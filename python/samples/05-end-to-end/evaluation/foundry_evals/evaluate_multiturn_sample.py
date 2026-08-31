@@ -10,7 +10,7 @@ a different aspect of agent behavior:
 3. per_turn_items — "Was each individual response appropriate?"
 
 Prerequisites:
-- An Azure AI Foundry project with a deployed model
+- A Microsoft Foundry project with a deployed model
 - Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL in .env
 """
 

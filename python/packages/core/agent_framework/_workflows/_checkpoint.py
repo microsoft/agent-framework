@@ -59,7 +59,17 @@ class WorkflowCheckpoint:
         pending_request_info_events: Any pending request info events that have not
             yet been processed at the time of checkpointing. This allows the workflow
             to resume with the correct pending events after a restore.
-        iteration_count: Current iteration number when checkpoint was created
+        iteration_count: Current iteration number when checkpoint was created.
+            Note: iteration_count is not guaranteed to be unique across a workflow's
+            lifecycle. It marks the superstep boundary the checkpoint sits on, and the
+            same boundary can carry more than one checkpoint. For example, a run that
+            pauses at ``IDLE_WITH_PENDING_REQUESTS`` records a checkpoint after superstep
+            K; when responses are later delivered, a response-entry checkpoint is recorded
+            at the same iteration K (responses in-flight, before superstep K+1 runs).
+            Both share iteration K but are distinct checkpoints. Checkpoint ordering is
+            defined by the ``previous_checkpoint_id`` lineage chain (and ``timestamp``),
+            not by ``iteration_count``; do not use ``iteration_count`` to identify the
+            latest checkpoint in human-in-the-loop flows.
         metadata: Additional metadata (e.g., superstep info, graph signature)
         version: Checkpoint format version
 
@@ -120,7 +130,7 @@ class CheckpointStorage(Protocol):
     """Protocol for checkpoint storage backends."""
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
-        """Save a checkpoint and return its ID.
+        """Create a copy of the given checkpoint and store it, returning its ID.
 
         Args:
             checkpoint: The WorkflowCheckpoint object to save.
@@ -137,7 +147,7 @@ class CheckpointStorage(Protocol):
             checkpoint_id: The unique ID of the checkpoint to load.
 
         Returns:
-            The WorkflowCheckpoint object corresponding to the given ID.
+            A copy of the WorkflowCheckpoint object corresponding to the given ID.
 
         Raises:
             WorkflowCheckpointException: If no checkpoint with the given ID exists.
@@ -151,7 +161,7 @@ class CheckpointStorage(Protocol):
             workflow_name: The name of the workflow to list checkpoints for.
 
         Returns:
-            A list of WorkflowCheckpoint objects for the specified workflow name.
+            A list of copies of WorkflowCheckpoint objects for the specified workflow name.
         """
         ...
 
@@ -173,7 +183,8 @@ class CheckpointStorage(Protocol):
             workflow_name: The name of the workflow to get the latest checkpoint for.
 
         Returns:
-            The latest WorkflowCheckpoint object for the specified workflow name, or None if no checkpoints exist.
+            A copy of the latest WorkflowCheckpoint object for the specified workflow name,
+            or None if no checkpoints exist.
         """
         ...
 
@@ -197,7 +208,7 @@ class InMemoryCheckpointStorage:
         self._checkpoints: dict[CheckpointID, WorkflowCheckpoint] = {}
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
-        """Save a checkpoint and return its ID."""
+        """Create a copy of the given checkpoint and store it, returning its ID."""
         self._checkpoints[checkpoint.checkpoint_id] = copy.deepcopy(checkpoint)
         logger.debug(f"Saved checkpoint {checkpoint.checkpoint_id} to memory")
         return checkpoint.checkpoint_id
@@ -207,12 +218,12 @@ class InMemoryCheckpointStorage:
         checkpoint = self._checkpoints.get(checkpoint_id)
         if checkpoint:
             logger.debug(f"Loaded checkpoint {checkpoint_id} from memory")
-            return checkpoint
+            return copy.deepcopy(checkpoint)
         raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
 
     async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
         """List checkpoint objects for a given workflow name."""
-        return [cp for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
+        return [copy.deepcopy(cp) for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
 
     async def delete(self, checkpoint_id: CheckpointID) -> bool:
         """Delete a checkpoint by ID."""
@@ -229,7 +240,7 @@ class InMemoryCheckpointStorage:
             return None
         latest_checkpoint = max(checkpoints, key=lambda cp: datetime.fromisoformat(cp.timestamp))
         logger.debug(f"Latest checkpoint for workflow {workflow_name} is {latest_checkpoint.checkpoint_id}")
-        return latest_checkpoint
+        return copy.deepcopy(latest_checkpoint)
 
     async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
         """List checkpoint IDs. If workflow_id is provided, filter by that workflow."""
@@ -246,8 +257,9 @@ class FileCheckpointStorage:
 
     By default, checkpoint deserialization is restricted to a built-in set of safe Python types
     (primitives, datetime, uuid, ...), all ``agent_framework`` internal types, and OpenAI SDK types
-    (``openai.types``). To allow additional application-specific types, pass them via the
-    ``allowed_checkpoint_types`` parameter using ``"module:qualname"`` format.
+    (``openai.types``). To allow additional application-specific types, register them with
+    ``agent_framework.register_checkpoint_type`` or pass them via the ``allowed_checkpoint_types``
+    parameter using ``"module:qualname"`` format.
 
     Example::
 
@@ -345,7 +357,7 @@ class FileCheckpointStorage:
 
         def _read() -> dict[str, Any]:
             with open(file_path) as f:
-                return json.load(f)  # type: ignore[no-any-return]
+                return json.load(f)
 
         encoded_checkpoint = await asyncio.to_thread(_read)
 

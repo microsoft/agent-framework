@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -9,7 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
-    <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI.AGUI\Microsoft.Agents.AI.AGUI.csproj" />
+    <PackageReference Include="AGUI.Client" />
   </ItemGroup>
 
 </Project>

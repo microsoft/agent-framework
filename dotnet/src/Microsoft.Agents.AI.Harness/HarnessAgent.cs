@@ -2,16 +2,14 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Agents.AI.Compaction;
-#if NET
-using Microsoft.Agents.AI.Tools.Shell;
-#endif
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -43,22 +41,22 @@ namespace Microsoft.Agents.AI;
 /// <item><description><see cref="TodoProvider"/> — persistent todo list that the agent uses to track multi-step plans. Disable with <see cref="HarnessAgentOptions.DisableTodoProvider"/>.</description></item>
 /// <item><description><see cref="AgentModeProvider"/> — mode tracking (e.g., "plan" vs "execute") that the agent uses to structure its work. Disable with <see cref="HarnessAgentOptions.DisableAgentModeProvider"/>.</description></item>
 /// <item><description><see cref="FileMemoryProvider"/> — file-based session memory allowing the agent to persist notes and artifacts across turns. Disable with <see cref="HarnessAgentOptions.DisableFileMemory"/>.</description></item>
-/// <item><description><see cref="FileAccessProvider"/> — shared file access providing read/write tools for a working directory. Disable with <see cref="HarnessAgentOptions.DisableFileAccess"/>.</description></item>
 /// <item><description><see cref="AgentSkillsProvider"/> — discovers and loads skill definitions from the file system, enabling dynamic tool sets. Disable with <see cref="HarnessAgentOptions.DisableAgentSkillsProvider"/>.</description></item>
 /// </list>
 /// </para>
 /// <para>
 /// <strong>Optional context providers (enabled via <see cref="HarnessAgentOptions"/>):</strong>
 /// <list type="bullet">
+/// <item><description><see cref="FileAccessProvider"/> — shared file access providing read/write tools for a working directory. Enable by setting <see cref="HarnessAgentOptions.FileAccessStore"/>; configure via <see cref="HarnessAgentOptions.FileAccessProviderOptions"/>.</description></item>
 /// <item><description><see cref="BackgroundAgentsProvider"/> — enables delegation to background agents for parallel work. Enable by setting <see cref="HarnessAgentOptions.BackgroundAgents"/>.</description></item>
-/// <item><description><c>ShellEnvironmentProvider</c> — injects OS/shell/CWD information and a shell execution tool. Enable by setting <c>HarnessAgentOptions.ShellExecutor</c> (.NET only).</description></item>
 /// </list>
 /// </para>
 /// <para>
 /// <strong>Agent decorators (each enabled by default, individually disableable):</strong>
 /// <list type="bullet">
-/// <item><description><see cref="ToolApprovalAgent"/> — "don't ask again" tool approval rules enabling safe unattended execution. Disable with <see cref="HarnessAgentOptions.DisableToolApproval"/>.</description></item>
+/// <item><description><see cref="ToolApprovalAgent"/> — "don't ask again" tool approval rules enabling safe unattended execution. Disable with <see cref="HarnessAgentOptions.DisableToolAutoApproval"/>.</description></item>
 /// <item><description><see cref="OpenTelemetryAgent"/> — OpenTelemetry instrumentation following semantic conventions for generative AI. Disable with <see cref="HarnessAgentOptions.DisableOpenTelemetry"/>.</description></item>
+/// <item><description><see cref="LoopAgent"/> — re-invokes the agent until the configured evaluators are satisfied. Applied as the outermost decorator (so each iteration is a complete agent run) and only when <see cref="HarnessAgentOptions.LoopEvaluators"/> supplies at least one evaluator; otherwise omitted.</description></item>
 /// </list>
 /// </para>
 /// <para>
@@ -79,7 +77,6 @@ namespace Microsoft.Agents.AI;
 /// and combined with agent-specific instructions via <see cref="ChatOptions.Instructions"/>.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class HarnessAgent : DelegatingAIAgent
 {
     /// <summary>
@@ -136,13 +133,56 @@ public sealed class HarnessAgent : DelegatingAIAgent
     {
     }
 
+    /// <inheritdoc />
+    protected override Task<AgentResponse> RunCoreAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentSession? session = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreHarnessAgent);
+#pragma warning restore MAAI001
+
+        return this.InnerAgent.RunAsync(messages, session, options, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentSession? session = null,
+        AgentRunOptions? options = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreHarnessAgent);
+#pragma warning restore MAAI001
+
+        await foreach (AgentResponseUpdate update in this.InnerAgent.RunStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
+        {
+            yield return update;
+        }
+    }
+
     private static AIAgent BuildAgent(IChatClient chatClient, HarnessAgentOptions? options, ILoggerFactory? loggerFactory, IServiceProvider? services)
     {
         ChatClientAgent innerAgent = BuildInnerAgent(chatClient, options, loggerFactory, services);
 
         AIAgentBuilder builder = innerAgent.AsBuilder();
 
-        if (options?.DisableToolApproval is not true)
+        // Register the loop decorator first so it ends up outermost (AIAgentBuilder applies factories in reverse): the
+        // loop drives complete agent runs, each independently tool-approved and OpenTelemetry-traced. Only added when at
+        // least one evaluator is supplied; otherwise the agent behaves as a single-shot agent.
+        if (options?.LoopEvaluators is IEnumerable<LoopEvaluator> loopEvaluators)
+        {
+            List<LoopEvaluator> evaluatorList = loopEvaluators.ToList();
+            if (evaluatorList.Count > 0)
+            {
+                builder.Use((inner, _) => new LoopAgent(inner, evaluatorList, options.LoopAgentOptions, loggerFactory));
+            }
+        }
+
+        if (options?.DisableToolAutoApproval is not true)
         {
             builder.UseToolApproval(options?.ToolApprovalAgentOptions);
         }
@@ -177,6 +217,11 @@ public sealed class HarnessAgent : DelegatingAIAgent
             }
         }
 
+        CompactionProvider? compactionProvider = compactionStrategy is not null
+            ? new CompactionProvider(compactionStrategy, loggerFactory: loggerFactory)
+            : null;
+
+        // Build ChatHistoryProvider
         ChatHistoryProvider chatHistoryProvider = options?.ChatHistoryProvider
             ?? (compactionStrategy is not null
                 ? new InMemoryChatHistoryProvider(new InMemoryChatHistoryProviderOptions
@@ -185,6 +230,7 @@ public sealed class HarnessAgent : DelegatingAIAgent
                 })
                 : new InMemoryChatHistoryProvider());
 
+        // Build instructions
         string harnessInstructions = options?.HarnessInstructions ?? DefaultInstructions;
         string? agentInstructions = options?.ChatOptions?.Instructions;
 
@@ -196,22 +242,28 @@ public sealed class HarnessAgent : DelegatingAIAgent
             (false, false) => $"{harnessInstructions}\n\n{agentInstructions}",
         };
 
+        // Build Chat Options & context providers
         ChatOptions chatOptions = BuildChatOptions(options, instructions, options?.MaxOutputTokens);
-
-        CompactionProvider? compactionProvider = compactionStrategy is not null
-            ? new CompactionProvider(compactionStrategy, loggerFactory: loggerFactory)
-            : null;
-
         IEnumerable<AIContextProvider> contextProviders = BuildContextProviders(options, loggerFactory);
 
+        // Build ChatClient stack
         ChatClientBuilder chatClientBuilder = chatClient.AsBuilder();
 
-        if (options?.DisableNonApprovalRequiredFunctionBypassing is not true)
+        // Registered first so it sits as the outermost decorator, above the approval-not-required bypassing
+        // and function invocation middleware, so it can bind inbound approval responses to the requests the
+        // framework surfaced. The harness uses UseProvidedChatClientAsIs, so this is added manually here rather
+        // than via the default ChatClientAgent pipeline.
+        if (options?.DisableApprovalResponseBinding is not true)
         {
-            chatClientBuilder.UseNonApprovalRequiredFunctionBypassing();
+            chatClientBuilder.UseApprovalResponseBinding();
         }
 
-        ChatClientBuilder pipeline = chatClientBuilder
+        if (options?.DisableApprovalNotRequiredFunctionBypassing is not true)
+        {
+            chatClientBuilder.UseApprovalNotRequiredFunctionBypassing();
+        }
+
+        chatClientBuilder = chatClientBuilder
             .UseFunctionInvocation(loggerFactory, configure: options?.MaximumIterationsPerRequest is int maxIterations
                 ? ficc => ficc.MaximumIterationsPerRequest = maxIterations
                 : null)
@@ -220,10 +272,16 @@ public sealed class HarnessAgent : DelegatingAIAgent
 
         if (compactionProvider is not null)
         {
-            pipeline = pipeline.UseAIContextProviders(compactionProvider);
+            chatClientBuilder = chatClientBuilder.UseAIContextProviders(compactionProvider);
         }
 
-        return pipeline
+        if (options?.DisableOpenTelemetry is not true)
+        {
+            chatClientBuilder = chatClientBuilder.UseOpenTelemetry(sourceName: options?.OpenTelemetrySourceName);
+        }
+
+        // Build Chat Client Agent
+        return chatClientBuilder
             .BuildAIAgent(new ChatClientAgentOptions
             {
                 Id = options?.Id,
@@ -257,14 +315,6 @@ public sealed class HarnessAgent : DelegatingAIAgent
             result.Tools.Add(new HostedWebSearchTool());
         }
 
-#if NET
-        if (options?.ShellExecutor is ShellExecutor shellExecutor)
-        {
-            result.Tools ??= [];
-            result.Tools.Add(shellExecutor.AsAIFunction());
-        }
-#endif
-
         return result;
     }
 
@@ -296,13 +346,9 @@ public sealed class HarnessAgent : DelegatingAIAgent
                 }));
         }
 
-        if (options?.DisableFileAccess is not true)
+        if (options?.FileAccessStore is AgentFileStore fileAccessStore)
         {
-            AgentFileStore fileAccessStore = options?.FileAccessStore
-                ?? new FileSystemAgentFileStore(
-                    Path.Combine(Directory.GetCurrentDirectory(), "working"));
-
-            providers.Add(new FileAccessProvider(fileAccessStore));
+            providers.Add(new FileAccessProvider(fileAccessStore, options.FileAccessProviderOptions));
         }
 
         if (options?.DisableAgentSkillsProvider is not true)
@@ -322,13 +368,6 @@ public sealed class HarnessAgent : DelegatingAIAgent
                 providers.Add(new BackgroundAgentsProvider(materializedAgents, options.BackgroundAgentsProviderOptions));
             }
         }
-
-#if NET
-        if (options?.ShellExecutor is ShellExecutor shellExecutor)
-        {
-            providers.Add(new ShellEnvironmentProvider(shellExecutor, options.ShellEnvironmentProviderOptions));
-        }
-#endif
 
         if (options?.AIContextProviders is IEnumerable<AIContextProvider> userProviders)
         {

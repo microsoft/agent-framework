@@ -10,6 +10,7 @@ import re
 import sys
 from asyncio import iscoroutine
 from collections.abc import (
+    AsyncGenerator,
     AsyncIterable,
     AsyncIterator,
     Awaitable,
@@ -25,12 +26,10 @@ from datetime import datetime
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
 
-from pydantic import BaseModel
 from typing_extensions import TypedDict
 
+from ._feature_stage import ExperimentalFeature, experimental
 from ._serialization import SerializationMixin
-from ._tools import ToolTypes
-from ._tools import normalize_tools as _normalize_tools
 from .exceptions import AdditionItemMismatch, ContentError
 
 if sys.version_info >= (3, 13):
@@ -39,6 +38,11 @@ else:
     from typing_extensions import TypeVar  # pragma: no cover
 
 logger = logging.getLogger("agent_framework")
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from ._tools import ToolTypes
 
 
 # region Content Parsing Utilities
@@ -122,7 +126,11 @@ def detect_media_type_from_base64(
         if data is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
         # Remove data URI prefix if present
-        data_str = data_uri.split(";base64,", 1)[1]
+        if not data_uri.startswith("data:") or "," not in data_uri:
+            raise ValueError("Invalid data URI format.")
+        prefix, data_str = data_uri.split(",", 1)
+        if not prefix.endswith(";base64"):
+            raise ValueError("Data URI must use base64 encoding.")
     if data_str is not None:
         if data is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
@@ -191,7 +199,7 @@ def _get_data_bytes_as_str(content: Content) -> str | None:
         raise ContentError("Data URI must use base64 encoding")
 
     _, data = uri.split(";base64,", 1)
-    return data  # type: ignore[return-value, no-any-return]
+    return data
 
 
 def _get_data_bytes(content: Content) -> bytes | None:  # pyright: ignore[reportUnusedFunction]
@@ -298,9 +306,14 @@ EmbeddingInputT = TypeVar("EmbeddingInputT", default="str")
 ChatResponseT = TypeVar("ChatResponseT", bound="ChatResponse")
 ToolModeT = TypeVar("ToolModeT", bound="ToolMode")
 AgentResponseT = TypeVar("AgentResponseT", bound="AgentResponse")
-ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None, covariant=True)
-ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
-StructuredResponseFormat = type[BaseModel] | Mapping[str, Any] | None
+if TYPE_CHECKING:
+    ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None, covariant=True)
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+    StructuredResponseFormat = type[BaseModel] | Mapping[str, Any] | None
+else:
+    ResponseModelT = TypeVar("ResponseModelT", bound=Any, default=None, covariant=True)
+    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=Any)
+    StructuredResponseFormat = type[Any] | Mapping[str, Any] | None
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
 
@@ -390,7 +403,7 @@ ContentT = TypeVar("ContentT", bound="Content")
 # endregion
 
 
-class UsageDetails(TypedDict, total=False, extra_items=int):  # type: ignore[call-arg]
+class UsageDetails(TypedDict, total=False, extra_items=int):
     """A dictionary representing usage details.
 
     This is a non-closed dictionary, so any specific provider fields can be added as needed.
@@ -400,12 +413,18 @@ class UsageDetails(TypedDict, total=False, extra_items=int):  # type: ignore[cal
         input_token_count: The number of input tokens used.
         output_token_count: The number of output tokens generated.
         total_token_count: The total number of tokens (input + output).
+        cache_creation_input_token_count: The number of input tokens written to a provider-managed cache.
+        cache_read_input_token_count: The number of input tokens served from a provider-managed cache.
+        reasoning_output_token_count: The number of output tokens used for reasoning.
 
     """
 
     input_token_count: int | None
     output_token_count: int | None
     total_token_count: int | None
+    cache_creation_input_token_count: int | None
+    cache_read_input_token_count: int | None
+    reasoning_output_token_count: int | None
 
 
 def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) -> UsageDetails:
@@ -445,7 +464,7 @@ def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) 
         ):
             logger.warning("Non `int` value found in usage details, skipping.")
             continue
-        result[key] = (val1 or 0) + (val2 or 0)  # type: ignore[literal-required]
+        result[key] = (val1 or 0) + (val2 or 0)
     return result
 
 
@@ -483,6 +502,7 @@ class Content:
         name: str | None = None,
         arguments: str | Mapping[str, Any] | None = None,
         exception: str | None = None,
+        informational_only: bool = False,
         result: Any = None,
         items: Sequence[Content] | None = None,
         # Hosted file/vector store fields
@@ -543,6 +563,7 @@ class Content:
         self.name = name
         self.arguments = arguments
         self.exception = exception
+        self.informational_only = informational_only or type == "mcp_server_tool_call"
         self.result = result
         self.items = items
         self.file_id = file_id
@@ -568,10 +589,10 @@ class Content:
         self.consent_link = consent_link
 
     def __deepcopy__(self, memo: dict[int, Any]) -> Content:
-        """Create a deep copy, preserving ``_SHALLOW_COPY_FIELDS`` by reference.
+        """Create a deep copy, discarding non-``None`` ``_SHALLOW_COPY_FIELDS``.
 
         Fields listed in ``_SHALLOW_COPY_FIELDS`` may contain LLM SDK objects
-        (e.g., proto/gRPC responses) that are not safe to deep-copy.
+        (e.g., proto/gRPC responses) that are not safe to deep-copy or share.
         """
         cls = type(self)
         result = cls.__new__(cls)
@@ -579,7 +600,9 @@ class Content:
         shallow = cls._SHALLOW_COPY_FIELDS
         for k, v in self.__dict__.items():
             if k in shallow:
-                object.__setattr__(result, k, v)
+                if v is not None:
+                    logger.debug("Discarding field '%s' while deep-copying Content.", k)
+                object.__setattr__(result, k, None)
             else:
                 object.__setattr__(result, k, deepcopy(v, memo))
         return result
@@ -792,17 +815,39 @@ class Content:
         *,
         arguments: str | Mapping[str, Any] | None = None,
         exception: str | None = None,
+        informational_only: bool = False,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
     ) -> ContentT:
-        """Create function call content."""
+        """Create function call content.
+
+        Args:
+            call_id: The model- or service-provided identifier for this function call. Function results use the
+                same ID to indicate which call they answer.
+            name: The function name requested by the model or service.
+
+        Keyword Args:
+            arguments: The arguments for the requested function call. May be a JSON string, a mapping that can be
+                serialized as arguments, or None when no arguments were provided.
+            exception: Error information associated with the function call, if the provider returned the call in an
+                error state.
+            informational_only: Whether the function call is present only for transcript fidelity and should not be
+                executed by Agent Framework function invocation.
+            annotations: Optional annotations attached to this content item.
+            additional_properties: Extra provider-specific properties to preserve with the content item.
+            raw_representation: The original provider-specific object or payload this content item was created from.
+
+        Returns:
+            Function call content.
+        """
         return cls(
             "function_call",
             call_id=call_id,
             name=name,
             arguments=arguments,
             exception=exception,
+            informational_only=informational_only,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1171,13 +1216,36 @@ class Content:
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
     ) -> ContentT:
-        """Create MCP server tool call content."""
+        """Create MCP server tool call content.
+
+        MCP server tool calls are provider-hosted tool calls that the model/service
+        already routed to a remote MCP server. They are recorded for transcript
+        fidelity and for matching provider-returned MCP tool results, but they are
+        not local function invocation requests. The returned content is always
+        marked ``informational_only=True``.
+
+        Args:
+            call_id: The model- or service-provided identifier for this MCP tool call.
+            tool_name: The remote MCP tool name that was called.
+
+        Keyword Args:
+            server_name: The remote MCP server label or name, when provided by the service.
+            arguments: The arguments sent to the remote MCP tool. May be a JSON string,
+                a mapping, or None when no arguments were provided.
+            annotations: Optional annotations attached to this content item.
+            additional_properties: Extra provider-specific properties to preserve with the content item.
+            raw_representation: The original provider-specific object or payload this content item was created from.
+
+        Returns:
+            MCP server tool call content.
+        """
         return cls(
             "mcp_server_tool_call",
             call_id=call_id,
             tool_name=tool_name,
             server_name=server_name,
             arguments=arguments,
+            informational_only=True,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1238,7 +1306,7 @@ class Content:
         """Create function approval response content."""
         return cls(
             "function_approval_response",
-            approved=approved,
+            approved=approved if type(approved) is bool else False,
             id=id,
             function_call=function_call,
             annotations=annotations,
@@ -1310,6 +1378,7 @@ class Content:
             "name",
             "arguments",
             "exception",
+            "informational_only",
             "result",
             "items",
             "file_id",
@@ -1342,6 +1411,8 @@ class Content:
         for field in fields_to_capture:
             value = getattr(self, field, None)
             if field in exclude:
+                continue
+            if field == "informational_only" and (self.type != "function_call" or not value):
                 continue
             if exclude_none and value is None:
                 continue
@@ -1387,6 +1458,9 @@ class Content:
         # Handle nested Content objects (e.g., function_call in function_approval_request)
         if (function_call := remaining.get("function_call")) and isinstance(function_call, dict):
             remaining["function_call"] = cls.from_dict(function_call)  # type: ignore[reportUnknownArgumentType]
+
+        if content_type == "function_approval_response" and type(remaining.get("approved")) is not bool:
+            remaining["approved"] = False
 
         # Handle list of Content objects (e.g., inputs in code_interpreter_tool_call)
         if (input_items := remaining.get("inputs")) and isinstance(input_items, list):
@@ -1442,12 +1516,18 @@ class Content:
         combined_id = self.id or other.id
 
         # Concatenate text, handling None values
-        self_text = self.text or ""  # type: ignore[attr-defined]
-        other_text = other.text or ""  # type: ignore[attr-defined]
+        self_text = self.text or ""
+        other_text = other.text or ""
+        if (
+            self_text
+            and other_text
+            and ("reasoning_text" in self.additional_properties) != ("reasoning_text" in other.additional_properties)
+        ):
+            raise AdditionItemMismatch("Cannot merge reasoning text with a reasoning summary")
         combined_text = self_text + other_text if (self_text or other_text) else None
 
         # Handle protected_data replacement
-        protected_data = other.protected_data if other.protected_data is not None else self.protected_data  # type: ignore[attr-defined]
+        protected_data = other.protected_data if other.protected_data is not None else self.protected_data
 
         return Content(
             "text_reasoning",
@@ -1483,9 +1563,13 @@ class Content:
         return Content(
             "function_call",
             call_id=self_call_id,
-            name=getattr(self, "name", getattr(other, "name", None)),
+            name=getattr(self, "name", None) or getattr(other, "name", None),
             arguments=arguments,
+            id=self.id or other.id,
+            user_input_request=self.user_input_request or other.user_input_request,
             exception=getattr(self, "exception", None) or getattr(other, "exception", None),
+            informational_only=getattr(self, "informational_only", False)
+            or getattr(other, "informational_only", False),
             additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
             raw_representation=_combine_raw_representations(self.raw_representation, other.raw_representation),
         )
@@ -1901,14 +1985,14 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
             # mypy doesn't narrow type based on match/case, but we know these are FunctionCallContents
             case "function_call" if message.contents and message.contents[-1].type == "function_call":
                 try:
-                    message.contents[-1] += content  # type: ignore[operator]
+                    message.contents[-1] += content
                 except (AdditionItemMismatch, ContentError):
                     message.contents.append(content)
             case "usage":
                 if response.usage_details is None:
                     response.usage_details = UsageDetails()
                 # mypy doesn't narrow type based on match/case, but we know this is UsageContent
-                response.usage_details = add_usage_details(response.usage_details, content.usage_details)  # type: ignore[arg-type]
+                response.usage_details = add_usage_details(response.usage_details, content.usage_details)
             case _:
                 message.contents.append(content)
     # Incorporate the update's properties into the response.
@@ -2104,8 +2188,11 @@ def _parse_structured_response_value(text: str, response_format: Any | None) -> 
         return None
     if not text:
         return None
-    if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-        return response_format.model_validate_json(text)
+    if isinstance(response_format, type):
+        from pydantic import BaseModel
+
+        if issubclass(response_format, BaseModel):
+            return response_format.model_validate_json(text)
     if isinstance(response_format, Mapping):
         try:
             return json.loads(text)
@@ -2117,6 +2204,16 @@ def _parse_structured_response_value(text: str, response_format: Any | None) -> 
         type(response_format),  # type: ignore[reportUnknownArgumentType]
     )
     return None
+
+
+def _last_non_empty_assistant_message_text(messages: Sequence[Message]) -> str:
+    for message in reversed(messages):
+        if message.role != "assistant":
+            continue
+        text = "".join((content.text or "") for content in message.contents if content.type == "text")
+        if text.strip():
+            return text
+    return ""
 
 
 class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
@@ -2304,7 +2401,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Keyword Args:
             output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
-                response text into structured data.
+                final non-empty assistant message text into structured data.
         """
         msg = cls(messages=[], response_format=output_format_type)
         for update in updates:
@@ -2364,7 +2461,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Keyword Args:
             output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
-                response text into structured data.
+                final non-empty assistant message text into structured data.
         """
         msg = cls(messages=[], response_format=output_format_type)
         async for update in updates:
@@ -2382,16 +2479,22 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         """Get the parsed structured output value.
 
         If a response_format was provided and parsing hasn't been attempted yet,
-        this will attempt to parse the text into the specified type.
+        this will attempt to parse the last non-empty assistant message text into the specified type.
 
         Raises:
-            ValidationError: If the response text doesn't match the expected schema.
-            ValueError: If the response text is not valid JSON for a non-Pydantic structured format.
+            ValidationError: If the assistant message text doesn't match the expected schema.
+            ValueError: If the assistant message text is not valid JSON for a non-Pydantic structured format.
         """
         if self._value_parsed:
             return self._value
         if self._response_format is not None:
-            self._value = cast(ResponseModelT, _parse_structured_response_value(self.text, self._response_format))
+            self._value = cast(
+                ResponseModelT,
+                _parse_structured_response_value(
+                    _last_non_empty_assistant_message_text(self.messages),
+                    self._response_format,
+                ),
+            )
             self._value_parsed = True
         return self._value
 
@@ -2646,16 +2749,22 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         """Get the parsed structured output value.
 
         If a response_format was provided and parsing hasn't been attempted yet,
-        this will attempt to parse the text into the specified type.
+        this will attempt to parse the last non-empty assistant message text into the specified type.
 
         Raises:
-            ValidationError: If the response text doesn't match the expected schema.
-            ValueError: If the response text is not valid JSON for a non-Pydantic structured format.
+            ValidationError: If the assistant message text doesn't match the expected schema.
+            ValueError: If the assistant message text is not valid JSON for a non-Pydantic structured format.
         """
         if self._value_parsed:
             return self._value
         if self._response_format is not None:
-            self._value = cast(ResponseModelT, _parse_structured_response_value(self.text, self._response_format))
+            self._value = cast(
+                ResponseModelT,
+                _parse_structured_response_value(
+                    _last_non_empty_assistant_message_text(self.messages),
+                    self._response_format,
+                ),
+            )
             self._value_parsed = True
         return self._value
 
@@ -2714,7 +2823,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Keyword Args:
             output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
-                response text into structured data.
+                final non-empty assistant message text into structured data.
             value: Optional pre-parsed structured output value to set directly on the response.
         """
         msg = cls(messages=[], response_format=output_format_type, value=value)
@@ -2764,7 +2873,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Keyword Args:
             output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
-                response text into structured data.
+                final non-empty assistant message text into structured data.
         """
         msg = cls(messages=[], response_format=output_format_type)
         async for update in updates:
@@ -2774,6 +2883,30 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
 
     def __str__(self) -> str:
         return self.text
+
+
+def _build_agent_response_from_chat_response(  # pyright: ignore[reportUnusedFunction]
+    response: ChatResponse[Any],
+    *,
+    response_format: StructuredResponseFormat = None,
+    suppress_response_id: bool = False,
+) -> AgentResponse[Any]:
+    """Build the AgentResponse wrapper for a completed ChatResponse."""
+    agent_response = AgentResponse(
+        messages=response.messages,
+        response_id=None if suppress_response_id else response.response_id,
+        created_at=response.created_at,
+        finish_reason=cast(FinishReasonLiteral | FinishReason | None, response.finish_reason),
+        usage_details=response.usage_details,
+        response_format=response_format,
+        continuation_token=response.continuation_token,
+        raw_representation=response,
+        additional_properties=response.additional_properties,
+    )
+    if response._value_parsed:  # pyright: ignore[reportPrivateUsage]
+        agent_response._value = response._value  # pyright: ignore[reportPrivateUsage]
+        agent_response._value_parsed = True  # pyright: ignore[reportPrivateUsage]
+    return agent_response
 
 
 # region AgentResponseUpdate
@@ -2977,6 +3110,8 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         self._inner_stream_source: ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]] | None = None
         self._wrap_inner: bool = False
         self._map_update: Callable[[Any], UpdateT | Awaitable[UpdateT]] | None = None
+        self._flat_map_update: Callable[[Any], Iterable[UpdateT] | Awaitable[Iterable[UpdateT]]] | None = None
+        self._pending_mapped_updates: list[UpdateT] = []
         self._pull_context_manager_factories: list[Callable[[], contextlib.AbstractContextManager[Any]]] = []
 
     def map(
@@ -3021,6 +3156,23 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         stream._inner_stream_source = self
         stream._wrap_inner = True
         stream._map_update = transform
+        return stream
+
+    def flat_map(
+        self,
+        transform: Callable[[UpdateT], Iterable[OuterUpdateT] | Awaitable[Iterable[OuterUpdateT]]],
+        finalizer: Callable[[Sequence[OuterUpdateT]], OuterFinalT | Awaitable[OuterFinalT]],
+    ) -> ResponseStream[OuterUpdateT, OuterFinalT]:
+        """Create a new stream that transforms each update into zero or more updates.
+
+        Like :meth:`map`, the returned stream delegates iteration to this stream,
+        preserving single consumption and inner finalization/result hooks. Use this
+        when one upstream update naturally expands into multiple wire-protocol events.
+        """
+        stream: ResponseStream[OuterUpdateT, OuterFinalT] = ResponseStream(self, finalizer=finalizer)
+        stream._inner_stream_source = self
+        stream._wrap_inner = True
+        stream._flat_map_update = transform
         return stream
 
     def with_finalizer(
@@ -3078,6 +3230,60 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         stream._wrap_inner = True
         return stream
 
+    @classmethod
+    @experimental(feature_id=ExperimentalFeature.AGENT_HOOKS)
+    def buffered_and_gated(
+        cls,
+        consume: Callable[[], Awaitable[tuple[Sequence[UpdateT], FinalT]]],
+        gate: Callable[[list[UpdateT], FinalT], Awaitable[tuple[FinalT, bool]]],
+        rederive: Callable[[FinalT], Sequence[UpdateT]],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Create a fully buffered stream whose content is finalized by a gate.
+
+        This combinator exists for egress-gating middleware (e.g. policy enforcement)
+        that must apply a verdict to a run's *complete* content before anything is
+        released, and it states the hook-ordering contract in one place:
+
+        1. On the first pull, ``consume`` runs and produces the buffered updates and
+           the finalized result. Nothing has egressed yet.
+        2. Every transform/result/cleanup hook registered on the *returned* stream so
+           far (for example hooks attached by middleware pipelines after they unwind)
+           is applied to the buffered updates and result now — **before** the gate —
+           so the gate's verdict covers their effect. The hooks are consumed: they are
+           not applied again during replay. Because they run ahead of the verdict,
+           these hooks also *see* pre-verdict content: they are rewriters inside the
+           enforcement boundary. A host-facing observer must consume the released
+           stream instead of registering a hook here.
+        3. ``gate`` receives the post-hook updates and the post-hook result. It
+           returns the result to release and whether it transformed that result (it
+           may raise to block egress entirely).
+        4. The combinator owns the no-divergence rule: whenever pending hooks were
+           applied or the gate reports a transform, the released updates are
+           re-derived from the gated result via ``rederive``, so streamed egress can
+           never diverge from the verdicted content. Otherwise the buffered updates
+           are replayed as-is.
+        5. The stream is then sealed: the released updates and result are replayed
+           verbatim, and registering further transform or result hooks raises
+           ``RuntimeError`` — nothing can rewrite content past the gate.
+
+        Args:
+            consume: Produces the buffered updates and finalized result. Runs inside
+                the caller's context (the caller owns any context-variable scoping).
+            gate: Receives ``(updates, final)`` after pending hooks are applied;
+                returns ``(final, transformed)`` — the result to release and whether
+                the gate changed it.
+            rederive: Rebuilds the released updates from the gated result; applied by
+                the combinator whenever hooks ran or the gate transformed, so no
+                caller can accidentally egress un-verdicted updates.
+
+        Returns:
+            A sealed, fully buffered ResponseStream.
+        """
+        return cast(
+            "ResponseStream[UpdateT, FinalT]",
+            cast(Any, _GatedResponseStream).create_buffered_and_gated(consume, gate, rederive),
+        )
+
     async def _get_stream(self) -> AsyncIterable[UpdateT]:
         if self._stream is None:
             if hasattr(self._stream_source, "__aiter__"):
@@ -3095,43 +3301,56 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
     def __aiter__(self) -> ResponseStream[UpdateT, FinalT]:
         return self
 
-    async def __anext__(self) -> UpdateT:
-        try:
-            with contextlib.ExitStack() as stack:
-                for factory in self._pull_context_manager_factories:
-                    stack.enter_context(factory())
-                # Resolve the underlying stream inside the pull contexts so that any
-                # spans/contexts created during stream resolution (e.g. inner chat
-                # completion spans created on the first pull of a wrapped agent stream)
-                # inherit the active context (e.g. an outer agent invoke span).
-                if self._iterator is None:
-                    stream = await self._get_stream()
-                    self._iterator = stream.__aiter__()
-                update: UpdateT = await self._iterator.__anext__()
-        except StopAsyncIteration:
-            self._consumed = True
-            await self._run_cleanup_hooks()
-            await self.get_final_response()
-            raise
-        except Exception as exc:
-            self._stream_error = exc
-            try:
-                await self._run_cleanup_hooks()
-            finally:
-                self._stream_error = None
-            raise
-        if self._map_update is not None:
-            update = self._map_update(update)  # type: ignore[assignment]
-            if isawaitable(update):
-                update = await update
+    async def _record_update(self, update: UpdateT) -> UpdateT:
         self._updates.append(update)
         for hook in self._transform_hooks:
             hooked = hook(update)
             if isawaitable(hooked):
                 hooked = await hooked
             if hooked is not None:
-                update = hooked
+                update = cast(UpdateT, hooked)
         return update
+
+    async def __anext__(self) -> UpdateT:
+        while True:
+            if self._pending_mapped_updates:
+                return await self._record_update(self._pending_mapped_updates.pop(0))
+
+            try:
+                with contextlib.ExitStack() as stack:
+                    for factory in self._pull_context_manager_factories:
+                        stack.enter_context(factory())
+                    # Resolve the underlying stream inside the pull contexts so that any
+                    # spans/contexts created during stream resolution (e.g. inner chat
+                    # completion spans created on the first pull of a wrapped agent stream)
+                    # inherit the active context (e.g. an outer agent invoke span).
+                    if self._iterator is None:
+                        stream = await self._get_stream()
+                        self._iterator = stream.__aiter__()
+                    update: UpdateT = await self._iterator.__anext__()
+            except StopAsyncIteration:
+                self._consumed = True
+                await self._run_cleanup_hooks()
+                await self.get_final_response()
+                raise
+            except Exception as exc:
+                self._stream_error = exc
+                try:
+                    await self._run_cleanup_hooks()
+                finally:
+                    self._stream_error = None
+                raise
+            if self._flat_map_update is not None:
+                mapped_updates = self._flat_map_update(update)
+                if isawaitable(mapped_updates):
+                    mapped_updates = await mapped_updates
+                self._pending_mapped_updates.extend(mapped_updates)
+                continue
+            if self._map_update is not None:
+                update = self._map_update(update)  # type: ignore[assignment]
+                if isawaitable(update):
+                    update = await update
+            return await self._record_update(update)
 
     async def _resolve_stream_with_pull_contexts(self) -> AsyncIterable[UpdateT]:
         """Resolve the underlying stream while activating any registered pull context managers.
@@ -3323,6 +3542,103 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         return self._updates
 
 
+class _GatedResponseStream(ResponseStream[UpdateT, FinalT]):
+    """ResponseStream whose content is sealed once its gate has run.
+
+    Created by :meth:`ResponseStream.buffered_and_gated`. Hooks registered before
+    the gate runs are applied to the buffered content ahead of the gate; once the
+    gate has run, registering transform or result hooks raises so nothing can
+    rewrite content past the gate. (Cleanup hooks remain allowed: they cannot
+    influence content.)
+    """
+
+    _gate_sealed: bool = False
+
+    def with_transform_hook(
+        self,
+        hook: Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a transform hook; rejected once the stream's gate has run."""
+        if self._gate_sealed:
+            raise RuntimeError(
+                "Cannot register a transform hook on a gated ResponseStream after its gate has "
+                "run: content is sealed by the gate's verdict."
+            )
+        return super().with_transform_hook(hook)
+
+    def with_result_hook(
+        self,
+        hook: Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a result hook; rejected once the stream's gate has run."""
+        if self._gate_sealed:
+            raise RuntimeError(
+                "Cannot register a result hook on a gated ResponseStream after its gate has "
+                "run: content is sealed by the gate's verdict."
+            )
+        return super().with_result_hook(hook)
+
+    @classmethod
+    def create_buffered_and_gated(
+        cls,
+        consume: Callable[[], Awaitable[tuple[Sequence[UpdateT], FinalT]]],
+        gate: Callable[[list[UpdateT], FinalT], Awaitable[tuple[FinalT, bool]]],
+        rederive: Callable[[FinalT], Sequence[UpdateT]],
+    ) -> _GatedResponseStream[UpdateT, FinalT]:
+        """Build the gated stream for :meth:`ResponseStream.buffered_and_gated`."""
+        holder: dict[str, Any] = {}
+
+        async def _materialize() -> AsyncGenerator[UpdateT]:
+            stream = cast(_GatedResponseStream[UpdateT, FinalT], holder["stream"])
+            updates, final = await consume()
+            # Drain the hooks registered on the gated stream so far and apply them to
+            # the buffered content before the gate (contract step 2). Draining also
+            # means _record_update applies nothing during replay.
+            transform_hooks = list(stream._transform_hooks)
+            stream._transform_hooks.clear()
+            result_hooks = list(stream._result_hooks)
+            stream._result_hooks.clear()
+            cleanup_hooks = list(stream._cleanup_hooks)
+            stream._cleanup_hooks.clear()
+            hooked_updates: list[UpdateT] = []
+            for update in updates:
+                hooked_update = update
+                for hook in transform_hooks:
+                    hooked = hook(hooked_update)
+                    if isawaitable(hooked):
+                        hooked = await hooked
+                    if hooked is not None:
+                        hooked_update = cast(UpdateT, hooked)
+                hooked_updates.append(hooked_update)
+            for result_hook in result_hooks:
+                hooked_final = result_hook(final)
+                if isawaitable(hooked_final):
+                    hooked_final = await hooked_final
+                if hooked_final is not None:
+                    final = cast(FinalT, hooked_final)
+            for cleanup_hook in cleanup_hooks:
+                cleanup_result = cleanup_hook()
+                if isawaitable(cleanup_result):
+                    await cleanup_result
+            gated_final, gate_transformed = await gate(hooked_updates, final)
+            holder["final"] = gated_final
+            stream._gate_sealed = True
+            # No-divergence rule (contract step 4), owned here: hooks or a gate
+            # transform mean the buffered updates may no longer match the verdicted
+            # result, so the released updates are re-derived from it.
+            hooks_applied = bool(transform_hooks or result_hooks)
+            released = rederive(gated_final) if (hooks_applied or gate_transformed) else hooked_updates
+            for update in released:
+                yield update
+
+        def _finalizer(_: Sequence[UpdateT]) -> FinalT:
+            return cast(FinalT, holder["final"])
+
+        stream: _GatedResponseStream[UpdateT, FinalT] = cls(_materialize(), finalizer=_finalizer)
+        holder["stream"] = stream
+        return stream
+
+
 # region ChatOptions
 
 
@@ -3506,6 +3822,8 @@ def normalize_tools(
             # List of tools
             tools = normalize_tools([my_tool, another_tool])
     """
+    from ._tools import normalize_tools as _normalize_tools
+
     return _normalize_tools(tools)
 
 
@@ -3553,7 +3871,7 @@ async def validate_tools(
             # Expand MCP tools to their constituent functions
             if not tool_.is_connected:
                 await tool_.connect()
-            final_tools.extend(tool_.functions)  # type: ignore
+            final_tools.extend(tool_.functions)
         else:
             final_tools.append(tool_)
 
@@ -3599,6 +3917,38 @@ def validate_tool_mode(
         normalized_tool_choice["allowed_tools"] = list(allowed_tools)
         return cast(ToolMode, normalized_tool_choice)
     return tool_choice
+
+
+def _append_instructions(
+    base: str | Mapping[str, Any] | Sequence[Any] | None,
+    addition: str | Mapping[str, Any] | Sequence[Any] | None,
+) -> str | Mapping[str, Any] | Sequence[Any] | None:
+    """Append instructions to existing instructions without discarding their structure.
+
+    ``instructions`` is declared as ``str`` on :class:`ChatOptions`, but chat clients may widen it to a
+    provider-native structured form, such as a sequence of typed instruction blocks. Combining such a
+    value with string formatting would coerce it to its ``repr``, silently turning structured metadata
+    into literal text, so a non-string base is extended element-wise instead.
+
+    The addition is always placed after the existing instructions, so the leading portion stays
+    unchanged for providers that treat it as a stable, structure-sensitive prefix.
+
+    Args:
+        base: The existing instructions, if any.
+        addition: The instructions to append, if any.
+
+    Returns:
+        The combined instructions, preserving the structure of ``base`` when it is not a string.
+    """
+    if not base:
+        return addition
+    if not addition:
+        return base
+    if isinstance(base, str) and isinstance(addition, str):
+        return f"{base}\n{addition}"
+    combined: list[Any] = [base] if isinstance(base, (str, Mapping)) else list(base)
+    combined.extend([addition] if isinstance(addition, (str, Mapping)) else addition)
+    return combined
 
 
 def merge_chat_options(
@@ -3650,12 +4000,8 @@ def merge_chat_options(
             continue
 
         if key == "instructions":
-            # Concatenate instructions
-            base_instructions = result.get("instructions")
-            if base_instructions:
-                result["instructions"] = f"{base_instructions}\n{value}"
-            else:
-                result["instructions"] = value
+            # Concatenate instructions, preserving provider-native structured values
+            result["instructions"] = _append_instructions(result.get("instructions"), value)
         elif key == "tools":
             # Merge tools lists
             base_tools = result.get("tools")

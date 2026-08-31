@@ -73,12 +73,17 @@ public sealed class AnthropicClientExtensionsTests
         public string? ApiKey { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
         public string? AuthToken { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
         public string? WebhookKey { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
+        public IReadOnlyList<DelegatingHandler> Handlers { get => throw new NotImplementedException(); init => throw new NotImplementedException(); }
 
         public IAnthropicClientWithRawResponse WithRawResponse => throw new NotImplementedException();
 
         public IMessageService Messages => throw new NotImplementedException();
 
         public IModelService Models => throw new NotImplementedException();
+
+        public IFileService Files => throw new NotImplementedException();
+
+        public ISkillService Skills => throw new NotImplementedException();
 
         public IBetaService Beta => throw new NotImplementedException();
 

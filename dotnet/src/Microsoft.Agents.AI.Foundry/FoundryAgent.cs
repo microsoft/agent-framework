@@ -135,7 +135,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
     /// <see cref="AIProjectClient"/> reference here.
     /// </summary>
     internal FoundryAgent(ChatClientAgent innerAgent)
-        : base(WireClientHeaders(Throw.IfNull(innerAgent)))
+        : base(WireFoundryRequestContext(Throw.IfNull(innerAgent)))
     {
     }
 
@@ -161,6 +161,59 @@ public sealed class FoundryAgent : DelegatingAIAgent
     /// </remarks>
     public ValueTask<AgentSession> CreateSessionAsync(string conversationId, CancellationToken cancellationToken = default)
         => this.GetInnerChatClientAgent().CreateSessionAsync(conversationId, cancellationToken);
+
+    /// <summary>
+    /// Creates a local <see cref="ChatClientAgentSession"/> optionally pinned to a Foundry hosted-agent
+    /// session id (sandbox) and/or a server conversation id.
+    /// </summary>
+    /// <param name="hostedSessionId">
+    /// Optional existing hosted-agent session id to pin on the session. The id identifies a Foundry
+    /// infrastructure managed sandbox (compute and persistent <c>$HOME</c>), not Agent Framework local
+    /// state. See
+    /// <see href="https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/hosted-agents#sessions-and-conversations">Sessions and conversations</see>.
+    /// When set, it is stored in <see cref="AgentSession.StateBag"/> under
+    /// <see cref="FoundryAgentSessionExtensions.FoundryHostedAgentSessionIdKey"/> and subsequent runs that
+    /// reuse this session send <c>agent_session_id</c> automatically. When omitted, Foundry may create
+    /// a session on the first run and the returned id becomes sticky on this session.
+    /// </param>
+    /// <param name="conversationId">
+    /// Optional existing conversation id for server-side message history continuity. Conversation
+    /// history and hosted-agent session (sandbox) are separate Foundry concepts; see
+    /// <see href="https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/hosted-agents#sessions-and-conversations">Sessions and conversations</see>.
+    /// </param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
+    /// <returns>A <see cref="ChatClientAgentSession"/> with the optional pins applied.</returns>
+    /// <remarks>
+    /// <para>
+    /// The hosted-agent session itself is owned and lifecycle managed by Foundry Agent Service
+    /// (provisioning, idle suspend, TTL). This method only builds a local Agent Framework session
+    /// object and optionally attaches an existing platform session id. It does not call the Foundry
+    /// admin API to provision a sandbox. To create a platform session first, use the agent
+    /// administration client and pass the resulting id as <paramref name="hostedSessionId"/>.
+    /// </para>
+    /// <para>
+    /// For the platform model of sessions versus conversations, see
+    /// <see href="https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/hosted-agents#sessions-and-conversations">Hosted agents: sessions and conversations</see>.
+    /// </para>
+    /// </remarks>
+    public async Task<ChatClientAgentSession> CreateFoundryHostedAgentSessionAsync(
+        string? hostedSessionId = null,
+        string? conversationId = null,
+        CancellationToken cancellationToken = default)
+    {
+        AgentSession session = conversationId is null
+            ? await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false)
+            : await this.CreateSessionAsync(conversationId, cancellationToken).ConfigureAwait(false);
+
+        var typed = (ChatClientAgentSession)session;
+        if (hostedSessionId is not null)
+        {
+            // Non-null values are treated as an explicit pin attempt; whitespace is rejected by Set.
+            typed.FoundryHostedAgentSessionId = hostedSessionId;
+        }
+
+        return typed;
+    }
 
     /// <summary>
     /// Creates a server-side conversation session that appears in the Foundry Project UI.
@@ -240,23 +293,21 @@ public sealed class FoundryAgent : DelegatingAIAgent
             chatClient = clientFactory(chatClient);
         }
 
-        return WireClientHeaders(new ChatClientAgent(chatClient, agentOptions, loggerFactory, services));
+        return WireFoundryRequestContext(new ChatClientAgent(chatClient, agentOptions, loggerFactory, services));
     }
 
     /// <summary>
-    /// Registers <see cref="ClientHeadersPolicy"/> on the agent's underlying chat client (if it
-    /// exposes <see cref="OpenAIRequestPolicies"/>) and wraps the agent in a
-    /// <see cref="ClientHeadersAgent"/> so per-call <c>x-client-*</c> headers stamped via
-    /// <see cref="ClientHeadersExtensions.WithClientHeader(ChatOptions, string, string)"/> reach
-    /// the wire. Idempotent: if the chain already contains a <see cref="ClientHeadersAgent"/>,
-    /// the original instance is returned unchanged.
+    /// Registers Foundry per-call pipeline policies and wraps the agent so request-scoped
+    /// headers/body fields reach the wire:
+    /// <list type="bullet">
+    /// <item><description><c>x-client-*</c> via <see cref="ClientHeadersAgent"/> / <see cref="ClientHeadersPolicy"/></description></item>
+    /// <item><description><c>x-ms-user-identity</c> and sticky <c>agent_session_id</c> via <see cref="FoundryHostedRequestAgent"/></description></item>
+    /// </list>
+    /// Idempotent per decorator type.
     /// </summary>
-    private static AIAgent WireClientHeaders(ChatClientAgent innerAgent)
+    private static AIAgent WireFoundryRequestContext(ChatClientAgent innerAgent)
     {
-        if (innerAgent.GetService<ClientHeadersAgent>() is not null)
-        {
-            return innerAgent;
-        }
+        AIAgent agent = innerAgent;
 
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
         if (innerAgent.ChatClient.GetService<OpenAIRequestPolicies>() is { } policies)
@@ -265,10 +316,28 @@ public sealed class FoundryAgent : DelegatingAIAgent
                 policies,
                 ClientHeadersPolicy.Instance,
                 PipelinePosition.PerCall);
+            OpenAIRequestPoliciesReflection.AddPolicyIfMissing(
+                policies,
+                UserIdentityPolicy.Instance,
+                PipelinePosition.PerCall);
+            OpenAIRequestPoliciesReflection.AddPolicyIfMissing(
+                policies,
+                HostedSessionIdCapturePolicy.Instance,
+                PipelinePosition.PerCall);
         }
 #pragma warning restore MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
-        return new ClientHeadersAgent(innerAgent);
+        if (agent.GetService<ClientHeadersAgent>() is null)
+        {
+            agent = new ClientHeadersAgent(agent);
+        }
+
+        if (agent.GetService<FoundryHostedRequestAgent>() is null)
+        {
+            agent = new FoundryHostedRequestAgent(agent);
+        }
+
+        return agent;
     }
 
     /// <summary>
@@ -303,7 +372,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
             ChatOptions = new() { Tools = tools },
         };
 
-        return WireClientHeaders(new ChatClientAgent(chatClient, agentOptions, services: services));
+        return WireFoundryRequestContext(new ChatClientAgent(chatClient, agentOptions, services: services));
     }
 
     /// <summary>
@@ -336,7 +405,7 @@ public sealed class FoundryAgent : DelegatingAIAgent
             ChatOptions = new() { Tools = tools },
         };
 
-        return WireClientHeaders(new ChatClientAgent(chatClient, agentOptions, services: services));
+        return WireFoundryRequestContext(new ChatClientAgent(chatClient, agentOptions, services: services));
     }
 
     /// <summary>

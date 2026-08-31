@@ -90,7 +90,7 @@ async def _run(yaml_def: dict[str, Any], handler: HttpRequestHandler) -> Any:
 
 def _state(workflow: Any, events: Any) -> dict[str, Any]:
     """Read declarative state out of the workflow after run completes."""
-    return workflow._state.get(DECLARATIVE_STATE_KEY) or {}
+    return workflow._runner.state.get(DECLARATIVE_STATE_KEY) or {}
 
 
 # Helper used by parametrised path tests
@@ -151,7 +151,7 @@ class TestSuccessPath:
         workflow = factory.create_workflow_from_definition(_yaml(_action(method="GET", response="Local.Result")))
         await workflow.run({})
 
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert decl["Local"]["Result"] == {"key": "value", "number": 42}
         assert handler.last_info is not None
         assert handler.last_info.method == "GET"
@@ -164,7 +164,7 @@ class TestSuccessPath:
         workflow = factory.create_workflow_from_definition(_yaml(_action(response="Local.Result")))
         await workflow.run({})
 
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert decl["Local"]["Result"] == "not-json content"
 
     @pytest.mark.asyncio
@@ -174,7 +174,7 @@ class TestSuccessPath:
         workflow = factory.create_workflow_from_definition(_yaml(_action(response="Local.Result")))
         await workflow.run({})
 
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert decl["Local"]["Result"] is None
 
     @pytest.mark.asyncio
@@ -184,7 +184,7 @@ class TestSuccessPath:
         workflow = factory.create_workflow_from_definition(_yaml(_action(response={"path": "Local.Result"})))
         await workflow.run({})
 
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert decl["Local"]["Result"] == {"x": 1}
 
     @pytest.mark.asyncio
@@ -517,7 +517,7 @@ class TestResponseHeaders:
         factory = WorkflowFactory(http_request_handler=handler)
         workflow = factory.create_workflow_from_definition(_yaml(_action(response_headers="Local.H")))
         await workflow.run({})
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         h = decl["Local"]["H"]
         assert h["Content-Type"] == "application/json"
         assert h["Set-Cookie"] == "a=1,b=2"
@@ -528,7 +528,7 @@ class TestResponseHeaders:
         factory = WorkflowFactory(http_request_handler=handler)
         workflow = factory.create_workflow_from_definition(_yaml(_action(response_headers="Local.H")))
         await workflow.run({})
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert decl["Local"]["H"] is None
 
     @pytest.mark.asyncio
@@ -538,7 +538,7 @@ class TestResponseHeaders:
         workflow = factory.create_workflow_from_definition(_yaml(_action(response_headers="Local.H")))
         with pytest.raises(DeclarativeActionError):
             await workflow.run({})
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert decl["Local"]["H"] == {"X-Trace": "abc"}
 
 
@@ -559,7 +559,7 @@ class TestConversationAppend:
             )
         )
         await workflow.run({})
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         conv = decl["System"]["conversations"].get("conv-test-1")
         assert conv is not None
         assert len(conv["messages"]) == 1
@@ -570,7 +570,7 @@ class TestConversationAppend:
         factory = WorkflowFactory(http_request_handler=handler)
         workflow = factory.create_workflow_from_definition(_yaml(_action(response="Local.Result", conversation_id="")))
         await workflow.run({})
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         # Auto-init creates an entry for the System.ConversationId conversation,
         # but it should NOT have HTTP-appended messages from us.
         for _cid, conv in decl["System"]["conversations"].items():
@@ -582,7 +582,7 @@ class TestConversationAppend:
         factory = WorkflowFactory(http_request_handler=handler)
         workflow = factory.create_workflow_from_definition(_yaml(_action(conversation_id="conv-test-1")))
         await workflow.run({})
-        decl = workflow._state.get(DECLARATIVE_STATE_KEY)
+        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         # No conversation entry should have been created either.
         assert "conv-test-1" not in decl["System"]["conversations"]
 

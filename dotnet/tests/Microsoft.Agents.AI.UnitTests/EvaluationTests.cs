@@ -551,6 +551,343 @@ public sealed class EvaluationTests
     }
 
     // ---------------------------------------------------------------
+    // RubricScore tests
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void RubricScore_Constructor_SetsAllProperties()
+    {
+        // Arrange & Act
+        var dim = new RubricScore("clarity", Score: 4, Applicable: true, Weight: 2, Reason: "clear");
+
+        // Assert
+        Assert.Equal("clarity", dim.Id);
+        Assert.Equal(4, dim.Score);
+        Assert.True(dim.Applicable);
+        Assert.Equal(2, dim.Weight);
+        Assert.Equal("clear", dim.Reason);
+    }
+
+    [Fact]
+    public void RubricScore_NonApplicable_AllowsNullScore()
+    {
+        // Arrange & Act
+        var dim = new RubricScore("safety", Score: null, Applicable: false, Weight: 1, Reason: "n/a");
+
+        // Assert
+        Assert.Null(dim.Score);
+        Assert.False(dim.Applicable);
+    }
+
+    [Fact]
+    public void EvalScoreResult_Dimensions_DefaultsToNull()
+    {
+        // Arrange & Act
+        var score = new EvalScoreResult("relevance", 0.8, Passed: true);
+
+        // Assert
+        Assert.Null(score.Dimensions);
+    }
+
+    [Fact]
+    public void EvalScoreResult_Dimensions_CanBeInitialized()
+    {
+        // Arrange
+        var dimensions = new List<RubricScore>
+        {
+            new("clarity", 4, true, 1, "ok"),
+            new("safety", null, false, 1, "n/a"),
+        };
+
+        // Act
+        var score = new EvalScoreResult("custom-rubric", 0.75, Passed: true)
+        {
+            Dimensions = dimensions,
+        };
+
+        // Assert
+        Assert.NotNull(score.Dimensions);
+        Assert.Equal(2, score.Dimensions.Count);
+        Assert.Equal("clarity", score.Dimensions[0].Id);
+        Assert.False(score.Dimensions[1].Applicable);
+    }
+
+    // ---------------------------------------------------------------
+    // GeneratedEvaluatorRef tests
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void GeneratedEvaluatorRef_Constructor_DefaultsVersionAndDisplayNameToNull()
+    {
+        // Arrange & Act
+        var @ref = new GeneratedEvaluatorRef("policy-rubric");
+
+        // Assert
+        Assert.Equal("policy-rubric", @ref.Name);
+        Assert.Null(@ref.Version);
+        Assert.Null(@ref.DisplayName);
+    }
+
+    [Fact]
+    public void GeneratedEvaluatorRef_Constructor_AcceptsVersionAndDisplayName()
+    {
+        // Arrange & Act
+        var @ref = new GeneratedEvaluatorRef("policy-rubric", Version: "3", DisplayName: "Policy Quality");
+
+        // Assert
+        Assert.Equal("3", @ref.Version);
+        Assert.Equal("Policy Quality", @ref.DisplayName);
+    }
+
+    [Fact]
+    public void GeneratedEvaluatorRef_Latest_ProducesVersionlessReference()
+    {
+        // Arrange & Act
+        var @ref = GeneratedEvaluatorRef.Latest("policy-rubric", displayName: "Policy");
+
+        // Assert
+        Assert.Equal("policy-rubric", @ref.Name);
+        Assert.Null(@ref.Version);
+        Assert.Equal("Policy", @ref.DisplayName);
+    }
+
+    // ---------------------------------------------------------------
+    // Assertion helper tests (AssertScoreAtLeast / AssertDimensionScoreAtLeast / AssertNoFailedItems)
+    // ---------------------------------------------------------------
+
+    private static AgentEvaluationResults BuildResultsWithDetailed(params EvalItemResult[] detailed)
+        => new("test", Array.Empty<EvaluationResult>())
+        {
+            DetailedItems = detailed,
+        };
+
+    [Fact]
+    public void AssertScoreAtLeast_AboveThreshold_DoesNotThrow()
+    {
+        // Arrange
+        var detailed = new EvalItemResult("item-1", "pass", new[]
+        {
+            new EvalScoreResult("relevance", 0.9, Passed: true),
+            new EvalScoreResult("coherence", 0.85, Passed: true),
+        });
+        var results = BuildResultsWithDetailed(detailed);
+
+        // Act & Assert
+        results.AssertScoreAtLeast(0.8);
+    }
+
+    [Fact]
+    public void AssertScoreAtLeast_BelowThreshold_ThrowsWithOffender()
+    {
+        // Arrange
+        var detailed = new EvalItemResult("item-1", "pass", new[]
+        {
+            new EvalScoreResult("relevance", 0.5, Passed: false),
+            new EvalScoreResult("coherence", 0.9, Passed: true),
+        });
+        var results = BuildResultsWithDetailed(detailed);
+
+        // Act & Assert
+        var ex = Assert.Throws<InvalidOperationException>(() => results.AssertScoreAtLeast(0.8));
+        Assert.Contains("item-1/relevance=0.500", ex.Message);
+        Assert.Contains("0.8", ex.Message);
+    }
+
+    [Fact]
+    public void AssertScoreAtLeast_EvaluatorFilter_OnlyChecksMatchingName()
+    {
+        // Arrange — coherence is below threshold but we filter to relevance.
+        var detailed = new EvalItemResult("item-1", "pass", new[]
+        {
+            new EvalScoreResult("relevance", 0.9, Passed: true),
+            new EvalScoreResult("coherence", 0.4, Passed: false),
+        });
+        var results = BuildResultsWithDetailed(detailed);
+
+        // Act & Assert — filtered to relevance, so no throw.
+        results.AssertScoreAtLeast(0.8, evaluator: "relevance");
+    }
+
+    [Fact]
+    public void AssertScoreAtLeast_RecursesIntoSubResults()
+    {
+        // Arrange
+        var failing = new EvalItemResult("sub-1", "pass", new[]
+        {
+            new EvalScoreResult("relevance", 0.2, Passed: false),
+        });
+        var sub = BuildResultsWithDetailed(failing);
+
+        var top = new AgentEvaluationResults("top", Array.Empty<EvaluationResult>())
+        {
+            SubResults = new Dictionary<string, AgentEvaluationResults> { ["agent"] = sub },
+        };
+
+        // Act & Assert
+        var ex = Assert.Throws<InvalidOperationException>(() => top.AssertScoreAtLeast(0.8));
+        Assert.Contains("sub-1/relevance", ex.Message);
+    }
+
+    [Fact]
+    public void AssertDimensionScoreAtLeast_AboveThreshold_DoesNotThrow()
+    {
+        // Arrange
+        var detailed = new EvalItemResult("item-1", "pass", new[]
+        {
+            new EvalScoreResult("policy", 0.9, Passed: true)
+            {
+                Dimensions =
+                [
+                    new RubricScore("clarity", Score: 4, Applicable: true, Weight: 1, Reason: "ok"),
+                    new RubricScore("safety", Score: 5, Applicable: true, Weight: 1, Reason: "ok"),
+                ],
+            },
+        });
+        var results = BuildResultsWithDetailed(detailed);
+
+        // Act & Assert
+        results.AssertDimensionScoreAtLeast("clarity", 3.0);
+    }
+
+    [Fact]
+    public void AssertDimensionScoreAtLeast_BelowThreshold_ThrowsWithOffender()
+    {
+        // Arrange
+        var detailed = new EvalItemResult("item-1", "pass", new[]
+        {
+            new EvalScoreResult("policy", 0.6, Passed: false)
+            {
+                Dimensions =
+                [
+                    new RubricScore("clarity", Score: 2, Applicable: true, Weight: 1, Reason: "weak"),
+                ],
+            },
+        });
+        var results = BuildResultsWithDetailed(detailed);
+
+        // Act & Assert
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => results.AssertDimensionScoreAtLeast("clarity", 3.0, evaluator: "policy"));
+        Assert.Contains("item-1/policy/clarity=2", ex.Message);
+    }
+
+    [Fact]
+    public void AssertDimensionScoreAtLeast_NonApplicable_SkippedByDefault()
+    {
+        // Arrange — score=null + applicable=false should NOT trip the assertion by default.
+        var detailed = new EvalItemResult("item-1", "pass", new[]
+        {
+            new EvalScoreResult("policy", 1.0, Passed: true)
+            {
+                Dimensions =
+                [
+                    new RubricScore("optional", Score: null, Applicable: false, Weight: 1, Reason: "n/a"),
+                ],
+            },
+        });
+        var results = BuildResultsWithDetailed(detailed);
+
+        // Act & Assert
+        results.AssertDimensionScoreAtLeast("optional", 3.0);
+    }
+
+    [Fact]
+    public void AssertDimensionScoreAtLeast_RequireApplicable_ThrowsWhenMissing()
+    {
+        // Arrange — dimension never produced an applicable score on the item.
+        var detailed = new EvalItemResult("item-1", "pass", new[]
+        {
+            new EvalScoreResult("policy", 1.0, Passed: true)
+            {
+                Dimensions =
+                [
+                    new RubricScore("optional", Score: null, Applicable: false, Weight: 1, Reason: "n/a"),
+                ],
+            },
+        });
+        var results = BuildResultsWithDetailed(detailed);
+
+        // Act & Assert
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => results.AssertDimensionScoreAtLeast("optional", 3.0, requireApplicable: true));
+        Assert.Contains("not applicable", ex.Message);
+        Assert.Contains("item-1", ex.Message);
+    }
+
+    [Fact]
+    public void AssertDimensionScoreAtLeast_UnknownDimension_ThrowsWhenDimensionDataExists()
+    {
+        // Arrange
+        var detailed = new EvalItemResult("item-1", "pass", new[]
+        {
+            new EvalScoreResult("policy", 1.0, Passed: true)
+            {
+                Dimensions =
+                [
+                    new RubricScore("clarity", Score: 4, Applicable: true, Weight: 1, Reason: "ok"),
+                ],
+            },
+        });
+        var results = BuildResultsWithDetailed(detailed);
+
+        // Act & Assert
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => results.AssertDimensionScoreAtLeast("typo_dimension", 3.0));
+        Assert.Contains("typo_dimension", ex.Message);
+        Assert.Contains("not found", ex.Message);
+    }
+
+    [Fact]
+    public void AssertNoFailedItems_AllPassing_DoesNotThrow()
+    {
+        // Arrange
+        var detailed = new EvalItemResult("item-1", "pass", new[]
+        {
+            new EvalScoreResult("relevance", 0.9, Passed: true),
+        });
+        var results = BuildResultsWithDetailed(detailed);
+
+        // Act & Assert
+        results.AssertNoFailedItems();
+    }
+
+    [Fact]
+    public void AssertNoFailedItems_FailedOrErrored_ThrowsWithStatuses()
+    {
+        // Arrange
+        var failed = new EvalItemResult("item-1", "fail", new[]
+        {
+            new EvalScoreResult("relevance", 0.2, Passed: false),
+        });
+        var errored = new EvalItemResult("item-2", "errored", Array.Empty<EvalScoreResult>());
+        var results = BuildResultsWithDetailed(failed, errored);
+
+        // Act & Assert
+        var ex = Assert.Throws<InvalidOperationException>(() => results.AssertNoFailedItems());
+        Assert.Contains("item-1:fail", ex.Message);
+        Assert.Contains("item-2:errored", ex.Message);
+    }
+
+    [Fact]
+    public void AssertNoFailedItems_RecursesIntoSubResults()
+    {
+        // Arrange
+        var failed = new EvalItemResult("sub-1", "fail", new[]
+        {
+            new EvalScoreResult("relevance", 0.1, Passed: false),
+        });
+        var sub = BuildResultsWithDetailed(failed);
+        var top = new AgentEvaluationResults("top", Array.Empty<EvaluationResult>())
+        {
+            SubResults = new Dictionary<string, AgentEvaluationResults> { ["agent"] = sub },
+        };
+
+        // Act & Assert
+        var ex = Assert.Throws<InvalidOperationException>(() => top.AssertNoFailedItems());
+        Assert.Contains("sub-1:fail", ex.Message);
+    }
+
+    // ---------------------------------------------------------------
     // Mixed evaluator tests
     // ---------------------------------------------------------------
 

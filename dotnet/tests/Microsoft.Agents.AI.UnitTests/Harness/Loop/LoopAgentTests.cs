@@ -165,6 +165,28 @@ public class LoopAgentTests
     }
 
     /// <summary>
+    /// Verify that the aggregated transcript is returned even when no iteration reports usage, so that
+    /// transcript aggregation is never coupled to whether any usage happened to be reported.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_AggregatedTranscript_ReturnsFullTranscriptWhenNoUsageReportedAsync()
+    {
+        // Arrange
+        var capture = new InnerAgentCapture(call =>
+            new AgentResponse([new ChatMessage(ChatRole.Assistant, $"iteration {call}")]) { Usage = null });
+        var evaluator = While(ctx => ctx.LastResponse.Text != "iteration 3");
+        var agent = new LoopAgent(capture.Agent, evaluator);
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "go")], new ChatClientAgentSession());
+
+        // Assert
+        Assert.Equal(3, capture.CallCount);
+        Assert.Equal(["iteration 1", "iteration 2", "iteration 3"], response.Messages.Select(static m => m.Text));
+        Assert.Null(response.Usage);
+    }
+
+    /// <summary>
     /// Verify that <see cref="LoopAgentOptions.NonStreamingReturnsLastResponseOnly"/> returns only the final
     /// iteration's response instead of the aggregated transcript.
     /// </summary>
@@ -185,6 +207,38 @@ public class LoopAgentTests
         Assert.Equal(3, capture.CallCount);
         Assert.Equal("iteration 3", response.Text);
         Assert.Single(response.Messages);
+    }
+
+    /// <summary>
+    /// Verify that a derived <see cref="AgentResponse"/> returned by the inner agent survives the loop in both
+    /// result modes. The transcript and aggregated usage are applied to the final iteration's response rather
+    /// than to a replacement, so a subclass keeps its runtime type and the state it carries.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RunAsync_InnerAgentReturnsDerivedResponse_PreservesRuntimeTypeWhileAggregatingUsageAsync(bool lastResponseOnly)
+    {
+        // Arrange
+        var capture = new InnerAgentCapture(call =>
+            new TestDerivedAgentResponse([new ChatMessage(ChatRole.Assistant, $"iteration {call}")])
+            {
+                DerivedState = $"iteration {call}",
+                Usage = new UsageDetails { InputTokenCount = call, OutputTokenCount = call * 10 },
+            });
+        var evaluator = While(ctx => ctx.LastResponse.Text != "iteration 3");
+        var options = new LoopAgentOptions { NonStreamingReturnsLastResponseOnly = lastResponseOnly };
+        var agent = new LoopAgent(capture.Agent, evaluator, options);
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "go")], new ChatClientAgentSession());
+
+        // Assert
+        Assert.Equal(3, capture.CallCount);
+        var derived = Assert.IsType<TestDerivedAgentResponse>(response);
+        Assert.Equal("iteration 3", derived.DerivedState);
+        Assert.Equal(1 + 2 + 3, derived.Usage!.InputTokenCount);
+        Assert.Equal(10 + 20 + 30, derived.Usage.OutputTokenCount);
     }
 
     /// <summary>
@@ -1002,6 +1056,283 @@ public class LoopAgentTests
 
         // The feedback is still sent to the wrapped agent even though it is not surfaced.
         Assert.Equal("fix it", capture.MessagesPerCall[1].Single().Text);
+    }
+
+    #endregion
+
+    #region Usage aggregation
+
+    /// <summary>
+    /// Verify that usage from every iteration is summed into the aggregated response rather than only the
+    /// final iteration's usage being reported.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MultipleIterations_AggregatesUsageAcrossIterationsAsync()
+    {
+        // Arrange
+        var capture = new InnerAgentCapture(call =>
+            new AgentResponse([new ChatMessage(ChatRole.Assistant, $"iteration {call}")])
+            {
+                Usage = new UsageDetails { InputTokenCount = call * 10, OutputTokenCount = call, TotalTokenCount = (call * 10) + call },
+            });
+        var evaluator = While(ctx => ctx.Iteration < 3);
+        var agent = new LoopAgent(capture.Agent, evaluator);
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "go")], new ChatClientAgentSession());
+
+        // Assert
+        Assert.Equal(3, capture.CallCount);
+        Assert.NotNull(response.Usage);
+        Assert.Equal(60, response.Usage!.InputTokenCount);
+        Assert.Equal(6, response.Usage.OutputTokenCount);
+        Assert.Equal(66, response.Usage.TotalTokenCount);
+    }
+
+    /// <summary>
+    /// Verify that usage covers the whole run even when only the final iteration's response is returned.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_LastResponseOnly_StillAggregatesUsageAcrossIterationsAsync()
+    {
+        // Arrange
+        var capture = new InnerAgentCapture(call =>
+            new AgentResponse([new ChatMessage(ChatRole.Assistant, $"iteration {call}")])
+            {
+                Usage = CreateUsageForCall(call),
+            });
+        var evaluator = While(ctx => ctx.Iteration < 3);
+        var options = new LoopAgentOptions { NonStreamingReturnsLastResponseOnly = true };
+        var agent = new LoopAgent(capture.Agent, evaluator, options);
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "go")], new ChatClientAgentSession());
+
+        // Assert
+        Assert.Equal(3, capture.CallCount);
+        Assert.Single(response.Messages);
+        Assert.Equal("iteration 3", response.Text);
+        Assert.NotNull(response.Usage);
+        Assert.Equal(42, response.Usage!.InputTokenCount);
+        Assert.Equal(15, response.Usage.OutputTokenCount);
+        Assert.Equal(57, response.Usage.TotalTokenCount);
+    }
+
+    /// <summary>
+    /// Verify that usage is aggregated across all iterations before the global safety cap stops the loop.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_AlwaysContinue_StopsAtGlobalCapAndAggregatesUsageAsync()
+    {
+        // Arrange
+        var capture = new InnerAgentCapture(call =>
+            new AgentResponse([new ChatMessage(ChatRole.Assistant, $"iteration {call}")])
+            {
+                Usage = CreateUsageForCall(call),
+            });
+        var evaluator = While(static _ => true);
+        var options = new LoopAgentOptions { MaxIterations = 3 };
+        var agent = new LoopAgent(capture.Agent, evaluator, options);
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "go")], new ChatClientAgentSession());
+
+        // Assert
+        Assert.Equal(3, capture.CallCount);
+        Assert.NotNull(response.Usage);
+        Assert.Equal(42, response.Usage!.InputTokenCount);
+        Assert.Equal(15, response.Usage.OutputTokenCount);
+        Assert.Equal(57, response.Usage.TotalTokenCount);
+    }
+
+    /// <summary>
+    /// Verify that usage is aggregated when a later iteration stops the loop with a pending approval request.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_PendingApprovalRequestOnLaterIteration_AggregatesUsageAsync()
+    {
+        // Arrange
+        var approvalRequest = new ToolApprovalRequestContent("req1", new FunctionCallContent("call1", "MyTool"));
+        var capture = new InnerAgentCapture(call =>
+            new AgentResponse(
+                [call < 3
+                    ? new ChatMessage(ChatRole.Assistant, $"iteration {call}")
+                    : new ChatMessage(ChatRole.Assistant, [approvalRequest])])
+            {
+                Usage = CreateUsageForCall(call),
+            });
+        var evaluator = While(static _ => true);
+        var agent = new LoopAgent(capture.Agent, evaluator);
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "go")], new ChatClientAgentSession());
+
+        // Assert
+        Assert.Equal(3, capture.CallCount);
+        Assert.Contains(response.Messages.SelectMany(static m => m.Contents), static c => c is ToolApprovalRequestContent);
+        Assert.NotNull(response.Usage);
+        Assert.Equal(42, response.Usage!.InputTokenCount);
+        Assert.Equal(15, response.Usage.OutputTokenCount);
+        Assert.Equal(57, response.Usage.TotalTokenCount);
+    }
+
+    /// <summary>
+    /// Verify that iterations reporting no usage are skipped rather than zeroing out the aggregate.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_SomeIterationsWithoutUsage_AggregatesReportedUsageOnlyAsync()
+    {
+        // Arrange
+        var capture = new InnerAgentCapture(call =>
+            new AgentResponse([new ChatMessage(ChatRole.Assistant, $"iteration {call}")])
+            {
+                Usage = call == 2 ? null : new UsageDetails { InputTokenCount = 7, TotalTokenCount = 7 },
+            });
+        var evaluator = While(ctx => ctx.Iteration < 3);
+        var agent = new LoopAgent(capture.Agent, evaluator);
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "go")], new ChatClientAgentSession());
+
+        // Assert
+        Assert.Equal(3, capture.CallCount);
+        Assert.NotNull(response.Usage);
+        Assert.Equal(14, response.Usage!.InputTokenCount);
+        Assert.Equal(14, response.Usage.TotalTokenCount);
+        Assert.Null(response.Usage.OutputTokenCount);
+    }
+
+    /// <summary>
+    /// Verify that aggregating usage never mutates the usage instances owned by the inner agent's responses.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_AggregatingUsage_DoesNotMutateInnerResponseUsageAsync()
+    {
+        // Arrange
+        var innerUsages = new List<UsageDetails>();
+        var capture = new InnerAgentCapture(call =>
+        {
+            var usage = new UsageDetails { InputTokenCount = 10, OutputTokenCount = 5, TotalTokenCount = 15 };
+            innerUsages.Add(usage);
+            return new AgentResponse([new ChatMessage(ChatRole.Assistant, $"iteration {call}")]) { Usage = usage };
+        });
+        var evaluator = While(ctx => ctx.Iteration < 3);
+        var agent = new LoopAgent(capture.Agent, evaluator);
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "go")], new ChatClientAgentSession());
+
+        // Assert
+        Assert.All(innerUsages, usage =>
+        {
+            Assert.Equal(10, usage.InputTokenCount);
+            Assert.Equal(5, usage.OutputTokenCount);
+            Assert.Equal(15, usage.TotalTokenCount);
+        });
+        Assert.DoesNotContain(innerUsages, usage => ReferenceEquals(usage, response.Usage));
+    }
+
+    /// <summary>
+    /// Verify that usage lives on <see cref="AgentResponse.Usage"/> and is not also duplicated into the
+    /// aggregated transcript messages, which would cause downstream consumers to double count it.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_AggregatedTranscript_DoesNotDuplicateUsageIntoMessagesAsync()
+    {
+        // Arrange
+        var capture = new InnerAgentCapture(call =>
+            new AgentResponse([new ChatMessage(ChatRole.Assistant, $"iteration {call}")])
+            {
+                Usage = new UsageDetails { InputTokenCount = 10, TotalTokenCount = 10 },
+            });
+        var evaluator = While(ctx => ctx.Iteration < 2);
+        var agent = new LoopAgent(capture.Agent, evaluator);
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "go")], new ChatClientAgentSession());
+
+        // Assert
+        Assert.Equal(20, response.Usage!.InputTokenCount);
+        Assert.DoesNotContain(response.Messages.SelectMany(static m => m.Contents), static c => c is UsageContent);
+    }
+
+    /// <summary>
+    /// Verify that the streaming path surfaces every iteration's usage so an aggregated response built from
+    /// the updates reports the usage of the whole run.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_MultipleIterations_SurfacesUsageFromEveryIterationAsync()
+    {
+        // Arrange
+        var capture = new InnerStreamingCapture(call =>
+        [
+            new AgentResponseUpdate(ChatRole.Assistant, $"chunk {call}"),
+            new AgentResponseUpdate(ChatRole.Assistant, [new UsageContent(CreateUsageForCall(call))]),
+        ]);
+        var evaluator = While(ctx => ctx.Iteration < 3);
+        var agent = new LoopAgent(capture.Agent, evaluator);
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "go")], new ChatClientAgentSession()))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        Assert.Equal(3, capture.CallCount);
+        var response = updates.ToAgentResponse();
+        Assert.NotNull(response.Usage);
+        Assert.Equal(42, response.Usage!.InputTokenCount);
+        Assert.Equal(15, response.Usage.OutputTokenCount);
+        Assert.Equal(57, response.Usage.TotalTokenCount);
+    }
+
+    /// <summary>
+    /// Creates distinct usage values for an inner call so aggregation tests cannot pass by multiplying
+    /// the final usage by the call count.
+    /// </summary>
+    private static UsageDetails CreateUsageForCall(int call)
+        => new()
+        {
+            InputTokenCount = call is 1 ? 2 : call is 2 ? 11 : 29,
+            OutputTokenCount = call is 1 ? 3 : call is 2 ? 5 : 7,
+            TotalTokenCount = call is 1 ? 5 : call is 2 ? 16 : 36,
+        };
+
+    /// <summary>
+    /// Verify that provider-reported counters beyond the three headline token counts (such as cached and
+    /// reasoning tokens, both of which real providers populate) survive aggregation end to end, rather than
+    /// being dropped when the aggregated response replaces the inner response's usage instance.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_MultipleIterations_AggregatesAllProviderReportedCountersAsync()
+    {
+        // Arrange
+        var capture = new InnerAgentCapture(call =>
+            new AgentResponse([new ChatMessage(ChatRole.Assistant, $"iteration {call}")])
+            {
+                Usage = new UsageDetails
+                {
+                    InputTokenCount = 100,
+                    CachedInputTokenCount = 3,
+                    ReasoningTokenCount = 11,
+                    AdditionalCounts = new() { ["cost"] = 2 },
+                },
+            });
+        var evaluator = While(ctx => ctx.Iteration < 3);
+        var agent = new LoopAgent(capture.Agent, evaluator);
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "go")], new ChatClientAgentSession());
+
+        // Assert
+        Assert.Equal(3, capture.CallCount);
+        Assert.NotNull(response.Usage);
+        Assert.Equal(300, response.Usage!.InputTokenCount);
+        Assert.Equal(9, response.Usage.CachedInputTokenCount);
+        Assert.Equal(33, response.Usage.ReasoningTokenCount);
+        Assert.Equal(6, response.Usage.AdditionalCounts!["cost"]);
     }
 
     #endregion

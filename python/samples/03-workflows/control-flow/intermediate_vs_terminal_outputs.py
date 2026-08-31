@@ -107,7 +107,9 @@ async def main() -> None:
     agent = workflow.as_agent("planner-agent")
     response = await agent.run("life, the universe, and everything")
     print(f"  response.text (Workflow Output only): {response.text!r}")
-    reasoning = " | ".join(c.text for m in response.messages for c in m.contents if c.type == "text_reasoning")
+    reasoning = " | ".join(
+        c.text for m in response.messages for c in m.contents if c.type == "text_reasoning" and c.text is not None
+    )
     print(f"  reasoning content (intermediates): {reasoning!r}")
 
     # Embed the same workflow as a node inside a larger workflow via WorkflowExecutor.

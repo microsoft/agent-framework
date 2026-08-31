@@ -4,7 +4,7 @@ import asyncio
 
 from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_tools.shell import LocalShellTool, ShellPolicy
+from agent_framework.tools import LocalShellTool, ShellPolicy
 from dotenv import load_dotenv
 
 """

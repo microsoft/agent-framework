@@ -41,7 +41,7 @@ How would you compute the value of PI?
 
 ## Configuration
 
-For production use, configure these agents in Azure AI Foundry:
+For production use, configure these agents in Microsoft Foundry:
 
 ### StudentAgent
 ```

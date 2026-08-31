@@ -19,7 +19,7 @@ More permissions mean more potential for unintended actions.
 
 import asyncio
 
-from agent_framework.github import GitHubCopilotAgent
+from agent_framework.github import GitHubCopilotAgent, GitHubCopilotOptions
 from copilot.session import PermissionHandler, PermissionRequestResult
 from copilot.session_events import PermissionRequest
 
@@ -33,9 +33,9 @@ def approve_and_log(request: PermissionRequest, context: dict[str, str]) -> Perm
 async def main() -> None:
     print("=== GitHub Copilot Agent with Multiple Permissions ===\n")
 
-    agent = GitHubCopilotAgent(
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         instructions="You are a helpful development assistant that can read, write files and run commands.",
-        default_options={"on_permission_request": approve_and_log},
+        default_options=GitHubCopilotOptions(on_permission_request=approve_and_log),
     )
 
     async with agent:

@@ -59,6 +59,10 @@ static async Task RunWorkflowAsync(Workflow workflow)
         }
 
         await run.TrySendMessageAsync(userInput);
+
+        // Agents are wrapped as executors that cache incoming messages and only run when they receive a TurnToken,
+        // so the turn must be triggered explicitly after sending the user input.
+        await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
         string? speakingAgent = null;
         await foreach (WorkflowEvent evt in run.WatchStreamAsync(cts.Token))
         {

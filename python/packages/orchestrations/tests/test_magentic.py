@@ -2,16 +2,20 @@
 
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Sequence
+from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
+import agent_framework._telemetry as telemetry
 import pytest
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
     BaseAgent,
+    BaseChatClient,
+    ChatResponse,
     Content,
     Executor,
     Message,
@@ -24,6 +28,7 @@ from agent_framework import (
     WorkflowRunState,
     handler,
 )
+from agent_framework._telemetry import get_feature_token
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework.orchestrations import (
     GroupChatRequestMessage,
@@ -36,6 +41,8 @@ from agent_framework.orchestrations import (
     MagenticProgressLedgerItem,
     StandardMagenticManager,
 )
+
+from agent_framework_orchestrations._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -156,11 +163,11 @@ class StubAgent(BaseAgent):
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+    ) -> Any:
         if stream:
             return self._run_stream()
 
-        async def _run() -> AgentResponse:
+        async def _run() -> AgentResponse[Any]:
             response = Message("assistant", [self._reply_text], author_name=self.name)
             return AgentResponse(messages=[response])
 
@@ -181,6 +188,17 @@ class DummyExec(Executor):
         self, message: GroupChatRequestMessage, ctx: WorkflowContext[Message]
     ) -> None:  # pragma: no cover - not called
         pass
+
+
+def test_magentic_builder_marks_feature_with_custom_manager() -> None:
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+
+    MagenticBuilder(participants=[DummyExec("agentA")], manager=FakeManager()).build()
+
+    token = get_feature_token()
+    assert token is not None
+    assert int(token.split(".", 1)[1], 16) & (1 << FeatureIndex.ORCHESTRATION_MAGENTIC)
 
 
 async def test_magentic_builder_returns_workflow_and_runs() -> None:
@@ -473,17 +491,17 @@ class StubManagerAgent(BaseAgent):
         stream: bool = False,
         session: Any = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+    ) -> Any:
         if stream:
             return self._run_stream()
 
-        async def _run() -> AgentResponse:
+        async def _run() -> AgentResponse[Any]:
             return AgentResponse(messages=[Message("assistant", ["ok"])])
 
         return _run()
 
     async def _run_stream(self) -> AsyncIterable[AgentResponseUpdate]:
-        yield AgentResponseUpdate(message_deltas=[Message("assistant", ["ok"])])
+        yield AgentResponseUpdate(contents=[Content.from_text(text="ok")])
 
 
 async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
@@ -496,7 +514,7 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
         return Message("assistant", ["GIVEN OR VERIFIED FACTS\n- fact1"])
 
     # First, patch to produce facts then plan
-    mgr._complete = fake_complete_plan  # type: ignore[attr-defined]
+    mgr._complete = fake_complete_plan  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
 
     ctx = MagenticContext(task="T", participant_descriptions={"A": "desc"})
     combined = await mgr.plan(ctx.clone())
@@ -511,7 +529,7 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
             return Message("assistant", ["- new step"])
         return Message("assistant", ["GIVEN OR VERIFIED FACTS\n- updated"])
 
-    mgr._complete = fake_complete_replan  # type: ignore[attr-defined]
+    mgr._complete = fake_complete_replan  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
     combined2 = await mgr.replan(ctx.clone())
     assert "updated" in combined2.text or "new step" in combined2.text
 
@@ -531,7 +549,7 @@ async def test_standard_manager_progress_ledger_success_and_error():
         )
         return Message("assistant", [json_text])
 
-    mgr._complete = fake_complete_ok  # type: ignore[attr-defined]
+    mgr._complete = fake_complete_ok  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
     ledger = await mgr.create_progress_ledger(ctx.clone())
     assert ledger.next_speaker.answer == "alice"
 
@@ -539,7 +557,7 @@ async def test_standard_manager_progress_ledger_success_and_error():
     async def fake_complete_bad(messages: list[Message], **kwargs: Any) -> Message:
         return Message("assistant", ["not-json"])
 
-    mgr._complete = fake_complete_bad  # type: ignore[attr-defined]
+    mgr._complete = fake_complete_bad  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
     with pytest.raises(RuntimeError):
         await mgr.create_progress_ledger(ctx.clone())
 
@@ -583,11 +601,11 @@ class StubThreadAgent(BaseAgent):
     def __init__(self, name: str | None = None) -> None:
         super().__init__(name=name or "agentA")
 
-    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs) -> Any:  # type: ignore[override]
         if stream:
             return self._run_stream()
 
-        async def _run():
+        async def _run() -> AgentResponse[Any]:
             return AgentResponse(messages=[Message("assistant", ["thread-ok"], author_name=self.name)])
 
         return _run()
@@ -611,11 +629,11 @@ class StubAssistantsAgent(BaseAgent):
         super().__init__(name="agentA")
         self.client = StubAssistantsClient()  # type name contains 'AssistantsClient'
 
-    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs) -> Any:  # type: ignore[override]
         if stream:
             return self._run_stream()
 
-        async def _run():
+        async def _run() -> AgentResponse[Any]:
             return AgentResponse(messages=[Message("assistant", ["assistants-ok"], author_name=self.name)])
 
         return _run()
@@ -1193,10 +1211,10 @@ async def test_standard_manager_propagates_session_to_agent():
             stream: bool = False,
             session: Any = None,
             **kwargs: Any,
-        ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+        ) -> Any:
             captured_sessions.append(session)
 
-            async def _run() -> AgentResponse:
+            async def _run() -> AgentResponse[Any]:
                 return AgentResponse(messages=[Message("assistant", ["ok"])])
 
             return _run()
@@ -1207,39 +1225,95 @@ async def test_standard_manager_propagates_session_to_agent():
 
     await mgr.plan(ctx.clone())
 
-    # plan() calls _complete twice (facts + plan), both should receive the same session
+    # plan() calls _complete twice (facts + plan). Each call must receive a non-None
+    # session so context providers configured on the manager agent are still invoked
+    # (the original intent of regression #4371).
     assert len(captured_sessions) == 2
     assert all(s is not None for s in captured_sessions), "session must be passed to agent.run()"
-    assert captured_sessions[0] is captured_sessions[1], "same session instance must be reused across calls"
-    assert captured_sessions[0] is mgr._session
+    # Each call must use a *fresh* session rather than one shared, accumulating session.
+    # The manager re-passes the full conversation on every call, so a reused session
+    # would make the agent's history provider re-inject prior turns and duplicate the
+    # task/facts/plan each round. See test_standard_manager_does_not_duplicate_history.
+    assert captured_sessions[0] is not captured_sessions[1], "each call must use a fresh session"
 
 
-def test_standard_manager_checkpoint_preserves_session():
-    """Verify that checkpoint save/restore preserves the manager's session identity."""
-    agent = StubManagerAgent()
+async def test_standard_manager_does_not_duplicate_history():
+    """Regression: the manager must not re-send already-sent turns to the model.
+
+    The manager rebuilds the full conversation it wants the model to see on every call
+    (``[*chat_history, facts_user]`` then ``[*chat_history, facts_user, facts_msg, plan_user]``).
+    Previously it reused one persistent ``AgentSession`` across calls, so the agent's
+    default ``InMemoryHistoryProvider`` reloaded the first call's stored messages and
+    prepended them to the second call's input, duplicating the facts pre-survey (and, over
+    multiple rounds, compounding the whole task/facts/plan). This drives a real ``Agent``
+    through the real session machinery and asserts no such duplication reaches the client.
+    """
+    facts_marker = "Below I will present you a request."
+    plan_marker = "Fantastic. To address this request"
+
+    class RecordingChatClient(BaseChatClient):
+        """Captures the exact message list handed to the model on each call."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls: list[list[Message]] = []
+
+        @override
+        def _inner_get_response(self, *, messages, stream, options, **kwargs):  # type: ignore[override]
+            # Snapshot the fully-merged messages (session history + input) the model sees.
+            self.calls.append(list(messages))
+
+            async def _get() -> ChatResponse:
+                return ChatResponse(messages=Message(role="assistant", contents=["recorded"]))
+
+            return _get()
+
+    client = RecordingChatClient()
+    agent = Agent(name="MagenticManager", client=client)
     mgr = StandardMagenticManager(agent=agent)
-    original_session_id = mgr._session.session_id
+    ctx = MagenticContext(task="Is the system healthy?", participant_descriptions={"a": "desc"})
+
+    await mgr.plan(ctx.clone())
+
+    # plan() makes two model calls: the facts call, then the plan call.
+    assert len(client.calls) == 2
+    facts_call, plan_call = client.calls
+
+    # The facts pre-survey is sent once on the facts call...
+    assert sum(facts_marker in m.text for m in facts_call) == 1
+    # ...and must appear exactly once on the plan call too (the manager includes it
+    # manually). A reused/accumulating session would make it appear twice.
+    assert sum(facts_marker in m.text for m in plan_call) == 1, "facts pre-survey duplicated across calls"
+    # The plan prompt itself is present exactly once on the plan call.
+    assert sum(plan_marker in m.text for m in plan_call) == 1
+
+
+def test_standard_manager_checkpoint_preserves_task_ledger():
+    """Checkpoint save/restore round-trips the manager's task ledger (its only persisted state)."""
+    from agent_framework_orchestrations._magentic import _MagenticTaskLedger  # type: ignore
+
+    mgr = StandardMagenticManager(agent=StubManagerAgent())
+    mgr.task_ledger = _MagenticTaskLedger(
+        facts=Message("assistant", ["Custom facts"]),
+        plan=Message("assistant", ["Custom plan"]),
+    )
 
     state = mgr.on_checkpoint_save()
-    assert "agent_session" in state
+    assert "task_ledger" in state
 
-    # Restore into a fresh manager and verify session_id is preserved
-    mgr2 = StandardMagenticManager(agent=agent)
-    assert mgr2._session.session_id != original_session_id
+    mgr2 = StandardMagenticManager(agent=StubManagerAgent())
+    assert mgr2.task_ledger is None
     mgr2.on_checkpoint_restore(state)
-    assert mgr2._session.session_id == original_session_id
+    assert mgr2.task_ledger is not None
+    assert mgr2.task_ledger.facts.text == "Custom facts"
+    assert mgr2.task_ledger.plan.text == "Custom plan"
 
 
 def test_standard_manager_checkpoint_restore_empty_state():
-    """Verify that restoring from a state without agent_session leaves the session intact."""
-    agent = StubManagerAgent()
-    mgr = StandardMagenticManager(agent=agent)
-    original_session = mgr._session
-    original_session_id = original_session.session_id
-
+    """Restoring from a state without a task ledger leaves the manager unchanged."""
+    mgr = StandardMagenticManager(agent=StubManagerAgent())
     mgr.on_checkpoint_restore({})
-    assert mgr._session is original_session
-    assert mgr._session.session_id == original_session_id
+    assert mgr.task_ledger is None
 
 
 # endregion

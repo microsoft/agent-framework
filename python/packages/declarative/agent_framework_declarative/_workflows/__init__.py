@@ -76,12 +76,10 @@ from ._executors_mcp import (
 from ._executors_tools import (
     FUNCTION_TOOL_REGISTRY_KEY,
     TOOL_ACTION_EXECUTORS,
-    TOOL_APPROVAL_STATE_KEY,
     BaseToolExecutor,
     InvokeFunctionToolExecutor,
     ToolApprovalRequest,
     ToolApprovalResponse,
-    ToolApprovalState,
     ToolInvocationResult,
 )
 from ._factory import WorkflowFactory
@@ -111,7 +109,6 @@ __all__ = [
     "HTTP_ACTION_EXECUTORS",
     "MCP_ACTION_EXECUTORS",
     "TOOL_ACTION_EXECUTORS",
-    "TOOL_APPROVAL_STATE_KEY",
     "TOOL_REGISTRY_KEY",
     "ActionComplete",
     "ActionTrigger",
@@ -164,7 +161,6 @@ __all__ = [
     "SetVariableExecutor",
     "ToolApprovalRequest",
     "ToolApprovalResponse",
-    "ToolApprovalState",
     "ToolInvocationResult",
     "WorkflowFactory",
     "WorkflowState",

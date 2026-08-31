@@ -18,13 +18,14 @@
 // Note: By default, this tool expects sample build outputs to already exist.
 // Pre-build the solution before running, or pass --build to avoid missing build output failures.
 //
-// Required environment variables (for AI-powered samples):
-//   AZURE_OPENAI_ENDPOINT
-//   AZURE_OPENAI_DEPLOYMENT_NAME (optional, defaults to gpt-5-mini)
+// Required environment variables (for AI-powered verification):
+//   FOUNDRY_PROJECT_ENDPOINT  — Your Microsoft Foundry project endpoint
+//   FOUNDRY_MODEL             — Model deployment name (optional, defaults to gpt-5.4-mini)
 
 using System.Diagnostics;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
+using Microsoft.Agents.AI;
 using VerifySamples;
 
 var options = VerifyOptions.Parse(args);
@@ -43,14 +44,33 @@ if (!File.Exists(Path.Combine(dotnetRoot, "agent-framework-dotnet.slnx")))
 }
 
 // Set up the AI verifier
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5-mini";
+var foundryEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT");
+var foundryModel = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
-OpenAI.Chat.ChatClient? chatClient = null;
-if (!string.IsNullOrEmpty(endpoint))
+AIAgent? verifierAgent = null;
+if (!string.IsNullOrEmpty(foundryEndpoint))
 {
-    chatClient = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-        .GetChatClient(deploymentName);
+    verifierAgent = new AIProjectClient(new Uri(foundryEndpoint), new DefaultAzureCredential())
+        .AsAIAgent(
+            model: foundryModel,
+            instructions: """
+                You are a test output verifier. You will be given:
+                1. The actual stdout output of a program
+                2. The stderr output (if any)
+                3. A list of expectations about what the output should contain or demonstrate
+
+                Your job is to determine whether the actual output satisfies each expectation.
+                Be reasonable — the output comes from an LLM so exact wording won't match, but the
+                semantic intent should be clearly satisfied.
+
+                In your response, you MUST:
+                - Always provide ai_reasoning with a brief overall assessment.
+                - Always provide exactly one entry in expectation_results for each expectation,
+                  in the same order as the input list.
+                - For each expectation_results entry, echo the expectation text in the expectation
+                  field and explain your assessment in the detail field, citing evidence from the output.
+                """,
+            name: "OutputVerifier");
 }
 
 // Set up optional log file writer
@@ -61,11 +81,13 @@ if (options.LogFilePath is not null)
     await logWriter.WriteHeaderAsync();
 }
 
+Console.WriteLine($"Foundry endpoint: {foundryEndpoint ?? "(not set — AI verification disabled)"}, Model: {foundryModel}");
+
 try
 {
     // Run all samples
     var reporter = new ConsoleReporter();
-    var verifier = new SampleVerifier(chatClient);
+    var verifier = new SampleVerifier(verifierAgent);
     var orchestrator = new VerificationOrchestrator(verifier, reporter, dotnetRoot, TimeSpan.FromMinutes(3), logWriter, buildSamples: options.BuildSamples);
 
     var run = await orchestrator.RunAllAsync(options.Samples, options.MaxParallelism);

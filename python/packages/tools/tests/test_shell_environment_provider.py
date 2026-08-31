@@ -294,9 +294,9 @@ async def test_before_run_extends_instructions() -> None:
             received.append((source_id, instructions))
 
     await provider.before_run(
-        agent=None,  # type: ignore[arg-type]
-        session=None,  # type: ignore[arg-type]
-        context=FakeContext(),  # type: ignore[arg-type]
+        agent=None,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        session=None,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        context=FakeContext(),  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         state={},
     )
 
@@ -346,9 +346,9 @@ async def test_custom_formatter_is_used_when_provided() -> None:
             received.append((source_id, instructions))
 
     await provider.before_run(
-        agent=None,  # type: ignore[arg-type]
-        session=None,  # type: ignore[arg-type]
-        context=FakeContext(),  # type: ignore[arg-type]
+        agent=None,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        session=None,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        context=FakeContext(),  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         state={},
     )
 

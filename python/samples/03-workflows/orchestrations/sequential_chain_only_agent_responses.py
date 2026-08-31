@@ -25,7 +25,7 @@ Compare with `sequential_agents.py`, which uses the default behavior where the f
 conversation context is passed to each agent.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL must be the deployment name of a model in your Foundry project.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """

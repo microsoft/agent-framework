@@ -7,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
-using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
@@ -177,19 +176,7 @@ internal sealed class HttpRequestExecutor(
         {
             using JsonDocument jsonDocument = JsonDocument.Parse(responseBody);
 
-            object? parsedValue = jsonDocument.RootElement.ValueKind switch
-            {
-                JsonValueKind.Object => jsonDocument.ParseRecord(VariableType.RecordType),
-                JsonValueKind.Array => jsonDocument.ParseList(jsonDocument.RootElement.GetListTypeFromJson()),
-                JsonValueKind.String => jsonDocument.RootElement.GetString(),
-                JsonValueKind.Number => jsonDocument.RootElement.TryGetInt64(out long l)
-                    ? l
-                    : jsonDocument.RootElement.GetDouble(),
-                JsonValueKind.True => true,
-                JsonValueKind.False => false,
-                JsonValueKind.Null => null,
-                _ => responseBody,
-            };
+            object? parsedValue = jsonDocument.ParseJsonValue(responseBody);
 
             return parsedValue.ToFormula();
         }

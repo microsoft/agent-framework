@@ -92,7 +92,7 @@ public static class Program
         string model)
     {
         ProjectsAgentVersion agentVersion = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(
-            $"{targetLanguage} Translator",
+            $"{targetLanguage}Translator",
             new ProjectsAgentVersionCreationOptions(
                 new DeclarativeAgentDefinition(model: model)
                 {

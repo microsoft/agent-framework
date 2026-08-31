@@ -33,7 +33,7 @@ class AnthropicFoundrySettings(TypedDict, total=False):
 class RawAnthropicFoundryClient(RawAnthropicClient[AnthropicOptionsT], Generic[AnthropicOptionsT]):
     """Raw Anthropic Foundry chat client without middleware, telemetry, or function invocation support."""
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"
 
     def __init__(
         self,
@@ -109,7 +109,7 @@ class RawAnthropicFoundryClient(RawAnthropicClient[AnthropicOptionsT], Generic[A
         )
 
 
-class AnthropicFoundryClient(  # type: ignore[misc]
+class AnthropicFoundryClient(
     FunctionInvocationLayer[AnthropicOptionsT],
     ChatMiddlewareLayer[AnthropicOptionsT],
     ChatTelemetryLayer[AnthropicOptionsT],

@@ -156,7 +156,7 @@ def test_flip_messages_mixed_conversation():
 
 def test_flip_messages_empty_list():
     """Test flipping empty message list."""
-    messages = []
+    messages: list[Message] = []
     flipped = flip_messages(messages)
     assert len(flipped) == 0
 

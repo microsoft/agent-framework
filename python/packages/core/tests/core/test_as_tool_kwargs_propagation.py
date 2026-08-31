@@ -45,7 +45,7 @@ class TestAsToolKwargsPropagation:
 
         # Create sub-agent with middleware
         sub_agent = Agent(
-            client=client,
+            client=client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             name="sub_agent",
             middleware=[capture_middleware],
         )
@@ -86,7 +86,7 @@ class TestAsToolKwargsPropagation:
         ]
 
         sub_agent = Agent(
-            client=client,
+            client=client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             name="sub_agent",
             middleware=[capture_middleware],
         )
@@ -139,14 +139,14 @@ class TestAsToolKwargsPropagation:
 
         # Create agent C (bottom level)
         agent_c = Agent(
-            client=client,
+            client=client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             name="agent_c",
             middleware=[capture_middleware],
         )
 
         # Create agent B (middle level) - delegates to C
         agent_b = Agent(
-            client=client,
+            client=client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             name="agent_b",
             tools=[agent_c.as_tool(name="call_c")],
             middleware=[capture_middleware],
@@ -190,7 +190,7 @@ class TestAsToolKwargsPropagation:
         ]
 
         sub_agent = Agent(
-            client=client,
+            client=client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             name="sub_agent",
             middleware=[capture_middleware],
         )
@@ -223,7 +223,7 @@ class TestAsToolKwargsPropagation:
         ]
 
         sub_agent = Agent(
-            client=client,
+            client=client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             name="sub_agent",
         )
 
@@ -252,7 +252,7 @@ class TestAsToolKwargsPropagation:
         ]
 
         sub_agent = Agent(
-            client=client,
+            client=client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             name="sub_agent",
             middleware=[capture_middleware],
         )
@@ -300,7 +300,7 @@ class TestAsToolKwargsPropagation:
         ]
 
         sub_agent = Agent(
-            client=client,
+            client=client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             name="sub_agent",
             middleware=[capture_middleware],
         )
@@ -346,7 +346,7 @@ class TestAsToolKwargsPropagation:
         ]
 
         sub_agent = Agent(
-            client=client,
+            client=client,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             name="sub_agent",
             middleware=[capture_middleware],
         )

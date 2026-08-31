@@ -97,6 +97,54 @@ public class FoundryAgentTests
         Assert.Equal("A test agent", agent.Description);
     }
 
+    [Fact]
+    public void ProjectEndpointConstructor_DefaultTransport_RegistersFeatureUsagePolicy()
+    {
+        // Arrange / Act
+        var agent = new FoundryAgent(
+            projectEndpoint: s_testEndpoint,
+            credential: new FakeAuthenticationTokenProvider(),
+            model: "gpt-4o-mini",
+            instructions: "Test instructions");
+
+        // Assert
+        FoundryChatClient chatClient = Assert.IsType<FoundryChatClient>(
+            agent.GetService<FoundryChatClient>());
+        OpenAIRequestPolicies policies = Assert.IsType<OpenAIRequestPolicies>(
+            chatClient.GetService<OpenAIRequestPolicies>());
+        Assert.True(OpenAIRequestPoliciesReflection.ContainsPolicy(
+            policies,
+            FoundryUserAgentPolicies.Registration.FeatureUsagePolicy));
+    }
+
+    [Fact]
+    public void ProjectEndpointConstructor_CustomTransport_RegistersFeatureUsagePolicy()
+    {
+        // Arrange
+        using var httpClient = new HttpClient();
+        var options = new AIProjectClientOptions
+        {
+            Transport = new HttpClientPipelineTransport(httpClient),
+        };
+
+        // Act
+        var agent = new FoundryAgent(
+            projectEndpoint: s_testEndpoint,
+            credential: new FakeAuthenticationTokenProvider(),
+            model: "gpt-4o-mini",
+            instructions: "Test instructions",
+            clientOptions: options);
+
+        // Assert
+        FoundryChatClient chatClient = Assert.IsType<FoundryChatClient>(
+            agent.GetService<FoundryChatClient>());
+        OpenAIRequestPolicies policies = Assert.IsType<OpenAIRequestPolicies>(
+            chatClient.GetService<OpenAIRequestPolicies>());
+        Assert.True(OpenAIRequestPoliciesReflection.ContainsPolicy(
+            policies,
+            FoundryUserAgentPolicies.Registration.FeatureUsagePolicy));
+    }
+
     #endregion
 
     #region Property tests
@@ -168,6 +216,7 @@ public class FoundryAgentTests
 
         // Assert: ClientHeadersAgent decorator is present in the delegating chain.
         Assert.NotNull(agent.GetService<ClientHeadersAgent>());
+        Assert.NotNull(agent.GetService<FoundryHostedRequestAgent>());
     }
 
     [Fact]

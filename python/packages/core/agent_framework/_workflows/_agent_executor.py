@@ -14,7 +14,7 @@ from .._agents import SupportsAgentRun
 from .._sessions import AgentSession
 from .._types import AgentResponse, AgentResponseUpdate, Message, ResponseStream
 from ._agent_utils import resolve_agent_id
-from ._const import GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
+from ._const import GLOBAL_KWARGS_KEY, INTERNAL_SOURCE_ID, WORKFLOW_RUN_KWARGS_KEY
 from ._executor import Executor, handler
 from ._message_utils import normalize_messages_input
 from ._request_info_mixin import response_handler
@@ -22,9 +22,9 @@ from ._typing_utils import is_chat_agent
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
@@ -251,7 +251,7 @@ class AgentExecutor(Executor):
             executor, use ``AgentExecutorResponse.with_text(...)`` so that the message type
             stays ``AgentExecutorResponse`` and ``from_response`` is called instead.
         """
-        if not self._cache and ctx.source_executor_ids != ["Workflow"]:
+        if not self._cache and ctx.source_executor_ids != [INTERNAL_SOURCE_ID(self.id)]:
             logger.warning(
                 "AgentExecutor '%s': from_str handler invoked with an empty cache. "
                 "If you are chaining from an AgentExecutor, the upstream custom executor may be "

@@ -2,24 +2,71 @@
 
 """Type definitions for AG-UI integration."""
 
-import sys
-from typing import Any, Generic
+from __future__ import annotations
 
+import sys
+from typing import Annotated, Any, Generic
+
+from ag_ui.core import Interrupt, ResumeEntry
 from agent_framework import ChatOptions
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, BeforeValidator, Field
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 
 AGUIChatOptionsT = TypeVar("AGUIChatOptionsT", bound=TypedDict, default="AGUIChatOptions", covariant=True)  # type: ignore[valid-type]
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
+
+
+def _coerce_legacy_resume_entry(value: Any) -> Any:  # noqa: ANN401
+    if not isinstance(value, dict):
+        return value
+
+    interrupt_id = value.get("interruptId") or value.get("interrupt_id") or value.get("id") or value.get("toolCallId")
+    if not interrupt_id:
+        return value
+
+    if "payload" in value:
+        payload = value.get("payload")
+    elif "value" in value:
+        payload = value.get("value")
+    elif "response" in value:
+        payload = value.get("response")
+    else:
+        payload = {
+            key: item
+            for key, item in value.items()
+            if key not in {"id", "interruptId", "interrupt_id", "toolCallId", "type", "status"}
+        }
+
+    entry: dict[str, Any] = {"interruptId": str(interrupt_id), "status": value.get("status", "resolved")}
+    if payload is not None:
+        entry["payload"] = payload
+    return entry
+
+
+def _coerce_legacy_resume(value: Any) -> Any:  # noqa: ANN401
+    if value is None:
+        return value
+    if isinstance(value, dict):
+        if "interrupts" in value:
+            value = value["interrupts"]
+        elif "interrupt" in value:
+            value = value["interrupt"]
+        elif any(key in value for key in ("interruptId", "interrupt_id", "id", "toolCallId")):
+            value = [value]
+        else:
+            return value
+    if not isinstance(value, list):
+        return value
+    return [_coerce_legacy_resume_entry(entry) for entry in value]
 
 
 class PredictStateConfig(TypedDict):
@@ -83,14 +130,14 @@ class AGUIRequest(BaseModel):
         validation_alias=AliasChoices("parent_run_id", "parentRunId"),
         description="ID of the run that spawned this run",
     )
-    available_interrupts: list[dict[str, Any]] | None = Field(
+    available_interrupts: list[Interrupt] | None = Field(
         None,
         validation_alias=AliasChoices("availableInterrupts", "available_interrupts"),
-        description="List of interrupts that can be resumed by the server",
+        description="Canonical AG-UI interrupts that can be resumed by the server",
     )
-    resume: dict[str, Any] | None = Field(
+    resume: Annotated[list[ResumeEntry], BeforeValidator(_coerce_legacy_resume)] | None = Field(
         None,
-        description="Resume payload containing interrupt responses",
+        description="Resume payload for continuing interrupted runs",
     )
 
 
@@ -153,11 +200,11 @@ class AGUIChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], tota
     context: dict[str, Any]
     """Shared context/state to send to the server."""
 
-    available_interrupts: list[dict[str, Any]]
-    """Interrupt descriptors available for resumption."""
+    available_interrupts: list[Interrupt]
+    """Canonical AG-UI interrupt descriptors available for resumption."""
 
-    resume: dict[str, Any]
-    """Interrupt resume payload to continue a paused run."""
+    resume: list[ResumeEntry]
+    """Canonical AG-UI resume entries to continue a paused run."""
 
     # ChatOptions fields not applicable for AG-UI
     store: None  # type: ignore[misc]

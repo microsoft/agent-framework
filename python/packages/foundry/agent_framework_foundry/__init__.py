@@ -2,7 +2,13 @@
 
 import importlib.metadata
 
-from ._agent import FoundryAgent, FoundryAgentOptions, RawFoundryAgent, RawFoundryAgentChatClient
+from ._agent import (
+    FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY,
+    FoundryAgent,
+    FoundryAgentOptions,
+    RawFoundryAgent,
+    RawFoundryAgentChatClient,
+)
 from ._chat_client import FoundryChatClient, FoundryChatOptions, RawFoundryChatClient
 from ._embedding_client import (
     FoundryEmbeddingClient,
@@ -25,6 +31,7 @@ except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"
 
 __all__ = [
+    "FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY",
     "FoundryAgent",
     "FoundryAgentOptions",
     "FoundryChatClient",

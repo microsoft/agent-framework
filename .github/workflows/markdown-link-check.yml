@@ -19,12 +19,12 @@ jobs:
     runs-on: ubuntu-22.04
     # check out the latest version of the code
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
 
@@ -33,7 +33,7 @@ jobs:
 
       # Checks the status of hyperlinks in all files
       - name: Run linkspector
-        uses: umbrelladocs/action-linkspector@963b6264d7de32c904942a70b488d3407453049e # v1
+        uses: umbrelladocs/action-linkspector@963b6264d7de32c904942a70b488d3407453049e # v1.5.1
         with:
           reporter: local
           filter_mode: nofilter

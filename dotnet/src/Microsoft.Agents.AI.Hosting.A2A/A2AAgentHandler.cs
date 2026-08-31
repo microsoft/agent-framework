@@ -20,6 +20,12 @@ namespace Microsoft.Agents.AI.Hosting.A2A;
 [Experimental(DiagnosticIds.Experiments.AIResponseContinuations)]
 internal sealed class A2AAgentHandler : IAgentHandler
 {
+    /// <summary>
+    /// The <see cref="AgentRunOptions.AdditionalProperties"/> key under which the caller supplied
+    /// <c>MessageSendParams.configuration</c> is forwarded to the hosted agent.
+    /// </summary>
+    private const string ConfigurationPropertyKey = "a2a.configuration";
+
     private readonly AIHostAgent _hostAgent;
     private readonly AgentRunMode _runMode;
 
@@ -84,9 +90,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
         var decisionContext = new A2ARunDecisionContext(context);
         var allowBackgroundResponses = await this._runMode.ShouldRunInBackgroundAsync(decisionContext, cancellationToken).ConfigureAwait(false);
 
-        var options = context.Metadata is not { Count: > 0 }
-            ? new AgentRunOptions { AllowBackgroundResponses = allowBackgroundResponses }
-            : new AgentRunOptions { AllowBackgroundResponses = allowBackgroundResponses, AdditionalProperties = context.Metadata.ToAdditionalProperties() };
+        var options = CreateRunOptions(context, allowBackgroundResponses);
 
         AgentResponse response;
         try
@@ -137,16 +141,26 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
         List<ChatMessage> chatMessages = context.Message is not null ? [context.Message.ToChatMessage()] : [];
 
-        var options = context.Metadata is { Count: > 0 }
-            ? new AgentRunOptions { AdditionalProperties = context.Metadata.ToAdditionalProperties() }
-            : null;
+        var options = CreateRunOptions(context);
+
+        // Decide whether to run in background based on user preferences and agent capabilities
+        var decisionContext = new A2ARunDecisionContext(context);
+        var returnTask = await this._runMode.ShouldRunInBackgroundAsync(decisionContext, cancellationToken).ConfigureAwait(false);
+
+        var updates = this._hostAgent.RunStreamingAsync(chatMessages, session, options, cancellationToken);
 
         try
         {
-            await foreach (var update in this._hostAgent.RunStreamingAsync(chatMessages, session, options, cancellationToken).ConfigureAwait(false))
+            if (returnTask)
             {
-                var message = CreateMessageFromUpdate(contextId, update);
-                await eventQueue.EnqueueMessageAsync(message, cancellationToken).ConfigureAwait(false);
+                // Stream progress and output through the A2A task lifecycle.
+                var taskUpdater = new TaskUpdater(eventQueue, context.TaskId, contextId);
+                await StreamTaskUpdatesAsync(updates, taskUpdater, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                // A2A permits only one message in a message-only stream, so aggregate all updates.
+                await StreamMessageUpdatesAsync(contextId, updates, eventQueue, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
@@ -165,9 +179,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
         var decisionContext = new A2ARunDecisionContext(context);
         var allowBackgroundResponses = await this._runMode.ShouldRunInBackgroundAsync(decisionContext, cancellationToken).ConfigureAwait(false);
 
-        var options = context.Metadata is not { Count: > 0 }
-            ? new AgentRunOptions { AllowBackgroundResponses = allowBackgroundResponses }
-            : new AgentRunOptions { AllowBackgroundResponses = allowBackgroundResponses, AdditionalProperties = context.Metadata.ToAdditionalProperties() };
+        var options = CreateRunOptions(context, allowBackgroundResponses);
 
         AgentResponse response;
         try
@@ -213,6 +225,42 @@ internal sealed class A2AAgentHandler : IAgentHandler
         }
     }
 
+    /// <summary>
+    /// Creates the <see cref="AgentRunOptions"/> for a run, forwarding the caller supplied A2A
+    /// <c>MessageSendParams.metadata</c> and <c>MessageSendParams.configuration</c> to the hosted agent.
+    /// </summary>
+    /// <param name="context">The A2A request context of the incoming request.</param>
+    /// <param name="allowBackgroundResponses">
+    /// The value to assign to <see cref="AgentRunOptions.AllowBackgroundResponses"/>. Defaults to <see langword="null"/>, which leaves it unset.
+    /// </param>
+    /// <returns>
+    /// The run options to invoke the agent with, or <see langword="null"/> when there is nothing to forward.
+    /// </returns>
+    private static AgentRunOptions? CreateRunOptions(RequestContext context, bool? allowBackgroundResponses = null)
+    {
+        AdditionalPropertiesDictionary? additionalProperties = context.Metadata is { Count: > 0 }
+            ? context.Metadata.ToAdditionalProperties()
+            : null;
+
+        // Forward the whole configuration object under a well-known key so that agents can observe
+        // the caller's requested configuration, including fields added to the A2A protocol in the future.
+        if (context.Configuration is { } configuration)
+        {
+            (additionalProperties ??= [])[ConfigurationPropertyKey] = configuration;
+        }
+
+        if (allowBackgroundResponses is null && additionalProperties is null)
+        {
+            return null;
+        }
+
+        return new AgentRunOptions
+        {
+            AllowBackgroundResponses = allowBackgroundResponses,
+            AdditionalProperties = additionalProperties
+        };
+    }
+
     private static Message CreateMessageFromResponse(string contextId, AgentResponse response) =>
         new()
         {
@@ -221,16 +269,6 @@ internal sealed class A2AAgentHandler : IAgentHandler
             Role = Role.Agent,
             Parts = response.Messages.ToParts(),
             Metadata = response.AdditionalProperties?.ToA2AMetadata()
-        };
-
-    private static Message CreateMessageFromUpdate(string contextId, AgentResponseUpdate update) =>
-        new()
-        {
-            MessageId = update.ResponseId ?? Guid.NewGuid().ToString("N"),
-            ContextId = contextId,
-            Role = Role.Agent,
-            Parts = update.ToParts(),
-            Metadata = update.AdditionalProperties?.ToA2AMetadata()
         };
 
     private static List<ChatMessage> ExtractChatMessagesFromTaskHistory(AgentTask? agentTask)
@@ -248,4 +286,67 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
         return chatMessages;
     }
+
+    private static async Task StreamTaskUpdatesAsync(IAsyncEnumerable<AgentResponseUpdate> updates, TaskUpdater updater, CancellationToken cancellationToken)
+    {
+        var artifactWriter = new ArtifactStreamWriter(updater);
+
+        // Emit the task in the Submitted state.
+        await updater.SubmitAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            // Transition the task to the Working state.
+            await updater.StartWorkAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            await foreach (var update in updates.ConfigureAwait(false))
+            {
+                await artifactWriter.WriteAsync(update, cancellationToken).ConfigureAwait(false);
+            }
+
+            await artifactWriter.CompleteAsync(cancellationToken).ConfigureAwait(false);
+
+            // Transition the task to the Completed state.
+            await updater.CompleteAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await artifactWriter.CompleteAsync(CancellationToken.None).ConfigureAwait(false);
+
+            await updater.CancelAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+        catch (Exception)
+        {
+            await artifactWriter.CompleteAsync(CancellationToken.None).ConfigureAwait(false);
+
+            await updater.FailAsync(CreateFailureMessage(updater.ContextId, updater.TaskId), CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private static async Task StreamMessageUpdatesAsync(string contextId, IAsyncEnumerable<AgentResponseUpdate> responseUpdates, AgentEventQueue eventQueue, CancellationToken cancellationToken)
+    {
+        AgentResponse response = await responseUpdates.ToAgentResponseAsync(cancellationToken).ConfigureAwait(false);
+
+        if (response.Messages.Count == 0)
+        {
+            return;
+        }
+
+        var message = CreateMessageFromResponse(contextId, response);
+
+        await eventQueue.EnqueueMessageAsync(message, cancellationToken).ConfigureAwait(false);
+    }
+
+    // The text is intentionally generic so that exception details are never exposed to the client.
+    private static Message CreateFailureMessage(string contextId, string taskId) =>
+        new()
+        {
+            MessageId = Guid.NewGuid().ToString("N"),
+            ContextId = contextId,
+            TaskId = taskId,
+            Role = Role.Agent,
+            Parts = [new Part { Text = "The agent encountered an unexpected error and could not complete the request." }]
+        };
 }

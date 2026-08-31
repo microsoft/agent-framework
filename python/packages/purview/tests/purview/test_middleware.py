@@ -2,6 +2,7 @@
 
 """Tests for Purview middleware."""
 
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -83,9 +84,10 @@ class TestPurviewPolicyMiddleware:
 
             assert not next_called
             assert context.result is not None
-            assert len(context.result.messages) == 1
-            assert context.result.messages[0].role == "system"
-            assert "blocked by policy" in context.result.messages[0].text.lower()
+            result = cast(AgentResponse[Any], context.result)
+            assert len(result.messages) == 1
+            assert result.messages[0].role == "system"
+            assert "blocked by policy" in result.messages[0].text.lower()
 
     async def test_middleware_checks_response(self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock) -> None:
         """Test middleware checks agent response for policy violations."""
@@ -110,9 +112,10 @@ class TestPurviewPolicyMiddleware:
 
             assert call_count == 2
             assert context.result is not None
-            assert len(context.result.messages) == 1
-            assert context.result.messages[0].role == "system"
-            assert "blocked by policy" in context.result.messages[0].text.lower()
+            result = cast(AgentResponse[Any], context.result)
+            assert len(result.messages) == 1
+            assert result.messages[0].role == "system"
+            assert "blocked by policy" in result.messages[0].text.lower()
 
     async def test_middleware_handles_result_without_messages(
         self, middleware: PurviewPolicyMiddleware, mock_agent: MagicMock
@@ -126,7 +129,7 @@ class TestPurviewPolicyMiddleware:
         with patch.object(middleware._processor, "process_messages", return_value=(False, "user-123")):
 
             async def mock_next() -> None:
-                context.result = "Some non-standard result"
+                context.result = cast(Any, "Some non-standard result")
 
             await middleware.process(context, mock_next)
 

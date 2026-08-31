@@ -36,8 +36,11 @@ class RunDynamicValidationWorkflowExecutor(Executor):
         self, creation: WorkflowCreationResult, ctx: WorkflowContext[ExecutionResult]
     ) -> None:
         """Run the nested workflow and emit execution results."""
+        cached_results = list(creation.cached_results)
+
         if creation.workflow is None:
-            await ctx.send_message(ExecutionResult(results=[]))
+            # Nothing left for the agent; emit whatever the cache produced.
+            await ctx.send_message(ExecutionResult(results=cached_results))
             return
 
         print("\nRunning nested batched workflow...")
@@ -50,10 +53,10 @@ class RunDynamicValidationWorkflowExecutor(Executor):
                 CoordinatorStart(samples=creation.samples), stream=True
             ):
                 if event.type == "output" and isinstance(event.data, ExecutionResult):
-                    result = event.data  # type: ignore
-                elif event.type == WORKER_COMPLETED and isinstance(
+                    result = event.data
+                elif event.type == WORKER_COMPLETED and isinstance( # type: ignore
                     event.data, SampleInfo
-                ):  # type: ignore
+                ):
                     remaining_sample_counts -= 1
                     print(
                         f"Completed validation for sample: {event.data.relative_path:<80} | "
@@ -61,7 +64,9 @@ class RunDynamicValidationWorkflowExecutor(Executor):
                     )
 
             if result is not None:
-                await ctx.send_message(result)
+                await ctx.send_message(
+                    ExecutionResult(results=cached_results + result.results)
+                )
             else:
                 fallback_results = [
                     RunResult(
@@ -69,10 +74,11 @@ class RunDynamicValidationWorkflowExecutor(Executor):
                         status=RunStatus.FAILURE,
                         output="",
                         error="Nested workflow did not return an ExecutionResult.",
-                        fix="",
                     )
                     for sample in creation.samples
                 ]
-                await ctx.send_message(ExecutionResult(results=fallback_results))
+                await ctx.send_message(
+                    ExecutionResult(results=cached_results + fallback_results)
+                )
         finally:
             await stop_agents(creation.agents)

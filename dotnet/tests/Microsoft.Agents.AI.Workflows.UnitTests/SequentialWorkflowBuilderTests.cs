@@ -3,8 +3,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.UnitTests.Futures;
 using Microsoft.Extensions.AI;
 
@@ -70,6 +71,42 @@ public class SequentialWorkflowBuilderTests
     }
 
     [Fact]
+    public async Task Test_SequentialWorkflowBuilder_DefaultNextAgentReceivesFullConversationAsync()
+    {
+        CapturingAgent first = new("agent1", "step-one");
+        CapturingAgent second = new("agent2", "step-two");
+
+        Workflow workflow = new SequentialWorkflowBuilder(first, second).Build();
+
+        _ = await OrchestrationTestHelpers.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "start")]);
+
+        Assert.NotNull(second.MessagesSeen);
+        Assert.Equal(2, second.MessagesSeen.Count);
+        Assert.Equal(ChatRole.User, second.MessagesSeen![0].Role);
+        Assert.Equal("start", second.MessagesSeen[0].Text);
+        Assert.Equal(ChatRole.User, second.MessagesSeen[1].Role);
+        Assert.Equal("step-one", second.MessagesSeen[1].Text);
+    }
+
+    [Fact]
+    public async Task Test_SequentialWorkflowBuilder_WithChainOnlyAgentResponses_NextAgentReceivesOnlyPreviousOutputAsync()
+    {
+        CapturingAgent first = new("agent1", "step-one");
+        CapturingAgent second = new("agent2", "step-two");
+
+        Workflow workflow = new SequentialWorkflowBuilder(first, second)
+            .WithChainOnlyAgentResponses()
+            .Build();
+
+        _ = await OrchestrationTestHelpers.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "start")]);
+
+        Assert.NotNull(second.MessagesSeen);
+        Assert.Single(second.MessagesSeen);
+        Assert.Equal(ChatRole.User, second.MessagesSeen![0].Role);
+        Assert.Equal("step-one", second.MessagesSeen[0].Text);
+    }
+
+    [Fact]
     public void Test_SequentialWorkflowBuilder_DefaultDesignationsMatchSpec()
     {
         Workflow workflow = new SequentialWorkflowBuilder(
@@ -79,10 +116,8 @@ public class SequentialWorkflowBuilderTests
             .Build();
 
         Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
-        designations.Where(kvp => kvp.Value.Count == 0)
-            .Should().ContainSingle("OutputMessagesExecutor is the sole terminal output by default");
-        designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))
-            .Should().HaveCount(3, "every pipeline agent is designated intermediate by default");
+        Assert.Single(designations, kvp => kvp.Value.Count == 0);
+        Assert.Equal(3, designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))?.Count());
     }
 
     [Fact]
@@ -99,12 +134,9 @@ public class SequentialWorkflowBuilderTests
 
         Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
 
-        designations.Should().HaveCount(2,
-            "only the two explicitly-designated agents land on the inner builder; the end default is suppressed");
-        designations.Values.Where(tags => tags.Count == 0)
-            .Should().ContainSingle("agent1 is the only terminal designation");
-        designations.Values.Where(tags => tags.Contains(OutputTag.Intermediate))
-            .Should().ContainSingle("agent2 is the only intermediate designation");
+        Assert.Equal(2, designations.Count);
+        Assert.Single(designations.Values, tags => tags.Count == 0);
+        Assert.Single(designations.Values, tags => tags.Contains(OutputTag.Intermediate));
     }
 
     [Fact]
@@ -116,8 +148,8 @@ public class SequentialWorkflowBuilderTests
         SequentialWorkflowBuilder builder = new SequentialWorkflowBuilder(participant)
             .WithIntermediateOutputFrom([stranger]);
 
-        Action build = () => builder.Build();
-        build.Should().Throw<InvalidOperationException>().WithMessage("*stranger*");
+        void build() => builder.Build();
+        Assert.Contains("stranger", Assert.Throws<InvalidOperationException>(build).Message);
     }
 
     [Fact]
@@ -127,7 +159,7 @@ public class SequentialWorkflowBuilderTests
             .WithName("named-sequential")
             .Build();
 
-        workflow.Name.Should().Be("named-sequential");
+        Assert.Equal("named-sequential", workflow.Name);
     }
 
     [Fact]
@@ -137,7 +169,52 @@ public class SequentialWorkflowBuilderTests
             .WithDescription("describes the sequential pipeline")
             .Build();
 
-        workflow.Description.Should().Be("describes the sequential pipeline");
+        Assert.Equal("describes the sequential pipeline", workflow.Description);
+    }
+
+    private sealed class CapturingAgent(string name, string responseText) : AIAgent
+    {
+        public List<ChatMessage>? MessagesSeen { get; private set; }
+
+        public override string Name => name;
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+            => new(new CapturingAgentSession());
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(System.Text.Json.JsonElement serializedState, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => new(new CapturingAgentSession());
+
+        protected override ValueTask<System.Text.Json.JsonElement> SerializeSessionCoreAsync(AgentSession session, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => default;
+
+        protected override Task<AgentResponse> RunCoreAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default)
+        {
+            this.MessagesSeen = messages.ToList();
+            return Task.FromResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, responseText)));
+        }
+
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            this.MessagesSeen = messages.ToList();
+            await Task.Yield();
+
+            string messageId = Guid.NewGuid().ToString("N");
+            yield return new AgentResponseUpdate(ChatRole.Assistant, responseText)
+            {
+                AuthorName = this.Name,
+                MessageId = messageId,
+            };
+        }
+
+        private sealed class CapturingAgentSession() : AgentSession;
     }
 
     [Collection(FuturesSerialCollection.Name)]
@@ -173,11 +250,9 @@ public class SequentialWorkflowBuilderTests
                 .Select(n => n!)
                 .ToHashSet();
 
-            authoredBy.Should().Contain("agent3", "the terminal agent must surface");
-            authoredBy.Should().NotContain("agent1",
-                "the intermediate agent must not surface when only the terminal is designated");
-            authoredBy.Should().NotContain("agent2",
-                "the intermediate agent must not surface when only the terminal is designated");
+            Assert.Contains("agent3", authoredBy);
+            Assert.DoesNotContain("agent1", authoredBy);
+            Assert.DoesNotContain("agent2", authoredBy);
         }
     }
 }

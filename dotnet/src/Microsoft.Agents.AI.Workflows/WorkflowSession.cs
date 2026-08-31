@@ -31,6 +31,8 @@ internal sealed class WorkflowSession : AgentSession
     private readonly bool _includeWorkflowOutputsInResponse;
 
     private InMemoryCheckpointManager? _inMemoryCheckpointManager;
+    private bool _resumeWithoutNewTurn;
+    private WorkflowSessionCheckpointRecovery? _checkpointRecovery;
 
     /// <summary>
     /// Tracks pending external requests by their workflow-facing request ID.
@@ -132,6 +134,31 @@ internal sealed class WorkflowSession : AgentSession
 
     public CheckpointInfo? LastCheckpoint { get; set; }
 
+    /// <inheritdoc/>
+    public override object? GetService(Type serviceType, object? serviceKey = null)
+    {
+        return base.GetService(serviceType, serviceKey)
+            ?? (serviceKey is null && serviceType == typeof(WorkflowSessionCheckpointRecovery)
+                ? this._checkpointRecovery ??= new(this)
+                : null);
+    }
+
+    internal bool TryPrepareCheckpointRecovery(string? checkpointId)
+    {
+        if (checkpointId is not null)
+        {
+            _ = Throw.IfNullOrWhitespace(checkpointId);
+            this.LastCheckpoint = new CheckpointInfo(this.SessionId, checkpointId);
+        }
+        else if (this.LastCheckpoint is null)
+        {
+            return false;
+        }
+
+        this._resumeWithoutNewTurn = true;
+        return true;
+    }
+
     internal JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
         JsonMarshaller marshaller = new(jsonSerializerOptions);
@@ -165,6 +192,7 @@ internal sealed class WorkflowSession : AgentSession
 
         return new(message.Role, message.Contents)
         {
+            AuthorName = message.AuthorName,
             CreatedAt = message.CreatedAt ?? DateTimeOffset.UtcNow,
             MessageId = message.MessageId ?? Guid.NewGuid().ToString("N"),
             ResponseId = responseId,
@@ -247,7 +275,7 @@ internal sealed class WorkflowSession : AgentSession
                         hasMatchedResponseForStartExecutor |= string.Equals(responseExecutorId, this._workflow.StartExecutorId, StringComparison.Ordinal);
                     }
 
-                    object normalizedResponseContent = NormalizeResponseContentForDelivery(content, pendingRequest);
+                    object normalizedResponseContent = this.NormalizeResponseContentForDelivery(content, pendingRequest);
                     externalResponses.Add((pendingRequest.CreateResponse(normalizedResponseContent), pendingRequest.RequestId));
                     (matchedContentIds ??= new(StringComparer.Ordinal)).Add(contentId);
                 }
@@ -287,22 +315,19 @@ internal sealed class WorkflowSession : AgentSession
             hasMatchedResponseForStartExecutor);
     }
 
-    /// <summary>
-    /// Resolves the concrete request payload type from <see cref="RequestPortInfo.RequestType"/>
-    /// and returns it as an <see cref="IExternalRequestEnvelope"/> if the type implements that
-    /// abstraction. Resolving via the concrete <see cref="TypeId"/> (rather than asking the
-    /// PortableValue to deserialize directly to <see cref="IExternalRequestEnvelope"/>) is
-    /// required because checkpointed payloads round-trip as JSON which cannot be deserialized
-    /// to an interface; the concrete type populates the deserialization cache so subsequent
-    /// interface assignment succeeds.
-    /// </summary>
-    [UnconditionalSuppressMessage("Trimming", "IL2057:Unrecognized value passed to the parameter of method", Justification = "Higher-layer envelope types are explicitly preserved by the package that defines them.")]
-    private static bool TryGetRequestEnvelope(ExternalRequest request, [NotNullWhen(true)] out IExternalRequestEnvelope? envelope)
+    // Resolves the request payload as an envelope using the request types declared by the
+    // workflow's request ports.
+    private bool TryGetRequestEnvelope(ExternalRequest request, [NotNullWhen(true)] out IExternalRequestEnvelope? envelope)
+        => TryGetRequestEnvelope(request, this._workflow.Ports, out envelope);
+
+    // Returns true and the envelope when the request's port declares a type that implements the
+    // envelope contract and the payload deserializes to it; otherwise returns false so the
+    // request is delivered as ordinary content.
+    internal static bool TryGetRequestEnvelope(ExternalRequest request, IReadOnlyDictionary<string, RequestPort> ports, [NotNullWhen(true)] out IExternalRequestEnvelope? envelope)
     {
         envelope = null;
 
-        TypeId requestType = request.PortInfo.RequestType;
-        Type? concreteType = Type.GetType($"{requestType.TypeName}, {requestType.AssemblyName}", throwOnError: false);
+        Type? concreteType = ResolveEnvelopeType(request.PortInfo, ports);
         if (concreteType is null || !typeof(IExternalRequestEnvelope).IsAssignableFrom(concreteType))
         {
             return false;
@@ -317,14 +342,27 @@ internal sealed class WorkflowSession : AgentSession
         return true;
     }
 
+    // Returns the request type declared by the port that owns the request when it matches the
+    // type recorded on the request; otherwise returns null.
+    internal static Type? ResolveEnvelopeType(RequestPortInfo portInfo, IReadOnlyDictionary<string, RequestPort> ports)
+    {
+        if (ports.TryGetValue(portInfo.PortId, out RequestPort? port)
+            && portInfo.RequestType.IsMatch(port.Request))
+        {
+            return port.Request;
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// Creates the workflow-facing request content surfaced in response updates.
     /// </summary>
-    private static AIContent CreateRequestContentForDelivery(ExternalRequest request)
+    private AIContent CreateRequestContentForDelivery(ExternalRequest request)
     {
         // If the request payload is a higher-layer envelope (e.g., a declarative
         // ExternalInputRequest), surface its inner FCC/TARC to the host on the wire.
-        if (TryGetRequestEnvelope(request, out IExternalRequestEnvelope? envelope))
+        if (this.TryGetRequestEnvelope(request, out IExternalRequestEnvelope? envelope))
         {
             AIContent? inner = envelope.GetInnerRequestContent();
             if (inner is ToolApprovalRequestContent toolApprovalRequest)
@@ -351,12 +389,12 @@ internal sealed class WorkflowSession : AgentSession
     /// <summary>
     /// Rewrites workflow-facing response content back to the original agent-owned content ID.
     /// </summary>
-    private static object NormalizeResponseContentForDelivery(AIContent content, ExternalRequest request)
+    private object NormalizeResponseContentForDelivery(AIContent content, ExternalRequest request)
     {
         // If the request payload is a higher-layer envelope, recover the original
         // CallId/RequestId from the inner content and ask the envelope to wrap the
         // response back into its paired response type for delivery to the request port.
-        if (TryGetRequestEnvelope(request, out IExternalRequestEnvelope? envelope))
+        if (this.TryGetRequestEnvelope(request, out IExternalRequestEnvelope? envelope))
         {
             AIContent? inner = envelope.GetInnerRequestContent();
             AIContent payload = (content, inner) switch
@@ -438,24 +476,39 @@ internal sealed class WorkflowSession : AgentSession
 
         ResumeRunResult resumeResult =
             await this.CreateOrResumeRunAsync(messages, cancellationToken).ConfigureAwait(false);
+        bool resumeWithoutNewTurn = this._resumeWithoutNewTurn;
+        this._resumeWithoutNewTurn = false;
 
 #pragma warning disable CA2007 // Analyzer misfiring.
         await using StreamingRun run = resumeResult.Run;
 #pragma warning restore CA2007
 
         ResumeDispatchInfo dispatchInfo = resumeResult.DispatchInfo;
+        HashSet<(string ExecutorId, string MessageId)> streamedMessageIds = [];
 
         // Send a TurnToken to the start executor unless the only activity is an external
         // response directed at the start executor itself (which self-emits a TurnToken via
         // ContinueTurnAsync). Non-start executors (e.g., RequestInfoExecutor) do not emit
         // TurnTokens after processing responses, so the session must always provide one.
         bool shouldSendTurnToken =
-            !dispatchInfo.HasMatchedExternalResponses
-            || !dispatchInfo.HasMatchedResponseForStartExecutor;
+            !resumeWithoutNewTurn
+            && (!dispatchInfo.HasMatchedExternalResponses
+                || !dispatchInfo.HasMatchedResponseForStartExecutor);
         if (shouldSendTurnToken)
         {
             await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
         }
+
+        AgentResponseUpdate CreateObservabilityUpdate(WorkflowEvent evt)
+            => new(ChatRole.Assistant, [])
+            {
+                CreatedAt = DateTimeOffset.UtcNow,
+                MessageId = Guid.NewGuid().ToString("N"),
+                Role = ChatRole.Assistant,
+                ResponseId = this.LastResponseId,
+                RawRepresentation = evt
+            };
+
         await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false, cancellationToken)
                                                .ConfigureAwait(false)
                                                .WithCancellation(cancellationToken))
@@ -463,11 +516,16 @@ internal sealed class WorkflowSession : AgentSession
             switch (evt)
             {
                 case AgentResponseUpdateEvent agentUpdate:
+                    string? messageId = agentUpdate.Update.MessageId;
+                    if (!string.IsNullOrWhiteSpace(messageId))
+                    {
+                        streamedMessageIds.Add((agentUpdate.ExecutorId, messageId));
+                    }
                     yield return agentUpdate.Update;
                     break;
 
                 case RequestInfoEvent requestInfo:
-                    AIContent requestContent = CreateRequestContentForDelivery(requestInfo.Request);
+                    AIContent requestContent = this.CreateRequestContentForDelivery(requestInfo.Request);
 
                     // Track the pending request so we can convert incoming responses back to ExternalResponse.
                     // External callers respond using the workflow-facing request ID, which is always RequestId.
@@ -512,12 +570,14 @@ internal sealed class WorkflowSession : AgentSession
                         ? executorException.Message
                         : "An error occurred while executing the workflow.";
 
-                    yield return this.CreateUpdate(this.LastResponseId, evt, new ErrorContent(executorMessage));
+                    AgentResponseUpdate executorUpdate = this.CreateUpdate(this.LastResponseId, evt, new ErrorContent(executorMessage));
+                    yield return executorUpdate;
                     break;
 
                 case SuperStepCompletedEvent stepCompleted:
                     this.LastCheckpoint = stepCompleted.CompletionInfo?.Checkpoint;
-                    goto default;
+                    yield return CreateObservabilityUpdate(evt);
+                    break;
 
                 case AgentResponseEvent agentResponse:
                     // Under Futures.EnableAgentResponseOutputTaggingAndFiltering=true, mirror
@@ -526,7 +586,8 @@ internal sealed class WorkflowSession : AgentSession
                     // the legacy default, keep today's behavior — gated by the include flag.
                     if (!Futures.EnableAgentResponseOutputTaggingAndFiltering && !this._includeWorkflowOutputsInResponse)
                     {
-                        goto default;
+                        yield return CreateObservabilityUpdate(evt);
+                        break;
                     }
 
                     // Either EnableAgentResponseOutputTaggingAndFiltering -- so yield the Response
@@ -534,9 +595,28 @@ internal sealed class WorkflowSession : AgentSession
                     // _includeWorkflowOutputInResponse flag is set. Reason being: The user specifies
                     // exclusion of an event by enabling filtering and then _not_ marking an Executor
                     // as an output executor.
+                    bool emittedMessage = false;
+                    bool suppressedStreamedMessage = false;
                     foreach (ChatMessage message in agentResponse.Response.Messages)
                     {
+                        string? completedMessageId = message.MessageId;
+                        bool messageWasStreamed =
+                            !string.IsNullOrWhiteSpace(completedMessageId)
+                            && streamedMessageIds.Contains((agentResponse.ExecutorId, completedMessageId));
+                        if (messageWasStreamed)
+                        {
+                            suppressedStreamedMessage = true;
+                            continue;
+                        }
+
+                        emittedMessage = true;
                         yield return this.CreateUpdate(this.LastResponseId, evt, message);
+                    }
+                    if (!emittedMessage && suppressedStreamedMessage)
+                    {
+                        // Preserve the completion event for observability after its correlated
+                        // streamed content has already been forwarded.
+                        yield return CreateObservabilityUpdate(evt);
                     }
                     break;
 
@@ -547,32 +627,50 @@ internal sealed class WorkflowSession : AgentSession
                         ChatMessage chatMessage => [chatMessage],
                         _ => null
                     };
-
-                    // Same assymetry as with AgentResponseEvent, but there is no EnableFiltering flag
-                    // to consider. If this made it here (and since it is not an AgentResponse[Update]),
-                    // it means it is already been selected as an Output() from the user. Intermediate
-                    // is irrelevant here.
-                    if (updateMessages == null || !this._includeWorkflowOutputsInResponse)
+                    IEnumerable<AIContent>? updateContents = output.Data switch
                     {
-                        goto default;
+                        string text => [new TextContent(text)],
+                        AIContent content => [content],
+                        IEnumerable<AIContent> contents => contents,
+                        _ => null
+                    };
+
+                    // Workflow outputs with response-compatible payloads are forwarded when the
+                    // host requests all workflow outputs, or when this executor is an explicit
+                    // output source for the workflow.
+                    if (updateMessages == null
+                        && updateContents == null)
+                    {
+                        yield return CreateObservabilityUpdate(evt);
+                        break;
                     }
 
-                    foreach (ChatMessage message in updateMessages)
+                    bool includeTerminalOutput = this._workflow.IsTerminalOutput(output.ExecutorId);
+                    if (!this._includeWorkflowOutputsInResponse
+                        && !includeTerminalOutput)
+                    {
+                        yield return CreateObservabilityUpdate(evt);
+                        break;
+                    }
+
+                    foreach (ChatMessage message in this._includeWorkflowOutputsInResponse ? updateMessages ?? [] : [])
                     {
                         yield return this.CreateUpdate(this.LastResponseId, evt, message);
+                    }
+                    if (updateContents is not null
+                        && (this._includeWorkflowOutputsInResponse || includeTerminalOutput))
+                    {
+                        AIContent[] contents = [.. updateContents];
+                        if (contents.Length > 0)
+                        {
+                            yield return this.CreateUpdate(this.LastResponseId, evt, contents);
+                        }
                     }
                     break;
 
                 default:
                     // Emit all other workflow events for observability (DevUI, logging, etc.)
-                    yield return new AgentResponseUpdate(ChatRole.Assistant, [])
-                    {
-                        CreatedAt = DateTimeOffset.UtcNow,
-                        MessageId = Guid.NewGuid().ToString("N"),
-                        Role = ChatRole.Assistant,
-                        ResponseId = this.LastResponseId,
-                        RawRepresentation = evt
-                    };
+                    yield return CreateObservabilityUpdate(evt);
                     break;
             }
         }

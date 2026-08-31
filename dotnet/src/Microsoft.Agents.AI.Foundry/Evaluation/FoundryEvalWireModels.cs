@@ -137,6 +137,9 @@ internal sealed class WireTestingCriterion
     [JsonPropertyName("evaluator_name")]
     public required string EvaluatorName { get; init; }
 
+    [JsonPropertyName("evaluator_version")]
+    public string? EvaluatorVersion { get; init; }
+
     [JsonPropertyName("initialization_parameters")]
     public required WireInitParams InitializationParameters { get; init; }
 

@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.8.1"
+version = "1.16.0"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,30 +23,37 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.8.1",
+    "agent-framework-core[all]==1.16.0",
 ]
 
 [dependency-groups]
 dev = [
-    "uv==0.11.17",
-    "flit==3.12.0",
-    "ruff==0.15.15",
-    "pytest==9.0.3",
+    "uv==0.12.5",
+    "flit==4.0.2",
+    "ruff==0.16.3",
+    "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
     "pytest-xdist[psutil]==3.8.0",
     "pytest-timeout==2.4.0",
     "pytest-retry==1.7.0",
-    "mypy==1.20.0",
-    "pyright==1.1.408",
-    "mcp[ws]==1.27.2",
-    "opentelemetry-sdk==1.40.0",
-    "azure-monitor-opentelemetry==1.8.8",
+    "mypy==2.3.1",
+    "pyright==1.1.411",
+    "pyrefly==1.2.0",
+    "ty==0.0.72",
+    "zuban==0.9.1",
+    "opentelemetry-sdk",
     #tasks
-    "poethepoet==0.46.0",
+    "poethepoet==0.48.0",
     "rich>=13.7.1,<16.0.0",
     "tomli==2.4.1",
-    "prek==0.4.3",
+    "prek==0.4.11",
+]
+test = [
+    "azure-monitor-opentelemetry",
+    "mcp[ws]",
+    # Optional SDK used by the agent-hooks tests and isolated source checks.
+    "agent-hooks-sdk>=0.1.0a4,<0.2",
 ]
 
 [tool.uv]
@@ -54,9 +61,8 @@ package = false
 prerelease = "if-necessary-or-explicit"
 # Security floors for transitive deps; overrides bypass litellm[proxy]'s strict pins.
 constraint-dependencies = ["litellm>=1.83.7", "fastapi-sso>=0.19.0"]
-# Allow opentelemetry-semantic-conventions 0.61b0 for mistralai compatibility
-# (mistralai pins <0.61 but 0.61b0 is compatible at runtime).
-override-dependencies = ["mcp[ws]>=1.27.0", "uvicorn[standard]>=0.34.0", "opentelemetry-semantic-conventions>=0.60b1"]
+# python-multipart>=0.0.31 overrides litellm[proxy]'s exact pin of <=0.0.27 for security.
+override-dependencies = ["mcp[ws]>=1.27.0,<2", "uvicorn[standard]>=0.34.0", "python-multipart>=0.0.31"]
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
@@ -74,19 +80,22 @@ agent-framework-ag-ui = { workspace = true }
 agent-framework-azure-ai-search = { workspace = true }
 agent-framework-azure-cosmos = { workspace = true }
 agent-framework-anthropic = { workspace = true }
-agent-framework-azurefunctions = { workspace = true }
 agent-framework-bedrock = { workspace = true }
 agent-framework-chatkit = { workspace = true }
 agent-framework-claude = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
 agent-framework-declarative = { workspace = true }
 agent-framework-devui = { workspace = true }
-agent-framework-durabletask = { workspace = true }
 agent-framework-foundry = { workspace = true }
 agent-framework-foundry-hosting = { workspace = true }
 agent-framework-foundry-local = { workspace = true }
 agent-framework-gemini = { workspace = true }
 agent-framework-github-copilot = { workspace = true }
+agent-framework-hosting = { workspace = true }
+agent-framework-hosting-a2a = { workspace = true }
+agent-framework-hosting-mcp = { workspace = true }
+agent-framework-hosting-responses = { workspace = true }
+agent-framework-hosting-telegram = { workspace = true }
 agent-framework-hyperlight = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
@@ -140,9 +149,11 @@ select = [
 ignore = [
     "D100", # allow missing docstring in public module
     "D104", # allow missing docstring in public package
+    "D421", # allow property docstrings that start with a verb
     "D418", # allow overload to have a docstring
     "TD003", # allow missing link to todo issue
     "FIX002", # allow todo
+    "ASYNC119", # allow yielding inside async-generator context managers
     "B027", # allow empty non-abstract method in ABC
     "B905", # `zip()` without an explicit `strict=` parameter
     "RUF067", # allow version detection in __init__.py
@@ -185,56 +196,48 @@ omit = [
 ]
 
 [tool.pyright]
-exclude = ["**/tests/**", "**/.venv/**", "packages/devui/frontend/**"]
+# Pyright is the sole SOURCE-code type checker. Tests + samples are covered by mypy,
+# pyrefly, ty (and zuban) instead, so Pyright excludes them entirely -- no per-package
+# test executionEnvironments are needed anymore.
+exclude = ["**/tests/**", "**/ag_ui_tests/**", "samples/**", "**/.venv/**", "packages/devui/frontend/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
 reportUnnecessaryCast = "error"
-# Tests intentionally probe internal implementation details.
-executionEnvironments = [
-    { root = "packages/a2a/tests", reportPrivateUsage = "none" },
-    { root = "packages/ag-ui/tests", reportPrivateUsage = "none" },
-    { root = "packages/anthropic/tests", reportPrivateUsage = "none" },
-    { root = "packages/azure-ai-search/tests", reportPrivateUsage = "none" },
-    { root = "packages/azure-contentunderstanding/tests", reportPrivateUsage = "none" },
-    { root = "packages/azure-cosmos/tests", reportPrivateUsage = "none" },
-    { root = "packages/azurefunctions/tests", reportPrivateUsage = "none" },
-    { root = "packages/bedrock/tests", reportPrivateUsage = "none" },
-    { root = "packages/chatkit/tests", reportPrivateUsage = "none" },
-    { root = "packages/claude/tests", reportPrivateUsage = "none" },
-    { root = "packages/copilotstudio/tests", reportPrivateUsage = "none" },
-    { root = "packages/core/tests", reportPrivateUsage = "none" },
-    { root = "packages/declarative/tests", reportPrivateUsage = "none" },
-    { root = "packages/devui/tests", reportPrivateUsage = "none" },
-    { root = "packages/durabletask/tests", reportPrivateUsage = "none" },
-    { root = "packages/foundry/tests", reportPrivateUsage = "none" },
-    { root = "packages/foundry_local/tests", reportPrivateUsage = "none" },
-    { root = "packages/github_copilot/tests", reportPrivateUsage = "none" },
-    { root = "packages/lab/gaia/tests", reportPrivateUsage = "none" },
-    { root = "packages/lab/lightning/tests", reportPrivateUsage = "none" },
-    { root = "packages/lab/tau2/tests", reportPrivateUsage = "none" },
-    { root = "packages/mem0/tests", reportPrivateUsage = "none" },
-    { root = "packages/mistral/tests", reportPrivateUsage = "none" },
-    { root = "packages/ollama/tests", reportPrivateUsage = "none" },
-    { root = "packages/orchestrations/tests", reportPrivateUsage = "none" },
-    { root = "packages/purview/tests", reportPrivateUsage = "none" },
-    { root = "packages/redis/tests", reportPrivateUsage = "none" },
-    { root = "tests", reportPrivateUsage = "none" },
-]
+# With MyPy off source, mypy-only ``# type: ignore`` comments are now dead weight. Flag
+# them so they get removed and do not creep back in.
+reportUnnecessaryTypeIgnoreComment = "error"
 
+# MyPy (and zuban, which reads this [mypy]-compatible config) no longer run on source
+# code -- Pyright is the sole source-code type checker. These checkers run over the
+# tests + samples instead, in a deliberately relaxed mode: real type errors in how the
+# public API is exercised are caught, but test/sample authors are not burdened with
+# annotating every function. See docs/skills/python-code-quality.
 [tool.mypy]
 plugins = ['pydantic.mypy']
-strict = true
 python_version = "3.10"
 ignore_missing_imports = true
-disallow_untyped_defs = true
-no_implicit_optional = true
 check_untyped_defs = true
-warn_return_any = true
-show_error_codes = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_return_any = false
 warn_unused_ignores = false
-disallow_incomplete_defs = true
-disallow_untyped_decorators = true
+show_error_codes = true
+
+# NumPy 2.5 stubs use Python 3.12 type-statement syntax while mypy intentionally
+# targets Python 3.10 for test typing; skip parsing NumPy internals.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
+# ty (preview) over tests + samples. Relaxed: ty's defaults are gradual, and a few
+# categories are too noisy on test/mock-heavy code to gate on yet.
+[tool.ty.rules]
+unused-ignore-comment = "ignore"
+unused-type-ignore-comment = "ignore"
 
 [tool.bandit]
 targets = ["agent_framework"]
@@ -245,8 +248,8 @@ executor.type = "uv"
 
 # Workspace setup
 [tool.poe.tasks.install]
-help = "Install all workspace packages, extras, and dev dependencies from the lockfile."
-cmd = "uv sync --all-packages --all-extras --dev --frozen --prerelease=if-necessary-or-explicit"
+help = "Install all workspace packages, extras, and dependency groups from the lockfile."
+cmd = "uv sync --all-packages --all-extras --all-groups --frozen --prerelease=if-necessary-or-explicit"
 
 [tool.poe.tasks.setup]
 help = "Create the workspace virtual environment for -P/--python, install dependencies, and install prek hooks."
@@ -292,11 +295,15 @@ help = "Run Pyright for -P/--package packages, use -A/--all for one aggregate sw
 cmd = "python scripts/workspace_poe_tasks.py pyright"
 
 [tool.poe.tasks.mypy]
-help = "Run MyPy for -P/--package packages, or use -A/--all for one aggregate sweep."
+help = "Run MyPy over -P/--package test suites (alias for `test-typing --checker mypy`)."
 cmd = "python scripts/workspace_poe_tasks.py mypy"
 
+[tool.poe.tasks.test-typing]
+help = "Run the tests/samples type checkers (mypy, pyrefly, ty, zuban) for -P/--package, -A/--all, or -S/--samples. Narrow with `--checker NAME` (repeatable)."
+cmd = "python scripts/workspace_poe_tasks.py test-typing"
+
 [tool.poe.tasks.typing]
-help = "Run both MyPy and Pyright for -P/--package packages, or use -A/--all for aggregate mode."
+help = "Run Pyright over source and the tests/samples checkers for -P/--package packages, or use -A/--all."
 cmd = "python scripts/workspace_poe_tasks.py typing"
 
 [tool.poe.tasks.samples-syntax]
@@ -363,14 +370,14 @@ cmd = "uv publish"
 
 # Dependency maintenance
 [tool.poe.tasks.upgrade-dev-dependency-pins]
-help = "Repin the workspace dev dependency versions used in pyproject.toml."
+help = "Repin exact workspace development dependency versions used in pyproject.toml."
 cmd = "python -m scripts.dependencies.upgrade_dev_dependencies"
 
 [tool.poe.tasks._upgrade-lockfile]
 cmd = "uv lock --upgrade"
 
 [tool.poe.tasks.upgrade-dev-dependencies]
-help = "Repin dev dependencies, refresh uv.lock, reinstall, and rerun validation commands."
+help = "Repin development dependencies, refresh uv.lock, reinstall, and rerun validation commands."
 sequence = [
     { ref = "upgrade-dev-dependency-pins" },
     { ref = "_upgrade-lockfile" },
@@ -388,9 +395,31 @@ args = [
 ]
 
 [tool.poe.tasks.validate-dependency-bounds-test]
-help = "Run workspace dependency-bound validation in test mode, optionally scoped with -P/--package short names such as `core`."
+help = "Run the exhaustive workspace dependency-bound test+typing matrix, optionally scoped with -P/--package short names such as `core`."
 shell = "python -m scripts.dependencies.validate_dependency_bounds --mode test --package \"$project\""
 args = [{ name = "project", default = "*", options = ["-P", "--package"] }]
+
+[tool.poe.tasks.validate-python-release]
+help = "Refresh uv.lock, then run lower/upper import probes for changed package metadata on each package closure's minimum Python."
+executor = "simple"
+shell = """
+command=(
+  python -m scripts.dependencies.validate_dependency_bounds
+  --mode release
+  --base-ref "${base_ref}"
+  --release-timeout-seconds "${timeout}"
+)
+if [ -n "${python}" ]; then
+  command+=(--python "${python}")
+fi
+"${command[@]}"
+"""
+interpreter = "bash"
+args = [
+    { name = "base_ref", options = ["-B", "--base-ref"] },
+    { name = "python", default = "", options = ["--python"] },
+    { name = "timeout", default = "300", options = ["--timeout-seconds"] },
+]
 
 [tool.poe.tasks.validate-dependency-bounds-project]
 help = "Validate lower and upper dependency bounds for a -P/--package workspace package, optionally narrowed with -M/--mode and -D/--dependency."
@@ -434,5 +463,5 @@ explicit = true
 name = "agent_framework_meta"
 
 [build-system]
-requires = ["flit-core >= 3.11,<4.0"]
+requires = ["flit-core >= 3.11,< 5.0"]
 build-backend = "flit_core.buildapi"

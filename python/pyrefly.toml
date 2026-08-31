@@ -1,0 +1,17 @@
+# Pyrefly runs over the tests + samples (not source -- Pyright owns source).
+# Relaxed profile: surface real public-API type errors without forcing test/sample
+# authors to fully annotate their code. Paths are passed explicitly by the workspace
+# task runner; this config supplies the shared rule tuning.
+project-includes = ["packages/*/tests", "packages/*/ag_ui_tests", "samples"]
+
+# The lab sub-packages use an editable namespace layout (agent_framework_lab_*) that
+# pyrefly's import resolver does not pick up from the venv finder hook; add their roots.
+search-path = [
+    "packages/lab/gaia",
+    "packages/lab/lightning",
+    "packages/lab/tau2",
+]
+
+[errors]
+# Test/mock-heavy code legitimately accesses attributes dynamically.
+missing-attribute = false

@@ -94,12 +94,15 @@ async def cached_pipeline(document: str) -> str:
 
 
 async def main():
+    simple_workflow = simple_pipeline.build()
+    cached_workflow = cached_pipeline.build()
+
     # Simple version — agents called inline
-    result = await simple_pipeline.run("This is a technical document about machine learning...")
+    result = await simple_workflow.run("This is a technical document about machine learning...")
     print(result.get_outputs()[0])
 
     # Cached version — same result, but steps won't re-execute on resume
-    result = await cached_pipeline.run("This is a technical document about machine learning...")
+    result = await cached_workflow.run("This is a technical document about machine learning...")
     print(f"\nCached: {result.get_outputs()[0]}")
 
 

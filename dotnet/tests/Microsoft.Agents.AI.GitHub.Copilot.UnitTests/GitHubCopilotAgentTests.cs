@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using GitHub.Copilot;
 using GitHub.Copilot.Rpc;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.GitHub.Copilot.UnitTests;
 
@@ -93,7 +94,7 @@ public sealed class GitHubCopilotAgentTests
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions());
-        List<AITool> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
+        List<AIFunctionDeclaration> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
 
         // Act
         var agent = new GitHubCopilotAgent(copilotClient, tools: tools);
@@ -140,15 +141,15 @@ public sealed class GitHubCopilotAgentTests
         Assert.Equal("gpt-4o", result.Model);
         Assert.Equal("high", result.ReasoningEffort);
         Assert.Equal(systemMessage, result.SystemMessage);
-        Assert.Equal(new List<string> { "tool1", "tool2" }, result.AvailableTools);
-        Assert.Equal(new List<string> { "tool3" }, result.ExcludedTools);
+        Assert.Equal(["tool1", "tool2"], result.AvailableTools);
+        Assert.Equal(["tool3"], result.ExcludedTools);
         Assert.Equal("/workspace", result.WorkingDirectory);
         Assert.Equal("/config", result.ConfigDirectory);
         Assert.Same(hooks, result.Hooks);
         Assert.Same(infiniteSessions, result.InfiniteSessions);
         Assert.Same(permissionHandler, result.OnPermissionRequest);
         Assert.Same(userInputHandler, result.OnUserInputRequest);
-        Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
+        Assert.Equal(["skill1"], result.DisabledSkills);
         Assert.True(result.Streaming);
     }
 
@@ -168,6 +169,8 @@ public sealed class GitHubCopilotAgentTests
         {
             Model = "gpt-4o",
             ReasoningEffort = "high",
+            ReasoningSummary = ReasoningSummary.Detailed,
+            ContextTier = ContextTier.LongContext,
             Tools = tools,
             SystemMessage = systemMessage,
             AvailableTools = ["tool1", "tool2"],
@@ -188,10 +191,12 @@ public sealed class GitHubCopilotAgentTests
         // Assert
         Assert.Equal("gpt-4o", result.Model);
         Assert.Equal("high", result.ReasoningEffort);
+        Assert.Equal(ReasoningSummary.Detailed, result.ReasoningSummary);
+        Assert.Equal(ContextTier.LongContext, result.ContextTier);
         Assert.Same(tools, result.Tools);
         Assert.Same(systemMessage, result.SystemMessage);
-        Assert.Equal(new List<string> { "tool1", "tool2" }, result.AvailableTools);
-        Assert.Equal(new List<string> { "tool3" }, result.ExcludedTools);
+        Assert.Equal(["tool1", "tool2"], result.AvailableTools);
+        Assert.Equal(["tool3"], result.ExcludedTools);
         Assert.Equal("/workspace", result.WorkingDirectory);
         Assert.Equal("/config", result.ConfigDirectory);
         Assert.Same(hooks, result.Hooks);
@@ -199,7 +204,7 @@ public sealed class GitHubCopilotAgentTests
         Assert.Same(permissionHandler, result.OnPermissionRequest);
         Assert.Same(userInputHandler, result.OnUserInputRequest);
         Assert.Same(mcpServers, result.McpServers);
-        Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
+        Assert.Equal(["skill1"], result.DisabledSkills);
         Assert.True(result.Streaming);
     }
 
@@ -212,6 +217,8 @@ public sealed class GitHubCopilotAgentTests
         // Assert
         Assert.Null(result.Model);
         Assert.Null(result.ReasoningEffort);
+        Assert.Null(result.ReasoningSummary);
+        Assert.Null(result.ContextTier);
         Assert.Null(result.Tools);
         Assert.Null(result.SystemMessage);
         Assert.Null(result.OnPermissionRequest);
@@ -220,6 +227,26 @@ public sealed class GitHubCopilotAgentTests
         Assert.Null(result.WorkingDirectory);
         Assert.Null(result.ConfigDirectory);
         Assert.True(result.Streaming);
+    }
+
+    [Fact]
+    public void CopyResumeSessionConfig_RoundTripsReasoningSummary()
+    {
+        // Regression: ReasoningSummary controls whether the model returns readable
+        // extended-thinking summaries. It must round-trip onto resumed turns, just like
+        // ReasoningEffort, otherwise callers lose readable reasoning after the first turn.
+        var source = new SessionConfig
+        {
+            ReasoningEffort = "high",
+            ReasoningSummary = ReasoningSummary.Detailed,
+        };
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.CopyResumeSessionConfig(source);
+
+        // Assert
+        Assert.Equal(ReasoningSummary.Detailed, result.ReasoningSummary);
+        Assert.Equal("high", result.ReasoningEffort);
     }
 
     [Fact]
@@ -381,5 +408,176 @@ public sealed class GitHubCopilotAgentTests
         Assert.Contains(result.Contents, c => c is TextContent);
         Assert.Null(result.MessageId);
         Assert.Null(result.ResponseId);
+    }
+
+    [Fact]
+    public async Task Constructor_WithApprovalRequiredTool_InstallsAskPreToolUseHookAsync()
+    {
+        // Arrange
+        AIFunction dangerousTool = AIFunctionFactory.Create(() => "sensitive", "ApprovalRequiredOperation", "A sensitive operation.");
+        AIFunction plainTool = AIFunctionFactory.Create(() => "ok", "PlainOperation", "A normal operation.");
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+
+        // Act
+        var agent = new GitHubCopilotAgent(copilotClient, tools: [new ApprovalRequiredAIFunction(dangerousTool), plainTool]);
+
+        // Assert - the provider installs a default OnPreToolUse that asks for the approval-required tool
+        // (routing the decision to OnPermissionRequest) and defers everything else.
+        SessionConfig sessionConfig = GetSessionConfigFromAgent(agent);
+        Assert.NotNull(sessionConfig.Hooks?.OnPreToolUse);
+
+        PreToolUseHookOutput? approvalDecision = await InvokePreToolUseAsync(sessionConfig, "ApprovalRequiredOperation");
+        Assert.Equal("ask", approvalDecision?.PermissionDecision);
+        Assert.False(string.IsNullOrEmpty(approvalDecision?.PermissionDecisionReason));
+
+        PreToolUseHookOutput? plainDecision = await InvokePreToolUseAsync(sessionConfig, "PlainOperation");
+        Assert.Null(plainDecision);
+    }
+
+    [Fact]
+    public async Task Constructor_WithApprovalRequiredToolInSessionConfig_InstallsAskPreToolUseHookAsync()
+    {
+        // Arrange
+        AIFunction dangerousTool = AIFunctionFactory.Create(() => "sensitive", "ApprovalRequiredOperation", "A sensitive operation.");
+        SessionConfig sessionConfig = new() { Tools = [new ApprovalRequiredAIFunction(dangerousTool)] };
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+
+        // Act
+        var agent = new GitHubCopilotAgent(copilotClient, sessionConfig);
+
+        // Assert
+        SessionConfig configured = GetSessionConfigFromAgent(agent);
+        Assert.NotNull(configured.Hooks?.OnPreToolUse);
+        PreToolUseHookOutput? decision = await InvokePreToolUseAsync(configured, "ApprovalRequiredOperation");
+        Assert.Equal("ask", decision?.PermissionDecision);
+    }
+
+    [Fact]
+    public void Constructor_WithNoApprovalRequiredTools_DoesNotInstallPreToolUseHook()
+    {
+        // Arrange
+        AIFunction plainTool = AIFunctionFactory.Create(() => "ok", "PlainOperation", "A normal operation.");
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+
+        // Act
+        var agent = new GitHubCopilotAgent(copilotClient, tools: [plainTool]);
+
+        // Assert - no approval-required tools means no hook is installed; tools flow through normally.
+        SessionConfig sessionConfig = GetSessionConfigFromAgent(agent);
+        Assert.Null(sessionConfig.Hooks?.OnPreToolUse);
+    }
+
+    [Fact]
+    public async Task Constructor_WithUserPreToolUseHook_PreservesItAndWarnsAsync()
+    {
+        // Arrange - the caller supplies their own OnPreToolUse hook and also registers an approval-required tool.
+        AIFunction dangerousTool = AIFunctionFactory.Create(() => "sensitive", "ApprovalRequiredOperation", "A sensitive operation.");
+        var userHookOutput = new PreToolUseHookOutput { PermissionDecision = "allow" };
+        SessionConfig sessionConfig = new()
+        {
+            Tools = [new ApprovalRequiredAIFunction(dangerousTool)],
+            Hooks = new SessionHooks
+            {
+                OnPreToolUse = (input, invocation) => Task.FromResult<PreToolUseHookOutput?>(userHookOutput),
+            },
+        };
+
+        CapturingLoggerFactory loggerFactory = new();
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+
+        // Act
+        var agent = new GitHubCopilotAgent(copilotClient, sessionConfig, loggerFactory: loggerFactory);
+
+        // Assert - the user's hook is preserved (not overridden), and a warning is logged for the unenforced tool.
+        SessionConfig configured = GetSessionConfigFromAgent(agent);
+        PreToolUseHookOutput? decision = await InvokePreToolUseAsync(configured, "ApprovalRequiredOperation");
+        Assert.Same(userHookOutput, decision);
+
+        (LogLevel Level, string Message) warning = Assert.Single(loggerFactory.Entries, e => e.Level == LogLevel.Warning);
+        Assert.Contains("ApprovalRequiredOperation", warning.Message);
+    }
+
+    [Fact]
+    public void Constructor_WithUserPreToolUseHookButNoApprovalRequiredTools_DoesNotWarn()
+    {
+        // Arrange
+        AIFunction plainTool = AIFunctionFactory.Create(() => "ok", "PlainOperation", "A normal operation.");
+        SessionConfig sessionConfig = new()
+        {
+            Tools = [plainTool],
+            Hooks = new SessionHooks
+            {
+                OnPreToolUse = (input, invocation) => Task.FromResult<PreToolUseHookOutput?>(null),
+            },
+        };
+
+        CapturingLoggerFactory loggerFactory = new();
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+
+        // Act
+        var agent = new GitHubCopilotAgent(copilotClient, sessionConfig, loggerFactory: loggerFactory);
+
+        // Assert - nothing is being bypassed, so no warning is emitted.
+        Assert.DoesNotContain(loggerFactory.Entries, e => e.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public void Constructor_WithApprovalRequiredTool_DoesNotMutateCallerHooks()
+    {
+        // Arrange
+        AIFunction dangerousTool = AIFunctionFactory.Create(() => "sensitive", "ApprovalRequiredOperation", "A sensitive operation.");
+        SessionHooks callerHooks = new();
+        SessionConfig sessionConfig = new()
+        {
+            Tools = [new ApprovalRequiredAIFunction(dangerousTool)],
+            Hooks = callerHooks,
+        };
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+
+        // Act
+        _ = new GitHubCopilotAgent(copilotClient, sessionConfig);
+
+        // Assert - the caller-supplied SessionConfig and its Hooks instance are not mutated.
+        Assert.Null(callerHooks.OnPreToolUse);
+        Assert.Same(callerHooks, sessionConfig.Hooks);
+    }
+
+    private static Task<PreToolUseHookOutput?> InvokePreToolUseAsync(SessionConfig sessionConfig, string toolName)
+    {
+        var input = new PreToolUseHookInput { ToolName = toolName };
+        return sessionConfig.Hooks!.OnPreToolUse!(input, new HookInvocation());
+    }
+
+    private static SessionConfig GetSessionConfigFromAgent(GitHubCopilotAgent agent)
+    {
+        System.Reflection.FieldInfo field = typeof(GitHubCopilotAgent).GetField(
+            "_sessionConfig",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        return (SessionConfig)field.GetValue(agent)!;
+    }
+
+    private sealed class CapturingLoggerFactory : ILoggerFactory
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public ILogger CreateLogger(string categoryName) => new CapturingLogger(this.Entries);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class CapturingLogger(List<(LogLevel Level, string Message)> entries) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+                => entries.Add((logLevel, formatter(state, exception)));
+        }
     }
 }

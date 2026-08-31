@@ -16,6 +16,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+from agent_framework._telemetry import mark_feature_used
+from agent_framework_lab_common._feature_usage import FeatureIndex
 from opentelemetry.trace import NoOpTracer, SpanKind, get_tracer
 from tqdm import tqdm
 
@@ -33,7 +35,7 @@ class _OrjsonModule(Protocol):
 @lru_cache(maxsize=1)
 def _get_orjson() -> _OrjsonModule | None:
     try:
-        import orjson as runtime_orjson  # pyright: ignore[reportMissingImports]
+        import orjson as runtime_orjson
     except ImportError:
         return None
     return cast(_OrjsonModule, runtime_orjson)
@@ -201,6 +203,7 @@ def gaia_scorer(model_answer: str | None, ground_truth: str) -> bool:
     Returns:
         True if the answer is correct, False otherwise
     """
+    mark_feature_used(FeatureIndex.LAB)
 
     def is_float(x: Any) -> bool:
         try:
@@ -273,7 +276,7 @@ def _load_gaia_local(repo_dir: Path, wanted_levels: list[int] | None = None, max
 
     for p in parquet_files:
         try:
-            import pyarrow.parquet as pq  # type: ignore[reportMissingImports]
+            import pyarrow.parquet as pq
 
             pq_any = cast(Any, pq)
             table: Any = pq_any.read_table(p)
@@ -393,6 +396,7 @@ class GAIA:
             self.tracer = get_tracer("gaia_benchmark", "1.0.0")
         else:
             self.tracer = NoOpTracer()
+        mark_feature_used(FeatureIndex.LAB)
 
     async def _default_evaluator(self, task: Task, prediction: Prediction) -> Evaluation:
         """Default evaluator using GAIA official scoring."""
@@ -647,6 +651,7 @@ class GAIA:
 
 def viewer_main() -> None:
     """Main function for the gaia_viewer script."""
+    mark_feature_used(FeatureIndex.LAB)
     import argparse
 
     parser = argparse.ArgumentParser(description="View GAIA benchmark results")

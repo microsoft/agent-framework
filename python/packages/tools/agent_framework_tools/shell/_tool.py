@@ -11,8 +11,10 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Literal
 
 from agent_framework import FunctionTool, tool
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 
+from .._feature_usage import FeatureIndex
 from ._executor import run_stateless
 from ._policy import ShellPolicy, ShellRequest
 from ._resolve import is_powershell, resolve_shell
@@ -244,6 +246,7 @@ class LocalShellTool:
                 so callers do not need to wrap this call in
                 :func:`asyncio.wait_for`.
         """
+        mark_feature_used(FeatureIndex.TOOLS_SHELL)
         request = ShellRequest(command=command, workdir=self._workdir)
         decision = self._policy.evaluate(request)
         if decision.decision == "deny":
@@ -285,6 +288,21 @@ class LocalShellTool:
 
         The returned tool has ``kind="shell"`` so provider-specific
         ``get_shell_tool(func=...)`` factories recognise it as a local shell.
+
+        Args:
+            name: Function name surfaced to the model. Defaults to ``run_shell``.
+
+                .. warning::
+                    **Security — avoid tool-name collisions.** This applies only
+                    when the shell tool requires approval (constructed with
+                    ``approval_mode="always_require"``, the default). Auto-approval
+                    rules may match tool calls by name, so setting ``name`` to a
+                    value approved by an auto-approval rule for another feature
+                    may cause this shell tool to also be auto-approved, bypassing
+                    the human approval boundary. Choose a unique name that no
+                    other registered tool uses.
+            description: Optional description surfaced to the model. When
+                ``None`` a mode-appropriate default is used.
         """
 
         async def _run_shell(command: str) -> str:

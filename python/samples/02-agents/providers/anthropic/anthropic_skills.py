@@ -85,6 +85,8 @@ async def main() -> None:
         # Since I'm using the pptx skill, the files will be PowerPoint presentations
         print("Generated files:")
         for idx, file in enumerate(files):
+            if file.file_id is None:
+                continue
             file_content = await client.anthropic_client.beta.files.download(  # type: ignore
                 file_id=file.file_id, betas=["files-api-2025-04-14"]
             )

@@ -37,13 +37,103 @@ public sealed class LocalShellExecutorTests
     }
 
     [Fact]
-    public void Policy_AllowList_OverridesDeny()
+    public void Policy_DenyList_TakesPrecedenceOverAllowList()
     {
+        // Under deny-first semantics an allow-list match does NOT override a
+        // deny-list match; deny wins.
         var policy = new ShellPolicy(
             allowList: ["^echo "],
             denyList: ["echo"]);
         var decision = policy.Evaluate(new ShellRequest("echo hello"));
-        Assert.True(decision.Allowed);
+        Assert.False(decision.Allowed);
+        Assert.Contains("deny pattern", decision.Reason ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Policy_BroadDenyList_OverridesSpecificAllowList()
+    {
+        // A broad deny pattern wins even when a more specific allow pattern
+        // would otherwise permit the command.
+        var policy = new ShellPolicy(
+            allowList: ["^git push origin main$"],
+            denyList: ["git push"]);
+        var decision = policy.Evaluate(new ShellRequest("git push origin main"));
+        Assert.False(decision.Allowed);
+        Assert.Contains("deny pattern", decision.Reason ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Policy_AllowList_AllowsMatch()
+    {
+        var policy = new ShellPolicy(allowList: ["^echo "]);
+        Assert.True(policy.Evaluate(new ShellRequest("echo hello")).Allowed);
+    }
+
+    [Fact]
+    public void Policy_AllowList_DeniesNonMatch()
+    {
+        var policy = new ShellPolicy(allowList: ["^echo "]);
+        var decision = policy.Evaluate(new ShellRequest("ls -la"));
+        Assert.False(decision.Allowed);
+        Assert.Contains("allow list", decision.Reason ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Policy_EmptyAllowList_DeniesEverything()
+    {
+        // A supplied-but-empty allow list matches nothing, so it denies all.
+        var policy = new ShellPolicy(allowList: []);
+        Assert.False(policy.Evaluate(new ShellRequest("echo hello")).Allowed);
+    }
+
+    [Fact]
+    public void Policy_NullAllowList_DisablesAllowList()
+    {
+        var policy = new ShellPolicy(allowList: null);
+        Assert.True(policy.Evaluate(new ShellRequest("echo hello")).Allowed);
+    }
+
+    [Fact]
+    public void Policy_Custom_CanOverrideDefaultAllowToDeny()
+    {
+        var policy = new ShellPolicy(
+            custom: req => req.Command.Contains("secret", StringComparison.OrdinalIgnoreCase)
+                ? ShellPolicyOutcome.Deny("custom blocked")
+                : null);
+        Assert.True(policy.Evaluate(new ShellRequest("echo hello")).Allowed);
+        var decision = policy.Evaluate(new ShellRequest("cat secret.txt"));
+        Assert.False(decision.Allowed);
+        Assert.Equal("custom blocked", decision.Reason);
+    }
+
+    [Fact]
+    public void Policy_Custom_NullReturn_LeavesDefaultAllow()
+    {
+        var policy = new ShellPolicy(custom: _ => null);
+        Assert.True(policy.Evaluate(new ShellRequest("echo hello")).Allowed);
+    }
+
+    [Fact]
+    public void Policy_Custom_DoesNotRunWhenDenyListMatches()
+    {
+        // Deny-list match short-circuits before the custom callback runs, so a
+        // permissive custom callback cannot re-enable a denied command.
+        var policy = new ShellPolicy(
+            denyList: ["echo"],
+            custom: _ => ShellPolicyOutcome.Allow);
+        Assert.False(policy.Evaluate(new ShellRequest("echo hello")).Allowed);
+    }
+
+    [Fact]
+    public void Policy_Custom_DoesNotOverrideAllowListDenial()
+    {
+        // An allow-list denial short-circuits before the custom callback runs,
+        // so a permissive custom callback cannot re-enable a command that is
+        // outside the allow list.
+        var policy = new ShellPolicy(
+            allowList: ["^echo "],
+            custom: _ => ShellPolicyOutcome.Allow);
+        Assert.False(policy.Evaluate(new ShellRequest("ls -la")).Allowed);
     }
 
     [Fact]

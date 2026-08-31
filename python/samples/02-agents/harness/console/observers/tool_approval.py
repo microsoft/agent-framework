@@ -84,23 +84,38 @@ class ToolApprovalObserver(ConsoleObserver):
         tool_name = self._format_tool_name(request)
         prompt = f"🔐 Tool approval: {tool_name}"
 
-        # TODO(westey-m): Add "Always approve" options when the framework supports
-        # CreateAlwaysApproveToolResponse / CreateAlwaysApproveToolWithArgumentsResponse.
-        choices = [
-            "Approve this call",
-            "Deny",
-        ]
+        approve_once = "Approve this call"
+        always_tool = "Always approve this tool (any arguments)"
+        always_tool_args = "Always approve this tool with these arguments"
+        deny = "Deny"
+        choices = [approve_once, always_tool, always_tool_args, deny]
 
         async def continuation(
             selection: str,
             ux: IUXStateDriver,
         ) -> Message | None:
-            from agent_framework import Message
+            from agent_framework import (
+                Message,
+                create_always_approve_tool_response,
+                create_always_approve_tool_with_arguments_response,
+            )
 
-            if selection == "Deny":
+            if selection == deny:
                 response_content = request.to_function_approval_response(approved=False)
                 action_label = "❌ Denied"
                 color = "red"
+            elif selection == always_tool:
+                response_content = create_always_approve_tool_response(
+                    request, reason="User chose to always approve this tool"
+                )
+                action_label = "✅ Always approved (any args)"
+                color = "green"
+            elif selection == always_tool_args:
+                response_content = create_always_approve_tool_with_arguments_response(
+                    request, reason="User chose to always approve this tool with these arguments"
+                )
+                action_label = "✅ Always approved (these args)"
+                color = "green"
             else:
                 response_content = request.to_function_approval_response(approved=True)
                 action_label = "✅ Approved"

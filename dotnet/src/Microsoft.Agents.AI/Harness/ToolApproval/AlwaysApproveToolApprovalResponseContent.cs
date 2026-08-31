@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -25,7 +23,6 @@ namespace Microsoft.Agents.AI;
 /// entries in the session state.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AlwaysApproveToolApprovalResponseContent : AIContent
 {
     /// <summary>

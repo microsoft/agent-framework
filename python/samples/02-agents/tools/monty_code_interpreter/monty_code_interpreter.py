@@ -8,7 +8,7 @@ from typing import Annotated, Any, Literal
 
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
-from agent_framework_monty import MontyExecuteCodeTool
+from agent_framework.monty import MontyExecuteCodeTool
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -19,10 +19,10 @@ description advertises the registered sandbox tools (as typed async functions
 and via `call_tool(...)`) plus the Monty DSL, so no extra CodeAct-specific
 agent instructions are required.
 
-Note: `agent-framework-monty` is an alpha package and is not yet part of
-`agent-framework[all]`. Install it explicitly with:
+`agent-framework-monty` is a beta package included in `agent-framework[all]`.
+Install the main package with:
 
-    pip install agent-framework agent-framework-monty --pre
+    pip install agent-framework-monty agent-framework-foundry --pre
 """
 
 load_dotenv()

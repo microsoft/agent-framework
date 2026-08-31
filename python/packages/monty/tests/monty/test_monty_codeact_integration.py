@@ -524,7 +524,7 @@ async def test_approval_required_tool_gates_execute_code_end_to_end() -> None:
 
 async def test_agent_runs_monty_codeact_end_to_end() -> None:
     """A fake chat client emits one execute_code tool call; Monty runs it end-to-end."""
-    from collections.abc import Awaitable, Mapping, MutableSequence
+    from collections.abc import Awaitable, Mapping, Sequence
 
     from agent_framework import (
         BaseChatClient,
@@ -543,7 +543,7 @@ async def test_agent_runs_monty_codeact_end_to_end() -> None:
         def _inner_get_response(
             self,
             *,
-            messages: MutableSequence[Message],
+            messages: Sequence[Message],
             stream: bool,
             options: Mapping[str, Any],
             **kwargs: Any,

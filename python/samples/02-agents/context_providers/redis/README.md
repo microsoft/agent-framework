@@ -20,7 +20,7 @@ This folder contains an example demonstrating how to use the Redis context provi
 
 1. A running Redis with RediSearch (Redis Stack or a managed service)
 2. Python environment with Agent Framework Redis extra installed
-3. Azure AI Foundry project endpoint and Azure OpenAI Responses deployment
+3. Microsoft Foundry project endpoint and Azure OpenAI Responses deployment
 4. Optional: OpenAI API key if using vector embeddings
 
 ### Install the package
@@ -51,7 +51,7 @@ See quickstart: `https://learn.microsoft.com/azure/redis/quickstart-create-manag
 
 ### Environment variables
 
-- `FOUNDRY_PROJECT_ENDPOINT` (required): Azure AI Foundry project endpoint for `FoundryChatClient`
+- `FOUNDRY_PROJECT_ENDPOINT` (required): Microsoft Foundry project endpoint for `FoundryChatClient`
 - `FOUNDRY_MODEL` (required): Foundry model deployment name
 - `OPENAI_API_KEY` (optional): Required only if you set `vectorizer_choice="openai"` to enable hybrid search.
 

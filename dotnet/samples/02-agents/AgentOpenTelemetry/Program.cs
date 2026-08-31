@@ -3,7 +3,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Agents.AI;
@@ -96,8 +96,8 @@ Console.WriteLine("""
     Type your message and press Enter. Type 'exit' or empty message to quit.
     """);
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT environment variable is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT environment variable is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // Log application startup
 appLogger.LogInformation("OpenTelemetry Aspire Demo application started");
@@ -112,20 +112,19 @@ static async Task<string> GetWeatherAsync([Description("The location to get the 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-using var instrumentedChatClient = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
-        .AsIChatClient() // Converts a native OpenAI SDK ChatClient into a Microsoft.Extensions.AI.IChatClient
-        .AsBuilder()
-        .UseFunctionInvocation()
-        .UseOpenTelemetry(sourceName: SourceName, configure: (cfg) => cfg.EnableSensitiveData = true) // enable telemetry at the chat client level
-        .Build();
-
 appLogger.LogInformation("Creating Agent with OpenTelemetry instrumentation");
 // Create the agent with the instrumented chat client
-var agent = new ChatClientAgent(instrumentedChatClient,
-    name: "OpenTelemetryDemoAgent",
-    instructions: "You are a helpful assistant that provides concise and informative responses.",
-    tools: [AIFunctionFactory.Create(GetWeatherAsync)])
+var agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
+    .AsAIAgent(
+        model: deploymentName,
+        instructions: "You are a helpful assistant that provides concise and informative responses.",
+        name: "OpenTelemetryDemoAgent",
+        tools: [AIFunctionFactory.Create(GetWeatherAsync)],
+        clientFactory: client => client
+            .AsBuilder()
+            .UseFunctionInvocation()
+            .UseOpenTelemetry(sourceName: SourceName, configure: (cfg) => cfg.EnableSensitiveData = true) // enable telemetry at the chat client level
+            .Build())
     .AsBuilder()
     .UseOpenTelemetry(sourceName: SourceName, configure: (cfg) => cfg.EnableSensitiveData = true) // enable telemetry at the agent level
     .Build();

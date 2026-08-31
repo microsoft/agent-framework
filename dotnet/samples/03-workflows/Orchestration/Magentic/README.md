@@ -15,7 +15,7 @@ This sample showcases the Magentic Orchestration Pattern in .NET, setting up a t
 
 ## Prerequisites
 
-- `FOUNDRY_PROJECT_ENDPOINT` set to your Azure AI Foundry project endpoint
+- `FOUNDRY_PROJECT_ENDPOINT` set to your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL` set to your model deployment name (defaults to `gpt-5.4-mini`)
 - `az login` completed before running the sample
 

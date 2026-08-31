@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <NoWarn>$(NoWarn);MEAI001;MAAIW001</NoWarn>
+    <NoWarn>$(NoWarn);MEAI001;MAAIW001;MAAI001</NoWarn>
   </PropertyGroup>
 
   <!-- Evaluation tests require net8.0+ (MEAI.Evaluation does not support legacy TFMs) -->
@@ -19,7 +19,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="FluentAssertions" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
     <PackageReference Include="System.Linq.AsyncEnumerable" />
   </ItemGroup>

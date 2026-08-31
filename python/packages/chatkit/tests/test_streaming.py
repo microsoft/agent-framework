@@ -2,10 +2,14 @@
 
 """Tests for Agent Framework to ChatKit streaming utilities."""
 
+from collections.abc import AsyncIterator
 from unittest.mock import Mock
 
 from agent_framework import AgentResponseUpdate, Content
 from chatkit.types import (
+    AssistantMessageContent,
+    AssistantMessageContentPartTextDelta,
+    AssistantMessageItem,
     ThreadItemAddedEvent,
     ThreadItemDoneEvent,
     ThreadItemUpdated,
@@ -20,7 +24,7 @@ class TestStreamAgentResponse:
     async def test_stream_empty_response(self):
         """Test streaming empty response."""
 
-        async def empty_stream():
+        async def empty_stream() -> AsyncIterator[AgentResponseUpdate]:
             return
             yield  # Make it a generator
 
@@ -49,10 +53,13 @@ class TestStreamAgentResponse:
         assert isinstance(events[2], ThreadItemDoneEvent)
 
         # Check delta event
+        assert isinstance(events[1].update, AssistantMessageContentPartTextDelta)
         assert events[1].update.delta == "Hello world"
 
         # Check final message content
+        assert isinstance(events[2].item, AssistantMessageItem)
         assert len(events[2].item.content) == 1
+        assert isinstance(events[2].item.content[0], AssistantMessageContent)
         assert events[2].item.content[0].text == "Hello world"
 
     async def test_stream_multiple_text_updates(self):
@@ -76,12 +83,16 @@ class TestStreamAgentResponse:
         assert isinstance(events[3], ThreadItemDoneEvent)
 
         # Check delta events
+        assert isinstance(events[1].update, AssistantMessageContentPartTextDelta)
+        assert isinstance(events[2].update, AssistantMessageContentPartTextDelta)
         assert events[1].update.delta == "Hello "
         assert events[2].update.delta == "world!"
 
         # Check final accumulated text
         final_message_event = events[-1]
         assert isinstance(final_message_event, ThreadItemDoneEvent)
+        assert isinstance(final_message_event.item, AssistantMessageItem)
+        assert isinstance(final_message_event.item.content[0], AssistantMessageContent)
         assert final_message_event.item.content[0].text == "Hello world!"
 
     async def test_stream_with_custom_id_generator(self):
@@ -101,6 +112,7 @@ class TestStreamAgentResponse:
 
         # Check that custom IDs are used
         message_added_event = events[0]
+        assert isinstance(message_added_event, ThreadItemAddedEvent)
         assert message_added_event.item.id == "custom_msg_123"
 
     async def test_stream_empty_content_updates(self):
@@ -120,6 +132,7 @@ class TestStreamAgentResponse:
         assert isinstance(events[1], ThreadItemDoneEvent)
 
         # Final message should have empty content
+        assert isinstance(events[1].item, AssistantMessageItem)
         assert len(events[1].item.content) == 0
 
     async def test_stream_non_text_content(self):

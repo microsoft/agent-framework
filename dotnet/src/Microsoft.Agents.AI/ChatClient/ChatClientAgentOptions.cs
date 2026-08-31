@@ -62,6 +62,19 @@ public sealed class ChatClientAgentOptions
     public bool UseProvidedChatClientAsIs { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether functions may be invoked concurrently when a model response
+    /// contains multiple function calls.
+    /// </summary>
+    /// <remarks>
+    /// This setting is independent of <see cref="ChatOptions.AllowMultipleToolCalls"/>, which controls whether
+    /// a model may return multiple tool calls in a single response. The default is <see langword="false"/>.
+    /// This option has no effect when <see cref="UseProvidedChatClientAsIs"/> is <see langword="true"/>.
+    /// When using a custom chat client stack, configure <see cref="FunctionInvokingChatClient.AllowConcurrentInvocation"/>
+    /// directly on its <see cref="FunctionInvokingChatClient"/> instance.
+    /// </remarks>
+    public bool AllowConcurrentInvocation { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether to set the <see cref="ChatClientAgent.ChatHistoryProvider"/> to <see langword="null"/>
     /// if the underlying AI service indicates that it manages chat history (for example, by returning a conversation id in the response), but a <see cref="ChatHistoryProvider"/> is configured for the agent.
     /// </summary>
@@ -148,7 +161,6 @@ public sealed class ChatClientAgentOptions
     /// <value>
     /// Default is <see langword="false"/>.
     /// </value>
-    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public bool RequirePerServiceCallChatHistoryPersistence { get; set; }
 
     /// <summary>
@@ -178,12 +190,11 @@ public sealed class ChatClientAgentOptions
     /// <value>
     /// Default is <see langword="false"/>.
     /// </value>
-    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public bool EnableMessageInjection { get; set; }
 
     /// <summary>
-    /// Gets or sets a value indicating whether to store automatically approved function calls in the session state
-    /// for tools that do not require approval when they are returned alongside tools that do.
+    /// Gets or sets a value indicating whether to disable storing automatically approved function calls in the
+    /// session state for tools that do not require approval when they are returned alongside tools that do.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -192,16 +203,82 @@ public sealed class ChatClientAgentOptions
     /// items to <see cref="ToolApprovalRequestContent"/>, even for tools that do not require approval.
     /// </para>
     /// <para>
-    /// Setting this property to <see langword="true"/> injects an <see cref="NonApprovalRequiredFunctionBypassingChatClient"/>
-    /// decorator above <see cref="FunctionInvokingChatClient"/> in the pipeline. This decorator identifies approval
-    /// requests for non-approval-required tools, removes them from the response, and stores them in the session.
+    /// By default (when this property is <see langword="false"/>), an <see cref="ApprovalNotRequiredFunctionBypassingChatClient"/>
+    /// decorator is injected above <see cref="FunctionInvokingChatClient"/> in the pipeline. This decorator identifies approval
+    /// requests for tools that do not require approval, removes them from the response, and stores them in the session.
     /// On the next request, the stored items are automatically re-injected as approved, so the caller only needs
     /// to handle approval requests for tools that truly require human approval.
     /// </para>
     /// <para>
+    /// Set this property to <see langword="true"/> to disable this behavior, in which case all tool calls in a
+    /// response containing an approval-required tool are surfaced as approval requests.
+    /// </para>
+    /// <para>
     /// This option has no effect when <see cref="UseProvidedChatClientAsIs"/> is <see langword="true"/>.
-    /// When using a custom chat client stack, you can add an <see cref="NonApprovalRequiredFunctionBypassingChatClient"/>
-    /// manually via the <see cref="ChatClientBuilderExtensions.UseNonApprovalRequiredFunctionBypassing"/>
+    /// When using a custom chat client stack, you can add an <see cref="ApprovalNotRequiredFunctionBypassingChatClient"/>
+    /// manually via the <see cref="ChatClientBuilderExtensions.UseApprovalNotRequiredFunctionBypassing"/>
+    /// extension method.
+    /// </para>
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="false"/>.
+    /// </value>
+    public bool DisableApprovalNotRequiredFunctionBypassing { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to disable binding inbound tool-approval responses to the
+    /// model-originated approval requests that the framework surfaced.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// By default (when this property is <see langword="false"/>), an <see cref="ApprovalResponseBindingChatClient"/>
+    /// decorator is injected as the outermost decorator above <see cref="FunctionInvokingChatClient"/>. It records each
+    /// <see cref="ToolApprovalRequestContent"/> the framework surfaces and, on the next request, binds every
+    /// <see cref="ToolApprovalResponseContent"/> to its recorded request: the response's tool call is rebound to the
+    /// model-originated call, and only approvals tied to a genuine, framework-issued request take effect. This keeps an
+    /// approved call aligned with exactly what a human was asked to approve.
+    /// </para>
+    /// <para>
+    /// Set this property to <see langword="true"/> to disable this behavior. Keeping it enabled is recommended, as it
+    /// strengthens the human-in-the-loop approval control; disable it only when approval binding is enforced elsewhere.
+    /// </para>
+    /// <para>
+    /// This option has no effect when <see cref="UseProvidedChatClientAsIs"/> is <see langword="true"/>.
+    /// When using a custom chat client stack, you can add an <see cref="ApprovalResponseBindingChatClient"/>
+    /// manually via the <see cref="ChatClientBuilderExtensions.UseApprovalResponseBinding"/> extension method.
+    /// </para>
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="false"/>.
+    /// </value>
+    public bool DisableApprovalResponseBinding { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to enable bypassing that stores invocable (backend) function
+    /// calls in the session state and executes them on the next request when they are returned alongside
+    /// declaration-only (frontend) function calls in the same response.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="FunctionInvokingChatClient"/> terminates the function-calling loop as soon as it encounters
+    /// a non-invocable (declaration-only) <see cref="FunctionCallContent"/>, returning every
+    /// <see cref="FunctionCallContent"/> in that iteration — including invocable backend calls — to the caller
+    /// unexecuted. When the caller only resolves the declaration-only call (for example an AG-UI frontend
+    /// tool), the backend call's <c>call_id</c> is left orphaned, which causes the AI provider to reject the
+    /// next request.
+    /// </para>
+    /// <para>
+    /// When this property is set to <see langword="true"/>, an <see cref="InvocableFunctionBypassingChatClient"/>
+    /// decorator is injected above <see cref="FunctionInvokingChatClient"/> in the pipeline. For responses that
+    /// contain both invocable and declaration-only function calls, the decorator removes the invocable calls,
+    /// stores them in the session, and returns only the declaration-only calls to the caller. On the next
+    /// request the stored calls are re-injected as pre-approved responses so
+    /// <see cref="FunctionInvokingChatClient"/> reconstructs and executes them.
+    /// </para>
+    /// <para>
+    /// This option has no effect when <see cref="UseProvidedChatClientAsIs"/> is <see langword="true"/>.
+    /// When using a custom chat client stack, you can add an <see cref="InvocableFunctionBypassingChatClient"/>
+    /// manually via the <see cref="ChatClientBuilderExtensions.UseInvocableFunctionBypassing"/>
     /// extension method.
     /// </para>
     /// </remarks>
@@ -209,7 +286,7 @@ public sealed class ChatClientAgentOptions
     /// Default is <see langword="false"/>.
     /// </value>
     [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-    public bool EnableNonApprovalRequiredFunctionBypassing { get; set; }
+    public bool EnableInvocableFunctionBypassing { get; set; }
 
     /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
@@ -224,11 +301,14 @@ public sealed class ChatClientAgentOptions
             ChatHistoryProvider = this.ChatHistoryProvider,
             AIContextProviders = this.AIContextProviders is null ? null : new List<AIContextProvider>(this.AIContextProviders),
             UseProvidedChatClientAsIs = this.UseProvidedChatClientAsIs,
+            AllowConcurrentInvocation = this.AllowConcurrentInvocation,
             ClearOnChatHistoryProviderConflict = this.ClearOnChatHistoryProviderConflict,
             WarnOnChatHistoryProviderConflict = this.WarnOnChatHistoryProviderConflict,
             ThrowOnChatHistoryProviderConflict = this.ThrowOnChatHistoryProviderConflict,
             RequirePerServiceCallChatHistoryPersistence = this.RequirePerServiceCallChatHistoryPersistence,
             EnableMessageInjection = this.EnableMessageInjection,
-            EnableNonApprovalRequiredFunctionBypassing = this.EnableNonApprovalRequiredFunctionBypassing,
+            DisableApprovalNotRequiredFunctionBypassing = this.DisableApprovalNotRequiredFunctionBypassing,
+            DisableApprovalResponseBinding = this.DisableApprovalResponseBinding,
+            EnableInvocableFunctionBypassing = this.EnableInvocableFunctionBypassing,
         };
 }

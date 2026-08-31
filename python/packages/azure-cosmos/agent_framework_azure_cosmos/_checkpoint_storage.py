@@ -8,7 +8,7 @@ import logging
 from typing import Any, TypedDict
 
 from agent_framework._settings import SecretString, load_settings
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework._workflows._checkpoint import CheckpointID, WorkflowCheckpoint
 from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from agent_framework.exceptions import WorkflowCheckpointException
@@ -17,6 +17,8 @@ from azure.core.credentials_async import AsyncTokenCredential
 from azure.cosmos import PartitionKey
 from azure.cosmos.aio import ContainerProxy, CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
+
+from ._feature_usage import FeatureIndex
 
 AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
@@ -52,8 +54,9 @@ class CosmosCheckpointStorage:
 
     By default, checkpoint deserialization is restricted to a built-in set of safe
     Python types (primitives, datetime, uuid, ...) and all ``agent_framework``
-    internal types.  To allow additional application-specific types, pass them via
-    the ``allowed_checkpoint_types`` parameter using ``"module:qualname"`` format.
+    internal types. To allow additional application-specific types, register them
+    with ``register_checkpoint_type`` or pass them via the
+    ``allowed_checkpoint_types`` parameter using ``"module:qualname"`` format.
 
     Example:
 
@@ -214,6 +217,7 @@ class CosmosCheckpointStorage:
         Returns:
             The unique ID of the saved checkpoint.
         """
+        mark_feature_used(FeatureIndex.AZURE_COSMOS)
         await self._ensure_container_proxy()
 
         checkpoint_dict = checkpoint.to_dict()
@@ -242,6 +246,7 @@ class CosmosCheckpointStorage:
             WorkflowCheckpointException: If no checkpoint with the given ID exists,
                 or if multiple checkpoints share the same ID across workflows.
         """
+        mark_feature_used(FeatureIndex.AZURE_COSMOS)
         await self._ensure_container_proxy()
 
         query = "SELECT * FROM c WHERE c.checkpoint_id = @checkpoint_id"

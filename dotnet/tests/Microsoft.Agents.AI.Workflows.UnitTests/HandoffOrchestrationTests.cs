@@ -9,7 +9,6 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Agents.AI.Workflows.Specialized.Magentic;
@@ -80,10 +79,10 @@ public class HandoffOrchestrationTests
         FieldInfo field = typeof(HandoffWorkflowBuilder).BaseType!.GetField("_targets", BindingFlags.Instance | BindingFlags.NonPublic)!;
         Dictionary<AIAgent, HashSet<HandoffTarget>>? targets = field.GetValue(handoffs) as Dictionary<AIAgent, HashSet<HandoffTarget>>;
 
-        targets.Should().NotBeNull();
+        Assert.NotNull(targets);
 
         HandoffTarget target = targets[agent].Single();
-        target.Reason.Should().Be("instructions");
+        Assert.Equal("instructions", target.Reason);
     }
 
     [Fact]
@@ -319,6 +318,99 @@ public class HandoffOrchestrationTests
         Assert.Contains(capturedThirdAgentMessages, m => m.Text!.Contains("Routing to third agent"));
         Assert.DoesNotContain(capturedThirdAgentMessages, m => m.Contents.Any(c => c is FunctionCallContent fcc && fcc.Name.StartsWith("handoff_to_", StringComparison.Ordinal)));
         Assert.DoesNotContain(capturedThirdAgentMessages, m => m.Role == ChatRole.Tool && m.Contents.Any(c => c is FunctionResultContent));
+    }
+
+    [Fact]
+    public async Task Handoffs_MultipleTransfers_AsAgentPreservesCallResultOrderAsync()
+    {
+        // Arrange
+        string[] expected = ["call:call1", "result:call1", "call:call2", "result:call2", "text:Hello from agent3"];
+
+        AIAgent nonStreamingAgent = CreateThreeAgentHandoffWorkflow().AsAIAgent(name: "HandoffWorkflow");
+        AgentSession nonStreamingSession = await nonStreamingAgent.CreateSessionAsync();
+
+        AIAgent streamingAgent = CreateThreeAgentHandoffWorkflow().AsAIAgent(name: "StreamingHandoffWorkflow");
+        AgentSession streamingSession = await streamingAgent.CreateSessionAsync();
+
+        // Act
+        AgentResponse nonStreamingResponse = await nonStreamingAgent.RunAsync("abc", nonStreamingSession);
+
+        List<AgentResponseUpdate> streamingUpdates = [];
+        await foreach (AgentResponseUpdate update in streamingAgent.RunStreamingAsync("abc", streamingSession))
+        {
+            if (update.Contents.Count > 0)
+            {
+                streamingUpdates.Add(update);
+            }
+        }
+        AgentResponse streamingResponse = streamingUpdates.ToAgentResponse();
+
+        // Assert
+        Assert.Equal(expected, GetMessageSequence(nonStreamingResponse.Messages));
+        Assert.Equal(expected, GetMessageSequence(streamingResponse.Messages));
+
+        WorkflowSession nonStreamingWorkflowSession = Assert.IsType<WorkflowSession>(nonStreamingSession);
+        WorkflowSession streamingWorkflowSession = Assert.IsType<WorkflowSession>(streamingSession);
+
+        Assert.Equal(expected, GetMessageSequence(nonStreamingWorkflowSession.ChatHistoryProvider.GetAllMessages(nonStreamingWorkflowSession).Skip(1)));
+        Assert.Equal(expected, GetMessageSequence(streamingWorkflowSession.ChatHistoryProvider.GetAllMessages(streamingWorkflowSession).Skip(1)));
+    }
+
+    [Fact]
+    public async Task Handoffs_ReturnToInitialAgent_AsAgentKeepsInvocationsSeparateAsync()
+    {
+        // Arrange
+        int initialAgentInvocationCount = 0;
+
+        var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            initialAgentInvocationCount++;
+            if (initialAgentInvocationCount == 1)
+            {
+                string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+                Assert.NotNull(transferFuncName);
+                return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]) { MessageId = "message-initial-1" })
+                {
+                    ResponseId = "response-initial-1",
+                };
+            }
+
+            return new(new ChatMessage(ChatRole.Assistant, "Final response") { MessageId = "message-initial-2" })
+            {
+                ResponseId = "response-initial-2",
+            };
+        }), name: "initialAgent");
+
+        var secondAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call2", transferFuncName)]) { MessageId = "message-second" })
+            {
+                ResponseId = "response-second",
+            };
+        }), name: "secondAgent", description: "The second agent");
+
+        Workflow workflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
+            .WithHandoff(initialAgent, secondAgent)
+            .WithHandoff(secondAgent, initialAgent)
+            .Build();
+        AIAgent hostAgent = workflow.AsAIAgent(name: "PingPongHandoffWorkflow");
+
+        // Act
+        AgentResponse response = await hostAgent.RunAsync("abc");
+
+        // Assert
+        Assert.Equal(2, initialAgentInvocationCount);
+        Assert.Equal(
+            [
+                "call:call1",
+                "result:call1",
+                "call:call2",
+                "result:call2",
+                "text:Final response",
+            ],
+            GetMessageSequence(response.Messages));
     }
 
     [Fact]
@@ -585,14 +677,13 @@ public class HandoffOrchestrationTests
         Assert.Null(result);
         Assert.NotNull(requests);
 
-        requests.Should().HaveCount(1);
+        Assert.Single(requests);
         ExternalRequest request = requests[0].Request;
 
-        ToolApprovalRequestContent approvalRequest =
-            request.Data.As<ToolApprovalRequestContent>().Should().NotBeNull()
-                                                              .And.Subject.As<ToolApprovalRequestContent>();
+        ToolApprovalRequestContent? approvalRequest = request.Data.As<ToolApprovalRequestContent>();
+        Assert.NotNull(approvalRequest);
 
-        approvalRequest.ToolCall.CallId.Should().Be(SomeOtherFunctionCallId);
+        Assert.Equal(SomeOtherFunctionCallId, approvalRequest.ToolCall.CallId);
 
         ExternalResponse response = request.CreateResponse(approvalRequest.CreateResponse(false, "Denied"));
 
@@ -704,14 +795,14 @@ public class HandoffOrchestrationTests
         Assert.Null(result);
         Assert.NotNull(requests);
 
-        requests.Should().HaveCount(1);
+        Assert.Single(requests);
         ExternalRequest request = requests[0].Request;
 
-        FunctionCallContent functionCall = request.Data.As<FunctionCallContent>().Should().NotBeNull()
-                                                                                 .And.Subject.As<FunctionCallContent>();
+        FunctionCallContent? functionCall = request.Data.As<FunctionCallContent>();
+        Assert.NotNull(functionCall);
 
-        functionCall.CallId.Should().Be(SomeOtherFunctionCallId);
-        functionCall.Name.Should().Be(SomeOtherFunctionName);
+        Assert.Equal(SomeOtherFunctionCallId, functionCall.CallId);
+        Assert.Equal(SomeOtherFunctionName, functionCall.Name);
 
         ExternalResponse response = request.CreateResponse(new FunctionResultContent(functionCall.CallId, true));
 
@@ -957,7 +1048,7 @@ public class HandoffOrchestrationTests
             }
 
             // If there are still unmatched calls, we have an error
-            callResolver.UnmatchedCalls.Should().BeEmpty();
+            Assert.Empty(callResolver.UnmatchedCalls ?? []);
 
             // Now we can invoke the inner response factory to generate the response
             ChatResponse response = innerResponseFactory(incomingMessages, options);
@@ -1537,6 +1628,57 @@ public class HandoffOrchestrationTests
     private static Task<WorkflowRunResult> RunWorkflowAsync(
         Workflow workflow, List<ChatMessage> input, ExecutionEnvironment executionEnvironment = ExecutionEnvironment.InProcess_Lockstep)
         => RunWorkflowCheckpointedAsync(workflow, input, executionEnvironment.ToWorkflowExecutionEnvironment());
+
+    private static Workflow CreateThreeAgentHandoffWorkflow()
+    {
+        var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+            return new(new ChatMessage(ChatRole.Assistant, [new TextContent("Routing to second agent"), new FunctionCallContent("call1", transferFuncName)]))
+            {
+                ResponseId = "response-initial",
+            };
+        }), name: "initialAgent");
+
+        var secondAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+            return new(new ChatMessage(ChatRole.Assistant, [new TextContent("Routing to third agent"), new FunctionCallContent("call2", transferFuncName)]))
+            {
+                ResponseId = "response-second",
+            };
+        }), name: "secondAgent", description: "The second agent");
+
+        var thirdAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+            new(new ChatMessage(ChatRole.Assistant, "Hello from agent3") { MessageId = "message-third" })
+            {
+                ResponseId = "response-third",
+            }),
+            name: "thirdAgent",
+            description: "The third agent");
+
+        return AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
+            .WithHandoff(initialAgent, secondAgent)
+            .WithHandoff(secondAgent, thirdAgent)
+            .Build();
+    }
+
+    private static string[] GetMessageSequence(IEnumerable<ChatMessage> messages)
+    {
+        return messages.Select(message =>
+        {
+            FunctionCallContent? call = message.Contents.OfType<FunctionCallContent>().FirstOrDefault();
+            if (call is not null)
+            {
+                return $"call:{call.CallId}";
+            }
+
+            FunctionResultContent? result = message.Contents.OfType<FunctionResultContent>().FirstOrDefault();
+            return result is not null ? $"result:{result.CallId}" : $"text:{message.Text}";
+        }).ToArray();
+    }
 
     private sealed class CapturingAgent(string name, string description, string textToCapture) : AIAgent
     {

@@ -6,6 +6,7 @@ using Azure.AI.Projects;
 using Azure.Identity;
 using Azure.Search.Documents;
 using Azure.Search.Documents.Models;
+using Foundry.Hosting.IntegrationTests.TestContainer;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
 using Microsoft.Agents.AI.Foundry.Hosting;
@@ -26,21 +27,40 @@ var projectEndpoint = new Uri(Environment.GetEnvironmentVariable("FOUNDRY_PROJEC
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set."));
 var deployment = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
 
-var projectClient = new AIProjectClient(projectEndpoint, new DefaultAzureCredential());
+var credential = new DefaultAzureCredential();
+var projectClient = new AIProjectClient(projectEndpoint, credential);
 
 AIAgent agent = scenario switch
 {
     "happy-path" => CreateHappyPathAgent(projectClient, deployment),
+    "unsupported-protocol" => CreateHappyPathAgent(projectClient, deployment),
+    "store-config" => CreateStoreConfigAgent(projectClient, deployment),
+    "downstream-store" => CreateDownstreamStoreAgent(projectClient, deployment),
     "tool-calling" => CreateToolCallingAgent(projectClient, deployment),
     "tool-calling-approval" => CreateToolCallingApprovalAgent(projectClient, deployment),
     "mcp-toolbox" => CreateMcpToolboxAgent(projectClient, deployment),
+    "toolbox-oauth-consent" => CreateToolboxOAuthConsentAgent(projectClient, deployment),
     "custom-storage" => CreateCustomStorageAgent(projectClient, deployment),
     "memory" => await CreateMemoryAgentAsync(projectClient, deployment).ConfigureAwait(false),
     "azure-search-rag" => CreateAzureSearchRagAgent(projectClient, deployment),
     "session-files" => CreateSessionFilesAgent(projectClient, deployment),
     "agent-skills" => CreateAgentSkillsAgent(projectClient, deployment),
+    "user-identity" => CreateUserIdentityAgent(projectClient, deployment),
+    "resilient-workflow" => ResilientWorkflowAgent.Create(),
+    "steerable-long-running" => new SteerableLongRunningAgent(),
     _ => throw new InvalidOperationException($"Unknown IT_SCENARIO '{scenario}'.")
 };
+
+if (scenario == "happy-path")
+{
+    var agentHostBuilder = AgentHost.CreateBuilder(args);
+    agentHostBuilder.Services.AddFoundryResponses(agent);
+    agentHostBuilder.RegisterProtocol("responses", endpoints => endpoints.MapFoundryResponses());
+
+    var agentHostApp = agentHostBuilder.Build();
+    agentHostApp.Run();
+    return;
+}
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -50,7 +70,22 @@ if (!string.IsNullOrEmpty(port))
     builder.WebHost.UseUrls($"http://+:{port}");
 }
 
-builder.Services.AddFoundryResponses(agent);
+builder.Services.AddFoundryResponses(agent, configure: options =>
+{
+    options.ResilientBackground =
+        scenario is "resilient-workflow" or "steerable-long-running";
+    options.SteerableConversations = scenario == "steerable-long-running";
+});
+
+// toolbox-oauth-consent scenario: pre-register a Foundry toolbox whose tool source is fronted by a
+// per-user OAuth connection. IT_TOOLBOX_NAME names that toolbox (the fixture sets it). With the
+// startup-deferral fix the container stays routable even though the toolbox cannot enumerate without
+// a consented user, and the first user request surfaces an oauth_consent_request.
+var consentToolboxName = Environment.GetEnvironmentVariable("IT_TOOLBOX_NAME");
+if (!string.IsNullOrEmpty(consentToolboxName))
+{
+    builder.Services.AddFoundryToolboxes(credential, consentToolboxName);
+}
 
 var app = builder.Build();
 app.MapFoundryResponses();
@@ -59,9 +94,34 @@ app.Run();
 static AIAgent CreateHappyPathAgent(AIProjectClient client, string deployment) =>
     client.AsAIAgent(
         model: deployment,
-        instructions: "You are a helpful AI assistant. Always reply with exactly the single word ECHO unless the user explicitly asks a question that requires a different answer.",
+        instructions: "You are a helpful assistant. Answer the user's question concisely and accurately. " +
+                      "At the very end of every reply, append the marker token CONTAINER-OK on its own line.",
         name: "happy-path-agent",
         description: "Round trip and conversation test agent.");
+
+// store-config scenario: a neutral assistant used to exercise store/session semantics
+// (store=true/false, previous_response_id and conversation_id forks, multi-turn recall). It has no
+// marker instruction so it never contaminates the content/recall assertions.
+static AIAgent CreateStoreConfigAgent(AIProjectClient client, string deployment) =>
+    client.AsAIAgent(
+        model: deployment,
+        instructions: "You are a helpful assistant. Answer the user's question concisely and accurately, " +
+                      "and use any facts the user told you earlier in the conversation.",
+        name: "store-config-agent",
+        description: "Store and session semantics test agent.");
+
+// downstream-store scenario: an ordinary Foundry ChatClientAgent, like the first hosted agent sample,
+// wrapped so the caller is told which conversation the agent's own run left behind on the service. The
+// platform already records the hosted turn in the caller's conversation; anything the agent's run also
+// leaves behind is a second copy of the same turn, on a trail nobody reads.
+static AIAgent CreateDownstreamStoreAgent(AIProjectClient client, string deployment) =>
+    new DownstreamConversationReportingAgent(
+        client.AsAIAgent(
+            model: deployment,
+            instructions: "You are a helpful assistant. Answer the user's question concisely and accurately, " +
+                          "and use any facts the user told you earlier in the conversation.",
+            name: "downstream-store-agent",
+            description: "Downstream store test agent."));
 
 static AIAgent CreateToolCallingAgent(AIProjectClient client, string deployment) =>
     client.AsAIAgent(
@@ -92,6 +152,18 @@ static AIAgent CreateMcpToolboxAgent(AIProjectClient client, string deployment) 
         instructions: "You are an assistant with access to Microsoft Learn documentation via MCP.",
         name: "mcp-toolbox-agent",
         description: "MCP toolbox test agent (placeholder).");
+
+// toolbox-oauth-consent scenario: a plain agent whose tools come from a pre-registered Foundry
+// toolbox (wired via AddFoundryToolboxes from IT_TOOLBOX_NAME). The toolbox's tool source requires
+// per-user OAuth consent, so the first request that needs the tool surfaces an oauth_consent_request
+// instead of running the tool.
+static AIAgent CreateToolboxOAuthConsentAgent(AIProjectClient client, string deployment) =>
+    client.AsAIAgent(
+        model: deployment,
+        instructions: "You are an assistant that can act on the user's behalf using OAuth-protected tools. " +
+                      "When the user asks you to do something that needs such a tool, call it.",
+        name: "toolbox-oauth-consent-agent",
+        description: "Per-user OAuth toolbox consent test agent.");
 
 static AIAgent CreateCustomStorageAgent(AIProjectClient client, string deployment) =>
     // TODO: substitute custom IResponsesStorageProvider in DI.
@@ -157,6 +229,12 @@ static Func<string, CancellationToken, Task<IEnumerable<TextSearchProvider.TextS
 
         return results;
     };
+// user-identity scenario: returns USER-ID:<platform-user-key> without calling a model so the
+// assertion works even when the subscription has no OpenAI chat deployment. The hosting layer
+// writes HostedSessionContext from x-agent-user-id before RunCoreAsync.
+static AIAgent CreateUserIdentityAgent(AIProjectClient _, string __) =>
+    new UserIdentityEchoAgent();
+
 // session-files scenario: agent reads files from $HOME inside the per-session sandbox volume.
 // Mirrors the dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Files sample.
 static AIAgent CreateSessionFilesAgent(AIProjectClient client, string deployment) =>
@@ -276,7 +354,13 @@ static AIAgent CreateAgentSkillsAgent(AIProjectClient client, string deployment)
             Instructions = "You are a customer-support assistant for Contoso Outdoors.",
         },
         AIContextProviders = [skillsProvider]
-    });
+    })
+    .AsBuilder()
+    .UseToolApproval(new ToolApprovalAgentOptions
+    {
+        AutoApprovalRules = [AgentSkillsProvider.AllToolsAutoApprovalRule],
+    })
+    .Build();
 }
 #pragma warning restore MEAI001
 

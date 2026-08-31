@@ -113,7 +113,7 @@ Implement a hybrid strategy where common tools use generic `AITool`-derived abst
 
 ### AI Agent Tool Types Availability
 
-Tool Type | Azure AI Foundry Agent Service | OpenAI Assistant API | OpenAI ChatCompletion API | OpenAI Responses API | Amazon Bedrock Agents | Google | Anthropic | Description
+Tool Type | Microsoft Foundry Agent Service | OpenAI Assistant API | OpenAI ChatCompletion API | OpenAI Responses API | Amazon Bedrock Agents | Google | Anthropic | Description
 -- | -- | -- | -- | -- | -- | -- | -- | --
 Function Calling | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | Enables custom, stateless functions to define specific agent behaviors.
 Code Interpreter | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | Allows agents to execute code for tasks like data analysis or problem-solving.
@@ -132,7 +132,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
 
 #### Function Calling
 <details>
-  <summary>Azure AI Foundry Agent Service</summary>
+  <summary>Microsoft Foundry Agent Service</summary>
   Source: <a href="https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/function-calling?pivots=rest">https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/function-calling?pivots=rest</a>
 
   Message Request:
@@ -401,7 +401,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
 
 #### Code Interpreter
 <details>
-  <summary>Azure AI Foundry Agent Service</summary>
+  <summary>Microsoft Foundry Agent Service</summary>
   <p>Source: <a href="https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/code-interpreter-samples?pivots=rest-api">https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/code-interpreter-samples?pivots=rest-api</a></p>
 
   <p>.NET Support: ✅</p>
@@ -709,7 +709,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
 
 #### Search and Retrieval
 <details>
-  <summary>Azure AI Foundry Agent Service</summary>
+  <summary>Microsoft Foundry Agent Service</summary>
   Source: <a href="https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/file-search-upload-files?pivots=rest">https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/file-search-upload-files?pivots=rest</a>
 
   File Search Request:
@@ -1083,7 +1083,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
 
 #### Web Search
 <details>
-  <summary>Azure AI Foundry Agent Service</summary>
+  <summary>Microsoft Foundry Agent Service</summary>
   Source: <a href="https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/bing-code-samples?pivots=rest">https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/bing-code-samples?pivots=rest</a>
 
   Bing Search Message Request:
@@ -1630,7 +1630,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
 
 #### OpenAPI Spec Tool
 <details>
-  <summary>Azure AI Foundry Agent Service</summary>
+  <summary>Microsoft Foundry Agent Service</summary>
   Source: <a href="https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/openapi-spec-samples?pivots=rest-api">https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/openapi-spec-samples?pivots=rest-api</a><br>
   Source: <a href="https://learn.microsoft.com/en-us/rest/api/aifoundry/aiagents/run-steps/get-run-step?view=rest-aifoundry-aiagents-v1&tabs=HTTP#runstepopenapitoolcall">https://learn.microsoft.com/en-us/rest/api/aifoundry/aiagents/run-steps/get-run-step?view=rest-aifoundry-aiagents-v1&tabs=HTTP#runstepopenapitoolcall</a>
 
@@ -1712,7 +1712,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
 
 #### Stateful Functions
 <details>
-  <summary>Azure AI Foundry Agent Service</summary>
+  <summary>Microsoft Foundry Agent Service</summary>
   Source: <a href="https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/azure-functions-samples?pivots=rest">https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/azure-functions-samples?pivots=rest</a>
 
   Message Request:
@@ -1832,7 +1832,7 @@ Image Generation | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | Generates or edits 
 
 #### Microsoft Fabric
 <details>
-  <summary>Azure AI Foundry Agent Service</summary>
+  <summary>Microsoft Foundry Agent Service</summary>
   Source: <a href="https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/fabric?pivots=rest">https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/tools/fabric?pivots=rest</a>
 
   Message Request:

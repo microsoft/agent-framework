@@ -1,8 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from collections.abc import AsyncIterable
-from typing import Any
+from collections.abc import AsyncIterable, Awaitable
+from typing import Any, Literal, overload
 
 from agent_framework import (
     AgentResponse,
@@ -55,6 +55,26 @@ class EchoAgent(BaseAgent):
         )
         self.echo_prefix = echo_prefix
 
+    @overload
+    def run(
+        self,
+        messages: str | Message | list[str] | list[Message] | None = None,
+        *,
+        stream: Literal[False] = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> asyncio.Future[AgentResponse]: ...
+
+    @overload
+    def run(
+        self,
+        messages: str | Message | list[str] | list[Message] | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterable[AgentResponseUpdate]: ...
+
     def run(
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
@@ -62,7 +82,7 @@ class EchoAgent(BaseAgent):
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> "AsyncIterable[AgentResponseUpdate] | asyncio.Future[AgentResponse]":
+    ) -> "AsyncIterable[AgentResponseUpdate] | Awaitable[AgentResponse]":
         """Execute the agent and return a response.
 
         Args:
@@ -181,7 +201,9 @@ async def main() -> None:
     query2 = "This is a streaming test"
     print(f"\nUser: {query2}")
     print("Agent: ", end="", flush=True)
-    async for chunk in echo_agent.run(query2, stream=True):
+    stream = echo_agent.run(query2, stream=True)
+    assert isinstance(stream, AsyncIterable)
+    async for chunk in stream:
         if chunk.text:
             print(chunk.text, end="", flush=True)
     print()

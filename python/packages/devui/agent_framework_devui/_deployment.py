@@ -259,8 +259,8 @@ COPY . /app/entity/
 ENV PORT=8080
 EXPOSE 8080
 
-# Launch DevUI with auth enabled (token from environment variable)
-CMD ["devui", "/app/entity", "--mode", "{config.ui_mode}", "--host", "0.0.0.0", "--port", "8080", "--auth"]
+# Launch DevUI. Auth is enabled by default and reads the token from the environment.
+CMD ["devui", "/app/entity", "--mode", "{config.ui_mode}", "--host", "0.0.0.0", "--port", "8080"]
 """
 
         dockerfile_path = entity_path / "Dockerfile"

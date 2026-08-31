@@ -155,7 +155,7 @@ internal sealed class Program
 
         try
         {
-            await toolboxClient.DeleteToolboxAsync(name);
+            await toolboxClient.DeleteAsync(name);
             Console.WriteLine($"Deleted existing toolbox '{name}'");
         }
         catch (ClientResultException ex) when (ex.Status == 404)
@@ -163,14 +163,15 @@ internal sealed class Program
             // Toolbox does not exist.
         }
 
-        ProjectsAgentTool webTool = ProjectsAgentTool.AsProjectTool(ResponseTool.CreateWebSearchTool());
+        WebSearchToolboxTool webTool = new();
 
-        ProjectsAgentTool mcpTool = ProjectsAgentTool.AsProjectTool(ResponseTool.CreateMcpTool(
-            serverLabel: serverLabel,
-            serverUri: new Uri("https://learn.microsoft.com/api/mcp"),
-            toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.NeverRequireApproval)));
+        MCPToolboxTool mcpTool = new(serverLabel)
+        {
+            ServerUri = new Uri("https://learn.microsoft.com/api/mcp"),
+            ToolCallApprovalPolicy = new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.NeverRequireApproval),
+        };
 
-        ToolboxVersion created = (await toolboxClient.CreateToolboxVersionAsync(
+        ToolboxVersion created = (await toolboxClient.CreateVersionAsync(
             name: name,
             tools: [webTool, mcpTool],
             description: "Sample toolbox combining Foundry web search with the Microsoft Learn MCP tools for the declarative InvokeFoundryToolboxMcp sample.")).Value;

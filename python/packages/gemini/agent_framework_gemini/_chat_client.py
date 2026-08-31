@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
+from collections import OrderedDict
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from typing import Any, ClassVar, Generic, cast
 from uuid import uuid4
 
@@ -17,6 +19,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReason,
     FinishReasonLiteral,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -24,30 +27,35 @@ from agent_framework import (
     Message,
     ResponseStream,
     UsageDetails,
+    detect_media_type_from_base64,
     validate_tool_mode,
 )
 from agent_framework._settings import SecretString, load_settings
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
+from agent_framework._types import _get_data_bytes  # type: ignore[reportPrivateUsage]
+from agent_framework.exceptions import ContentError
 from agent_framework.observability import ChatTelemetryLayer
 from google import genai
 from google.auth.credentials import Credentials
 from google.genai import types
 from pydantic import BaseModel
 
+from ._feature_usage import FeatureIndex
+
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 logger = logging.getLogger("agent_framework.gemini")
 
@@ -72,8 +80,8 @@ class ThinkingConfig(TypedDict, total=False):
     Attributes:
         include_thoughts: Whether to include thought summaries in the response. Thought summaries
             are condensed representations of the model's internal reasoning and appear as response
-            parts where ``part.thought`` is ``True``. Note: the framework currently excludes
-            thought parts from ``ChatResponse.contents`` and does not surface them as output.
+            parts where ``part.thought`` is ``True``. When set, the framework surfaces these parts
+            as ``text_reasoning`` content in ``ChatResponse.contents``.
         thinking_budget: Token budget for Gemini 2.5 models. Set to ``0`` to disable
             thinking or ``-1`` to enable a dynamic budget.
         thinking_level: Thinking level for Gemini 2.5 models and later. One of
@@ -178,6 +186,7 @@ class GoogleGeminiSettings(TypedDict, total=False):
 
 _GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com"
 _VERTEX_AI_BASE_URL = "https://aiplatform.googleapis.com"
+_DEFAULT_MAX_THOUGHT_SIGNATURES = 256
 
 
 def _resolve_vertexai_mode(client: genai.Client, *, fallback: bool | None = None) -> bool:
@@ -306,7 +315,7 @@ class RawGeminiChatClient(
     client with batteries included, use `GeminiChatClient` instead.
     """
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "gcp.gemini"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "gcp.gemini"
 
     def __init__(
         self,
@@ -321,6 +330,7 @@ class RawGeminiChatClient(
         env_file_encoding: str | None = None,
         client: genai.Client | None = None,
         additional_properties: dict[str, Any] | None = None,
+        max_tracked_thought_signatures: int = _DEFAULT_MAX_THOUGHT_SIGNATURES,
     ) -> None:
         """Create a raw Gemini chat client.
 
@@ -341,7 +351,14 @@ class RawGeminiChatClient(
             env_file_encoding: Encoding for the ``.env`` file.
             client: Pre-built ``genai.Client`` instance. When provided, connector auth settings are not required.
             additional_properties: Extra properties stored on the client instance.
+            max_tracked_thought_signatures: Maximum number of Gemini 3 thought signatures retained
+                for replay, keyed by call ID. Least-recently-used entries are evicted beyond this.
+
+        Raises:
+            ValueError: If ``max_tracked_thought_signatures`` is less than 1.
         """
+        if max_tracked_thought_signatures < 1:
+            raise ValueError("max_tracked_thought_signatures must be greater than 0.")
         settings = load_settings(
             GeminiSettings,
             env_prefix="GEMINI_",
@@ -402,6 +419,8 @@ class RawGeminiChatClient(
         self._vertexai = _resolve_vertexai_mode(self._genai_client, fallback=configured_vertexai)
         self._service_url = _resolve_service_url(self._genai_client, vertexai=self._vertexai)
         self.model = google_settings.get("model") or settings.get("model")
+        self.max_tracked_thought_signatures = max_tracked_thought_signatures
+        self._thought_signature_cache: OrderedDict[str, bytes] = OrderedDict()
 
         super().__init__(additional_properties=additional_properties)
 
@@ -535,9 +554,14 @@ class RawGeminiChatClient(
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 validated = await self._validate_options(options)
                 model, contents, config = self._prepare_request(messages, validated)
-                async for chunk in await self._genai_client.aio.models.generate_content_stream(  # pyright: ignore[reportUnknownMemberType]
+                mark_feature_used(FeatureIndex.GEMINI)
+                generate_content_stream = cast(
+                    Callable[..., Awaitable[AsyncIterable[types.GenerateContentResponse]]],
+                    cast(Any, self._genai_client.aio.models).generate_content_stream,
+                )
+                async for chunk in await generate_content_stream(
                     model=model,
-                    contents=contents,  # type: ignore[arg-type]
+                    contents=contents,
                     config=config,
                 ):
                     yield self._process_chunk(chunk)
@@ -547,6 +571,7 @@ class RawGeminiChatClient(
         async def _get_response() -> ChatResponse:
             validated = await self._validate_options(options)
             model, contents, config = self._prepare_request(messages, validated)
+            mark_feature_used(FeatureIndex.GEMINI)
             raw = await self._genai_client.aio.models.generate_content(model=model, contents=contents, config=config)  # type: ignore[arg-type]
             return self._process_generate_response(raw, response_format=validated.get("response_format"))
 
@@ -660,12 +685,54 @@ class RawGeminiChatClient(
             A list of Gemini Part objects representing the message contents.
         """
         parts: list[types.Part] = []
+        pending_signature: bytes | None = None
         for content in message_contents:
+            if content.type == "text_reasoning":
+                # Gemini 3's thought_signature travels as base64 protected_data on reasoning content;
+                # hold it for the function call it precedes (reasoning is not sent back as a Part).
+                # Reasoning without protected_data (a thought summary) must not clear a held
+                # signature, otherwise the pairing breaks on ordering alone.
+                encoded_signature = content.protected_data
+                if isinstance(encoded_signature, str) and encoded_signature:
+                    pending_signature = None
+                    try:
+                        pending_signature = base64.b64decode(encoded_signature, validate=True)
+                    except ValueError:
+                        logger.warning("Ignoring malformed thought_signature on reasoning content")
+                continue
+            thought_signature: bytes | None = None
+            if content.type == "function_call":
+                # A held signature belongs to the next function call in the message.
+                thought_signature = pending_signature
+                pending_signature = None
+            elif content.type in ("text", "function_result", "data", "uri"):
+                # Content that emits its own Part breaks the reasoning-to-call pairing. Content that
+                # emits nothing (approval requests and responses) is left transparent.
+                pending_signature = None
             match content.type:
                 case "text":
                     parts.append(types.Part(text=content.text or ""))
                 case "function_call":
                     call_id = content.call_id or self._generate_tool_call_id()
+                    raw_part = content.raw_representation
+                    if thought_signature is None:
+                        # No adjacent carrier: fall back to the signature recorded for this call at
+                        # parse time. Covers replays where the carrier was dropped in transit.
+                        thought_signature = self._recall_thought_signature(call_id)
+                    if (
+                        content.informational_only
+                        and isinstance(raw_part, types.Part)
+                        and raw_part.tool_call is not None
+                    ):
+                        tool_call = raw_part.tool_call.model_copy(
+                            update={
+                                "id": call_id,
+                                "args": content.parse_arguments() or {},
+                            },
+                            deep=True,
+                        )
+                        parts.append(raw_part.model_copy(update={"tool_call": tool_call}, deep=True))
+                        continue
                     if content.name:
                         call_id_to_name[call_id] = content.name
                     function_call = types.FunctionCall(
@@ -673,14 +740,77 @@ class RawGeminiChatClient(
                         name=content.name or "",
                         args=content.parse_arguments() or {},
                     )
-                    raw_part = content.raw_representation
+                    # Echo the signature from the preceding reasoning content, backfilling only when
+                    # the raw Part lacks one.
                     if isinstance(raw_part, types.Part) and raw_part.function_call is not None:
-                        parts.append(raw_part.model_copy(update={"function_call": function_call}, deep=True))
+                        replayed_part = raw_part.model_copy(update={"function_call": function_call}, deep=True)
+                        if replayed_part.thought_signature is None and thought_signature is not None:
+                            replayed_part.thought_signature = thought_signature
+                        parts.append(replayed_part)
                     else:
-                        parts.append(types.Part(function_call=function_call))
+                        parts.append(types.Part(function_call=function_call, thought_signature=thought_signature))
+                case "function_result":
+                    raw_part = content.raw_representation
+                    if isinstance(raw_part, types.Part) and raw_part.tool_response is not None:
+                        tool_response = raw_part.tool_response.model_copy(
+                            update={
+                                "id": content.call_id or self._generate_tool_call_id(),
+                                "response": content.result,
+                            },
+                            deep=True,
+                        )
+                        parts.append(raw_part.model_copy(update={"tool_response": tool_response}, deep=True))
+                    else:
+                        logger.debug("Skipping unsupported content type for Gemini: %s", content.type)
+                case "data" | "uri":
+                    part = self._convert_data_or_uri_content(content)
+                    if part is not None:
+                        parts.append(part)
                 case _:
                     logger.debug("Skipping unsupported content type for Gemini: %s", content.type)
         return parts
+
+    def _convert_data_or_uri_content(self, content: Content) -> types.Part | None:
+        """Convert a ``data`` or ``uri`` Content to a Gemini Part.
+
+        Data URIs (``type="data"``) become ``inline_data`` Parts with the decoded bytes.
+        External URIs (``type="uri"``) become ``file_data`` Parts referencing the resource.
+
+        Args:
+            content: The framework Content object, expected to be of type ``data`` or ``uri``.
+
+        Returns:
+            A Gemini Part carrying the multimodal content, or None if the content cannot be
+            converted (e.g. missing URI, non-base64 data URI, or undecodable data).
+        """
+        uri = content.uri
+        if not uri:
+            logger.warning("Skipping %s content for Gemini: missing uri", content.type)
+            return None
+
+        if uri.startswith("data:"):
+            try:
+                raw_bytes = _get_data_bytes(content)
+            except ContentError:
+                logger.warning("Skipping data content for Gemini: data URI is not valid base64")
+                return None
+            if not raw_bytes:
+                logger.warning("Skipping data content for Gemini: no data found in URI")
+                return None
+            mime_type = content.media_type or detect_media_type_from_base64(data_bytes=raw_bytes)
+            if not mime_type:
+                logger.warning("Skipping data content for Gemini: missing media_type")
+                return None
+            return types.Part.from_bytes(data=raw_bytes, mime_type=mime_type)
+
+        try:
+            return types.Part.from_uri(file_uri=uri, mime_type=content.media_type)
+        except ValueError:
+            # from_uri raises when no media_type is given and one cannot be inferred from the URI
+            # (e.g. presigned URLs or API endpoints without an extension). Pass the URI through
+            # without a mime type rather than dropping the content or raising.
+            logger.warning("Could not determine media_type for URI content; sending to Gemini without one: %s", uri)
+            return types.Part(file_data=types.FileData(file_uri=uri, mime_type=None))
 
     def _convert_function_result(
         self,
@@ -699,6 +829,17 @@ class RawGeminiChatClient(
         """
         if content.type != "function_result":
             return None
+
+        raw_part = content.raw_representation
+        if isinstance(raw_part, types.Part) and raw_part.tool_response is not None:
+            tool_response = raw_part.tool_response.model_copy(
+                update={
+                    "id": content.call_id or self._generate_tool_call_id(),
+                    "response": content.result,
+                },
+                deep=True,
+            )
+            return raw_part.model_copy(update={"tool_response": tool_response}, deep=True)
 
         name = call_id_to_name.get(content.call_id or "")
         if not name:
@@ -778,9 +919,14 @@ class RawGeminiChatClient(
             kwargs["response_schema"] = response_schema
         elif (schema := self._extract_response_schema(response_format)) is not None:
             kwargs["response_schema"] = schema
-        if tools := self._prepare_tools(options):
+        tools = self._prepare_tools(options)
+        if tools:
             kwargs["tools"] = tools
-        if tool_config := self._prepare_tool_config(options.get("tool_choice")):
+        tool_config = self._prepare_tool_config(options.get("tool_choice"))
+        if tools and not self._vertexai and self._requires_server_side_tool_invocations(tools):
+            tool_config = tool_config or types.ToolConfig()
+            tool_config.include_server_side_tool_invocations = True
+        if tool_config:
             kwargs["tool_config"] = tool_config
         if thinking_config := options.get("thinking_config"):
             thinking_config_kwargs = {k: v for k, v in thinking_config.items() if v is not None}
@@ -791,7 +937,15 @@ class RawGeminiChatClient(
 
     @staticmethod
     def _extract_response_schema(response_format: Any) -> dict[str, Any] | None:
-        """Extract a Gemini response schema from supported mapping response_format shapes."""
+        """Extract a Gemini response schema from supported response_format shapes.
+
+        Handles a Pydantic model class and, for mappings, a ``format`` envelope
+        (unwrapped recursively), a ``json_schema`` envelope, a bare ``schema``
+        envelope, and a raw JSON schema mapping. Anything else returns ``None``.
+        """
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            return response_format.model_json_schema()
+
         if not isinstance(response_format, Mapping):
             return None
         mapping = cast("Mapping[str, Any]", response_format)
@@ -863,7 +1017,7 @@ class RawGeminiChatClient(
             types.FunctionDeclaration(
                 name=tool.name,
                 description=tool.description or "",
-                parameters=tool.parameters(),  # type: ignore[arg-type]
+                parameters_json_schema=tool.parameters(),
             )
             for tool in tools_option
             if isinstance(tool, FunctionTool)
@@ -875,6 +1029,20 @@ class RawGeminiChatClient(
         result.extend(tool for tool in tools_option if isinstance(tool, types.Tool))
 
         return result or None
+
+    @staticmethod
+    def _requires_server_side_tool_invocations(tools: Sequence[types.Tool]) -> bool:
+        """Return whether Gemini Developer API requires server-side tool invocation reporting."""
+        has_function_declarations = any(tool.function_declarations for tool in tools)
+        return has_function_declarations and any(RawGeminiChatClient._has_server_side_tool(tool) for tool in tools)
+
+    @staticmethod
+    def _has_server_side_tool(tool: types.Tool) -> bool:
+        """Return whether the Gemini tool declares a native server-side tool."""
+        return any(
+            field_name != "function_declarations" and getattr(tool, field_name, None) is not None
+            for field_name in type(tool).model_fields
+        )
 
     def _prepare_tool_config(self, tool_choice: Any) -> types.ToolConfig | None:
         """Build a Gemini ``ToolConfig`` from the framework ``tool_choice`` value.
@@ -985,20 +1153,52 @@ class RawGeminiChatClient(
         )
 
     def _parse_parts(self, parts: Sequence[types.Part]) -> list[Content]:
-        """Convert Gemini response parts to framework Content objects, skipping thought/reasoning parts.
+        """Convert Gemini response parts to framework Content objects.
 
         Args:
             parts: Sequence of ``types.Part`` objects from a Gemini response candidate.
 
         Returns:
-            A list of framework ``Content`` objects (text, function_call, or function_result).
+            A list of framework ``Content`` objects (text_reasoning, text, function_call, or
+            function_result).
         """
         contents: list[Content] = []
         for part in parts:
             if part.thought:
+                if part.text:
+                    contents.append(Content.from_text_reasoning(text=part.text, raw_representation=part))
                 continue
             if part.text is not None:
                 contents.append(Content.from_text(text=part.text, raw_representation=part))
+            elif part.tool_call is not None:
+                tool_call = part.tool_call
+                if tool_call.id:
+                    call_id = tool_call.id
+                else:
+                    call_id = self._generate_tool_call_id()
+                    logger.debug("tool_call missing id; generated fallback call_id=%r", call_id)
+                if isinstance(tool_call.tool_type, types.ToolType):
+                    tool_name = tool_call.tool_type.value
+                else:
+                    tool_name = str(tool_call.tool_type or "tool_call")
+                contents.append(
+                    Content.from_function_call(
+                        call_id=call_id,
+                        name=tool_name,
+                        arguments=tool_call.args or {},
+                        informational_only=True,
+                        raw_representation=part,
+                    )
+                )
+            elif part.tool_response is not None:
+                tool_response = part.tool_response
+                contents.append(
+                    Content.from_function_result(
+                        call_id=tool_response.id or self._generate_tool_call_id(),
+                        result=tool_response.response,
+                        raw_representation=part,
+                    )
+                )
             elif part.function_call is not None:
                 function_call = part.function_call
                 if function_call.id:
@@ -1006,6 +1206,18 @@ class RawGeminiChatClient(
                 else:
                     call_id = self._generate_tool_call_id()
                     logger.debug("function_call missing id; generated fallback call_id=%r", call_id)
+                # Surface Gemini 3's thought_signature as reasoning content preceding the call so it
+                # survives when the call is later reconstructed without its raw Part.
+                if part.thought_signature is not None:
+                    contents.append(
+                        Content.from_text_reasoning(
+                            protected_data=base64.b64encode(part.thought_signature).decode("utf-8")
+                        )
+                    )
+                    # Also key it by the resolved call_id so the signature survives surfaces that
+                    # drop the reasoning carrier. Captured here, not from the raw Part, because the
+                    # raw part's id may be absent and replaced by a generated fallback above.
+                    self._remember_thought_signature(call_id, part.thought_signature)
                 contents.append(
                     Content.from_function_call(
                         call_id=call_id,
@@ -1051,20 +1263,26 @@ class RawGeminiChatClient(
             details["output_token_count"] = v
         if (v := usage.total_token_count) is not None:
             details["total_token_count"] = v
+        if (v := usage.cached_content_token_count) is not None:
+            details["cache_read_input_token_count"] = v
+        if (v := usage.thoughts_token_count) is not None:
+            details["reasoning_output_token_count"] = v
         return details or None
 
-    def _map_finish_reason(self, reason: str | None) -> FinishReasonLiteral | None:
+    def _map_finish_reason(self, reason: str | None) -> FinishReasonLiteral | FinishReason | None:
         """Map a Gemini finish reason string to the framework's FinishReasonLiteral.
 
         Args:
             reason: The finish reason name from the Gemini API (e.g. ``"STOP"``), or None.
 
         Returns:
-            The corresponding ``FinishReasonLiteral``, or None if the reason is absent or unmapped.
+            The corresponding ``FinishReasonLiteral`` for known reasons, the raw reason string for
+            values not yet mapped (so callers still see that the response terminated abnormally
+            instead of losing it), or None if the reason is absent or ``FINISH_REASON_UNSPECIFIED``.
         """
-        if not reason:
+        if not reason or reason == "FINISH_REASON_UNSPECIFIED":
             return None
-        return _FINISH_REASON_MAP.get(reason)
+        return _FINISH_REASON_MAP.get(reason, FinishReason(reason))
 
     # endregion
 
@@ -1076,6 +1294,37 @@ class RawGeminiChatClient(
             A unique string in the format ``tool-call-<uuid_hex>``.
         """
         return f"tool-call-{uuid4().hex}"
+
+    # region Thought signature tracking
+
+    def _remember_thought_signature(self, call_id: str, signature: bytes) -> None:
+        """Record a thought signature so a later replay of the same call can be re-signed.
+
+        Correlating by ``call_id`` keeps the signature recoverable when the reasoning content that
+        carries it is dropped by a surface (for example an approval round trip through a client).
+
+        Args:
+            call_id: The resolved framework call ID of the function call the signature belongs to.
+            signature: The opaque Gemini thought signature bytes.
+        """
+        cache = self._thought_signature_cache
+        cache[call_id] = signature
+        cache.move_to_end(call_id)
+        while len(cache) > self.max_tracked_thought_signatures:
+            cache.popitem(last=False)
+
+    def _recall_thought_signature(self, call_id: str) -> bytes | None:
+        """Look up a previously recorded thought signature for a function call.
+
+        Args:
+            call_id: The framework call ID of the function call being serialized.
+
+        Returns:
+            The recorded signature bytes, or ``None`` when nothing was recorded for this call.
+        """
+        return self._thought_signature_cache.get(call_id)
+
+    # endregion
 
 
 class GeminiChatClient(
@@ -1114,6 +1363,7 @@ class GeminiChatClient(
         additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        max_tracked_thought_signatures: int = _DEFAULT_MAX_THOUGHT_SIGNATURES,
     ) -> None:
         """Create a Gemini chat client.
 
@@ -1133,6 +1383,11 @@ class GeminiChatClient(
             additional_properties: Extra properties stored on the client instance.
             middleware: Optional middleware chain applied to every call.
             function_invocation_configuration: Optional configuration for the function invocation loop.
+            max_tracked_thought_signatures: Maximum number of Gemini 3 thought signatures retained
+                for replay, keyed by call ID. Least-recently-used entries are evicted beyond this.
+
+        Raises:
+            ValueError: If ``max_tracked_thought_signatures`` is less than 1.
         """
         super().__init__(
             api_key=api_key,
@@ -1147,4 +1402,5 @@ class GeminiChatClient(
             additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
+            max_tracked_thought_signatures=max_tracked_thought_signatures,
         )

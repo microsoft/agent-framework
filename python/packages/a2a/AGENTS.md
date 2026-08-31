@@ -6,6 +6,8 @@ Agent-to-Agent (A2A) protocol support for inter-agent communication.
 
 - **`A2AAgent`** - Client to connect to remote A2A-compliant agents.
 - **`A2AExecutor`** - Bridge to expose Agent Framework agents via the A2A protocol.
+- **`A2AServiceSessionId`** - Typed durable A2A continuation state shape stored in `AgentSession.service_session_id`.
+- **`A2AAgentSession`** - Deprecated compatibility session wrapper; prefer `AgentSession` + `A2AServiceSessionId`.
 
 ## Usage
 
@@ -50,7 +52,7 @@ app = Starlette(
 ## Import Path
 
 ```python
-from agent_framework.a2a import A2AAgent, A2AExecutor
+from agent_framework.a2a import A2AAgent, A2AExecutor, A2AServiceSessionId
 # or directly:
-from agent_framework_a2a import A2AAgent, A2AExecutor
+from agent_framework_a2a import A2AAgent, A2AExecutor, A2AServiceSessionId
 ```

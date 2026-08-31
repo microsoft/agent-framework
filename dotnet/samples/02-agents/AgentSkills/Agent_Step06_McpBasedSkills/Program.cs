@@ -12,7 +12,7 @@
 // to discover and inject the skill into a ChatClientAgent.
 
 using System.ComponentModel;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,7 +20,6 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Server;
-using OpenAI.Responses;
 
 if (args.Length > 0 && args[0] == "--server")
 {
@@ -29,9 +28,9 @@ if (args.Length > 0 && args[0] == "--server")
 }
 
 // --- Configuration ---
-string openAiEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+string openAiEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // --- MCP client + skill discovery ---
 // Launch this same assembly as a stdio MCP server in a child process.
@@ -54,18 +53,27 @@ var skillsProvider = new AgentSkillsProviderBuilder()
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(new Uri(openAiEndpoint), new DefaultAzureCredential())
-    .GetResponsesClient()
+AIAgent agent = new AIProjectClient(new Uri(openAiEndpoint), new DefaultAzureCredential())
     .AsAIAgent(new ChatClientAgentOptions
     {
         Name = "SkillsAgent",
         ChatOptions = new()
         {
+            ModelId = deploymentName,
             Instructions = "You are a helpful assistant. Use available skills to answer the user.",
         },
         AIContextProviders = [skillsProvider],
-    },
-    model: deploymentName);
+    })
+    .AsBuilder()
+    .UseToolApproval(new ToolApprovalAgentOptions
+    {
+        // NOTE: Auto-approving all skill tools is done here for simplicity in
+        // this demonstration. In production, you should prompt the user before
+        // allowing skill tools to execute. See Agent_Step07_SkillsAutoApproval
+        // for a walkthrough of the full approval flow.
+        AutoApprovalRules = [AgentSkillsProvider.AllToolsAutoApprovalRule],
+    })
+    .Build();
 
 // --- Run ---
 Console.WriteLine(new string('-', 60));

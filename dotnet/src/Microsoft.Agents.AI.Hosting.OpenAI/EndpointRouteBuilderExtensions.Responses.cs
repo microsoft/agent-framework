@@ -32,13 +32,14 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
     /// <param name="agentBuilder">The builder for <see cref="AIAgent"/> to map the OpenAI Responses endpoints for.</param>
     /// <param name="path">Custom route path for the OpenAI Responses endpoint.</param>
-    public static IEndpointConventionBuilder MapOpenAIResponses(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder, string? path)
+    /// <param name="mapOptions">Optional options controlling how incoming requests are mapped onto the agent run.</param>
+    public static IEndpointConventionBuilder MapOpenAIResponses(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder, string? path, OpenAIResponsesMapOptions? mapOptions = null)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(agentBuilder);
 
         var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentBuilder.Name);
-        return MapOpenAIResponses(endpoints, agent, path);
+        return MapOpenAIResponses(endpoints, agent, path, mapOptions);
     }
 
     /// <summary>
@@ -55,10 +56,12 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Responses endpoints to.</param>
     /// <param name="agent">The <see cref="AIAgent"/> instance to map the OpenAI Responses endpoints for.</param>
     /// <param name="responsesPath">Custom route path for the responses endpoint.</param>
+    /// <param name="mapOptions">Optional options controlling how incoming requests are mapped onto the agent run.</param>
     public static IEndpointConventionBuilder MapOpenAIResponses(
         this IEndpointRouteBuilder endpoints,
         AIAgent agent,
-        [StringSyntax("Route")] string? responsesPath)
+        [StringSyntax("Route")] string? responsesPath,
+        OpenAIResponsesMapOptions? mapOptions = null)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(agent);
@@ -68,7 +71,7 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
         responsesPath ??= $"/{agent.Name}/v1/responses";
 
         // Create an executor for this agent
-        var executor = new AIAgentResponseExecutor(agent);
+        var executor = new AIAgentResponseExecutor(agent, mapOptions);
         var storageOptions = endpoints.ServiceProvider.GetService<InMemoryStorageOptions>() ?? new InMemoryStorageOptions();
         var conversationStorage = endpoints.ServiceProvider.GetService<IConversationStorage>();
         var responsesService = new InMemoryResponsesService(executor, storageOptions, conversationStorage);
@@ -103,6 +106,7 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
             .WithName(endpointAgentName + "/ListResponseInputItems")
             .WithSummary("Lists the input items for a response");
 
+        MarkFeatureUsed();
         return group;
     }
 
@@ -156,7 +160,15 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
             .WithName("ListResponseInputItems")
             .WithSummary("Lists the input items for a response");
 
+        MarkFeatureUsed();
         return group;
+    }
+
+    private static void MarkFeatureUsed()
+    {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.HostingOpenAI);
+#pragma warning restore MAAI001
     }
 
     private static void ValidateAgentName([NotNull] string agentName)

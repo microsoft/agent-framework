@@ -1,7 +1,130 @@
 # Code ownership assignments
 # https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Policy: a PR needs one approval, and it must come from a code owner of the changed
+# files ("Require review from Code Owners" + "Required approvals: 1" on `main`).
+# A PR touching several CODEOWNERS patterns will request review from the applicable
+# code owners, but an approval from any applicable code owner is sufficient to satisfy
+# GitHub's required-code-owner review.
+#
+# Order matters: the LAST matching pattern wins, so a module rule fully replaces the
+# catch-all rather than adding to it. @chetantoshniwal is included on every line as a
+# repository-wide fallback owner. All owners on a line have equal approval authority.
+#
+# CONVENTION: owners are written in the order
+#   @chetantoshniwal <owner A> <owner B> [...]
+# @chetantoshniwal is at the beginning for aesthetics. The owners share equal approval
+# power and responsibility.
+#
+# RULE: every path must list at least two owners besides @chetantoshniwal. An author
+# cannot approve their own PR, so a path with a single module owner leaves only Chetan
+# to review whenever that owner is the author, which defeats the point of naming a
+# module owner.
+#
+# Samples: owned by all core developers of that language, not by the module a sample
+# demonstrates. Any core Python developer can approve any Python sample, and any core
+# .NET developer can approve any .NET sample. No dedicated rule is needed -- samples
+# fall through to the /python and /dotnet rules, which already list those developers.
+#
+# Tests: same as samples. Tests that live inside a package (python/packages/<pkg>/tests)
+# are covered by that package's rule instead, since they sit under its path.
 
-python/packages/azurefunctions/ @microsoft/agentframework-durabletask-developers
-python/packages/durabletask/ @microsoft/agentframework-durabletask-developers
-python/samples/getting_started/azure_functions/ @microsoft/agentframework-durabletask-developers
-python/samples/getting_started/durabletask/ @microsoft/agentframework-durabletask-developers
+# Default owners for everything not matched by a module rule below.
+*                                                               @chetantoshniwal @westey-m
+
+# Repository-level paths: every core Agent Framework developer is a code owner, so any
+# one of them can approve. Be explicit now and we can use the AgentFramework team in the future.
+/docs/                                                          @chetantoshniwal @westey-m @eavanvalkenburg @giles17 @moonbox3 @TaoChenOSU @peibekwe @rogerbarreto @SergeyMenshykh
+/*.md                                                           @chetantoshniwal @westey-m @eavanvalkenburg @giles17 @moonbox3 @TaoChenOSU @peibekwe @rogerbarreto @SergeyMenshykh
+/LICENSE                                                        @chetantoshniwal @westey-m @eavanvalkenburg @giles17 @moonbox3 @TaoChenOSU @peibekwe @rogerbarreto @SergeyMenshykh
+/.gitattributes                                                 @chetantoshniwal @westey-m @eavanvalkenburg @giles17 @moonbox3 @TaoChenOSU @peibekwe @rogerbarreto @SergeyMenshykh
+/.gitignore                                                     @chetantoshniwal @westey-m @eavanvalkenburg @giles17 @moonbox3 @TaoChenOSU @peibekwe @rogerbarreto @SergeyMenshykh
+/.github                                                        @chetantoshniwal @westey-m @eavanvalkenburg @giles17 @moonbox3 @TaoChenOSU @peibekwe @rogerbarreto @SergeyMenshykh
+
+# Repository-level paths that require specific owners
+/.devcontainer                                                  @chetantoshniwal @westey-m @rogerbarreto @SergeyMenshykh
+/declarative-agents                                             @chetantoshniwal @moonbox3 @peibekwe
+
+# Core Python developers: @eavanvalkenburg @giles17 @moonbox3 @TaoChenOSU
+/python                                                         @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3 @TaoChenOSU
+
+# Python packages
+/python/packages/a2a/                                           @chetantoshniwal @giles17 @eavanvalkenburg @moonbox3
+/python/packages/ag-ui/                                         @chetantoshniwal @eavanvalkenburg @moonbox3 @giles17
+/python/packages/anthropic/                                     @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
+/python/packages/azure-ai-search/                               @chetantoshniwal @eavanvalkenburg @giles17
+/python/packages/azure-contentunderstanding/                    @chetantoshniwal @giles17 @eavanvalkenburg
+/python/packages/azure-cosmos/                                  @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
+/python/packages/azure-cosmos-memory/                           @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
+/python/packages/bedrock/                                       @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
+/python/packages/chatkit/                                       @chetantoshniwal @eavanvalkenburg @moonbox3 @giles17
+/python/packages/claude/                                        @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
+/python/packages/copilotstudio/                                 @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
+/python/packages/core/                                          @chetantoshniwal @eavanvalkenburg @moonbox3 @TaoChenOSU @giles17
+/python/packages/core/agent_framework/_workflows/               @chetantoshniwal @eavanvalkenburg @moonbox3 @TaoChenOSU
+/python/packages/core/agent_framework/_harness/                 @chetantoshniwal @westey-m @eavanvalkenburg @moonbox3
+/python/packages/declarative/                                   @chetantoshniwal @eavanvalkenburg @moonbox3 @peibekwe
+/python/packages/devui/                                         @chetantoshniwal @eavanvalkenburg @moonbox3
+/python/packages/foundry/                                       @chetantoshniwal @eavanvalkenburg @TaoChenOSU @moonbox3 @giles17
+/python/packages/foundry_hosting/                               @chetantoshniwal @TaoChenOSU @eavanvalkenburg @moonbox3
+/python/packages/foundry_local/                                 @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
+/python/packages/gemini/                                        @chetantoshniwal @giles17 @eavanvalkenburg @moonbox3
+/python/packages/github_copilot/                                @chetantoshniwal @giles17 @eavanvalkenburg @moonbox3
+/python/packages/hosting/                                       @chetantoshniwal @eavanvalkenburg @TaoChenOSU @moonbox3
+/python/packages/hosting-a2a/                                   @chetantoshniwal @eavanvalkenburg @TaoChenOSU @moonbox3
+/python/packages/hosting-mcp/                                   @chetantoshniwal @eavanvalkenburg @TaoChenOSU @moonbox3
+/python/packages/hosting-responses/                             @chetantoshniwal @eavanvalkenburg @TaoChenOSU @moonbox3
+/python/packages/hosting-telegram/                              @chetantoshniwal @eavanvalkenburg @TaoChenOSU @moonbox3
+/python/packages/hyperlight/                                    @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
+/python/packages/lab/                                           @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3 @TaoChenOSU
+/python/packages/mem0/                                          @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
+/python/packages/mistral/                                       @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
+/python/packages/monty/                                         @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
+/python/packages/ollama/                                        @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
+/python/packages/openai/                                        @chetantoshniwal @eavanvalkenburg @moonbox3 @TaoChenOSU @giles17
+/python/packages/orchestrations/                                @chetantoshniwal @eavanvalkenburg @moonbox3 @TaoChenOSU
+/python/packages/purview/                                       @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
+/python/packages/redis/                                         @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
+/python/packages/tools/                                         @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
+
+# Core .NET developers: @peibekwe @rogerbarreto @SergeyMenshykh @westey-m
+/dotnet                                                         @chetantoshniwal @peibekwe @rogerbarreto @SergeyMenshykh @westey-m
+
+# .NET projects
+/dotnet/src/Aspire.Hosting.AgentFramework.DevUI/                @chetantoshniwal @peibekwe @rogerbarreto @SergeyMenshykh @westey-m
+/dotnet/src/LegacySupport/                                      @chetantoshniwal @peibekwe @rogerbarreto @SergeyMenshykh @westey-m
+/dotnet/src/Shared/                                             @chetantoshniwal @peibekwe @rogerbarreto @SergeyMenshykh @westey-m
+/dotnet/src/Microsoft.Agents.AI/                                @chetantoshniwal @rogerbarreto @SergeyMenshykh @westey-m
+/dotnet/src/Microsoft.Agents.AI.A2A/                            @chetantoshniwal @rogerbarreto @SergeyMenshykh @westey-m
+/dotnet/src/Microsoft.Agents.AI.Abstractions/                   @chetantoshniwal @rogerbarreto @SergeyMenshykh @westey-m
+/dotnet/src/Microsoft.Agents.AI.AGUI/                           @chetantoshniwal @peibekwe @rogerbarreto @SergeyMenshykh @westey-m
+/dotnet/src/Microsoft.Agents.AI.Anthropic/                      @chetantoshniwal @rogerbarreto @westey-m
+/dotnet/src/Microsoft.Agents.AI.AzureAI.Persistent/             @chetantoshniwal @rogerbarreto @westey-m
+/dotnet/src/Microsoft.Agents.AI.CopilotStudio/                  @chetantoshniwal @rogerbarreto @westey-m
+/dotnet/src/Microsoft.Agents.AI.CosmosNoSql/                    @chetantoshniwal @rogerbarreto @westey-m
+/dotnet/src/Microsoft.Agents.AI.Declarative/                    @chetantoshniwal @peibekwe @westey-m
+/dotnet/src/Microsoft.Agents.AI.DevUI/                          @chetantoshniwal @peibekwe @rogerbarreto @SergeyMenshykh @westey-m
+/dotnet/src/Microsoft.Agents.AI.Foundry/                        @chetantoshniwal @rogerbarreto @westey-m
+/dotnet/src/Microsoft.Agents.AI.Foundry.Hosting/                @chetantoshniwal @rogerbarreto @westey-m
+/dotnet/src/Microsoft.Agents.AI.GitHub.Copilot/                 @chetantoshniwal @rogerbarreto @westey-m
+/dotnet/src/Microsoft.Agents.AI.Harness/                        @chetantoshniwal @westey-m @SergeyMenshykh
+/dotnet/src/Microsoft.Agents.AI.Hosting/                        @chetantoshniwal @rogerbarreto @SergeyMenshykh @westey-m
+/dotnet/src/Microsoft.Agents.AI.Hosting.A2A/                    @chetantoshniwal @rogerbarreto @SergeyMenshykh @westey-m
+/dotnet/src/Microsoft.Agents.AI.Hosting.A2A.AspNetCore/         @chetantoshniwal @rogerbarreto @SergeyMenshykh @westey-m
+/dotnet/src/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore/        @chetantoshniwal @rogerbarreto @SergeyMenshykh @westey-m
+/dotnet/src/Microsoft.Agents.AI.Hosting.AspNetCore/             @chetantoshniwal @rogerbarreto @SergeyMenshykh @westey-m
+/dotnet/src/Microsoft.Agents.AI.Hosting.AzureStorage/           @chetantoshniwal @rogerbarreto @SergeyMenshykh @westey-m
+/dotnet/src/Microsoft.Agents.AI.Hosting.OpenAI/                 @chetantoshniwal @rogerbarreto @SergeyMenshykh @westey-m
+/dotnet/src/Microsoft.Agents.AI.Hyperlight/                     @chetantoshniwal @westey-m @SergeyMenshykh
+/dotnet/src/Microsoft.Agents.AI.LocalCodeAct/                   @chetantoshniwal @westey-m @SergeyMenshykh
+/dotnet/src/Microsoft.Agents.AI.Mcp/                            @chetantoshniwal @westey-m @peibekwe
+/dotnet/src/Microsoft.Agents.AI.Mem0/                           @chetantoshniwal @westey-m @SergeyMenshykh
+/dotnet/src/Microsoft.Agents.AI.OpenAI/                         @chetantoshniwal @westey-m @rogerbarreto
+/dotnet/src/Microsoft.Agents.AI.Purview/                        @chetantoshniwal @westey-m @SergeyMenshykh
+/dotnet/src/Microsoft.Agents.AI.Tools.Shell/                    @chetantoshniwal @westey-m @SergeyMenshykh
+/dotnet/src/Microsoft.Agents.AI.Valkey/                         @chetantoshniwal @westey-m @SergeyMenshykh
+/dotnet/src/Microsoft.Agents.AI.Workflows/                      @chetantoshniwal @peibekwe @rogerbarreto
+/dotnet/src/Microsoft.Agents.AI.Workflows.Declarative/          @chetantoshniwal @peibekwe @rogerbarreto
+/dotnet/src/Microsoft.Agents.AI.Workflows.Declarative.Foundry/  @chetantoshniwal @peibekwe @rogerbarreto
+/dotnet/src/Microsoft.Agents.AI.Workflows.Declarative.Mcp/      @chetantoshniwal @peibekwe @rogerbarreto
+/dotnet/src/Microsoft.Agents.AI.Workflows.Generators/           @chetantoshniwal @peibekwe @rogerbarreto

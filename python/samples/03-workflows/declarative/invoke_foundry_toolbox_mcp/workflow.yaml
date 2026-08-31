@@ -9,11 +9,9 @@
 #
 kind: Workflow
 trigger:
-
   kind: OnConversationStart
   id: workflow_invoke_foundry_toolbox_mcp
   actions:
-
     - kind: SetVariable
       id: set_search_query
       variable: Local.SearchQuery
@@ -28,8 +26,6 @@ trigger:
       serverLabel: foundry_toolbox
       toolName: =Env.FOUNDRY_TOOLBOX_DOCS_SERVER_LABEL & "___microsoft_docs_search"
       conversationId: =System.ConversationId
-      headers:
-        Foundry-Features: Toolboxes=V1Preview
       arguments:
         query: =Local.SearchQuery
       output:

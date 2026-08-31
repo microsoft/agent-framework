@@ -42,12 +42,16 @@ uv run poe venv --python 3.12
 # Intentionally upgrade a specific dependency to reduce lockfile conflicts
 uv lock --upgrade-package <dependency-name> && uv run poe install
 
-# Refresh all dev dependency pins, lockfile, and validation in one run
+# Refresh exact development dependency-group pins, lockfile, and validation in one run
 uv run poe upgrade-dev-dependencies
 
-# First, run workspace-wide lower/upper compatibility gates
+# Release cuts: refresh uv.lock and probe changed packages at both bound extremes.
+# The release probe has a shared five-minute deadline.
+uv run poe validate-python-release --base-ref upstream/main
+
+# Exhaustive test+typing matrix (slow; use for deliberate dependency-range work or CI)
 uv run poe validate-dependency-bounds-test
-# Defaults to --package "*"; pass a package to scope test mode
+# Defaults to --package "*"; scope locally whenever possible.
 uv run poe validate-dependency-bounds-test --package core
 
 # Then expand bounds for one dependency in the target package
@@ -66,12 +70,40 @@ uv run poe add-dependency-and-validate-bounds --package core --dependency "<depe
 - Prerelease (`dev`/`a`/`b`/`rc`) and `<1.0` dependencies should use hard bounds with an explicit upper cap (avoid open-ended ranges).
 - For `<1.0` dependencies, prefer the broadest validated range the package can really support. That may be a patch line, a minor line, or multiple minor lines when checks/tests show the broader lane is compatible.
 - Prefer supporting multiple majors when practical; if APIs diverge across supported majors, use version-conditional imports/paths.
-- For dependency changes, run workspace-wide bound gates first, then `validate-dependency-bounds-project --mode both` for the target package/dependency to keep minimum and maximum constraints current. The same task can also drive repo-wide upper-bound automation by using `--package "*"` and omitting `--dependency`.
+- For release-only version, lifecycle, pin, and internal-floor edits, use `validate-python-release`. It refreshes
+  `uv.lock`, finds changed package metadata relative to the selected main ref, and runs the changed packages'
+  published runtime dependencies and non-development extras through lock-independent `lowest-direct` and `highest`
+  import probes on the minimum Python minor supported by each package's internal editable closure. The probes run
+  concurrently under one 300-second deadline; pass `--python` only when an explicit interpreter override is needed.
+- For deliberate external dependency-range changes, use
+  `validate-dependency-bounds-project --mode both` for the target package/dependency to find and validate the actual
+  minimum and maximum constraints. Scope the exhaustive `validate-dependency-bounds-test` matrix to affected
+  packages during local iteration; reserve the workspace-wide form for CI or an intentional full audit. The same
+  project task can drive repo-wide upper-bound automation by using `--package "*"` and omitting `--dependency`.
 - Prefer targeted lock updates with `uv lock --upgrade-package <dependency-name>` to reduce `uv.lock` merge conflicts.
 - Use `add-dependency-and-validate-bounds` for package-scoped dependency additions plus bound validation in one command.
-- Use `upgrade-dev-dependencies` for repo-wide dev tooling refreshes; it repins dev dependencies, refreshes `uv.lock`, and reruns `check`, `typing`, and `test`.
+- Keep shared tooling and source/type-check support in the root or package `dev` group. Put package-specific test
+  fixtures in a `test` group, and use a feature-named group for local-only executable dependencies that cannot be
+  expressed in published runtime metadata.
+- Use `upgrade-dev-dependencies` for repo-wide development dependency refreshes; it repins exact dependencies
+  across development groups, refreshes `uv.lock`, and reruns `check`, `typing`, and `test`.
 
 ## Lazy Loading Pattern
+
+### Root core API
+
+The root `agent_framework` package is a lazy public API surface:
+
+- Runtime exports live in `packages/core/agent_framework/__init__.py`.
+- Typing/editor exports live in `packages/core/agent_framework/__init__.pyi`.
+- Add or move root exports in `_LAZY_MODULE_EXPORTS`, keep the explicit runtime `__all__` in sync, and add the same
+  symbol to the `.pyi` file.
+- Keep deprecation behavior in the owning module (for example, a module-level `__getattr__` that warns and returns
+  the deprecated alias). Do not add one-off deprecated-symbol branches to root `__getattr__`.
+- Validate root API changes with `uv run poe syntax -P core`, `uv run poe pyright -P core`, and import smoke tests
+  for both `from agent_framework import <symbol>` and `from agent_framework import *`.
+
+### Provider namespaces
 
 Provider folders in core use `__getattr__` to lazy load from connector packages:
 
@@ -189,10 +221,13 @@ Move a package to `released` when it no longer carries a prerelease qualifier.
 - If promoting a package changes a dependent package's published dependency metadata, bump the
   dependent package's own version in the correct lifecycle pattern for its current stage
 - Lifecycle version patterns:
-  - `alpha`: `1.0.0a<date>`
-  - `beta`: `1.0.0b<date>`
-  - `rc`: `1.0.0rc<number>`
-  - `released`: `1.0.0`
+  - `alpha`: `1.0.0a<date>` where `<date>` is the current Pacific (US west coast) `YYMMDD`
+  - `beta`: `1.0.0b<date>` where `<date>` is the current Pacific (US west coast) `YYMMDD`
+  - `rc`: `1.0.0rc<number>` where `<number>` increments only when the package has changes
+  - `released`: `X.Y.Z` using semver per package
+- For alpha/beta date stamps, use the current Pacific date as the cutoff, not UTC and not the user's local
+  timezone. Same-Pacific-day re-cuts use a `.postN` suffix. Honor an explicit user-provided date over this
+  default.
 - Keep the `Development Status` classifier in `pyproject.toml` aligned with the lifecycle stage:
   - `alpha` -> `Development Status :: 3 - Alpha`
   - `beta` -> `Development Status :: 4 - Beta`

@@ -3,14 +3,15 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
-using Microsoft.Agents.AI.AGUI;
+using AGUI.Abstractions;
+using AGUI.Client;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
@@ -31,7 +32,7 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
         // FakeSessionAgent tracks turn count in session StateBag so we can verify
         // that state survives the serialization round-trip through the session store.
         await this.SetupTestServerWithSessionStoreAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentSession session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
@@ -43,10 +44,35 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
             firstTurnUpdates.Add(update);
         }
 
-        // Act - Second turn (same thread ID to test session persistence)
+        // Act - Second turn (continue the same AG-UI run on the same thread).
+        // The new AGUI.Client is stateless and never round-trips ConversationId. AG-UI continuation is
+        // expressed on the wire with the same threadId plus a parentRunId equal to the previous turn's
+        // runId. We capture both from turn 1's RUN_STARTED event and supply them to the stateless client
+        // through RawRepresentationFactory, sending only the new message (the continuation subset).
+        RunStartedEvent? firstRunStarted = firstTurnUpdates
+            .Select(u => u.AsChatResponseUpdate().RawRepresentation as RunStartedEvent)
+            .FirstOrDefault(e => e is not null);
+        Assert.NotNull(firstRunStarted);
+        string threadId = firstRunStarted!.ThreadId;
+        string previousRunId = firstRunStarted.RunId;
+        Assert.False(string.IsNullOrEmpty(threadId));
+        Assert.False(string.IsNullOrEmpty(previousRunId));
+
         ChatMessage secondUserMessage = new(ChatRole.User, "Second message");
+        var continuationOptions = new ChatClientAgentRunOptions
+        {
+            ChatOptions = new ChatOptions
+            {
+                RawRepresentationFactory = _ => new RunAgentInput
+                {
+                    ThreadId = threadId,
+                    ParentRunId = previousRunId,
+                    Messages = new[] { secondUserMessage }.AsAGUIMessages().ToList(),
+                },
+            },
+        };
         List<AgentResponseUpdate> secondTurnUpdates = [];
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([secondUserMessage], session, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([secondUserMessage], session, continuationOptions, CancellationToken.None))
         {
             secondTurnUpdates.Add(update);
         }
@@ -55,22 +81,22 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
         // If session persistence were broken, both turns would return "Turn 1"
         // because a fresh session (with turn count 0) would be created each time.
         AgentResponse firstResponse = firstTurnUpdates.ToAgentResponse();
-        firstResponse.Messages.Should().HaveCount(1);
-        firstResponse.Messages[0].Role.Should().Be(ChatRole.Assistant);
-        firstResponse.Messages[0].Text.Should().Contain("Turn 1:");
+        ChatMessage firstResponseMessage = Assert.Single(firstResponse.Messages);
+        Assert.Equal(ChatRole.Assistant, firstResponseMessage.Role);
+        Assert.Contains("Turn 1:", firstResponseMessage.Text);
 
         AgentResponse secondResponse = secondTurnUpdates.ToAgentResponse();
-        secondResponse.Messages.Should().HaveCount(1);
-        secondResponse.Messages[0].Role.Should().Be(ChatRole.Assistant);
-        secondResponse.Messages[0].Text.Should().Contain("Turn 2:");
+        ChatMessage secondResponseMessage = Assert.Single(secondResponse.Messages);
+        Assert.Equal(ChatRole.Assistant, secondResponseMessage.Role);
+        Assert.Contains("Turn 2:", secondResponseMessage.Text);
     }
 
     [Fact]
-    public async Task MapAGUI_WithAgentName_StreamsResponseCorrectlyAsync()
+    public async Task MapAGUIServer_WithAgentName_StreamsResponseCorrectlyAsync()
     {
-        // Arrange - use the MapAGUI(agentName, pattern) overload via hosting DI
+        // Arrange - use the MapAGUIServer(agentName, pattern) overload via hosting DI
         await this.SetupTestServerWithSessionStoreAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentSession session = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "hello");
@@ -84,13 +110,13 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
         }
 
         // Assert
-        updates.Should().NotBeEmpty();
-        updates.Should().AllSatisfy(u => u.Role.Should().Be(ChatRole.Assistant));
+        Assert.NotEmpty(updates);
+        Assert.All(updates, u => Assert.Equal(ChatRole.Assistant, u.Role));
 
         AgentResponse response = updates.ToAgentResponse();
-        response.Messages.Should().HaveCount(1);
-        response.Messages[0].Role.Should().Be(ChatRole.Assistant);
-        response.Messages[0].Text.Should().Be("Turn 1: Hello from session agent!");
+        ChatMessage responseMessage = Assert.Single(response.Messages);
+        Assert.Equal(ChatRole.Assistant, responseMessage.Role);
+        Assert.Equal("Turn 1: Hello from session agent!", responseMessage.Text);
     }
 
     private async Task SetupTestServerWithSessionStoreAsync()
@@ -98,7 +124,7 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
 
-        builder.Services.AddAGUI();
+        builder.Services.AddAGUIServer();
 
         // Register agent using hosting DI pattern with InMemorySessionStore
         builder.Services.AddAIAgent("session-test-agent", (_, name) => new FakeSessionAgent(name))
@@ -106,8 +132,8 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
 
         this._app = builder.Build();
 
-        // Use the agentName overload of MapAGUI
-        this._app.MapAGUI("session-test-agent", "/agent");
+        // Use the agentName overload of MapAGUIServer
+        this._app.MapAGUIServer("session-test-agent", "/agent");
 
         await this._app.StartAsync();
 

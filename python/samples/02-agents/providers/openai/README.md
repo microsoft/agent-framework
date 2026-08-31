@@ -22,6 +22,7 @@ This folder contains OpenAI provider samples for the generic clients in
 | [`client_basic.py`](client_basic.py) | Basic non-streaming and streaming responses sample with an explicit `gpt-5.4-nano` model and API key. |
 | [`client_image_analysis.py`](client_image_analysis.py) | Analyze images with the responses client. |
 | [`client_image_generation.py`](client_image_generation.py) | Generate images from text prompts. |
+| [`client_prompt_caching.py`](client_prompt_caching.py) | Explicit prompt cache breakpoints and `prompt_cache_options` on GPT-5.6 models. |
 | [`client_reasoning.py`](client_reasoning.py) | Reasoning-focused sample for models such as `gpt-5`. |
 | [`client_streaming_image_generation.py`](client_streaming_image_generation.py) | Streaming image generation sample. |
 | [`client_verbosity.py`](client_verbosity.py) | GPT-5 `verbosity` option (`low`/`medium`/`high`) with default and per-call overrides. |

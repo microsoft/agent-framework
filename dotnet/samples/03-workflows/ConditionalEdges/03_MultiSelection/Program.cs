@@ -2,7 +2,7 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
@@ -37,15 +37,15 @@ public static class Program
 
     private static async Task Main()
     {
-        // Set up the Azure OpenAI client
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
-        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
+        // Set up the Microsoft Foundry client
+        var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+        var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
+        AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
         // Create agents
-        AIAgent emailAnalysisAgent = GetEmailAnalysisAgent(chatClient);
-        AIAgent emailAssistantAgent = GetEmailAssistantAgent(chatClient);
-        AIAgent emailSummaryAgent = GetEmailSummaryAgent(chatClient);
+        AIAgent emailAnalysisAgent = GetEmailAnalysisAgent(aiProjectClient, deploymentName);
+        AIAgent emailAssistantAgent = GetEmailAssistantAgent(aiProjectClient, deploymentName);
+        AIAgent emailSummaryAgent = GetEmailSummaryAgent(aiProjectClient, deploymentName);
 
         // Create executors
         var emailAnalysisExecutor = new EmailAnalysisExecutor(emailAnalysisAgent);
@@ -92,6 +92,10 @@ public static class Program
             if (evt is WorkflowOutputEvent outputEvent)
             {
                 Console.WriteLine($"{outputEvent}");
+            }
+            else if (evt is ClassificationEvent classificationEvent)
+            {
+                Console.WriteLine($"{classificationEvent}");
             }
             else if (evt is DatabaseEvent databaseEvent)
             {
@@ -150,11 +154,12 @@ public static class Program
     /// Create an email analysis agent.
     /// </summary>
     /// <returns>A ChatClientAgent configured for email analysis</returns>
-    private static ChatClientAgent GetEmailAnalysisAgent(IChatClient chatClient) =>
-        new(chatClient, new ChatClientAgentOptions()
+    private static ChatClientAgent GetEmailAnalysisAgent(AIProjectClient client, string model) =>
+        client.AsAIAgent(new ChatClientAgentOptions()
         {
             ChatOptions = new()
             {
+                ModelId = model,
                 Instructions = "You are a spam detection assistant that identifies spam emails.",
                 ResponseFormat = ChatResponseFormat.ForJsonSchema<AnalysisResult>()
             }
@@ -164,11 +169,12 @@ public static class Program
     /// Creates an email assistant agent.
     /// </summary>
     /// <returns>A ChatClientAgent configured for email assistance</returns>
-    private static ChatClientAgent GetEmailAssistantAgent(IChatClient chatClient) =>
-        new(chatClient, new ChatClientAgentOptions()
+    private static ChatClientAgent GetEmailAssistantAgent(AIProjectClient client, string model) =>
+        client.AsAIAgent(new ChatClientAgentOptions()
         {
             ChatOptions = new()
             {
+                ModelId = model,
                 Instructions = "You are an email assistant that helps users draft responses to emails with professionalism.",
                 ResponseFormat = ChatResponseFormat.ForJsonSchema<EmailResponse>()
             }
@@ -178,11 +184,12 @@ public static class Program
     /// Creates an agent that summarizes emails.
     /// </summary>
     /// <returns>A ChatClientAgent configured for email summarization</returns>
-    private static ChatClientAgent GetEmailSummaryAgent(IChatClient chatClient) =>
-        new(chatClient, new ChatClientAgentOptions()
+    private static ChatClientAgent GetEmailSummaryAgent(AIProjectClient client, string model) =>
+        client.AsAIAgent(new ChatClientAgentOptions()
         {
             ChatOptions = new()
             {
+                ModelId = model,
                 Instructions = "You are an assistant that helps users summarize emails.",
                 ResponseFormat = ChatResponseFormat.ForJsonSchema<EmailSummary>()
             }
@@ -270,6 +277,11 @@ internal sealed class EmailAnalysisExecutor : Executor<ChatMessage, AnalysisResu
 
         AnalysisResult!.EmailId = newEmail.EmailId;
         AnalysisResult!.EmailLength = newEmail.EmailContent.Length;
+
+        // Emit a classification event so the workflow output shows the spam decision.
+        await context.AddEventAsync(
+            new ClassificationEvent($"Email classified as: {AnalysisResult.spamDecision} — {AnalysisResult.Reason}"),
+            cancellationToken);
 
         return AnalysisResult;
     }
@@ -414,6 +426,12 @@ internal sealed class EmailSummaryExecutor : Executor<AnalysisResult, AnalysisRe
         return message;
     }
 }
+
+/// <summary>
+/// A custom workflow event for classification operations.
+/// </summary>
+/// <param name="message">The classification message</param>
+internal sealed class ClassificationEvent(string message) : WorkflowEvent(message) { }
 
 /// <summary>
 /// A custom workflow event for database operations.

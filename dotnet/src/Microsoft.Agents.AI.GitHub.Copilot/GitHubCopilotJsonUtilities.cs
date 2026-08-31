@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -43,6 +44,7 @@ internal static partial class GitHubCopilotJsonUtilities
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         NumberHandling = JsonNumberHandling.AllowReadingFromString)]
     [JsonSerializable(typeof(GitHubCopilotAgentSession))]
+    [JsonSerializable(typeof(Dictionary<string, object?>))]
     [ExcludeFromCodeCoverage]
     private sealed partial class JsonContext : JsonSerializerContext;
 }

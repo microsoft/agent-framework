@@ -2,8 +2,12 @@
 
 """Tests for SerializationMixin functionality."""
 
+import copy
 import logging
 from typing import Any
+
+import pytest
+from typing_extensions import Self
 
 from agent_framework._serialization import SerializationMixin
 
@@ -224,6 +228,26 @@ class TestSerializationMixin:
         assert data["outer_value"] == "outer_test"
         assert data["inner"]["inner_value"] == "inner_test"
 
+    def test_to_dict_with_nested_structural_serialization_protocol(self):
+        """Test to_dict handles a structural protocol implementation without the mixin."""
+
+        class InnerClass:
+            def __init__(self, inner_value: str):
+                self.inner_value = inner_value
+
+            def to_dict(self, **kwargs: Any) -> dict[str, Any]:
+                return {"inner_value": self.inner_value}
+
+            @classmethod
+            def from_dict(cls, value: dict[str, Any], **kwargs: Any) -> Self:
+                return cls(value["inner_value"])
+
+        class OuterClass(SerializationMixin):
+            def __init__(self, inner: InnerClass):
+                self.inner = inner
+
+        assert OuterClass(InnerClass("inner_test")).to_dict()["inner"] == {"inner_value": "inner_test"}
+
     def test_to_dict_with_list_of_serialization_protocol(self):
         """Test to_dict handles lists containing SerializationProtocol objects."""
 
@@ -346,6 +370,26 @@ class TestSerializationMixin:
         # Verify to_dict includes the type
         out = obj.to_dict()
         assert out["type"] == "my_custom_type"
+
+    def test_from_dict_rejects_mismatched_type(self):
+        """from_dict raises ValueError when the payload type doesn't match the class."""
+
+        class TestClass(SerializationMixin):
+            def __init__(self, value: str):
+                self.value = value
+
+        with pytest.raises(ValueError, match="Type mismatch: expected 'test_class', got 'function_tool'"):
+            TestClass.from_dict({"type": "function_tool", "value": "x"})
+
+    def test_from_json_rejects_mismatched_type(self):
+        """from_json surfaces the same mismatch error instead of silently coercing."""
+
+        class TestClass(SerializationMixin):
+            def __init__(self, value: str):
+                self.value = value
+
+        with pytest.raises(ValueError, match="Type mismatch"):
+            TestClass.from_json('{"type": "some_other_type", "value": "x"}')
 
     def test_from_json(self):
         """Test from_json deserializes JSON string."""
@@ -527,3 +571,113 @@ class TestSerializationMixin:
         # Normal field: deep-copied
         assert cloned.items is not obj.items
         assert cloned.items == ["a"]
+
+    def test_dependency_dict_merge_does_not_mutate_input(self):
+        """Test that dict dependency merging does not mutate the caller's input dictionary."""
+
+        class TestClass(SerializationMixin):
+            INJECTABLE = {"config"}
+
+            def __init__(self, name: str, config: dict | None = None):
+                self.name = name
+                self.config = config or {}
+
+        # Create input with nested dict
+        input_data = {"type": "test_class", "name": "test", "config": {"base": True}}
+        original_input = copy.deepcopy(input_data)
+
+        # Call from_dict with dict-shaped dependency
+        dependencies = {"test_class": {"config": {"injected": True}}}
+        obj = TestClass.from_dict(input_data, dependencies=dependencies)
+
+        # Verify the object received the merged values
+        assert obj.config["base"] is True
+        assert obj.config["injected"] is True
+
+        # Verify the input was NOT mutated
+        assert input_data == original_input
+        assert input_data["config"] == {"base": True}
+        assert "injected" not in input_data["config"]
+
+    def test_dependency_dict_merge_preserves_override_semantics(self):
+        """Test that dict dependency merging preserves existing override behavior."""
+
+        class TestClass(SerializationMixin):
+            INJECTABLE = {"options"}
+
+            def __init__(self, name: str, options: dict | None = None):
+                self.name = name
+                self.options = options or {}
+
+        # Existing options in data
+        data = {"type": "test_class", "name": "test", "options": {"timeout": 10, "name": "original"}}
+        # Dependency with conflicting and new keys
+        dependencies = {"test_class": {"options": {"timeout": 20, "new_key": "value"}}}
+
+        obj = TestClass.from_dict(data, dependencies=dependencies)
+
+        # Dependency values should override existing values
+        assert obj.options["timeout"] == 20  # Overridden by dependency
+        assert obj.options["name"] == "original"  # Preserved from original
+        assert obj.options["new_key"] == "value"  # Added from dependency
+
+    def test_repeated_from_dict_calls_do_not_leak_state(self):
+        """Test that reusing the same input dictionary across calls does not leak state."""
+
+        class TestClass(SerializationMixin):
+            INJECTABLE = {"config"}
+
+            def __init__(self, name: str, config: dict | None = None):
+                self.name = name
+                self.config = config or {}
+
+        # Shared input specification
+        spec = {"type": "test_class", "name": "test", "config": {"base": True}}
+        original_spec = copy.deepcopy(spec)
+
+        # First call with first dependency
+        first = TestClass.from_dict(spec, dependencies={"test_class": {"config": {"first": True}}})
+
+        # Verify first result
+        assert first.config["base"] is True
+        assert first.config["first"] is True
+        assert "second" not in first.config
+
+        # Second call with second dependency (reusing same spec)
+        second = TestClass.from_dict(spec, dependencies={"test_class": {"config": {"second": True}}})
+
+        # Verify second result does NOT leak state from first call
+        assert second.config["base"] is True
+        assert second.config["second"] is True
+        assert "first" not in second.config
+
+        # Verify the original spec was never mutated
+        assert spec == original_spec
+        assert spec["config"] == {"base": True}
+
+    def test_instance_specific_dict_merge_does_not_mutate_input(self):
+        """Test that instance-specific dict dependency merging does not mutate input."""
+
+        class TestClass(SerializationMixin):
+            INJECTABLE = {"config"}
+
+            def __init__(self, name: str, config: dict | None = None):
+                self.name = name
+                self.config = config or {}
+
+        # Create input with nested dict
+        input_data = {"type": "test_class", "name": "special_instance", "config": {"base": True}}
+        original_input = copy.deepcopy(input_data)
+
+        # Call from_dict with instance-specific dict-shaped dependency
+        dependencies = {"test_class": {"name:special_instance": {"config": {"injected": True}}}}
+        obj = TestClass.from_dict(input_data, dependencies=dependencies)
+
+        # Verify the object received the merged values
+        assert obj.config["base"] is True
+        assert obj.config["injected"] is True
+
+        # Verify the input was NOT mutated
+        assert input_data == original_input
+        assert input_data["config"] == {"base": True}
+        assert "injected" not in input_data["config"]

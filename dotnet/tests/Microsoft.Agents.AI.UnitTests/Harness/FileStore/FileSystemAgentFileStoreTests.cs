@@ -2,6 +2,7 @@
 
 using System;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
@@ -64,38 +65,38 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
     public async Task WriteFileAsync_DotDotSegment_ThrowsAsync()
     {
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => this._store.WriteFileAsync("../escape.txt", "content"));
+        await Assert.ThrowsAsync<ArgumentException>(() => this._store.WriteAsync("../escape.txt", "content"));
     }
 
     [Fact]
     public async Task ReadFileAsync_AbsolutePath_ThrowsAsync()
     {
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => this._store.ReadFileAsync("/etc/passwd"));
+        await Assert.ThrowsAsync<ArgumentException>(() => this._store.ReadAsync("/etc/passwd"));
     }
 
     [Fact]
     public async Task DeleteFileAsync_DriveRootedPath_ThrowsAsync()
     {
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => this._store.DeleteFileAsync("C:\\temp\\file.txt"));
+        await Assert.ThrowsAsync<ArgumentException>(() => this._store.DeleteAsync("C:\\temp\\file.txt"));
     }
 
     [Fact]
     public async Task WriteFileAsync_DotSegment_ThrowsAsync()
     {
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(() => this._store.WriteFileAsync("./file.txt", "content"));
+        await Assert.ThrowsAsync<ArgumentException>(() => this._store.WriteAsync("./file.txt", "content"));
     }
 
     [Fact]
     public async Task WriteFileAsync_DoubleDotsInFileName_AllowedAsync()
     {
         // Arrange — "notes..md" contains ".." but is not a ".." segment
-        await this._store.WriteFileAsync("notes..md", "content");
+        await this._store.WriteAsync("notes..md", "content");
 
         // Act
-        string? result = await this._store.ReadFileAsync("notes..md");
+        string? result = await this._store.ReadAsync("notes..md");
 
         // Assert
         Assert.Equal("content", result);
@@ -105,10 +106,10 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
     public async Task WriteFileAsync_TrailingSlash_NormalizesAsync()
     {
         // Act — trailing slash is trimmed during normalization.
-        await this._store.WriteFileAsync("subdir/", "content");
+        await this._store.WriteAsync("subdir/", "content");
 
         // Assert — the file is accessible via the normalized name.
-        string? result = await this._store.ReadFileAsync("subdir");
+        string? result = await this._store.ReadAsync("subdir");
         Assert.Equal("content", result);
     }
 
@@ -120,10 +121,10 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
     public async Task WriteAndReadAsync_RoundTripsAsync()
     {
         // Arrange
-        await this._store.WriteFileAsync("test.txt", "hello world");
+        await this._store.WriteAsync("test.txt", "hello world");
 
         // Act
-        string? content = await this._store.ReadFileAsync("test.txt");
+        string? content = await this._store.ReadAsync("test.txt");
 
         // Assert
         Assert.Equal("hello world", content);
@@ -133,11 +134,11 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
     public async Task WriteFileAsync_OverwritesExistingAsync()
     {
         // Arrange
-        await this._store.WriteFileAsync("test.txt", "first");
-        await this._store.WriteFileAsync("test.txt", "second");
+        await this._store.WriteAsync("test.txt", "first");
+        await this._store.WriteAsync("test.txt", "second");
 
         // Act
-        string? content = await this._store.ReadFileAsync("test.txt");
+        string? content = await this._store.ReadAsync("test.txt");
 
         // Assert
         Assert.Equal("second", content);
@@ -147,7 +148,7 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
     public async Task ReadFileAsync_NonExistent_ReturnsNullAsync()
     {
         // Act
-        string? content = await this._store.ReadFileAsync("missing.txt");
+        string? content = await this._store.ReadAsync("missing.txt");
 
         // Assert
         Assert.Null(content);
@@ -161,21 +162,21 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
     public async Task DeleteFileAsync_ExistingFile_ReturnsTrueAsync()
     {
         // Arrange
-        await this._store.WriteFileAsync("delete-me.txt", "content");
+        await this._store.WriteAsync("delete-me.txt", "content");
 
         // Act
-        bool deleted = await this._store.DeleteFileAsync("delete-me.txt");
+        bool deleted = await this._store.DeleteAsync("delete-me.txt");
 
         // Assert
         Assert.True(deleted);
-        Assert.Null(await this._store.ReadFileAsync("delete-me.txt"));
+        Assert.Null(await this._store.ReadAsync("delete-me.txt"));
     }
 
     [Fact]
     public async Task DeleteFileAsync_NonExistent_ReturnsFalseAsync()
     {
         // Act
-        bool deleted = await this._store.DeleteFileAsync("nope.txt");
+        bool deleted = await this._store.DeleteAsync("nope.txt");
 
         // Assert
         Assert.False(deleted);
@@ -189,7 +190,7 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
     public async Task FileExistsAsync_ExistingFile_ReturnsTrueAsync()
     {
         // Arrange
-        await this._store.WriteFileAsync("exists.txt", "content");
+        await this._store.WriteAsync("exists.txt", "content");
 
         // Act & Assert
         Assert.True(await this._store.FileExistsAsync("exists.txt"));
@@ -210,11 +211,14 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
     public async Task ListFilesAsync_ReturnsDirectChildrenOnlyAsync()
     {
         // Arrange
-        await this._store.WriteFileAsync("root.txt", "content");
-        await this._store.WriteFileAsync("sub/nested.txt", "content");
+        await this._store.WriteAsync("root.txt", "content");
+        await this._store.WriteAsync("sub/nested.txt", "content");
 
         // Act
-        var files = await this._store.ListFilesAsync("");
+        var files = (await this._store.ListChildrenAsync(""))
+            .Where(e => e.Type == FileStoreEntry.File)
+            .Select(e => e.Name)
+            .ToList();
 
         // Assert
         Assert.Single(files);
@@ -225,12 +229,15 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
     public async Task ListFilesAsync_SubDirectory_ReturnsChildrenAsync()
     {
         // Arrange
-        await this._store.WriteFileAsync("sub/a.txt", "content");
-        await this._store.WriteFileAsync("sub/b.txt", "content");
-        await this._store.WriteFileAsync("other.txt", "content");
+        await this._store.WriteAsync("sub/a.txt", "content");
+        await this._store.WriteAsync("sub/b.txt", "content");
+        await this._store.WriteAsync("other.txt", "content");
 
         // Act
-        var files = await this._store.ListFilesAsync("sub");
+        var files = (await this._store.ListChildrenAsync("sub"))
+            .Where(e => e.Type == FileStoreEntry.File)
+            .Select(e => e.Name)
+            .ToList();
 
         // Assert
         Assert.Equal(2, files.Count);
@@ -242,7 +249,10 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
     public async Task ListFilesAsync_NonExistentDirectory_ReturnsEmptyAsync()
     {
         // Act
-        var files = await this._store.ListFilesAsync("no-such-dir");
+        var files = (await this._store.ListChildrenAsync("no-such-dir"))
+            .Where(e => e.Type == FileStoreEntry.File)
+            .Select(e => e.Name)
+            .ToList();
 
         // Assert
         Assert.Empty(files);
@@ -270,10 +280,10 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
     public async Task SearchFilesAsync_FindsMatchAsync()
     {
         // Arrange
-        await this._store.WriteFileAsync("doc.md", "This has an error on line one.\nLine two is fine.");
+        await this._store.WriteAsync("doc.md", "This has an error on line one.\nLine two is fine.");
 
         // Act
-        var results = await this._store.SearchFilesAsync("", "error");
+        var results = await this._store.SearchAsync("", "error");
 
         // Assert
         Assert.Single(results);
@@ -287,11 +297,11 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
     public async Task SearchFilesAsync_GlobFilter_ExcludesNonMatchingAsync()
     {
         // Arrange
-        await this._store.WriteFileAsync("notes.md", "important info");
-        await this._store.WriteFileAsync("data.txt", "important info");
+        await this._store.WriteAsync("notes.md", "important info");
+        await this._store.WriteAsync("data.txt", "important info");
 
         // Act
-        var results = await this._store.SearchFilesAsync("", "important", "*.md");
+        var results = await this._store.SearchAsync("", "important", "*.md");
 
         // Assert
         Assert.Single(results);
@@ -302,10 +312,10 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
     public async Task SearchFilesAsync_NoMatch_ReturnsEmptyAsync()
     {
         // Arrange
-        await this._store.WriteFileAsync("doc.md", "nothing here");
+        await this._store.WriteAsync("doc.md", "nothing here");
 
         // Act
-        var results = await this._store.SearchFilesAsync("", "missing-pattern");
+        var results = await this._store.SearchAsync("", "missing-pattern");
 
         // Assert
         Assert.Empty(results);
@@ -315,7 +325,7 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
     public async Task SearchFilesAsync_NonExistentDirectory_ReturnsEmptyAsync()
     {
         // Act
-        var results = await this._store.SearchFilesAsync("no-dir", "anything");
+        var results = await this._store.SearchAsync("no-dir", "anything");
 
         // Assert
         Assert.Empty(results);
@@ -326,11 +336,121 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
     {
         // Arrange — write a file with content that triggers catastrophic backtracking.
         // The pattern (a+)+$ with a string of 'a's followed by 'b' forces exponential backtracking.
-        await this._store.WriteFileAsync("trap.txt", new string('a', 30) + "b");
+        await this._store.WriteAsync("trap.txt", new string('a', 30) + "b");
 
         // Act & Assert — a known ReDoS pattern with backtracking
         await Assert.ThrowsAsync<RegexMatchTimeoutException>(() =>
-            this._store.SearchFilesAsync("", "(a+)+$"));
+            this._store.SearchAsync("", "(a+)+$"));
+    }
+
+    [Fact]
+    public async Task SearchFilesAsync_Recursive_FindsDescendantsAsync()
+    {
+        // Arrange
+        await this._store.WriteAsync("notes.md", "Match here");
+        await this._store.WriteAsync("reports/q1.md", "Match here too");
+        await this._store.WriteAsync("reports/2024/q2.md", "Match here as well");
+
+        // Act
+        var results = await this._store.SearchAsync("", "Match", globPattern: null, recursive: true);
+
+        // Assert
+        Assert.Equal(3, results.Count);
+        var names = string.Join(",", results.Select(r => r.FileName).OrderBy(n => n, StringComparer.Ordinal));
+        Assert.Equal("notes.md,reports/2024/q2.md,reports/q1.md", names);
+    }
+
+    [Fact]
+    public async Task SearchFilesAsync_Recursive_GlobScopesToSubtreeAsync()
+    {
+        // Arrange
+        await this._store.WriteAsync("notes.md", "Match here");
+        await this._store.WriteAsync("reports/q1.md", "Match here too");
+        await this._store.WriteAsync("reports/2024/q2.md", "Match here as well");
+
+        // Act
+        var results = await this._store.SearchAsync("", "Match", globPattern: "reports/**", recursive: true);
+
+        // Assert
+        Assert.Equal(2, results.Count);
+        var names = string.Join(",", results.Select(r => r.FileName).OrderBy(n => n, StringComparer.Ordinal));
+        Assert.Equal("reports/2024/q2.md,reports/q1.md", names);
+    }
+
+    [Fact]
+    public async Task SearchFilesAsync_Recursive_GlobMatchesNestedExtensionAsync()
+    {
+        // Arrange
+        await this._store.WriteAsync("notes.md", "Match here");
+        await this._store.WriteAsync("reports/q1.txt", "Match here too");
+        await this._store.WriteAsync("reports/2024/q2.md", "Match here as well");
+
+        // Act
+        var results = await this._store.SearchAsync("", "Match", globPattern: "**/*.md", recursive: true);
+
+        // Assert
+        Assert.Equal(2, results.Count);
+        var names = string.Join(",", results.Select(r => r.FileName).OrderBy(n => n, StringComparer.Ordinal));
+        Assert.Equal("notes.md,reports/2024/q2.md", names);
+    }
+
+    [Fact]
+    public async Task ListDirectoriesAsync_ReturnsDirectChildSubdirectoriesAsync()
+    {
+        // Arrange
+        await this._store.WriteAsync("root.md", "x");
+        await this._store.WriteAsync("reports/q1.md", "x");
+        await this._store.WriteAsync("reports/2024/q2.md", "x");
+        await this._store.WriteAsync("images/logo.txt", "x");
+
+        // Act
+        var directories = (await this._store.ListChildrenAsync(""))
+            .Where(e => e.Type == FileStoreEntry.Directory)
+            .Select(e => e.Name)
+            .ToList();
+
+        // Assert
+        var sorted = string.Join(",", directories.OrderBy(d => d, StringComparer.Ordinal));
+        Assert.Equal("images,reports", sorted);
+    }
+
+    [Fact]
+    public async Task ListDirectoriesAsync_NestedDirectory_ReturnsChildrenAsync()
+    {
+        // Arrange
+        await this._store.WriteAsync("reports/q1.md", "x");
+        await this._store.WriteAsync("reports/2024/q2.md", "x");
+        await this._store.WriteAsync("reports/2025/q3.md", "x");
+
+        // Act
+        var directories = (await this._store.ListChildrenAsync("reports"))
+            .Where(e => e.Type == FileStoreEntry.Directory)
+            .Select(e => e.Name)
+            .ToList();
+
+        // Assert
+        var sorted = string.Join(",", directories.OrderBy(d => d, StringComparer.Ordinal));
+        Assert.Equal("2024,2025", sorted);
+    }
+
+    [Fact]
+    public async Task ListDirectoriesAsync_NonExistentDirectory_ReturnsEmptyAsync()
+    {
+        // Act
+        var directories = (await this._store.ListChildrenAsync("no-dir"))
+            .Where(e => e.Type == FileStoreEntry.Directory)
+            .Select(e => e.Name)
+            .ToList();
+
+        // Assert
+        Assert.Empty(directories);
+    }
+
+    [Fact]
+    public async Task ListDirectoriesAsync_DotDotSegment_ThrowsAsync()
+    {
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(() => this._store.ListChildrenAsync("../other"));
     }
 
     #endregion
@@ -395,7 +515,7 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
             }
 
             // Act & Assert — reading through the symlink should be rejected.
-            await Assert.ThrowsAsync<ArgumentException>(() => this._store.ReadFileAsync("leak.txt"));
+            await Assert.ThrowsAsync<ArgumentException>(() => this._store.ReadAsync("leak.txt"));
         }
         finally
         {
@@ -425,7 +545,7 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
             }
 
             // Act & Assert — writing through the symlink should be rejected.
-            await Assert.ThrowsAsync<ArgumentException>(() => this._store.WriteFileAsync("overwrite.txt", "EVIL_CONTENT"));
+            await Assert.ThrowsAsync<ArgumentException>(() => this._store.WriteAsync("overwrite.txt", "EVIL_CONTENT"));
 
             // Verify the outside file was NOT modified.
             Assert.Equal("ORIGINAL_CONTENT", await File.ReadAllTextAsync(outsideFile));
@@ -458,7 +578,7 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
             }
 
             // Act & Assert
-            await Assert.ThrowsAsync<ArgumentException>(() => this._store.DeleteFileAsync("trap.txt"));
+            await Assert.ThrowsAsync<ArgumentException>(() => this._store.DeleteAsync("trap.txt"));
 
             // Verify the outside file still exists.
             Assert.True(File.Exists(outsideFile));
@@ -519,7 +639,7 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
             }
 
             // Act & Assert — even a dangling symlink must be rejected.
-            await Assert.ThrowsAsync<ArgumentException>(() => this._store.WriteFileAsync("dangling.txt", "CONTENT"));
+            await Assert.ThrowsAsync<ArgumentException>(() => this._store.WriteAsync("dangling.txt", "CONTENT"));
 
             // Verify the target was NOT created by following the dangling link.
             Assert.False(File.Exists(nonExistentTarget));
@@ -554,7 +674,7 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
             }
 
             // Act & Assert
-            await Assert.ThrowsAsync<ArgumentException>(() => this._store.ListFilesAsync("linked-dir"));
+            await Assert.ThrowsAsync<ArgumentException>(() => this._store.ListChildrenAsync("linked-dir"));
         }
         finally
         {
@@ -585,7 +705,7 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
             }
 
             // Act & Assert
-            await Assert.ThrowsAsync<ArgumentException>(() => this._store.SearchFilesAsync("search-link", "SENSITIVE"));
+            await Assert.ThrowsAsync<ArgumentException>(() => this._store.SearchAsync("search-link", "SENSITIVE"));
         }
         finally
         {
@@ -616,7 +736,7 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
             }
 
             // Act & Assert — reading through a directory symlink should be rejected.
-            await Assert.ThrowsAsync<ArgumentException>(() => this._store.ReadFileAsync("linked-output/secret.txt"));
+            await Assert.ThrowsAsync<ArgumentException>(() => this._store.ReadAsync("linked-output/secret.txt"));
         }
         finally
         {
@@ -646,7 +766,7 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
             }
 
             // Act & Assert
-            await Assert.ThrowsAsync<ArgumentException>(() => this._store.WriteFileAsync("linked-output/created-by-agent.txt", "CONTENT"));
+            await Assert.ThrowsAsync<ArgumentException>(() => this._store.WriteAsync("linked-output/created-by-agent.txt", "CONTENT"));
 
             // Verify no file was created outside.
             Assert.False(File.Exists(Path.Combine(outsideDir, "created-by-agent.txt")));
@@ -681,7 +801,7 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
             }
 
             // Act & Assert
-            await Assert.ThrowsAsync<ArgumentException>(() => this._store.DeleteFileAsync("linked-output/delete-me.txt"));
+            await Assert.ThrowsAsync<ArgumentException>(() => this._store.DeleteAsync("linked-output/delete-me.txt"));
 
             // Verify the outside file was NOT deleted.
             Assert.True(File.Exists(outsideFile));
@@ -747,10 +867,10 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
             }
 
             // Also add a normal file to confirm search still works for non-symlinks.
-            await this._store.WriteFileAsync("normal.txt", "NORMAL_CONTENT");
+            await this._store.WriteAsync("normal.txt", "NORMAL_CONTENT");
 
             // Act — search at root should skip the symlinked file.
-            var results = await this._store.SearchFilesAsync("", "SECRET_CONTENT");
+            var results = await this._store.SearchAsync("", "SECRET_CONTENT");
 
             // Assert — no results from the symlinked file.
             Assert.Empty(results);
@@ -783,10 +903,13 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
             }
 
             // Also add a normal file.
-            await this._store.WriteFileAsync("visible.txt", "VISIBLE");
+            await this._store.WriteAsync("visible.txt", "VISIBLE");
 
             // Act
-            var files = await this._store.ListFilesAsync("");
+            var files = (await this._store.ListChildrenAsync(""))
+                .Where(e => e.Type == FileStoreEntry.File)
+                .Select(e => e.Name)
+                .ToList();
 
             // Assert — symlinked file should not appear in listing.
             Assert.DoesNotContain("hidden-link.txt", files);
@@ -800,6 +923,82 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
             }
 
             File.Delete(outsideFile);
+        }
+    }
+
+    [Fact]
+    public async Task SearchFilesAsync_Recursive_SkipsSymlinkedSubdirectoryAsync()
+    {
+        // Arrange — a symlinked directory under root should be skipped by recursive search.
+        string outsideDir = Path.Combine(Path.GetTempPath(), "symlink_recursive_target_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outsideDir);
+        File.WriteAllText(Path.Combine(outsideDir, "leak.txt"), "RECURSIVE_SECRET_CONTENT");
+
+        string linkDir = Path.Combine(this._rootDir, "linked-sub");
+
+        try
+        {
+            if (!TryCreateDirectorySymbolicLink(linkDir, outsideDir))
+            {
+                return;
+            }
+
+            await this._store.WriteAsync("normal/visible.txt", "RECURSIVE_VISIBLE_CONTENT");
+
+            // Act — recursive search should not descend into the symlinked directory.
+            var results = await this._store.SearchAsync("", "RECURSIVE", globPattern: null, recursive: true);
+
+            // Assert — only the non-symlinked file is found.
+            Assert.Single(results);
+            Assert.Equal("normal/visible.txt", results[0].FileName);
+        }
+        finally
+        {
+            if (Directory.Exists(linkDir))
+            {
+                Directory.Delete(linkDir);
+            }
+
+            Directory.Delete(outsideDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ListDirectoriesAsync_ExcludesSymlinkedDirectoryAsync()
+    {
+        // Arrange — a symlinked directory under root should not be listed.
+        string outsideDir = Path.Combine(Path.GetTempPath(), "symlink_listdir_target_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outsideDir);
+
+        string linkDir = Path.Combine(this._rootDir, "linked-listing");
+
+        try
+        {
+            if (!TryCreateDirectorySymbolicLink(linkDir, outsideDir))
+            {
+                return;
+            }
+
+            await this._store.WriteAsync("real-dir/file.txt", "x");
+
+            // Act
+            var directories = (await this._store.ListChildrenAsync(""))
+                .Where(e => e.Type == FileStoreEntry.Directory)
+                .Select(e => e.Name)
+                .ToList();
+
+            // Assert — the symlinked directory is excluded, the real one is present.
+            Assert.DoesNotContain("linked-listing", directories);
+            Assert.Contains("real-dir", directories);
+        }
+        finally
+        {
+            if (Directory.Exists(linkDir))
+            {
+                Directory.Delete(linkDir);
+            }
+
+            Directory.Delete(outsideDir, recursive: true);
         }
     }
 #endif

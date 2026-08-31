@@ -2,8 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -15,7 +13,6 @@ namespace Microsoft.Agents.AI;
 /// positional constructor or method parameters. New options can be added here
 /// without breaking existing callers.
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentFileSkillsSourceOptions
 {
     /// <summary>

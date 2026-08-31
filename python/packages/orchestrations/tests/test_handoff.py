@@ -9,8 +9,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from agent_framework import (
     Agent,
+    AgentContext,
     AgentResponse,
     AgentResponseUpdate,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
@@ -20,6 +22,7 @@ from agent_framework import (
     ResponseStream,
     WorkflowEvent,
     WorkflowRunState,
+    agent_middleware,
     function_middleware,
     resolve_agent_id,
     tool,
@@ -42,6 +45,14 @@ from agent_framework_orchestrations._handoff import (
     get_handoff_tool_name,
 )
 from agent_framework_orchestrations._orchestrator_helpers import clean_conversation_for_handoff
+
+
+def _as_handoff_agent(agent: Any) -> Agent:
+    return cast(Agent, agent)
+
+
+def _as_handoff_agents(*agents: Any) -> list[Agent]:
+    return [_as_handoff_agent(agent) for agent in agents]
 
 
 # region unit tests
@@ -97,7 +108,7 @@ class MockChatClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], Bas
 
         def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
             response_format = options.get("response_format")
-            output_format_type = response_format if isinstance(response_format, type) else None
+            output_format_type: Any = response_format if isinstance(response_format, type) else None
             return ChatResponse.from_updates(updates, output_format_type=output_format_type)
 
         return ResponseStream(_stream(), finalizer=_finalize)
@@ -229,10 +240,10 @@ async def test_handoff():
     # between all agents.
     workflow = (
         HandoffBuilder(
-            participants=[triage, specialist, escalation],
+            participants=_as_handoff_agents(triage, specialist, escalation),
             termination_condition=lambda conv: sum(1 for m in conv if m.role == "user") >= 2,
         )
-        .with_start_agent(triage)
+        .with_start_agent(_as_handoff_agent(triage))
         .build()
     )
 
@@ -274,8 +285,8 @@ async def test_resume_keeps_prior_user_context_for_same_agent() -> None:
         require_per_service_call_history_persistence=True,
     )
     workflow = (
-        HandoffBuilder(participants=[refund_agent], termination_condition=lambda _: False)
-        .with_start_agent(refund_agent)
+        HandoffBuilder(participants=_as_handoff_agents(refund_agent), termination_condition=lambda _: False)
+        .with_start_agent(_as_handoff_agent(refund_agent))
         .build()
     )
 
@@ -372,7 +383,9 @@ async def test_tool_approval_responses_are_not_replayed_from_history() -> None:
         require_per_service_call_history_persistence=True,
     )
     workflow = (
-        HandoffBuilder(participants=[agent], termination_condition=lambda _: False).with_start_agent(agent).build()
+        HandoffBuilder(participants=_as_handoff_agents(agent), termination_condition=lambda _: False)
+        .with_start_agent(_as_handoff_agent(agent))
+        .build()
     )
 
     first_events = await _drain(workflow.run("start", stream=True))
@@ -476,7 +489,9 @@ async def test_handoff_resume_preserves_approval_function_call_for_stateless_run
         require_per_service_call_history_persistence=True,
     )
     workflow = (
-        HandoffBuilder(participants=[agent], termination_condition=lambda _: False).with_start_agent(agent).build()
+        HandoffBuilder(participants=_as_handoff_agents(agent), termination_condition=lambda _: False)
+        .with_start_agent(_as_handoff_agent(agent))
+        .build()
     )
 
     first_events = await _drain(workflow.run("start", stream=True))
@@ -553,8 +568,8 @@ async def test_handoff_replay_serializes_handoff_function_results() -> None:
     )
 
     workflow = (
-        HandoffBuilder(participants=[triage, specialist], termination_condition=lambda _: False)
-        .with_start_agent(triage)
+        HandoffBuilder(participants=_as_handoff_agents(triage, specialist), termination_condition=lambda _: False)
+        .with_start_agent(_as_handoff_agent(triage))
         .build()
     )
 
@@ -562,6 +577,138 @@ async def test_handoff_replay_serializes_handoff_function_results() -> None:
     requests = [event for event in events if event.type == "request_info"]
     assert requests
     assert requests[-1].source_executor_id == triage.name
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_textless_handoff_preserves_target_context_without_synthetic_user_turn(stream: bool) -> None:
+    """Textless handoffs route accumulated context without inventing user input."""
+
+    class TextlessHandoffClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], BaseChatClient[Any]):
+        def __init__(self, name: str, handoff_sequence: list[str | None]) -> None:
+            ChatMiddlewareLayer.__init__(self)
+            FunctionInvocationLayer.__init__(self)
+            BaseChatClient.__init__(self)
+            self._name = name
+            self._handoff_sequence = handoff_sequence
+            self.received_messages: list[list[Message]] = []
+
+        def _inner_get_response(
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            del options
+            del kwargs
+
+            self.received_messages.append(list(messages))
+            call_index = len(self.received_messages) - 1
+            handoff_to = self._handoff_sequence[call_index]
+            if handoff_to is None:
+                contents = [Content.from_text(text=f"{self._name} complete")]
+            else:
+                contents = [
+                    Content.from_function_call(
+                        call_id=f"{self._name}-handoff-{call_index}",
+                        name=get_handoff_tool_name(handoff_to),
+                        arguments={},
+                    )
+                ]
+
+            if stream:
+
+                async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                    yield ChatResponseUpdate(contents=contents, role="assistant", finish_reason="stop")
+
+                return ResponseStream(_stream(), finalizer=lambda updates: ChatResponse.from_updates(updates))
+
+            async def _get() -> ChatResponse:
+                return ChatResponse(
+                    messages=[Message(role="assistant", contents=contents)],
+                    response_id=f"{self._name}-{call_index}",
+                )
+
+            return _get()
+
+    initial_task = "Investigate order 1234."
+    source_client = TextlessHandoffClient("source", ["target", None])
+    target_client = TextlessHandoffClient("target", ["source"])
+    source = Agent(
+        id="source",
+        name="source",
+        client=source_client,
+        require_per_service_call_history_persistence=True,
+    )
+    target = Agent(
+        id="target",
+        name="target",
+        client=target_client,
+        require_per_service_call_history_persistence=True,
+    )
+    observed_user_turns: list[list[str]] = []
+
+    def terminate_after_second_real_user_turn(conversation: list[Message]) -> bool:
+        user_turns = [message.text or "" for message in conversation if message.role == "user"]
+        observed_user_turns.append(user_turns)
+        return len(user_turns) >= 2
+
+    workflow = (
+        HandoffBuilder(
+            participants=_as_handoff_agents(source, target),
+            termination_condition=terminate_after_second_real_user_turn,
+        )
+        .with_start_agent(_as_handoff_agent(source))
+        .build()
+    )
+
+    if stream:
+        events = await _drain(workflow.run(initial_task, stream=True))
+        final_state = [event.state for event in events if event.type == "status"][-1]
+    else:
+        result = await workflow.run(initial_task)
+        events = list(result)
+        final_state = result.get_final_state()
+
+    received_messages = [
+        [(message.role, message.text) for message in invocation]
+        for invocation in [*source_client.received_messages, *target_client.received_messages]
+    ]
+    assert received_messages == [
+        [("user", initial_task)],
+        [("user", initial_task), ("assistant", ""), ("tool", "")],
+        [("user", initial_task)],
+    ]
+
+    revisited_source_messages = source_client.received_messages[1]
+    source_call_ids = {
+        content.call_id
+        for message in revisited_source_messages
+        for content in message.contents
+        if content.type == "function_call"
+    }
+    source_result_ids = {
+        content.call_id
+        for message in revisited_source_messages
+        for content in message.contents
+        if content.type == "function_result"
+    }
+    assert "source-handoff-0" in source_call_ids
+    assert "source-handoff-0" in source_result_ids
+
+    assert observed_user_turns
+    assert all(user_turns == [initial_task] for user_turns in observed_user_turns)
+
+    handoffs = [event.data for event in events if event.type == "handoff_sent"]
+    assert handoffs == [
+        HandoffSentEvent(source=resolve_agent_id(source), target=resolve_agent_id(target)),
+        HandoffSentEvent(source=resolve_agent_id(target), target=resolve_agent_id(source)),
+    ]
+    requests = [event for event in events if event.type == "request_info"]
+    assert len(requests) == 1
+    assert requests[0].source_executor_id == resolve_agent_id(source)
+    assert final_state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
 
 
 async def test_handoff_resume_preserves_approved_tool_output_for_stateless_runs() -> None:
@@ -682,8 +829,10 @@ async def test_handoff_resume_preserves_approved_tool_output_for_stateless_runs(
         require_per_service_call_history_persistence=True,
     )
     workflow = (
-        HandoffBuilder(participants=[refund_agent, order_agent], termination_condition=lambda _: False)
-        .with_start_agent(refund_agent)
+        HandoffBuilder(
+            participants=_as_handoff_agents(refund_agent, order_agent), termination_condition=lambda _: False
+        )
+        .with_start_agent(_as_handoff_agent(refund_agent))
         .build()
     )
 
@@ -719,19 +868,20 @@ async def test_handoff_clone_preserves_per_service_call_history_persistence() ->
         context_providers=[triage_history],
         require_per_service_call_history_persistence=True,
     )
+    specialist_options: ChatOptions = {"tool_choice": "none"}
     specialist = Agent(
         id="specialist",
         name="specialist",
         client=MockChatClient(name="specialist"),
-        default_options={"tool_choice": "none"},
+        default_options=specialist_options,
         require_per_service_call_history_persistence=True,
     )
 
     workflow = (
-        HandoffBuilder(participants=[triage, specialist], termination_condition=lambda _: False)
-        .with_start_agent(triage)
-        .add_handoff(triage, [specialist])
-        .add_handoff(specialist, [triage])
+        HandoffBuilder(participants=_as_handoff_agents(triage, specialist), termination_condition=lambda _: False)
+        .with_start_agent(_as_handoff_agent(triage))
+        .add_handoff(_as_handoff_agent(triage), _as_handoff_agents(specialist))
+        .add_handoff(_as_handoff_agent(specialist), _as_handoff_agents(triage))
         .build()
     )
 
@@ -739,7 +889,7 @@ async def test_handoff_clone_preserves_per_service_call_history_persistence() ->
 
     executor = workflow.executors[resolve_agent_id(triage)]
     assert isinstance(executor, HandoffAgentExecutor)
-    assert executor._agent.require_per_service_call_history_persistence is True
+    assert cast(Agent, executor._agent).require_per_service_call_history_persistence is True
 
     provider_state = executor._session.state[triage_history.source_id]
     stored_messages = await triage_history.get_messages(
@@ -766,26 +916,73 @@ async def test_handoff_clone_preserves_all_middleware_types() -> None:
         middleware=[tracking_middleware],
         require_per_service_call_history_persistence=True,
     )
+    agent_b_options: ChatOptions = {"tool_choice": "none"}
     agent_b = Agent(
         id="agent_b",
         name="agent_b",
         client=MockChatClient(name="agent_b"),
-        default_options={"tool_choice": "none"},
+        default_options=agent_b_options,
         require_per_service_call_history_persistence=True,
     )
 
     workflow = (
-        HandoffBuilder(participants=[agent_a, agent_b], termination_condition=lambda _: False)
-        .with_start_agent(agent_a)
-        .add_handoff(agent_a, [agent_b])
-        .add_handoff(agent_b, [agent_a])
+        HandoffBuilder(participants=_as_handoff_agents(agent_a, agent_b), termination_condition=lambda _: False)
+        .with_start_agent(_as_handoff_agent(agent_a))
+        .add_handoff(_as_handoff_agent(agent_a), _as_handoff_agents(agent_b))
+        .add_handoff(_as_handoff_agent(agent_b), _as_handoff_agents(agent_a))
         .build()
     )
 
     executor = workflow.executors[resolve_agent_id(agent_a)]
     assert isinstance(executor, HandoffAgentExecutor)
-    cloned_middleware = executor._agent.middleware or []
+    cloned_middleware = cast(Agent, executor._agent).middleware or []
     assert tracking_middleware in cloned_middleware, "User function middleware should be preserved on cloned agent"
+
+
+async def test_handoff_clone_preserves_additional_properties() -> None:
+    """Handoff clones should preserve additional_properties from the original agent."""
+    tracked_properties: list[dict[str, Any]] = []
+
+    @agent_middleware
+    async def observe_properties(context: AgentContext, call_next):
+        agent = cast(Agent, context.agent)
+        tracked_properties.append(dict(agent.additional_properties))
+        await call_next()
+
+    coordinator = Agent(
+        id="coordinator",
+        name="coordinator",
+        client=MockChatClient(name="coordinator"),
+        additional_properties={"tenant": "contoso", "trace_tag": "triage"},
+        middleware=[observe_properties],
+        require_per_service_call_history_persistence=True,
+    )
+    specialist = Agent(
+        id="specialist",
+        name="specialist",
+        client=MockChatClient(name="specialist"),
+        require_per_service_call_history_persistence=True,
+    )
+
+    workflow = (
+        HandoffBuilder(
+            participants=_as_handoff_agents(coordinator, specialist),
+            termination_condition=lambda conversation: any(msg.role == "assistant" for msg in conversation),
+        )
+        .with_start_agent(_as_handoff_agent(coordinator))
+        .build()
+    )
+
+    await _drain(workflow.run("hello", stream=True))
+
+    assert tracked_properties == [{"tenant": "contoso", "trace_tag": "triage"}]
+
+    # The clone owns its own copy; the original agent's properties stay untouched.
+    executor = workflow.executors[resolve_agent_id(coordinator)]
+    assert isinstance(executor, HandoffAgentExecutor)
+    cloned_additional_properties = cast(Agent, executor.agent).additional_properties
+    assert cloned_additional_properties == {"tenant": "contoso", "trace_tag": "triage"}
+    assert cloned_additional_properties is not coordinator.additional_properties
 
 
 def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
@@ -833,7 +1030,7 @@ async def test_autonomous_mode_yields_output_without_user_request():
 
     workflow = (
         HandoffBuilder(
-            participants=[triage, specialist],
+            participants=_as_handoff_agents(triage, specialist),
             # This termination condition ensures the workflow runs through both agents.
             # First message is the user message to triage, second is triage's response, which
             # is a handoff to specialist, third is specialist's response that should not request
@@ -841,7 +1038,7 @@ async def test_autonomous_mode_yields_output_without_user_request():
             # again and will trigger termination.
             termination_condition=lambda conv: len(conv) >= 4,
         )
-        .with_start_agent(triage)
+        .with_start_agent(_as_handoff_agent(triage))
         # Since specialist has no handoff, the specialist will be generating normal responses.
         # With autonomous mode, this should continue until the termination condition is met.
         .with_autonomous_mode(
@@ -875,8 +1072,8 @@ async def test_autonomous_mode_resumes_user_input_on_turn_limit():
     worker = MockHandoffAgent(name="worker")
 
     workflow = (
-        HandoffBuilder(participants=[triage, worker], termination_condition=lambda conv: False)
-        .with_start_agent(triage)
+        HandoffBuilder(participants=_as_handoff_agents(triage, worker), termination_condition=lambda conv: False)
+        .with_start_agent(_as_handoff_agent(triage))
         .with_autonomous_mode(agents=[worker], turn_limits={resolve_agent_id(worker): 2})
         .build()
     )
@@ -893,7 +1090,7 @@ def test_build_fails_without_start_agent():
     specialist = MockHandoffAgent(name="specialist")
 
     with pytest.raises(ValueError, match=r"Must call with_start_agent\(...\) before building the workflow."):
-        HandoffBuilder(participants=[triage, specialist]).build()
+        HandoffBuilder(participants=_as_handoff_agents(triage, specialist)).build()
 
 
 def test_build_fails_without_participants():
@@ -916,8 +1113,8 @@ async def test_handoff_async_termination_condition() -> None:
     worker = MockHandoffAgent(name="worker")
 
     workflow = (
-        HandoffBuilder(participants=[coordinator, worker], termination_condition=async_termination)
-        .with_start_agent(coordinator)
+        HandoffBuilder(participants=_as_handoff_agents(coordinator, worker), termination_condition=async_termination)
+        .with_start_agent(_as_handoff_agent(coordinator))
         .build()
     )
 
@@ -977,12 +1174,12 @@ async def test_handoff_terminates_without_request_info_when_latest_response_meet
     )
     workflow = (
         HandoffBuilder(
-            participants=[agent],
+            participants=_as_handoff_agents(agent),
             termination_condition=lambda conv: any(
                 message.role == "assistant" and "case complete." in (message.text or "").lower() for message in conv
             ),
         )
-        .with_start_agent(agent)
+        .with_start_agent(_as_handoff_agent(agent))
         .build()
     )
 
@@ -1064,7 +1261,7 @@ async def test_context_provider_preserved_during_handoff():
     assert context_provider in agent.context_providers, "Original agent should have context provider"
 
     # Build handoff workflow - this should clone the agent and preserve context_providers
-    workflow = HandoffBuilder(participants=[agent]).with_start_agent(agent).build()
+    workflow = HandoffBuilder(participants=_as_handoff_agents(agent)).with_start_agent(_as_handoff_agent(agent)).build()
 
     # Run workflow with a simple message to trigger context provider
     await _drain(workflow.run("Test message", stream=True))
@@ -1084,9 +1281,9 @@ def test_handoff_builder_accepts_all_instances_in_add_handoff():
 
     # This should work - all instances with participants
     builder = (
-        HandoffBuilder(participants=[triage, specialist_a, specialist_b])
-        .with_start_agent(triage)
-        .add_handoff(triage, [specialist_a, specialist_b])
+        HandoffBuilder(participants=_as_handoff_agents(triage, specialist_a, specialist_b))
+        .with_start_agent(_as_handoff_agent(triage))
+        .add_handoff(_as_handoff_agent(triage), _as_handoff_agents(specialist_a, specialist_b))
     )
 
     workflow = builder.build()
@@ -1144,7 +1341,9 @@ def test_handoff_builder_rejects_agents_without_per_service_call_history_persist
     agent_with_flag = MockHandoffAgent(name="has_flag")  # MockHandoffAgent sets flag to True
 
     with pytest.raises(ValueError, match="require_per_service_call_history_persistence"):
-        HandoffBuilder(participants=[agent_without_flag, agent_with_flag]).with_start_agent(agent_with_flag).build()
+        HandoffBuilder(participants=_as_handoff_agents(agent_without_flag, agent_with_flag)).with_start_agent(
+            _as_handoff_agent(agent_with_flag)
+        ).build()
 
 
 def test_handoff_builder_rejects_non_agent_supports_agent_run():
@@ -1167,10 +1366,10 @@ def test_handoff_builder_rejects_non_agent_supports_agent_run():
             return AgentSession(service_session_id=service_session_id)
 
     fake = FakeAgentRun("a", "A")
-    assert isinstance(fake, SupportsAgentRun)
+    assert isinstance(fake, SupportsAgentRun)  # pyrefly: ignore[unsafe-overlap]
 
     with pytest.raises(TypeError, match="Participants must be Agent instances"):
-        HandoffBuilder().participants([fake])
+        HandoffBuilder().participants([cast(Any, fake)])
 
 
 # endregion
@@ -1200,7 +1399,7 @@ async def test_simple_handoff_workflow(store: bool) -> None:
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["FOUNDRY_MODEL"],
-        credential=AzureCliCredential(),
+        credential=cast(Any, AzureCliCredential()),
     )
 
     triage_agent = Agent(
@@ -1210,7 +1409,7 @@ async def test_simple_handoff_workflow(store: bool) -> None:
             "based on the problem described."
         ),
         name="triage_agent",
-        default_options={"store": store},
+        default_options=cast(Any, {"store": store}),
         require_per_service_call_history_persistence=True,
     )
 
@@ -1218,19 +1417,19 @@ async def test_simple_handoff_workflow(store: bool) -> None:
         client=client,
         instructions="You process refund requests. Ask user the ID of the order they want refunded.",
         name="refund_agent",
-        default_options={"store": store},
+        default_options=cast(Any, {"store": store}),
         require_per_service_call_history_persistence=True,
     )
 
     workflow = (
         HandoffBuilder(
-            participants=[triage_agent, refund_agent],
+            participants=_as_handoff_agents(triage_agent, refund_agent),
             termination_condition=lambda conversation: (
                 # We terminate after triage hands off to refund to test handoff works
                 len(conversation) > 0 and conversation[-1].author_name == refund_agent.name
             ),
         )
-        .with_start_agent(triage_agent)
+        .with_start_agent(_as_handoff_agent(triage_agent))
         .build()
     )
 
@@ -1256,7 +1455,7 @@ async def test_simple_handoff_workflow_with_request_and_response(store: bool) ->
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["FOUNDRY_MODEL"],
-        credential=AzureCliCredential(),
+        credential=cast(Any, AzureCliCredential()),
     )
 
     triage_agent = Agent(
@@ -1266,7 +1465,7 @@ async def test_simple_handoff_workflow_with_request_and_response(store: bool) ->
             "based on the problem described."
         ),
         name="triage_agent",
-        default_options={"store": store},
+        default_options=cast(Any, {"store": store}),
         require_per_service_call_history_persistence=True,
     )
 
@@ -1274,13 +1473,13 @@ async def test_simple_handoff_workflow_with_request_and_response(store: bool) ->
         client=client,
         instructions="You process refund requests. Ask user the ID of the order they want refunded.",
         name="refund_agent",
-        default_options={"store": store},
+        default_options=cast(Any, {"store": store}),
         require_per_service_call_history_persistence=True,
     )
 
     workflow = (
         HandoffBuilder(
-            participants=[triage_agent, refund_agent],
+            participants=_as_handoff_agents(triage_agent, refund_agent),
             termination_condition=lambda conversation: (
                 # We terminate after the refund agent request user input and the user provides
                 # a response. There will be two user messages in the conversation at that point
@@ -1289,7 +1488,7 @@ async def test_simple_handoff_workflow_with_request_and_response(store: bool) ->
                 len([message for message in conversation if message.role == "user"]) == 2
             ),
         )
-        .with_start_agent(triage_agent)
+        .with_start_agent(_as_handoff_agent(triage_agent))
         .build()
     )
 
@@ -1333,7 +1532,7 @@ async def test_simple_handoff_workflow_with_approval_request(store: bool) -> Non
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["FOUNDRY_MODEL"],
-        credential=AzureCliCredential(),
+        credential=cast(Any, AzureCliCredential()),
     )
 
     triage_agent = Agent(
@@ -1343,7 +1542,7 @@ async def test_simple_handoff_workflow_with_approval_request(store: bool) -> Non
             "based on the problem described."
         ),
         name="triage_agent",
-        default_options={"store": store},
+        default_options=cast(Any, {"store": store}),
         require_per_service_call_history_persistence=True,
     )
 
@@ -1351,7 +1550,7 @@ async def test_simple_handoff_workflow_with_approval_request(store: bool) -> Non
         client=client,
         instructions="You process refund requests. Ask user the ID of the order they want refunded.",
         name="refund_agent",
-        default_options={"store": store},
+        default_options=cast(Any, {"store": store}),
         tools=[process_refund],
         require_per_service_call_history_persistence=True,
     )
@@ -1359,9 +1558,9 @@ async def test_simple_handoff_workflow_with_approval_request(store: bool) -> Non
     # This workflow will be terminated manually
     workflow = (
         HandoffBuilder(
-            participants=[triage_agent, refund_agent],
+            participants=_as_handoff_agents(triage_agent, refund_agent),
         )
-        .with_start_agent(triage_agent)
+        .with_start_agent(_as_handoff_agent(triage_agent))
         .build()
     )
 

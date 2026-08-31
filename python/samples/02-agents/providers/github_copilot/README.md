@@ -10,7 +10,7 @@ This directory contains examples demonstrating how to use the `GitHubCopilotAgen
 2. **GitHub Copilot Subscription**: An active GitHub Copilot subscription
 3. **Install the package**:
    ```bash
-   pip install agent-framework-github-copilot --pre
+   pip install agent-framework-github-copilot
    ```
 
 ## Environment Variables
@@ -53,3 +53,4 @@ See the [observability samples](../../../02-agents/observability/) for full exam
 | [`github_copilot_with_mcp.py`](github_copilot_with_mcp.py) | Shows how to configure MCP (Model Context Protocol) servers, including local (stdio) and remote (HTTP) servers. |
 | [`github_copilot_with_instruction_directories.py`](github_copilot_with_instruction_directories.py) | Shows how to configure custom instruction directories for project-specific or team-shared guidelines. |
 | [`github_copilot_with_multiple_permissions.py`](github_copilot_with_multiple_permissions.py) | Shows how to combine multiple permission types for complex tasks that require shell, read, and write access. |
+| [`github_copilot_with_byok.py`](github_copilot_with_byok.py) | Shows how to configure BYOK (Bring Your Own Key) to route requests through your own endpoint instead of the GitHub Copilot backend. |

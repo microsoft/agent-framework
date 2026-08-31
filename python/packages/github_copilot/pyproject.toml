@@ -3,8 +3,8 @@ name = "agent-framework-github-copilot"
 description = "GitHub Copilot integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
-requires-python = ">=3.10"
-version = "1.0.0rc1"
+requires-python = ">=3.11"
+version = "1.0.3"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -12,10 +12,9 @@ urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=ta
 urls.issues = "https://github.com/microsoft/agent-framework/issues"
 classifiers = [
   "License :: OSI Approved :: MIT License",
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -23,8 +22,8 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.8.0,<2",
-    "github-copilot-sdk>=1.0.0,<2; python_version >= '3.11'",
+    "agent-framework-core>=1.15.0,<2",
+    "github-copilot-sdk==1.0.2; python_version >= '3.11'",
 ]
 
 [tool.uv]
@@ -102,4 +101,3 @@ interpreter = "posix"
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]
 build-backend = "flit_core.buildapi"
-

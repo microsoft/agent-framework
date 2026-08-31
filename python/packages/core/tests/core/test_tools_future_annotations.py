@@ -127,7 +127,7 @@ async def test_tool_invoke_with_context():
 
     context = FunctionInvocationContext(
         function=get_weather,
-        arguments=get_weather.input_model(location="Seattle"),
+        arguments=get_weather.input_model(location="Seattle"),  # type: ignore[misc, operator]  # pyrefly: ignore[not-callable]  # ty: ignore[call-non-callable]
         kwargs={"user": "test_user"},
     )
     result = await get_weather.invoke(context=context)

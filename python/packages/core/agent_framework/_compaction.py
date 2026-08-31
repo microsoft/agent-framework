@@ -12,10 +12,12 @@ from typing import (
     Literal,
     Protocol,
     TypeAlias,
+    cast,
     runtime_checkable,
 )
 
 from ._sessions import ContextProvider
+from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import ChatResponse, Content, Message
 
 if TYPE_CHECKING:
@@ -27,7 +29,7 @@ GROUP_ID_KEY = "id"
 GROUP_KIND_KEY = "kind"
 GROUP_INDEX_KEY = "index"
 GROUP_HAS_REASONING_KEY = "has_reasoning"
-GROUP_TOKEN_COUNT_KEY = "token_count"  # noqa: S105 # nosec B105 - compaction metadata key, not a credential
+GROUP_TOKEN_COUNT_KEY = "token_count"  # ruff:ignore[hardcoded-password-string] # nosec B105 - compaction metadata key, not a credential
 EXCLUDED_KEY = "_excluded"
 EXCLUDE_REASON_KEY = "_exclude_reason"
 SUMMARY_OF_MESSAGE_IDS_KEY = "_summary_of_message_ids"
@@ -36,6 +38,14 @@ SUMMARIZED_BY_SUMMARY_ID_KEY = "_summarized_by_summary_id"
 
 
 logger = logging.getLogger("agent_framework")
+
+_TOOL_CALL_CONTENT_TYPES: Final[set[str]] = {
+    "function_call",
+    "mcp_server_tool_call",
+    "code_interpreter_tool_call",
+    "shell_tool_call",
+    "image_generation_tool_call",
+}
 
 
 @runtime_checkable
@@ -74,8 +84,8 @@ def _has_content_type(message: Message, content_type: str) -> bool:
     return any(content.type == content_type for content in message.contents)
 
 
-def _has_function_call(message: Message) -> bool:
-    return _has_content_type(message, "function_call")
+def _has_tool_call(message: Message) -> bool:
+    return any(content.type in _TOOL_CALL_CONTENT_TYPES for content in message.contents)
 
 
 def _has_reasoning(message: Message) -> bool:
@@ -83,13 +93,33 @@ def _has_reasoning(message: Message) -> bool:
 
 
 def _is_tool_call_assistant(message: Message) -> bool:
-    return message.role == "assistant" and _has_function_call(message)
+    return message.role == "assistant" and _has_tool_call(message)
 
 
 def _is_reasoning_only_assistant(message: Message) -> bool:
     if message.role != "assistant" or not message.contents:
         return False
     return all(content.type == "text_reasoning" for content in message.contents)
+
+
+def _unambiguous_function_call_result_pairs(messages: Sequence[Message]) -> list[tuple[int, int]]:
+    unmatched_declaration_indices: dict[str, list[int]] = {}
+    pairs: list[tuple[int, int]] = []
+
+    for message_index, message in enumerate(messages):
+        if message.role not in ("assistant", "tool"):
+            continue
+        for content in message.contents:
+            if message.role == "assistant" and content.type == "function_call" and content.call_id:
+                unmatched_declaration_indices.setdefault(content.call_id, []).append(message_index)
+                continue
+            if content.type != "function_result" or not content.call_id:
+                continue
+            candidates = unmatched_declaration_indices.get(content.call_id)
+            if candidates is None or len(candidates) != 1:
+                continue
+            pairs.append((candidates.pop(), message_index))
+    return pairs
 
 
 def _ensure_message_ids(
@@ -117,6 +147,56 @@ def _group_id_for(message: Message, group_index: int) -> str:
     return f"group_index_{group_index}"
 
 
+def _link_function_call_result_spans(messages: Sequence[Message], spans: list[dict[str, Any]]) -> None:
+    """Link non-adjacent function results to unambiguous declaration occurrences."""
+    if len(spans) < 2:
+        return
+
+    span_by_message_index: dict[int, int] = {}
+    for span_index, span in enumerate(spans):
+        start_index = int(span["start_index"])
+        end_index = int(span["end_index"])
+        for message_index in range(start_index, end_index + 1):
+            span_by_message_index[message_index] = span_index
+
+    parents = list(range(len(spans)))
+
+    def find(span_index: int) -> int:
+        while parents[span_index] != span_index:
+            parents[span_index] = parents[parents[span_index]]
+            span_index = parents[span_index]
+        return span_index
+
+    def union(left: int, right: int) -> bool:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root == right_root:
+            return False
+        earlier_root = min(left_root, right_root)
+        later_root = max(left_root, right_root)
+        parents[later_root] = earlier_root
+        return True
+
+    linked = False
+    for declaration_message_index, result_message_index in _unambiguous_function_call_result_pairs(messages):
+        declaration_span_index = span_by_message_index[declaration_message_index]
+        result_span_index = span_by_message_index[result_message_index]
+        if declaration_span_index < result_span_index and union(result_span_index, declaration_span_index):
+            linked = True
+    if not linked:
+        return
+
+    has_reasoning_by_root: dict[int, bool] = {}
+    for span_index, span in enumerate(spans):
+        root = find(span_index)
+        has_reasoning_by_root[root] = has_reasoning_by_root.get(root, False) or bool(span["has_reasoning"])
+
+    for span_index, span in enumerate(spans):
+        root = find(span_index)
+        span["group_id"] = spans[root]["group_id"]
+        span["has_reasoning"] = has_reasoning_by_root[root]
+
+
 def group_messages(
     messages: list[Message], *, id_offset: int = 0, reserved_ids: Iterable[str] | None = None
 ) -> list[dict[str, Any]]:
@@ -136,6 +216,7 @@ def group_messages(
     Returns:
         Ordered list of lightweight span dicts with keys:
         ``group_id``, ``kind``, ``start_index``, ``end_index``, ``has_reasoning``.
+        Non-contiguous function-call declaration and result spans share a group id.
     """
     _ensure_message_ids(messages, id_offset=id_offset, reserved_ids=reserved_ids)
     spans: list[dict[str, Any]] = []
@@ -240,6 +321,7 @@ def group_messages(
         i += 1
         group_index += 1
 
+    _link_function_call_result_spans(messages, spans)
     return spans
 
 
@@ -291,6 +373,76 @@ def _set_group_summarized_by_summary_id(message: Message, summary_id: str) -> No
         annotation = {}
         message.additional_properties[GROUP_ANNOTATION_KEY] = annotation
     annotation[SUMMARIZED_BY_SUMMARY_ID_KEY] = summary_id
+
+
+def _reconcile_compaction_summaries(  # pyright: ignore[reportUnusedFunction]
+    source_messages: list[Message],
+    working_messages: Sequence[Message],
+    previous_message_ids: set[int],
+) -> None:
+    """Reconcile summaries of source messages without persisting unrelated rewrites."""
+    source_message_ids = {message.message_id for message in source_messages if message.message_id}
+    candidates: list[tuple[Message, set[str]]] = []
+    for message in working_messages:
+        if id(message) in previous_message_ids:
+            continue
+
+        annotation = _read_group_annotation_raw(message)
+        if annotation is None:
+            continue
+        summarized_message_ids: Any = annotation.get(SUMMARY_OF_MESSAGE_IDS_KEY)
+        if (
+            message.message_id
+            and isinstance(summarized_message_ids, list)
+            and summarized_message_ids
+            and all(isinstance(value, str) for value in cast("list[Any]", summarized_message_ids))
+        ):
+            candidates.append((message, set(cast("list[str]", summarized_message_ids))))
+
+    dependencies = {message.message_id: summary_ids for message, summary_ids in candidates if message.message_id}
+    supported_ids = set(source_message_ids)
+    pending_ids = set(dependencies)
+    while pending_ids:
+        newly_supported = {summary_id for summary_id in pending_ids if dependencies[summary_id].issubset(supported_ids)}
+        if not newly_supported:
+            break
+        supported_ids.update(newly_supported)
+        pending_ids.difference_update(newly_supported)
+
+    accepted_ids = set(dependencies).difference(pending_ids)
+    for message in [*source_messages, *(candidate for candidate, _ in candidates)]:
+        annotation = _read_group_annotation_raw(message)
+        if annotation is None:
+            continue
+        summary_id = annotation.get(SUMMARIZED_BY_SUMMARY_ID_KEY)
+        if not isinstance(summary_id, str) or summary_id in accepted_ids or summary_id in source_message_ids:
+            continue
+        annotation.pop(SUMMARIZED_BY_SUMMARY_ID_KEY, None)
+        message.additional_properties.pop(EXCLUDED_KEY, None)
+        message.additional_properties.pop(EXCLUDE_REASON_KEY, None)
+
+    def source_dependencies(summary_id: str) -> set[str]:
+        expanded: set[str] = set()
+        for dependency_id in dependencies[summary_id]:
+            if dependency_id in source_message_ids:
+                expanded.add(dependency_id)
+            elif dependency_id in accepted_ids:
+                expanded.update(source_dependencies(dependency_id))
+        return expanded
+
+    for message, _ in candidates:
+        if message.message_id not in accepted_ids:
+            continue
+        summarized_source_ids = source_dependencies(message.message_id)
+        insertion_index = min(
+            (
+                index
+                for index, source_message in enumerate(source_messages)
+                if source_message.message_id in summarized_source_ids
+            ),
+            default=len(source_messages),
+        )
+        source_messages.insert(insertion_index, message)
 
 
 def _write_group_annotation(
@@ -425,6 +577,39 @@ def _reannotation_start(messages: Sequence[Message], index: int) -> int:
     return previous_index
 
 
+def _function_pair_reannotation_start(messages: Sequence[Message], start_index: int) -> int:
+    unmatched_declaration_indices: dict[str, list[int]] = {}
+    matching_indices: list[int] = []
+    for message_index, message in enumerate(messages):
+        if message.role not in ("assistant", "tool"):
+            continue
+        for content in message.contents:
+            if message.role == "assistant" and content.type == "function_call" and content.call_id:
+                unmatched_declaration_indices.setdefault(content.call_id, []).append(message_index)
+                continue
+            if content.type != "function_result" or not content.call_id:
+                continue
+            candidates = unmatched_declaration_indices.get(content.call_id)
+            if not candidates:
+                continue
+            if message_index >= start_index:
+                # Keep every earlier candidate in the re-annotation slice. Otherwise an ambiguous result can
+                # appear unambiguous when an older declaration is hidden outside the slice.
+                matching_indices.extend(index for index in candidates if index < start_index)
+            if len(candidates) == 1:
+                candidates.pop()
+    if not matching_indices:
+        return start_index
+
+    earliest_index = min(matching_indices)
+    declaration_group_id = _group_id(messages[earliest_index])
+    if declaration_group_id is None:
+        return earliest_index
+    while earliest_index > 0 and _group_id(messages[earliest_index - 1]) == declaration_group_id:
+        earliest_index -= 1
+    return earliest_index
+
+
 def annotate_message_groups(
     messages: list[Message],
     *,
@@ -435,7 +620,8 @@ def annotate_message_groups(
     """Annotate message groups while reusing existing annotations when possible.
 
     By default, the function re-annotates only the suffix that contains new
-    messages and keeps previously annotated prefixes untouched. When a
+    messages and keeps previously annotated prefixes untouched. A newly added
+    function result expands that suffix back to its unique declaration. When a
     ``tokenizer`` is provided, token-count annotations are also populated
     incrementally.
     """
@@ -457,18 +643,29 @@ def annotate_message_groups(
         start_index = min(candidate_starts)
 
     start_index = _reannotation_start(messages, start_index)
+    start_index = _function_pair_reannotation_start(messages, start_index)
 
-    # Continue group indices from the preserved prefix when only re-annotating a suffix.
-    group_index_offset = 0
-    if start_index > 0:
-        previous_group_index = _group_index(messages[start_index - 1])
-        if previous_group_index is not None:
-            group_index_offset = previous_group_index + 1
+    # Linked groups can be non-contiguous, so the last prefix message does not
+    # necessarily carry the highest group index.
+    prefix_group_indices = [
+        group_index for message in messages[:start_index] if (group_index := _group_index(message)) is not None
+    ]
+    group_index_offset = max(prefix_group_indices, default=-1) + 1
 
     reserved_ids = {message.message_id for message in messages[:start_index] if message.message_id}
     spans = group_messages(messages[start_index:], id_offset=start_index, reserved_ids=reserved_ids)
-    for span_index, span in enumerate(spans):
+    span_counts_by_group_id: dict[str, int] = {}
+    for span in spans:
         group_id = str(span["group_id"])
+        span_counts_by_group_id[group_id] = span_counts_by_group_id.get(group_id, 0) + 1
+    linked_group_ids = {group_id for group_id, count in span_counts_by_group_id.items() if count > 1}
+
+    group_indices: dict[str, int] = {}
+    grouped_messages: dict[str, list[Message]] = {}
+    for span in spans:
+        group_id = str(span["group_id"])
+        if group_id not in group_indices:
+            group_indices[group_id] = group_index_offset + len(group_indices)
         kind = _coerce_group_kind(span["kind"])
         if kind is None:
             raise ValueError(f"Unexpected group kind in span: {span['kind']}")
@@ -481,12 +678,19 @@ def annotate_message_groups(
                 message,
                 group_id=group_id,
                 kind=kind,
-                index=group_index_offset + span_index,
+                index=group_indices[group_id],
                 has_reasoning=has_reasoning,
             )
             message.additional_properties.setdefault(EXCLUDED_KEY, False)
+            if group_id in linked_group_ids:
+                grouped_messages.setdefault(group_id, []).append(message)
             if tokenizer is not None and _token_count(message) is None:
                 _write_token_count(message, tokenizer.count_tokens(_serialize_message(message)))
+
+    for group in grouped_messages.values():
+        if any(not message.additional_properties.get(EXCLUDED_KEY, False) for message in group):
+            for message in group:
+                message.additional_properties[EXCLUDED_KEY] = False
     return _ordered_group_ids_from_annotations(messages)
 
 
@@ -506,7 +710,9 @@ def _serialize_message(message: Message) -> str:
         "message_id": message.message_id,
         "contents": serialized_contents,
     }
-    return json.dumps(payload, ensure_ascii=True, sort_keys=True, default=str)
+    # ensure_ascii=False so non-ASCII text (e.g. CJK) is token-counted as the
+    # actual characters the model sees, not as inflated ``\uXXXX`` escapes.
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
 
 
 def annotate_token_counts(
@@ -639,6 +845,17 @@ def _included_group_ids(messages: list[Message], ordered_group_ids: list[str]) -
     return included_ids
 
 
+def _minimum_retained_group_ids(
+    messages: list[Message], ordered_group_ids: list[str], kinds: dict[str, GroupKind]
+) -> set[str]:
+    """Return the group ids needed to keep a compaction projection non-empty."""
+    included_ids = _included_group_ids(messages, ordered_group_ids)
+    non_system_ids = [group_id for group_id in included_ids if kinds.get(group_id) != "system"]
+    if non_system_ids:
+        return {non_system_ids[-1]}
+    return {included_ids[-1]} if included_ids else set()
+
+
 def _count_included_messages(messages: list[Message]) -> int:
     return len(included_messages(messages))
 
@@ -654,8 +871,9 @@ class TruncationStrategy:
     groups (never partial tool-call groups). The metric is:
     - token count when ``tokenizer`` is provided
     - included message count when ``tokenizer`` is not provided
-    Compaction triggers when the metric exceeds ``max_n`` and trims to
-    ``compact_to``.
+    Compaction triggers when the metric exceeds ``max_n`` and trims toward
+    ``compact_to``. Protected groups are never excluded, so the result may
+    remain above ``compact_to`` when those groups alone exceed it.
     """
 
     def __init__(
@@ -665,6 +883,7 @@ class TruncationStrategy:
         compact_to: int,
         tokenizer: TokenizerProtocol | None = None,
         preserve_system: bool = True,
+        preserve_first_user_group: bool = False,
     ) -> None:
         """Create a truncation strategy.
 
@@ -676,6 +895,8 @@ class TruncationStrategy:
             tokenizer: Optional tokenizer used for token-based truncation.
             preserve_system: When True, system groups remain included and only
                 non-system groups are eligible for exclusion.
+            preserve_first_user_group: When True, the earliest user group
+                remains included along with the minimum retained group.
         """
         if max_n <= 0:
             raise ValueError("max_n must be greater than 0.")
@@ -687,6 +908,7 @@ class TruncationStrategy:
         self.compact_to = compact_to
         self.tokenizer = tokenizer
         self.preserve_system = preserve_system
+        self.preserve_first_user_group = preserve_first_user_group
 
     async def __call__(self, messages: list[Message]) -> bool:
         ordered_group_ids = _ordered_group_ids_from_annotations(messages)
@@ -702,6 +924,14 @@ class TruncationStrategy:
         protected_ids: set[str] = set()
         if self.preserve_system:
             protected_ids = {group_id for group_id in ordered_group_ids if kinds.get(group_id) == "system"}
+        if self.preserve_first_user_group:
+            first_user_group_id = next(
+                (group_id for group_id in ordered_group_ids if kinds.get(group_id) == "user"),
+                None,
+            )
+            if first_user_group_id is not None:
+                protected_ids.add(first_user_group_id)
+        protected_ids.update(_minimum_retained_group_ids(messages, ordered_group_ids, kinds))
 
         changed = False
         for group_id in ordered_group_ids:
@@ -831,6 +1061,11 @@ class ToolResultCompactionStrategy:
     untouched; older ones are collapsed.
     """
 
+    _SUMMARY_PREFIX = "[Tool results: "
+    _SUMMARY_SUFFIX = "]"
+    _SUMMARY_MAX_CHARS = 4096
+    _SUMMARY_TRUNCATION_MARKER = "... [truncated]"
+
     def __init__(self, *, keep_last_tool_call_groups: int = 1) -> None:
         """Create a tool-result compaction strategy.
 
@@ -870,23 +1105,34 @@ class ToolResultCompactionStrategy:
             if group_id in keep_ids:
                 continue
             group_msgs = grouped.get(group_id, [])
-            # Build a call_id → function_name map from function_call contents.
+            # Build a call_id -> tool-name map from tool-call contents.
             call_id_to_name: dict[str, str] = {}
             for msg in group_msgs:
+                if msg.additional_properties.get(EXCLUDED_KEY, False):
+                    continue
                 for content in msg.contents:
                     if content.type == "function_call" and content.call_id and content.name:
                         call_id_to_name[content.call_id] = content.name
-            # Collect tool results with the function name for context.
+                    elif content.type == "mcp_server_tool_call" and content.call_id and content.tool_name:
+                        call_id_to_name[content.call_id] = content.tool_name
+
+            # Collect tool results with the tool name for context.
             tool_results: list[str] = []
             for msg in group_msgs:
+                if msg.additional_properties.get(EXCLUDED_KEY, False):
+                    continue
                 for content in msg.contents:
                     if content.type == "function_result":
                         result_text = content.result if isinstance(content.result, str) else str(content.result)
-                        func_name = call_id_to_name.get(content.call_id or "", "")
-                        label = f"{func_name}: {result_text}" if func_name else result_text
+                        tool_name = call_id_to_name.get(content.call_id or "", "")
+                        label = f"{tool_name}: {result_text}" if tool_name else result_text
                         tool_results.append(label.strip())
-            summary_label = "; ".join(tool_results) if tool_results else "no results"
-            summary_text = f"[Tool results: {summary_label}]"
+                    elif content.type == "mcp_server_tool_result":
+                        result_text = _tool_result_text(content.output)
+                        tool_name = call_id_to_name.get(content.call_id or "", "")
+                        label = f"{tool_name}: {result_text}" if tool_name else result_text
+                        tool_results.append(label.strip())
+            summary_text = self._summary_text(tool_results)
 
             summary_id = f"tool_summary_{group_id}"
             original_message_ids = [msg.message_id for msg in group_msgs if msg.message_id]
@@ -917,15 +1163,95 @@ class ToolResultCompactionStrategy:
 
         return changed
 
+    @classmethod
+    def _summary_text(cls, tool_results: list[str]) -> str:
+        summary_label = "; ".join(tool_results) if tool_results else "no results"
+        summary_text = f"{cls._SUMMARY_PREFIX}{summary_label}{cls._SUMMARY_SUFFIX}"
+        if len(summary_text) <= cls._SUMMARY_MAX_CHARS:
+            return summary_text
 
-def _format_messages_for_summary(messages: list[Message]) -> str:
+        allowed_label_chars = (
+            cls._SUMMARY_MAX_CHARS
+            - len(cls._SUMMARY_PREFIX)
+            - len(cls._SUMMARY_TRUNCATION_MARKER)
+            - len(cls._SUMMARY_SUFFIX)
+        )
+        if allowed_label_chars <= 0:
+            return f"{cls._SUMMARY_PREFIX}{cls._SUMMARY_TRUNCATION_MARKER}{cls._SUMMARY_SUFFIX}"
+        truncated_label = summary_label[:allowed_label_chars].rstrip()
+        return f"{cls._SUMMARY_PREFIX}{truncated_label}{cls._SUMMARY_TRUNCATION_MARKER}{cls._SUMMARY_SUFFIX}"
+
+
+def _tool_result_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, str)):
+        text_parts: list[str] = []
+        for item in cast(Sequence[object], value):
+            if isinstance(item, Content) and item.type == "text" and item.text is not None:
+                text_parts.append(item.text)
+            elif isinstance(item, Mapping):
+                item_mapping = cast(Mapping[str, object], item)
+                text = item_mapping.get("text")
+                if item_mapping.get("type") == "text" and isinstance(text, str):
+                    text_parts.append(text)
+        if text_parts:
+            return "\n".join(text_parts)
+    if isinstance(value, Mapping):
+        return json.dumps(cast(Mapping[str, object], value), ensure_ascii=False)
+    return str(cast(object, value))
+
+
+def _format_summary_message(index: int, message: Message) -> str:
+    content_text = message.text
+    if not content_text:
+        content_text = ", ".join(content.type for content in message.contents)
+    return f"{index}. [{message.role}] {content_text}"
+
+
+def _format_messages_for_summary(messages: list[Message], *, start_index: int = 1) -> str:
     lines: list[str] = []
-    for index, message in enumerate(messages, start=1):
-        content_text = message.text
-        if not content_text:
-            content_text = ", ".join(content.type for content in message.contents)
-        lines.append(f"{index}. [{message.role}] {content_text}")
+    for index, message in enumerate(messages, start=start_index):
+        lines.append(_format_summary_message(index, message))
     return "\n".join(lines)
+
+
+def _select_summary_input_groups(
+    groups: Sequence[tuple[str, list[Message]]],
+    *,
+    prompt: str,
+    max_summary_input_tokens: int | None,
+    tokenizer: TokenizerProtocol,
+) -> tuple[list[str], list[Message]]:
+    if max_summary_input_tokens is None:
+        return (
+            [group_id for group_id, _ in groups],
+            [message for _, group_messages in groups for message in group_messages],
+        )
+
+    selected_group_ids: list[str] = []
+    selected_messages: list[Message] = []
+    prompt_token_count = tokenizer.count_tokens(prompt)
+    selected_message_count = 0
+    selected_text_token_count = 0
+    separator_token_count = tokenizer.count_tokens("\n")
+
+    for group_id, group_messages in groups:
+        group_text = _format_messages_for_summary(group_messages, start_index=selected_message_count + 1)
+        candidate_text_token_count = selected_text_token_count + tokenizer.count_tokens(group_text)
+        if selected_messages:
+            candidate_text_token_count += separator_token_count
+        candidate_token_count = prompt_token_count + candidate_text_token_count
+        if candidate_token_count > max_summary_input_tokens:
+            if not selected_messages:
+                continue
+            break
+        selected_group_ids.append(group_id)
+        selected_messages.extend(group_messages)
+        selected_message_count += len(group_messages)
+        selected_text_token_count = candidate_text_token_count
+
+    return selected_group_ids, selected_messages
 
 
 DEFAULT_SUMMARIZATION_PROMPT: Final[
@@ -945,6 +1271,9 @@ The summary must never:
 - Omit any details included in an earlier summary
 """
 
+DEFAULT_SUMMARY_INPUT_TOKEN_BUDGET: Final[int] = 8_000
+SUMMARY_FAILURE_ERROR_THRESHOLD: Final[int] = 3
+
 
 class SummarizationStrategy:
     """Summarize older included groups and replace them with linked summary text.
@@ -955,6 +1284,17 @@ class SummarizationStrategy:
     ``target_count`` (subject to atomic group boundaries). It writes trace
     metadata in both directions: summary -> original message/group IDs and
     original -> summary ID.
+
+    Security considerations:
+        Unlike strategies that only remove or reorder existing messages (which carry no additional
+        risk), this strategy calls out to an LLM to produce replacement summary content that
+        permanently becomes part of chat history and is trusted the same as any other assistant
+        message going forward. Using it is an explicit opt-in — it must be constructed with a
+        summarization ``client``. A compromised or malicious summarization service could therefore
+        return a summary containing unsafe instructions, which become a persistent part of the
+        conversation — a form of indirect prompt injection that survives beyond the turn in which it
+        was introduced. Only point ``client`` at a summarization service you trust as much as the
+        primary model.
     """
 
     def __init__(
@@ -964,12 +1304,17 @@ class SummarizationStrategy:
         target_count: int = 4,
         threshold: int | None = 2,
         prompt: str | None = None,
+        max_summary_input_tokens: int | None = DEFAULT_SUMMARY_INPUT_TOKEN_BUDGET,
+        tokenizer: TokenizerProtocol | None = None,
     ) -> None:
         """Create a summarization strategy.
 
         Keyword Args:
             client: A chat client compatible with ``SupportsChatGetResponse``
-                used to generate summary text.
+                used to generate summary text. **Security:** its output permanently replaces the
+                original messages in chat history, so only use a summarization service you trust as
+                much as the primary model — see the class-level security considerations for the
+                indirect-prompt-injection risk of an untrusted summarizer.
             target_count: Target number of included non-system messages to
                 retain after summarization. Must be greater than 0.
             threshold: Extra included non-system messages allowed above
@@ -978,19 +1323,50 @@ class SummarizationStrategy:
             prompt: Optional summarization instruction. If omitted, a default
                 prompt that preserves goals, decisions, and unresolved items is
                 used.
+            max_summary_input_tokens: Maximum estimated token count for the
+                summarizer request prompt and user transcript. Whole message
+                groups are selected until the next group would exceed this
+                budget. Pass ``None`` to disable the input budget.
+            tokenizer: Token counter used to estimate summarizer request size.
+                If omitted, :class:`CharacterEstimatorTokenizer` is used.
 
         Raises:
             ValueError: If ``target_count`` is less than 1.
             ValueError: If ``threshold`` is provided and is negative.
+            ValueError: If ``max_summary_input_tokens`` is provided and is less
+                than 1.
         """
         if target_count <= 0:
             raise ValueError("target_count must be greater than 0.")
         if threshold is not None and threshold < 0:
             raise ValueError("threshold must be greater than or equal to 0.")
+        if max_summary_input_tokens is not None and max_summary_input_tokens <= 0:
+            raise ValueError("max_summary_input_tokens must be greater than 0.")
         self.client = client
         self.target_count = target_count
         self.threshold = threshold if threshold is not None else 0
         self.prompt = prompt or DEFAULT_SUMMARIZATION_PROMPT
+        self.max_summary_input_tokens = max_summary_input_tokens
+        self.tokenizer = tokenizer or CharacterEstimatorTokenizer()
+        self._consecutive_summary_failures = 0
+        self._summary_failure_error_emitted = False
+
+    def _record_summary_failure(self) -> None:
+        self._consecutive_summary_failures += 1
+        if (
+            self._consecutive_summary_failures >= SUMMARY_FAILURE_ERROR_THRESHOLD
+            and not self._summary_failure_error_emitted
+        ):
+            logger.error(
+                "Summarization compaction has failed %s consecutive times; "
+                "graceful summary compaction may no longer be contributing.",
+                self._consecutive_summary_failures,
+            )
+            self._summary_failure_error_emitted = True
+
+    def _record_summary_success(self) -> None:
+        self._consecutive_summary_failures = 0
+        self._summary_failure_error_emitted = False
 
     async def __call__(self, messages: list[Message]) -> bool:
         ordered_group_ids = _ordered_group_ids_from_annotations(messages)
@@ -1031,12 +1407,23 @@ class SummarizationStrategy:
         if not group_ids_to_summarize:
             return False
 
-        messages_to_summarize: list[Message] = []
-        for group_id, group_messages in included_non_system_groups:
-            if group_id in keep_group_id_set:
-                continue
-            messages_to_summarize.extend(group_messages)
+        candidate_groups = [
+            (group_id, group_messages)
+            for group_id, group_messages in included_non_system_groups
+            if group_id not in keep_group_id_set
+        ]
+        group_ids_to_summarize, messages_to_summarize = _select_summary_input_groups(
+            candidate_groups,
+            prompt=self.prompt,
+            max_summary_input_tokens=self.max_summary_input_tokens,
+            tokenizer=self.tokenizer,
+        )
         if not messages_to_summarize:
+            if self.max_summary_input_tokens is not None:
+                logger.warning(
+                    "Skipping summarization compaction: no complete message group fits within max_summary_input_tokens."
+                )
+                self._record_summary_failure()
             return False
 
         try:
@@ -1055,12 +1442,15 @@ class SummarizationStrategy:
                 "Skipping summarization compaction: summary generation failed (%s).",
                 exc,
             )
+            self._record_summary_failure()
             return False
 
         summary_text = summary_response.text.strip() if summary_response.text else ""
         if not summary_text:
             logger.warning("Skipping summarization compaction: summarizer returned no text.")
+            self._record_summary_failure()
             return False
+        self._record_summary_success()
         summary_id = f"summary_{len(messages)}"
         original_message_ids = [message.message_id for message in messages_to_summarize if message.message_id]
         summary_of_group_ids = list(group_ids_to_summarize)
@@ -1094,7 +1484,9 @@ class TokenBudgetComposedStrategy:
     Strategies run in the provided order over shared message annotations. After
     each step, token counts are refreshed. If no strategy reaches budget, a
     deterministic fallback excludes oldest groups (and finally anchors when
-    necessary) to enforce the limit.
+    necessary) to enforce the limit, while retaining the minimum group needed
+    for a non-empty projection. The result may remain above the budget when
+    that group alone exceeds it.
     """
 
     def __init__(
@@ -1139,8 +1531,9 @@ class TokenBudgetComposedStrategy:
         ordered_group_ids = annotate_message_groups(messages)
         grouped = _group_messages_by_id(messages)
         kinds = _group_kind_map(messages)
+        minimum_retained_ids = _minimum_retained_group_ids(messages, ordered_group_ids, kinds)
         for group_id in ordered_group_ids:
-            if kinds.get(group_id) == "system":
+            if kinds.get(group_id) == "system" or group_id in minimum_retained_ids:
                 continue
             for message in grouped.get(group_id, []):
                 changed = set_excluded(message, excluded=True, reason="token_budget_fallback") or changed
@@ -1151,13 +1544,57 @@ class TokenBudgetComposedStrategy:
 
         # Strict budget enforcement fallback: if anchors alone exceed budget, exclude remaining groups.
         for group_id in ordered_group_ids:
-            if kinds.get(group_id) != "system":
+            if kinds.get(group_id) != "system" or group_id in minimum_retained_ids:
                 continue
             for message in grouped.get(group_id, []):
                 changed = set_excluded(message, excluded=True, reason="token_budget_fallback_strict") or changed
             if included_token_count(messages) <= self.token_budget:
                 break
         return changed
+
+
+async def _run_compaction_strategy(
+    messages: list[Message],
+    *,
+    strategy: CompactionStrategy,
+    tokenizer: TokenizerProtocol | None = None,
+    phase: str,
+) -> bool:
+    """Apply a strategy and log aggregate metrics when it changes context."""
+    resolved_tokenizer = tokenizer
+    if resolved_tokenizer is None:
+        strategy_tokenizer = getattr(strategy, "tokenizer", None)
+        if isinstance(strategy_tokenizer, TokenizerProtocol):
+            resolved_tokenizer = strategy_tokenizer
+
+    annotate_message_groups(messages)
+    if resolved_tokenizer is not None:
+        annotate_token_counts(messages, tokenizer=resolved_tokenizer)
+    before_message_count = _count_included_messages(messages)
+    before_token_count = included_token_count(messages) if resolved_tokenizer is not None else None
+
+    changed = await strategy(messages)
+    if not changed:
+        return False
+
+    annotate_message_groups(messages)
+    if resolved_tokenizer is not None:
+        annotate_token_counts(messages, tokenizer=resolved_tokenizer)
+    after_message_count = _count_included_messages(messages)
+    after_token_count = included_token_count(messages) if resolved_tokenizer is not None else None
+    strategy_name = getattr(strategy, "__name__", type(strategy).__name__)
+    logger.info(
+        "Compaction applied",
+        extra={
+            "compaction_phase": phase,
+            "compaction_strategy": strategy_name,
+            "compaction_included_messages_before": before_message_count,
+            "compaction_included_messages_after": after_message_count,
+            "compaction_included_tokens_before": before_token_count,
+            "compaction_included_tokens_after": after_token_count,
+        },
+    )
+    return True
 
 
 async def apply_compaction(
@@ -1169,10 +1606,12 @@ async def apply_compaction(
     """Apply configured compaction and return projected model-input messages."""
     if strategy is None:
         return messages
-    annotate_message_groups(messages)
-    if tokenizer is not None:
-        annotate_token_counts(messages, tokenizer=tokenizer)
-    await strategy(messages)
+    await _run_compaction_strategy(
+        messages,
+        strategy=strategy,
+        tokenizer=tokenizer,
+        phase="in_run",
+    )
     return project_included_messages(messages)
 
 
@@ -1217,6 +1656,10 @@ class CompactionProvider(ContextProvider):
             await agent.run("Hello", session=session)
     """
 
+    # Compacting persisted history mid-task rewrites the transcript the loop
+    # still works from, so defer it to the end of the user turn.
+    after_run_once_per_turn = True
+
     def __init__(
         self,
         *,
@@ -1255,6 +1698,7 @@ class CompactionProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Compact messages already present in the context from earlier providers."""
+        mark_feature_used(FeatureIndex.CORE_COMPACTION_PROVIDER)
         if self.before_strategy is None:
             return
 
@@ -1262,10 +1706,12 @@ class CompactionProvider(ContextProvider):
         if not all_messages:
             return
 
-        annotate_message_groups(all_messages)
-        if self.tokenizer is not None:
-            annotate_token_counts(all_messages, tokenizer=self.tokenizer)
-        await self.before_strategy(all_messages)
+        await _run_compaction_strategy(
+            all_messages,
+            strategy=self.before_strategy,
+            tokenizer=self.tokenizer,
+            phase="before_run",
+        )
 
         projected = project_included_messages(all_messages)
         projected_set = {id(m) for m in projected}
@@ -1294,10 +1740,12 @@ class CompactionProvider(ContextProvider):
             return
         stored_messages: list[Message] = raw_messages  # type: ignore[assignment]
 
-        annotate_message_groups(stored_messages)
-        if self.tokenizer is not None:
-            annotate_token_counts(stored_messages, tokenizer=self.tokenizer)
-        await self.after_strategy(stored_messages)
+        await _run_compaction_strategy(
+            stored_messages,
+            strategy=self.after_strategy,
+            tokenizer=self.tokenizer,
+            phase="after_run",
+        )
 
         # Keep all messages (including excluded) in storage so annotations are
         # preserved. The history provider's ``skip_excluded`` flag controls
@@ -1315,9 +1763,10 @@ class ContextWindowCompactionStrategy:
     2. **Truncation** — removes oldest non-system groups when included tokens
        exceed ``truncation_threshold`` of the input budget.
 
-    The class uses two independent :class:`TokenBudgetComposedStrategy`
-    instances — one per phase — so each fires only when its own threshold
-    is exceeded.
+    Each phase checks its threshold explicitly. Token counts are refreshed
+    after tool-result eviction before deciding whether destructive truncation
+    is necessary. If protected groups still exceed the input budget after
+    truncation, the strategy preserves them and emits a structured warning.
 
     Examples:
         .. code-block:: python
@@ -1346,6 +1795,7 @@ class ContextWindowCompactionStrategy:
         tool_eviction_threshold: float = DEFAULT_TOOL_EVICTION_THRESHOLD,
         truncation_threshold: float = DEFAULT_TRUNCATION_THRESHOLD,
         keep_last_tool_call_groups: int = 4,
+        preserve_first_user_group: bool = False,
     ) -> None:
         """Create a context-window compaction strategy.
 
@@ -1364,6 +1814,8 @@ class ContextWindowCompactionStrategy:
             keep_last_tool_call_groups: Number of most recent tool-call groups
                 to retain verbatim during tool eviction. Older groups are
                 collapsed into summaries. Defaults to 4.
+            preserve_first_user_group: Whether destructive truncation preserves
+                the earliest user group. Defaults to False.
 
         Raises:
             ValueError: If thresholds are out of range or inconsistent.
@@ -1389,24 +1841,18 @@ class ContextWindowCompactionStrategy:
         self.input_budget_tokens = input_budget
         self.tool_eviction_threshold = tool_eviction_threshold
         self.truncation_threshold = truncation_threshold
+        self.tokenizer = resolved_tokenizer
+        self._tool_eviction_tokens = tool_eviction_tokens
+        self._truncation_tokens = truncation_tokens
 
-        self._tool_eviction = TokenBudgetComposedStrategy(
-            token_budget=tool_eviction_tokens,
-            tokenizer=resolved_tokenizer,
-            strategies=[
-                ToolResultCompactionStrategy(keep_last_tool_call_groups=keep_last_tool_call_groups),
-            ],
+        self._tool_eviction = ToolResultCompactionStrategy(
+            keep_last_tool_call_groups=keep_last_tool_call_groups,
         )
-        self._truncation = TokenBudgetComposedStrategy(
-            token_budget=truncation_tokens,
+        self._truncation = TruncationStrategy(
+            max_n=truncation_tokens,
+            compact_to=tool_eviction_tokens,
             tokenizer=resolved_tokenizer,
-            strategies=[
-                TruncationStrategy(
-                    max_n=truncation_tokens,
-                    compact_to=tool_eviction_tokens,
-                    tokenizer=resolved_tokenizer,
-                ),
-            ],
+            preserve_first_user_group=preserve_first_user_group,
         )
 
     async def __call__(self, messages: list[Message]) -> bool:
@@ -1415,8 +1861,28 @@ class ContextWindowCompactionStrategy:
         Returns:
             True if compaction changed message inclusion; otherwise False.
         """
-        changed = await self._tool_eviction(messages)
-        return (await self._truncation(messages)) or changed
+        annotate_message_groups(messages)
+        annotate_token_counts(messages, tokenizer=self.tokenizer)
+
+        changed = False
+        if included_token_count(messages) > self._tool_eviction_tokens:
+            changed = await self._tool_eviction(messages)
+            annotate_message_groups(messages)
+            annotate_token_counts(messages, tokenizer=self.tokenizer)
+
+        if included_token_count(messages) > self._truncation_tokens:
+            changed = (await self._truncation(messages)) or changed
+        remaining_tokens = included_token_count(messages)
+        if remaining_tokens > self.input_budget_tokens:
+            logger.warning(
+                "Compaction could not fit protected messages within the input budget",
+                extra={
+                    "compaction_strategy": type(self).__name__,
+                    "compaction_included_tokens_after": remaining_tokens,
+                    "compaction_input_budget_tokens": self.input_budget_tokens,
+                },
+            )
+        return changed
 
 
 __all__ = [

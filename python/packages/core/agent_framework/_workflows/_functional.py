@@ -21,7 +21,10 @@ parameter to access HITL and state APIs directly.
 
 Key public symbols:
 
-* :func:`workflow` / :class:`FunctionalWorkflow` — decorator and runtime.
+* :func:`workflow` / :class:`FunctionalWorkflowDefinition` — decorator and
+  stateless definition.
+* :class:`FunctionalWorkflow` — stateful runtime created by
+  :meth:`FunctionalWorkflowDefinition.build`.
 * :func:`step` / :class:`StepWrapper` — optional step decorator.
 * :class:`RunContext` — execution context injected into workflow and step
   functions.
@@ -55,7 +58,7 @@ from ._events import (
     WorkflowErrorDetails,
     WorkflowEvent,
     WorkflowRunState,
-    _framework_event_origin,  # type: ignore[reportPrivateUsage]
+    _framework_event_origin,
 )
 from ._workflow import WorkflowRunResult
 
@@ -516,7 +519,7 @@ class StepWrapper(Generic[R]):
             # Dedicated bypass event so consumers can tell cache-hit replays
             # apart from fresh executions.
             await ctx.add_event(WorkflowEvent.executor_bypassed(self.name, cached))
-            return cached  # type: ignore[return-value, no-any-return]
+            return cached
 
         # Inject RunContext if the step function declares it
         call_args, call_kwargs = self._build_call_args_with_ctx(ctx, args, kwargs)
@@ -629,6 +632,46 @@ def step(
 
 
 # ---------------------------------------------------------------------------
+# FunctionalWorkflowDefinition
+# ---------------------------------------------------------------------------
+
+
+@experimental(feature_id=ExperimentalFeature.FUNCTIONAL_WORKFLOWS)
+class FunctionalWorkflowDefinition:
+    """Stateless definition produced by :func:`workflow`.
+
+    Call :meth:`build` to create a stateful :class:`FunctionalWorkflow`.
+    Each built workflow represents one logical caller or session.
+    """
+
+    def __init__(
+        self,
+        func: Callable[..., Awaitable[Any]],
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> None:
+        FunctionalWorkflow._classify_signature(func)
+        self._func = func
+        self.name = name or func.__name__
+        self.description = description
+        functools.update_wrapper(self, func)  # type: ignore[arg-type]
+
+    def build(
+        self,
+        *,
+        checkpoint_storage: CheckpointStorage | None = None,
+    ) -> FunctionalWorkflow:
+        """Build a stateful workflow for one logical caller or session."""
+        return FunctionalWorkflow(
+            self._func,
+            name=self.name,
+            description=self.description,
+            checkpoint_storage=checkpoint_storage,
+        )
+
+
+# ---------------------------------------------------------------------------
 # FunctionalWorkflow
 # ---------------------------------------------------------------------------
 
@@ -637,14 +680,18 @@ def step(
 class FunctionalWorkflow:
     """A workflow backed by a user-defined async function.
 
-    Created by the :func:`workflow` decorator.  Exposes the same ``run()``
-    interface as graph-based :class:`Workflow` objects, returning a
+    Built from a :class:`FunctionalWorkflowDefinition`. Exposes the same
+    ``run()`` interface as graph-based :class:`Workflow` objects, returning a
     :class:`WorkflowRunResult` (or a :class:`ResponseStream` in streaming
     mode).
 
     The underlying function is executed directly — no graph compilation or
     edge wiring is involved.  Native Python control flow (``if``/``else``,
     ``for``, ``asyncio.gather``) is used for branching and parallelism.
+
+    Like graph-based :class:`Workflow`, each instance owns mutable execution
+    state across calls to :meth:`run`. Scope an instance to one logical
+    caller or session; build separate instances for independent callers.
 
     Args:
         func: The async function that implements the workflow logic.
@@ -664,7 +711,8 @@ class FunctionalWorkflow:
                 return await to_upper(data)
 
 
-            result = await my_pipeline.run("hello")
+            pipeline = my_pipeline.build()
+            result = await pipeline.run("hello")
             print(result.get_outputs())  # ['HELLO']
     """
 
@@ -811,6 +859,24 @@ class FunctionalWorkflow:
                 execution is not allowed).
         """
         self._validate_run_params(message, responses, checkpoint_id)
+        # Warn (but don't block) when a fresh message or a checkpoint restore begins while a prior
+        # run left request_info events pending. Mirrors Workflow.run. Delivering responses is the
+        # normal way to complete the pending cycle and is intentionally not warned.
+        if (message is not None or checkpoint_id is not None) and self._last_pending_request_ids:
+            logger.warning(
+                "Workflow %s received %s while %d request_info event(s) are still pending from an "
+                "unfinished request/response cycle; %s. Deliver responses (responses=...) to complete "
+                "the pending cycle before starting new input.",
+                self.name,
+                "a fresh message" if message is not None else "a checkpoint restore",
+                len(self._last_pending_request_ids),
+                (
+                    "those requests remain answerable, but this run advances workflow state, so a "
+                    "response that arrives later may apply to a workflow that has moved on"
+                    if message is not None
+                    else "those pending requests will be overwritten by the checkpoint's state"
+                ),
+            )
         if responses and checkpoint_id is None:
             # Require at least one response key to match a currently-pending
             # request; prevents silent replay against stale state while still
@@ -915,7 +981,7 @@ class FunctionalWorkflow:
             if storage is None:
                 raise ValueError(
                     "Cannot restore from checkpoint without checkpoint_storage. "
-                    "Provide checkpoint_storage parameter or set it on the @workflow decorator."
+                    "Provide checkpoint_storage to build() or to this run."
                 )
             checkpoint = await storage.load(checkpoint_id)
             if checkpoint.graph_signature_hash != self.graph_signature_hash:
@@ -1240,7 +1306,7 @@ class FunctionalWorkflow:
 
 
 @overload
-def workflow(func: Callable[..., Awaitable[Any]]) -> FunctionalWorkflow: ...
+def workflow(func: Callable[..., Awaitable[Any]]) -> FunctionalWorkflowDefinition: ...
 
 
 @overload
@@ -1248,8 +1314,7 @@ def workflow(
     *,
     name: str | None = None,
     description: str | None = None,
-    checkpoint_storage: CheckpointStorage | None = None,
-) -> Callable[[Callable[..., Awaitable[Any]]], FunctionalWorkflow]: ...
+) -> Callable[[Callable[..., Awaitable[Any]]], FunctionalWorkflowDefinition]: ...
 
 
 @experimental(feature_id=ExperimentalFeature.FUNCTIONAL_WORKFLOWS)
@@ -1258,29 +1323,26 @@ def workflow(
     *,
     name: str | None = None,
     description: str | None = None,
-    checkpoint_storage: CheckpointStorage | None = None,
-) -> FunctionalWorkflow | Callable[[Callable[..., Awaitable[Any]]], FunctionalWorkflow]:
-    """Decorator that converts an async function into a :class:`FunctionalWorkflow`.
+) -> FunctionalWorkflowDefinition | Callable[[Callable[..., Awaitable[Any]]], FunctionalWorkflowDefinition]:
+    """Decorator that creates a stateless :class:`FunctionalWorkflowDefinition`.
 
     Supports both bare ``@workflow`` and parameterized
     ``@workflow(name="my_wf")`` forms.
 
     The decorated function receives its input as the first positional argument
     and a :class:`RunContext` instance wherever a parameter is annotated with
-    that type.  The resulting :class:`FunctionalWorkflow` object exposes the
-    same ``run()`` interface as graph-based workflows.
+    that type. Call ``build()`` on the resulting definition to create a
+    stateful :class:`FunctionalWorkflow`.
 
     Args:
         func: The async function to decorate (when using the bare
             ``@workflow`` form).
         name: Display name for the workflow.  Defaults to ``func.__name__``.
         description: Optional human-readable description.
-        checkpoint_storage: Default :class:`CheckpointStorage` for
-            persisting step results and workflow state.
 
     Returns:
-        A :class:`FunctionalWorkflow` (bare form) or a decorator that
-        produces one (parameterized form).
+        A :class:`FunctionalWorkflowDefinition` (bare form) or a decorator
+        that produces one (parameterized form).
 
     Examples:
 
@@ -1293,14 +1355,17 @@ def workflow(
 
 
             # Parameterized form
-            @workflow(name="my_pipeline", checkpoint_storage=storage)
+            @workflow(name="my_pipeline")
             async def pipeline(data: str) -> str: ...
+
+
+            instance = pipeline.build(checkpoint_storage=storage)
     """
     if func is not None:
-        return FunctionalWorkflow(func, name=name, description=description, checkpoint_storage=checkpoint_storage)
+        return FunctionalWorkflowDefinition(func, name=name, description=description)
 
-    def _decorator(fn: Callable[..., Awaitable[Any]]) -> FunctionalWorkflow:
-        return FunctionalWorkflow(fn, name=name, description=description, checkpoint_storage=checkpoint_storage)
+    def _decorator(fn: Callable[..., Awaitable[Any]]) -> FunctionalWorkflowDefinition:
+        return FunctionalWorkflowDefinition(fn, name=name, description=description)
 
     return _decorator
 
@@ -1324,6 +1389,12 @@ class FunctionalWorkflowAgent:
     as :class:`FunctionApprovalRequestContent` items (mirroring the graph
     :class:`WorkflowAgent`), so HITL workflows are callable via this
     adapter.  Callers resume via ``responses=`` / ``checkpoint_id=``.
+
+    The wrapped workflow owns mutable execution state. Scope the workflow and
+    this adapter to one logical caller or session; create separate workflow
+    instances for independent or mutually untrusted callers. If those
+    instances use checkpoint storage, the host must also authorize and
+    tenant-scope access to that external store.
 
     Args:
         workflow: The :class:`FunctionalWorkflow` to wrap.

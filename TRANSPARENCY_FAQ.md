@@ -2,7 +2,7 @@
 
 **What is Microsoft Agent Framework?**
 
-Microsoft Agent Framework is a comprehensive multi-language (C#/.NET and Python) framework for building, orchestrating, and deploying AI agents and multi-agent workflows. The system takes user instructions and conversation inputs and produces intelligent responses through AI agents that can integrate with various LLM providers (OpenAI, Azure OpenAI, Azure AI Foundry). It provides both simple chat agents and complex multi-agent workflows with graph-based orchestration.
+Microsoft Agent Framework is a comprehensive multi-language (C#/.NET and Python) framework for building, orchestrating, and deploying AI agents and multi-agent workflows. The system takes user instructions and conversation inputs and produces intelligent responses through AI agents that can integrate with various LLM providers (OpenAI, Azure OpenAI, Microsoft Foundry). It provides both simple chat agents and complex multi-agent workflows with graph-based orchestration.
 
 **What can Microsoft Agent Framework do?**
 
@@ -12,7 +12,7 @@ The framework offers:
 - **Multi-Agent Orchestration**: Group chat, sequential, concurrent, and handoff patterns
 - **Graph-based Workflows**: Connect agents and deterministic functions using data flows with streaming, checkpointing, time-travel, and Human-in-the-loop
 - **Extensibility Framework**: Extend with native functions, A2A, Model Context Protocol (MCP)
-- **LLM Integration**: Support for OpenAI, Azure OpenAI, Azure AI Foundry, and other providers
+- **LLM Integration**: Support for OpenAI, Azure OpenAI, Microsoft Foundry, and other providers
 - **Runtime Support**: Both in-process and distributed agent execution
 
 **What is/are Microsoft Agent Framework's intended use(s)?**

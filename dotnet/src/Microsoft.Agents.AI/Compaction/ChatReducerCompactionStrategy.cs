@@ -31,6 +31,16 @@ namespace Microsoft.Agents.AI.Compaction;
 /// (such as <c>MessageCountingChatReducer</c>) and want to apply it as part of a
 /// <see cref="CompactionStrategy"/> pipeline or as an in-run compaction strategy.
 /// </para>
+/// <para>
+/// <strong>Security consideration:</strong> This strategy rebuilds the conversation from whatever
+/// messages the supplied <see cref="IChatReducer"/> returns, replacing the original included messages
+/// outright. If <see cref="ChatReducer"/> is backed by an external or LLM-based service (rather than a
+/// purely local/deterministic reduction such as trimming by message count), a compromised or malicious
+/// reducer could return messages containing unsafe instructions that permanently become part of chat
+/// history — the same persistent indirect-prompt-injection risk described for
+/// <see cref="SummarizationCompactionStrategy"/>. Only use a reducer implementation you trust as much
+/// as the primary model when it is backed by an external service.
+/// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class ChatReducerCompactionStrategy : CompactionStrategy

@@ -39,9 +39,9 @@ from ._message_utils import normalize_messages_input
 from ._typing_utils import is_instance_of, is_type_compatible
 
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
@@ -64,7 +64,18 @@ class WorkflowAgent(BaseAgent):
             return {"request_id": self.request_id, "request_event": self.request_event.to_dict()}
 
         @classmethod
-        def from_dict(cls, payload: dict[str, Any]) -> WorkflowAgent.RequestInfoFunctionArgs:
+        def from_dict(
+            cls,
+            payload: dict[str, Any],
+            *,
+            allowed_types: Mapping[str, type[Any]] | None = None,
+        ) -> WorkflowAgent.RequestInfoFunctionArgs:
+            """Create request-info function arguments from a dictionary.
+
+            Args:
+                payload: Serialized request-info function arguments.
+                allowed_types: Optional exact mapping of serialized names to trusted custom types.
+            """
             if "request_id" not in payload or "request_event" not in payload:
                 raise ValueError(
                     "Invalid payload for RequestInfoFunctionArgs. 'request_id' and 'request_event' are required."
@@ -74,7 +85,10 @@ class WorkflowAgent(BaseAgent):
 
             return cls(
                 request_id=payload.get("request_id", ""),
-                request_event=WorkflowEvent.from_dict(payload.get("request_event", {})),
+                request_event=WorkflowEvent.from_dict(
+                    payload.get("request_event", {}),
+                    allowed_types=allowed_types,
+                ),
             )
 
     def __init__(
@@ -276,7 +290,7 @@ class WorkflowAgent(BaseAgent):
             if provider_session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")
             await provider.before_run(
-                agent=self,  # type: ignore[arg-type]
+                agent=self,
                 session=provider_session,
                 context=session_context,
                 state=provider_session.state.setdefault(provider.source_id, {}),
@@ -356,7 +370,7 @@ class WorkflowAgent(BaseAgent):
             if provider_session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")
             await provider.before_run(
-                agent=self,  # type: ignore[arg-type]
+                agent=self,
                 session=provider_session,
                 context=session_context,
                 state=provider_session.state.setdefault(provider.source_id, {}),
@@ -688,20 +702,19 @@ class WorkflowAgent(BaseAgent):
         self,
         event: WorkflowEvent[Any],
     ) -> Content:
-        """Convert a request_info event to FunctionApprovalRequestContent.
+        """Convert a request_info event to caller-facing content.
 
         Args:
             event: A WorkflowEvent with type='request_info'.
 
         Returns:
-            A content object representing the request info. The content can be a `function_approval_request`
-            or a `function_call` depending on the structure of the event data.
+            Specialized user-input request content unchanged, or a `function_call` envelope for generic requests.
 
         Note:
-            If the event data is already a FunctionApprovalRequestContent, it will be returned as-is.
+            Text requests use the function-call envelope so callers can reply with a matching function result.
         """
-        if isinstance(event.data, Content) and event.data.user_input_request:
-            # Return the event data as-is if it's already a properly formed FunctionApprovalRequestContent
+        if isinstance(event.data, Content) and event.data.user_input_request and event.data.type != "text":
+            # Preserve specialized requests that callers already understand how to present.
             return event.data
 
         request_id = event.request_id
@@ -727,7 +740,7 @@ class WorkflowAgent(BaseAgent):
                     request_id: str = content.id  # type: ignore[assignment]
                     function_responses[request_id] = content
                 elif content.type == "function_result":
-                    response_data = content.result if hasattr(content, "result") else str(content)  # type: ignore[attr-defined]
+                    response_data = content.result if hasattr(content, "result") else str(content)
                     function_responses[content.call_id] = response_data  # type: ignore
                 else:
                     raise AgentInvalidResponseException(
@@ -741,7 +754,7 @@ class WorkflowAgent(BaseAgent):
         if isinstance(data, list):
             return [c for item in data for c in self._extract_contents(item)]  # type: ignore
         if isinstance(data, Content):
-            return [data]  # type: ignore[redundant-cast]
+            return [data]
         if isinstance(data, str):
             return [Content.from_text(text=data)]
         return [Content.from_text(text=str(data))]
@@ -835,7 +848,7 @@ class WorkflowAgent(BaseAgent):
                 messages=(current.messages or []) + (incoming.messages or []),
                 response_id=current.response_id or incoming.response_id,
                 created_at=incoming.created_at or current.created_at,
-                usage_details=add_usage_details(current.usage_details, incoming.usage_details),  # type: ignore[arg-type]
+                usage_details=add_usage_details(current.usage_details, incoming.usage_details),
                 raw_representation=raw_list if raw_list else None,
                 additional_properties=incoming.additional_properties or current.additional_properties,
             )
@@ -870,7 +883,7 @@ class WorkflowAgent(BaseAgent):
             if aggregated:
                 final_messages.extend(aggregated.messages)
                 if aggregated.usage_details:
-                    merged_usage = add_usage_details(merged_usage, aggregated.usage_details)  # type: ignore[arg-type]
+                    merged_usage = add_usage_details(merged_usage, aggregated.usage_details)
                 if aggregated.created_at and (
                     not latest_created_at or _parse_dt(aggregated.created_at) > _parse_dt(latest_created_at)
                 ):
@@ -894,7 +907,7 @@ class WorkflowAgent(BaseAgent):
             flattened = AgentResponse.from_updates(global_dangling)
             final_messages.extend(flattened.messages)
             if flattened.usage_details:
-                merged_usage = add_usage_details(merged_usage, flattened.usage_details)  # type: ignore[arg-type]
+                merged_usage = add_usage_details(merged_usage, flattened.usage_details)
             if flattened.created_at and (
                 not latest_created_at or _parse_dt(flattened.created_at) > _parse_dt(latest_created_at)
             ):

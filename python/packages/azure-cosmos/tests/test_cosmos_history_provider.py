@@ -6,7 +6,7 @@ import os
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import suppress
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,6 +17,7 @@ from azure.cosmos.aio import CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 import agent_framework_azure_cosmos._history_provider as history_provider_module
+from agent_framework_azure_cosmos._feature_usage import FeatureIndex
 from agent_framework_azure_cosmos._history_provider import CosmosHistoryProvider
 
 skip_if_cosmos_integration_tests_disabled = pytest.mark.skipif(
@@ -42,6 +43,15 @@ def _to_async_iter(items: list[Any]) -> AsyncIterator[Any]:
             yield item
 
     return _iterator()
+
+
+async def test_save_messages_marks_azure_cosmos_used_before_empty_return() -> None:
+    provider = object.__new__(CosmosHistoryProvider)
+
+    with patch("agent_framework_azure_cosmos._history_provider.mark_feature_used") as mark_feature_used:
+        await provider.save_messages(None, [])
+
+    mark_feature_used.assert_called_once_with(FeatureIndex.AZURE_COSMOS)
 
 
 @pytest.fixture
@@ -282,8 +292,11 @@ class TestCosmosHistoryProviderBeforeAfterRun:
         context = SessionContext(input_messages=[Message(role="user", contents=["new msg"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore[arg-type]
+            agent=cast(Any, None),
+            session=session,
+            context=context,
+            state=session.state.setdefault(provider.source_id, {}),
+        )
 
         assert "mem" in context.context_messages
         assert context.context_messages["mem"][0].text == "old msg"
@@ -295,8 +308,11 @@ class TestCosmosHistoryProviderBeforeAfterRun:
         context._response = AgentResponse(messages=[Message(role="assistant", contents=["hello"])])
 
         await provider.after_run(
-            agent=None, session=session, context=context, state=session.state.setdefault(provider.source_id, {})
-        )  # type: ignore[arg-type]
+            agent=cast(Any, None),
+            session=session,
+            context=context,
+            state=session.state.setdefault(provider.source_id, {}),
+        )
 
         mock_container.execute_item_batch.assert_awaited_once()
         batch_operations = mock_container.execute_item_batch.await_args.kwargs["batch_operations"]

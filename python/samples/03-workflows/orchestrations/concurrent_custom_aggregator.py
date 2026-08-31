@@ -29,7 +29,7 @@ Demonstrates:
 - Workflow output yielded with the synthesized summary string
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """

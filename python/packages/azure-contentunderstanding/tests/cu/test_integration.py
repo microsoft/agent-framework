@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -43,11 +44,12 @@ async def test_analyze_pdf_binary() -> None:
     assert pdf_path.exists(), f"Test fixture not found: {pdf_path}"
     pdf_bytes = pdf_path.read_bytes()
 
-    async with DefaultAzureCredential() as credential, ContentUnderstandingClient(endpoint, credential) as client:
+    async with DefaultAzureCredential() as credential, ContentUnderstandingClient(endpoint, credential) as client:  # pyrefly: ignore[bad-argument-type]
         poller = await client.begin_analyze_binary(
             analyzer_id,
             binary_input=pdf_bytes,
             content_type="application/pdf",
+            string_encoding="utf-8",
         )
         result = await poller.result()
 
@@ -83,7 +85,7 @@ async def test_before_run_e2e() -> None:
     async with DefaultAzureCredential() as credential:
         cu = ContentUnderstandingContextProvider(
             endpoint=endpoint,
-            credential=credential,
+            credential=credential,  # pyrefly: ignore[bad-argument-type]
             max_wait=None,  # wait until analysis completes (no background deferral)
         )
         async with cu:
@@ -106,15 +108,17 @@ async def test_before_run_e2e() -> None:
 
             await cu.before_run(agent=MagicMock(), session=session, context=context, state=state)
 
-            docs = state.get("documents", {})
+            docs = cast("dict[str, Any]", state.get("documents", {}))
             assert isinstance(docs, dict)
             assert "invoice.pdf" in docs
             doc_entry = docs["invoice.pdf"]
             assert doc_entry["status"] == "ready"
-            assert doc_entry["result"] is not None
-            assert doc_entry["result"].get("markdown")
-            assert len(doc_entry["result"]["markdown"]) > 10
-            assert "CONTOSO LTD." in doc_entry["result"]["markdown"]
+            # ``result`` is now the rendered string from ``to_llm_input``.
+            rendered = doc_entry["result"]
+            assert isinstance(rendered, str)
+            assert len(rendered) > 10
+            assert "source: invoice.pdf" in rendered
+            assert "CONTOSO LTD." in rendered
 
 
 # Raw GitHub URL for a public invoice PDF from the CU samples repo
@@ -143,7 +147,7 @@ async def test_before_run_uri_content() -> None:
     async with DefaultAzureCredential() as credential:
         cu = ContentUnderstandingContextProvider(
             endpoint=endpoint,
-            credential=credential,
+            credential=credential,  # pyrefly: ignore[bad-argument-type]
             max_wait=None,  # wait until analysis completes (no background deferral)
         )
         async with cu:
@@ -166,16 +170,17 @@ async def test_before_run_uri_content() -> None:
 
             await cu.before_run(agent=MagicMock(), session=session, context=context, state=state)
 
-            docs = state.get("documents", {})
+            docs = cast("dict[str, Any]", state.get("documents", {}))
             assert isinstance(docs, dict)
             assert "invoice.pdf" in docs
 
             doc_entry = docs["invoice.pdf"]
             assert doc_entry["status"] == "ready"
-            assert doc_entry["result"] is not None
-            assert doc_entry["result"].get("markdown")
-            assert len(doc_entry["result"]["markdown"]) > 10
-            assert "CONTOSO LTD." in doc_entry["result"]["markdown"]
+            rendered = doc_entry["result"]
+            assert isinstance(rendered, str)
+            assert len(rendered) > 10
+            assert "source: invoice.pdf" in rendered
+            assert "CONTOSO LTD." in rendered
 
 
 @pytest.mark.flaky
@@ -206,7 +211,7 @@ async def test_before_run_data_uri_content() -> None:
     async with DefaultAzureCredential() as credential:
         cu = ContentUnderstandingContextProvider(
             endpoint=endpoint,
-            credential=credential,
+            credential=credential,  # pyrefly: ignore[bad-argument-type]
             max_wait=None,  # wait until analysis completes
         )
         async with cu:
@@ -229,16 +234,17 @@ async def test_before_run_data_uri_content() -> None:
 
             await cu.before_run(agent=MagicMock(), session=session, context=context, state=state)
 
-            docs = state.get("documents", {})
+            docs = cast("dict[str, Any]", state.get("documents", {}))
             assert isinstance(docs, dict)
             assert "invoice_b64.pdf" in docs
 
             doc_entry = docs["invoice_b64.pdf"]
             assert doc_entry["status"] == "ready"
-            assert doc_entry["result"] is not None
-            assert doc_entry["result"].get("markdown")
-            assert len(doc_entry["result"]["markdown"]) > 10
-            assert "CONTOSO LTD." in doc_entry["result"]["markdown"]
+            rendered = doc_entry["result"]
+            assert isinstance(rendered, str)
+            assert len(rendered) > 10
+            assert "source: invoice_b64.pdf" in rendered
+            assert "CONTOSO LTD." in rendered
 
 
 @pytest.mark.flaky
@@ -264,7 +270,7 @@ async def test_before_run_background_analysis() -> None:
     async with DefaultAzureCredential() as credential:
         cu = ContentUnderstandingContextProvider(
             endpoint=endpoint,
-            credential=credential,
+            credential=credential,  # pyrefly: ignore[bad-argument-type]
             max_wait=0.5,  # short timeout to force background deferral
         )
         async with cu:
@@ -288,7 +294,7 @@ async def test_before_run_background_analysis() -> None:
 
             await cu.before_run(agent=MagicMock(), session=session, context=context, state=state)
 
-            docs = state.get("documents", {})
+            docs = cast("dict[str, Any]", state.get("documents", {}))
             assert isinstance(docs, dict)
             assert "invoice.pdf" in docs
             assert docs["invoice.pdf"]["status"] == "analyzing", (
@@ -307,6 +313,6 @@ async def test_before_run_background_analysis() -> None:
             await cu.before_run(agent=MagicMock(), session=session, context=context2, state=state)
 
             assert docs["invoice.pdf"]["status"] == "ready"
-            assert docs["invoice.pdf"]["result"] is not None
-            assert docs["invoice.pdf"]["result"].get("markdown")
-            assert "CONTOSO LTD." in docs["invoice.pdf"]["result"]["markdown"]
+            rendered = docs["invoice.pdf"]["result"]
+            assert isinstance(rendered, str)
+            assert "CONTOSO LTD." in rendered

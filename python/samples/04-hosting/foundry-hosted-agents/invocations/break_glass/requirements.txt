@@ -1,0 +1,2 @@
+agent-framework-foundry
+azure-ai-agentserver-invocations

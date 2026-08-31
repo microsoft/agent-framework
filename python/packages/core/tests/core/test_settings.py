@@ -4,7 +4,7 @@
 
 import os
 import tempfile
-from typing import TypedDict
+from typing import Any, Literal, TypedDict
 
 import pytest
 
@@ -260,6 +260,45 @@ class TestOverrideTypeValidation:
 
         assert isinstance(settings["api_key"], SecretString)
         assert settings["api_key"] == "plain-string"
+
+    def test_parameterized_generic_union_arm_accepted(self) -> None:
+        """A ``dict`` override is valid for ``dict[str, Any] | str | None``."""
+
+        class GenericUnionSettings(TypedDict, total=False):
+            config: dict[str, Any] | str | None
+
+        settings = load_settings(GenericUnionSettings, env_prefix="TEST_", config={"key": "value"})
+
+        assert settings["config"] == {"key": "value"}
+
+    def test_parameterized_generic_union_arm_rejects_unrelated_type(self) -> None:
+        class GenericUnionSettings(TypedDict, total=False):
+            config: dict[str, Any] | str | None
+
+        with pytest.raises(ValueError, match="Invalid type for setting 'config'"):
+            load_settings(GenericUnionSettings, env_prefix="TEST_", config=1.5)
+
+    def test_bare_parameterized_generic_field(self) -> None:
+        """A non-union ``dict[str, Any]`` is validated against its origin, not the alias."""
+
+        class GenericSettings(TypedDict, total=False):
+            config: dict[str, Any]
+
+        settings = load_settings(GenericSettings, env_prefix="TEST_", config={"key": "value"})
+        assert settings["config"] == {"key": "value"}
+
+        with pytest.raises(ValueError, match="Invalid type for setting 'config'"):
+            load_settings(GenericSettings, env_prefix="TEST_", config=1.5)
+
+    def test_union_with_literal_arm_skips_check(self) -> None:
+        """``Literal`` arms have no runtime class, so validation is skipped rather than wrong."""
+
+        class LiteralUnionSettings(TypedDict, total=False):
+            mode: Literal["all"] | list[str] | None
+
+        settings = load_settings(LiteralUnionSettings, env_prefix="TEST_", mode=["a", "b"])
+
+        assert settings["mode"] == ["a", "b"]
 
 
 class TestMutuallyExclusive:

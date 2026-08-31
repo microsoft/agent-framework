@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import logging
 import sys
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Mapping, Sequence
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, cast, overload
 
@@ -24,21 +25,23 @@ from ._types import (
 )
 from .exceptions import MiddlewareException
 
+logger = logging.getLogger(__name__)
+
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from ._agents import SupportsAgentRun
     from ._compaction import CompactionStrategy, TokenizerProtocol
-    from ._sessions import AgentSession
+    from ._sessions import AgentSession, _RunPersistenceGate  # pyright: ignore[reportPrivateUsage]
     from ._tools import FunctionTool, ToolTypes
     from ._types import ChatOptions
 
@@ -77,6 +80,64 @@ class MiddlewareTermination(MiddlewareException):
     def __init__(self, message: str = "Middleware terminated execution.", *, result: Any = None) -> None:
         super().__init__(message, log_level=None)
         self.result = result
+
+
+class MiddlewareFailure(MiddlewareException):
+    """Fatal middleware signal that aborts the run instead of being absorbed.
+
+    Ordinary exceptions raised by **function** middleware (or by the tool it wraps) are
+    converted into tool-error results by the function-invocation loop, which then keeps
+    running — appropriate for recoverable tool failures, but fail-open for enforcement
+    layers and guardrails. ``MiddlewareFailure`` is the loop's explicit fail-closed
+    escape: it is never converted into a tool result, the current batch of concurrent
+    tool calls is cancelled, no further tool call starts, and the exception propagates
+    to the caller of :meth:`Agent.run` (for streaming runs, it is raised when the
+    stream is consumed). Cancellation is cooperative: an async sibling stops at its
+    next suspension point, while a synchronous tool body already executing in a worker
+    thread cannot be interrupted and may still complete its side effects — its result
+    is discarded either way and never reaches the transcript, the model, or history.
+    On a service-managed conversation (a persisted conversation id), the loop first
+    settles the aborted batch by submitting one error ``function_result`` per dangling
+    call — one extra request — so the hosted thread is not left with unresolved tool
+    calls that would make the session's next request fail; the persisted continuation
+    advances to the settlement response (the new handle for response-ID continuations)
+    and the settlement response is otherwise discarded. This also covers a failure
+    raised while an approved tool is replayed after an approval pause.
+
+    Agent and chat middleware do not need a dedicated signal — every exception they
+    raise already propagates to the caller — and ``MiddlewareFailure`` behaves the same
+    there, so one exception type gives uniform fail-loud semantics across all three
+    middleware categories.
+
+    Contrast with :class:`MiddlewareTermination`, which stops the loop *gracefully*
+    (optionally substituting a result that still flows back to the caller):
+    ``MiddlewareFailure`` produces no result at all.
+
+    Middleware must not catch ``MiddlewareFailure`` (let it propagate through
+    ``call_next()``): swallowing it converts a fail-closed abort back into a running —
+    and possibly unguarded — loop.
+
+    Chain the underlying error so it reaches the caller intact:
+
+    .. code-block:: python
+
+        from agent_framework import FunctionMiddleware, FunctionInvocationContext, MiddlewareFailure
+
+
+        class EnforcementMiddleware(FunctionMiddleware):
+            async def process(self, context: FunctionInvocationContext, call_next):
+                try:
+                    verdict = await self.check(context.arguments)
+                except Exception as exc:
+                    # The enforcement layer itself failed: abort instead of running unguarded.
+                    raise MiddlewareFailure("policy check failed") from exc
+                if verdict.deny:
+                    raise MiddlewareFailure(f"denied: {verdict.reason}")
+                await call_next()
+    """
+
+    def __init__(self, message: str = "Middleware failed.") -> None:
+        super().__init__(message, log_level=None)
 
 
 class MiddlewareType(str, Enum):
@@ -199,6 +260,11 @@ class AgentContext:
         self.stream_transform_hooks = list(stream_transform_hooks or [])
         self.stream_result_hooks = list(stream_result_hooks or [])
         self.stream_cleanup_hooks = list(stream_cleanup_hooks or [])
+        # Set by egress-enforcement middleware (agent-hooks): the run-persistence gate
+        # covering this pipeline's run. The final handler offers it for adoption by
+        # the run it starts (see _sessions._offer_run_persistence_gate_claim), so the
+        # gate binds to that run's identity and never to middleware-initiated runs.
+        self._run_persistence_gate: _RunPersistenceGate | None = None
 
 
 class FunctionInvocationContext:
@@ -362,16 +428,12 @@ class FunctionInvocationContext:
                 names_to_remove.add(item)
                 continue
             for normalized in normalize_tools(item):
-                if name := _get_tool_name(normalized):  # type: ignore[reportPrivateUsage]
+                if name := _get_tool_name(normalized):
                     names_to_remove.add(name)
 
         if not names_to_remove:
             return
-        self.tools[:] = [
-            tool
-            for tool in self.tools
-            if _get_tool_name(tool) not in names_to_remove  # type: ignore[reportPrivateUsage]
-        ]
+        self.tools[:] = [tool for tool in self.tools if _get_tool_name(tool) not in names_to_remove]
 
 
 class ChatContext:
@@ -385,6 +447,7 @@ class ChatContext:
         messages: The messages being sent to the chat client.
         options: The options for the chat request as a dict.
         stream: Whether this is a streaming invocation.
+        session: The active agent session for this chat invocation, if any.
         metadata: Metadata dictionary for sharing data between chat middleware.
         result: Chat execution result. Can be observed after calling ``call_next()``
                 to see the actual execution result or can be set to override the execution result.
@@ -425,6 +488,7 @@ class ChatContext:
         messages: Sequence[Message],
         options: Mapping[str, Any] | None,
         stream: bool = False,
+        session: AgentSession | None = None,
         metadata: Mapping[str, Any] | None = None,
         result: ChatResponse | ResponseStream[ChatResponseUpdate, ChatResponse] | None = None,
         kwargs: Mapping[str, Any] | None = None,
@@ -443,6 +507,7 @@ class ChatContext:
             messages: The messages being sent to the chat client.
             options: The options for the chat request as a dict.
             stream: Whether this is a streaming invocation.
+            session: The active agent session for this chat invocation, if any.
             metadata: Metadata dictionary for sharing data between chat middleware.
             result: Chat execution result.
             kwargs: Additional keyword arguments passed to the chat client.
@@ -455,6 +520,7 @@ class ChatContext:
         self.messages = messages
         self.options = options
         self.stream = stream
+        self.session = session
         self.metadata: dict[str, Any] = dict(metadata) if metadata is not None else {}
         self.result = result
         self.kwargs: dict[str, Any] = dict(kwargs) if kwargs is not None else {}
@@ -535,6 +601,13 @@ class FunctionMiddleware(ABC):
     Note:
         FunctionMiddleware is an abstract base class. You must subclass it and implement
         the ``process()`` method to create custom function middleware.
+
+    Note:
+        Exception semantics inside the function-invocation loop: an ordinary exception
+        raised from function middleware is converted into a tool-error result and the
+        loop keeps running; raise :class:`MiddlewareTermination` to stop the loop
+        gracefully (optionally substituting a result), or :class:`MiddlewareFailure` to
+        abort the run fail-closed and propagate the failure to the caller.
 
     Examples:
         .. code-block:: python
@@ -668,6 +741,81 @@ ChatAndFunctionMiddlewareTypes: TypeAlias = (
     FunctionMiddleware | FunctionMiddlewareCallable | ChatMiddleware | ChatMiddlewareCallable
 )
 
+
+@experimental(feature_id=ExperimentalFeature.AGENT_HOOKS)
+class MiddlewareBundle:
+    """An indivisible group of middleware that forms one coherent feature.
+
+    Some features (for example the agent-hooks enforcement middleware) consist of
+    several middleware objects that only uphold their contract when installed
+    together. A bundle carries those objects as one opaque unit: pass the bundle
+    itself (agent-level ``Agent(middleware=[...])`` or per-run
+    ``agent.run(middleware=[...])``), and :func:`categorize_middleware` splits its
+    members into their agent/function/chat categories while the bundle guarantees
+    the members cannot be installed partially — it is deliberately not a sequence,
+    so it cannot be unpacked or sliced. Middleware seams that install only some
+    categories (chat-client seams install chat and function middleware only)
+    enforce the same guarantee by raising ``MiddlewareException`` when a bundle
+    member falls into a category they cannot install, instead of silently dropping
+    that member.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Agent
+
+            bundle = create_some_feature_middleware(...)
+            agent = Agent(client=client, middleware=[bundle, my_other_middleware])
+    """
+
+    def __init__(
+        self,
+        middleware: Sequence[
+            AgentMiddleware
+            | AgentMiddlewareCallable
+            | FunctionMiddleware
+            | FunctionMiddlewareCallable
+            | ChatMiddleware
+            | ChatMiddlewareCallable
+        ],
+    ) -> None:
+        """Initialize the bundle.
+
+        Args:
+            middleware: The middleware objects that belong together. Order is
+                preserved when the bundle is expanded into the run's pipelines.
+                Every member must be categorizable by the framework's own rules
+                (an agent/function/chat middleware instance, or a callable with a
+                recognizable middleware signature); nested bundles are rejected.
+
+        Raises:
+            MiddlewareException: If a member is a nested bundle or cannot be
+                categorized as agent, function, or chat middleware.
+        """
+        members = tuple(middleware)
+        for member in members:
+            if isinstance(member, MiddlewareBundle):
+                raise MiddlewareException(
+                    "MiddlewareBundle members must be middleware objects; nesting a "
+                    "MiddlewareBundle inside another bundle is not supported."
+                )
+            if isinstance(member, (AgentMiddleware, FunctionMiddleware, ChatMiddleware)):
+                continue
+            if callable(member):
+                # Raises MiddlewareException when the callable's category cannot be
+                # determined — the same validation categorize_middleware applies.
+                _determine_middleware_type(member)
+                continue
+            raise MiddlewareException(
+                f"MiddlewareBundle members must be agent, function, or chat middleware; got {type(member).__name__}."
+            )
+        self._middleware = members
+
+    def __repr__(self) -> str:
+        members = ", ".join(type(middleware).__name__ for middleware in self._middleware)
+        return f"{type(self).__name__}({members})"
+
+
 # Type alias for all middleware types
 MiddlewareTypes: TypeAlias = (
     AgentMiddleware
@@ -676,7 +824,17 @@ MiddlewareTypes: TypeAlias = (
     | FunctionMiddlewareCallable
     | ChatMiddleware
     | ChatMiddlewareCallable
+    | MiddlewareBundle
 )
+
+
+def _copy_middleware_sequence(source: object | None) -> list[MiddlewareTypes]:
+    """Validate and copy a middleware sequence."""
+    if source is None:
+        return []
+    if isinstance(source, (str, bytes)) or not isinstance(source, Sequence):
+        raise TypeError("middleware must be a non-string sequence of middleware.")
+    return list(cast("Sequence[MiddlewareTypes]", source))
 
 
 def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
@@ -842,6 +1000,16 @@ class BaseMiddlewarePipeline(ABC):
             self._middleware.append(middleware)
         elif callable(middleware):
             self._middleware.append(MiddlewareWrapper(middleware))  # type: ignore[arg-type]
+        else:
+            # Preserve the long-standing lenient behavior (do not fail the run), but
+            # never skip silently: an unrecognized object here means middleware the
+            # caller supplied will not execute.
+            logger.warning(
+                "Ignoring unrecognized middleware of type %s: it is neither a %s nor a callable "
+                "and will not be executed.",
+                type(middleware).__name__,
+                expected_type.__name__,
+            )
 
 
 class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
@@ -1185,12 +1353,16 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
         super_get_response = super().get_response  # type: ignore[misc]
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         call_middleware = effective_client_kwargs.pop("middleware", [])
+        raw_session = effective_client_kwargs.pop("session", None)
+        from ._sessions import AgentSession as _AgentSession
+
+        session = raw_session if isinstance(raw_session, _AgentSession) else None
         context_kwargs = dict(effective_client_kwargs)
         if compaction_strategy is not None:
             context_kwargs["compaction_strategy"] = compaction_strategy
         if tokenizer is not None:
             context_kwargs["tokenizer"] = tokenizer
-        pipeline = self._get_chat_middleware_pipeline(call_middleware)  # type: ignore[reportUnknownArgumentType]
+        pipeline = self._get_chat_middleware_pipeline(call_middleware)
         if not pipeline.has_middlewares:
             return super_get_response(  # type: ignore[no-any-return]
                 messages=messages,
@@ -1207,15 +1379,42 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
             messages=list(messages),
             options=options,
             stream=stream,
+            session=session,
             kwargs=context_kwargs,
             function_invocation_kwargs=function_invocation_kwargs,
         )
+        source_messages = messages if isinstance(messages, list) else None
+        baseline_message_ids = {id(message) for message in messages}
+        middleware_messages = cast("list[Message]", context.messages)
+        downstream_messages: list[Message] | None = None
 
         async def _execute() -> ChatResponse | ResponseStream[ChatResponseUpdate, ChatResponse] | None:
-            return await pipeline.execute(
-                context=context,
-                final_handler=self._middleware_handler,
-            )
+            def _final_handler(
+                middleware_context: ChatContext,
+            ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+                nonlocal downstream_messages
+                downstream_messages = (
+                    middleware_context.messages
+                    if isinstance(middleware_context.messages, list)
+                    else list(middleware_context.messages)
+                )
+                middleware_context.messages = downstream_messages
+                return self._middleware_handler(middleware_context)
+
+            try:
+                return await pipeline.execute(
+                    context=context,
+                    final_handler=_final_handler,
+                )
+            finally:
+                if source_messages is not None:
+                    from ._compaction import _reconcile_compaction_summaries  # pyright: ignore[reportPrivateUsage]
+
+                    _reconcile_compaction_summaries(
+                        source_messages,
+                        downstream_messages if downstream_messages is not None else middleware_messages,
+                        baseline_message_ids,
+                    )
 
         if stream:
             # For streaming, wrap execution in ResponseStream.from_awaitable
@@ -1244,14 +1443,17 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
         handler_kwargs = dict(context.kwargs)
         compaction_strategy = handler_kwargs.pop("compaction_strategy", None)
         tokenizer = handler_kwargs.pop("tokenizer", None)
-        return super().get_response(  # type: ignore[misc, no-any-return]
-            messages=context.messages,
-            stream=context.stream,
-            options=context.options or {},
-            compaction_strategy=compaction_strategy,
-            tokenizer=tokenizer,
-            function_invocation_kwargs=context.function_invocation_kwargs,
-            client_kwargs=handler_kwargs,
+        return cast(
+            "Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]",
+            super().get_response(  # type: ignore[misc]
+                messages=context.messages,
+                stream=context.stream,
+                options=context.options or {},
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                function_invocation_kwargs=context.function_invocation_kwargs,
+                client_kwargs=handler_kwargs,
+            ),
         )
 
 
@@ -1264,11 +1466,12 @@ class AgentMiddlewareLayer:
         middleware: Sequence[MiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> None:
-        middleware_list = categorize_middleware(middleware)
+        middleware_sequence = _copy_middleware_sequence(middleware) if middleware is not None else None
+        middleware_list = categorize_middleware(middleware_sequence)
         self.agent_middleware = middleware_list["agent"]
         self._cached_agent_middleware_pipeline: AgentMiddlewarePipeline | None = None
         # Pass middleware to super so BaseAgent can store it for dynamic rebuild
-        super().__init__(*args, middleware=middleware, **kwargs)  # type: ignore[call-arg]
+        super().__init__(*args, middleware=middleware_sequence, **kwargs)  # type: ignore[call-arg]
         # Note: We intentionally don't extend client's middleware lists here.
         # Chat and function middleware is passed to the chat client at runtime via kwargs
         # in AgentMiddlewareLayer.run(), where it's properly combined with run-level middleware.
@@ -1348,13 +1551,13 @@ class AgentMiddlewareLayer:
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """MiddlewareTypes-enabled unified run method."""
-        # Re-categorize self.middleware at runtime to support dynamic changes
-        base_middleware_attr = getattr(self, "middleware", None)
-        base_middleware: Sequence[MiddlewareTypes] = (
-            cast(Sequence[MiddlewareTypes], base_middleware_attr) if isinstance(base_middleware_attr, Sequence) else []
+        base_middleware = getattr(self, "middleware", None)
+        base_middleware_list = categorize_middleware(
+            _copy_middleware_sequence(base_middleware) if base_middleware is not None else None
         )
-        base_middleware_list = categorize_middleware(base_middleware)
-        run_middleware_list = categorize_middleware(middleware)
+        run_middleware_list = categorize_middleware(
+            _copy_middleware_sequence(middleware) if middleware is not None else None
+        )
         pipeline = self._get_agent_middleware_pipeline([*base_middleware_list["agent"], *run_middleware_list["agent"]])
 
         # Combine base and run-level function/chat middleware for forwarding to chat client
@@ -1426,6 +1629,12 @@ class AgentMiddlewareLayer:
     def _middleware_handler(
         self, context: AgentContext
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        from ._sessions import _offer_run_persistence_gate_claim  # pyright: ignore[reportPrivateUsage]
+
+        # The final handler starts the run this pipeline (and any egress gate on the
+        # context) covers. Offer the gate for adoption by that run — always, so a
+        # gate-less pipeline also clears any stale ticket at this boundary.
+        _offer_run_persistence_gate_claim(context._run_persistence_gate, self)  # pyright: ignore[reportPrivateUsage]
         return super().run(  # type: ignore[misc, no-any-return]
             context.messages,
             stream=context.stream,
@@ -1440,7 +1649,7 @@ class AgentMiddlewareLayer:
 
 
 def _determine_middleware_type(middleware: Any) -> MiddlewareType:
-    """Determine middleware type using decorator and/or parameter type annotation.
+    """Determine the middleware type from function annotations or decorators.
 
     Args:
         middleware: The middleware function to analyze.
@@ -1451,6 +1660,8 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
     Raises:
         MiddlewareException: When middleware type cannot be determined or there's a mismatch.
     """
+    middleware_name = getattr(middleware, "__name__", type(middleware).__name__)
+
     # Check for decorator marker
     decorator_type: MiddlewareType | None = getattr(middleware, "_middleware_type", None)
 
@@ -1475,7 +1686,7 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
             # Not enough parameters - can't be valid middleware
             raise MiddlewareException(
                 f"Middleware function must have at least 2 parameters (context, call_next), "
-                f"but {middleware.__name__} has {len(params)}"
+                f"but {middleware_name} has {len(params)}"
             )
     except Exception as e:
         if isinstance(e, MiddlewareException):
@@ -1488,7 +1699,7 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
         if decorator_type != param_type:
             raise MiddlewareException(
                 f"MiddlewareTypes type mismatch: decorator indicates '{decorator_type.value}' "
-                f"but parameter type indicates '{param_type.value}' for function {middleware.__name__}"
+                f"but parameter type indicates '{param_type.value}' for function {middleware_name}"
             )
         return decorator_type
 
@@ -1502,7 +1713,7 @@ def _determine_middleware_type(middleware: Any) -> MiddlewareType:
 
     # Neither decorator nor parameter type specified - throw exception
     raise MiddlewareException(
-        f"Cannot determine middleware type for function {middleware.__name__}. "
+        f"Cannot determine middleware type for function {middleware_name}. "
         f"Please either use @agent_middleware/@function_middleware/@chat_middleware decorators "
         f"or specify parameter types (AgentContext, FunctionInvocationContext, or ChatContext)."
     )
@@ -1514,47 +1725,112 @@ class MiddlewareDict(TypedDict):
     chat: list[ChatMiddleware | ChatMiddlewareCallable]
 
 
+def _as_middleware_list(
+    source: MiddlewareTypes | Sequence[MiddlewareTypes] | None,
+) -> list[MiddlewareTypes]:
+    """Normalize one middleware source into a list — the bare-source rule's single owner.
+
+    ``None`` is empty; a sequence (never str/bytes) is taken element-wise; any other
+    bare source — a single middleware object or a :class:`MiddlewareBundle`, which is
+    deliberately not a sequence — is one element. The ``None`` check is deliberate
+    (not truthiness): a bare middleware object with a falsy ``__bool__``/``__len__``
+    still counts as one element, never silently dropped.
+    """
+    if source is None:
+        return []
+    if isinstance(source, Sequence) and not isinstance(source, (str, bytes)):
+        return list(cast("Sequence[MiddlewareTypes]", source))
+    return [cast("MiddlewareTypes", source)]
+
+
 def categorize_middleware(
     *middleware_sources: MiddlewareTypes | Sequence[MiddlewareTypes] | None,
+    supported_categories: Collection[str] | None = None,
 ) -> MiddlewareDict:
     """Categorize middleware from multiple sources into agent, function, and chat types.
 
     Args:
         *middleware_sources: Variable number of middleware sources to categorize.
+            A bare (non-sequence) source — a single middleware object or a
+            :class:`MiddlewareBundle` — is treated as a one-element list
+            (normalization is owned by :func:`_as_middleware_list`).
+
+    Keyword Args:
+        supported_categories: The categories the call site actually installs, e.g.
+            ``("chat", "function")`` at chat-client seams. When provided, middleware
+            that categorizes outside these is not returned: a bare middleware object
+            is skipped with a warning (mirroring pipeline registration's leniency),
+            while a :class:`MiddlewareBundle` member raises ``MiddlewareException`` —
+            a bundle is indivisible, so dropping one member would silently install a
+            partial feature. ``None`` (default) supports every category.
 
     Returns:
         Dict with keys "agent", "function", "chat" containing lists of categorized middleware.
+
+    Raises:
+        MiddlewareException: If a bundle member falls outside ``supported_categories``.
     """
     result: MiddlewareDict = {"agent": [], "function": [], "chat": []}
 
-    # Merge all middleware sources into a single list
+    # Merge all middleware sources into a single list (bare-source normalization is
+    # owned by _as_middleware_list).
     all_middleware: list[Any] = []
     for source in middleware_sources:
-        if source:
-            if isinstance(source, Sequence) and not isinstance(source, (str, bytes)):
-                all_middleware.extend(source)  # type: ignore
-            else:
-                all_middleware.append(source)
+        all_middleware.extend(_as_middleware_list(source))
+
+    # Expand bundles first: a bundle's members are categorized individually (in
+    # order) but travel as one unit, so a feature spanning several categories can
+    # never be partially installed. Membership is remembered so an unsupported
+    # category can fail loudly for bundle members below.
+    expanded_middleware: list[Any] = []
+    bundle_member_ids: set[int] = set()
+    for middleware in all_middleware:
+        if isinstance(middleware, MiddlewareBundle):
+            members = middleware._middleware  # pyright: ignore[reportPrivateUsage]
+            bundle_member_ids.update(id(member) for member in members)
+            expanded_middleware.extend(members)
+        else:
+            expanded_middleware.append(middleware)
+    all_middleware = expanded_middleware
 
     # Categorize each middleware item
     for middleware in all_middleware:
+        category: Literal["agent", "function", "chat"]
         if isinstance(middleware, AgentMiddleware):
-            result["agent"].append(middleware)
+            category = "agent"
         elif isinstance(middleware, FunctionMiddleware):
-            result["function"].append(middleware)
+            category = "function"
         elif isinstance(middleware, ChatMiddleware):
-            result["chat"].append(middleware)
+            category = "chat"
         elif callable(middleware):
             # Always call _determine_middleware_type to ensure proper validation
             middleware_type = _determine_middleware_type(middleware)
             if middleware_type == MiddlewareType.AGENT:
-                result["agent"].append(middleware)  # type: ignore
+                category = "agent"
             elif middleware_type == MiddlewareType.FUNCTION:
-                result["function"].append(middleware)  # type: ignore
-            elif middleware_type == MiddlewareType.CHAT:
-                result["chat"].append(middleware)  # type: ignore
+                category = "function"
+            else:
+                category = "chat"
         else:
             # Fallback to agent middleware for unknown types
-            result["agent"].append(middleware)
+            category = "agent"
+        if supported_categories is not None and category not in supported_categories:
+            supported_text = ", ".join(sorted(supported_categories))
+            if id(middleware) in bundle_member_ids:
+                raise MiddlewareException(
+                    f"MiddlewareBundle member {type(middleware).__name__} is {category} middleware, but this "
+                    f"middleware seam supports only {supported_text} middleware. A bundle is one indivisible "
+                    "feature and cannot be partially installed; pass the bundle to the agent instead "
+                    "(Agent(middleware=[...]) or agent.run(middleware=[...]))."
+                )
+            logger.warning(
+                "Ignoring %s middleware of type %s: this middleware seam supports only %s middleware "
+                "and it will not be executed.",
+                category,
+                getattr(middleware, "__name__", type(middleware).__name__),
+                supported_text,
+            )
+            continue
+        result[category].append(cast("Any", middleware))
 
     return result
