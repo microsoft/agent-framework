@@ -11,7 +11,6 @@ from uuid import uuid4
 
 import pytest
 from agent_framework import Agent, AgentSession, Message
-from agent_framework.exceptions import ChatClientException
 from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
 from azure.ai.projects import models as projects_models
 from azure.ai.projects.aio import AIProjectClient
@@ -72,8 +71,6 @@ class _ConversationCapturingAgent(_CapturingAgent):
 async def _exercise_agui_case(
     agent: Any,
     mode: _Mode,
-    *,
-    expect_hosted_stateless_failure: bool = False,
 ) -> None:
     marker = f"AF-AGUI-{uuid4().hex}"
     follow_up = "Return only the exact marker from my previous message."
@@ -130,29 +127,15 @@ async def _exercise_agui_case(
                 assert capturing.service_session_ids == [None]
                 assert not capturing.created_conversation_ids
 
-        try:
-            second_events = [
-                event
-                async for event in runner.run({
-                    "threadId": thread_id,
-                    "runId": f"run-2-{uuid4().hex}",
-                    "__ag_ui_snapshot_scope": scope,
-                    "messages": [*replay_messages, {"role": "user", "content": follow_up}],
-                })
-            ]
-        except ChatClientException as exc:
-            if not expect_hosted_stateless_failure:
-                raise
-            error = str(exc)
-            assert "request body failed schema validation" in error
-            assert "Expected one of: string, array; got array" in error
-            assert "'param': '$.input'" in error
-            # TODO: Remove this expected-failure branch when Foundry Hosted Agents
-            # accept standard output_text replay without fabricated logprobs.
-            pytest.xfail("Foundry Hosted Agent rejects output_text replay when logprobs are absent")
-
-        if expect_hosted_stateless_failure:
-            pytest.fail("Foundry Hosted Agent replay now works; remove the expected-failure branch")
+        second_events = [
+            event
+            async for event in runner.run({
+                "threadId": thread_id,
+                "runId": f"run-2-{uuid4().hex}",
+                "__ag_ui_snapshot_scope": scope,
+                "messages": [*replay_messages, {"role": "user", "content": follow_up}],
+            })
+        ]
 
         assert not [event for event in second_events if getattr(event, "type", None) == "RUN_ERROR"]
         if mode == "stateless":
@@ -251,11 +234,7 @@ async def test_foundry_hosted_agent_agui_provider_matrix(mode: _Mode, store: boo
         default_options=cast(Any, {"store": store}),
     )
     try:
-        await _exercise_agui_case(
-            hosted_agent,
-            mode,
-            expect_hosted_stateless_failure=mode == "stateless",
-        )
+        await _exercise_agui_case(hosted_agent, mode)
     finally:
         await cast(Any, hosted_agent.client).client.close()
         await cast(Any, hosted_agent.client).close()

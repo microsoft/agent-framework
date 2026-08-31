@@ -180,7 +180,7 @@ async def test_openai_chat_completions_agui_provider_matrix(store: bool) -> None
 @skip_if_openai_integration_tests_disabled
 async def test_openai_responses_replays_real_assistant_logprobs() -> None:
     """Real provider logprobs survive direct assistant-message replay without fabrication."""
-    client = OpenAIChatClient()
+    client = OpenAIChatClient(model=os.environ["OPENAI_CHAT_COMPLETION_MODEL"])
     follow_up = Message(role="user", contents=["Reply with exactly: done"])
     try:
         first = await client.get_response(
