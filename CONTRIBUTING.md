@@ -105,6 +105,12 @@ individual projects may opt out (for example by setting `EnablePackageValidation
 
 For more details, see the [Package Validation diagnostic IDs](https://learn.microsoft.com/dotnet/fundamentals/package-validation/diagnostic-ids).
 
+#### Public API Baselines
+
+Released .NET packages also use `Microsoft.CodeAnalysis.PublicApiAnalyzers` to make source-level public API changes visible during builds. The `PublicAPI.*.txt` files use `#nullable enable` so nullability annotations are tracked as part of the public API surface. When adding, changing, or removing public APIs in a released package, update the package's `PublicAPI.Unshipped.txt` file with the analyzer-provided entries and include that change in your PR. The build will fail if public API changes are not reflected in the baseline files.
+
+After a release, the `Promote Shipped APIs` workflow moves entries from `PublicAPI.Unshipped.txt` to `PublicAPI.Shipped.txt` and opens or updates a promotion PR. Publish builds fail if released packages still contain unshipped public API entries.
+
 ### Suggested Workflow
 
 We use and recommend the following workflow:
@@ -166,6 +172,18 @@ Each language has its own dev setup guide, coding standards, and build scripts:
     - Unit tests: `dotnet test --filter-query "/*UnitTests*/*/*/*"`
     - Integration tests: `dotnet test --filter-query "/*IntegrationTests*/*/*/*"` (requires API keys/endpoints)
     - Linting (auto-fix): `dotnet format`
+
+#### Microsoft Internal Feed Proxy for GitHub Copilot SDK (.NET)
+
+Microsoft contributors can route GitHub Copilot SDK npm downloads through the internal proxy without passing extra `dotnet` arguments:
+
+1. Create `dotnet/Directory.Build.rsp` with:
+
+   ```text
+   -p:CopilotNpmRegistryUrl=https://packagefeedproxy.microsoft.io/npm/
+   ```
+
+When running `dotnet build` (or other `dotnet` commands) from the `./dotnet` directory, this property is applied automatically.
 
 ### PR - CI Process
 

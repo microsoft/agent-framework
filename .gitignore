@@ -249,6 +249,9 @@ python/dotnet-ref
 dotnet/filtered-*.slnx
 **/*.lscache
 
+# Local .NET build overrides
+/dotnet/Directory.Build.rsp
+
 # Local tool state
 .omc/
 .omx/

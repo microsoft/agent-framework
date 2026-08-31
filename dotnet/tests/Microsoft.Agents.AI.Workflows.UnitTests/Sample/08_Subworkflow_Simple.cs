@@ -7,7 +7,6 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
@@ -62,15 +61,15 @@ internal static partial class Step8EntryPoint
             Assert.Fail(errorBuilder.ToString());
         }
 
-        status.Should().Be(RunStatus.Idle);
+        Assert.Equal(RunStatus.Idle, status);
 
         WorkflowOutputEvent? maybeOutput = workflowRun.OutgoingEvents.OfType<WorkflowOutputEvent>()
                                                                      .SingleOrDefault();
 
-        maybeOutput.Should().NotBeNull("the workflow should have produced an output event");
+        Assert.NotNull(maybeOutput);
         List<TextProcessingResult>? maybeResults = maybeOutput.As<List<TextProcessingResult>>();
 
-        maybeResults.Should().NotBeNull("the output event should contain the results");
+        Assert.NotNull(maybeResults);
         List<TextProcessingResult> results = maybeResults;
 
         results.Sort((left, right) => StringComparer.Ordinal.Compare(left.TaskId, right.TaskId));

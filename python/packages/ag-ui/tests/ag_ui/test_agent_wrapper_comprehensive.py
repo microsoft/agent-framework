@@ -713,7 +713,11 @@ async def test_agent_with_use_service_session_is_true(streaming_chat_client_stub
         )
 
     agent = Agent(client=streaming_chat_client_stub(stream_fn))
-    wrapper = AgentFrameworkAgent(agent=agent, use_service_session=True)
+    wrapper = AgentFrameworkAgent(
+        agent=agent,
+        use_service_session=True,
+        service_session_id_from_thread_id=True,
+    )
 
     input_data = {"messages": [{"role": "user", "content": "Hi"}], "thread_id": "conv_123456"}
 

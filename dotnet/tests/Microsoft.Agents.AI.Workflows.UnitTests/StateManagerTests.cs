@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Extensions.AI;
@@ -39,10 +38,10 @@ public class StateManagerTests
 
         // Assert baseline: neither executor sees any keys
         HashSet<string> selfKeys = await manager.ReadKeysAsync(sharedScopeSelfView);
-        selfKeys.Should().BeEmpty("there should be no keys in an empty StateManager");
+        Assert.Empty(selfKeys ?? []);
 
         HashSet<string> otherKeys = await manager.ReadKeysAsync(sharedScopeOtherView);
-        otherKeys.Should().BeEmpty("there should be no keys in an empty StateManager");
+        Assert.Empty(otherKeys ?? []);
 
         // Act 1: Write a key from the self executor's view of the shared scope
 
@@ -50,28 +49,27 @@ public class StateManagerTests
 
         // Assert 1: The self executor should see the key immediately, but the other executor should not
         selfKeys = await manager.ReadKeysAsync(sharedScopeSelfView);
-        selfKeys.SetEquals(ExpectedAfterWrite).Should().BeTrue("writes should be visible immediately to the writing executor");
+        Assert.True(selfKeys.SetEquals(ExpectedAfterWrite));
 
         otherKeys = await manager.ReadKeysAsync(sharedScopeOtherView);
-        otherKeys.Should().BeEmpty(isSharedScope ? "writes should not be visible to other executors until published"
-                                                 : "writes to private scopes should not be visible across executors");
+        Assert.Empty(otherKeys ?? []);
 
         // Act 2: Publish the updates
         await manager.PublishUpdatesAsync(tracer: null);
 
         // Assert 2: Both executors should see the key now, if sharedScope
         selfKeys = await manager.ReadKeysAsync(sharedScopeSelfView);
-        selfKeys.SetEquals(ExpectedAfterWrite).Should().BeTrue("published writes should be visible to all executors");
+        Assert.True(selfKeys.SetEquals(ExpectedAfterWrite));
 
         otherKeys = await manager.ReadKeysAsync(sharedScopeOtherView);
 
         if (isSharedScope)
         {
-            otherKeys.SetEquals(ExpectedAfterWrite).Should().BeTrue("published writes should be visible to all executors");
+            Assert.True(otherKeys.SetEquals(ExpectedAfterWrite));
         }
         else
         {
-            otherKeys.Should().BeEmpty("writes to private scopes should not be visible across executors");
+            Assert.Empty(otherKeys ?? []);
         }
 
         // Act 3: Clear the state from the self executor's view of the shared scope
@@ -79,16 +77,16 @@ public class StateManagerTests
 
         // Assert 3: The self executor should not see the key immediately, but the other executor should still see it if sharedScope
         selfKeys = await manager.ReadKeysAsync(sharedScopeSelfView);
-        selfKeys.Should().BeEmpty("deletes should be visible immediately to the writing executor");
+        Assert.Empty(selfKeys ?? []);
 
         otherKeys = await manager.ReadKeysAsync(sharedScopeOtherView);
         if (isSharedScope)
         {
-            otherKeys.SetEquals(ExpectedAfterWrite).Should().BeTrue("published writes should be visible to all executors");
+            Assert.True(otherKeys.SetEquals(ExpectedAfterWrite));
         }
         else
         {
-            otherKeys.Should().BeEmpty("writes to private scopes should not be visible across executors");
+            Assert.Empty(otherKeys ?? []);
         }
 
         // Act 4: Publish the updates
@@ -96,11 +94,10 @@ public class StateManagerTests
 
         // Assert 4: Neither executor should see the key now
         selfKeys = await manager.ReadKeysAsync(sharedScopeSelfView);
-        selfKeys.Should().BeEmpty("published deletes should be visible to all executors");
+        Assert.Empty(selfKeys ?? []);
 
         otherKeys = await manager.ReadKeysAsync(sharedScopeOtherView);
-        otherKeys.Should().BeEmpty(isSharedScope ? "published deletes should be visible to all executors"
-                                                 : "writes to private scopes should not be visible across executors");
+        Assert.Empty(otherKeys ?? []);
     }
 
     [Fact]
@@ -128,132 +125,125 @@ public class StateManagerTests
         ScopeId scopeSelfView = new(SelfExecutorId, scopeName);
         ScopeId scopeOtherView = new(OtherExecutorId, scopeName);
 
-        isSharedScope.Should().Be(scopeSelfView == scopeOtherView);
+        Assert.Equal(scopeSelfView == scopeOtherView, isSharedScope);
 
         // Assert baseline: neither executor sees any keys or values
         string? selfValue1 = await manager.ReadStateAsync<string>(scopeSelfView, Key1);
         string? selfValue2 = await manager.ReadStateAsync<string>(scopeSelfView, Key2);
-        selfValue1.Should().BeNull("there should be no values in an empty StateManager");
-        selfValue2.Should().BeNull("there should be no values in an empty StateManager");
+        Assert.Null(selfValue1);
+        Assert.Null(selfValue2);
 
         string? otherValue1 = await manager.ReadStateAsync<string>(scopeOtherView, Key1);
         string? otherValue2 = await manager.ReadStateAsync<string>(scopeOtherView, Key2);
-        otherValue1.Should().BeNull("there should be no values in an empty StateManager");
-        otherValue2.Should().BeNull("there should be no values in an empty StateManager");
+        Assert.Null(otherValue1);
+        Assert.Null(otherValue2);
 
         // Act 1: Write a value from the self executor's view of the shared scope
         await manager.WriteStateAsync(scopeSelfView, Key1, Value1);
 
         // Assert 1: The self executor should see the value immediately, but the other executor should not
         selfValue1 = await manager.ReadStateAsync<string>(scopeSelfView, Key1);
-        selfValue1.Should().Be(Value1, "writes should be visible immediately to the writing executor");
+        Assert.Equal(Value1, selfValue1);
 
         selfValue2 = await manager.ReadStateAsync<string>(scopeSelfView, Key2);
-        selfValue2.Should().BeNull("uninvolved keys' state/value should not change after a write");
+        Assert.Null(selfValue2);
 
         otherValue1 = await manager.ReadStateAsync<string>(scopeOtherView, Key1);
-        otherValue1.Should().BeNull(isSharedScope ? "writes should not be visible to other executors until published (key1: written by self, read by other)"
-                                                  : "writes to private scopes should not be visible across executors");
+        Assert.Null(otherValue1);
 
         otherValue2 = await manager.ReadStateAsync<string>(scopeOtherView, Key2);
-        otherValue2.Should().BeNull("uninvolved keys' state/value should not change after a write");
+        Assert.Null(otherValue2);
 
         // Act 2: Write a value from the other executor's view of the shared scope
         await manager.WriteStateAsync(scopeOtherView, Key2, Value2);
 
         // Assert 2: The other executor should see the value immediately, but the self executor should not
         selfValue1 = await manager.ReadStateAsync<string>(scopeSelfView, Key1);
-        selfValue1.Should().Be(Value1, "uninvolved keys' state/value should not change after a write");
+        Assert.Equal(Value1, selfValue1);
 
         selfValue2 = await manager.ReadStateAsync<string>(scopeSelfView, Key2);
-        selfValue2.Should().BeNull(isSharedScope ? "writes should not be visible to other executors until published (key2: written by other, read by self)"
-                                                 : "writes to private scopes should not be visible across executors");
+        Assert.Null(selfValue2);
 
         otherValue1 = await manager.ReadStateAsync<string>(scopeOtherView, Key1);
-        otherValue1.Should().BeNull(isSharedScope ? "writes should not be visible to other executors until published (key1: written by self, read by other)"
-                                                  : "writes to private scopes should not be visible across executors");
+        Assert.Null(otherValue1);
 
         otherValue2 = await manager.ReadStateAsync<string>(scopeOtherView, Key2);
-        otherValue2.Should().Be(Value2, "writes should be visible immediately to the writing executor");
+        Assert.Equal(Value2, otherValue2);
 
         // Act 3: Publish the updates
         await manager.PublishUpdatesAsync(tracer: null);
 
         // Assert 3: Both executors should see both values now, if the scope is shared
         selfValue1 = await manager.ReadStateAsync<string>(scopeSelfView, Key1);
-        selfValue1.Should().Be(Value1, "published writes should be visible to all executors (key1: written by self, read by self)");
+        Assert.Equal(Value1, selfValue1);
 
         selfValue2 = await manager.ReadStateAsync<string>(scopeSelfView, Key2);
         if (isSharedScope)
         {
-            selfValue2.Should().Be(Value2, "published writes should be visible to all executors (key2: written by other, read by self)");
+            Assert.Equal(Value2, selfValue2);
         }
         else
         {
-            selfValue2.Should().BeNull("writes to private scopes should not be visible across executors");
+            Assert.Null(selfValue2);
         }
 
         otherValue1 = await manager.ReadStateAsync<string>(scopeOtherView, Key1);
         if (isSharedScope)
         {
-            otherValue1.Should().Be(Value1, "published writes should be visible to all executors (key1: written by self, read by other)");
+            Assert.Equal(Value1, otherValue1);
         }
         else
         {
-            otherValue1.Should().BeNull("writes to private scopes should not be visible across executors");
+            Assert.Null(otherValue1);
         }
 
         otherValue2 = await manager.ReadStateAsync<string>(scopeOtherView, Key2);
-        otherValue2.Should().Be(Value2, "published writes should be visible to all executors (key2: written by other, read by other)");
+        Assert.Equal(Value2, otherValue2);
 
         // Act 4: Clear the value from the self executor's view of the shared scope
         await manager.ClearStateAsync(scopeSelfView);
 
         // Assert 4: The self executor should not see either value immediately, but the other executor should still see both
         selfValue1 = await manager.ReadStateAsync<string>(scopeSelfView, Key1);
-        selfValue1.Should().BeNull("clears should be visible immediately to the writing executor");
+        Assert.Null(selfValue1);
 
         selfValue2 = await manager.ReadStateAsync<string>(scopeSelfView, Key2);
-        selfValue2.Should().BeNull(isSharedScope ? "clears should be visible immediately to the writing executor"
-                                                 : "writes to private scopes should not be visible across executors");
+        Assert.Null(selfValue2);
 
         otherValue1 = await manager.ReadStateAsync<string>(scopeOtherView, Key1);
         if (isSharedScope)
         {
-            otherValue1.Should().Be(Value1, "clears should not be visible to other executors until published (key2: written by self, read by other)");
+            Assert.Equal(Value1, otherValue1);
         }
         else
         {
-            otherValue1.Should().BeNull("writes to private scopes should not be visible across executors");
+            Assert.Null(otherValue1);
         }
 
         otherValue2 = await manager.ReadStateAsync<string>(scopeOtherView, Key2);
-        otherValue2.Should().Be(Value2, isSharedScope ? "clears should not be visible to other executors until published (key2: written by self, read by other)"
-                                                      : "writes to private scopes should not be visible across executors");
+        Assert.Equal(Value2, otherValue2);
 
         // Act 5: Publish the updates
         await manager.PublishUpdatesAsync(tracer: null);
 
         // Assert 5: Neither executor should see either value now
         selfValue1 = await manager.ReadStateAsync<string>(scopeSelfView, Key1);
-        selfValue1.Should().BeNull("published clears should be visible to all executors");
+        Assert.Null(selfValue1);
 
         selfValue2 = await manager.ReadStateAsync<string>(scopeSelfView, Key2);
-        selfValue2.Should().BeNull(isSharedScope ? "published clears should be visible to all executors"
-                                                 : "writes to private scopes should not be visible across executors");
+        Assert.Null(selfValue2);
 
         otherValue1 = await manager.ReadStateAsync<string>(scopeOtherView, Key1);
-        otherValue1.Should().BeNull(isSharedScope ? "published clears should be visible to all executors"
-                                                  : "writes to private scopes should not be visible across executors");
+        Assert.Null(otherValue1);
 
         otherValue2 = await manager.ReadStateAsync<string>(scopeOtherView, Key2);
         if (isSharedScope)
         {
-            otherValue2.Should().BeNull("published clears should be visible to all executors");
+            Assert.Null(otherValue2);
         }
         else
         {
-            otherValue2.Should().Be(Value2, "writes to private scopes should not be visible across executors");
+            Assert.Equal(Value2, otherValue2);
         }
 
         // Restore the written state of both keys
@@ -266,25 +256,23 @@ public class StateManagerTests
 
         // Assert 6: The other executor should not see Key1 immediately, but should still see Key2. The self executor should still see both.
         selfValue1 = await manager.ReadStateAsync<string>(scopeSelfView, Key1);
-        selfValue1.Should().Be(Value1, isSharedScope ? "deletes should not be visible to other executors until published (key1: written by other, read by self)"
-                                                     : "writes to private scopes should not be visible across executors");
+        Assert.Equal(Value1, selfValue1);
 
         selfValue2 = await manager.ReadStateAsync<string>(scopeSelfView, Key2);
         if (isSharedScope)
         {
-            selfValue2.Should().Be(Value2, "uninvolved keys' state/value should not change after a delete");
+            Assert.Equal(Value2, selfValue2);
         }
         else
         {
-            selfValue2.Should().BeNull("writes to private scopes should not be visible across executors");
+            Assert.Null(selfValue2);
         }
 
         otherValue1 = await manager.ReadStateAsync<string>(scopeOtherView, Key1);
-        otherValue1.Should().BeNull(isSharedScope ? "deletes should be visible immediately to the writing executor"
-                                                  : "writes to private scopes should not be visible across executors");
+        Assert.Null(otherValue1);
 
         otherValue2 = await manager.ReadStateAsync<string>(scopeOtherView, Key2);
-        otherValue2.Should().Be(Value2, "uninvolved keys' state/value should not change after a delete");
+        Assert.Equal(Value2, otherValue2);
 
         // Act 7: Delete Key2 from the self executor's view of the shared scope
         await manager.WriteStateAsync<string?>(scopeSelfView, Key2, null);
@@ -292,20 +280,16 @@ public class StateManagerTests
         // Assert 7: The self executor should not see Key2 immediately, but should still see Key1.
         // The other executor should not see Key1, but should still see Key2.
         selfValue1 = await manager.ReadStateAsync<string>(scopeSelfView, Key1);
-        selfValue1.Should().Be(Value1, isSharedScope ? "deletes should not be visible to other executors until published (key1: written by other, read by self)"
-                                                     : "writes to private scopes should not be visible across executors");
+        Assert.Equal(Value1, selfValue1);
 
         selfValue2 = await manager.ReadStateAsync<string>(scopeSelfView, Key2);
-        selfValue2.Should().BeNull(isSharedScope ? "deletes should be visible immediately to the writing executor"
-                                                 : "writes to private scopes should not be visible across executors");
+        Assert.Null(selfValue2);
 
         otherValue1 = await manager.ReadStateAsync<string>(scopeOtherView, Key1);
-        otherValue1.Should().BeNull(isSharedScope ? "deletes should be visible immediately to the writing executor"
-                                                  : "writes to private scopes should not be visible across executors");
+        Assert.Null(otherValue1);
 
         otherValue2 = await manager.ReadStateAsync<string>(scopeOtherView, Key2);
-        otherValue2.Should().Be(Value2, isSharedScope ? "deletes should not be visible to other executors until published (key2: written by self, read by other)"
-                                                      : "writes to private scopes should not be visible across executors");
+        Assert.Equal(Value2, otherValue2);
 
         // Act 8: Publish the updates
         await manager.PublishUpdatesAsync(tracer: null);
@@ -314,29 +298,27 @@ public class StateManagerTests
         selfValue1 = await manager.ReadStateAsync<string>(scopeSelfView, Key1);
         if (isSharedScope)
         {
-            selfValue1.Should().BeNull("published deletes should be visible to all executors");
+            Assert.Null(selfValue1);
         }
         else
         {
-            selfValue1.Should().Be(Value1, "writes to private scopes should not be visible across executors");
+            Assert.Equal(Value1, selfValue1);
         }
 
         selfValue2 = await manager.ReadStateAsync<string>(scopeSelfView, Key2);
-        selfValue2.Should().BeNull(isSharedScope ? "published deletes should be visible to all executors"
-                                                 : "writes to private scopes should not be visible across executors");
+        Assert.Null(selfValue2);
 
         otherValue1 = await manager.ReadStateAsync<string>(scopeOtherView, Key1);
-        otherValue1.Should().BeNull(isSharedScope ? "published deletes should be visible to all executors"
-                                                  : "writes to private scopes should not be visible across executors");
+        Assert.Null(otherValue1);
 
         otherValue2 = await manager.ReadStateAsync<string>(scopeOtherView, Key2);
         if (isSharedScope)
         {
-            otherValue2.Should().BeNull("published deletes should be visible to all executors");
+            Assert.Null(otherValue2);
         }
         else
         {
-            otherValue2.Should().Be(Value2, "writes to private scopes should not be visible across executors");
+            Assert.Equal(Value2, otherValue2);
         }
     }
 
@@ -369,7 +351,7 @@ public class StateManagerTests
         StateManager manager = new();
         ScopeId scopeSelfView = new(SelfExecutorId, scopeName);
         ScopeId scopeOtherView = new(OtherExecutorId, scopeName);
-        isSharedScope.Should().Be(scopeSelfView == scopeOtherView);
+        Assert.Equal(scopeSelfView == scopeOtherView, isSharedScope);
 
         // Act 1: Write a conflicting value from the self executor's view of the shared scope
         // Note that conflicting means update to the same key, not that the values are necessarily different.
@@ -377,15 +359,15 @@ public class StateManagerTests
         await manager.WriteStateAsync(scopeSelfView, Key1, Value1);
         await manager.WriteStateAsync(scopeOtherView, Key1, Value2);
 
-        Func<Task> act = async () => await manager.PublishUpdatesAsync(tracer: null);
+        async Task actAsync() => await manager.PublishUpdatesAsync(tracer: null);
 
         if (isSharedScope)
         {
-            await act.Should().ThrowAsync<InvalidOperationException>("conflicting writes to the same key should raise an exception when published");
+            await Assert.ThrowsAsync<InvalidOperationException>(actAsync);
         }
         else
         {
-            await act.Should().NotThrowAsync("writes to private scopes should not be visible across executors");
+            Assert.Null(await Record.ExceptionAsync(actAsync));
         }
     }
 
@@ -400,7 +382,7 @@ public class StateManagerTests
         StateManager manager = new();
         ScopeId scopeSelfView = new(SelfExecutorId, scopeName);
         ScopeId scopeOtherView = new(OtherExecutorId, scopeName);
-        isSharedScope.Should().Be(scopeSelfView == scopeOtherView);
+        Assert.Equal(scopeSelfView == scopeOtherView, isSharedScope);
 
         await manager.WriteStateAsync(scopeSelfView, Key1, Value1);
         await manager.WriteStateAsync(scopeOtherView, Key2, Value2);
@@ -409,15 +391,15 @@ public class StateManagerTests
         // Act: Update the key from one executor and delete it from another
         await manager.WriteStateAsync(scopeSelfView, Key1, "newValue");
         await manager.ClearStateAsync(scopeOtherView, Key1);
-        Func<Task> act = async () => await manager.PublishUpdatesAsync(tracer: null);
+        async Task actAsync() => await manager.PublishUpdatesAsync(tracer: null);
 
         if (isSharedScope)
         {
-            await act.Should().ThrowAsync<InvalidOperationException>("conflicting writes (update vs delete) should raise an exception when published");
+            await Assert.ThrowsAsync<InvalidOperationException>(actAsync);
         }
         else
         {
-            await act.Should().NotThrowAsync("writes to private scopes should not be visible across executors");
+            Assert.Null(await Record.ExceptionAsync(actAsync));
         }
     }
 
@@ -432,7 +414,7 @@ public class StateManagerTests
         StateManager manager = new();
         ScopeId scopeSelfView = new(SelfExecutorId, scopeName);
         ScopeId scopeOtherView = new(OtherExecutorId, scopeName);
-        isSharedScope.Should().Be(scopeSelfView == scopeOtherView);
+        Assert.Equal(scopeSelfView == scopeOtherView, isSharedScope);
 
         await manager.WriteStateAsync(scopeSelfView, Key1, Value1);
         await manager.WriteStateAsync(scopeOtherView, Key2, Value2);
@@ -441,30 +423,30 @@ public class StateManagerTests
         // Act: Update the key from one, and clear the entire scope from another
         await manager.WriteStateAsync(scopeSelfView, Key1, "newValue");
         await manager.ClearStateAsync(scopeOtherView);
-        Func<Task> act = async () => await manager.PublishUpdatesAsync(tracer: null);
+        async Task actAsync() => await manager.PublishUpdatesAsync(tracer: null);
 
         // Assert
         if (isSharedScope)
         {
-            await act.Should().ThrowAsync<InvalidOperationException>("conflicting writes (update vs clear) should raise an exception when published");
+            await Assert.ThrowsAsync<InvalidOperationException>(actAsync);
         }
         else
         {
-            await act.Should().NotThrowAsync("writes to private scopes should not be visible across executors");
+            Assert.Null(await Record.ExceptionAsync(actAsync));
         }
     }
 
     private static void VerifyIs<TExpectedType>(PortableValue? candidatePV, TExpectedType value)
     {
-        candidatePV.Should().NotBeNull();
-        candidatePV.Is(out TExpectedType? candidateValue).Should().BeTrue();
-        candidateValue.Should().Be(value);
+        Assert.NotNull(candidatePV);
+        Assert.True(candidatePV.Is(out TExpectedType? candidateValue));
+        Assert.Equal(value, candidateValue);
     }
 
     private static void VerifyIsNot<TExpectedType>(PortableValue? candidatePV)
     {
-        candidatePV.Should().NotBeNull();
-        candidatePV.Is(out TExpectedType? _).Should().BeFalse();
+        Assert.NotNull(candidatePV);
+        Assert.False(candidatePV.Is(out TExpectedType? _));
     }
 
     [Theory]
