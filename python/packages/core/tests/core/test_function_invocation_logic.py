@@ -2719,6 +2719,53 @@ async def test_pydantic_validation_error_caps_reported_field_count(chat_client_b
     assert error_result.result.count("title") < 10
 
 
+async def test_schema_supplied_tool_caps_unexpected_key_count(chat_client_base: SupportsChatGetResponse):
+    """Regression: a model submitting thousands of unexpected keys must not produce an unbounded result.
+
+    Unlike the pydantic-error cap above, this exercises the schema-supplied TypeError path
+    (`additionalProperties: False`), reported by @moonbox3 on PR #7953: `_validate_arguments_against_schema`
+    joined every unexpected key into the default message with no cap, so a large hallucinated object could
+    exceed the next request's context budget instead of giving the model a short summary to correct against.
+    """
+
+    json_schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+        "additionalProperties": False,
+    }
+
+    @tool(name="search", description="Search tool", schema=json_schema, approval_mode="never_require")
+    def search(query: str) -> str:
+        return query
+
+    bad_arguments = {"query": "hello", **{f"extra_key_{i}": i for i in range(50)}}
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="1", name="search", arguments=json.dumps(bad_arguments))],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [search]}
+    )
+
+    error_result = next(
+        content for msg in response.messages for content in msg.contents if content.type == "function_result"
+    )
+    assert error_result.result is not None
+    assert "search" in error_result.result
+    assert "extra_key_0" in error_result.result
+    assert "more" in error_result.result  # omitted-count marker present
+    # The message should not grow one entry per unexpected key; it stays well under a per-key accounting
+    # of 50 keys.
+    assert error_result.result.count("extra_key_") < 10
+
+
 async def test_hosted_tool_approval_response(chat_client_base: SupportsChatGetResponse):
     """Test handling of approval responses for hosted tools (tools not in tool_map)."""
 

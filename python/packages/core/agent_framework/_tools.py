@@ -1082,6 +1082,9 @@ def _matches_json_schema_type(value: Any, schema_type: str) -> bool:
             return True
 
 
+_MAX_VALIDATION_ERROR_DETAILS = 5
+
+
 class _ToolArgumentValidationError(TypeError):
     """A schema-validation failure with a value-free default message.
 
@@ -1097,6 +1100,19 @@ class _ToolArgumentValidationError(TypeError):
         self.safe_message = safe_message
 
 
+def _format_field_list(fields: Sequence[str], *, limit: int = _MAX_VALIDATION_ERROR_DETAILS) -> str:
+    """Join field names for a default error message, capped against a model submitting arbitrarily many.
+
+    Field/key *names* are safe to list in full (they are structural, not the value being validated), but
+    their *count* is attacker/model-controlled: a submitted object with thousands of unexpected keys must
+    not turn the error result itself into an unbounded addition to the next request's context.
+    """
+    shown = fields[:limit]
+    text = ", ".join(shown)
+    omitted = len(fields) - len(shown)
+    return f"{text} (+{omitted} more)" if omitted > 0 else text
+
+
 def _validate_arguments_against_schema(
     *,
     arguments: Mapping[str, Any],
@@ -1110,7 +1126,7 @@ def _validate_arguments_against_schema(
     missing_fields = [field for field in required_fields if field not in parsed_arguments]
     if missing_fields:
         raise _ToolArgumentValidationError(
-            f"Missing required argument(s) for '{tool_name}': {', '.join(sorted(missing_fields))}"
+            f"Missing required argument(s) for '{tool_name}': {_format_field_list(sorted(missing_fields))}"
         )
 
     properties: Mapping[str, Any] = schema.get("properties", {})
@@ -1118,7 +1134,7 @@ def _validate_arguments_against_schema(
         unexpected_fields = sorted(field for field in parsed_arguments if field not in properties)
         if unexpected_fields:
             raise _ToolArgumentValidationError(
-                f"Unexpected argument(s) for '{tool_name}': {', '.join(unexpected_fields)}"
+                f"Unexpected argument(s) for '{tool_name}': {_format_field_list(unexpected_fields)}"
             )
 
     for field_name, field_value in parsed_arguments.items():
@@ -1429,9 +1445,6 @@ def normalize_function_invocation_configuration(
     return normalized
 
 
-_MAX_VALIDATION_ERROR_DETAILS = 5
-
-
 def _format_argument_validation_error(exception: TypeError | ValidationError, tool_name: str) -> str:
     """Build a model-oriented summary of an argument-validation failure.
 
@@ -1448,6 +1461,12 @@ def _format_argument_validation_error(exception: TypeError | ValidationError, to
     A ``ValidationError`` can carry one entry per invalid item in a large submitted
     container, so the per-field detail is capped to keep this message from itself
     becoming an unbounded addition to the next request's context.
+
+    Only ``_ToolArgumentValidationError`` has a message vetted to be value-free; a
+    plain ``TypeError`` reaching this point is not one this function recognizes; its
+    text is not known to be safe, so the default falls back to a generic, tool-named
+    summary and the raw text stays behind ``include_detailed_errors`` like any other
+    unvetted exception.
     """
     if isinstance(exception, ValidationError):
         raw_errors = exception.errors(include_url=False, include_context=False, include_input=False)
@@ -1462,7 +1481,7 @@ def _format_argument_validation_error(exception: TypeError | ValidationError, to
         return f"Error: invalid arguments for tool '{tool_name}': {detail}."
     if isinstance(exception, _ToolArgumentValidationError):
         return f"Error: {exception.safe_message}"
-    return f"Error: {exception}"
+    return f"Error: invalid arguments for tool '{tool_name}'."
 
 
 def _function_execution_error_result(
