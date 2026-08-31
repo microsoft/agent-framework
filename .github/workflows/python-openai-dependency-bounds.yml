@@ -6,9 +6,12 @@ on:
     paths:
       - ".github/actions/python-setup/**"
       - ".github/workflows/python-openai-dependency-bounds.yml"
+      - "python/packages/devui/**"
+      - "python/packages/hosting-responses/**"
       - "python/packages/openai/**"
       - "python/pyproject.toml"
       - "python/scripts/dependencies/**"
+      - "python/samples/04-hosting/container/hyperlight_codeact/call_server.py"
       - "python/shared_tasks.toml"
 
 permissions:
@@ -27,9 +30,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: 2.x floor
+          - name: integration 2.x floor
+            package: openai
+            module: agent_framework_openai
             requirement: openai==2.25.0
-          - name: 3.x floor
+          - name: integration 3.x floor
+            package: openai
+            module: agent_framework_openai
+            requirement: openai==3.0.0
+          - name: DevUI 3.x floor
+            package: devui
+            module: agent_framework_devui
+            requirement: openai==3.0.0
+          - name: hosting responses 3.x floor
+            package: hosting-responses
+            module: agent_framework_hosting_responses
             requirement: openai==3.0.0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,6 +59,6 @@ jobs:
       - name: Test and type-check ${{ matrix.name }}
         run: |
           uv run --no-sync python -c "import openai; print(f'OpenAI SDK {openai.__version__}')"
-          uv run --no-sync python -m pytest -m "not integration" --cov=agent_framework_openai --cov-report=term-missing:skip-covered -n auto --dist worksteal tests
+          uv run --no-sync python -m pytest -m "not integration" --cov=${{ matrix.module }} --cov-report=term-missing:skip-covered tests
           uv run --no-sync pyright
-        working-directory: ./python/packages/openai
+        working-directory: ./python/packages/${{ matrix.package }}

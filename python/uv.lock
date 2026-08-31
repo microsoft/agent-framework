@@ -581,7 +581,7 @@ requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-orchestrations", marker = "extra == 'dev'", editable = "packages/orchestrations" },
     { name = "fastapi", specifier = ">=0.115.0,<0.138.1" },
-    { name = "openai", specifier = ">=2.45.0,<3" },
+    { name = "openai", specifier = ">=2.45.0,<4" },
     { name = "opentelemetry-sdk", specifier = ">=1.39.0,<2" },
     { name = "pytest", marker = "extra == 'all'", specifier = "==9.1.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.1.1" },
@@ -764,7 +764,7 @@ test = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-hosting", editable = "packages/hosting" },
-    { name = "openai", specifier = ">=1.99.0,<3" },
+    { name = "openai", specifier = ">=1.99.0,<4" },
 ]
 
 [package.metadata.requires-dev]
