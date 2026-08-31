@@ -336,6 +336,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
         checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
         function_approval_store_provider: StoreProvider[FunctionApprovalStore] | None = None,
+        allow_stored_output_enabled: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize a ResponsesHostServer.
@@ -351,6 +352,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 If not provided, a default `CheckpointStoreProvider` will be used.
             function_approval_store_provider: Optional provider for function approval storage.
                 If not provided, a default `FunctionApprovalStoreProvider` will be used.
+            allow_stored_output_enabled: Whether the agent's own chat client may store the
+                conversation server-side. Defaults to False, which turns storage off for every
+                run and fails the request if the client stored the turn anyway. Set to True to
+                leave the client exactly as the container configured it; nothing is then
+                overridden or checked, and reconciling the two records is the container's
+                responsibility.
             **kwargs: Additional keyword arguments.
 
         Note:
@@ -416,6 +423,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 )
 
         self._agent: SupportsAgentRun = agent
+        self._allow_stored_output_enabled = allow_stored_output_enabled
 
         # Storage providers
         self._checkpoint_storage_provider = (
@@ -630,6 +638,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 "session": session,
             }
             chat_options, are_options_set = _to_chat_options(request)
+            if self._uses_hosted_responses_history and not self._allow_stored_output_enabled:
+                # The platform records this conversation and serves it back through
+                # `context.get_history()` above. Letting the agent's own service store it too would
+                # give the model the same transcript twice -- once as input, once as the resumed
+                # service thread -- compounding every turn.
+                chat_options["store"] = False
 
             if are_options_set and not isinstance(self._agent, RawAgent):
                 logger.warning("Agent doesn't support runtime options. They will be ignored.")
@@ -662,8 +676,30 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         finally:
             if self._uses_hosted_responses_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
+
+            # A service session id on the session means the agent's chat client kept the turn
+            # despite `store=False`, so a second record of this conversation now exists that
+            # nothing here reconciles. Leave the session unsaved so later turns do not resume onto
+            # it, and report it: a container configured this way is a server fault, not a bad request.
+            stored_output_violation = (
+                self._uses_hosted_responses_history
+                and not self._allow_stored_output_enabled
+                and session.service_session_id is not None
+            )
+            if stored_output_violation:
+                misconfigured = RuntimeError(
+                    "The agent's chat client stored this turn server-side while the hosting service "
+                    "is managing the conversation, which would feed the model a duplicated transcript. "
+                    "Configure the chat client so the underlying service does not store responses, or "
+                    "construct ResponsesHostServer with allow_stored_output_enabled=True to own that "
+                    "reconciliation yourself."
+                )
+                logger.error("%s", misconfigured)
+                if request_failure is None and not request_interrupted:
+                    request_failure = misconfigured
             try:
-                await session_storage.set(session_save_id, session)
+                if not stored_output_violation:
+                    await session_storage.set(session_save_id, session)
             except Exception as save_error:
                 save_failure = save_error
                 if request_interrupted:

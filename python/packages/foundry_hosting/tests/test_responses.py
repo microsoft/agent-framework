@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -260,6 +261,44 @@ class _FunctionLoopRecordingClient(
 @tool(name="lookup_weather", approval_mode="never_require")
 def _lookup_weather(location: str) -> str:
     return f"Weather in {location}: sunny"
+
+
+class _ServiceStorageRecordingClient(BaseChatClient):
+    """A chat client whose service keeps the conversation, as OpenAI Responses does with ``store`` on."""
+
+    STORES_BY_DEFAULT = True
+
+    def __init__(self, *, honours_store: bool = True) -> None:
+        super().__init__()
+        self._honours_store = honours_store
+        self.calls: list[list[Message]] = []
+        self.store_options: list[Any] = []
+        self.conversation_ids: list[Any] = []
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        del kwargs
+        assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
+        self.calls.append(list(messages))
+        self.store_options.append(options.get("store"))
+        self.conversation_ids.append(options.get("conversation_id"))
+        storing = options.get("store") is not False if self._honours_store else True
+        conversation_id = "svc-thread-1" if storing else None
+
+        async def stream_response() -> AsyncIterator[ChatResponseUpdate]:
+            yield ChatResponseUpdate(
+                contents=[Content.from_text("recorded")],
+                role="assistant",
+                conversation_id=conversation_id,
+            )
+
+        return ResponseStream(stream_response(), finalizer=ChatResponse.from_updates)
 
 
 class _FailingSessionStore(SessionStore):
@@ -738,6 +777,69 @@ class TestAgentSessionPersistence:
         assert stored is not None
         assert InMemoryHistoryProvider.DEFAULT_SOURCE_ID not in stored.state
         assert "_foundry_responses_history" not in stored.state
+
+    async def test_responses_history_is_not_duplicated_when_the_client_stores_service_side(self) -> None:
+        """The platform transcript is the only history the model sees, even for a storing client.
+
+        Without turning storage off downstream the session keeps a service session id, the next run
+        resumes that thread, and the model receives the transcript both as input and as the resumed
+        thread -- twice on the second turn and three times on the third.
+        """
+        client = _ServiceStorageRecordingClient()
+        agent = Agent(client=client, name="Service Storage Agent")
+        store = SessionStore()
+        server = _make_server(agent, session_store=store)
+
+        first = await _post(server, input_text="first")
+        second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
+        third = await _post(server, input_text="third", previous_response_id=second.json()["id"])
+
+        assert third.status_code == 200
+        assert third.json()["status"] == "completed"
+        assert [[message.text for message in call] for call in client.calls] == [
+            ["first"],
+            ["first", "recorded", "second"],
+            ["first", "recorded", "second", "recorded", "third"],
+        ]
+        # Storage is off downstream, so no service thread is ever resumed alongside that input.
+        assert client.store_options == [False, False, False]
+        assert client.conversation_ids == [None, None, None]
+
+        stored = await store.get(first.json()["id"])
+        assert stored is not None
+        assert stored.service_session_id is None
+
+    async def test_client_that_stores_despite_disabled_storage_fails_and_leaves_session_unsaved(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        client = _ServiceStorageRecordingClient(honours_store=False)
+        agent = Agent(client=client, name="Ignores Store Agent")
+        store = SessionStore()
+        server = _make_server(agent, session_store=store)
+
+        with caplog.at_level(logging.ERROR):
+            response = await _post(server, input_text="first")
+
+        assert response.json()["status"] == "failed"
+        assert "stored this turn server-side" in caplog.text
+        # The session is not saved, so a later turn cannot resume onto the duplicated thread.
+        assert await store.get(response.json()["id"]) is None
+
+    async def test_allow_stored_output_enabled_leaves_the_client_configuration_untouched(self) -> None:
+        client = _ServiceStorageRecordingClient()
+        agent = Agent(client=client, name="Container Managed Storage Agent")
+        store = SessionStore()
+        server = _make_server(agent, session_store=store, allow_stored_output_enabled=True)
+
+        response = await _post(server, input_text="first")
+
+        assert response.json()["status"] == "completed"
+        assert client.store_options == [None]
+
+        stored = await store.get(response.json()["id"])
+        assert stored is not None
+        assert stored.service_session_id == "svc-thread-1"
 
     async def test_per_service_call_persistence_preserves_function_loop_history(self) -> None:
         provider = _PerServiceCallHistoryProvider()
