@@ -5,7 +5,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from typing import Any, cast
 
 from ..exceptions import WorkflowCheckpointException
@@ -24,6 +24,32 @@ from ._runner_context import RunnerContext, WorkflowMessage
 from ._state import State
 
 logger = logging.getLogger(__name__)
+
+
+async def gather_cancelling_siblings_on_error(*coroutines: Coroutine[Any, Any, Any]) -> None:
+    """Run coroutines concurrently; on any failure, cancel and await every other one before raising.
+
+    Plain ``asyncio.gather()`` does not cancel its other tasks when one raises - by default they keep
+    running as orphaned background tasks even though the caller has already moved on with the raised
+    exception. For edge delivery this is a real race with checkpoint restoration: work that is still
+    in-flight when a sibling fails can mutate runner/context state - a ``FanInEdgeRunner``'s buffer, or
+    a ``RunnerContext``'s pending-message queue via a target executor's own ``ctx.send_message`` call -
+    *after* ``restore_checkpoint``/``restore_from_checkpoint`` has already reset that same state for the
+    resumed run, corrupting it with output from the failed, never-checkpointed superstep.
+
+    Shared by :class:`RunnerImpl._run_iteration` (across sources and across edge runners for a source)
+    and :class:`FanOutEdgeRunner.send_message` (across one message's fan-out targets) - every point in
+    the delivery path where sibling coroutines run concurrently and one can fail while another is still
+    executing.
+    """
+    tasks = [asyncio.ensure_future(coro) for coro in coroutines]
+    try:
+        await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
 
 class EdgeRunner(ABC):
@@ -314,13 +340,11 @@ class FanOutEdgeRunner(EdgeRunner):
 
         if deliverable_edges:
 
-            async def send_to_edge(edge: Edge) -> bool:
+            async def send_to_edge(edge: Edge) -> None:
                 await self._execute_on_target(edge.target_id, [edge.source_id], message, state, ctx)
-                return True
 
-            tasks = [send_to_edge(edge) for edge in deliverable_edges]
-            results = await asyncio.gather(*tasks)
-            return any(results)
+            await gather_cancelling_siblings_on_error(*(send_to_edge(edge) for edge in deliverable_edges))
+            return True
 
         # If we get here, it's a broadcast message with no deliverable edges
         return False

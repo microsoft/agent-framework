@@ -763,6 +763,77 @@ async def test_runner_orphaned_delivery_cannot_repopulate_a_restored_fan_in_buff
     assert target.batches == [[1, 2]]
 
 
+async def test_runner_orphaned_fan_out_target_cannot_repopulate_a_restored_message_queue():
+    """The same orphaned-task race applies one level deeper, inside FanOutEdgeRunner.send_message.
+
+    Follow-up from @moonbox3 on PR #7948: ``_gather_cancelling_siblings_on_error`` wraps the two
+    ``gather()`` call sites in ``_run_iteration``, but ``FanOutEdgeRunner.send_message`` has its own,
+    separate ``asyncio.gather()`` across a single message's fan-out targets (``_edge_runner.py:322``).
+    When a fan-out has only one edge runner for its source (the common case), that inner gather is
+    the *only* level at which one target's failure has a sibling target to race against - the outer
+    per-source/per-edge-runner levels my fix wraps see just one task each, so there is nothing for
+    the fix to cancel there. A target still executing when a sibling target fails can call
+    ``WorkflowContext.send_message`` (via its own handler) after ``restore_checkpoint`` has already
+    cleared ``RunnerContext._messages`` for the resumed run, repopulating it with output from the
+    failed, never-checkpointed superstep.
+    """
+    entered_delay = asyncio.Event()
+    release = asyncio.Event()
+
+    class FailingTarget(Executor):
+        @handler
+        async def handle(self, message: MockMessage, ctx: WorkflowContext[Any, int]) -> None:
+            raise RuntimeError("target1 failed")
+
+    class BlockingTarget(Executor):
+        """Still executing when its fan-out sibling fails; emits a message once released."""
+
+        @handler
+        async def handle(self, message: MockMessage, ctx: WorkflowContext[Any, int]) -> None:
+            entered_delay.set()
+            await release.wait()
+            # A stale output from the failed superstep, sent after the sibling's failure surfaced.
+            await ctx.send_message(MockMessage(data=999))
+
+    source = MockExecutor(id="source")
+    target1 = FailingTarget(id="target1")
+    target2 = BlockingTarget(id="target2")
+    edge_group = FanOutEdgeGroup(source_id=source.id, target_ids=[target1.id, target2.id])
+    executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
+    ctx = InProcRunnerContext()
+    runner = Runner([edge_group], executors, State(), ctx, "test_name", graph_signature_hash="test_hash")
+
+    # A checkpoint from before this superstep started: no in-flight messages, matching the last
+    # known-good superstep boundary a real resume flow would restore to.
+    checkpoint = await runner.build_checkpoint()
+    assert not checkpoint.messages
+
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id=source.id))
+
+    iteration_task = asyncio.create_task(runner._run_iteration())  # pyright: ignore[reportPrivateUsage]
+
+    # target2 is now parked mid-handler, about to call ctx.send_message once released, when target1
+    # raises inside the same FanOutEdgeRunner.send_message call's own internal gather.
+    await entered_delay.wait()
+
+    with pytest.raises(RuntimeError, match="target1 failed"):
+        await iteration_task
+
+    # The app's resume flow restores the same runner from the last good checkpoint.
+    await runner.restore_checkpoint(checkpoint)
+    assert not await ctx.has_messages()
+
+    # Release the parked target. If _run_iteration's fix reached this inner gather, target2's task
+    # would already be cancelled and this is a no-op; if it does not, target2 proceeds to call
+    # ctx.send_message with its stale output.
+    release.set()
+    await asyncio.sleep(0)  # yield so the orphaned target's send_message actually runs before we continue
+
+    # The message queue the restore just reset for the next run must not have picked up output from
+    # the failed, never-checkpointed superstep.
+    assert not await ctx.has_messages()
+
+
 async def test_runner_build_checkpoint_includes_in_flight_messages():
     """build_checkpoint() must snapshot in-flight messages non-destructively."""
     executor = MockExecutor(id="executor_a")

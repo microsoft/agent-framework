@@ -5,7 +5,7 @@ import contextlib
 import logging
 import warnings
 from collections import defaultdict
-from collections.abc import AsyncGenerator, Coroutine, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from ..exceptions import (
@@ -15,7 +15,7 @@ from ..exceptions import (
 from ._checkpoint import CheckpointID, CheckpointStorage, WorkflowCheckpoint
 from ._const import EDGE_STATE_KEY, EXECUTOR_STATE_KEY
 from ._edge import EdgeGroup
-from ._edge_runner import EdgeRunner, create_edge_runner
+from ._edge_runner import EdgeRunner, create_edge_runner, gather_cancelling_siblings_on_error
 from ._events import WorkflowEvent
 from ._executor import Executor
 from ._runner_context import (
@@ -25,27 +25,6 @@ from ._runner_context import (
 from ._state import State
 
 logger = logging.getLogger(__name__)
-
-
-async def _gather_cancelling_siblings_on_error(*coroutines: Coroutine[Any, Any, Any]) -> None:
-    """Run coroutines concurrently; on any failure, cancel and await every other one before raising.
-
-    Plain ``asyncio.gather()`` does not cancel its other tasks when one raises - by default they keep
-    running as orphaned background tasks even though the caller has already moved on with the raised
-    exception. For fan-in edge delivery this is a real race with checkpoint restoration: a delivery
-    that is still in-flight when a sibling delivery fails can append into a ``FanInEdgeRunner``'s
-    buffer *after* ``restore_checkpoint``/``restore_from_checkpoint`` has already cleared it on the
-    same runner instance, corrupting the freshly restored state and producing a duplicate-aggregated
-    fan-in batch once the resumed superstep redelivers the same source.
-    """
-    tasks = [asyncio.ensure_future(coro) for coro in coroutines]
-    try:
-        await asyncio.gather(*tasks)
-    except BaseException:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        raise
 
 
 def warn_runner_deprecated() -> None:
@@ -243,14 +222,14 @@ class RunnerImpl:
                 return
 
             tasks = [_deliver_messages_for_edge_runner(edge_runner) for edge_runner in associated_edge_runners]
-            await _gather_cancelling_siblings_on_error(*tasks)
+            await gather_cancelling_siblings_on_error(*tasks)
 
         message_batches = await self._ctx.drain_messages()
         tasks = [
             _deliver_messages(source_executor_id, source_messages)
             for source_executor_id, source_messages in message_batches.items()
         ]
-        await _gather_cancelling_siblings_on_error(*tasks)
+        await gather_cancelling_siblings_on_error(*tasks)
 
     async def _prepare_checkpoint_state(self) -> None:
         """Persist executor snapshots into committed shared state.
