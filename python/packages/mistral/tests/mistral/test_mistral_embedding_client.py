@@ -15,6 +15,7 @@ from agent_framework.exceptions import (
     IntegrationInvalidRequestException,
     IntegrationInvalidResponseException,
 )
+from mistralai.client import Mistral
 
 from agent_framework_mistral import MistralEmbeddingClient, MistralEmbeddingOptions
 
@@ -27,6 +28,7 @@ def make_embeddings_payload(
     usage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
+        "id": "embed-id",
         "object": "list",
         "model": model,
         "data": [{"object": "embedding", "index": i, "embedding": list(vector)} for i, vector in enumerate(vectors)],
@@ -70,7 +72,7 @@ def test_mistral_embedding_construction_with_params() -> None:
     """Test construction with explicit parameters."""
     client = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
     assert client.model == "mistral-embed"
-    assert client.client.headers["Authorization"] == "Bearer test-key"
+    assert isinstance(client.client, Mistral)
 
 
 def test_mistral_embedding_construction_with_server_url() -> None:
@@ -82,21 +84,24 @@ def test_mistral_embedding_construction_with_server_url() -> None:
     )
     assert client.model == "mistral-embed"
     assert client.server_url == "https://custom.mistral.ai"
-    assert str(client.client.base_url) == "https://custom.mistral.ai"
+    assert client.client.sdk_configuration.get_server_details()[0] == "https://custom.mistral.ai"
 
 
 def test_mistral_embedding_construction_with_http_client() -> None:
     """Test construction with a pre-configured client."""
     http_client = httpx.AsyncClient(base_url="https://api.mistral.ai")
     client = MistralEmbeddingClient(model="mistral-embed", http_client=http_client)
-    assert client.client is http_client
+    assert client.client.sdk_configuration.async_client is http_client
 
 
-def test_mistral_embedding_deprecated_client_param_accepts_httpx() -> None:
+def test_mistral_embedding_client_param_accepts_httpx() -> None:
     http_client = httpx.AsyncClient(base_url="https://api.mistral.ai")
-    with pytest.deprecated_call():
-        client = MistralEmbeddingClient(model="mistral-embed", client=http_client)
-    assert client.client is http_client
+    with pytest.deprecated_call(match="http_client"):
+        client = MistralEmbeddingClient(
+            model="mistral-embed",
+            client=http_client,  # type: ignore[arg-type]
+        )
+    assert client.client.sdk_configuration.async_client is http_client
 
 
 class FakeMistralSDK:
@@ -116,31 +121,42 @@ class FakeMistralSDK:
         )
 
 
-async def test_mistral_embedding_deprecated_client_param_accepts_sdk_client() -> None:
-    """An injected mistralai.Mistral keeps working through the legacy SDK path."""
-    sdk = FakeMistralSDK()
-    with pytest.deprecated_call():
-        client = MistralEmbeddingClient(model="mistral-embed", client=sdk)
+async def test_mistral_embedding_client_param_accepts_sdk_client() -> None:
+    """An injected mistralai.Mistral is used directly."""
+    fake_embeddings = FakeMistralSDK()
+    sdk = Mistral(api_key="test-key")
+    sdk.embeddings = fake_embeddings.embeddings  # type: ignore[assignment]
+    client = MistralEmbeddingClient(model="mistral-embed", client=sdk)
 
     result = await client.get_embeddings(["hello"], options=MistralEmbeddingOptions(dimensions=2))
 
     assert [e.vector for e in result] == [[0.1, 0.2]]
     assert result.usage == {"input_token_count": 3, "total_token_count": 3}
-    assert sdk.requests == [{"model": "mistral-embed", "inputs": ["hello"], "output_dimension": 2}]
+    request = fake_embeddings.requests[0]
+    assert request["model"] == "mistral-embed"
+    assert request["inputs"] == ["hello"]
+    assert request["output_dimension"] == 2
+    assert "http_headers" in request
+    await sdk.__aexit__(None, None, None)
+    sdk.__exit__(None, None, None)
 
 
-def test_mistral_embedding_deprecated_client_param_rejects_unknown_client() -> None:
+def test_mistral_embedding_client_param_rejects_unknown_client() -> None:
     class NotAClient:
         pass
 
-    with pytest.deprecated_call(), pytest.raises(TypeError, match="httpx.AsyncClient"):
-        MistralEmbeddingClient(model="mistral-embed", client=NotAClient())
+    with pytest.raises(TypeError, match="mistralai.client.Mistral"):
+        MistralEmbeddingClient(model="mistral-embed", client=NotAClient())  # type: ignore[arg-type]
 
 
 def test_mistral_embedding_client_and_http_client_conflict() -> None:
     http_client = httpx.AsyncClient(base_url="https://api.mistral.ai")
-    with pytest.deprecated_call(), pytest.raises(ValueError, match="not both"):
-        MistralEmbeddingClient(model="mistral-embed", http_client=http_client, client=http_client)
+    with pytest.deprecated_call(match="http_client"), pytest.raises(ValueError, match="not both"):
+        MistralEmbeddingClient(
+            model="mistral-embed",
+            http_client=http_client,
+            client=http_client,  # type: ignore[arg-type]
+        )
 
 
 def test_mistral_embedding_construction_missing_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -181,8 +197,10 @@ def test_mistral_embedding_service_url_custom() -> None:
 
 async def test_mistral_embedding_close_only_closes_owned_client() -> None:
     owned = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
+    owned_http_client = owned.client.sdk_configuration.async_client
     await owned.close()
-    assert owned.client.is_closed
+    assert owned_http_client is not None
+    assert owned_http_client.is_closed
 
     http_client = httpx.AsyncClient(base_url="https://custom.mistral.ai")
     injected = MistralEmbeddingClient(model="mistral-embed", http_client=http_client)
@@ -323,7 +341,7 @@ async def test_mistral_embedding_network_error_wrapped() -> None:
     ("response", "message"),
     [
         (httpx.Response(200, content=b"{"), "response was invalid"),
-        (httpx.Response(200, json=[]), "must be a JSON object"),
+        (httpx.Response(200, json=[]), "response was invalid"),
         (httpx.Response(200, json={"data": ["not-an-object"]}), "response was invalid"),
     ],
 )
