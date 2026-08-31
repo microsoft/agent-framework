@@ -134,6 +134,108 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
         }
     }
 
+    [Fact]
+    public async Task Test_AgentHostExecutor_ForwardsAgentResponseMessageAsync()
+    {
+        // Arrange
+        ChatMessage userMessage = new(ChatRole.User, "Summarize this.") { AuthorName = "User" };
+        ChatMessage responseMessage = new(ChatRole.Assistant, [new TextContent("Partial answer")])
+        {
+            AuthorName = TestAgentName,
+            MessageId = "message-id",
+            RawRepresentation = "provider-message",
+        };
+        ChatMessage reasoningMessage = new(ChatRole.Assistant, [new TextReasoningContent("internal reasoning")])
+        {
+            AuthorName = TestAgentName,
+            MessageId = "reasoning-id",
+            RawRepresentation = "provider-reasoning",
+        };
+        AgentResponse agentResponse = new([responseMessage, reasoningMessage])
+        {
+            AgentId = TestAgentId,
+            ResponseId = "response-id",
+            FinishReason = ChatFinishReason.Length,
+            Usage = new UsageDetails { InputTokenCount = 10, OutputTokenCount = 2, TotalTokenCount = 12 },
+            AdditionalProperties = new() { ["detail"] = "metadata" },
+        };
+        AIAgentHostExecutor executor = new(new FixedResponseAgent(agentResponse, TestAgentId, TestAgentName), new() { ForwardAgentResponse = true });
+        TestRunContext testContext = new();
+        testContext.ConfigureExecutor(executor);
+
+        // Act
+        await executor.Router.RouteMessageAsync(userMessage, testContext.BindWorkflowContext(executor.Id));
+        await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
+
+        // Assert
+        Assert.Contains(typeof(AIAgentHostResponse), executor.Protocol.Describe().Sends);
+
+        IEnumerable<object> sentMessages = testContext.QueuedMessages[executor.Id].Select(envelope => envelope.Message);
+        AIAgentHostResponse hostResponse = Assert.Single(sentMessages.OfType<AIAgentHostResponse>());
+
+        Assert.Equal(executor.Id, hostResponse.ExecutorId);
+        Assert.Same(agentResponse, hostResponse.AgentResponse);
+        Assert.Equal(ChatFinishReason.Length, hostResponse.AgentResponse.FinishReason);
+        Assert.Equal("response-id", hostResponse.AgentResponse.ResponseId);
+        Assert.Equal(12, hostResponse.AgentResponse.Usage?.TotalTokenCount);
+        Assert.Equal("metadata", hostResponse.AgentResponse.AdditionalProperties?["detail"]);
+
+        ChatMessage forwardableMessage = Assert.Single(hostResponse.ForwardableMessages);
+        Assert.Equal("Partial answer", forwardableMessage.Text);
+        Assert.Null(forwardableMessage.RawRepresentation);
+
+        Assert.Equal(2, hostResponse.FullConversation.Count);
+        Assert.Equal("Summarize this.", hostResponse.FullConversation[0].Text);
+        Assert.Equal("Partial answer", hostResponse.FullConversation[1].Text);
+    }
+
+    [Fact]
+    public async Task Test_AgentHostExecutor_DoesNotForwardAgentResponseMessageByDefaultAsync()
+    {
+        // Arrange
+        AgentResponse agentResponse = new(new ChatMessage(ChatRole.Assistant, "Hello"));
+        AIAgentHostExecutor executor = new(new FixedResponseAgent(agentResponse, TestAgentId, TestAgentName), new());
+        TestRunContext testContext = new();
+        testContext.ConfigureExecutor(executor);
+
+        // Act
+        await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
+
+        // Assert
+        Assert.Contains(executor.Id, testContext.QueuedMessages);
+        Assert.DoesNotContain(testContext.QueuedMessages[executor.Id], envelope => envelope.Message is AIAgentHostResponse);
+    }
+
+    private sealed class FixedResponseAgent(AgentResponse response, string? id = null, string? name = null) : AIAgent
+    {
+        protected override string? IdCore => id;
+        public override string? Name => name;
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+            => new(new FixedResponseSession());
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => new(new FixedResponseSession());
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => default;
+
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+            => Task.FromResult(response);
+
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            foreach (AgentResponseUpdate update in response.ToAgentResponseUpdates())
+            {
+                yield return update;
+            }
+
+            await Task.CompletedTask;
+        }
+
+        private sealed class FixedResponseSession : AgentSession;
+    }
+
     [Theory]
     [InlineData(true, true, false, false)]
     [InlineData(true, true, false, true)]
