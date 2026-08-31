@@ -69,8 +69,10 @@ from agent_framework_foundry_hosting._responses import (
     CONSENT_ERROR_CODE,
     ConsentError,
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
+    _json_safe_to_str,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
+    _stringify_mcp_output,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
 )
 from agent_framework_foundry_hosting._state_store import (
@@ -554,6 +556,33 @@ async def test_agui_service_storage_response_mode_persists_provider_continuation
 def _sse_event_types(events: list[dict[str, Any]]) -> list[str]:
     """Extract event type strings from parsed SSE events."""
     return [e["event"] for e in events]
+
+
+# endregion
+
+
+# region Serialization Helpers
+
+
+class TestSerializationHelpers:
+    def test_json_safe_to_str_preserves_structured_conversion_and_falls_back_to_string(self) -> None:
+        @dataclass
+        class DataclassValue:
+            count: int
+
+        class ToDictValue:
+            def to_dict(self) -> dict[str, bool]:
+                return {"ok": False}
+
+        assert json.loads(_json_safe_to_str(DataclassValue(count=0))) == {"count": 0}
+        assert json.loads(_json_safe_to_str(ToDictValue())) == {"ok": False}
+        assert json.loads(_json_safe_to_str(Path("result.txt"))) == "result.txt"
+
+    def test_stringify_mcp_output_extracts_only_text_content_mappings(self) -> None:
+        assert _stringify_mcp_output({"text": "ok"}) == "ok"
+        assert _stringify_mcp_output({"type": "text", "text": "ok", "annotations": {"priority": 0}}) == "ok"
+        assert json.loads(_stringify_mcp_output({"text": "ok", "count": 0})) == {"text": "ok", "count": 0}
+        assert _stringify_mcp_output([{"type": "text", "text": "first"}, {"text": "second"}]) == "firstsecond"
 
 
 # endregion
@@ -1268,8 +1297,17 @@ class TestNonStreaming:
         assert mcp_items[0]["id"] == "mcp_abc123"
         assert mcp_items[0]["output"] == "found 10 cats"
 
-    async def test_mcp_result_serialization_matches_with_and_without_correlated_call(self) -> None:
-        output = {"count": 0, "ok": False}
+    @pytest.mark.parametrize(
+        ("output", "expected_output"),
+        [
+            ({"count": 0, "ok": False}, {"count": 0, "ok": False}),
+            ({"text": "ok", "count": 0}, {"text": "ok", "count": 0}),
+            (Path("result.txt"), "result.txt"),
+        ],
+    )
+    async def test_mcp_result_serialization_matches_with_and_without_correlated_call(
+        self, output: Any, expected_output: Any
+    ) -> None:
         correlated_agent = _make_agent(
             response=AgentResponse(
                 messages=[
@@ -1312,7 +1350,7 @@ class TestNonStreaming:
             item for item in uncorrelated_response.json()["output"] if item["type"] == "custom_tool_call_output"
         )
         assert correlated_item["output"] == uncorrelated_item["output"]
-        assert json.loads(correlated_item["output"]) == output
+        assert json.loads(correlated_item["output"]) == expected_output
 
     async def test_reasoning_content(self) -> None:
         reasoning_id = "rs_576d207b35d96b3200pkcXkMwXAij920Wcv7WhRXiMPiLdOA63"

@@ -1779,7 +1779,7 @@ def _json_default(value: Any) -> Any:
     to_dict = getattr(value, "to_dict", None)
     if callable(to_dict):
         return to_dict()
-    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+    return str(value)
 
 
 def _json_safe_to_str(value: Any | None) -> str:
@@ -1821,6 +1821,16 @@ def _reasoning_output_item(
     })
 
 
+def _mcp_mapping_text(output: Mapping[Any, Any]) -> str | None:
+    """Extract text only from a recognized MCP text-content mapping."""
+    text = output.get("text")
+    if not isinstance(text, str):
+        return None
+    if output.get("type") == "text" or set(output) == {"text"}:
+        return text
+    return None
+
+
 def _stringify_mcp_output(output: Any) -> str:
     """Convert hosted MCP output payloads into the string shape expected by mcp_call.output."""
     if output is None:
@@ -1829,8 +1839,7 @@ def _stringify_mcp_output(output: Any) -> str:
         return output
     if isinstance(output, Mapping):
         mapping = cast(Mapping[Any, Any], output)
-        text = mapping.get("text")
-        if isinstance(text, str):
+        if (text := _mcp_mapping_text(mapping)) is not None:
             return text
         return _json_safe_to_str(mapping)
     if isinstance(output, Sequence) and not isinstance(output, (str, bytes, bytearray)):
@@ -1843,11 +1852,9 @@ def _stringify_mcp_output(output: Any) -> str:
             if isinstance(entry, Content) and entry.type == "text":
                 parts.append(entry.text or "")
                 continue
-            if isinstance(entry, Mapping):
-                text = cast(Any, entry).get("text")
-                if isinstance(text, str):
-                    parts.append(text)
-                    continue
+            if isinstance(entry, Mapping) and (text := _mcp_mapping_text(cast(Mapping[Any, Any], entry))) is not None:
+                parts.append(text)
+                continue
             return _json_safe_to_str(entries)
         return "".join(parts)
     return _json_safe_to_str(output)
