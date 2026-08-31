@@ -2766,6 +2766,104 @@ async def test_schema_supplied_tool_caps_unexpected_key_count(chat_client_base: 
     assert error_result.result.count("extra_key_") < 10
 
 
+async def test_pydantic_validation_error_does_not_echo_a_dict_key(chat_client_base: SupportsChatGetResponse):
+    """Regression for the review on #7953: a dict-typed field's key is caller data, not a field name.
+
+    Copilot flagged that `include_input=False` only strips pydantic's `input` field - it does not stop
+    a dict-typed field's own key from appearing in `loc`, since pydantic reports the key as part of the
+    error's location rather than its input. A model submitting `{"mapping": {"<secret>": "bad"}}` would
+    put `<secret>` straight into the default (non-detailed) message. This was dismissed in review as
+    "the same category as the unexpected/missing field names this PR already surfaces by design" -
+    that reasoning was wrong: a dict key is data the caller chose, not a field name the tool declared.
+    """
+
+    class MappingInput(BaseModel):
+        mapping: dict[str, int]
+
+    @tool(name="store_tool", schema=MappingInput, approval_mode="never_require")
+    def store_tool(mapping: dict[str, int]) -> str:
+        return str(mapping)
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="1",
+                        name="store_tool",
+                        arguments=json.dumps({"mapping": {"super-secret-api-key-abc123": "not-an-int"}}),
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [store_tool]}
+    )
+
+    error_result = next(
+        content for msg in response.messages for content in msg.contents if content.type == "function_result"
+    )
+    assert error_result.result is not None
+    assert "super-secret-api-key-abc123" not in error_result.result  # the caller-chosen key is not echoed
+    assert "store_tool" in error_result.result
+    assert "mapping" in error_result.result  # the declared field name is still named
+
+
+async def test_pydantic_validation_error_still_names_nested_and_list_field_paths(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Companion to the dict-key redaction above: declared field names, at any depth, must still show.
+
+    Redacting a caller-chosen dict key must not turn into over-redaction of the tool's own declared
+    shape - a nested model's field name and a list index are static structure from the schema, not
+    caller data, and are exactly what makes the default message actionable in the first place.
+    """
+
+    class Item(BaseModel):
+        title: str
+
+    class NestedInput(BaseModel):
+        item: Item
+        items: list[Item]
+
+    @tool(name="nested_tool", schema=NestedInput, approval_mode="never_require")
+    def nested_tool(item: Item, items: list[Item]) -> str:
+        return "ok"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="1",
+                        name="nested_tool",
+                        arguments=json.dumps({"item": {"title": 123}, "items": [{"title": 456}]}),
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [nested_tool]}
+    )
+
+    error_result = next(
+        content for msg in response.messages for content in msg.contents if content.type == "function_result"
+    )
+    assert error_result.result is not None
+    # Both the nested field's own path and the list-indexed field's path are declared shape, not
+    # caller-chosen data, and must still be named rather than redacted to "<key>".
+    assert "item.title" in error_result.result
+    assert "items[0].title" in error_result.result
+
+
 async def test_hosted_tool_approval_response(chat_client_base: SupportsChatGetResponse):
     """Test handling of approval responses for hosted tools (tools not in tool_map)."""
 

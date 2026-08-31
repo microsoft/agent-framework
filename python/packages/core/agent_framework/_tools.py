@@ -1445,7 +1445,47 @@ def normalize_function_invocation_configuration(
     return normalized
 
 
-def _format_argument_validation_error(exception: TypeError | ValidationError, tool_name: str) -> str:
+def _redact_dynamic_loc_segments(loc: tuple[int | str, ...], schema: Mapping[str, Any]) -> str:
+    """Render a pydantic error ``loc`` as a path, without echoing a caller-chosen dict key.
+
+    A ``loc`` segment is safe to show only when the tool's own schema names it: a declared
+    ``properties`` key, or a list index (positional, not data). A segment that instead indexes into a
+    dict-typed field (``additionalProperties``) is a key the caller supplied - the exact kind of value
+    this default message exists to never echo (see #7222 and the review on #7953) - so it is replaced
+    with a fixed placeholder instead of the submitted string. ``$ref``/``$defs`` are resolved so a
+    nested model's own declared field names are still recognized and shown, not just top-level ones.
+    """
+    defs: dict[str, Any] = schema.get("$defs", {}) if isinstance(schema, dict) else {}
+
+    def resolve(node: Any) -> dict[str, Any]:
+        if not isinstance(node, dict):
+            # A schema fragment can legitimately be a non-dict, e.g. `additionalProperties: False`;
+            # treat anything not shaped like a schema object as having no further declared fields.
+            return {}
+        typed_node = cast(dict[str, Any], node)
+        ref = typed_node.get("$ref")
+        return resolve(defs.get(ref.rsplit("/", 1)[-1], {})) if isinstance(ref, str) else typed_node
+
+    node: dict[str, Any] = resolve(schema)
+    parts: list[str] = []
+    for segment in loc:
+        if isinstance(segment, int):
+            parts.append(f"[{segment}]")
+            node = resolve(node.get("items"))
+            continue
+        properties: dict[str, Any] = node.get("properties", {}) if isinstance(node.get("properties"), dict) else {}
+        if segment in properties:
+            parts.append(f".{segment}" if parts else str(segment))
+            node = resolve(properties[segment])
+        else:
+            parts.append(".<key>" if parts else "<key>")
+            node = resolve(node.get("additionalProperties"))
+    return "".join(parts) if parts else "value"
+
+
+def _format_argument_validation_error(
+    exception: TypeError | ValidationError, tool_name: str, schema: Mapping[str, Any]
+) -> str:
     """Build a model-oriented summary of an argument-validation failure.
 
     Unlike a tool-execution exception, the failing data here is the model's own
@@ -1460,7 +1500,10 @@ def _format_argument_validation_error(exception: TypeError | ValidationError, to
 
     A ``ValidationError`` can carry one entry per invalid item in a large submitted
     container, so the per-field detail is capped to keep this message from itself
-    becoming an unbounded addition to the next request's context.
+    becoming an unbounded addition to the next request's context. Each entry's
+    location is rendered through :func:`_redact_dynamic_loc_segments`, which shows a
+    field name only when the schema itself declares it - a dict-typed field's key is
+    the caller's own data, not part of the tool's declared shape, and is redacted.
 
     Only ``_ToolArgumentValidationError`` has a message vetted to be value-free; a
     plain ``TypeError`` reaching this point is not one this function recognizes; its
@@ -1471,7 +1514,7 @@ def _format_argument_validation_error(exception: TypeError | ValidationError, to
     if isinstance(exception, ValidationError):
         raw_errors = exception.errors(include_url=False, include_context=False, include_input=False)
         offenses = [
-            f"{'.'.join(str(segment) for segment in error['loc']) or tool_name} ({error['msg']})"
+            f"{_redact_dynamic_loc_segments(error['loc'], schema) or tool_name} ({error['msg']})"
             for error in raw_errors[:_MAX_VALIDATION_ERROR_DETAILS]
         ]
         detail = "; ".join(offenses) if offenses else str(exception)
@@ -1607,7 +1650,7 @@ async def _auto_invoke_function(
             tool_name=tool.name,
         )
     except (TypeError, ValidationError) as exc:
-        message = _format_argument_validation_error(exc, tool.name)
+        message = _format_argument_validation_error(exc, tool.name, tool.parameters())
         if config.get("include_detailed_errors", False):
             message = f"{message} Exception: {exc}"
         return Content.from_function_result(

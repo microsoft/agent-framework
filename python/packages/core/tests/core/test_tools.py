@@ -164,7 +164,7 @@ def test_format_argument_validation_error_unvetted_type_error_falls_back_to_gene
     """
     exc = TypeError("some internal detail: submitted-secret-value")
 
-    message = _format_argument_validation_error(exc, "mytool")
+    message = _format_argument_validation_error(exc, "mytool", {})
 
     assert message == "Error: invalid arguments for tool 'mytool'."
     assert "submitted-secret-value" not in message
