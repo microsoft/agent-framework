@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -14,14 +15,18 @@ from agent_framework import (
     SubWorkflowResponseMessage,
     Workflow,
     WorkflowBuilder,
+    WorkflowCheckpoint,
     WorkflowContext,
     WorkflowEvent,
     WorkflowExecutor,
+    WorkflowRunResult,
     WorkflowRunState,
     handler,
     response_handler,
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
+from agent_framework._workflows._runner_context import InProcRunnerContext, WorkflowMessage
+from agent_framework._workflows._state import State
 
 
 # Test message types
@@ -943,3 +948,76 @@ async def test_sub_workflow_intermediate_outputs_propagate_to_parent() -> None:
 
     # The parent's own terminal output is unaffected.
     assert any(e.executor_id == "parent_sink" and e.data == "final: hello" for e in output_events)
+
+
+async def test_workflow_executor_orphaned_output_forward_cannot_repopulate_a_restored_message_queue() -> None:
+    """The orphaned-task race from PR #7948 applies to WorkflowExecutor's own output-forwarding gather too.
+
+    That PR's review excluded ``_workflow_executor.py``'s ``gather()`` sites with "none of them hold
+    cross-invocation buffered state a restore can race with" - that reasoning was wrong. When
+    ``allow_direct_output`` is false (the default), ``_process_workflow_result`` forwards every
+    sub-workflow output to the parent by gathering ``ctx.send_message(output)`` per output.
+    ``WorkflowContext.send_message`` reaches straight into ``RunnerContext._messages`` with no
+    precondition check (unlike, say, ``send_request_info_response``'s pop-and-validate, which turned
+    out to protect a sibling gather site in ``_workflow.py``). A sibling output still being sent when
+    another fails is therefore not cancelled by plain ``asyncio.gather``, and can append into the
+    parent's message queue after a checkpoint restore has already cleared it for the resumed run.
+    """
+
+    class _Inner(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[str]) -> None:
+            pass
+
+    inner_workflow = WorkflowBuilder(start_executor=_Inner(id="inner")).build()
+    workflow_executor = WorkflowExecutor(inner_workflow, id="wrapped")
+
+    ctx_impl = InProcRunnerContext()
+    state = State()
+    wctx: WorkflowContext[Any] = WorkflowContext(workflow_executor, ["parent_source"], state, ctx_impl)
+
+    entered_delay = asyncio.Event()
+    release = asyncio.Event()
+    real_send_message = ctx_impl.send_message
+
+    async def patched_send_message(message: WorkflowMessage) -> None:
+        if message.data == "bad-output":
+            raise RuntimeError("output send failed")
+        if message.data == "stale-output-from-failed-run":
+            entered_delay.set()
+            await release.wait()
+        await real_send_message(message)
+
+    ctx_impl.send_message = patched_send_message  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+
+    # allow_direct_output defaults to False, so outputs go through the ctx.send_message branch.
+    # A status event is required for get_final_state(), which _process_workflow_result reads before
+    # the gather; without it the method raises immediately and entered_delay is never set.
+    result = WorkflowRunResult(
+        [
+            WorkflowEvent("output", data="bad-output"),
+            WorkflowEvent("output", data="stale-output-from-failed-run"),
+        ],
+        status_events=[WorkflowEvent.status(WorkflowRunState.IDLE)],
+    )
+
+    task = asyncio.create_task(workflow_executor._process_workflow_result(result, wctx))  # pyright: ignore[reportPrivateUsage]
+
+    # The second output's send is now parked mid-flight when the first one raises.
+    await asyncio.wait_for(entered_delay.wait(), timeout=5)
+
+    with pytest.raises(RuntimeError, match="output send failed"):
+        await task
+
+    # The parent restores the same runner context from its last good checkpoint - what a caller does
+    # after catching a failed superstep, per Workflow._execute_with_message_or_checkpoint.
+    checkpoint = WorkflowCheckpoint(workflow_name="test_name", graph_signature_hash="test_hash")
+    await ctx_impl.apply_checkpoint(checkpoint)
+    assert not await ctx_impl.has_messages()
+
+    # Release the parked send. If the fix reached this gather, its task was already cancelled and
+    # this is a no-op; if it did not, the stale output lands in the just-restored queue.
+    release.set()
+    await asyncio.sleep(0)
+
+    assert not await ctx_impl.has_messages()
