@@ -51,4 +51,4 @@ Get-ChildItem -Path $root -Recurse -Filter 'PublicAPI.Unshipped.txt' | ForEach-O
     Write-Host "Promoted $($unshippedLines.Count) public API entries in $($_.Directory.Name)."
 }
 
-Write-Host "Promoted $promotedApis public API entries across $promotedFiles project(s)."
+Write-Host "Promoted $promotedApis public API baseline entries across $promotedFiles baseline file(s)."
