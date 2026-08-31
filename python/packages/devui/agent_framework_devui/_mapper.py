@@ -280,7 +280,20 @@ class MessageMapper:
         Returns:
             Final aggregated OpenAI response
         """
+        context = self._get_or_create_context(request)
         try:
+            failed_response = next(
+                (
+                    event.response
+                    for event in events
+                    if getattr(event, "type", None) == "response.failed"
+                    and isinstance(getattr(event, "response", None), Response)
+                ),
+                None,
+            )
+            if failed_response is not None:
+                return cast(OpenAIResponse, failed_response)
+
             # Collect output items in order
             output_items: list[Any] = []
 
@@ -413,22 +426,10 @@ class MessageMapper:
             request_id = str(id(request))
             usage_data = self._usage_accumulator.pop(request_id, None)
 
-            if usage_data is not None:
-                usage = _response_usage(usage_data)
-            else:
-                # Fallback: estimate if no usage was tracked
-                input_token_count = len(str(request.input)) // 4 if request.input else 0
-                output_token_count = len(full_content) // 4
-                usage = _response_usage(
-                    UsageDetails(
-                        input_token_count=input_token_count,
-                        output_token_count=output_token_count,
-                        total_token_count=input_token_count + output_token_count,
-                    )
-                )
+            usage = _response_usage(usage_data) if usage_data is not None else None
 
             return OpenAIResponse(
-                id=f"resp_{uuid.uuid4().hex[:12]}",
+                id=context["response_id"],
                 object="response",
                 created_at=datetime.now().timestamp(),
                 model=request.model or "devui",
@@ -441,13 +442,14 @@ class MessageMapper:
 
         except Exception as e:
             logger.exception(f"Error aggregating response: {e}")
-            return await self._create_error_response(str(e), request)
+            return await self._create_error_response(str(e), request, context["response_id"])
         finally:
             # Cleanup: Remove context after aggregation to prevent memory leak
             # This handles the common case where streaming completes successfully
             request_key = id(request)
             if self._conversion_contexts.pop(request_key, None):
                 logger.debug(f"Cleaned up context for request {request_key} after aggregation")
+            self._usage_accumulator.pop(str(request_key), None)
 
     def _get_or_create_context(self, request: AgentFrameworkRequest) -> dict[str, Any]:
         """Get or create conversion context for this request.
@@ -468,8 +470,13 @@ class MessageMapper:
                 evicted_key, _ = self._conversion_contexts.popitem(last=False)
                 logger.debug(f"Evicted oldest context (key={evicted_key}) - at max capacity ({self._max_contexts})")
 
+            response_id = request.extra_body.get("response_id") if request.extra_body else None
+            if not isinstance(response_id, str) or not response_id:
+                response_id = f"resp_{uuid.uuid4().hex[:12]}"
+
             self._conversion_contexts[request_key] = {
                 "sequence_counter": 0,
+                "response_id": response_id,
                 "item_id": f"msg_{uuid.uuid4().hex[:8]}",
                 "content_index": 0,
                 "output_index": 0,
@@ -818,12 +825,9 @@ class MessageMapper:
             model = request_obj.model if request_obj and request_obj.model else "devui"
 
             if isinstance(event, AgentStartedEvent):
-                execution_id = f"agent_{uuid4().hex[:12]}"
-                context["execution_id"] = execution_id
-
                 # Create Response object
                 response_obj = Response(
-                    id=f"resp_{execution_id}",
+                    id=context["response_id"],
                     object="response",
                     created_at=float(time.time()),
                     model=model,
@@ -850,15 +854,13 @@ class MessageMapper:
                 return []
 
             if isinstance(event, AgentFailedEvent):
-                execution_id = context.get("execution_id", f"agent_{uuid4().hex[:12]}")
-
                 # Create error object
                 response_error = ResponseError(
                     message=str(event.error) if event.error else "Unknown error", code="server_error"
                 )
 
                 response_obj = Response(
-                    id=f"resp_{execution_id}",
+                    id=context["response_id"],
                     object="response",
                     created_at=float(time.time()),
                     model=model,
@@ -899,9 +901,6 @@ class MessageMapper:
 
             # Response-level events - construct proper OpenAI objects
             if event_type == "started":
-                workflow_id = getattr(event, "workflow_id", str(uuid4()))
-                context["workflow_id"] = workflow_id
-
                 # Import Response type for proper construction
                 from openai.types.responses import Response
 
@@ -914,7 +913,7 @@ class MessageMapper:
 
                 # Create a full Response object with all required fields
                 response_obj = Response(
-                    id=f"resp_{workflow_id}",
+                    id=context["response_id"],
                     object="response",
                     created_at=float(time.time()),
                     model=model,
@@ -1030,7 +1029,6 @@ class MessageMapper:
                 return []
 
             if event_type == "failed":
-                workflow_id = context.get("workflow_id", str(uuid4()))
                 # failed event (type='failed') uses 'details' field (WorkflowErrorDetails), not 'error'
                 # This matches executor_failed event which also uses 'details'
                 details = getattr(event, "details", None)
@@ -1059,7 +1057,7 @@ class MessageMapper:
 
                 # Create a full Response object for failed state
                 response_obj = Response(
-                    id=f"resp_{workflow_id}",
+                    id=context["response_id"],
                     object="response",
                     created_at=float(time.time()),
                     model=model,
@@ -1854,27 +1852,19 @@ class MessageMapper:
         text = f"Warning: Unknown content type: {content_type}\n"
         return self._create_text_delta_event(text, context)
 
-    async def _create_error_response(self, error_message: str, request: AgentFrameworkRequest) -> OpenAIResponse:
+    async def _create_error_response(
+        self, error_message: str, request: AgentFrameworkRequest, response_id: str
+    ) -> OpenAIResponse:
         """Create error response."""
-        error_text = f"Error: {error_message}"
-
-        response_output_text = ResponseOutputText(type="output_text", text=error_text, annotations=[])
-
-        response_output_message = ResponseOutputMessage(
-            type="message",
-            role="assistant",
-            content=[response_output_text],
-            id=f"msg_{uuid.uuid4().hex[:8]}",
-            status="completed",
-        )
-
         return OpenAIResponse(
-            id=f"resp_{uuid.uuid4().hex[:12]}",
+            id=response_id,
             object="response",
             created_at=datetime.now().timestamp(),
             model=request.model or "devui",
-            output=[response_output_message],
-            usage=_response_usage(UsageDetails()),
+            output=[],
+            status="failed",
+            error=ResponseError(message=error_message, code="server_error"),
+            usage=None,
             parallel_tool_calls=False,
             tool_choice="none",
             tools=[],

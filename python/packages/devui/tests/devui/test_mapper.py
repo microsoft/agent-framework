@@ -295,6 +295,13 @@ async def test_zero_usage_content_does_not_use_estimate(
     assert response.usage.total_tokens == 0
 
 
+async def test_missing_usage_is_not_estimated(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
+    """Completed responses omit usage when the framework reported none."""
+    response = await mapper.aggregate_to_response([], test_request)
+
+    assert response.usage is None
+
+
 # =============================================================================
 # Agent Lifecycle Event Tests
 # =============================================================================
@@ -327,6 +334,25 @@ async def test_agent_lifecycle_events(mapper: MessageMapper, test_request: Agent
     assert events[0].type == "response.failed"
     assert events[0].response.status == "failed"
     assert events[0].response.error.message == "Test error"
+
+
+async def test_response_id_is_stable_across_lifecycle_and_aggregation(mapper: MessageMapper) -> None:
+    """The server tracking ID remains the OpenAI response ID for the full lifecycle."""
+    request = AgentFrameworkRequest(
+        model="devui",
+        input="hello",
+        extra_body={"response_id": "resp_tracking_123"},
+    )
+
+    started_events = await mapper.convert_event(AgentStartedEvent(), request)
+    failed_events = await mapper.convert_event(AgentFailedEvent(error=RuntimeError("failed")), request)
+    response = await mapper.aggregate_to_response([*started_events, *failed_events], request)
+
+    assert [event.response.id for event in started_events] == ["resp_tracking_123", "resp_tracking_123"]
+    assert failed_events[0].response.id == "resp_tracking_123"
+    assert response.id == "resp_tracking_123"
+    assert response.status == "failed"
+    assert response.output == []
 
 
 async def test_agent_run_response_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:

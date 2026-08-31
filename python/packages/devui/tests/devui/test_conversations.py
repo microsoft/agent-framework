@@ -156,6 +156,68 @@ async def test_add_items():
 
 
 @pytest.mark.asyncio
+async def test_add_and_list_items_preserves_all_supported_message_parts():
+    """Conversation conversion retains message boundaries and every supported part."""
+    store = InMemoryConversationStore()
+    conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
+    request_items = [
+        {
+            "role": "system",
+            "content": [
+                {"type": "input_text", "text": "First instruction"},
+                {"type": "text", "text": "Second instruction"},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_image",
+                    "image_url": "https://example.com/photo.jpg?download=1",
+                    "detail": "high",
+                },
+                {"type": "input_image", "file_id": "file_image", "detail": "low"},
+                {"type": "input_file", "file_data": "JVBERi0=", "filename": "report.pdf"},
+                {"type": "input_file", "file_id": "file_audio", "filename": "recording.mp3"},
+                {"type": "input_file", "file_id": "file_scan", "filename": "scan.jpg"},
+            ],
+        },
+    ]
+
+    created_items = await store.add_items(conversation.id, items=request_items)
+    listed_items, has_more = await store.list_items(conversation.id)
+
+    assert [item.role for item in created_items] == ["system", "user"]
+    assert [len(item.content) for item in created_items] == [2, 5]
+    assert created_items[1].content[0].image_url == "https://example.com/photo.jpg?download=1"
+    assert created_items[1].content[0].detail == "high"
+    assert created_items[1].content[1].file_id == "file_image"
+    assert created_items[1].content[1].detail == "low"
+    assert created_items[1].content[2].file_url == "data:application/pdf;base64,JVBERi0="
+    assert created_items[1].content[2].filename == "report.pdf"
+    assert created_items[1].content[3].file_id == "file_audio"
+    assert created_items[1].content[3].filename == "recording.mp3"
+    assert created_items[1].content[4].type == "input_file"
+    assert created_items[1].content[4].file_id == "file_scan"
+
+    stored_messages = store._conversations[conversation.id]["messages"]
+    assert stored_messages[1].contents[0].media_type == "image/jpeg"
+    assert stored_messages[1].contents[2].media_type == "application/pdf"
+    assert stored_messages[1].contents[3].media_type == "audio/mpeg"
+    assert stored_messages[1].contents[4].media_type == "image/jpeg"
+
+    assert has_more is False
+    assert [item.role for item in listed_items] == ["system", "user"]
+    assert [len(item.content) for item in listed_items] == [2, 5]
+    assert listed_items[1].content[0].detail == "high"
+    assert listed_items[1].content[1].file_id == "file_image"
+    assert listed_items[1].content[2].file_url == "data:application/pdf;base64,JVBERi0="
+    assert listed_items[1].content[3].file_id == "file_audio"
+    assert listed_items[1].content[4].type == "input_file"
+    assert listed_items[1].content[4].file_id == "file_scan"
+
+
+@pytest.mark.asyncio
 async def test_list_items():
     """Test listing conversation items."""
     store = InMemoryConversationStore()
