@@ -1249,6 +1249,26 @@ def test_a2ui_agent_preserves_provider_state_authority_boundary():
     assert restored.state == {"private": "preserved"}
 
 
+def test_a2ui_agent_conditionally_delegates_conversation_creation():
+    async def create_conversation(*, session_id: str) -> str:
+        return session_id
+
+    inner = type(
+        "_Inner",
+        (),
+        {
+            "id": "i",
+            "name": "n",
+            "description": "d",
+            "create_conversation": staticmethod(create_conversation),
+        },
+    )()
+    runner = A2UIAgent(inner, _RenderSub())
+
+    assert runner.create_conversation is getattr(inner, "create_conversation")
+    assert not hasattr(A2UIAgent(type("_NoConversation", (), {})(), _RenderSub()), "create_conversation")
+
+
 def test_a2ui_agent_uses_per_request_context_over_constructor():
     # A reused runner must serve the CURRENT request's catalog, not a stale constructor one.
     old = build_ag_ui_context_slice(

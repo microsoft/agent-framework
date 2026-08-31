@@ -48,7 +48,6 @@ from agent_framework import (
     tool,
 )
 from agent_framework.ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
-from agent_framework.exceptions import ChatClientException
 from agent_framework.openai import OpenAIChatClient
 from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import (
@@ -591,21 +590,21 @@ async def test_agui_stateless_store_true_does_not_restore_provider_continuation(
             for event in reversed(first_events)
             if getattr(event, "type", None) == "MESSAGES_SNAPSHOT"
         )
-        with pytest.raises(ChatClientException, match="schema validation"):
-            _ = [
-                event
-                async for event in runner.run({
-                    "thread_id": thread_id,
-                    "__ag_ui_snapshot_scope": "test",
-                    "messages": [*first_snapshot, {"role": "user", "content": "second"}],
-                })
-            ]
+        second_events = [
+            event
+            async for event in runner.run({
+                "thread_id": thread_id,
+                "__ag_ui_snapshot_scope": "test",
+                "messages": [*first_snapshot, {"role": "user", "content": "second"}],
+            })
+        ]
     finally:
         await responses_client.close()
 
     assert all("conversation" not in payload for payload in transport.payloads)
     assert all("previous_response_id" not in payload for payload in transport.payloads)
     assert [item["role"] for item in transport.payloads[1]["input"]] == ["user", "assistant", "user"]
+    assert not [event for event in second_events if getattr(event, "type", None) == "RUN_ERROR"]
     stored = await store.get(scope="test", thread_id=thread_id)
     assert stored is not None
     assert stored.session_state is None

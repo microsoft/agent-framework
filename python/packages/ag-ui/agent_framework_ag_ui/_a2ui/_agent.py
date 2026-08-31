@@ -355,6 +355,11 @@ class A2UIAgent:
     def service_session_state_keys(self) -> Any:
         return getattr(self.inner_agent, "service_session_state_keys", ())
 
+    def __getattr__(self, name: str) -> Any:
+        if name == "create_conversation":
+            return getattr(self.inner_agent, name)
+        raise AttributeError(name)
+
     # -- public run -------------------------------------------------------
 
     def run(self, messages: Any = None, *, stream: bool = False, **kwargs: Any) -> Any:
