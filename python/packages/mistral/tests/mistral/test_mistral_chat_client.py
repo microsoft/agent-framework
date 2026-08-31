@@ -22,6 +22,9 @@ from pydantic import BaseModel
 import agent_framework_mistral._chat_client as chat_client_module
 from agent_framework_mistral import MistralChatClient, MistralChatOptions
 from agent_framework_mistral._chat_client import _sanitize_tool_call_id  # pyright: ignore[reportPrivateUsage]
+from agent_framework_mistral._http_client import (  # pyright: ignore[reportPrivateUsage]
+    AsyncClientUsingConfiguredTimeout,
+)
 
 # region: Helpers
 
@@ -91,8 +94,10 @@ class MockMistral:
     def __init__(self, responses: Sequence[httpx.Response]) -> None:
         self._responses = list(responses)
         self.requests: list[dict[str, Any]] = []
+        self.http_requests: list[httpx.Request] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
+        self.http_requests.append(request)
         self.requests.append(json.loads(request.content))
         return self._responses.pop(0)
 
@@ -133,6 +138,7 @@ def test_mistral_chat_construction_with_params() -> None:
     client = MistralChatClient(model="mistral-large-latest", api_key="test-key")
     assert client.model == "mistral-large-latest"
     assert isinstance(client.client, Mistral)
+    assert client.client.sdk_configuration.timeout_ms == 60_000
 
 
 def test_mistral_chat_construction_with_server_url() -> None:
@@ -149,7 +155,9 @@ def test_mistral_chat_construction_with_client_needs_no_api_key(monkeypatch: pyt
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     http_client = httpx.AsyncClient(base_url="https://api.mistral.ai")
     client = MistralChatClient(model="mistral-large-latest", http_client=http_client)
-    assert client.client.sdk_configuration.async_client is http_client
+    async_client = client.client.sdk_configuration.async_client
+    assert isinstance(async_client, AsyncClientUsingConfiguredTimeout)
+    assert async_client.client is http_client
 
 
 async def test_mistral_chat_deprecated_client_param_accepts_httpx() -> None:
@@ -159,7 +167,9 @@ async def test_mistral_chat_deprecated_client_param_accepts_httpx() -> None:
             model="mistral-large-latest",
             client=cast("Any", http_client),
         )
-    assert client.client.sdk_configuration.async_client is http_client
+    async_client = client.client.sdk_configuration.async_client
+    assert isinstance(async_client, AsyncClientUsingConfiguredTimeout)
+    assert async_client.client is http_client
     await client.close()
     await http_client.aclose()
 
@@ -234,6 +244,26 @@ async def test_get_response_basic() -> None:
     }
     assert server.last_request["model"] == "mistral-small-latest"
     assert server.last_request["messages"] == [{"role": "user", "content": "hi"}]
+
+
+async def test_get_response_preserves_injected_http_client_timeout() -> None:
+    server = MockMistral([json_response(make_response_payload(content="hello"))])
+    timeout = httpx.Timeout(connect=1, read=2, write=3, pool=4)
+    http_client = httpx.AsyncClient(
+        base_url="https://api.mistral.ai",
+        transport=httpx.MockTransport(server.handler),
+        timeout=timeout,
+    )
+    client = MistralChatClient(model="mistral-small-latest", http_client=http_client)
+
+    await client.get_response([Message("user", ["hi"])])
+
+    assert server.http_requests[0].extensions["timeout"] == {
+        "connect": 1,
+        "read": 2,
+        "write": 3,
+        "pool": 4,
+    }
 
 
 async def test_get_response_includes_cached_input_tokens() -> None:
@@ -393,6 +423,19 @@ async def test_get_response_instructions_prepended_as_system_message() -> None:
 
     assert server.last_request["messages"][0] == {"role": "system", "content": "Be brief."}
     assert "instructions" not in server.last_request
+
+
+@pytest.mark.parametrize("argument", ["http_headers", "retries", "server_url", "timeout_ms"])
+async def test_get_response_rejects_per_call_transport_arguments(argument: str) -> None:
+    client, server = make_client()
+
+    with pytest.raises(ValueError, match="cannot be supplied per call"):
+        await client.get_response(
+            [Message("user", ["hi"])],
+            client_kwargs={argument: "override"},
+        )
+
+    assert server.requests == []
 
 
 async def test_get_response_model_override() -> None:
@@ -799,6 +842,43 @@ async def test_function_invocation_loop() -> None:
     assert any(m["role"] == "tool" for m in server.requests[1]["messages"])
 
 
+async def test_streaming_function_invocation_loop() -> None:
+    client, server = make_client(
+        stream_response(
+            make_chunk_payload(tool_calls=[tool_call_payload("get_weather", '{"loc', call_id="abc123XYZ", index=0)]),
+            make_chunk_payload(
+                tool_calls=[tool_call_payload("", 'ation": "Paris"}', index=0)],
+                finish_reason="tool_calls",
+            ),
+        ),
+        stream_response(make_chunk_payload(content="It is sunny in Paris.", finish_reason="stop")),
+    )
+    executions = 0
+
+    @tool(approval_mode="never_require")
+    def get_weather(location: str) -> str:
+        """Get the weather."""
+        nonlocal executions
+        executions += 1
+        return f"sunny in {location}"
+
+    response = await client.get_response(
+        [Message("user", ["Weather in Paris?"])],
+        options={"tools": [get_weather]},
+        stream=True,
+    ).get_final_response()
+
+    assert response.text == "It is sunny in Paris."
+    assert executions == 1
+    assert len(server.requests) == 2
+    second_messages = server.requests[1]["messages"]
+    assistant_message = next(message for message in second_messages if message["role"] == "assistant")
+    tool_message = next(message for message in second_messages if message["role"] == "tool")
+    assert assistant_message["tool_calls"][0]["id"] == "abc123XYZ"
+    assert tool_message["tool_call_id"] == "abc123XYZ"
+    assert tool_message["content"] == "sunny in Paris"
+
+
 # region: Streaming
 
 
@@ -995,6 +1075,21 @@ async def test_streaming_mid_stream_error_wrapped() -> None:
 
     stream = client.get_response([Message("user", ["hi"])], stream=True)
     with pytest.raises(ChatClientException, match="Mistral streaming chat request failed"):
+        async for _ in stream:
+            pass
+
+
+async def test_streaming_invalid_event_wrapped() -> None:
+    client, _ = make_client(
+        httpx.Response(
+            200,
+            content=b"data: {\n\n",
+            headers={"content-type": "text/event-stream"},
+        )
+    )
+
+    stream = client.get_response([Message("user", ["hi"])], stream=True)
+    with pytest.raises(ChatClientInvalidResponseException, match="response was invalid"):
         async for _ in stream:
             pass
 

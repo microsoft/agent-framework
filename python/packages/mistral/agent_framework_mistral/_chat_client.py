@@ -53,9 +53,10 @@ from mistralai.client.models import (
     ToolCall,
     UsageInfo,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from ._feature_usage import FeatureIndex
+from ._http_client import AsyncClientUsingConfiguredTimeout
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -167,6 +168,8 @@ class MistralSettings(TypedDict, total=False):
 # endregion
 
 _MISTRAL_API_BASE_URL = "https://api.mistral.ai"
+_DEFAULT_TIMEOUT_MS = 60_000
+_SDK_TRANSPORT_ARGUMENTS = frozenset({"http_headers", "retries", "server_url", "timeout_ms"})
 
 # Keys mapping to a different Mistral chat-completion parameter name
 _OPTION_TRANSLATIONS: dict[str, str] = {
@@ -399,11 +402,11 @@ class RawMistralChatClient(
             if self.server_url is None:
                 self.server_url = client.sdk_configuration.get_server_details()[0]
         else:
-            client_kwargs: dict[str, Any] = {}
+            client_kwargs: dict[str, Any] = {"timeout_ms": _DEFAULT_TIMEOUT_MS}
             if resolved_api_key := mistral_settings.get("api_key"):
                 client_kwargs["api_key"] = resolved_api_key.get_secret_value()
             if http_client is not None:
-                client_kwargs["async_client"] = http_client
+                client_kwargs["async_client"] = AsyncClientUsingConfiguredTimeout(http_client)
                 if self.server_url is None:
                     client_base_url = str(http_client.base_url).rstrip("/")
                     self.server_url = client_base_url or None
@@ -442,13 +445,18 @@ class RawMistralChatClient(
                 request.setdefault("http_headers", {"User-Agent": get_user_agent()})
                 tool_calls = _StreamedToolCalls()
                 try:
-                    response = await self.client.chat.stream_async(**request)
-                    async for event in response:
-                        yield self._parse_chunk(event.data, tool_calls)
+                    async with await self.client.chat.stream_async(**request) as response:
+                        async for event in response:
+                            yield self._parse_chunk(event.data, tool_calls)
                     if remaining := tool_calls.flush_all():
                         yield ChatResponseUpdate(contents=remaining, role="assistant")
                 except MistralError as ex:
                     self._raise_sdk_error(ex, streaming=True)
+                except ValidationError as ex:
+                    raise ChatClientInvalidResponseException(
+                        f"Mistral streaming chat response was invalid: {ex}",
+                        inner_exception=ex,
+                    ) from ex
                 except ChatClientException:
                     raise
                 except Exception as ex:
@@ -520,6 +528,12 @@ class RawMistralChatClient(
         Raises:
             ValueError: If no model is set on the options or the client instance.
         """
+        if transport_arguments := _SDK_TRANSPORT_ARGUMENTS.intersection(kwargs):
+            arguments = ", ".join(sorted(transport_arguments))
+            raise ValueError(
+                f"Mistral transport arguments cannot be supplied per call: {arguments}. Configure the client instead."
+            )
+
         model = options.get("model") or self.model
         if not model:
             raise ValueError(

@@ -18,6 +18,9 @@ from agent_framework.exceptions import (
 from mistralai.client import Mistral
 
 from agent_framework_mistral import MistralEmbeddingClient, MistralEmbeddingOptions
+from agent_framework_mistral._http_client import (  # pyright: ignore[reportPrivateUsage]
+    AsyncClientUsingConfiguredTimeout,
+)
 
 # region: Unit Tests
 
@@ -40,8 +43,10 @@ class MockMistral:
     def __init__(self, responses: Sequence[httpx.Response]) -> None:
         self._responses = list(responses)
         self.requests: list[dict[str, Any]] = []
+        self.http_requests: list[httpx.Request] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
+        self.http_requests.append(request)
         self.requests.append(json.loads(request.content))
         return self._responses.pop(0)
 
@@ -73,6 +78,7 @@ def test_mistral_embedding_construction_with_params() -> None:
     client = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
     assert client.model == "mistral-embed"
     assert isinstance(client.client, Mistral)
+    assert client.client.sdk_configuration.timeout_ms == 60_000
 
 
 def test_mistral_embedding_construction_with_server_url() -> None:
@@ -91,7 +97,9 @@ def test_mistral_embedding_construction_with_http_client() -> None:
     """Test construction with a pre-configured client."""
     http_client = httpx.AsyncClient(base_url="https://api.mistral.ai")
     client = MistralEmbeddingClient(model="mistral-embed", http_client=http_client)
-    assert client.client.sdk_configuration.async_client is http_client
+    async_client = client.client.sdk_configuration.async_client
+    assert isinstance(async_client, AsyncClientUsingConfiguredTimeout)
+    assert async_client.client is http_client
 
 
 def test_mistral_embedding_client_param_accepts_httpx() -> None:
@@ -101,7 +109,9 @@ def test_mistral_embedding_client_param_accepts_httpx() -> None:
             model="mistral-embed",
             client=cast("Any", http_client),
         )
-    assert client.client.sdk_configuration.async_client is http_client
+    async_client = client.client.sdk_configuration.async_client
+    assert isinstance(async_client, AsyncClientUsingConfiguredTimeout)
+    assert async_client.client is http_client
 
 
 class FakeMistralSDK:
@@ -240,6 +250,26 @@ async def test_mistral_embedding_get_embeddings() -> None:
     assert result[0].model == "mistral-embed"
     assert result.usage == {"input_token_count": 10, "total_token_count": 10}
     assert server.last_request == {"model": "mistral-embed", "input": ["hello", "world"]}
+
+
+async def test_mistral_embedding_preserves_injected_http_client_timeout() -> None:
+    server = MockMistral([httpx.Response(200, json=make_embeddings_payload([[0.1, 0.2]]))])
+    timeout = httpx.Timeout(connect=1, read=2, write=3, pool=4)
+    http_client = httpx.AsyncClient(
+        base_url="https://api.mistral.ai",
+        transport=httpx.MockTransport(server.handler),
+        timeout=timeout,
+    )
+    client = MistralEmbeddingClient(model="mistral-embed", http_client=http_client)
+
+    await client.get_embeddings(["hello"])
+
+    assert server.http_requests[0].extensions["timeout"] == {
+        "connect": 1,
+        "read": 2,
+        "write": 3,
+        "pool": 4,
+    }
 
 
 async def test_mistral_embedding_get_embeddings_empty_input() -> None:

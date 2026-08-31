@@ -30,6 +30,7 @@ from mistralai.client import Mistral
 from mistralai.client.errors import MistralError
 
 from ._feature_usage import FeatureIndex
+from ._http_client import AsyncClientUsingConfiguredTimeout
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -40,6 +41,7 @@ else:
 logger = logging.getLogger("agent_framework.mistral")
 
 _MISTRAL_API_BASE_URL = "https://api.mistral.ai"
+_DEFAULT_TIMEOUT_MS = 60_000
 
 
 class MistralEmbeddingOptions(EmbeddingGenerationOptions, total=False):
@@ -158,11 +160,11 @@ class RawMistralEmbeddingClient(
             if self.server_url is None:
                 self.server_url = client.sdk_configuration.get_server_details()[0]
         else:
-            client_kwargs: dict[str, Any] = {}
+            client_kwargs: dict[str, Any] = {"timeout_ms": _DEFAULT_TIMEOUT_MS}
             if resolved_api_key := mistral_settings.get("api_key"):
                 client_kwargs["api_key"] = resolved_api_key.get_secret_value()
             if http_client is not None:
-                client_kwargs["async_client"] = http_client
+                client_kwargs["async_client"] = AsyncClientUsingConfiguredTimeout(http_client)
                 if self.server_url is None:
                     client_base_url = str(http_client.base_url).rstrip("/")
                     self.server_url = client_base_url or None
