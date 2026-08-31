@@ -4,7 +4,7 @@ import json
 import os
 from collections.abc import Sequence
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -99,7 +99,7 @@ def test_mistral_embedding_client_param_accepts_httpx() -> None:
     with pytest.deprecated_call(match="http_client"):
         client = MistralEmbeddingClient(
             model="mistral-embed",
-            client=http_client,  # type: ignore[arg-type]
+            client=cast("Any", http_client),
         )
     assert client.client.sdk_configuration.async_client is http_client
 
@@ -125,7 +125,7 @@ async def test_mistral_embedding_client_param_accepts_sdk_client() -> None:
     """An injected mistralai.Mistral is used directly."""
     fake_embeddings = FakeMistralSDK()
     sdk = Mistral(api_key="test-key")
-    sdk.embeddings = fake_embeddings.embeddings  # type: ignore[assignment]
+    sdk.embeddings = cast("Any", fake_embeddings.embeddings)
     client = MistralEmbeddingClient(model="mistral-embed", client=sdk)
 
     result = await client.get_embeddings(["hello"], options=MistralEmbeddingOptions(dimensions=2))
@@ -146,7 +146,7 @@ def test_mistral_embedding_client_param_rejects_unknown_client() -> None:
         pass
 
     with pytest.raises(TypeError, match="mistralai.client.Mistral"):
-        MistralEmbeddingClient(model="mistral-embed", client=NotAClient())  # type: ignore[arg-type]
+        MistralEmbeddingClient(model="mistral-embed", client=cast("Any", NotAClient()))
 
 
 def test_mistral_embedding_client_and_http_client_conflict() -> None:
@@ -155,7 +155,7 @@ def test_mistral_embedding_client_and_http_client_conflict() -> None:
         MistralEmbeddingClient(
             model="mistral-embed",
             http_client=http_client,
-            client=http_client,  # type: ignore[arg-type]
+            client=cast("Any", http_client),
         )
 
 
@@ -199,7 +199,7 @@ async def test_mistral_embedding_close_only_closes_owned_client() -> None:
     owned = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
     owned_http_client = owned.client.sdk_configuration.async_client
     await owned.close()
-    assert owned_http_client is not None
+    assert isinstance(owned_http_client, httpx.AsyncClient)
     assert owned_http_client.is_closed
 
     http_client = httpx.AsyncClient(base_url="https://custom.mistral.ai")

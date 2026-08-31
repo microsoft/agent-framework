@@ -4,7 +4,7 @@ import json
 import logging
 import os
 from collections.abc import AsyncIterator, Sequence
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -157,7 +157,7 @@ async def test_mistral_chat_deprecated_client_param_accepts_httpx() -> None:
     with pytest.deprecated_call(match="http_client"):
         client = MistralChatClient(
             model="mistral-large-latest",
-            client=http_client,  # type: ignore[arg-type]
+            client=cast("Any", http_client),
         )
     assert client.client.sdk_configuration.async_client is http_client
     await client.close()
@@ -181,7 +181,7 @@ async def test_mistral_chat_close_only_closes_owned_client() -> None:
     owned = MistralChatClient(model="mistral-large-latest", api_key="test-key")
     owned_http_client = owned.client.sdk_configuration.async_client
     await owned.close()
-    assert owned_http_client is not None
+    assert isinstance(owned_http_client, httpx.AsyncClient)
     assert owned_http_client.is_closed
 
     http_client = httpx.AsyncClient(base_url="https://custom.mistral.ai")
@@ -277,8 +277,9 @@ async def test_get_response_includes_extended_usage() -> None:
     response = await client.get_response([Message("user", ["hi"])])
 
     assert response.usage_details is not None
-    assert response.usage_details["prompt_audio_seconds"] == 4
-    assert response.usage_details["prompt/audio_tokens"] == 12
+    usage_details = cast("dict[str, Any]", response.usage_details)
+    assert usage_details["prompt_audio_seconds"] == 4
+    assert usage_details["prompt/audio_tokens"] == 12
     assert response.additional_properties["service_tier"] == "priority"
 
 
