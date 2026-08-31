@@ -865,7 +865,7 @@ class RawMistralChatClient(
         if "total_tokens" in fields_set and usage.total_tokens is not None:
             details["total_token_count"] = usage.total_tokens
         if isinstance(usage.prompt_audio_seconds, int) and not isinstance(usage.prompt_audio_seconds, bool):
-            cast("dict[str, Any]", details)["prompt_audio_seconds"] = usage.prompt_audio_seconds
+            cast("dict[str, Any]", details)["mistral.prompt_audio_seconds"] = usage.prompt_audio_seconds
         prompt_tokens_details = getattr(usage, "prompt_tokens_details", None)
         if isinstance(prompt_tokens_details, Mapping):
             prompt_details = cast("Mapping[str, Any]", prompt_tokens_details)
@@ -875,7 +875,7 @@ class RawMistralChatClient(
                 details["cache_read_input_token_count"] = cached_tokens
             audio_tokens = prompt_details.get("audio_tokens")
             if isinstance(audio_tokens, int) and not isinstance(audio_tokens, bool):
-                cast("dict[str, Any]", details)["prompt/audio_tokens"] = audio_tokens
+                cast("dict[str, Any]", details)["mistral.prompt_audio_tokens"] = audio_tokens
         return details or None
 
     @staticmethod

@@ -278,8 +278,8 @@ async def test_get_response_includes_extended_usage() -> None:
 
     assert response.usage_details is not None
     usage_details = cast("dict[str, Any]", response.usage_details)
-    assert usage_details["prompt_audio_seconds"] == 4
-    assert usage_details["prompt/audio_tokens"] == 12
+    assert usage_details["mistral.prompt_audio_seconds"] == 4
+    assert usage_details["mistral.prompt_audio_tokens"] == 12
     assert response.additional_properties["service_tier"] == "priority"
 
 
