@@ -6776,6 +6776,7 @@ async def test_phase1_duration_expiry_prevents_approval_execution(chat_client_ba
     agent = Agent(client=chat_client_base, tools=[op], middleware=[middleware])
 
     from unittest.mock import patch
+
     with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
         # First run: getting the approval request. Time is 0.0, so duration is not exceeded.
         first_response = await agent.run("Go", session=session)
@@ -6789,10 +6790,7 @@ async def test_phase1_duration_expiry_prevents_approval_execution(chat_client_ba
         current_time[0] = 10.0
 
         # Second run: user provides the approval response, but duration is exceeded.
-        resume_message = Message(
-            role="user",
-            contents=[approval_request.to_function_approval_response(approved=True)]
-        )
+        resume_message = Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])
         response = await agent.run(resume_message, session=session)
 
     # The tool should NOT have executed
@@ -6837,6 +6835,7 @@ async def test_duration_expiry_drops_unexecutable_provider_call(
         return res
 
     from unittest.mock import patch
+
     with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
         if streaming:
             stream = agent.run("Go", stream=True)
@@ -6881,6 +6880,7 @@ async def test_session_budget_state_persists_during_approval_and_cleans_up_on_co
         return res
 
     from unittest.mock import patch
+
     with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
         first_response = await agent.run("Go", session=session)
         assert any(c.type == "function_approval_request" for c in first_response.messages[-1].contents)
@@ -6891,9 +6891,7 @@ async def test_session_budget_state_persists_during_approval_and_cleans_up_on_co
         approval_request = next(
             c for c in first_response.messages[-1].contents if c.type == "function_approval_request"
         )
-        resume_message = Message(
-            role="user", contents=[approval_request.to_function_approval_response(approved=True)]
-        )
+        resume_message = Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])
 
         await agent.run(resume_message, session=session)
 
@@ -6912,9 +6910,7 @@ async def test_plain_session_multiturn_has_isolated_budget_state_per_invocation(
 
     chat_client_base.function_invocation_configuration["max_duration_seconds"] = 100.0  # type: ignore[attr-defined]
     chat_client_base.run_responses = [  # type: ignore[attr-defined]
-        ChatResponse(
-            messages=[Message(role="assistant", contents=[Content.from_text("first")])], finish_reason="stop"
-        ),
+        ChatResponse(messages=[Message(role="assistant", contents=[Content.from_text("first")])], finish_reason="stop"),
         ChatResponse(
             messages=[Message(role="assistant", contents=[Content.from_text("second")])], finish_reason="stop"
         ),
@@ -6951,6 +6947,7 @@ async def test_streaming_pending_approval_survives_budget_state_pop(chat_client_
     agent = Agent(client=chat_client_base, tools=[op], middleware=[middleware])
 
     from unittest.mock import patch
+
     with patch("agent_framework._tools.perf_counter", return_value=0.0):
         stream = agent.run("Go", session=session, stream=True)
 
@@ -6964,9 +6961,7 @@ async def test_streaming_pending_approval_survives_budget_state_pop(chat_client_
         approval_request = next(
             c for c in first_response.messages[-1].contents if c.type == "function_approval_request"
         )
-        resume_message = Message(
-            role="user", contents=[approval_request.to_function_approval_response(approved=True)]
-        )
+        resume_message = Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])
 
         stream2 = agent.run(resume_message, session=session, stream=True)
         async for _ in stream2:
