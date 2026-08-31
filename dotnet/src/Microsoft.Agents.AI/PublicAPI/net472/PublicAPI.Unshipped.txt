@@ -1,3 +1,1 @@
 ﻿#nullable enable
-[MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.WaitTimeout.get -> System.TimeSpan
-[MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.WaitTimeout.set -> void
