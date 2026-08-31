@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
@@ -25,7 +24,7 @@ public sealed class PortableValuePredicateTests
         ActionExecutorResult actual = ActionExecutorResult.ThrowIfNot(result);
 
         // Assert
-        actual.Should().BeSameAs(result);
+        Assert.Same(result, actual);
     }
 
     [Fact]
@@ -39,7 +38,7 @@ public sealed class PortableValuePredicateTests
         ActionExecutorResult actual = ActionExecutorResult.ThrowIfNot(wrapped);
 
         // Assert
-        actual.ExecutorId.Should().Be("test-executor");
+        Assert.Equal("test-executor", actual.ExecutorId);
     }
 
     [Fact]
@@ -80,7 +79,7 @@ public sealed class PortableValuePredicateTests
         ExternalInputRequest request = new("test prompt");
 
         // Act & Assert
-        InvokeAzureAgentExecutor.RequiresInput(request).Should().BeTrue();
+        Assert.True(InvokeAzureAgentExecutor.RequiresInput(request));
     }
 
     [Fact]
@@ -91,7 +90,7 @@ public sealed class PortableValuePredicateTests
         PortableValue wrapped = new(request);
 
         // Act & Assert
-        InvokeAzureAgentExecutor.RequiresInput(wrapped).Should().BeTrue();
+        Assert.True(InvokeAzureAgentExecutor.RequiresInput(wrapped));
     }
 
     [Fact]
@@ -101,7 +100,7 @@ public sealed class PortableValuePredicateTests
         ActionExecutorResult result = new("test");
 
         // Act & Assert
-        InvokeAzureAgentExecutor.RequiresInput(result).Should().BeFalse();
+        Assert.False(InvokeAzureAgentExecutor.RequiresInput(result));
     }
 
     [Fact]
@@ -111,7 +110,7 @@ public sealed class PortableValuePredicateTests
         ActionExecutorResult result = new("test");
 
         // Act & Assert
-        InvokeAzureAgentExecutor.RequiresNothing(result).Should().BeTrue();
+        Assert.True(InvokeAzureAgentExecutor.RequiresNothing(result));
     }
 
     [Fact]
@@ -122,7 +121,7 @@ public sealed class PortableValuePredicateTests
         PortableValue wrapped = new(result);
 
         // Act & Assert
-        InvokeAzureAgentExecutor.RequiresNothing(wrapped).Should().BeTrue();
+        Assert.True(InvokeAzureAgentExecutor.RequiresNothing(wrapped));
     }
 
     [Fact]
@@ -132,7 +131,7 @@ public sealed class PortableValuePredicateTests
         ExternalInputRequest request = new("test prompt");
 
         // Act & Assert
-        InvokeAzureAgentExecutor.RequiresNothing(request).Should().BeFalse();
+        Assert.False(InvokeAzureAgentExecutor.RequiresNothing(request));
     }
 
     #endregion
@@ -147,7 +146,7 @@ public sealed class PortableValuePredicateTests
         PortableValue wrapped = new(request);
 
         // Act & Assert
-        InvokeMcpToolExecutor.RequiresInput(wrapped).Should().BeTrue();
+        Assert.True(InvokeMcpToolExecutor.RequiresInput(wrapped));
     }
 
     [Fact]
@@ -158,7 +157,7 @@ public sealed class PortableValuePredicateTests
         PortableValue wrapped = new(result);
 
         // Act & Assert
-        InvokeMcpToolExecutor.RequiresNothing(wrapped).Should().BeTrue();
+        Assert.True(InvokeMcpToolExecutor.RequiresNothing(wrapped));
     }
 
     #endregion
@@ -173,7 +172,7 @@ public sealed class PortableValuePredicateTests
         PortableValue wrapped = new(result);
 
         // Act & Assert
-        QuestionExecutor.IsComplete(wrapped).Should().BeTrue();
+        Assert.True(QuestionExecutor.IsComplete(wrapped));
     }
 
     [Fact]
@@ -184,7 +183,7 @@ public sealed class PortableValuePredicateTests
         PortableValue wrapped = new(result);
 
         // Act & Assert
-        QuestionExecutor.IsComplete(wrapped).Should().BeFalse();
+        Assert.False(QuestionExecutor.IsComplete(wrapped));
     }
 
     #endregion

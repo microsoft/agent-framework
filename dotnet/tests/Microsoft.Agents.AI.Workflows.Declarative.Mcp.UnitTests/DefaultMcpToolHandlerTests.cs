@@ -7,7 +7,6 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Protocol;
 
@@ -27,7 +26,7 @@ public sealed class DefaultMcpToolHandlerTests
         DefaultMcpToolHandler handler = new();
 
         // Assert
-        handler.Should().NotBeNull();
+        Assert.NotNull(handler);
         await handler.DisposeAsync();
     }
 
@@ -38,7 +37,7 @@ public sealed class DefaultMcpToolHandlerTests
         DefaultMcpToolHandler handler = new(httpClientProvider: null);
 
         // Assert
-        handler.Should().NotBeNull();
+        Assert.NotNull(handler);
         await handler.DisposeAsync();
     }
 
@@ -52,7 +51,7 @@ public sealed class DefaultMcpToolHandlerTests
         DefaultMcpToolHandler handler = new(httpClientProvider: ProviderAsync);
 
         // Assert
-        handler.Should().NotBeNull();
+        Assert.NotNull(handler);
         await handler.DisposeAsync();
     }
 
@@ -67,10 +66,10 @@ public sealed class DefaultMcpToolHandlerTests
         DefaultMcpToolHandler handler = new();
 
         // Act
-        Func<Task> act = async () => await handler.DisposeAsync();
+        async Task actAsync() => await handler.DisposeAsync();
 
         // Assert
-        await act.Should().NotThrowAsync();
+        Assert.Null(await Record.ExceptionAsync(actAsync));
     }
 
     [Fact]
@@ -81,10 +80,10 @@ public sealed class DefaultMcpToolHandlerTests
 
         // Act
         await handler.DisposeAsync();
-        Func<Task> act = async () => await handler.DisposeAsync();
+        async Task actAsync() => await handler.DisposeAsync();
 
         // Assert - Second dispose should throw ObjectDisposedException from the semaphore
-        await act.Should().ThrowAsync<ObjectDisposedException>();
+        await Assert.ThrowsAsync<ObjectDisposedException>(actAsync);
     }
 
     #endregion
@@ -128,8 +127,8 @@ public sealed class DefaultMcpToolHandlerTests
         }
 
         // Assert
-        providerCalled.Should().BeTrue();
-        capturedServerUrl.Should().Be("http://localhost:12345/mcp");
+        Assert.True(providerCalled);
+        Assert.Equal("http://localhost:12345/mcp", capturedServerUrl);
     }
 
     [Fact]
@@ -170,7 +169,7 @@ public sealed class DefaultMcpToolHandlerTests
         }
 
         // Assert
-        providerCalled.Should().BeTrue();
+        Assert.True(providerCalled);
     }
 
     #endregion
@@ -216,7 +215,7 @@ public sealed class DefaultMcpToolHandlerTests
             }
 
             // Assert - Provider is called each time because McpClient creation fails before caching
-            providerCallCount.Should().Be(2);
+            Assert.Equal(2, providerCallCount);
         }
         finally
         {
@@ -260,7 +259,7 @@ public sealed class DefaultMcpToolHandlerTests
             }
 
             // Assert - Provider should be called once per unique server URL
-            providerCallCount.Should().Be(2);
+            Assert.Equal(2, providerCallCount);
         }
         finally
         {
@@ -311,7 +310,7 @@ public sealed class DefaultMcpToolHandlerTests
             }
 
             // Assert - Different headers should create different cache keys
-            providerCallCount.Should().Be(2);
+            Assert.Equal(2, providerCallCount);
         }
         finally
         {
@@ -330,7 +329,7 @@ public sealed class DefaultMcpToolHandlerTests
         string result = DefaultMcpToolHandler.ComputeHeadersHash(null);
 
         // Assert
-        result.Should().BeEmpty();
+        Assert.Equal(string.Empty, result);
     }
 
     [Fact]
@@ -340,7 +339,7 @@ public sealed class DefaultMcpToolHandlerTests
         string result = DefaultMcpToolHandler.ComputeHeadersHash(new Dictionary<string, string>());
 
         // Assert
-        result.Should().BeEmpty();
+        Assert.Equal(string.Empty, result);
     }
 
     [Fact]
@@ -363,7 +362,7 @@ public sealed class DefaultMcpToolHandlerTests
         string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
 
         // Assert
-        hash1.Should().Be(hash2);
+        Assert.Equal(hash2, hash1);
     }
 
     [Fact]
@@ -378,7 +377,7 @@ public sealed class DefaultMcpToolHandlerTests
         string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
 
         // Assert
-        hash1.Should().Be(hash2);
+        Assert.Equal(hash2, hash1);
     }
 
     [Fact]
@@ -393,7 +392,7 @@ public sealed class DefaultMcpToolHandlerTests
         string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
 
         // Assert
-        hash1.Should().NotBe(hash2);
+        Assert.NotEqual(hash2, hash1);
     }
 
     [Fact]
@@ -408,7 +407,7 @@ public sealed class DefaultMcpToolHandlerTests
         string hash2 = DefaultMcpToolHandler.ComputeHeadersHash(headers2);
 
         // Assert
-        hash1.Should().NotBe(hash2);
+        Assert.NotEqual(hash2, hash1);
     }
 
     #endregion
@@ -433,7 +432,7 @@ public sealed class DefaultMcpToolHandlerTests
         var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "conn", headers);
 
         // Assert
-        key1.Should().Be(key2);
+        Assert.Equal(key2, key1);
     }
 
     [Fact]
@@ -444,9 +443,9 @@ public sealed class DefaultMcpToolHandlerTests
         var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label", "connection-b", null);
 
         // Assert
-        key1.Should().NotBe(key2);
-        key1.Connection.Should().Be("connection-a");
-        key2.Connection.Should().Be("connection-b");
+        Assert.NotEqual(key2, key1);
+        Assert.Equal("connection-a", key1.Connection);
+        Assert.Equal("connection-b", key2.Connection);
     }
 
     [Fact]
@@ -457,9 +456,9 @@ public sealed class DefaultMcpToolHandlerTests
         var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", "label-b", null, null);
 
         // Assert
-        key1.Should().NotBe(key2);
-        key1.Label.Should().Be("label-a");
-        key2.Label.Should().Be("label-b");
+        Assert.NotEqual(key2, key1);
+        Assert.Equal("label-a", key1.Label);
+        Assert.Equal("label-b", key2.Label);
     }
 
     [Fact]
@@ -471,7 +470,7 @@ public sealed class DefaultMcpToolHandlerTests
         var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/tools", null, null, null);
 
         // Assert
-        key1.Should().NotBe(key2);
+        Assert.NotEqual(key2, key1);
     }
 
     [Fact]
@@ -486,8 +485,8 @@ public sealed class DefaultMcpToolHandlerTests
         var key2 = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", null, null, headers2);
 
         // Assert — header value case must propagate into the cache key
-        key1.Should().NotBe(key2);
-        key1.HeadersHash.Should().NotBe(key2.HeadersHash);
+        Assert.NotEqual(key2, key1);
+        Assert.NotEqual(key2.HeadersHash, key1.HeadersHash);
     }
 
     [Fact]
@@ -497,9 +496,9 @@ public sealed class DefaultMcpToolHandlerTests
         var key = DefaultMcpToolHandler.BuildCacheKey("http://localhost/mcp", null, null, null);
 
         // Assert — verifies null-safety contract callers rely on
-        key.Label.Should().BeEmpty();
-        key.Connection.Should().BeEmpty();
-        key.HeadersHash.Should().BeEmpty();
+        Assert.Equal(string.Empty, key.Label);
+        Assert.Equal(string.Empty, key.Connection);
+        Assert.Equal(string.Empty, key.HeadersHash);
     }
 
     #endregion
@@ -513,7 +512,7 @@ public sealed class DefaultMcpToolHandlerTests
         bool result = DefaultMcpToolHandler.IsListToolsToolName(DefaultMcpToolHandler.ListToolsToolName);
 
         // Assert
-        result.Should().BeTrue();
+        Assert.True(result);
     }
 
     [Fact]
@@ -523,7 +522,7 @@ public sealed class DefaultMcpToolHandlerTests
         bool result = DefaultMcpToolHandler.IsListToolsToolName("search");
 
         // Assert
-        result.Should().BeFalse();
+        Assert.False(result);
     }
 
     [Fact]
@@ -535,7 +534,7 @@ public sealed class DefaultMcpToolHandlerTests
         try
         {
             // Act
-            Func<Task> act = async () => await handler.InvokeToolAsync(
+            async Task actAsync() => await handler.InvokeToolAsync(
                 serverUrl: "http://localhost:12345/mcp",
                 serverLabel: "test",
                 toolName: DefaultMcpToolHandler.ListToolsToolName,
@@ -544,8 +543,8 @@ public sealed class DefaultMcpToolHandlerTests
                 connectionName: null);
 
             // Assert
-            await act.Should().ThrowAsync<ArgumentException>()
-                .WithMessage("*does not accept tool arguments*");
+            ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(actAsync);
+            Assert.Contains("does not accept tool arguments", exception.Message);
         }
         finally
         {
@@ -580,12 +579,12 @@ public sealed class DefaultMcpToolHandlerTests
         McpServerToolResultContent result = DefaultMcpToolHandler.CreateListToolsResultContent([tool]);
 
         // Assert
-        TextContent text = result.Outputs.Should().ContainSingle().Subject.Should().BeOfType<TextContent>().Subject;
+        TextContent text = Assert.IsType<TextContent>(Assert.Single(result.Outputs ?? []));
         using JsonDocument document = JsonDocument.Parse(text.Text);
         JsonElement listedTool = document.RootElement.GetProperty("tools")[0];
-        listedTool.GetProperty("name").GetString().Should().Be("search");
-        listedTool.GetProperty("description").GetString().Should().Be("Searches documentation.");
-        listedTool.GetProperty("inputSchema").GetProperty("properties").GetProperty("query").GetProperty("type").GetString().Should().Be("string");
+        Assert.Equal("search", listedTool.GetProperty("name").GetString());
+        Assert.Equal("Searches documentation.", listedTool.GetProperty("description").GetString());
+        Assert.Equal("string", listedTool.GetProperty("inputSchema").GetProperty("properties").GetProperty("query").GetProperty("type").GetString());
     }
 
     #endregion
@@ -599,7 +598,7 @@ public sealed class DefaultMcpToolHandlerTests
         DefaultMcpToolHandler handler = new();
 
         // Assert
-        handler.Should().BeAssignableTo<IMcpToolHandler>();
+        Assert.IsAssignableFrom<IMcpToolHandler>(handler);
         await handler.DisposeAsync();
     }
 
@@ -610,7 +609,7 @@ public sealed class DefaultMcpToolHandlerTests
         DefaultMcpToolHandler handler = new();
 
         // Assert
-        handler.Should().BeAssignableTo<IAsyncDisposable>();
+        Assert.IsAssignableFrom<IAsyncDisposable>(handler);
         await handler.DisposeAsync();
     }
 
@@ -628,9 +627,9 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        TextContent textContent = result.Should().BeOfType<TextContent>().Subject;
-        textContent.Text.Should().Be("hello world");
-        textContent.RawRepresentation.Should().BeSameAs(block);
+        TextContent textContent = Assert.IsType<TextContent>(result);
+        Assert.Equal("hello world", textContent.Text);
+        Assert.Same(block, textContent.RawRepresentation);
     }
 
     [Fact]
@@ -643,11 +642,11 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
-        dataContent.MediaType.Should().Be("image/png");
-        dataContent.Uri.Should().Be("data:image/png;base64,");
-        dataContent.Data.IsEmpty.Should().BeTrue();
-        dataContent.RawRepresentation.Should().BeSameAs(block);
+        DataContent dataContent = Assert.IsType<DataContent>(result);
+        Assert.Equal("image/png", dataContent.MediaType);
+        Assert.Equal("data:image/png;base64,", dataContent.Uri);
+        Assert.True(dataContent.Data.IsEmpty);
+        Assert.Same(block, dataContent.RawRepresentation);
     }
 
     [Fact]
@@ -663,11 +662,11 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
-        dataContent.MediaType.Should().Be("image/png");
-        dataContent.Data.ToArray().Should().BeEquivalentTo(expectedDecoded);
-        dataContent.Uri.Should().Be($"data:image/png;base64,{Base64Payload}");
-        dataContent.RawRepresentation.Should().BeSameAs(block);
+        DataContent dataContent = Assert.IsType<DataContent>(result);
+        Assert.Equal("image/png", dataContent.MediaType);
+        Assert.Equivalent(expectedDecoded, dataContent.Data.ToArray());
+        Assert.Equal($"data:image/png;base64,{Base64Payload}", dataContent.Uri);
+        Assert.Same(block, dataContent.RawRepresentation);
     }
 
     [Fact]
@@ -680,11 +679,11 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
-        dataContent.MediaType.Should().Be("audio/wav");
-        dataContent.Uri.Should().Be("data:audio/wav;base64,");
-        dataContent.Data.IsEmpty.Should().BeTrue();
-        dataContent.RawRepresentation.Should().BeSameAs(block);
+        DataContent dataContent = Assert.IsType<DataContent>(result);
+        Assert.Equal("audio/wav", dataContent.MediaType);
+        Assert.Equal("data:audio/wav;base64,", dataContent.Uri);
+        Assert.True(dataContent.Data.IsEmpty);
+        Assert.Same(block, dataContent.RawRepresentation);
     }
 
     [Fact]
@@ -700,11 +699,11 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
-        dataContent.MediaType.Should().Be("audio/wav");
-        dataContent.Data.ToArray().Should().BeEquivalentTo(expectedDecoded);
-        dataContent.Uri.Should().Be($"data:audio/wav;base64,{Base64Payload}");
-        dataContent.RawRepresentation.Should().BeSameAs(block);
+        DataContent dataContent = Assert.IsType<DataContent>(result);
+        Assert.Equal("audio/wav", dataContent.MediaType);
+        Assert.Equivalent(expectedDecoded, dataContent.Data.ToArray());
+        Assert.Equal($"data:audio/wav;base64,{Base64Payload}", dataContent.Uri);
+        Assert.Same(block, dataContent.RawRepresentation);
     }
 
     [Fact]
@@ -725,9 +724,9 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        TextContent textContent = result.Should().BeOfType<TextContent>().Subject;
-        textContent.Text.Should().Be("embedded text payload");
-        textContent.RawRepresentation.Should().BeSameAs(block);
+        TextContent textContent = Assert.IsType<TextContent>(result);
+        Assert.Equal("embedded text payload", textContent.Text);
+        Assert.Same(block, textContent.RawRepresentation);
     }
 
     [Fact]
@@ -751,11 +750,11 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
-        dataContent.MediaType.Should().Be("application/zip");
-        dataContent.Data.ToArray().Should().BeEquivalentTo(expectedDecoded);
-        dataContent.Uri.Should().Be($"data:application/zip;base64,{Base64Payload}");
-        dataContent.RawRepresentation.Should().BeSameAs(block);
+        DataContent dataContent = Assert.IsType<DataContent>(result);
+        Assert.Equal("application/zip", dataContent.MediaType);
+        Assert.Equivalent(expectedDecoded, dataContent.Data.ToArray());
+        Assert.Equal($"data:application/zip;base64,{Base64Payload}", dataContent.Uri);
+        Assert.Same(block, dataContent.RawRepresentation);
     }
 
     [Fact]
@@ -773,10 +772,10 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        UriContent uriContent = result.Should().BeOfType<UriContent>().Subject;
-        uriContent.Uri.ToString().Should().Be("https://example.com/resource.bin");
-        uriContent.MediaType.Should().Be("application/zip");
-        uriContent.RawRepresentation.Should().BeSameAs(block);
+        UriContent uriContent = Assert.IsType<UriContent>(result);
+        Assert.Equal("https://example.com/resource.bin", uriContent.Uri.ToString());
+        Assert.Equal("application/zip", uriContent.MediaType);
+        Assert.Same(block, uriContent.RawRepresentation);
     }
 
     [Fact]
@@ -794,9 +793,9 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        UriContent uriContent = result.Should().BeOfType<UriContent>().Subject;
-        uriContent.Uri.ToString().Should().Be("https://example.com/resource");
-        uriContent.MediaType.Should().Be("application/octet-stream");
+        UriContent uriContent = Assert.IsType<UriContent>(result);
+        Assert.Equal("https://example.com/resource", uriContent.Uri.ToString());
+        Assert.Equal("application/octet-stream", uriContent.MediaType);
     }
 
     [Fact]
@@ -819,11 +818,11 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        UriContent uriContent = result.Should().BeOfType<UriContent>().Subject;
-        uriContent.AdditionalProperties.Should().NotBeNull();
-        uriContent.AdditionalProperties!.Should().HaveCount(2);
-        uriContent.AdditionalProperties["traceId"].Should().BeSameAs(block.Meta!["traceId"]);
-        uriContent.AdditionalProperties["priority"].Should().BeSameAs(block.Meta["priority"]);
+        UriContent uriContent = Assert.IsType<UriContent>(result);
+        Assert.NotNull(uriContent.AdditionalProperties);
+        Assert.Equal(2, uriContent.AdditionalProperties.Count);
+        Assert.Same(block.Meta!["traceId"], uriContent.AdditionalProperties["traceId"]);
+        Assert.Same(block.Meta["priority"], uriContent.AdditionalProperties["priority"]);
     }
 
     [Fact]
@@ -841,9 +840,9 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        UriContent uriContent = result.Should().BeOfType<UriContent>().Subject;
-        uriContent.AdditionalProperties.Should().NotBeNull();
-        uriContent.AdditionalProperties!["filename"].Should().Be("resource.bin");
+        UriContent uriContent = Assert.IsType<UriContent>(result);
+        Assert.NotNull(uriContent.AdditionalProperties);
+        Assert.Equal("resource.bin", uriContent.AdditionalProperties!["filename"]);
     }
 
 #pragma warning disable MCP9005 // Verify compatibility mapping for deprecated sampling content blocks.
@@ -863,12 +862,12 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        FunctionCallContent call = result.Should().BeOfType<FunctionCallContent>().Subject;
-        call.CallId.Should().Be("call-1");
-        call.Name.Should().Be("get_weather");
-        call.Arguments.Should().NotBeNull();
-        call.Arguments!.Should().ContainKey("city");
-        call.RawRepresentation.Should().BeSameAs(block);
+        FunctionCallContent call = Assert.IsType<FunctionCallContent>(result);
+        Assert.Equal("call-1", call.CallId);
+        Assert.Equal("get_weather", call.Name);
+        Assert.NotNull(call.Arguments);
+        Assert.Contains("city", call.Arguments!);
+        Assert.Same(block, call.RawRepresentation);
     }
 
     [Fact]
@@ -886,10 +885,10 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        FunctionResultContent functionResult = result.Should().BeOfType<FunctionResultContent>().Subject;
-        functionResult.CallId.Should().Be("call-1");
-        functionResult.Exception.Should().BeNull();
-        functionResult.RawRepresentation.Should().BeSameAs(block);
+        FunctionResultContent functionResult = Assert.IsType<FunctionResultContent>(result);
+        Assert.Equal("call-1", functionResult.CallId);
+        Assert.Null(functionResult.Exception);
+        Assert.Same(block, functionResult.RawRepresentation);
     }
 
     [Fact]
@@ -907,10 +906,10 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        FunctionResultContent functionResult = result.Should().BeOfType<FunctionResultContent>().Subject;
-        functionResult.CallId.Should().Be("call-2");
-        functionResult.Exception.Should().NotBeNull();
-        functionResult.RawRepresentation.Should().BeSameAs(block);
+        FunctionResultContent functionResult = Assert.IsType<FunctionResultContent>(result);
+        Assert.Equal("call-2", functionResult.CallId);
+        Assert.NotNull(functionResult.Exception);
+        Assert.Same(block, functionResult.RawRepresentation);
     }
 #pragma warning restore MCP9005
 
@@ -932,9 +931,9 @@ public sealed class DefaultMcpToolHandlerTests
         AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
 
         // Assert
-        result.AdditionalProperties.Should().NotBeNull();
-        result.AdditionalProperties!.Should().ContainKey("traceId");
-        result.AdditionalProperties.Should().ContainKey("priority");
+        Assert.NotNull(result.AdditionalProperties);
+        Assert.True(result.AdditionalProperties!.ContainsKey("traceId"));
+        Assert.True(result.AdditionalProperties.ContainsKey("priority"));
     }
 
     #endregion
@@ -952,7 +951,7 @@ public sealed class DefaultMcpToolHandlerTests
         OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
 
         // Assert — same origin, credential is preserved
-        request.Headers.Contains("Authorization").Should().BeTrue();
+        Assert.True(request.Headers.Contains("Authorization"));
     }
 
     [Fact]
@@ -966,7 +965,7 @@ public sealed class DefaultMcpToolHandlerTests
         OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
 
         // Assert — credential must not cross the origin boundary
-        request.Headers.Contains("Authorization").Should().BeFalse();
+        Assert.False(request.Headers.Contains("Authorization"));
     }
 
     [Fact]
@@ -980,7 +979,7 @@ public sealed class DefaultMcpToolHandlerTests
         OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
 
         // Assert
-        request.Headers.Contains("Authorization").Should().BeFalse();
+        Assert.False(request.Headers.Contains("Authorization"));
     }
 
     [Fact]
@@ -995,7 +994,7 @@ public sealed class DefaultMcpToolHandlerTests
         OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com:443/mcp"));
 
         // Assert — explicit vs implicit default port is the same origin
-        request.Headers.Contains("Authorization").Should().BeTrue();
+        Assert.True(request.Headers.Contains("Authorization"));
     }
 
     [Fact]
@@ -1007,11 +1006,11 @@ public sealed class DefaultMcpToolHandlerTests
         request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
 
         // Act
-        Action act = () => OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+        void act() => OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
 
         // Assert — does not throw and leaves the credential in place
-        act.Should().NotThrow();
-        request.Headers.Contains("Authorization").Should().BeTrue();
+        Assert.Null(Record.Exception(act));
+        Assert.True(request.Headers.Contains("Authorization"));
     }
 
     [Fact]
@@ -1025,7 +1024,7 @@ public sealed class DefaultMcpToolHandlerTests
         OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
 
         // Assert
-        request.Headers.Contains("Authorization").Should().BeFalse();
+        Assert.False(request.Headers.Contains("Authorization"));
     }
 
     [Fact]
@@ -1041,9 +1040,9 @@ public sealed class DefaultMcpToolHandlerTests
         OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
 
         // Assert — all credential-bearing headers are stripped
-        request.Headers.Contains("Authorization").Should().BeFalse();
-        request.Headers.Contains("Cookie").Should().BeFalse();
-        request.Headers.Contains("Proxy-Authorization").Should().BeFalse();
+        Assert.False(request.Headers.Contains("Authorization"));
+        Assert.False(request.Headers.Contains("Cookie"));
+        Assert.False(request.Headers.Contains("Proxy-Authorization"));
     }
 
     [Fact]
@@ -1058,8 +1057,8 @@ public sealed class DefaultMcpToolHandlerTests
         OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
 
         // Assert — only credential headers are removed; other headers are untouched
-        request.Headers.Contains("Authorization").Should().BeFalse();
-        request.Headers.Contains("X-Trace-Id").Should().BeTrue();
+        Assert.False(request.Headers.Contains("Authorization"));
+        Assert.True(request.Headers.Contains("X-Trace-Id"));
     }
 
     [Fact]
@@ -1077,8 +1076,8 @@ public sealed class DefaultMcpToolHandlerTests
         using HttpResponseMessage response = await invoker.SendAsync(request, CancellationToken.None);
 
         // Assert — the credential never reached the inner handler for the foreign origin
-        response.StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
-        inner.LastRequestHadAuthorization.Should().BeFalse();
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        Assert.False(inner.LastRequestHadAuthorization);
     }
 
     [Fact]
@@ -1096,8 +1095,8 @@ public sealed class DefaultMcpToolHandlerTests
         using HttpResponseMessage response = await invoker.SendAsync(request, CancellationToken.None);
 
         // Assert — same-origin credential flows through normally
-        response.StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
-        inner.LastRequestHadAuthorization.Should().BeTrue();
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+        Assert.True(inner.LastRequestHadAuthorization);
     }
 
     private sealed class CapturingHandler : HttpMessageHandler

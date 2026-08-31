@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Extensions.AI;
 
@@ -30,8 +29,8 @@ public class TypeIdVersionToleranceTests
     {
         TypeId id = new(typeof(Probe));
 
-        id.IsMatch(typeof(Probe)).Should().BeTrue();
-        id.IsMatch<Probe>().Should().BeTrue();
+        Assert.True(id.IsMatch(typeof(Probe)));
+        Assert.True(id.IsMatch<Probe>());
     }
 
     [Fact]
@@ -40,7 +39,7 @@ public class TypeIdVersionToleranceTests
         string assemblyName = $"{ProbeSimpleAssemblyName}, Version=99.0.0.0, Culture=neutral, PublicKeyToken=null";
         TypeId id = new(assemblyName, ProbeTypeFullName);
 
-        id.IsMatch(typeof(Probe)).Should().BeTrue("version differences in AssemblyName must not affect matching");
+        Assert.True(id.IsMatch(typeof(Probe)));
     }
 
     [Fact]
@@ -49,7 +48,7 @@ public class TypeIdVersionToleranceTests
         string assemblyName = $"{ProbeSimpleAssemblyName}, Version=99.0.0.0, Culture=en-US, PublicKeyToken=abcdef0123456789";
         TypeId id = new(assemblyName, ProbeTypeFullName);
 
-        id.IsMatch(typeof(Probe)).Should().BeTrue();
+        Assert.True(id.IsMatch(typeof(Probe)));
     }
 
     [Fact]
@@ -57,7 +56,7 @@ public class TypeIdVersionToleranceTests
     {
         TypeId id = new(ProbeSimpleAssemblyName, ProbeTypeFullName);
 
-        id.IsMatch(typeof(Probe)).Should().BeTrue();
+        Assert.True(id.IsMatch(typeof(Probe)));
     }
 
     [Fact]
@@ -67,7 +66,7 @@ public class TypeIdVersionToleranceTests
             assemblyName: "Some.Completely.Different.Assembly, Version=1.0.0.0",
             typeName: ProbeTypeFullName);
 
-        id.IsMatch(typeof(Probe)).Should().BeFalse("different simple assembly names must not match");
+        Assert.False(id.IsMatch(typeof(Probe)));
     }
 
     [Fact]
@@ -77,7 +76,7 @@ public class TypeIdVersionToleranceTests
             assemblyName: $"{ProbeSimpleAssemblyName}, Version=99.0.0.0",
             typeName: "Some.Other.Namespace.Probe");
 
-        id.IsMatch(typeof(Probe)).Should().BeFalse("different type names must not match");
+        Assert.False(id.IsMatch(typeof(Probe)));
     }
 
     [Fact]
@@ -87,7 +86,7 @@ public class TypeIdVersionToleranceTests
             assemblyName: $"{ProbeSimpleAssemblyName}, Version=not-a-version, Culture=??, PublicKeyToken=???",
             typeName: ProbeTypeFullName);
 
-        id.IsMatch(typeof(Probe)).Should().BeTrue("the substring fallback recovers the simple name when AssemblyName parsing fails");
+        Assert.True(id.IsMatch(typeof(Probe)));
     }
 
     [Fact]
@@ -97,7 +96,7 @@ public class TypeIdVersionToleranceTests
             assemblyName: $"{typeof(object).Assembly.GetName().Name}, Version=99.0.0.0",
             typeName: typeof(object).FullName!);
 
-        id.IsMatchPolymorphic(typeof(Probe)).Should().BeTrue("IsMatchPolymorphic uses the same comparison rules as IsMatch");
+        Assert.True(id.IsMatchPolymorphic(typeof(Probe)));
     }
 
     [Fact]
@@ -106,9 +105,9 @@ public class TypeIdVersionToleranceTests
         TypeId v1 = new($"{ProbeSimpleAssemblyName}, Version=1.0.0.0", ProbeTypeFullName);
         TypeId v2 = new($"{ProbeSimpleAssemblyName}, Version=2.0.0.0", ProbeTypeFullName);
 
-        v1.Equals(v2).Should().BeTrue();
-        (v1 == v2).Should().BeTrue();
-        v1.GetHashCode().Should().Be(v2.GetHashCode());
+        Assert.True(v1.Equals(v2));
+        Assert.True(v1 == v2);
+        Assert.Equal(v2.GetHashCode(), v1.GetHashCode());
     }
 
     [Fact]
@@ -117,7 +116,7 @@ public class TypeIdVersionToleranceTests
         TypeId a = new($"{ProbeSimpleAssemblyName}, Version=1.0.0.0", ProbeTypeFullName);
         TypeId b = new("Some.Other.Assembly, Version=1.0.0.0", ProbeTypeFullName);
 
-        a.Equals(b).Should().BeFalse();
+        Assert.False(a.Equals(b));
     }
 
     [Fact]
@@ -126,7 +125,7 @@ public class TypeIdVersionToleranceTests
         TypeId a = new($"{ProbeSimpleAssemblyName}, Version=1.0.0.0", ProbeTypeFullName);
         TypeId b = new($"{ProbeSimpleAssemblyName}, Version=1.0.0.0", "Some.Other.Type");
 
-        a.Equals(b).Should().BeFalse();
+        Assert.False(a.Equals(b));
     }
 
     [Fact]
@@ -138,11 +137,11 @@ public class TypeIdVersionToleranceTests
             typeName: ProbeTypeFullName);
 
         Dictionary<TypeId, string> map = new() { [live] = "value" };
-        map.TryGetValue(mutated, out string? value).Should().BeTrue();
-        value.Should().Be("value");
+        Assert.True(map.TryGetValue(mutated, out string? value));
+        Assert.Equal("value", value);
 
         HashSet<TypeId> set = new() { live };
-        set.Contains(mutated).Should().BeTrue();
+        Assert.Contains(mutated, set);
     }
 
     [Fact]
@@ -151,8 +150,8 @@ public class TypeIdVersionToleranceTests
         TypeId a = new(typeof(Probe));
         TypeId b = new(typeof(Probe));
 
-        a.Equals(b).Should().BeTrue();
-        a.GetHashCode().Should().Be(b.GetHashCode());
+        Assert.True(a.Equals(b));
+        Assert.Equal(b.GetHashCode(), a.GetHashCode());
     }
 
     [Fact]
@@ -160,7 +159,7 @@ public class TypeIdVersionToleranceTests
     {
         const string TypeName = "Microsoft.Agents.AI.Workflows.Checkpointing.TypeId";
 
-        TypeId.NormalizeTypeName(TypeName).Should().BeSameAs(TypeName);
+        Assert.Same(TypeName, TypeId.NormalizeTypeName(TypeName));
     }
 
     [Fact]
@@ -169,7 +168,7 @@ public class TypeIdVersionToleranceTests
         const string TypeName = "System.Collections.Generic.List`1[[Some.Type, Some.Asm, Version=1.2.3.4, Culture=neutral, PublicKeyToken=abcdef0123456789]]";
         const string Expected = "System.Collections.Generic.List`1[[Some.Type, Some.Asm]]";
 
-        TypeId.NormalizeTypeName(TypeName).Should().Be(Expected);
+        Assert.Equal(Expected, TypeId.NormalizeTypeName(TypeName));
     }
 
     [Fact]
@@ -178,7 +177,7 @@ public class TypeIdVersionToleranceTests
         const string TypeName = "System.Collections.Generic.Dictionary`2[[System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089],[System.Collections.Generic.List`1[[Some.Type, Some.Asm, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null]], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089]]";
         const string Expected = "System.Collections.Generic.Dictionary`2[[System.String, mscorlib],[System.Collections.Generic.List`1[[Some.Type, Some.Asm]], mscorlib]]";
 
-        TypeId.NormalizeTypeName(TypeName).Should().Be(Expected);
+        Assert.Equal(Expected, TypeId.NormalizeTypeName(TypeName));
     }
 
     [Fact]
@@ -194,7 +193,7 @@ public class TypeIdVersionToleranceTests
 
         TypeId id = new(simpleAssemblyName, mutatedTypeName);
 
-        id.IsMatch(live).Should().BeTrue("version differences inside generic argument names must not affect matching");
+        Assert.True(id.IsMatch(live));
     }
 
     [Fact]
@@ -208,8 +207,8 @@ public class TypeIdVersionToleranceTests
         string mutatedTypeName = $"System.Collections.Generic.List`1[[Microsoft.Extensions.AI.ChatMessage, {innerArgSimpleName}, Version=99.0.0.0, Culture=neutral, PublicKeyToken=null]]";
         TypeId fromMutated = new(simpleAssemblyName, mutatedTypeName);
 
-        fromLive.Equals(fromMutated).Should().BeTrue();
-        fromLive.GetHashCode().Should().Be(fromMutated.GetHashCode());
+        Assert.True(fromLive.Equals(fromMutated));
+        Assert.Equal(fromMutated.GetHashCode(), fromLive.GetHashCode());
     }
 
     [Fact]
@@ -224,7 +223,7 @@ public class TypeIdVersionToleranceTests
         TypeId fromMutated = new(simpleAssemblyName, mutatedTypeName);
 
         Dictionary<TypeId, string> map = new() { [fromLive] = "value" };
-        map.TryGetValue(fromMutated, out string? value).Should().BeTrue();
-        value.Should().Be("value");
+        Assert.True(map.TryGetValue(fromMutated, out string? value));
+        Assert.Equal("value", value);
     }
 }
