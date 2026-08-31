@@ -740,7 +740,8 @@ class Workflow(DictConvertible):
             include_status_events: Whether to include status events (non-streaming only).
             function_invocation_kwargs: Keyword arguments forwarded to tool invocations in
                 subagents. Either a mapping for agent name or agent executor id to kwargs,
-                or a flat mapping of kwargs for all tool invocations.
+                or a flat mapping of kwargs for all tool invocations. To combine global and
+                executor-specific kwargs, use the ``"__global__"`` key for the global mapping.
             client_kwargs: Keyword arguments forwarded to chat client calls in
                 subagents. Either a mapping for agent name or agent executor id to kwargs,
                 or a flat mapping of kwargs for all chat client calls.
@@ -1065,7 +1066,8 @@ class Workflow(DictConvertible):
         Detects whether the provided kwargs dict uses per-executor targeting by checking
         if any top-level key matches a known executor ID in the workflow. If at least one
         key matches, all entries are treated as per-executor. Otherwise the dict is treated
-        as global kwargs that apply to every executor.
+        as global kwargs that apply to every executor. The ``"__global__"`` key can be used
+        explicitly to combine global kwargs with per-executor overrides.
 
         Args:
             kwargs: The raw invocation kwargs from the caller.
@@ -1074,8 +1076,17 @@ class Workflow(DictConvertible):
         Returns:
             A dict with either:
             - ``{"__global__": <original dict>}`` for global kwargs, or
-            - The original dict unchanged for per-executor kwargs.
+            - A mapping containing ``"__global__"`` and per-executor kwargs.
         """
+        if GLOBAL_KWARGS_KEY in kwargs:
+            global_kwargs = kwargs[GLOBAL_KWARGS_KEY]
+            if not isinstance(global_kwargs, Mapping):
+                raise ValueError(f"{GLOBAL_KWARGS_KEY} must contain a mapping of global kwargs.")
+            resolved = dict(kwargs)
+            resolved[GLOBAL_KWARGS_KEY] = dict(global_kwargs)
+            logger.info("Explicit global %s provided; applying it with any per-executor overrides.", param_name)
+            return resolved
+
         executor_ids = set(self.executors.keys())
         matched_ids = kwargs.keys() & executor_ids
         if matched_ids:

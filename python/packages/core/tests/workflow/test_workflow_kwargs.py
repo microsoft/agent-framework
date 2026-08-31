@@ -870,6 +870,33 @@ async def test_per_executor_function_invocation_kwargs_routes_to_correct_agent()
     assert agent2.captured_kwargs[0].get("function_invocation_kwargs") == {"tool_param": "value_for_agent2"}
 
 
+async def test_global_and_per_executor_function_invocation_kwargs_are_merged() -> None:
+    """Global function kwargs are merged with executor-specific overrides."""
+    agent1 = _KwargsCapturingAgent(name="agent1")
+    agent2 = _KwargsCapturingAgent(name="agent2")
+    workflow = SequentialBuilder(participants=[agent1, agent2]).build()
+
+    fi_kwargs = {
+        "__global__": {"shared": "value", "overridden": "global"},
+        "agent1": {"overridden": "agent1"},
+        "agent2": {"agent_only": True},
+    }
+
+    async for event in workflow.run("test", stream=True, function_invocation_kwargs=fi_kwargs):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    assert agent1.captured_kwargs[0].get("function_invocation_kwargs") == {
+        "shared": "value",
+        "overridden": "agent1",
+    }
+    assert agent2.captured_kwargs[0].get("function_invocation_kwargs") == {
+        "shared": "value",
+        "overridden": "global",
+        "agent_only": True,
+    }
+
+
 async def test_per_executor_kwargs_unmatched_agent_gets_none() -> None:
     """An agent not targeted in per-executor kwargs should receive None for that kwarg."""
     agent1 = _KwargsCapturingAgent(name="agent1")

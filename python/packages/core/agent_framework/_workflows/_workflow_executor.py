@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ._workflow import Workflow
 
-from ._const import GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
+from ._const import WORKFLOW_RUN_KWARGS_KEY
 from ._events import (
     WorkflowEvent,
     WorkflowRunState,
@@ -375,21 +375,18 @@ class WorkflowExecutor(Executor):
         # Get kwargs from parent workflow's State to propagate to subworkflow
         parent_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
 
-        # Extract invocation kwargs recognised by Workflow.run()
-        # The state stores resolved format (with __global__ wrapper for global kwargs).
-        # Unwrap __global__ before passing to the subworkflow so it gets re-resolved
-        # against the subworkflow's own executor IDs.
+        # Extract invocation kwargs recognised by Workflow.run(). The state stores
+        # the resolved format, which can include a global mapping and executor overrides.
+        # Pass it through so the subworkflow resolves it against its own executor IDs.
         fi_kwargs: dict[str, Any] | None = None
         ci_kwargs: dict[str, Any] | None = None
         for key in ("function_invocation_kwargs", "client_kwargs"):
             resolved = parent_kwargs.get(key)
             if isinstance(resolved, dict):
-                # Unwrap global sentinel; pass per-executor dicts as-is
-                unwrapped: dict[str, Any] = resolved.get(GLOBAL_KWARGS_KEY, resolved)  # type: ignore
                 if key == "function_invocation_kwargs":
-                    fi_kwargs = unwrapped  # type: ignore
+                    fi_kwargs = resolved
                 else:
-                    ci_kwargs = unwrapped  # type: ignore
+                    ci_kwargs = resolved
 
         # Run the sub-workflow and collect all events, passing parent kwargs
         result = await self.workflow.run(
