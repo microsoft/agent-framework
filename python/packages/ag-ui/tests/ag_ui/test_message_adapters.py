@@ -9,9 +9,11 @@ from typing import Any
 
 import pytest
 from agent_framework import Content, Message
+from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY
 
 from agent_framework_ag_ui._message_adapters import (
     agent_framework_messages_to_agui,
+    agent_framework_messages_to_agui_host_history,
     agui_messages_to_agent_framework,
     agui_messages_to_snapshot_format,
     extract_text_from_contents,
@@ -47,6 +49,107 @@ def test_agent_framework_to_agui_basic(sample_agent_framework_message):
     assert messages[0]["role"] == "user"
     assert messages[0]["content"] == "Hello"
     assert messages[0]["id"] == "msg-123"
+
+
+def test_agent_framework_to_agui_preserves_mcp_host_payload_after_reload():
+    """History conversion uses persisted MCP Host data without changing the model result."""
+    host_payload = {
+        "content": [{"type": "text", "text": "Summary"}],
+        "structuredContent": {"image_url": "https://example.test/widget.png"},
+        "isError": False,
+    }
+    tool_return = Content.from_text(
+        "Summary",
+        additional_properties={_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY: host_payload},
+    )
+    message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id="mcp-1", result=[tool_return])],
+        message_id="message-1",
+    )
+    restored_message = Message.from_dict(message.to_dict())
+
+    outbound = agent_framework_messages_to_agui([restored_message])
+    converted = agent_framework_messages_to_agui_host_history([restored_message])
+
+    assert restored_message.contents[0].result == "Summary"
+    assert outbound[0]["content"] == "Summary"
+    assert "_agentFrameworkMcpResult" not in outbound[0]
+    assert json.loads(converted[0]["content"]) == host_payload
+    assert converted[0]["toolCallId"] == "mcp-1"
+
+    provider_messages = agui_messages_to_agent_framework(converted)
+    assert provider_messages[0].contents[0].result == "Summary"
+
+    converted[0].pop("_agentFrameworkModelContent")
+    fallback_provider_messages = agui_messages_to_agent_framework(converted)
+    assert fallback_provider_messages[0].contents[0].result == "Summary"
+
+
+def test_host_history_conversion_is_public_and_bounds_cumulative_payloads():
+    """The supported converter keeps newest Host data within its aggregate budget."""
+    from agent_framework.ag_ui import agent_framework_messages_to_agui_host_history as namespace_converter
+
+    from agent_framework_ag_ui import agent_framework_messages_to_agui_host_history as package_converter
+
+    messages: list[Message] = []
+    for index in range(2):
+        model_text = f"Summary {index}"
+        host_payload = {
+            "content": [{"type": "text", "text": model_text}],
+            "structuredContent": {"widget_data": "x" * 64, "index": index},
+            "isError": False,
+        }
+        item = Content.from_text(
+            model_text,
+            additional_properties={_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY: host_payload},
+        )
+        messages.append(
+            Message(
+                role="tool",
+                contents=[Content.from_function_result(call_id=f"mcp-{index}", result=[item])],
+            )
+        )
+
+    unbounded = package_converter(messages, max_host_payload_history_size_bytes=10_000)
+    converted = package_converter(
+        messages,
+        max_host_payload_history_size_bytes=len(unbounded[1]["content"].encode("utf-8")),
+    )
+
+    assert namespace_converter is package_converter
+    assert converted[0]["content"] == "Summary 0"
+    assert converted[0]["_agentFrameworkHostPayloadOmitted"] is True
+    assert json.loads(converted[1]["content"])["structuredContent"]["index"] == 1
+
+
+def test_agui_mcp_fallback_requires_provenance_and_hides_error_details():
+    """Only marked MCP history is reconstructed, and errors keep their generic model projection."""
+    lookalike_payload = {
+        "content": [{"type": "text", "text": "ordinary nested text"}],
+        "isError": False,
+    }
+    ordinary = agui_messages_to_agent_framework(
+        [{"role": "tool", "toolCallId": "ordinary", "content": json.dumps(lookalike_payload)}]
+    )
+    assert json.loads(ordinary[0].contents[0].result) == lookalike_payload
+
+    mcp_error = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "tool",
+                "toolCallId": "mcp-error",
+                "content": json.dumps(
+                    {
+                        "content": [{"type": "text", "text": "secret server detail"}],
+                        "isError": True,
+                    }
+                ),
+                "_agentFrameworkMcpResult": True,
+            }
+        ]
+    )
+    assert mcp_error[0].contents[0].result == "Error: Function failed."
 
 
 def test_agent_framework_to_agui_normalizes_dict_roles():

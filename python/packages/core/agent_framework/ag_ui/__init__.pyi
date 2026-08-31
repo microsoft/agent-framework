@@ -12,6 +12,7 @@ from agent_framework_ag_ui import (
     SnapshotScopeResolver,
     __version__,
     add_agent_framework_fastapi_endpoint,
+    agent_framework_messages_to_agui_host_history,
     state_update,
 )
 
@@ -27,5 +28,6 @@ __all__ = [
     "SnapshotScopeResolver",
     "__version__",
     "add_agent_framework_fastapi_endpoint",
+    "agent_framework_messages_to_agui_host_history",
     "state_update",
 ]

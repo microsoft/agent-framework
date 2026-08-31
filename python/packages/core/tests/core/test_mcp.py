@@ -31,15 +31,22 @@ from agent_framework import (
 )
 from agent_framework._feature_stage import _WARNED_FEATURES, ExperimentalFeature, ExperimentalWarning
 from agent_framework._mcp import (
+    _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY,
     MCPTool,
     _build_prefixed_mcp_name,
     _get_input_model_from_mcp_prompt,
+    _json_size_exceeds,
+    _make_mcp_tool_caller,
+    _mcp_tool_result_host_payload,
+    _MCPToolResultException,
     _normalize_additional_tool_argument_names,
     _normalize_mcp_name,
     _should_propagate_cancelled_error,
+    _with_mcp_tool_result_host_payload,
     logger,
 )
 from agent_framework._middleware import FunctionMiddlewarePipeline
+from agent_framework._tools import _function_execution_error_result, normalize_function_invocation_configuration
 from agent_framework.exceptions import ToolException, ToolExecutionException
 
 # Integration test skip condition
@@ -58,6 +65,12 @@ def _mcp_result_to_text(result: str | list[Content]) -> str:
 
 
 _HELPER_MCP_TOOL = MCPTool(name="helper")  # type: ignore[abstract]
+
+
+async def _call_generated_mcp_tool(tool: MCPTool, tool_name: str, **kwargs: Any) -> str | list[Content]:
+    function = FunctionTool(name=tool_name, description="", func=None, input_model={})
+    context = FunctionInvocationContext(function=function, arguments=kwargs)
+    return await _make_mcp_tool_caller(tool, tool_name)(context, **kwargs)
 
 
 def _reset_progressive_mcp_warning_state() -> None:
@@ -489,6 +502,153 @@ def test_parse_tool_result_from_mcp_structured_content_with_text():
     assert result[1].text is not None
     parsed = json.loads(result[1].text)
     assert parsed == {"data": [1, 2, 3]}
+
+
+def test_parse_tool_result_from_mcp_preserves_complete_host_payload_once():
+    """The complete MCP result survives model parsing and Content persistence."""
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Summary")],
+        structuredContent={"image_url": "https://example.test/widget.png"},
+        isError=False,
+        _meta={"widget": "image"},
+    )
+
+    model_items = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
+    parsed = _with_mcp_tool_result_host_payload(model_items, mcp_result, max_size_bytes=None)
+    expected_host_payload = {
+        "_meta": {"widget": "image"},
+        "content": [{"type": "text", "text": "Summary"}],
+        "structuredContent": {"image_url": "https://example.test/widget.png"},
+        "isError": False,
+    }
+
+    assert parsed[0].additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY] == expected_host_payload
+    assert _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY not in parsed[1].additional_properties
+    function_result = Content.from_function_result(call_id="call-1", result=parsed)
+    restored = Content.from_dict(function_result.to_dict())
+
+    assert restored.result == function_result.result
+    assert restored.items is not None
+    assert restored.items[0].additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY] == expected_host_payload
+    assert _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY not in restored.items[1].additional_properties
+
+
+async def test_custom_mcp_result_parser_preserves_host_payload_and_model_projection() -> None:
+    """A custom parser controls model content while core retains the complete Host payload once."""
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Server summary")],
+        structuredContent={"image_url": "https://example.test/widget.png"},
+    )
+    tool = MCPTool(name="helper", parse_tool_results=lambda _: "Custom model summary")  # type: ignore[abstract]
+    tool.session = Mock()
+    tool.session.call_tool = AsyncMock(return_value=mcp_result)
+
+    direct_result = await tool.call_tool("widget")
+    parsed = await _call_generated_mcp_tool(tool, "widget")
+
+    assert direct_result == "Custom model summary"
+    assert isinstance(parsed, list)
+    assert [item.text for item in parsed] == ["Custom model summary"]
+    assert parsed[0].additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["structuredContent"] == {
+        "image_url": "https://example.test/widget.png"
+    }
+
+
+async def test_oversized_mcp_host_payload_is_omitted_without_changing_model_result(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An oversized Host payload is not retained, while custom model content and metadata survive."""
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Server summary")],
+        structuredContent={"widget_data": "x" * 1024},
+        _meta={"source": "oversized"},
+    )
+    tool = MCPTool(  # type: ignore[abstract]
+        name="helper",
+        parse_tool_results=lambda _: "Bounded model summary",
+        max_host_payload_size_bytes=128,
+    )
+    tool.session = Mock()
+    tool.session.call_tool = AsyncMock(return_value=mcp_result)
+
+    with caplog.at_level(logging.WARNING):
+        parsed = await _call_generated_mcp_tool(tool, "widget")
+
+    assert isinstance(parsed, list)
+    assert [item.text for item in parsed] == ["Bounded model summary"]
+    assert parsed[0].additional_properties["_meta"] == {"source": "oversized"}
+    assert _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY not in parsed[0].additional_properties
+    assert "Omitting MCP Host payload" in caplog.text
+
+
+def test_mcp_host_payload_size_limit_must_be_positive_or_none() -> None:
+    with pytest.raises(ValueError, match="positive or None"):
+        MCPTool(name="invalid", max_host_payload_size_bytes=0)  # type: ignore[abstract]
+
+    unlimited = MCPTool(name="unlimited", max_host_payload_size_bytes=None)  # type: ignore[abstract]
+    assert unlimited.max_host_payload_size_bytes is None
+
+
+def test_mcp_host_payload_size_preflight_matches_json_and_aborts_before_dump(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text='Escaped "\n\u2603" text')],
+        structuredContent={"widget_data": "x" * 1024},
+    )
+    encoded_size = len(json.dumps(mcp_result.model_dump(by_alias=True, exclude_none=True)).encode("utf-8"))
+
+    assert _json_size_exceeds(mcp_result, encoded_size - 1) is True
+    assert _json_size_exceeds(mcp_result, encoded_size) is False
+
+    uri_result = types.CallToolResult(
+        content=[
+            types.ResourceLink(
+                type="resource_link",
+                uri=AnyUrl("file:///abc"),
+                name="resource",
+            )
+        ]
+    )
+    uri_payload = _mcp_tool_result_host_payload(uri_result, max_size_bytes=None)
+    assert uri_payload is not None
+    uri_size = len(json.dumps(uri_payload).encode("utf-8"))
+    assert _mcp_tool_result_host_payload(uri_result, max_size_bytes=uri_size) == uri_payload
+    assert _mcp_tool_result_host_payload(uri_result, max_size_bytes=uri_size - 1) is None
+
+    def fail_if_dumped(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("oversized payload must be rejected before model_dump")
+
+    monkeypatch.setattr(types.CallToolResult, "model_dump", fail_if_dumped)
+    assert _mcp_tool_result_host_payload(mcp_result, max_size_bytes=128) is None
+
+
+async def test_mcp_error_preserves_complete_host_payload_on_function_result():
+    """An MCP error keeps its Host payload after generic function error conversion."""
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Widget failed")],
+        structuredContent={"reason": "invalid input"},
+        isError=True,
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]
+    tool.session = Mock()
+    tool.session.call_tool = AsyncMock(return_value=mcp_result)
+
+    with pytest.raises(_MCPToolResultException) as exc_info:
+        await tool.call_tool("widget")
+
+    function_result = _function_execution_error_result(
+        Content.from_function_call(call_id="call-1", name="widget"),
+        "widget",
+        exc_info.value,
+        normalize_function_invocation_configuration(None),
+    )
+    host_payload = function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]
+
+    assert function_result.result == "Error: Function failed."
+    assert host_payload["content"] == [{"type": "text", "text": "Widget failed"}]
+    assert host_payload["structuredContent"] == {"reason": "invalid input"}
+    assert host_payload["isError"] is True
 
 
 def test_parse_tool_result_from_mcp_structured_content_none():
@@ -6635,11 +6795,21 @@ def _make_create_task_result(task_id: str = "task-1") -> types.CreateTaskResult:
     )
 
 
-def _make_payload(text: str = "done!", is_error: bool = False) -> types.GetTaskPayloadResult:
-    return types.GetTaskPayloadResult.model_validate({
+def _make_payload(
+    text: str = "done!",
+    is_error: bool = False,
+    structured_content: dict[str, Any] | None = None,
+    meta: dict[str, Any] | None = None,
+) -> types.GetTaskPayloadResult:
+    payload: dict[str, Any] = {
         "content": [{"type": "text", "text": text}],
         "isError": is_error,
-    })
+    }
+    if structured_content is not None:
+        payload["structuredContent"] = structured_content
+    if meta is not None:
+        payload["_meta"] = meta
+    return types.GetTaskPayloadResult.model_validate(payload)
 
 
 def _make_task_tool(
@@ -6740,20 +6910,56 @@ async def test_call_tool_routes_required_through_task_lifecycle(monkeypatch: pyt
     monkeypatch.setattr(_mcp_module, "_MCP_TASK_MIN_POLL_INTERVAL", _mcp_module.timedelta(milliseconds=1))
 
     tool = _make_task_tool()
+    tool.parse_tool_results = lambda _: "custom task summary"
     tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
         side_effect=_send_request_dispatcher(
             ("tools/call", _make_create_task_result()),
             ("tasks/get", _make_task_snapshot(status="working")),
             ("tasks/get", _make_task_snapshot(status="completed")),
-            ("tasks/result", _make_payload("hello task")),
+            (
+                "tasks/result",
+                _make_payload(
+                    "hello task",
+                    structured_content={"widget": "task"},
+                    meta={"source": "completed-task"},
+                ),
+            ),
         )
     )
 
-    result = await tool.call_tool("slow_op", x=1)
+    result = await _call_generated_mcp_tool(tool, "slow_op", x=1)
 
-    assert _mcp_result_to_text(result) == "hello task"
+    assert _mcp_result_to_text(result) == "custom task summary"
+    assert isinstance(result, list)
+    assert result[0].additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["structuredContent"] == {"widget": "task"}
+    assert result[0].additional_properties["_meta"] == {"source": "completed-task"}
+    assert result[0].additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["_meta"] == {"source": "completed-task"}
     # Plain session.call_tool must NOT be used for required tools.
     tool.session.call_tool.assert_not_called()  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+
+async def test_call_tool_as_task_fallback_preserves_custom_parser_host_payload() -> None:
+    """A legacy non-task response retains the Host payload after custom parsing."""
+    tool = _make_task_tool()
+    tool.parse_tool_results = lambda _: "custom fallback summary"
+    fallback_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="fallback")],
+        structuredContent={"widget": "fallback"},
+        _meta={"source": "fallback"},
+    )
+    tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+        return_value=types.Result.model_validate(fallback_result.model_dump(by_alias=True, exclude_none=True))
+    )
+
+    result = await _call_generated_mcp_tool(tool, "slow_op")
+
+    assert _mcp_result_to_text(result) == "custom fallback summary"
+    assert isinstance(result, list)
+    assert result[0].additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["structuredContent"] == {
+        "widget": "fallback"
+    }
+    assert result[0].additional_properties["_meta"] == {"source": "fallback"}
+    assert result[0].additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["_meta"] == {"source": "fallback"}
 
 
 async def test_call_tool_as_task_default_ttl_propagates() -> None:
