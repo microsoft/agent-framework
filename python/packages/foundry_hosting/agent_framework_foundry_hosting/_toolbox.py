@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import logging
 import os
+from collections.abc import Mapping, Sequence
 from contextlib import _AsyncGeneratorContextManager  # pyright: ignore[reportPrivateUsage]
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
@@ -180,7 +181,9 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         token_scope: str = DEFAULT_TOOLBOX_SCOPE,
         load_prompts: bool = False,
         load_tools: bool = True,
+        additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         timeout: float = _DEFAULT_TIMEOUT,
+        **kwargs: Any,
     ) -> None:
         """Initialize a Foundry toolbox tool.
 
@@ -200,7 +203,11 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             load_prompts: Whether to load prompts from the toolbox. Defaults to ``False``
                 because toolboxes expose tools.
             load_tools: Whether to load tools from the toolbox. Defaults to ``True``.
+            additional_tool_argument_names: Extra argument names to forward in addition to
+                parameters declared by toolbox functions. A sequence applies globally; a
+                mapping configures names per remote function, with ``"*"`` as the global key.
             timeout: Request timeout in seconds for the underlying HTTP client.
+            kwargs: Additional options forwarded to :class:`~agent_framework.MCPStreamableHTTPTool`.
         """
         endpoint = url or _resolve_toolbox_endpoint()
         tool_name = name or os.environ.get("TOOLBOX_NAME") or _toolbox_name_from_endpoint(endpoint)
@@ -219,6 +226,8 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             http_client=http_client,
             load_prompts=load_prompts,
             load_tools=load_tools,
+            additional_tool_argument_names=additional_tool_argument_names,
+            **kwargs,
         )
 
     @override

@@ -31,6 +31,11 @@ the agent definition by each fixture, drives a `switch` in the test container's
 `Program.cs` to wire up the scenario specific behavior (tools, toolbox, custom storage,
 etc.).
 
+The `happy-path` scenario creates the server with `AgentHost.CreateBuilder`. This covers
+the recommended AgentServer builder, including its port and readiness configuration. The
+remaining scenarios use `WebApplication.CreateBuilder`, so every live run covers both
+supported hosting paths.
+
 ### Session sticky and user-identity scenario
 
 `HostedSessionAndUserIdentityTests` (fixture `UserIdentityHostedAgentFixture`, agent

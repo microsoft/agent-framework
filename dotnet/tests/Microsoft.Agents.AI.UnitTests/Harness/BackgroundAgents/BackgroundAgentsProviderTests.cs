@@ -96,6 +96,76 @@ public class BackgroundAgentsProviderTests
         Assert.NotNull(provider);
     }
 
+    /// <summary>
+    /// Verify that the default wait timeout is five minutes.
+    /// </summary>
+    [Fact]
+    public void Options_DefaultWaitTimeout_IsFiveMinutes()
+    {
+        // Arrange & Act
+        var options = new BackgroundAgentsProviderOptions();
+
+        // Assert
+        Assert.Equal(TimeSpan.FromMinutes(5), options.WaitTimeout);
+    }
+
+    /// <summary>
+    /// Verify that the constructor rejects non-positive wait timeouts.
+    /// </summary>
+    /// <param name="seconds">The timeout value in seconds.</param>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Constructor_NonPositiveWaitTimeout_Throws(int seconds)
+    {
+        // Arrange
+        var agent = CreateMockAgent("Research", "Research agent");
+        var options = new BackgroundAgentsProviderOptions
+        {
+            WaitTimeout = TimeSpan.FromSeconds(seconds),
+        };
+
+        // Act & Assert
+        Assert.Throws<ArgumentOutOfRangeException>(() => new BackgroundAgentsProvider(new[] { agent }, options));
+    }
+
+    /// <summary>
+    /// Verify that the constructor rejects wait timeouts above the maximum supported delay.
+    /// </summary>
+    [Fact]
+    public void Constructor_ExcessiveWaitTimeout_Throws()
+    {
+        // Arrange
+        var agent = CreateMockAgent("Research", "Research agent");
+        var options = new BackgroundAgentsProviderOptions
+        {
+            WaitTimeout = TimeSpan.MaxValue,
+        };
+
+        // Act & Assert
+        Assert.Throws<ArgumentOutOfRangeException>(() => new BackgroundAgentsProvider(new[] { agent }, options));
+    }
+
+    /// <summary>
+    /// Verify that the constructor accepts the maximum supported wait timeout.
+    /// </summary>
+    [Fact]
+    public void Constructor_MaximumWaitTimeout_Succeeds()
+    {
+        // Arrange
+        var agent = CreateMockAgent("Research", "Research agent");
+        var options = new BackgroundAgentsProviderOptions
+        {
+            WaitTimeout = BackgroundAgentsProviderOptions.MaximumWaitTimeout,
+        };
+
+        // Act
+        var provider = new BackgroundAgentsProvider(new[] { agent }, options);
+
+        // Assert
+        Assert.NotNull(provider);
+    }
+
     #endregion
 
     #region ProvideAIContextAsync Tests
@@ -298,6 +368,80 @@ public class BackgroundAgentsProviderTests
 
         // Assert
         Assert.Contains("Error", GetStringResult(result));
+    }
+
+    /// <summary>
+    /// Verify that WaitForFirstCompletion returns after the configured timeout without stopping the task.
+    /// </summary>
+    [Fact]
+    public async Task WaitForFirstCompletion_TimeoutLeavesTaskRunningAsync()
+    {
+        // Arrange
+        var tcs = new TaskCompletionSource<AgentResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var agent = CreateMockAgentWithRunResult("Research", tcs.Task);
+        var provider = new BackgroundAgentsProvider(
+            new[] { agent },
+            new BackgroundAgentsProviderOptions { WaitTimeout = TimeSpan.FromMilliseconds(50) });
+        var (tools, session) = await CreateToolsForSessionAsync(provider);
+        AIFunction startBackgroundTask = GetTool(tools, "background_agents_start_task");
+        AIFunction waitForFirst = GetTool(tools, "background_agents_wait_for_first_completion");
+        AIFunction getResults = GetTool(tools, "background_agents_get_task_results");
+
+        await startBackgroundTask.InvokeAsync(new AIFunctionArguments
+        {
+            ["agentName"] = "Research",
+            ["input"] = "Task 1",
+            ["description"] = "First task",
+        });
+
+        // Act
+        object? result = await waitForFirst.InvokeAsync(new AIFunctionArguments
+        {
+            ["taskIds"] = new List<int> { 1 },
+        });
+
+        // Assert
+        Assert.Equal(
+            "No background task completed within 0.05 seconds. The tasks are still running; call this tool again if you wish to continue waiting.",
+            GetStringResult(result));
+
+        BackgroundAgentRuntimeState runtimeState = GetRuntimeState(provider, session);
+        Assert.False(runtimeState.InFlightTasks[1].IsCompleted);
+
+        object? taskResult = await getResults.InvokeAsync(new AIFunctionArguments
+        {
+            ["taskId"] = 1,
+        });
+        Assert.Contains("still running", GetStringResult(taskResult));
+
+        tcs.SetResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "done")));
+        await runtimeState.InFlightTasks[1];
+        await waitForFirst.InvokeAsync(new AIFunctionArguments
+        {
+            ["taskIds"] = new List<int> { 1 },
+        });
+    }
+
+    /// <summary>
+    /// Verify that the wait timeout is controlled by the provider rather than exposed to the model.
+    /// </summary>
+    [Fact]
+    public async Task WaitForFirstCompletion_OnlyTaskIdsAreModelSettableAsync()
+    {
+        // Arrange
+        var agent = CreateMockAgent("Research", "Research agent");
+        var (tools, _) = await CreateToolsWithProviderAsync(agent);
+        AIFunction waitForFirst = GetTool(tools, "background_agents_wait_for_first_completion");
+
+        // Act
+        JsonElement properties = waitForFirst.JsonSchema.GetProperty("properties");
+
+        // Assert
+        JsonProperty property = Assert.Single(properties.EnumerateObject());
+        Assert.Equal("taskIds", property.Name);
+        Assert.Contains("configured timeout expires", waitForFirst.Description);
+        Assert.Contains("tasks remain running", waitForFirst.Description);
+        Assert.Contains("called again", waitForFirst.Description);
     }
 
     #endregion

@@ -970,7 +970,8 @@ class _OutputItemTracker:
         return ResponseUsage(
             input_tokens=input_tokens,
             input_tokens_details=ResponseUsageInputTokensDetails(
-                cached_tokens=int(self._usage_details.get("cache_read_input_token_count") or 0)
+                cached_tokens=int(self._usage_details.get("cache_read_input_token_count") or 0),
+                cache_write_tokens=int(self._usage_details.get("cache_creation_input_token_count") or 0),
             ),
             output_tokens=output_tokens,
             output_tokens_details=ResponseUsageOutputTokensDetails(
@@ -1412,9 +1413,12 @@ async def _item_to_message(
         )
 
     if item["type"] == "function_call_output":
+        call_id = item.get("call_id")
+        if call_id is None:
+            raise ValueError("Function call output item is missing a call_id.")
         return Message(
             role="tool",
-            contents=[Content.from_function_result(item["call_id"], result=_json_safe_to_str(item["output"]))],
+            contents=[Content.from_function_result(call_id, result=_json_safe_to_str(item["output"]))],
         )
 
     if item["type"] == "reasoning":

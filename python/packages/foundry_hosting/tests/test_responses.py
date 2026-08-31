@@ -553,6 +553,65 @@ async def test_agui_service_storage_response_mode_persists_provider_continuation
     assert [message["role"] for message in second_snapshot] == ["user", "assistant", "user", "assistant"]
 
 
+async def test_agui_stateless_store_true_does_not_restore_provider_continuation() -> None:
+    """Stateless snapshot replay must not combine full history with a stored response id."""
+    hosted_agent_backend = _make_agent(
+        response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ACK")])])
+    )
+    transport = _CapturingASGITransport(_make_server(hosted_agent_backend))
+    responses_client = AsyncOpenAI(
+        api_key="test-key",
+        base_url="http://test",
+        http_client=httpx.AsyncClient(transport=transport),
+        max_retries=0,
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    runner = AgentFrameworkAgent(
+        agent=Agent(
+            client=OpenAIChatClient(  # ty: ignore[invalid-argument-type]
+                model="test-model",
+                async_client=responses_client,
+            ),
+            default_options={"store": True},
+        ),
+        snapshot_store=store,
+    )
+    thread_id = "stateless-thread"
+
+    try:
+        first_events = [
+            event
+            async for event in runner.run({
+                "thread_id": thread_id,
+                "__ag_ui_snapshot_scope": "test",
+                "messages": [{"role": "user", "content": "first"}],
+            })
+        ]
+        first_snapshot = next(
+            event.model_dump(by_alias=True)["messages"]
+            for event in reversed(first_events)
+            if getattr(event, "type", None) == "MESSAGES_SNAPSHOT"
+        )
+        second_events = [
+            event
+            async for event in runner.run({
+                "thread_id": thread_id,
+                "__ag_ui_snapshot_scope": "test",
+                "messages": [*first_snapshot, {"role": "user", "content": "second"}],
+            })
+        ]
+    finally:
+        await responses_client.close()
+
+    assert all("conversation" not in payload for payload in transport.payloads)
+    assert all("previous_response_id" not in payload for payload in transport.payloads)
+    assert [item["role"] for item in transport.payloads[1]["input"]] == ["user", "assistant", "user"]
+    assert not [event for event in second_events if getattr(event, "type", None) == "RUN_ERROR"]
+    stored = await store.get(scope="test", thread_id=thread_id)
+    assert stored is not None
+    assert stored.session_state is None
+
+
 def _sse_event_types(events: list[dict[str, Any]]) -> list[str]:
     """Extract event type strings from parsed SSE events."""
     return [e["event"] for e in events]
@@ -1503,6 +1562,7 @@ class TestStreaming:
                             "output_token_count": 2,
                             "total_token_count": 12,
                             "cache_read_input_token_count": 3,
+                            "cache_creation_input_token_count": 4,
                             "reasoning_output_token_count": 1,
                         })
                     ],
@@ -1516,6 +1576,7 @@ class TestStreaming:
                             "output_token_count": 4,
                             "total_token_count": 9,
                             "cache_read_input_token_count": 2,
+                            "cache_creation_input_token_count": 1,
                             "reasoning_output_token_count": 2,
                         })
                     ],
@@ -1536,7 +1597,7 @@ class TestStreaming:
         completed = events[-1]["data"]["response"]
         assert completed["usage"] == {
             "input_tokens": 15,
-            "input_tokens_details": {"cached_tokens": 5},
+            "input_tokens_details": {"cached_tokens": 5, "cache_write_tokens": 5},
             "output_tokens": 6,
             "output_tokens_details": {"reasoning_tokens": 3},
             "total_tokens": 21,
@@ -1996,6 +2057,13 @@ class TestOutputItemToMessage:
         msg = await _output_item_to_message(item)
 
         assert json.loads(msg.contents[0].result) == {"count": 0, "ok": False}
+
+    async def test_function_call_output_without_call_id_raises(self) -> None:
+        from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
+
+        item = FunctionCallOutputItemParam({"type": "function_call_output", "output": "sunny"})
+        with pytest.raises(ValueError, match="missing a call_id"):
+            await _output_item_to_message(item)  # type: ignore[arg-type] # ty: ignore[invalid-argument-type]
 
     async def test_reasoning(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemReasoningItem, SummaryTextContent
@@ -2523,6 +2591,13 @@ class TestItemToMessage:
         assert msg is not None
         assert msg.role == "tool"
         assert json.loads(msg.contents[0].result) == output
+
+    async def test_function_call_output_without_call_id_raises(self) -> None:
+        from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
+
+        item = FunctionCallOutputItemParam({"type": "function_call_output", "output": "sunny"})
+        with pytest.raises(ValueError, match="missing a call_id"):
+            await _item_to_message(item)
 
     async def test_reasoning_with_summary(self) -> None:
         from azure.ai.agentserver.responses.models import ItemReasoningItem, SummaryTextContent
@@ -4592,7 +4667,7 @@ class TestResponseFailedSurfacing:
         failed_response = events[-1]["data"]["response"]
         assert failed_response["usage"] == {
             "input_tokens": 8,
-            "input_tokens_details": {"cached_tokens": 2},
+            "input_tokens_details": {"cached_tokens": 2, "cache_write_tokens": 0},
             "output_tokens": 3,
             "output_tokens_details": {"reasoning_tokens": 1},
             "total_tokens": 11,

@@ -828,6 +828,15 @@ MiddlewareTypes: TypeAlias = (
 )
 
 
+def _copy_middleware_sequence(source: object | None) -> list[MiddlewareTypes]:
+    """Validate and copy a middleware sequence."""
+    if source is None:
+        return []
+    if isinstance(source, (str, bytes)) or not isinstance(source, Sequence):
+        raise TypeError("middleware must be a non-string sequence of middleware.")
+    return list(cast("Sequence[MiddlewareTypes]", source))
+
+
 def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
     """Decorator to mark a function as agent middleware.
 
@@ -1374,12 +1383,38 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
             kwargs=context_kwargs,
             function_invocation_kwargs=function_invocation_kwargs,
         )
+        source_messages = messages if isinstance(messages, list) else None
+        baseline_message_ids = {id(message) for message in messages}
+        middleware_messages = cast("list[Message]", context.messages)
+        downstream_messages: list[Message] | None = None
 
         async def _execute() -> ChatResponse | ResponseStream[ChatResponseUpdate, ChatResponse] | None:
-            return await pipeline.execute(
-                context=context,
-                final_handler=self._middleware_handler,
-            )
+            def _final_handler(
+                middleware_context: ChatContext,
+            ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+                nonlocal downstream_messages
+                downstream_messages = (
+                    middleware_context.messages
+                    if isinstance(middleware_context.messages, list)
+                    else list(middleware_context.messages)
+                )
+                middleware_context.messages = downstream_messages
+                return self._middleware_handler(middleware_context)
+
+            try:
+                return await pipeline.execute(
+                    context=context,
+                    final_handler=_final_handler,
+                )
+            finally:
+                if source_messages is not None:
+                    from ._compaction import _reconcile_compaction_summaries  # pyright: ignore[reportPrivateUsage]
+
+                    _reconcile_compaction_summaries(
+                        source_messages,
+                        downstream_messages if downstream_messages is not None else middleware_messages,
+                        baseline_message_ids,
+                    )
 
         if stream:
             # For streaming, wrap execution in ResponseStream.from_awaitable
@@ -1408,14 +1443,17 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
         handler_kwargs = dict(context.kwargs)
         compaction_strategy = handler_kwargs.pop("compaction_strategy", None)
         tokenizer = handler_kwargs.pop("tokenizer", None)
-        return super().get_response(  # type: ignore[misc, no-any-return]
-            messages=context.messages,
-            stream=context.stream,
-            options=context.options or {},
-            compaction_strategy=compaction_strategy,
-            tokenizer=tokenizer,
-            function_invocation_kwargs=context.function_invocation_kwargs,
-            client_kwargs=handler_kwargs,
+        return cast(
+            "Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]",
+            super().get_response(  # type: ignore[misc]
+                messages=context.messages,
+                stream=context.stream,
+                options=context.options or {},
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                function_invocation_kwargs=context.function_invocation_kwargs,
+                client_kwargs=handler_kwargs,
+            ),
         )
 
 
@@ -1425,14 +1463,15 @@ class AgentMiddlewareLayer:
     def __init__(
         self,
         *args: Any,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> None:
-        middleware_list = categorize_middleware(middleware)
+        middleware_sequence = _copy_middleware_sequence(middleware) if middleware is not None else None
+        middleware_list = categorize_middleware(middleware_sequence)
         self.agent_middleware = middleware_list["agent"]
         self._cached_agent_middleware_pipeline: AgentMiddlewarePipeline | None = None
         # Pass middleware to super so BaseAgent can store it for dynamic rebuild
-        super().__init__(*args, middleware=middleware, **kwargs)  # type: ignore[call-arg]
+        super().__init__(*args, middleware=middleware_sequence, **kwargs)  # type: ignore[call-arg]
         # Note: We intentionally don't extend client's middleware lists here.
         # Chat and function middleware is passed to the chat client at runtime via kwargs
         # in AgentMiddlewareLayer.run(), where it's properly combined with run-level middleware.
@@ -1456,7 +1495,7 @@ class AgentMiddlewareLayer:
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[ResponseModelBoundT],
         compaction_strategy: CompactionStrategy | None = None,
@@ -1472,7 +1511,7 @@ class AgentMiddlewareLayer:
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[None] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -1488,7 +1527,7 @@ class AgentMiddlewareLayer:
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -1503,7 +1542,7 @@ class AgentMiddlewareLayer:
         *,
         stream: bool = False,
         session: AgentSession | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -1512,14 +1551,13 @@ class AgentMiddlewareLayer:
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """MiddlewareTypes-enabled unified run method."""
-        # Re-categorize self.middleware at runtime to support dynamic changes. The raw
-        # attribute is passed straight through: categorize_middleware owns the rule
-        # that a bare single source (one middleware object or a MiddlewareBundle
-        # assigned directly to the attribute) is one element — never silently dropped.
+        base_middleware = getattr(self, "middleware", None)
         base_middleware_list = categorize_middleware(
-            cast("MiddlewareTypes | Sequence[MiddlewareTypes] | None", getattr(self, "middleware", None))
+            _copy_middleware_sequence(base_middleware) if base_middleware is not None else None
         )
-        run_middleware_list = categorize_middleware(middleware)
+        run_middleware_list = categorize_middleware(
+            _copy_middleware_sequence(middleware) if middleware is not None else None
+        )
         pipeline = self._get_agent_middleware_pipeline([*base_middleware_list["agent"], *run_middleware_list["agent"]])
 
         # Combine base and run-level function/chat middleware for forwarding to chat client

@@ -3,7 +3,6 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Execution;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -34,7 +33,7 @@ public sealed class InputWaiterTests : IDisposable
         bool signaled = await this._waiter.WaitForInputAsync(s_guardTimeout);
 
         // Assert
-        signaled.Should().BeTrue("the already-signaled input should release the wait");
+        Assert.True(signaled);
     }
 
     [Fact]
@@ -46,9 +45,7 @@ public sealed class InputWaiterTests : IDisposable
 
         // Assert - the waiter stays blocked while no input has been signaled.
         Task completedBeforeSignal = await Task.WhenAny(waitTask, Task.Delay(100));
-        completedBeforeSignal.Should().NotBeSameAs(
-            waitTask,
-            "the waiter should not complete before input is signaled");
+        Assert.NotSame(waitTask, completedBeforeSignal);
 
         // Act
         this._waiter.SignalInput();
@@ -65,11 +62,11 @@ public sealed class InputWaiterTests : IDisposable
     public void InputWaiter_SignalInput_DoubleSignalDoesNotThrow()
     {
         // Binary semaphore behavior: double signal should be idempotent
-        FluentActions.Invoking(() =>
+        Assert.Null(Record.Exception(() =>
         {
             this._waiter.SignalInput();
             this._waiter.SignalInput();
-        }).Should().NotThrow("double signaling should be handled gracefully");
+        }));
     }
 
     [Fact]
@@ -80,8 +77,8 @@ public sealed class InputWaiterTests : IDisposable
 
         cts.Cancel();
 
-        Func<Task> act = () => waitTask;
-        await act.Should().ThrowAsync<OperationCanceledException>();
+        Task actAsync() => waitTask;
+        await Assert.ThrowsAsync<OperationCanceledException>(actAsync);
     }
 
     [Fact]
@@ -91,7 +88,7 @@ public sealed class InputWaiterTests : IDisposable
         Task waitTask = this._waiter.WaitForInputAsync(cts.Token);
         Task completed = await Task.WhenAny(waitTask, Task.Delay(100));
 
-        completed.Should().NotBeSameAs(waitTask, "the wait task should not complete when input is not signaled");
+        Assert.NotSame(waitTask, completed);
 
         // Cancel and observe the pending task to avoid an unobserved exception on Dispose
         cts.Cancel();
@@ -111,8 +108,8 @@ public sealed class InputWaiterTests : IDisposable
         bool secondSignaled = await this._waiter.WaitForInputAsync(s_guardTimeout);
 
         // Assert each cycle was released by its signal rather than by an expiring timeout.
-        firstSignaled.Should().BeTrue("the first signal should release the first wait");
-        secondSignaled.Should().BeTrue("the second signal should release the second wait");
+        Assert.True(firstSignaled);
+        Assert.True(secondSignaled);
     }
 
     [Fact]
@@ -130,6 +127,6 @@ public sealed class InputWaiterTests : IDisposable
         bool signaled = await waitTask;
 
         // Assert
-        signaled.Should().BeFalse("the wait should be released by the expiring timeout rather than by a signal");
+        Assert.False(signaled);
     }
 }
