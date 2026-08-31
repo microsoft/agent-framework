@@ -7,7 +7,6 @@ using System.Reflection;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Sample;
 using Microsoft.Agents.AI.Workflows.Specialized;
@@ -47,7 +46,7 @@ public class RepresentationTests
     {
         ExecutorInfo info = binding.ToExecutorInfo();
 
-        info.IsMatch(await binding.CreateInstanceAsync(sessionId: string.Empty)).Should().BeTrue();
+        Assert.True(info.IsMatch(await binding.CreateInstanceAsync(sessionId: string.Empty)));
     }
 
     [Fact]
@@ -67,7 +66,7 @@ public class RepresentationTests
         int expectedTests = workflowAssembly.GetTypes()
                                             .Count(type => type != bindingBaseType
                                                         && bindingBaseType.IsAssignableFrom(type));
-        expectedTests.Should().BePositive();
+        Assert.True(expectedTests > 0);
 
         if (expectedTests > testsRun + 1)
         {
@@ -159,7 +158,7 @@ public class RepresentationTests
             comparatorEdge ??= edge;
 
             EdgeInfo info = edge.ToEdgeInfo();
-            info.IsMatch(comparatorEdge).Should().Be(expect);
+            Assert.Equal(expect, info.IsMatch(comparatorEdge));
         }
 
         EdgeId TakeEdgeId() => new(edgeId++);
@@ -183,7 +182,7 @@ public class RepresentationTests
             comparator ??= workflow;
 
             WorkflowInfo info = workflow.ToWorkflowInfo();
-            info.IsMatch(comparator).Should().Be(expect);
+            Assert.Equal(expect, info.IsMatch(comparator));
         }
     }
 }

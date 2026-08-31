@@ -2,7 +2,6 @@
 
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.InProc;
@@ -48,14 +47,16 @@ public class ExternalResponsePortCorrelationTests
         await runner.RunContext.AddExternalResponseAsync(forged);
 
         // Assert: validation fires when the queued delivery is drained.
-        var act = async () => await runner.RunContext.AdvanceAsync(CancellationToken.None);
-        var exception = await act.Should().ThrowAsync<System.InvalidOperationException>();
+        async Task<StepContext> actAsync() => await runner.RunContext.AdvanceAsync(CancellationToken.None);
+        var exception = await Assert.ThrowsAsync<System.InvalidOperationException>((System.Func<Task<StepContext>>)actAsync);
 
-        string message = exception.Which.Message;
-        message.Should().Contain($"'{PortBId}'").And.Contain(pending.RequestId).And.NotContain($"'{PortAId}'");
+        string message = exception.Message;
+        Assert.Contains($"'{PortBId}'", message);
+        Assert.Contains(pending.RequestId, message);
+        Assert.DoesNotContain($"'{PortAId}'", message);
 
         // Pending request survives the rejection so the legitimate responder can still complete it.
-        ((ISuperStepRunner)runner).HasUnservicedRequests.Should().BeTrue();
+        Assert.True(((ISuperStepRunner)runner).HasUnservicedRequests);
     }
 
     [Fact]
@@ -70,17 +71,17 @@ public class ExternalResponsePortCorrelationTests
         ExternalResponse forged = new(portB.ToPortInfo(), pending.RequestId, new PortableValue(42));
         await runner.RunContext.AddExternalResponseAsync(forged);
 
-        var rejectAct = async () => await runner.RunContext.AdvanceAsync(CancellationToken.None);
-        await rejectAct.Should().ThrowAsync<System.InvalidOperationException>();
+        async Task<StepContext> rejectActAsync() => await runner.RunContext.AdvanceAsync(CancellationToken.None);
+        await Assert.ThrowsAsync<System.InvalidOperationException>((System.Func<Task<StepContext>>)rejectActAsync);
 
         // Legitimate responder retries with the correct PortInfo.
         ExternalResponse legitimate = pending.CreateResponse(42);
         await runner.RunContext.AddExternalResponseAsync(legitimate);
 
-        var legitimateAct = async () => await runner.RunContext.AdvanceAsync(CancellationToken.None);
+        async Task<StepContext> legitimateActAsync() => await runner.RunContext.AdvanceAsync(CancellationToken.None);
 
-        await legitimateAct.Should().NotThrowAsync();
-        ((ISuperStepRunner)runner).HasUnservicedRequests.Should().BeFalse();
+        Assert.Null(await Record.ExceptionAsync((System.Func<Task<StepContext>>)legitimateActAsync));
+        Assert.False(((ISuperStepRunner)runner).HasUnservicedRequests);
     }
 
     [Fact]
@@ -97,10 +98,10 @@ public class ExternalResponsePortCorrelationTests
 
         await runner.RunContext.AddExternalResponseAsync(legitimate);
 
-        var act = async () => await runner.RunContext.AdvanceAsync(CancellationToken.None);
-        await act.Should().NotThrowAsync();
+        async Task<StepContext> actAsync() => await runner.RunContext.AdvanceAsync(CancellationToken.None);
+        Assert.Null(await Record.ExceptionAsync((System.Func<Task<StepContext>>)actAsync));
 
-        ((ISuperStepRunner)runner).HasUnservicedRequests.Should().BeFalse();
+        Assert.False(((ISuperStepRunner)runner).HasUnservicedRequests);
     }
 
     [Fact]
@@ -114,8 +115,8 @@ public class ExternalResponsePortCorrelationTests
 
         await runner.RunContext.AddExternalResponseAsync(stray);
 
-        var act = async () => await runner.RunContext.AdvanceAsync(CancellationToken.None);
-        var exception = await act.Should().ThrowAsync<System.InvalidOperationException>();
-        exception.Which.Message.Should().Contain("No pending request with ID no-such-request");
+        async Task<StepContext> actAsync() => await runner.RunContext.AdvanceAsync(CancellationToken.None);
+        var exception = await Assert.ThrowsAsync<System.InvalidOperationException>((System.Func<Task<StepContext>>)actAsync);
+        Assert.Contains("No pending request with ID no-such-request", exception.Message);
     }
 }

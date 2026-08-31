@@ -551,6 +551,65 @@ async def test_agui_service_storage_response_mode_persists_provider_continuation
     assert [message["role"] for message in second_snapshot] == ["user", "assistant", "user", "assistant"]
 
 
+async def test_agui_stateless_store_true_does_not_restore_provider_continuation() -> None:
+    """Stateless snapshot replay must not combine full history with a stored response id."""
+    hosted_agent_backend = _make_agent(
+        response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ACK")])])
+    )
+    transport = _CapturingASGITransport(_make_server(hosted_agent_backend))
+    responses_client = AsyncOpenAI(
+        api_key="test-key",
+        base_url="http://test",
+        http_client=httpx.AsyncClient(transport=transport),
+        max_retries=0,
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    runner = AgentFrameworkAgent(
+        agent=Agent(
+            client=OpenAIChatClient(  # ty: ignore[invalid-argument-type]
+                model="test-model",
+                async_client=responses_client,
+            ),
+            default_options={"store": True},
+        ),
+        snapshot_store=store,
+    )
+    thread_id = "stateless-thread"
+
+    try:
+        first_events = [
+            event
+            async for event in runner.run({
+                "thread_id": thread_id,
+                "__ag_ui_snapshot_scope": "test",
+                "messages": [{"role": "user", "content": "first"}],
+            })
+        ]
+        first_snapshot = next(
+            event.model_dump(by_alias=True)["messages"]
+            for event in reversed(first_events)
+            if getattr(event, "type", None) == "MESSAGES_SNAPSHOT"
+        )
+        second_events = [
+            event
+            async for event in runner.run({
+                "thread_id": thread_id,
+                "__ag_ui_snapshot_scope": "test",
+                "messages": [*first_snapshot, {"role": "user", "content": "second"}],
+            })
+        ]
+    finally:
+        await responses_client.close()
+
+    assert all("conversation" not in payload for payload in transport.payloads)
+    assert all("previous_response_id" not in payload for payload in transport.payloads)
+    assert [item["role"] for item in transport.payloads[1]["input"]] == ["user", "assistant", "user"]
+    assert not [event for event in second_events if getattr(event, "type", None) == "RUN_ERROR"]
+    stored = await store.get(scope="test", thread_id=thread_id)
+    assert stored is not None
+    assert stored.session_state is None
+
+
 def _sse_event_types(events: list[dict[str, Any]]) -> list[str]:
     """Extract event type strings from parsed SSE events."""
     return [e["event"] for e in events]
