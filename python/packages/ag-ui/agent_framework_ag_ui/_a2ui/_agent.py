@@ -351,6 +351,10 @@ class A2UIAgent:
     def context_providers(self) -> Any:
         return getattr(self.inner_agent, "context_providers", [])
 
+    @property
+    def service_session_state_keys(self) -> Any:
+        return getattr(self.inner_agent, "service_session_state_keys", ())
+
     # -- public run -------------------------------------------------------
 
     def run(self, messages: Any = None, *, stream: bool = False, **kwargs: Any) -> Any:

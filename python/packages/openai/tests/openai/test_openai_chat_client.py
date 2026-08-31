@@ -2970,18 +2970,18 @@ def test_streaming_parse_and_replay_preserves_all_real_assistant_logprobs() -> N
             delta="lo",
         ),
     ]
-    accumulated_logprobs: dict[str, list[Any]] = {}
     updates = [
         client._parse_chunk_from_openai(
             event,
             options={},
             function_call_ids={},
-            output_text_logprobs=accumulated_logprobs,
         )
         for event in events
     ]
 
-    response = ChatResponse.from_updates(updates)
+    assert updates[0].contents[0].additional_properties["logprobs"] == [first_logprob]
+    assert updates[1].contents[0].additional_properties["logprobs"] == [second_logprob]
+    response = client._finalize_response_updates(updates)
     text_content = response.messages[0].contents[0]
     replayed = client._prepare_content_for_openai("assistant", text_content)
 
