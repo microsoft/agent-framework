@@ -1433,11 +1433,16 @@ def _function_execution_error_result(
     message = "Error: Function failed."
     if config.get("include_detailed_errors", False):
         message = f"{message} Exception: {exception}"
+    additional_properties = dict(function_call.additional_properties)
+    # Tool-specific exceptions can retain caller-only transport metadata without changing the model-facing error.
+    exception_properties = getattr(exception, "_function_result_additional_properties", None)
+    if isinstance(exception_properties, Mapping):
+        additional_properties.update(cast(Mapping[str, Any], exception_properties))
     return Content.from_function_result(
         call_id=function_call.call_id,  # type: ignore[arg-type]
         result=message,
         exception=str(exception),
-        additional_properties=function_call.additional_properties,
+        additional_properties=additional_properties,
     )
 
 

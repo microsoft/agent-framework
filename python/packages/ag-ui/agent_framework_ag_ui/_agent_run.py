@@ -91,8 +91,8 @@ from ._run_common import (
     _new_tool_call_segment_id,  # type: ignore
     _reconstruct_messages_from_thread_snapshot,  # type: ignore
     _resume_contract_error,  # type: ignore
+    _resolve_tool_result_host_payload,  # type: ignore
     _resolve_ui_payload,  # type: ignore
-    _stringify_tool_result,  # type: ignore
     _track_tool_call_segment,  # type: ignore
 )
 from ._snapshots import (
@@ -102,8 +102,14 @@ from ._snapshots import (
 )
 from ._snapshot_session import ThreadSnapshotSession, _event_messages_to_snapshot_dicts
 from ._utils import (
+    _AGUI_MCP_TOOL_RESULT_KEY,
+    _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY,
     _approval_interrupt_id,
+    _bound_host_payload_history,
     _function_call_server_label,
+    _model_items_for_agui_replay,
+    _stringify_tool_result,
+    DEFAULT_MAX_HOST_PAYLOAD_HISTORY_SIZE_BYTES,
     canonical_function_arguments,
     convert_agui_tools_to_agent_framework,
     generate_event_id,
@@ -687,7 +693,9 @@ def _make_approval_tool_result_events(resolved_approval_results: list[Content]) 
         if resolved.call_id:
             raw = resolved.result if resolved.result is not None else ""
             llm_str = _stringify_tool_result(raw)
-            ui_str = _resolve_ui_payload(llm_str, _extract_tool_result_display(resolved))
+            display_result = _extract_tool_result_display(resolved)
+            has_host_payload, host_payload = _resolve_tool_result_host_payload(resolved, display_result)
+            ui_str = _resolve_ui_payload(llm_str, host_payload if has_host_payload else display_result)
             events.append(
                 ToolCallResultEvent(
                     message_id=generate_event_id(),
@@ -1968,12 +1976,21 @@ def _resolved_tool_result_snapshot_messages(resolved_messages: list[Message]) ->
         ]
         for content in function_results:
             call_id = str(content.call_id)
-            result_by_call_id[call_id] = {
+            llm_result = _stringify_tool_result(content.result if content.result is not None else "")
+            display_result = _extract_tool_result_display(content)
+            has_host_payload, host_payload = _resolve_tool_result_host_payload(content, display_result)
+            snapshot_message: dict[str, Any] = {
                 "id": msg.message_id if msg.message_id and len(function_results) == 1 else generate_event_id(),
                 "role": "tool",
                 "toolCallId": call_id,
-                "content": _stringify_tool_result(content.result if content.result is not None else ""),
+                "content": _stringify_tool_result(host_payload) if has_host_payload else llm_result,
             }
+            if has_host_payload:
+                snapshot_message[_AGUI_MCP_TOOL_RESULT_KEY] = True
+                snapshot_message[_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY] = _model_items_for_agui_replay(
+                    content, llm_result
+                )
+            result_by_call_id[call_id] = snapshot_message
     return result_by_call_id
 
 
@@ -2067,7 +2084,12 @@ def _build_messages_snapshot(
 
     if flow.snapshot_segments:
         _append_segmented_snapshot_messages(flow, all_messages)
-        return MessagesSnapshotEvent(messages=all_messages)  # type: ignore[arg-type]
+        return MessagesSnapshotEvent(
+            messages=_bound_host_payload_history(  # type: ignore[arg-type]
+                all_messages,
+                max_size_bytes=DEFAULT_MAX_HOST_PAYLOAD_HISTORY_SIZE_BYTES,
+            )
+        )  # type: ignore[arg-type]
 
     # Add assistant message with tool calls only (no content)
     if flow.pending_tool_calls:
@@ -2101,7 +2123,12 @@ def _build_messages_snapshot(
     # MESSAGES_SNAPSHOT retain reasoning content after streaming ends.
     all_messages.extend(flow.reasoning_messages)
 
-    return MessagesSnapshotEvent(messages=all_messages)  # type: ignore[arg-type]
+    return MessagesSnapshotEvent(
+        messages=_bound_host_payload_history(  # type: ignore[arg-type]
+            all_messages,
+            max_size_bytes=DEFAULT_MAX_HOST_PAYLOAD_HISTORY_SIZE_BYTES,
+        )
+    )  # type: ignore[arg-type]
 
 
 def _text_events_to_snapshot_messages(events: list[BaseEvent]) -> list[dict[str, Any]]:

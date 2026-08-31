@@ -11,7 +11,19 @@ from collections.abc import Callable, MutableMapping, Sequence
 from typing import Any
 
 from agent_framework import AgentResponseUpdate, ChatResponseUpdate, FunctionTool
+from agent_framework import _mcp as _core_mcp  # pyright: ignore[reportPrivateUsage]
 from agent_framework._serialization import make_json_safe  # pyright: ignore[reportPrivateUsage]
+
+# AG-UI supports older core releases that predate this marker; those versions retain the existing fallback behavior.
+_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY = getattr(
+    _core_mcp,
+    "_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY",
+    "_mcp_tool_result_host_payload",
+)
+_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY = "_agentFrameworkModelContent"
+_AGUI_MCP_TOOL_RESULT_KEY = "_agentFrameworkMcpResult"
+_AGUI_HOST_PAYLOAD_OMITTED_KEY = "_agentFrameworkHostPayloadOmitted"
+DEFAULT_MAX_HOST_PAYLOAD_HISTORY_SIZE_BYTES = 8 * 1024 * 1024
 
 # Role mapping constants
 AGUI_TO_FRAMEWORK_ROLE: dict[str, str] = {
@@ -53,6 +65,124 @@ def safe_json_parse(value: Any) -> dict[str, Any] | None:
         except json.JSONDecodeError:
             pass
     return None
+
+
+def _extract_tool_result_marker_values(content: Any, key: str) -> list[Any]:
+    """Extract marker values from outer and inner tool-result content."""
+    values: list[Any] = []
+
+    outer_properties = getattr(content, "additional_properties", None) or {}
+    if key in outer_properties:
+        values.append(outer_properties[key])
+
+    for item in getattr(content, "items", None) or ():
+        item_properties = getattr(item, "additional_properties", None) or {}
+        if key in item_properties:
+            values.append(item_properties[key])
+
+    return values
+
+
+def _extract_mcp_tool_result_host_payload(content: Any) -> tuple[bool, Any]:
+    """Return whether a core-preserved MCP Host payload exists and its value."""
+    values = _extract_tool_result_marker_values(content, _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY)
+    return (True, values[-1]) if values else (False, None)
+
+
+def _model_content_from_mcp_host_payload(payload: Any) -> str:
+    """Recover safe content-only text when an MCP snapshot loses its model-content sidecar."""
+    if not isinstance(payload, dict):
+        return "Tool result unavailable."
+    if payload.get("isError") is True:
+        return "Error: Function failed."
+    content = payload.get("content")
+    if not isinstance(content, list):
+        return "Tool result unavailable."
+
+    text_parts: list[str] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "text" and isinstance(item.get("text"), str):
+            text_parts.append(item["text"])
+            continue
+        resource = item.get("resource")
+        if item.get("type") == "resource" and isinstance(resource, dict) and isinstance(resource.get("text"), str):
+            text_parts.append(resource["text"])
+    return "\n".join(text_parts) if text_parts else "null"
+
+
+def _model_items_for_agui_replay(content: Any, model_result: str) -> list[dict[str, Any]]:
+    """Serialize model-facing items without repeating the MCP Host payload marker."""
+    items = getattr(content, "items", None) or ()
+    if not items:
+        return [{"type": "text", "text": model_result}]
+
+    serialized_items: list[dict[str, Any]] = []
+    for item in items:
+        serialized = item.to_dict()
+        additional_properties = serialized.get("additional_properties")
+        if isinstance(additional_properties, dict):
+            additional_properties.pop(_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY, None)
+            if not additional_properties:
+                serialized.pop("additional_properties", None)
+        serialized_items.append(serialized)
+    return serialized_items
+
+
+def _model_text_from_replay_items(message: dict[str, Any]) -> str:
+    serialized_items = message.get(_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY)
+    if not isinstance(serialized_items, list):
+        return ""
+    return "\n".join(
+        item["text"]
+        for item in serialized_items
+        if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str)
+    )
+
+
+def _bound_host_payload_history(
+    messages: list[dict[str, Any]],
+    *,
+    max_size_bytes: int,
+) -> list[dict[str, Any]]:
+    """Retain the newest MCP Host payloads within one aggregate history budget."""
+    if max_size_bytes < 0:
+        raise ValueError("max_size_bytes must be non-negative.")
+
+    retained_size = 0
+    omit_indices: set[int] = set()
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if message.get(_AGUI_MCP_TOOL_RESULT_KEY) is not True:
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        content_size = len(content.encode("utf-8"))
+        if retained_size + content_size > max_size_bytes:
+            omit_indices.add(index)
+        else:
+            retained_size += content_size
+
+    if not omit_indices:
+        return messages
+
+    bounded_messages: list[dict[str, Any]] = []
+    for index, message in enumerate(messages):
+        if index not in omit_indices:
+            bounded_messages.append(message)
+            continue
+        bounded_message = message.copy()
+        bounded_message["content"] = _model_text_from_replay_items(message)
+        bounded_message[_AGUI_HOST_PAYLOAD_OMITTED_KEY] = True
+        bounded_messages.append(bounded_message)
+    return bounded_messages
+
+
+def _stringify_tool_result(raw_result: Any) -> str:
+    """Serialize a tool result for an AG-UI tool message."""
+    return raw_result if isinstance(raw_result, str) else json.dumps(make_json_safe(raw_result))
 
 
 def canonical_function_arguments(function_call: Any) -> str | None:
