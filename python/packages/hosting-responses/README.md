@@ -20,7 +20,8 @@ Final streaming events match the rendered response status:
 `response.completed`, `response.incomplete`, or `response.failed`. Finalizing a
 stream with a nonterminal status produces `response.failed`. Response status is
 read from the raw transport representation rather than free-form agent metadata,
-and partial usage values render absent required token counters as zero.
+and partial usage values derive absent parent counters from their details or
+render them as zero. Explicitly inconsistent usage counters are rejected.
 
 FastAPI/Starlette/Django/Azure Functions code owns route registration,
 authentication, status codes, response construction, and background work.

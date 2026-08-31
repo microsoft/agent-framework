@@ -413,26 +413,46 @@ class TestResponsesRunHelpers:
             responses_from_run(result, response_id="resp_new")
 
     @pytest.mark.parametrize(
-        ("usage_details", "expected_counts"),
+        ("usage_details", "expected_counts", "cached_tokens", "reasoning_tokens"),
         [
             (
                 {"output_token_count": 3},
                 {"input_tokens": 0, "output_tokens": 3, "total_tokens": 3},
+                0,
+                0,
             ),
             (
                 {"input_token_count": 2},
                 {"input_tokens": 2, "output_tokens": 0, "total_tokens": 2},
+                0,
+                0,
             ),
             (
                 {"total_token_count": 5},
                 {"input_tokens": 0, "output_tokens": 0, "total_tokens": 5},
+                0,
+                0,
+            ),
+            (
+                {"output_token_count": 1, "cache_read_input_token_count": 3},
+                {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
+                3,
+                0,
+            ),
+            (
+                {"input_token_count": 1, "reasoning_output_token_count": 2},
+                {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
+                0,
+                2,
             ),
         ],
     )
-    def test_responses_from_run_zero_fills_partial_usage(
+    def test_responses_from_run_normalizes_partial_usage(
         self,
         usage_details: UsageDetails,
         expected_counts: dict[str, int],
+        cached_tokens: int,
+        reasoning_tokens: int,
     ) -> None:
         result = AgentResponse(
             messages=Message(role="assistant", contents=[Content.from_text("hello")]),
@@ -443,8 +463,38 @@ class TestResponsesRunHelpers:
 
         usage = cast("dict[str, object]", payload["usage"])
         assert {key: usage[key] for key in expected_counts} == expected_counts
-        assert usage["input_tokens_details"] == {"cached_tokens": 0, "cache_write_tokens": 0}
-        assert usage["output_tokens_details"] == {"reasoning_tokens": 0}
+        assert usage["input_tokens_details"] == {"cached_tokens": cached_tokens, "cache_write_tokens": 0}
+        assert usage["output_tokens_details"] == {"reasoning_tokens": reasoning_tokens}
+
+    @pytest.mark.parametrize(
+        ("usage_details", "message"),
+        [
+            (
+                {"input_token_count": 2, "cache_read_input_token_count": 3},
+                "input token details",
+            ),
+            (
+                {"output_token_count": 1, "reasoning_output_token_count": 2},
+                "reasoning token count",
+            ),
+            (
+                {"input_token_count": 2, "output_token_count": 3, "total_token_count": 4},
+                "total_token_count",
+            ),
+        ],
+    )
+    def test_responses_from_run_rejects_inconsistent_usage(
+        self,
+        usage_details: UsageDetails,
+        message: str,
+    ) -> None:
+        result = AgentResponse(
+            messages=Message(role="assistant", contents=[Content.from_text("hello")]),
+            usage_details=usage_details,
+        )
+
+        with pytest.raises(ValueError, match=message):
+            responses_from_run(result, response_id="resp_new")
 
     @pytest.mark.parametrize("count", [-1, True])
     def test_responses_from_run_rejects_invalid_usage_count(self, count: object) -> None:

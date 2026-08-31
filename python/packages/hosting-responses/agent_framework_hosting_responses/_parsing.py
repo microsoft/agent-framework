@@ -338,12 +338,25 @@ def _usage_from_result(result: AgentResponse[Any]) -> Any | None:
     if not usage_details:
         return None
 
-    input_tokens = _usage_count(usage_details, "input_token_count") or 0
-    output_tokens = _usage_count(usage_details, "output_token_count") or 0
+    input_tokens = _usage_count(usage_details, "input_token_count")
+    output_tokens = _usage_count(usage_details, "output_token_count")
     total_tokens = _usage_count(usage_details, "total_token_count")
     cached_tokens = _usage_count(usage_details, "cache_read_input_token_count") or 0
     cache_write_tokens = _usage_count(usage_details, "cache_creation_input_token_count") or 0
     reasoning_tokens = _usage_count(usage_details, "reasoning_output_token_count") or 0
+    if input_tokens is None:
+        input_tokens = max(cached_tokens, cache_write_tokens)
+    elif cached_tokens > input_tokens or cache_write_tokens > input_tokens:
+        raise ValueError("AgentResponse input token details must not exceed `input_token_count`")
+    if output_tokens is None:
+        output_tokens = reasoning_tokens
+    elif reasoning_tokens > output_tokens:
+        raise ValueError("AgentResponse reasoning token count must not exceed `output_token_count`")
+    minimum_total = input_tokens + output_tokens
+    if total_tokens is None:
+        total_tokens = minimum_total
+    elif total_tokens < minimum_total:
+        raise ValueError("AgentResponse `total_token_count` must not be less than input plus output tokens")
     usage: dict[str, Any] = {
         "input_tokens": input_tokens,
         "input_tokens_details": {
@@ -352,7 +365,7 @@ def _usage_from_result(result: AgentResponse[Any]) -> Any | None:
         },
         "output_tokens": output_tokens,
         "output_tokens_details": {"reasoning_tokens": reasoning_tokens},
-        "total_tokens": total_tokens if total_tokens is not None else input_tokens + output_tokens,
+        "total_tokens": total_tokens,
     }
     return usage
 
