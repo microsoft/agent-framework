@@ -2,7 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -662,6 +662,104 @@ async def test_runner_restore_clears_fan_in_buffer_left_by_an_interrupted_run():
     await ctx.send_message(WorkflowMessage(data=MockMessage(data=2), source_id="source_b"))
     await runner._run_iteration()  # pyright: ignore[reportPrivateUsage]
 
+    assert target.batches == [[1, 2]]
+
+
+async def test_runner_orphaned_delivery_cannot_repopulate_a_restored_fan_in_buffer():
+    """A sibling delivery still in flight when another source fails must not survive into a restore.
+
+    Reported on PR #7953 (@moonbox3): ``_run_iteration``'s ``asyncio.gather`` calls do not cancel their
+    other tasks when one raises - the others keep running as orphaned background tasks. If a fan-in
+    delivery is one of those orphans, it can resume after ``restore_checkpoint`` has already reset the
+    ``FanInEdgeRunner``'s buffer for the *next* run and append into it, so the buffer ends up holding a
+    message from the failed, never-checkpointed superstep. Once the caller redelivers that same source
+    as part of the normal resume flow, the fan-in can fire using the stale message instead of - or
+    alongside - the fresh redelivery.
+
+    The pre-restore (stale) and post-restore (fresh) ``source_b`` messages deliberately carry
+    different payloads (``99`` vs ``2``) so a fan-in that fires on the stale message is
+    distinguishable from one that correctly waits for the fresh redelivery; using the same payload
+    for both would let a buggy run and a correct run produce an identical-looking batch by
+    coincidence.
+    """
+    target = CollectingExecutor(id="target")
+    source_a = MockExecutor(id="source_a")
+    source_b = MockExecutor(id="source_b")
+    source_c = MockExecutor(id="source_c")
+    fan_in_group = FanInEdgeGroup([source_a.id, source_b.id], target.id)
+    executors: dict[str, Executor] = {
+        source_a.id: source_a,
+        source_b.id: source_b,
+        source_c.id: source_c,
+        target.id: target,
+    }
+    ctx = InProcRunnerContext()
+    runner = Runner([fan_in_group], executors, State(), ctx, "test_name", graph_signature_hash="test_hash")
+
+    real_fan_in_runner = cast(FanInEdgeRunner, runner._edge_runner_map["source_a"][0])  # pyright: ignore[reportPrivateUsage]
+    assert runner._edge_runner_map["source_b"][0] is real_fan_in_runner  # pyright: ignore[reportPrivateUsage]
+
+    entered_delay = asyncio.Event()
+    release = asyncio.Event()
+
+    class DelayedFanInDelivery:
+        """Wraps the real fan-in runner's delivery for source_b, pausing before it actually appends."""
+
+        async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+            entered_delay.set()
+            await release.wait()
+            return await real_fan_in_runner.send_message(message, state, ctx)
+
+    class FailingDelivery:
+        async def send_message(self, message: WorkflowMessage, state: State, ctx: RunnerContext) -> bool:
+            raise RuntimeError("source_c delivery failed")
+
+    runner._edge_runner_map["source_b"] = [DelayedFanInDelivery()]  # type: ignore[assignment, list-item]  # pyright: ignore[reportPrivateUsage]  # ty: ignore[invalid-assignment]
+    runner._edge_runner_map["source_c"] = [FailingDelivery()]  # type: ignore[assignment, list-item]  # pyright: ignore[reportPrivateUsage]  # ty: ignore[invalid-assignment]
+
+    # A checkpoint from before this superstep started: empty fan-in buffer, matching the last
+    # known-good superstep boundary that a real resume flow would restore to.
+    checkpoint = await runner.build_checkpoint()
+    assert EDGE_STATE_KEY not in checkpoint.state
+
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="source_a"))
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=99), source_id="source_b"))
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=-1), source_id="source_c"))
+
+    iteration_task = asyncio.create_task(runner._run_iteration())  # pyright: ignore[reportPrivateUsage]
+
+    # source_a's delivery completes immediately; source_b's is parked mid-flight, about to append
+    # into the *same* FanInEdgeRunner instance, when source_c's delivery fails.
+    await entered_delay.wait()
+
+    with pytest.raises(RuntimeError, match="source_c delivery failed"):
+        await iteration_task
+
+    # The app's resume flow restores the same runner from the last good checkpoint - this is exactly
+    # what a caller does after catching the failure above, per Workflow._execute_with_message_or_checkpoint.
+    await runner.restore_checkpoint(checkpoint)
+    assert real_fan_in_runner._buffer == {}  # pyright: ignore[reportPrivateUsage]
+
+    # Release the delayed delivery. If _run_iteration cancelled it when source_c failed (the fix),
+    # `release.wait()` raises CancelledError here and the real fan-in runner's send_message for the
+    # stale data=99 message is never reached at all; releasing an already-cancelled waiter is a no-op.
+    release.set()
+    await asyncio.sleep(0)  # yield so the orphaned task either appends or finishes cancelling
+
+    # The stale data=99 message from the failed, never-checkpointed superstep must not have reached
+    # the buffer the restore just reset for the next run.
+    assert real_fan_in_runner._buffer.get("source_b", []) == []  # pyright: ignore[reportPrivateUsage]
+
+    # The resume flow redelivers the failed superstep's sources with the correct payloads, as the
+    # existing test_runner_restore_clears_fan_in_buffer_left_by_an_interrupted_run models. source_b's
+    # fresh message (data=2) differs from the stale one (data=99) precisely so the assertion below can
+    # tell which one the fan-in actually used.
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="source_a"))
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=2), source_id="source_b"))
+    await runner._run_iteration()  # pyright: ignore[reportPrivateUsage]
+
+    # The target must see the fresh redelivery (source_a=1, source_b=2), not the stale pre-restore
+    # message (99) that the orphaned delivery left behind, and not both.
     assert target.batches == [[1, 2]]
 
 
