@@ -375,6 +375,76 @@ def _set_group_summarized_by_summary_id(message: Message, summary_id: str) -> No
     annotation[SUMMARIZED_BY_SUMMARY_ID_KEY] = summary_id
 
 
+def _reconcile_compaction_summaries(  # pyright: ignore[reportUnusedFunction]
+    source_messages: list[Message],
+    working_messages: Sequence[Message],
+    previous_message_ids: set[int],
+) -> None:
+    """Reconcile summaries of source messages without persisting unrelated rewrites."""
+    source_message_ids = {message.message_id for message in source_messages if message.message_id}
+    candidates: list[tuple[Message, set[str]]] = []
+    for message in working_messages:
+        if id(message) in previous_message_ids:
+            continue
+
+        annotation = _read_group_annotation_raw(message)
+        if annotation is None:
+            continue
+        summarized_message_ids: Any = annotation.get(SUMMARY_OF_MESSAGE_IDS_KEY)
+        if (
+            message.message_id
+            and isinstance(summarized_message_ids, list)
+            and summarized_message_ids
+            and all(isinstance(value, str) for value in cast("list[Any]", summarized_message_ids))
+        ):
+            candidates.append((message, set(cast("list[str]", summarized_message_ids))))
+
+    dependencies = {message.message_id: summary_ids for message, summary_ids in candidates if message.message_id}
+    supported_ids = set(source_message_ids)
+    pending_ids = set(dependencies)
+    while pending_ids:
+        newly_supported = {summary_id for summary_id in pending_ids if dependencies[summary_id].issubset(supported_ids)}
+        if not newly_supported:
+            break
+        supported_ids.update(newly_supported)
+        pending_ids.difference_update(newly_supported)
+
+    accepted_ids = set(dependencies).difference(pending_ids)
+    for message in [*source_messages, *(candidate for candidate, _ in candidates)]:
+        annotation = _read_group_annotation_raw(message)
+        if annotation is None:
+            continue
+        summary_id = annotation.get(SUMMARIZED_BY_SUMMARY_ID_KEY)
+        if not isinstance(summary_id, str) or summary_id in accepted_ids or summary_id in source_message_ids:
+            continue
+        annotation.pop(SUMMARIZED_BY_SUMMARY_ID_KEY, None)
+        message.additional_properties.pop(EXCLUDED_KEY, None)
+        message.additional_properties.pop(EXCLUDE_REASON_KEY, None)
+
+    def source_dependencies(summary_id: str) -> set[str]:
+        expanded: set[str] = set()
+        for dependency_id in dependencies[summary_id]:
+            if dependency_id in source_message_ids:
+                expanded.add(dependency_id)
+            elif dependency_id in accepted_ids:
+                expanded.update(source_dependencies(dependency_id))
+        return expanded
+
+    for message, _ in candidates:
+        if message.message_id not in accepted_ids:
+            continue
+        summarized_source_ids = source_dependencies(message.message_id)
+        insertion_index = min(
+            (
+                index
+                for index, source_message in enumerate(source_messages)
+                if source_message.message_id in summarized_source_ids
+            ),
+            default=len(source_messages),
+        )
+        source_messages.insert(insertion_index, message)
+
+
 def _write_group_annotation(
     message: Message,
     *,

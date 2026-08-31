@@ -36,6 +36,13 @@ class _TupleMessagesChatMiddleware(ChatMiddleware):
         await call_next()
 
 
+class _RestoreMessagesChatMiddleware(ChatMiddleware):
+    async def process(self, context: Any, call_next: Any) -> None:
+        original_messages = tuple(context.messages)
+        await call_next()
+        context.messages = original_messages
+
+
 class _FixedSummarizer:
     async def get_response(self, *args: Any, **kwargs: Any) -> ChatResponse:
         return ChatResponse(messages=[Message(role="assistant", contents=["SUMMARY"])])
@@ -314,8 +321,8 @@ def _is_tool_result_summary(message: Message) -> bool:
 
 @pytest.mark.parametrize(
     "chat_middleware",
-    [None, _NoOpChatMiddleware(), _TupleMessagesChatMiddleware()],
-    ids=["none", "list", "tuple"],
+    [None, _NoOpChatMiddleware(), _TupleMessagesChatMiddleware(), _RestoreMessagesChatMiddleware()],
+    ids=["none", "list", "tuple", "restore"],
 )
 async def test_function_loop_persists_inserted_summaries_across_iterations(
     chat_client_base: SupportsChatGetResponse,
@@ -543,6 +550,39 @@ async def test_chat_middleware_reconciles_compaction_before_downstream(
 
     chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     chat_client_base.chat_middleware = [_CompactBeforeDownstream()]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    messages = [
+        Message(role="user", contents=["request"]),
+        _tool_call_response("call_1", "first").messages[0],
+        Message(role="tool", contents=[Content.from_function_result(call_id="call_1", result="first result")]),
+        _tool_call_response("call_2", "second").messages[0],
+        Message(role="tool", contents=[Content.from_function_result(call_id="call_2", result="second result")]),
+    ]
+
+    await chat_client_base.get_response(messages)
+
+    assert any(_is_tool_result_summary(message) for message in messages)
+
+
+async def test_chat_middleware_reconciles_compaction_before_termination_and_restore(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    class _RestoreAfterCall(ChatMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            original_messages = tuple(context.messages)
+            await call_next()
+            context.messages = original_messages
+
+    class _CompactAndTerminate(ChatMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            assert isinstance(context.messages, list)
+            await apply_compaction(
+                context.messages,
+                strategy=ToolResultCompactionStrategy(keep_last_tool_call_groups=1),
+            )
+            context.result = ChatResponse(messages=[Message(role="assistant", contents=["terminated"])])
+
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.chat_middleware = [_RestoreAfterCall(), _CompactAndTerminate()]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     messages = [
         Message(role="user", contents=["request"]),
         _tool_call_response("call_1", "first").messages[0],
