@@ -267,6 +267,22 @@ class TestResponsesRunHelpers:
         with pytest.raises(ValueError, match="require.*assistant.*user"):
             responses_from_run(result, response_id="resp_new")
 
+    def test_responses_from_run_preserves_tool_role_function_result(self) -> None:
+        result = AgentResponse(
+            messages=Message(
+                role="tool",
+                contents=[Content.from_function_result("call_1", result="sunny")],
+            )
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        assert len(payload["output"]) == 1
+        assert payload["output"][0]["type"] == "function_call_output"
+        assert payload["output"][0]["call_id"] == "call_1"
+        assert payload["output"][0]["output"] == [{"type": "input_text", "text": "sunny"}]
+        assert payload["output"][0]["status"] == "completed"
+
     def test_responses_from_run_rejects_standalone_media(self) -> None:
         result = AgentResponse(
             messages=Message(

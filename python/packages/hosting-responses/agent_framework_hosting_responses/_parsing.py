@@ -475,9 +475,10 @@ def _messages_to_output_items(messages: Sequence[Any], *, status: str) -> list[R
         if not isinstance(message, Message):
             output_items.extend(_output_to_output_items(message, status=status))
             continue
-        if message.role != "assistant":
+        message_output_items = _contents_to_output_items(message.contents, status=status)
+        if message.role != "assistant" and any(_raw_type(item) == "message" for item in message_output_items):
             raise ValueError(f"Responses output messages require the `assistant` role; received {message.role!r}")
-        output_items.extend(_contents_to_output_items(message.contents, status=status))
+        output_items.extend(message_output_items)
 
     return output_items
 
