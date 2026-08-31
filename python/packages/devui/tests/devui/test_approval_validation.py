@@ -171,6 +171,35 @@ def test_approval_consumed_on_use(executor: AgentFrameworkExecutor) -> None:
         executor._convert_input_to_chat_message(input_data)
 
 
+def test_approval_not_consumed_when_later_message_is_invalid(executor: AgentFrameworkExecutor) -> None:
+    """Batch validation failure leaves an earlier valid approval available to retry."""
+    executor._pending_approvals["req_retry"] = {
+        "call_id": "call_retry",
+        "name": "retry_tool",
+        "arguments": {},
+    }
+    invalid_batch = [
+        *_make_approval_response_input(request_id="req_retry", approved=True),
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "unsupported_content", "value": "ignored"}],
+        },
+    ]
+
+    with pytest.raises(ValueError, match="did not contain any supported message content"):
+        executor._convert_input_to_chat_message(invalid_batch)
+
+    assert "req_retry" in executor._pending_approvals
+
+    result = executor._convert_input_to_chat_message(
+        _make_approval_response_input(request_id="req_retry", approved=True)
+    )
+
+    assert result.contents[0].type == "function_approval_response"
+    assert "req_retry" not in executor._pending_approvals
+
+
 def test_rejected_approval_uses_server_data(executor: AgentFrameworkExecutor) -> None:
     """Even rejected (approved=False) responses use server-stored function_call data."""
     executor._pending_approvals["req_deny"] = {

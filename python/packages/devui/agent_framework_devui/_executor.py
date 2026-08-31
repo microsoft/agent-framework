@@ -679,6 +679,7 @@ class AgentFrameworkExecutor:
             One Message, or a list of Messages when input contains multiple message items
         """
         messages: list[Any] = []
+        approval_request_ids: set[str] = set()
 
         # Process each input item
         for item in input_items:
@@ -814,7 +815,11 @@ class AgentFrameworkExecutor:
 
                                         # Only accept responses that match a request we issued.
                                         # Always use the server-stored function_call data.
-                                        stored_fc = self._pending_approvals.pop(request_id, None)
+                                        stored_fc = (
+                                            None
+                                            if request_id in approval_request_ids
+                                            else self._pending_approvals.get(request_id)
+                                        )
                                         if stored_fc is None:
                                             logger.warning(
                                                 "Rejected function_approval_response with unknown "
@@ -848,6 +853,7 @@ class AgentFrameworkExecutor:
                                             additional_properties=approval_additional_props,
                                         )
                                         contents.append(approval_response)
+                                        approval_request_ids.add(request_id)
                                         logger.info(
                                             "Validated FunctionApprovalResponseContent: id=%s, "
                                             "approved=%s, function=%s, policy_violation=%s",
@@ -873,6 +879,9 @@ class AgentFrameworkExecutor:
 
         if not messages:
             raise InputConversionError("OpenAI input did not contain any supported message content")
+
+        for request_id in approval_request_ids:
+            self._pending_approvals.pop(request_id, None)
 
         logger.info("Created %d Message object(s) from OpenAI input", len(messages))
 
