@@ -248,12 +248,16 @@ The helper only extracts the candidate key. App code decides whether to trust an
 - `responses_from_streaming_run(stream, *, response_id, conversation_id=None) -> AsyncIterator[str]`
 
 `responses_from_run(...)` renders a full Responses JSON payload from an `AgentResponse`. It renders the full set of
-OpenAI Responses output item types supported by Agent Framework content.
+OpenAI Responses output item types supported by Agent Framework content. Transport status is read from the nested raw
+Responses representation when available, rather than from free-form `AgentResponse.additional_properties`, where providers
+may flatten user metadata. Partial `UsageDetails` values are accepted; missing required Responses input/output counters are
+rendered as zero, and a missing total is derived from those counters.
 
 `responses_from_streaming_run(...)` renders Server-Sent Event strings for a `ResponseStream`. It emits a created event,
-text deltas, and a completed event. The final completed payload is produced through `responses_from_run(...)`; the helper
-also preserves the model id observed on streaming updates when the finalized `AgentResponse` no longer carries raw model
-metadata.
+text deltas, and a terminal event matching the final `completed`, `incomplete`, or `failed` status. A stream that finalizes
+with another status is rejected and rendered as `response.failed`. The final payload is produced through
+`responses_from_run(...)`; the helper also preserves the model id observed on streaming updates when the finalized
+`AgentResponse` no longer carries raw model metadata.
 
 ## `agent-framework-hosting-a2a`
 

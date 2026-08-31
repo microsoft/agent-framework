@@ -363,7 +363,8 @@ class TestResponsesRunHelpers:
         assert payload["output"][0]["status"] == "incomplete"
 
     def test_responses_from_run_uses_raw_response_fields_as_fallback(self) -> None:
-        raw = SimpleNamespace(
+        earlier_response = SimpleNamespace(status="completed")
+        terminal_response = SimpleNamespace(
             status="failed",
             metadata={"source": "raw"},
             usage={
@@ -374,6 +375,10 @@ class TestResponsesRunHelpers:
                 "total_tokens": 9,
             },
         )
+        raw = [
+            SimpleNamespace(raw_representation=SimpleNamespace(response=earlier_response)),
+            SimpleNamespace(raw_representation=SimpleNamespace(response=terminal_response)),
+        ]
         result = AgentResponse(
             messages=Message(role="assistant", contents=[Content.from_text("partial")]),
             raw_representation=raw,
@@ -385,44 +390,70 @@ class TestResponsesRunHelpers:
         assert payload["metadata"] == {"source": "raw"}
         assert payload["usage"]["total_tokens"] == 9
 
-    @pytest.mark.parametrize(
-        "additional_properties",
-        [
-            {"status": "unknown"},
-            {"metadata": {"attempt": 1}},
-        ],
-    )
-    def test_responses_from_run_rejects_invalid_response_fields(
-        self,
-        additional_properties: dict[str, object],
-    ) -> None:
+    def test_responses_from_run_does_not_treat_user_metadata_status_as_transport_status(self) -> None:
+        raw_response = SimpleNamespace(status="completed", metadata={"status": "gold"})
         result = AgentResponse(
             messages=Message(role="assistant", contents=[Content.from_text("hello")]),
-            additional_properties=additional_properties,
+            additional_properties={"status": "gold"},
+            raw_representation=SimpleNamespace(raw_representation=raw_response),
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        assert payload["status"] == "completed"
+        assert payload["metadata"] == {"status": "gold"}
+
+    def test_responses_from_run_rejects_invalid_metadata(self) -> None:
+        result = AgentResponse(
+            messages=Message(role="assistant", contents=[Content.from_text("hello")]),
+            additional_properties={"metadata": {"attempt": 1}},
         )
 
         with pytest.raises(ValueError):
             responses_from_run(result, response_id="resp_new")
 
     @pytest.mark.parametrize(
-        ("usage_details", "message"),
+        ("usage_details", "expected_counts"),
         [
-            ({"output_token_count": 1}, "input_token_count"),
-            ({"input_token_count": 1}, "output_token_count"),
-            ({"input_token_count": -1, "output_token_count": 1}, "non-negative"),
+            (
+                {"output_token_count": 3},
+                {"input_tokens": 0, "output_tokens": 3, "total_tokens": 3},
+            ),
+            (
+                {"input_token_count": 2},
+                {"input_tokens": 2, "output_tokens": 0, "total_tokens": 2},
+            ),
+            (
+                {"total_token_count": 5},
+                {"input_tokens": 0, "output_tokens": 0, "total_tokens": 5},
+            ),
         ],
     )
-    def test_responses_from_run_rejects_unrepresentable_usage(
+    def test_responses_from_run_zero_fills_partial_usage(
         self,
         usage_details: UsageDetails,
-        message: str,
+        expected_counts: dict[str, int],
     ) -> None:
         result = AgentResponse(
             messages=Message(role="assistant", contents=[Content.from_text("hello")]),
             usage_details=usage_details,
         )
 
-        with pytest.raises(ValueError, match=message):
+        payload = responses_from_run(result, response_id="resp_new")
+
+        usage = cast("dict[str, object]", payload["usage"])
+        assert {key: usage[key] for key in expected_counts} == expected_counts
+        assert usage["input_tokens_details"] == {"cached_tokens": 0, "cache_write_tokens": 0}
+        assert usage["output_tokens_details"] == {"reasoning_tokens": 0}
+
+    @pytest.mark.parametrize("count", [-1, True])
+    def test_responses_from_run_rejects_invalid_usage_count(self, count: object) -> None:
+        result = AgentResponse(
+            messages=Message(role="assistant", contents=[Content.from_text("hello")]),
+            usage_details=cast("UsageDetails", {"input_token_count": count}),
+        )
+
+        with pytest.raises(ValueError, match="non-negative integer"):
             responses_from_run(result, response_id="resp_new")
 
     def test_responses_from_run_maps_conversation_id(self) -> None:
@@ -517,6 +548,47 @@ class TestResponsesRunHelpers:
         assert response["metadata"] == {"source": "stream"}
         usage = cast("dict[str, object]", response["usage"])
         assert usage["total_tokens"] == 6
+
+    @pytest.mark.parametrize("status", ["completed", "incomplete", "failed"])
+    async def test_responses_from_streaming_run_emits_matching_terminal_event(self, status: str) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("hello")], role="assistant")
+
+        def finalizer(items: Sequence[AgentResponseUpdate]) -> AgentResponse:
+            response = AgentResponse.from_updates(items)
+            response.raw_representation = SimpleNamespace(status=status)
+            return response
+
+        stream = ResponseStream(updates(), finalizer=finalizer)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        payload = _sse_payload(events[-1])
+        response = cast("dict[str, object]", payload["response"])
+
+        assert events[-1].startswith(f"event: response.{status}")
+        assert payload["type"] == f"response.{status}"
+        assert response["status"] == status
+
+    @pytest.mark.parametrize("status", ["in_progress", "queued"])
+    async def test_responses_from_streaming_run_rejects_nonterminal_final_status(self, status: str) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("partial")], role="assistant")
+
+        def finalizer(items: Sequence[AgentResponseUpdate]) -> AgentResponse:
+            response = AgentResponse.from_updates(items)
+            response.raw_representation = SimpleNamespace(status=status)
+            return response
+
+        stream = ResponseStream(updates(), finalizer=finalizer)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        payload = _sse_payload(events[-1])
+        response = cast("dict[str, object]", payload["response"])
+        error = cast("dict[str, object]", response["error"])
+
+        assert events[-1].startswith("event: response.failed")
+        assert response["status"] == "failed"
+        assert f"unsupported status {status!r}" in cast(str, error["message"])
 
     async def test_responses_from_streaming_run_emits_failed_when_finalizer_raises(self) -> None:
         async def updates() -> AsyncIterator[AgentResponseUpdate]:

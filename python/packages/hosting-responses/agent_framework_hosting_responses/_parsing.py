@@ -17,7 +17,7 @@ import json
 import time
 import uuid
 import warnings
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from typing import Any, cast
 
 from agent_framework import AgentResponse, AgentResponseUpdate, ChatOptions, Content, Message, ResponseStream
@@ -59,6 +59,7 @@ _RESPONSES_RUN_TRANSPORT_KEYS = frozenset({
 _RESPONSES_CONTINUATION_KEYS = ("previous_response_id", "conversation", "conversation_id")
 _RESPONSES_INPUT_MESSAGE_ROLES = frozenset({"user", "assistant", "system", "developer"})
 _RESPONSES_STATUSES = frozenset({"completed", "failed", "in_progress", "cancelled", "queued", "incomplete"})
+_STREAMING_TERMINAL_STATUSES = frozenset({"completed", "failed", "incomplete"})
 
 
 def _content_from_input_item(item: Mapping[str, Any]) -> Content:
@@ -304,11 +305,11 @@ def responses_from_run(
 
 
 def _status_from_result(result: AgentResponse[Any]) -> str:
-    explicit_status = _response_field_from_result(result, "status")
-    if explicit_status is not None:
-        if not isinstance(explicit_status, str) or explicit_status not in _RESPONSES_STATUSES:
-            raise ValueError(f"AgentResponse status is not a valid Responses status: {explicit_status!r}")
-        return explicit_status
+    transport_status = _response_field_from_result(result, "status")
+    if transport_status is not None:
+        if not isinstance(transport_status, str) or transport_status not in _RESPONSES_STATUSES:
+            raise ValueError(f"AgentResponse status is not a valid Responses status: {transport_status!r}")
+        return transport_status
 
     finish_reason = getattr(result.finish_reason, "value", result.finish_reason)
     if finish_reason in ("length", "content_filter"):
@@ -319,7 +320,7 @@ def _status_from_result(result: AgentResponse[Any]) -> str:
 
 
 def _metadata_from_result(result: AgentResponse[Any]) -> dict[str, str] | None:
-    metadata = _response_field_from_result(result, "metadata")
+    metadata = _response_field_from_result(result, "metadata", allow_additional_properties=True)
     if metadata is None:
         return None
     if not isinstance(metadata, Mapping):
@@ -333,16 +334,12 @@ def _metadata_from_result(result: AgentResponse[Any]) -> dict[str, str] | None:
 def _usage_from_result(result: AgentResponse[Any]) -> Any | None:
     usage_details = result.usage_details
     if usage_details is None:
-        return _response_field_from_result(result, "usage")
+        return _response_field_from_result(result, "usage", allow_additional_properties=True)
     if not usage_details:
         return None
 
-    input_tokens = _usage_count(usage_details, "input_token_count")
-    if input_tokens is None:
-        raise ValueError("AgentResponse usage_details requires `input_token_count` for Responses conversion")
-    output_tokens = _usage_count(usage_details, "output_token_count")
-    if output_tokens is None:
-        raise ValueError("AgentResponse usage_details requires `output_token_count` for Responses conversion")
+    input_tokens = _usage_count(usage_details, "input_token_count") or 0
+    output_tokens = _usage_count(usage_details, "output_token_count") or 0
     total_tokens = _usage_count(usage_details, "total_token_count")
     cached_tokens = _usage_count(usage_details, "cache_read_input_token_count") or 0
     cache_write_tokens = _usage_count(usage_details, "cache_creation_input_token_count") or 0
@@ -370,7 +367,7 @@ def _usage_count(usage_details: Mapping[str, Any], key: str) -> int | None:
 
 
 def _incomplete_details_from_result(result: AgentResponse[Any], *, status: str) -> Any | None:
-    incomplete_details = _response_field_from_result(result, "incomplete_details")
+    incomplete_details = _response_field_from_result(result, "incomplete_details", allow_additional_properties=True)
     if incomplete_details is not None:
         return incomplete_details
     if status != "incomplete":
@@ -384,19 +381,50 @@ def _incomplete_details_from_result(result: AgentResponse[Any], *, status: str) 
     return None
 
 
-def _response_field_from_result(result: AgentResponse[Any], key: str) -> Any | None:
-    if key in result.additional_properties:
-        return result.additional_properties[key]
-
-    raw = result.raw_representation
-    for source in (raw, getattr(raw, "raw_representation", None)):
+def _response_field_from_result(
+    result: AgentResponse[Any],
+    key: str,
+    *,
+    allow_additional_properties: bool = False,
+) -> Any | None:
+    for source in _raw_response_sources(result.raw_representation):
         if isinstance(source, Mapping):
             value = cast("Mapping[str, Any]", source).get(key)
         else:
             value = getattr(source, key, None)
         if value is not None:
             return value
+    if allow_additional_properties and key in result.additional_properties:
+        return result.additional_properties[key]
     return None
+
+
+def _raw_response_sources(raw: Any) -> Iterator[Any]:
+    """Traverse raw response wrappers, preferring the latest streaming update."""
+    stack = [raw]
+    seen: set[int] = set()
+    while stack:
+        source = stack.pop()
+        if source is None or id(source) in seen:
+            continue
+        seen.add(id(source))
+
+        if isinstance(source, Sequence) and not isinstance(source, (str, bytes, bytearray)):
+            stack.extend(cast("Sequence[Any]", source))
+            continue
+
+        yield source
+        if isinstance(source, Mapping):
+            source_map = cast("Mapping[str, Any]", source)
+            nested_raw = source_map.get("raw_representation")
+            response = source_map.get("response")
+        else:
+            nested_raw = getattr(source, "raw_representation", None)
+            response = getattr(source, "response", None)
+        if nested_raw is not None:
+            stack.append(nested_raw)
+        if response is not None:
+            stack.append(response)
 
 
 def _model_from_update(update: AgentResponseUpdate) -> str | None:
@@ -1066,10 +1094,17 @@ async def responses_from_streaming_run(
             # (see `_model_from_update`), so prefer the model observed on the
             # stream's own chunks over `responses_from_run`'s "agent" fallback.
             payload["model"] = model
+        status = payload.get("status")
+        if not isinstance(status, str) or status not in _STREAMING_TERMINAL_STATUSES:
+            raise ValueError(
+                f"Response stream finalized with unsupported status {status!r}; "
+                "expected `completed`, `incomplete`, or `failed`"
+            )
+        terminal_event_type = f"response.{status}"
         yield _sse_event(
-            "response.completed",
+            terminal_event_type,
             {
-                "type": "response.completed",
+                "type": terminal_event_type,
                 "response": payload,
             },
         )
