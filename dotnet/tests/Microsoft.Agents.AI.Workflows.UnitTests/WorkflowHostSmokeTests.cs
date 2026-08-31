@@ -925,21 +925,17 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             .ToListAsync();
 
         // Assert
-        AgentResponseUpdate startUpdate = updates.Should().ContainSingle(update => update.Text == StartResponseText).Subject;
-        startUpdate.AdditionalProperties.Should().NotBeNull();
-        startUpdate.AdditionalProperties.Should().ContainKey(ExistingMetadataKey)
-            .WhoseValue.Should().Be("start metadata");
-        startUpdate.AdditionalProperties.Should().ContainKey(WorkflowAgentAdditionalProperties.ExecutorId)
-            .WhoseValue.Should().Be(StartExecutorId);
-        startUpdate.RawRepresentation.Should().BeSameAs(startRawRepresentation);
+        AgentResponseUpdate startUpdate = Assert.Single(updates, update => update.Text == StartResponseText);
+        Assert.NotNull(startUpdate.AdditionalProperties);
+        Assert.Equal("start metadata", startUpdate.AdditionalProperties[ExistingMetadataKey]);
+        Assert.Equal(StartExecutorId, startUpdate.AdditionalProperties[WorkflowAgentAdditionalProperties.ExecutorId]);
+        Assert.Same(startRawRepresentation, startUpdate.RawRepresentation);
 
-        AgentResponseUpdate downstreamUpdate = updates.Should().ContainSingle(update => update.Text == DownstreamResponseText).Subject;
-        downstreamUpdate.AdditionalProperties.Should().NotBeNull();
-        downstreamUpdate.AdditionalProperties.Should().ContainKey(ExistingMetadataKey)
-            .WhoseValue.Should().Be("downstream metadata");
-        downstreamUpdate.AdditionalProperties.Should().ContainKey(WorkflowAgentAdditionalProperties.ExecutorId)
-            .WhoseValue.Should().Be(DownstreamExecutorId);
-        downstreamUpdate.RawRepresentation.Should().BeSameAs(downstreamRawRepresentation);
+        AgentResponseUpdate downstreamUpdate = Assert.Single(updates, update => update.Text == DownstreamResponseText);
+        Assert.NotNull(downstreamUpdate.AdditionalProperties);
+        Assert.Equal("downstream metadata", downstreamUpdate.AdditionalProperties[ExistingMetadataKey]);
+        Assert.Equal(DownstreamExecutorId, downstreamUpdate.AdditionalProperties[WorkflowAgentAdditionalProperties.ExecutorId]);
+        Assert.Same(downstreamRawRepresentation, downstreamUpdate.RawRepresentation);
     }
 
     [Fact]
@@ -971,13 +967,11 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             .ToListAsync();
 
         // Assert
-        AgentResponseUpdate update = updates.Should().ContainSingle(item => item.Text == ResponseText).Subject;
-        update.AdditionalProperties.Should().NotBeNull();
-        update.AdditionalProperties.Should().ContainKey(ExistingMetadataKey)
-            .WhoseValue.Should().Be("provider metadata");
-        update.AdditionalProperties.Should().ContainKey(WorkflowAgentAdditionalProperties.ExecutorId)
-            .WhoseValue.Should().Be(ExecutorId);
-        update.RawRepresentation.Should().BeSameAs(rawRepresentation);
+        AgentResponseUpdate update = Assert.Single(updates, item => item.Text == ResponseText);
+        Assert.NotNull(update.AdditionalProperties);
+        Assert.Equal("provider metadata", update.AdditionalProperties[ExistingMetadataKey]);
+        Assert.Equal(ExecutorId, update.AdditionalProperties[WorkflowAgentAdditionalProperties.ExecutorId]);
+        Assert.Same(rawRepresentation, update.RawRepresentation);
     }
 
     // ----- Phase 5: Workflow-as-Agent intermediate forwarding -----------------
@@ -1190,11 +1184,10 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             List<AgentResponseUpdate> updates =
                 await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
 
-            AgentResponseUpdate update = updates.Should().ContainSingle(u => u.Text == FinalText).Subject;
-            update.RawRepresentation.Should().BeOfType<AgentResponseEvent>();
-            update.AdditionalProperties.Should().NotBeNull();
-            update.AdditionalProperties.Should().ContainKey(WorkflowAgentAdditionalProperties.ExecutorId)
-                .WhoseValue.Should().Be(ExecutorId);
+            AgentResponseUpdate update = Assert.Single(updates, u => u.Text == FinalText);
+            Assert.IsType<AgentResponseEvent>(update.RawRepresentation);
+            Assert.NotNull(update.AdditionalProperties);
+            Assert.Equal(ExecutorId, update.AdditionalProperties[WorkflowAgentAdditionalProperties.ExecutorId]);
         }
 
         [Fact]
@@ -1214,16 +1207,13 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             List<AgentResponseUpdate> updates =
                 await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
 
-            updates.Count(u => u.Text == FinalText).Should().Be(0,
-                "the completed response message should be suppressed after the matching message was already streamed");
+            Assert.DoesNotContain(updates, u => u.Text == FinalText);
 
-            AgentResponseUpdate update = updates.Should().ContainSingle(u =>
-                u.RawRepresentation is AgentResponseEvent && u.Contents.Count == 0).Subject;
-            update.MessageId.Should().NotBe(MessageId,
-                "the observability update should be distinct from the already-streamed content update");
-            update.AdditionalProperties.Should().NotBeNull();
-            update.AdditionalProperties.Should().ContainKey(WorkflowAgentAdditionalProperties.ExecutorId)
-                .WhoseValue.Should().Be(ExecutorId);
+            AgentResponseUpdate update = Assert.Single(updates, u =>
+                u.RawRepresentation is AgentResponseEvent && u.Contents.Count == 0);
+            Assert.NotEqual(MessageId, update.MessageId);
+            Assert.NotNull(update.AdditionalProperties);
+            Assert.Equal(ExecutorId, update.AdditionalProperties[WorkflowAgentAdditionalProperties.ExecutorId]);
         }
 
         private sealed class StreamThenCompleteExecutor(
