@@ -1165,6 +1165,65 @@ class TestNonStreaming:
         assert "function_call_output" in types
         assert "message" in types
 
+    @pytest.mark.parametrize(
+        ("result", "expected_output"),
+        [
+            (0, "0"),
+            (False, "false"),
+            ({"count": 0, "ok": False}, '{"count": 0, "ok": false}'),
+        ],
+    )
+    async def test_function_result_serializes_json_safely(self, result: Any, expected_output: str) -> None:
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[Content.from_function_call("call_1", "get_value", arguments="{}")],
+                    ),
+                    Message(role="tool", contents=[Content.from_function_result("call_1", result=result)]),
+                ]
+            )
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, stream=False)
+
+        assert resp.status_code == 200
+        result_item = next(item for item in resp.json()["output"] if item["type"] == "function_call_output")
+        assert result_item["output"] == expected_output
+
+    async def test_shell_call_preserves_execution_limits(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_shell_tool_call(
+                                call_id="shell_1",
+                                commands=["python --version"],
+                                timeout_ms=30_000,
+                                max_output_length=4096,
+                                status="completed",
+                            )
+                        ],
+                    )
+                ]
+            )
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, stream=False)
+
+        assert resp.status_code == 200
+        shell_item = next(item for item in resp.json()["output"] if item["type"] == "shell_call")
+        assert shell_item["action"] == {
+            "commands": ["python --version"],
+            "timeout_ms": 30_000,
+            "max_output_length": 4096,
+        }
+
     async def test_hosted_mcp_call_and_result_persist_as_single_mcp_call(self) -> None:
         agent = _make_agent(
             response=AgentResponse(
@@ -1208,6 +1267,52 @@ class TestNonStreaming:
         assert len(mcp_items) == 1
         assert mcp_items[0]["id"] == "mcp_abc123"
         assert mcp_items[0]["output"] == "found 10 cats"
+
+    async def test_mcp_result_serialization_matches_with_and_without_correlated_call(self) -> None:
+        output = {"count": 0, "ok": False}
+        correlated_agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_mcp_server_tool_call(
+                                call_id="mcp_correlated",
+                                tool_name="search",
+                                server_name="api_specs",
+                                arguments="{}",
+                            )
+                        ],
+                    ),
+                    Message(
+                        role="tool",
+                        contents=[Content.from_mcp_server_tool_result(call_id="mcp_correlated", output=output)],
+                    ),
+                ]
+            )
+        )
+        uncorrelated_agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="tool",
+                        contents=[Content.from_mcp_server_tool_result(call_id="mcp_uncorrelated", output=output)],
+                    )
+                ]
+            )
+        )
+
+        correlated_response = await _post(_make_server(correlated_agent), stream=False)
+        uncorrelated_response = await _post(_make_server(uncorrelated_agent), stream=False)
+
+        assert correlated_response.status_code == 200
+        assert uncorrelated_response.status_code == 200
+        correlated_item = next(item for item in correlated_response.json()["output"] if item["type"] == "mcp_call")
+        uncorrelated_item = next(
+            item for item in uncorrelated_response.json()["output"] if item["type"] == "custom_tool_call_output"
+        )
+        assert correlated_item["output"] == uncorrelated_item["output"]
+        assert json.loads(correlated_item["output"]) == output
 
     async def test_reasoning_content(self) -> None:
         reasoning_id = "rs_576d207b35d96b3200pkcXkMwXAij920Wcv7WhRXiMPiLdOA63"
@@ -1840,6 +1945,20 @@ class TestOutputItemToMessage:
         assert msg.contents[0].call_id == "call_1"
         assert msg.contents[0].result == "sunny"
 
+    async def test_function_call_output_structured_result_is_json(self) -> None:
+        item = cast(
+            OutputItem,
+            {
+                "type": "function_call_output",
+                "call_id": "call_2",
+                "output": {"count": 0, "ok": False},
+            },
+        )
+
+        msg = await _output_item_to_message(item)
+
+        assert json.loads(msg.contents[0].result) == {"count": 0, "ok": False}
+
     async def test_reasoning(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemReasoningItem, SummaryTextContent
 
@@ -1979,6 +2098,8 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "shell_tool_call"
         assert msg.contents[0].commands == ["ls", "-la"]
         assert msg.contents[0].call_id == "call_sc"
+        assert msg.contents[0].timeout_ms == 5000
+        assert msg.contents[0].max_output_length == 1024
 
     async def test_shell_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import (
@@ -2013,13 +2134,19 @@ class TestOutputItemToMessage:
             "type": "local_shell_call",
             "id": "lsc-1",
             "call_id": "call_lsc",
-            "action": LocalShellExecAction({"type": "exec", "command": ["echo", "hello"], "env": {}}),
+            "action": LocalShellExecAction({
+                "type": "exec",
+                "command": ["echo", "hello"],
+                "timeout_ms": 5000,
+                "env": {},
+            }),
             "status": "completed",
         })
         msg = await _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "shell_tool_call"
         assert msg.contents[0].commands == ["echo", "hello"]
+        assert msg.contents[0].timeout_ms == 5000
 
     async def test_local_shell_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemLocalShellToolCallOutput
@@ -2080,6 +2207,9 @@ class TestOutputItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "computer_use"
+        arguments = msg.contents[0].arguments
+        assert isinstance(arguments, str)
+        assert json.loads(arguments) == {"type": "click"}
         assert msg.contents[0].informational_only is True
 
     async def test_computer_call_output(self) -> None:
@@ -2098,6 +2228,10 @@ class TestOutputItemToMessage:
         assert msg.role == "tool"
         assert msg.contents[0].type == "function_result"
         assert msg.contents[0].call_id == "call_cc"
+        assert json.loads(msg.contents[0].result) == {
+            "type": "computer_screenshot",
+            "image_url": "data:image/png;base64,abc",
+        }
 
     async def test_custom_tool_call(self) -> None:
         item = cast(
@@ -2173,6 +2307,13 @@ class TestOutputItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "apply_patch"
+        arguments = msg.contents[0].arguments
+        assert isinstance(arguments, str)
+        assert json.loads(arguments) == {
+            "type": "update_file",
+            "path": "file.py",
+            "diff": "+ new line",
+        }
         assert msg.contents[0].informational_only is True
 
     async def test_apply_patch_call_output(self) -> None:
@@ -2332,17 +2473,18 @@ class TestItemToMessage:
         assert msg.contents[0].call_id == "call_1"
         assert msg.contents[0].result == "sunny"
 
-    async def test_function_call_output_non_string(self) -> None:
+    @pytest.mark.parametrize("output", [0, False, {"count": 0, "ok": False}])
+    async def test_function_call_output_non_string(self, output: Any) -> None:
         from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
 
         item = cast(
             FunctionCallOutputItemParam,
-            {"type": "function_call_output", "call_id": "call_2", "output": 42},
+            {"type": "function_call_output", "call_id": "call_2", "output": output},
         )
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "tool"
-        assert msg.contents[0].result == "42"
+        assert json.loads(msg.contents[0].result) == output
 
     async def test_reasoning_with_summary(self) -> None:
         from azure.ai.agentserver.responses.models import ItemReasoningItem, SummaryTextContent
@@ -2495,6 +2637,8 @@ class TestItemToMessage:
         assert msg.contents[0].type == "shell_tool_call"
         assert msg.contents[0].commands == ["ls", "-la"]
         assert msg.contents[0].call_id == "call_sc"
+        assert msg.contents[0].timeout_ms == 5000
+        assert msg.contents[0].max_output_length == 1024
 
     async def test_shell_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import (
@@ -2528,7 +2672,12 @@ class TestItemToMessage:
             "type": "local_shell_call",
             "id": "lsc-1",
             "call_id": "call_lsc",
-            "action": LocalShellExecAction({"type": "exec", "command": ["echo", "hello"], "env": {}}),
+            "action": LocalShellExecAction({
+                "type": "exec",
+                "command": ["echo", "hello"],
+                "timeout_ms": 5000,
+                "env": {},
+            }),
             "status": "completed",
         })
         msg = await _item_to_message(item)
@@ -2536,6 +2685,7 @@ class TestItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "shell_tool_call"
         assert msg.contents[0].commands == ["echo", "hello"]
+        assert msg.contents[0].timeout_ms == 5000
 
     async def test_local_shell_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ItemLocalShellToolCallOutput
@@ -2602,6 +2752,9 @@ class TestItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "computer_use"
+        arguments = msg.contents[0].arguments
+        assert isinstance(arguments, str)
+        assert json.loads(arguments) == {"type": "click"}
         assert msg.contents[0].informational_only is True
 
     async def test_computer_call_output(self) -> None:
@@ -2620,6 +2773,10 @@ class TestItemToMessage:
         assert msg.role == "tool"
         assert msg.contents[0].type == "function_result"
         assert msg.contents[0].call_id == "call_cc"
+        assert json.loads(msg.contents[0].result) == {
+            "type": "computer_screenshot",
+            "image_url": "data:image/png;base64,abc",
+        }
 
     async def test_custom_tool_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemCustomToolCall
@@ -2716,6 +2873,13 @@ class TestItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "apply_patch"
+        arguments = msg.contents[0].arguments
+        assert isinstance(arguments, str)
+        assert json.loads(arguments) == {
+            "type": "update_file",
+            "path": "file.py",
+            "diff": "+ new line",
+        }
         assert msg.contents[0].informational_only is True
 
     async def test_apply_patch_call_output(self) -> None:
