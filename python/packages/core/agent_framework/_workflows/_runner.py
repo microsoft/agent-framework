@@ -139,8 +139,6 @@ class RunnerImpl:
                 iteration_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await iteration_task
-                # Discard pending state writes from the cancelled superstep
-                self._state.discard()
                 raise
 
             # Propagate errors from iteration, but first surface any pending events
@@ -222,15 +220,56 @@ class RunnerImpl:
                 logger.debug(f"No outgoing edges found for executor {source_executor_id}; dropping messages.")
                 return
 
-            tasks = [_deliver_messages_for_edge_runner(edge_runner) for edge_runner in associated_edge_runners]
-            await asyncio.gather(*tasks)
+            tasks = [asyncio.create_task(_deliver_messages_for_edge_runner(edge_runner)) for edge_runner in associated_edge_runners]
+            if not tasks:
+                return  # asyncio.wait() requires a non-empty iterable
+            # Use FIRST_EXCEPTION to cancel pending siblings when one fails
+            try:
+                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+            except asyncio.CancelledError:
+                # If the wait() call itself is cancelled, cancel all child tasks
+                # before propagating to avoid orphaned work
+                for t in tasks:
+                    t.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
+            exceptions = [t.exception() for t in done if t.exception() is not None]
+            if exceptions:
+                for t in pending:
+                    t.cancel()
+                # Await all tasks to ensure cancelled tasks stop before propagating failure
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise exceptions[0]
 
         message_batches = await self._ctx.drain_messages()
-        tasks = [
-            _deliver_messages(source_executor_id, source_messages)
+        # Create actual Task objects so we can cancel them if needed
+        task_objects = [
+            asyncio.create_task(_deliver_messages(source_executor_id, source_messages))
             for source_executor_id, source_messages in message_batches.items()
         ]
-        await asyncio.gather(*tasks)
+        
+        if not task_objects:
+            return  # asyncio.wait() requires a non-empty iterable
+
+        try:
+            done, pending = await asyncio.wait(
+                task_objects,
+                return_when=asyncio.FIRST_EXCEPTION
+            )
+        except asyncio.CancelledError:
+            # If the wait() call itself is cancelled, cancel all child tasks
+            # before propagating to avoid orphaned work
+            for t in task_objects:
+                t.cancel()
+            await asyncio.gather(*task_objects, return_exceptions=True)
+            raise
+
+        exceptions = [t.exception() for t in done if t.exception() is not None]
+        if exceptions:
+            for t in pending:
+                t.cancel()
+            await asyncio.gather(*task_objects, return_exceptions=True)
+            raise exceptions[0]
 
     async def _prepare_checkpoint_state(self) -> None:
         """Persist executor snapshots into committed shared state.

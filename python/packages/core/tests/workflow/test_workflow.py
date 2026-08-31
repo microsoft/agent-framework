@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import contextlib
 import gc
 import logging
 import tempfile
@@ -656,6 +657,102 @@ async def test_workflow_discards_pending_state_after_failed_superstep():
     # Verify the leaked state from the failed run is NOT in committed state
     committed_state = workflow._runner.state.export_state()
     assert "secret" not in committed_state
+
+
+@dataclass
+class FanOutTestMessage:
+    """Message for fan-out state leak test."""
+    should_fail: bool
+
+
+class FanOutSourceExecutor(Executor):
+    """Source executor that sends fan-out test messages."""
+
+    @handler
+    async def handle(self, message: FanOutTestMessage, ctx: WorkflowContext[FanOutTestMessage]) -> None:
+        # Forward the message to targets
+        await ctx.send_message(message)
+
+
+class FailingTargetExecutor(Executor):
+    """Target that fails immediately on execute."""
+
+    def __init__(self, id: str, b_started: asyncio.Event | None = None) -> None:
+        super().__init__(id=id)
+        self._b_started = b_started
+
+    @handler
+    async def handle(self, message: FanOutTestMessage, ctx: WorkflowContext) -> None:
+        if message.should_fail:
+            # Wait for slow target to start before failing to ensure deterministic ordering
+            if self._b_started:
+                await self._b_started.wait()
+            raise RuntimeError("target A failed")
+
+
+class SlowStateWritingTargetExecutor(Executor):
+    """Target that writes state after being unblocked (vulnerable pattern if not cancelled)."""
+
+    def __init__(self, id: str, b_started: asyncio.Event, release_b: asyncio.Event, b_task_ref: list) -> None:
+        super().__init__(id=id)
+        self._b_started = b_started
+        self._release_b = release_b
+        self._b_task_ref = b_task_ref
+
+    @handler
+    async def handle(self, message: FanOutTestMessage, ctx: WorkflowContext) -> None:
+        self._b_task_ref.append(asyncio.current_task())
+        self._b_started.set()
+        if message.should_fail:
+            await self._release_b.wait()
+            ctx.set_state("leak_key", "leaked_value")
+
+
+async def test_workflow_discards_pending_state_after_fanout_failure():
+    """Test that pending state from a fan-out sibling target is discarded when another target fails.
+
+    Regression test for GitHub issue #7859: when a fan-out superstep has one target fail
+    while a sibling target is still running, the sibling's state writes must not leak
+    into committed state.
+    """
+    b_started = asyncio.Event()
+    release_b = asyncio.Event()
+    b_task_ref: list[asyncio.Task] = []
+
+    source = FanOutSourceExecutor(id="source")
+    failing_target = FailingTargetExecutor(id="failing_target", b_started=b_started)
+    slow_target = SlowStateWritingTargetExecutor(
+        id="slow_target", b_started=b_started, release_b=release_b, b_task_ref=b_task_ref
+    )
+
+    workflow = (
+        WorkflowBuilder(start_executor=source)
+        .add_fan_out_edges(source, [failing_target, slow_target])
+        .build()
+    )
+
+    # Verify topology: single FanOutEdgeGroup with two targets under one edge_runner
+    from agent_framework._workflows._edge import FanOutEdgeGroup
+    fan_out_groups = [eg for eg in workflow.edge_groups if isinstance(eg, FanOutEdgeGroup)]
+    assert len(fan_out_groups) == 1, f"Expected 1 FanOutEdgeGroup, got {len(fan_out_groups)}"
+    assert fan_out_groups[0].target_ids == [failing_target.id, slow_target.id], \
+        f"Expected targets [{failing_target.id}, {slow_target.id}], got {fan_out_groups[0].target_ids}"
+
+    run_task = asyncio.create_task(workflow.run(FanOutTestMessage(should_fail=True)))
+    with pytest.raises(RuntimeError, match="target A failed"):
+        await asyncio.wait_for(run_task, timeout=5.0)
+
+    release_b.set()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await asyncio.wait_for(b_task_ref[0], timeout=0.5)
+    
+    b_task_ref.clear()
+
+    result = await workflow.run(FanOutTestMessage(should_fail=False))
+    assert result.get_final_state() == WorkflowRunState.IDLE
+
+    committed_state = workflow._runner.state.export_state()
+    assert "leak_key" not in committed_state
 
 
 async def test_workflow_checkpoint_runtime_only_configuration(

@@ -282,8 +282,25 @@ class FanOutEdgeRunner(EdgeRunner):
                 await self._execute_on_target(edge.target_id, [edge.source_id], message, state, ctx)
                 return True
 
-            tasks = [send_to_edge(edge) for edge in deliverable_edges]
-            results = await asyncio.gather(*tasks)
+            tasks = [asyncio.create_task(send_to_edge(edge)) for edge in deliverable_edges]
+            if not tasks:
+                return False  # asyncio.wait() requires a non-empty iterable
+            try:
+                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+            except asyncio.CancelledError:
+                # If the wait() call itself is cancelled, cancel all child tasks
+                # before propagating to avoid orphaned work
+                for t in tasks:
+                    t.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
+            exceptions = [t.exception() for t in done if t.exception() is not None]
+            if exceptions:
+                for t in pending:
+                    t.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise exceptions[0]
+            results = [t.result() for t in tasks]
             return any(results)
 
         # If we get here, it's a broadcast message with no deliverable edges
