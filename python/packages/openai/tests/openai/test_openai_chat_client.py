@@ -5595,6 +5595,20 @@ def test_prepare_content_for_openai_preserves_falsey_function_output(output: str
     assert result["output"] == output
 
 
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [(False, "false"), (0, "0"), ({}, "{}")],
+    ids=["false", "zero", "empty-dict"],
+)
+def test_prepare_content_for_openai_normalizes_unsupported_falsey_function_output(output: Any, expected: str) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    content = Content("function_result", call_id="call_falsey", result=output)
+
+    result = client._prepare_content_for_openai("user", content)
+
+    assert result["output"] == expected
+
+
 def test_prepare_content_for_openai_function_result_without_items() -> None:
     """Test _prepare_content_for_openai with plain string function_result."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")

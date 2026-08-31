@@ -1179,7 +1179,7 @@ def test_function_approval_content_is_skipped_in_preparation(
     assert prepared_mixed[0]["content"] == "I need approval for this action."
 
 
-def test_mixed_approval_resume_roles_keep_function_result_and_omit_unsupported_request(
+def test_mixed_approval_resume_roles_serialize_function_result_as_tool(
     openai_unit_test_env: dict[str, str],
 ) -> None:
     client = OpenAIChatCompletionClient()
