@@ -7,10 +7,11 @@ from __future__ import annotations
 import json
 import warnings
 from collections.abc import AsyncIterator, Sequence
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
-from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream
+from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream, UsageDetails
 
 from agent_framework_hosting_responses import (
     create_conversation_id,
@@ -41,6 +42,11 @@ class TestMessagesFromResponsesInput:
         assert msgs[0].role == "user"
         assert msgs[0].text == "a b"
 
+    @pytest.mark.parametrize("text", [None, "", 42])
+    def test_text_items_require_non_empty_string_text(self, text: object) -> None:
+        with pytest.raises(ValueError, match="non-empty string `text`"):
+            messages_from_responses_input([{"type": "input_text", "text": text}])
+
     def test_message_envelope_with_string_content(self) -> None:
         msgs = messages_from_responses_input([
             {"type": "message", "role": "system", "content": "be brief"},
@@ -66,6 +72,23 @@ class TestMessagesFromResponsesInput:
     def test_message_envelope_rejects_invalid_content_shape(self) -> None:
         with pytest.raises(ValueError, match="content.*string or list"):
             messages_from_responses_input([{"type": "message", "role": "user", "content": 42}])
+
+    @pytest.mark.parametrize("role", [None, "", "moderator", 42])
+    def test_message_envelope_requires_supported_role(self, role: object) -> None:
+        with pytest.raises(ValueError, match="message `role`"):
+            messages_from_responses_input([{"type": "message", "role": role, "content": "hello"}])
+
+    @pytest.mark.parametrize(
+        "item",
+        [
+            {"type": "message", "role": "user"},
+            {"type": "message", "role": "user", "content": ""},
+            {"type": "message", "role": "user", "content": []},
+        ],
+    )
+    def test_message_envelope_requires_non_empty_content(self, item: dict[str, object]) -> None:
+        with pytest.raises(ValueError, match="content"):
+            messages_from_responses_input([item])
 
     def test_input_file_via_url(self) -> None:
         msgs = messages_from_responses_input([
@@ -110,6 +133,10 @@ class TestMessagesFromResponsesInput:
         with pytest.raises(ValueError, match="non-empty"):
             messages_from_responses_input([])
 
+    def test_empty_string_raises(self) -> None:
+        with pytest.raises(ValueError, match="non-empty"):
+            messages_from_responses_input("")
+
     def test_non_string_non_list_raises(self) -> None:
         with pytest.raises(ValueError):
             messages_from_responses_input(42)  # type: ignore[arg-type]
@@ -132,28 +159,56 @@ class TestResponsesRunHelpers:
 
         assert response_id.startswith("resp_")
 
-    def test_responses_session_id_prefers_previous_response(self) -> None:
-        assert responses_session_id({"previous_response_id": "resp_1", "conversation_id": "conv_1"}) == (
-            "resp_1",
-            False,
-        )
-
     def test_responses_session_id_valid_ids_do_not_warn(self) -> None:
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             assert responses_session_id({"previous_response_id": "resp_1"}) == ("resp_1", False)
-            assert responses_session_id({"conversation_id": "conv_1"}) == ("conv_1", True)
+            assert responses_session_id({"conversation": "conv_1"}) == ("conv_1", True)
+            assert responses_session_id({"conversation": {"id": "conv_2"}}) == ("conv_2", True)
 
     def test_responses_session_id_warns_for_nonstandard_previous_response_id(self) -> None:
         with pytest.warns(UserWarning, match="previous_response_id.*resp_"):
             assert responses_session_id({"previous_response_id": "custom-response"}) == ("custom-response", False)
 
-    def test_responses_session_id_warns_for_nonstandard_conversation_id(self) -> None:
-        with pytest.warns(UserWarning, match="conversation_id.*conv_"):
-            assert responses_session_id({"conversation_id": "custom-conversation"}) == ("custom-conversation", True)
+    def test_responses_session_id_warns_for_nonstandard_conversation(self) -> None:
+        with pytest.warns(UserWarning, match="conversation.*conv_"):
+            assert responses_session_id({"conversation": "custom-conversation"}) == ("custom-conversation", True)
 
-    def test_responses_session_id_uses_conversation_id(self) -> None:
-        assert responses_session_id({"conversation_id": "conv_1"}) == ("conv_1", True)
+    def test_responses_session_id_accepts_deprecated_conversation_id_alone(self) -> None:
+        with pytest.warns(DeprecationWarning, match="conversation_id.*deprecated.*conversation"):
+            assert responses_session_id({"conversation_id": "conv_legacy"}) == ("conv_legacy", True)
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"previous_response_id": "resp_1", "conversation": "conv_1"},
+            {"previous_response_id": "resp_1", "conversation_id": "conv_1"},
+            {"conversation": "conv_1", "conversation_id": "conv_1"},
+        ],
+    )
+    def test_responses_session_id_rejects_conflicting_continuation_mechanisms(
+        self,
+        body: dict[str, object],
+    ) -> None:
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            responses_session_id(body)
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"previous_response_id": ""},
+            {"previous_response_id": 42},
+            {"conversation": ""},
+            {"conversation": {}},
+            {"conversation": {"id": ""}},
+            {"conversation": {"id": 42}},
+            {"conversation_id": ""},
+            {"conversation_id": 42},
+        ],
+    )
+    def test_responses_session_id_rejects_invalid_continuation_values(self, body: dict[str, object]) -> None:
+        with pytest.raises(ValueError, match="non-empty"):
+            responses_session_id(body)
 
     def test_responses_session_id_returns_none_when_absent(self) -> None:
         assert responses_session_id({"input": "hi"}) == (None, None)
@@ -162,8 +217,7 @@ class TestResponsesRunHelpers:
         run = responses_to_run({
             "input": "hi",
             "stream": True,
-            "previous_response_id": "resp_1",
-            "conversation_id": "conv_1",
+            "conversation": {"id": "conv_1"},
             "max_output_tokens": 32,
             "model": "gpt-x",
         })
@@ -174,6 +228,14 @@ class TestResponsesRunHelpers:
         assert messages[0].text == "hi"
         assert run["stream"] is True
         assert run["options"] == {"max_tokens": 32, "model": "gpt-x"}
+
+    def test_responses_to_run_rejects_conflicting_continuation_mechanisms(self) -> None:
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            responses_to_run({
+                "input": "hi",
+                "previous_response_id": "resp_1",
+                "conversation": "conv_1",
+            })
 
     def test_responses_from_run_returns_response_payload(self) -> None:
         result = AgentResponse(
@@ -186,6 +248,35 @@ class TestResponsesRunHelpers:
         assert payload["id"] == "resp_new"
         assert payload["model"] == "test-model"
         assert payload["output"][0]["content"][0]["text"] == "hello"
+
+    def test_responses_from_run_preserves_message_boundaries(self) -> None:
+        result = AgentResponse(
+            messages=[
+                Message(role="assistant", contents=[Content.from_text("first")]),
+                Message(role="assistant", contents=[Content.from_text("second")]),
+            ]
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        assert [item["content"][0]["text"] for item in payload["output"]] == ["first", "second"]
+
+    def test_responses_from_run_rejects_non_assistant_message_role(self) -> None:
+        result = AgentResponse(messages=Message(role="user", contents=[Content.from_text("hello")]))
+
+        with pytest.raises(ValueError, match="require.*assistant.*user"):
+            responses_from_run(result, response_id="resp_new")
+
+    def test_responses_from_run_rejects_standalone_media(self) -> None:
+        result = AgentResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_uri("https://example.com/cat.png", media_type="image/png")],
+            )
+        )
+
+        with pytest.raises(ValueError, match="no standard representation.*uri"):
+            responses_from_run(result, response_id="resp_new")
 
     def test_responses_from_run_preserves_multimodal_output_items(self) -> None:
         result = AgentResponse(
@@ -225,6 +316,98 @@ class TestResponsesRunHelpers:
             {"type": "input_file", "file_id": "file_pdf"},
         ]
         assert output[3]["content"][0]["text"] == "done"
+
+    def test_responses_from_run_preserves_status_metadata_and_usage(self) -> None:
+        result = AgentResponse(
+            messages=Message(role="assistant", contents=[Content.from_text("truncated")]),
+            finish_reason="length",
+            usage_details={
+                "input_token_count": 10,
+                "output_token_count": 4,
+                "total_token_count": 14,
+                "cache_read_input_token_count": 3,
+                "cache_creation_input_token_count": 1,
+                "reasoning_output_token_count": 2,
+            },
+            additional_properties={"metadata": {"tenant": "contoso"}},
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        assert payload["status"] == "incomplete"
+        assert payload["incomplete_details"] == {"reason": "max_output_tokens"}
+        assert payload["metadata"] == {"tenant": "contoso"}
+        assert payload["usage"] == {
+            "input_tokens": 10,
+            "input_tokens_details": {"cached_tokens": 3, "cache_write_tokens": 1},
+            "output_tokens": 4,
+            "output_tokens_details": {"reasoning_tokens": 2},
+            "total_tokens": 14,
+        }
+        assert payload["output"][0]["status"] == "incomplete"
+
+    def test_responses_from_run_uses_raw_response_fields_as_fallback(self) -> None:
+        raw = SimpleNamespace(
+            status="failed",
+            metadata={"source": "raw"},
+            usage={
+                "input_tokens": 7,
+                "input_tokens_details": {"cached_tokens": 1, "cache_write_tokens": 0},
+                "output_tokens": 2,
+                "output_tokens_details": {"reasoning_tokens": 0},
+                "total_tokens": 9,
+            },
+        )
+        result = AgentResponse(
+            messages=Message(role="assistant", contents=[Content.from_text("partial")]),
+            raw_representation=raw,
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        assert payload["status"] == "failed"
+        assert payload["metadata"] == {"source": "raw"}
+        assert payload["usage"]["total_tokens"] == 9
+
+    @pytest.mark.parametrize(
+        "additional_properties",
+        [
+            {"status": "unknown"},
+            {"metadata": {"attempt": 1}},
+        ],
+    )
+    def test_responses_from_run_rejects_invalid_response_fields(
+        self,
+        additional_properties: dict[str, object],
+    ) -> None:
+        result = AgentResponse(
+            messages=Message(role="assistant", contents=[Content.from_text("hello")]),
+            additional_properties=additional_properties,
+        )
+
+        with pytest.raises(ValueError):
+            responses_from_run(result, response_id="resp_new")
+
+    @pytest.mark.parametrize(
+        ("usage_details", "message"),
+        [
+            ({"output_token_count": 1}, "input_token_count"),
+            ({"input_token_count": 1}, "output_token_count"),
+            ({"input_token_count": -1, "output_token_count": 1}, "non-negative"),
+        ],
+    )
+    def test_responses_from_run_rejects_unrepresentable_usage(
+        self,
+        usage_details: UsageDetails,
+        message: str,
+    ) -> None:
+        result = AgentResponse(
+            messages=Message(role="assistant", contents=[Content.from_text("hello")]),
+            usage_details=usage_details,
+        )
+
+        with pytest.raises(ValueError, match=message):
+            responses_from_run(result, response_id="resp_new")
 
     def test_responses_from_run_maps_conversation_id(self) -> None:
         result = AgentResponse(messages=Message(role="assistant", contents=[Content.from_text("hello")]))
@@ -294,6 +477,30 @@ class TestResponsesRunHelpers:
         assert response["conversation"] == {"id": "conv_1"}
         assert error["message"] == "upstream blew up"
         assert "partial" in events[-1]
+
+    async def test_responses_from_streaming_run_preserves_final_metadata_and_usage(self) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("hello")], role="assistant")
+
+        def finalizer(items: Sequence[AgentResponseUpdate]) -> AgentResponse:
+            response = AgentResponse.from_updates(items)
+            response.usage_details = UsageDetails(
+                input_token_count=5,
+                output_token_count=1,
+                total_token_count=6,
+            )
+            response.additional_properties["metadata"] = {"source": "stream"}
+            return response
+
+        stream = ResponseStream(updates(), finalizer=finalizer)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        payload = _sse_payload(events[-1])
+        response = cast("dict[str, object]", payload["response"])
+
+        assert response["metadata"] == {"source": "stream"}
+        usage = cast("dict[str, object]", response["usage"])
+        assert usage["total_tokens"] == 6
 
     async def test_responses_from_streaming_run_emits_failed_when_finalizer_raises(self) -> None:
         async def updates() -> AsyncIterator[AgentResponseUpdate]:

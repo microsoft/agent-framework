@@ -7,8 +7,8 @@ This package provides the Responses-specific conversion layer:
 - `responses_to_run(...)` — convert a Responses request body into Agent
   Framework run values.
 - `responses_session_id(...)` — return `(session_id, is_conversation_id)` for a
-  prior `resp_*` response id or `conv_*` conversation id, or `(None, None)` when
-  neither is present.
+  prior `resp_*` response id or the `conv_*` id from the official `conversation`
+  field, or `(None, None)` when neither is present.
 - `create_conversation_id(...)` — mint a Responses-shaped conversation id.
 - `create_response_id(...)` — mint a Responses-shaped response id.
 - `responses_from_run(...)` — convert an `AgentResponse` into a
@@ -56,8 +56,13 @@ async def responses(body: dict = Body(...)) -> JSONResponse:
 
 `previous_response_id` identifies an immutable continuation snapshot: multiple
 requests may branch from it and store their results under distinct new response
-ids. `conversation_id` is a mutable head instead; only one caller should
-advance it at a time. These helpers do not provide per-conversation locking.
+ids. `conversation` accepts either a conversation id string or an `{"id": ...}`
+object and identifies a mutable head; only one caller should advance it at a
+time. Supplying both mechanisms is invalid.
+
+The former `conversation_id` request field remains available only as a
+deprecated fallback when neither standard mechanism is present. These helpers
+do not provide per-conversation locking.
 
 `AgentState` lives in
 [`agent-framework-hosting`](https://pypi.org/project/agent-framework-hosting/).

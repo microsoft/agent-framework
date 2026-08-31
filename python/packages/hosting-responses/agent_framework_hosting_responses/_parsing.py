@@ -49,7 +49,16 @@ _RESPONSES_OPTION_REMAP = {
 }
 # Fields the Responses transport owns; they are consumed separately and must
 # not also appear in options.
-_RESPONSES_RUN_TRANSPORT_KEYS = frozenset({"input", "stream", "previous_response_id", "conversation_id"})
+_RESPONSES_RUN_TRANSPORT_KEYS = frozenset({
+    "input",
+    "stream",
+    "previous_response_id",
+    "conversation",
+    "conversation_id",
+})
+_RESPONSES_CONTINUATION_KEYS = ("previous_response_id", "conversation", "conversation_id")
+_RESPONSES_INPUT_MESSAGE_ROLES = frozenset({"user", "assistant", "system", "developer"})
+_RESPONSES_STATUSES = frozenset({"completed", "failed", "in_progress", "cancelled", "queued", "incomplete"})
 
 
 def _content_from_input_item(item: Mapping[str, Any]) -> Content:
@@ -62,26 +71,37 @@ def _content_from_input_item(item: Mapping[str, Any]) -> Content:
     """
     item_type = item.get("type")
     if item_type in ("input_text", "output_text", "text"):
-        return Content.from_text(text=str(item.get("text", "")))
+        text = item.get("text")
+        if not isinstance(text, str) or not text:
+            raise ValueError(f"{item_type} requires a non-empty string `text`")
+        return Content.from_text(text=text)
     if item_type == "input_image":
         image_url: Any = item.get("image_url")
         if isinstance(image_url, Mapping):
             image_url = cast("Mapping[str, Any]", image_url).get("url")
-        if not isinstance(image_url, str):
-            raise ValueError("input_image requires `image_url`")
+        if not isinstance(image_url, str) or not image_url:
+            raise ValueError("input_image requires a non-empty string `image_url`")
         return Content.from_uri(uri=image_url, media_type="image/*")
     if item_type == "input_file":
-        if (uri := item.get("file_url")) and isinstance(uri, str):
-            return Content.from_uri(uri=uri, media_type=item.get("mime_type"))
-        if file_id := item.get("file_id"):
-            return Content(type="hosted_file", file_id=str(file_id))
-        raise ValueError("input_file requires `file_url` or `file_id`")
+        file_url = item.get("file_url")
+        if file_url is not None:
+            if not isinstance(file_url, str) or not file_url:
+                raise ValueError("input_file `file_url` must be a non-empty string")
+            return Content.from_uri(uri=file_url, media_type=item.get("mime_type"))
+        file_id = item.get("file_id")
+        if file_id is not None:
+            if not isinstance(file_id, str) or not file_id:
+                raise ValueError("input_file `file_id` must be a non-empty string")
+            return Content(type="hosted_file", file_id=file_id)
+        raise ValueError("input_file requires a non-empty string `file_url` or `file_id`")
     raise ValueError(f"Unsupported Responses input content type: {item_type!r}")
 
 
 def messages_from_responses_input(value: Any) -> list[Message]:
     """Translate ``input`` (string or list of items) into :class:`Message` objects."""
     if isinstance(value, str):
+        if not value:
+            raise ValueError("`input` must be a non-empty string or list")
         return [Message("user", [Content.from_text(text=value)])]
     if not isinstance(value, list) or not value:
         raise ValueError("`input` must be a non-empty string or list")
@@ -101,12 +121,20 @@ def messages_from_responses_input(value: Any) -> list[Message]:
         item_map = cast("Mapping[str, Any]", item)
         if item_map.get("type") == "message":
             flush()
-            role = str(item_map.get("role") or "user")
-            content: Any = item_map.get("content") or []
+            role = item_map.get("role")
+            if not isinstance(role, str) or role not in _RESPONSES_INPUT_MESSAGE_ROLES:
+                raise ValueError("message `role` must be one of `user`, `assistant`, `system`, or `developer`")
+            if "content" not in item_map:
+                raise ValueError("message requires non-empty `content`")
+            content: Any = item_map["content"]
             parts: list[Content]
             if isinstance(content, str):
+                if not content:
+                    raise ValueError("message `content` must not be empty")
                 parts = [Content.from_text(text=content)]
             elif isinstance(content, list):
+                if not content:
+                    raise ValueError("message `content` must not be empty")
                 parts = []
                 for content_item in cast("list[Any]", content):
                     if not isinstance(content_item, Mapping):
@@ -145,29 +173,63 @@ def responses_session_id(body: Mapping[str, Any]) -> tuple[str, bool] | tuple[No
         body: OpenAI Responses-shaped request body.
 
     Returns:
-        The session id, if present, and whether it came from ``conversation_id``.
+        The session id, if present, and whether it came from ``conversation``.
         The flag is ``None`` when no session id is present.
+
+    Raises:
+        ValueError: If a continuation field is malformed or conflicts with
+            another continuation mechanism.
     """
-    previous_response_id = body.get("previous_response_id")
-    if isinstance(previous_response_id, str) and previous_response_id and not previous_response_id.startswith("resp_"):
+    return _responses_session_id(body, warn=True)
+
+
+def _responses_session_id(
+    body: Mapping[str, Any],
+    *,
+    warn: bool,
+) -> tuple[str, bool] | tuple[None, None]:
+    supplied_keys = [key for key in _RESPONSES_CONTINUATION_KEYS if body.get(key) is not None]
+    if len(supplied_keys) > 1:
+        raise ValueError("`previous_response_id`, `conversation`, and `conversation_id` are mutually exclusive")
+    if not supplied_keys:
+        return None, None
+
+    key = supplied_keys[0]
+    value = body[key]
+    if key == "previous_response_id":
+        if not isinstance(value, str) or not value:
+            raise ValueError("`previous_response_id` must be a non-empty string")
+        if warn and not value.startswith("resp_"):
+            warnings.warn(
+                "`previous_response_id` does not use the OpenAI Responses `resp_` prefix; "
+                "continuing with the supplied value.",
+                UserWarning,
+                stacklevel=3,
+            )
+        return value, False
+
+    if key == "conversation":
+        if isinstance(value, Mapping):
+            value = cast("Mapping[str, Any]", value).get("id")
+        if not isinstance(value, str) or not value:
+            raise ValueError("`conversation` must be a non-empty string or an object with a non-empty string `id`")
+    else:
+        if not isinstance(value, str) or not value:
+            raise ValueError("`conversation_id` must be a non-empty string")
+        if warn:
+            warnings.warn(
+                "`conversation_id` is deprecated; use the OpenAI Responses `conversation` field instead.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+
+    if warn and not value.startswith("conv_"):
         warnings.warn(
-            "`previous_response_id` does not use the OpenAI Responses `resp_` prefix; "
-            "continuing with the supplied value.",
+            f"`{key}` does not use the OpenAI Responses `conv_` prefix; continuing with the supplied value.",
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
-    conversation_id = body.get("conversation_id")
-    if isinstance(conversation_id, str) and conversation_id and not conversation_id.startswith("conv_"):
-        warnings.warn(
-            "`conversation_id` does not use the OpenAI Responses `conv_` prefix; continuing with the supplied value.",
-            UserWarning,
-            stacklevel=2,
-        )
-    if isinstance(previous_response_id, str) and previous_response_id:
-        return previous_response_id, False
-    if isinstance(conversation_id, str) and conversation_id:
-        return conversation_id, True
-    return None, None
+    return value, True
 
 
 def responses_to_run(body: Mapping[str, Any]) -> AgentRunArgs:
@@ -180,9 +242,10 @@ def responses_to_run(body: Mapping[str, Any]) -> AgentRunArgs:
         Arguments corresponding to ``Agent.run``.
 
     Raises:
-        ValueError: If the request body has invalid ``input``.
+        ValueError: If the request body has invalid ``input`` or continuation fields.
     """
     mark_feature_used(FeatureIndex.HOSTING_RESPONSES)
+    _responses_session_id(body, warn=False)
     messages = messages_from_responses_input(body.get("input"))
     options: dict[str, Any] = {}
     for key, value in body.items():
@@ -216,22 +279,124 @@ def responses_from_run(
         Responses-compatible JSON payload.
     """
     mark_feature_used(FeatureIndex.HOSTING_RESPONSES)
-    output_items = _result_to_output_items(result, status="completed")
+    status = _status_from_result(result)
+    output_items = _result_to_output_items(result, status=status)
     response_kwargs: dict[str, Any] = {
         "id": response_id,
         "object": "response",
         "created_at": int(time.time()),
-        "status": "completed",
+        "status": status,
         "model": _model_from_result(result),
         "output": output_items,
         "parallel_tool_calls": False,
         "tool_choice": "auto",
         "tools": [],
-        "metadata": {},
     }
+    if (metadata := _metadata_from_result(result)) is not None:
+        response_kwargs["metadata"] = metadata
+    if (usage := _usage_from_result(result)) is not None:
+        response_kwargs["usage"] = usage
+    if (incomplete_details := _incomplete_details_from_result(result, status=status)) is not None:
+        response_kwargs["incomplete_details"] = incomplete_details
     if conversation_id is not None:
         response_kwargs["conversation"] = {"id": conversation_id}
     return _response_payload(OpenAIResponse(**response_kwargs))
+
+
+def _status_from_result(result: AgentResponse[Any]) -> str:
+    explicit_status = _response_field_from_result(result, "status")
+    if explicit_status is not None:
+        if not isinstance(explicit_status, str) or explicit_status not in _RESPONSES_STATUSES:
+            raise ValueError(f"AgentResponse status is not a valid Responses status: {explicit_status!r}")
+        return explicit_status
+
+    finish_reason = getattr(result.finish_reason, "value", result.finish_reason)
+    if finish_reason in ("length", "content_filter"):
+        return "incomplete"
+    if result.continuation_token is not None:
+        return "in_progress"
+    return "completed"
+
+
+def _metadata_from_result(result: AgentResponse[Any]) -> dict[str, str] | None:
+    metadata = _response_field_from_result(result, "metadata")
+    if metadata is None:
+        return None
+    if not isinstance(metadata, Mapping):
+        raise ValueError("AgentResponse metadata must be an object with string keys and values")
+    metadata_dict = dict(cast("Mapping[Any, Any]", metadata))
+    if not all(isinstance(key, str) and isinstance(value, str) for key, value in metadata_dict.items()):
+        raise ValueError("AgentResponse metadata must be an object with string keys and values")
+    return cast("dict[str, str]", metadata_dict)
+
+
+def _usage_from_result(result: AgentResponse[Any]) -> Any | None:
+    usage_details = result.usage_details
+    if usage_details is None:
+        return _response_field_from_result(result, "usage")
+    if not usage_details:
+        return None
+
+    input_tokens = _usage_count(usage_details, "input_token_count")
+    if input_tokens is None:
+        raise ValueError("AgentResponse usage_details requires `input_token_count` for Responses conversion")
+    output_tokens = _usage_count(usage_details, "output_token_count")
+    if output_tokens is None:
+        raise ValueError("AgentResponse usage_details requires `output_token_count` for Responses conversion")
+    total_tokens = _usage_count(usage_details, "total_token_count")
+    cached_tokens = _usage_count(usage_details, "cache_read_input_token_count") or 0
+    cache_write_tokens = _usage_count(usage_details, "cache_creation_input_token_count") or 0
+    reasoning_tokens = _usage_count(usage_details, "reasoning_output_token_count") or 0
+    usage: dict[str, Any] = {
+        "input_tokens": input_tokens,
+        "input_tokens_details": {
+            "cached_tokens": cached_tokens,
+            "cache_write_tokens": cache_write_tokens,
+        },
+        "output_tokens": output_tokens,
+        "output_tokens_details": {"reasoning_tokens": reasoning_tokens},
+        "total_tokens": total_tokens if total_tokens is not None else input_tokens + output_tokens,
+    }
+    return usage
+
+
+def _usage_count(usage_details: Mapping[str, Any], key: str) -> int | None:
+    value = usage_details.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"AgentResponse usage_details `{key}` must be a non-negative integer")
+    return value
+
+
+def _incomplete_details_from_result(result: AgentResponse[Any], *, status: str) -> Any | None:
+    incomplete_details = _response_field_from_result(result, "incomplete_details")
+    if incomplete_details is not None:
+        return incomplete_details
+    if status != "incomplete":
+        return None
+
+    finish_reason = getattr(result.finish_reason, "value", result.finish_reason)
+    if finish_reason == "length":
+        return {"reason": "max_output_tokens"}
+    if finish_reason == "content_filter":
+        return {"reason": "content_filter"}
+    return None
+
+
+def _response_field_from_result(result: AgentResponse[Any], key: str) -> Any | None:
+    if key in result.additional_properties:
+        return result.additional_properties[key]
+
+    raw = result.raw_representation
+    for source in (raw, getattr(raw, "raw_representation", None)):
+        if isinstance(source, Mapping):
+            value = cast("Mapping[str, Any]", source).get(key)
+        else:
+            value = getattr(source, key, None)
+        if value is not None:
+            return value
+    return None
 
 
 def _model_from_update(update: AgentResponseUpdate) -> str | None:
@@ -305,19 +470,14 @@ def _output_to_output_items(output: Any, *, status: str) -> list[ResponseOutputI
 
 def _messages_to_output_items(messages: Sequence[Any], *, status: str) -> list[ResponseOutputItem]:
     output_items: list[ResponseOutputItem] = []
-    message_contents: list[Content] = []
 
     for message in messages:
         if not isinstance(message, Message):
-            if message_contents:
-                output_items.extend(_contents_to_output_items(message_contents, status=status))
-                message_contents.clear()
             output_items.extend(_output_to_output_items(message, status=status))
             continue
-        message_contents.extend(message.contents)
-
-    if message_contents:
-        output_items.extend(_contents_to_output_items(message_contents, status=status))
+        if message.role != "assistant":
+            raise ValueError(f"Responses output messages require the `assistant` role; received {message.role!r}")
+        output_items.extend(_contents_to_output_items(message.contents, status=status))
 
     return output_items
 
@@ -408,8 +568,9 @@ def _contents_to_output_items(
                 flush_message()
                 output_items.append(_function_approval_response_output_item(content))
             case "data" | "uri" | "hosted_file":
-                flush_message()
-                output_items.append(_media_content_output_item(content, status=status))
+                raise ValueError(
+                    f"Responses output has no standard representation for standalone {content.type!r} content"
+                )
             case "error":
                 message_content.append(ResponseOutputText(type="output_text", text=str(content), annotations=[]))
             case _:
@@ -660,22 +821,6 @@ def _function_approval_response_output_item(content: Content) -> ResponseOutputI
         "approval_request_id": content.id or "",
         "approve": bool(content.approved),
     })
-
-
-def _media_content_output_item(content: Content, *, status: str) -> ResponseOutputItem:
-    parts = _content_parts_to_input_items([content])
-    if parts:
-        return cast(
-            ResponseOutputItem,
-            ResponseFunctionToolCallOutputItem(
-                id=f"content_{uuid.uuid4().hex}",
-                type="function_call_output",
-                call_id=f"content_{uuid.uuid4().hex}",
-                output=parts,
-                status=_message_status(status),  # type: ignore[arg-type]
-            ),
-        )
-    return _text_output_items(json.dumps(content.to_dict(), default=str), status=status)[0]
 
 
 def _content_parts_to_input_items(contents: Sequence[Content] | None) -> list[Any]:

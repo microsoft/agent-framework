@@ -215,7 +215,7 @@ The Responses package provides the helper-first surface for OpenAI Responses-sha
 
 - `messages_from_responses_input(input) -> list[Message]`
 - `responses_to_run(body) -> AgentRunArgs`
-- `responses_session_id(body) -> str | None`
+- `responses_session_id(body) -> tuple[str, bool] | tuple[None, None]`
 - `create_response_id() -> str`
 
 `responses_to_run(...)` returns values corresponding to `Agent.run(...)`:
@@ -233,15 +233,19 @@ It excludes protocol transport/session fields from `options` and remaps known Re
 `responses_session_id(...)` returns:
 
 - `previous_response_id` when present (`resp_*`);
-- otherwise `conversation_id` when present (`conv_*`);
-- otherwise `None`.
+- otherwise the id from `conversation` when present as a string or `{ "id": ... }` object (`conv_*`);
+- otherwise the id from deprecated `conversation_id`, with a deprecation warning;
+- otherwise `(None, None)`.
+
+The returned boolean identifies conversation-based continuation. Supplying more
+than one continuation mechanism is invalid.
 
 The helper only extracts the candidate key. App code decides whether to trust and use that key.
 
 ### Response helpers
 
-- `responses_from_run(result, *, response_id, session_id=None) -> dict[str, Any]`
-- `responses_from_streaming_run(stream, *, response_id, session_id=None) -> AsyncIterator[str]`
+- `responses_from_run(result, *, response_id, conversation_id=None) -> dict[str, Any]`
+- `responses_from_streaming_run(stream, *, response_id, conversation_id=None) -> AsyncIterator[str]`
 
 `responses_from_run(...)` renders a full Responses JSON payload from an `AgentResponse`. It renders the full set of
 OpenAI Responses output item types supported by Agent Framework content.
@@ -451,7 +455,8 @@ state = AgentState(create_agent)
 @app.post("/responses", response_model=None)
 async def responses(body: dict = Body(...)) -> JSONResponse | StreamingResponse:
     run = responses_to_run(body)
-    candidate_session_id = responses_session_id(body)
+    candidate_session_id, is_conversation_id = responses_session_id(body)
+    conversation_id = candidate_session_id if is_conversation_id else None
     response_id = create_response_id()
 
     # Verify this caller owns candidate_session_id before loading it.
@@ -468,16 +473,16 @@ async def responses(body: dict = Body(...)) -> JSONResponse | StreamingResponse:
             async for event in responses_from_streaming_run(
                 stream,
                 response_id=response_id,
-                session_id=candidate_session_id,
+                conversation_id=conversation_id,
             ):
                 yield event
-            await state.set_session(response_id, session)
+            await state.set_session(conversation_id or response_id, session)
 
         return StreamingResponse(events(), media_type="text/event-stream")
 
     result = await target.run(run["messages"], session=session, options=run["options"])
-    await state.set_session(response_id, session)
-    return JSONResponse(responses_from_run(result, response_id=response_id, session_id=candidate_session_id))
+    await state.set_session(conversation_id or response_id, session)
+    return JSONResponse(responses_from_run(result, response_id=response_id, conversation_id=conversation_id))
 ```
 
 ## Validation
