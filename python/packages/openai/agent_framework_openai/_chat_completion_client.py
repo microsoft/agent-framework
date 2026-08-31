@@ -49,6 +49,7 @@ from agent_framework.observability import ChatTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
 from openai.types import CompletionUsage
+from openai.types.chat import completion_create_params
 from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDelta
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
@@ -82,23 +83,12 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # pragma: no cover
 
-try:
-    from openai.types.chat.completion_create_params import PromptCacheOptions
+_prompt_cache_options_supported = hasattr(completion_create_params, "PromptCacheOptions")
 
-    _prompt_cache_options_supported = True
-except ImportError:  # pragma: no cover
-    _prompt_cache_options_supported = False
 
-    class PromptCacheOptions(TypedDict, total=False):
-        """Fallback for openai versions that predate prompt cache options.
-
-        Mirrors the SDK's shape so ``prompt_cache_options`` type-checks the same on
-        every supported openai version; a runtime guard rejects the option when the
-        installed openai is too old to send it.
-        """
-
-        mode: Literal["implicit", "explicit"]
-        ttl: Literal["30m"]
+class _PromptCacheOptions(TypedDict, total=False):
+    mode: Literal["implicit", "explicit"]
+    ttl: Literal["30m"]
 
 
 if TYPE_CHECKING:
@@ -229,7 +219,7 @@ class OpenAIChatCompletionOptions(ChatOptions[ResponseModelT], Generic[ResponseM
     """Output verbosity for GPT-5 family models. Lower values yield shorter responses.
     See: https://developers.openai.com/cookbook/examples/gpt-5/gpt-5_new_params_and_tools#1-verbosity-parameter"""
 
-    prompt_cache_options: PromptCacheOptions
+    prompt_cache_options: _PromptCacheOptions
     """Request-wide prompt cache policy for GPT-5.6 and later models.
     Set mode to 'explicit' to use only the breakpoints set on content parts via
     ``Content.additional_properties["prompt_cache_breakpoint"]``.

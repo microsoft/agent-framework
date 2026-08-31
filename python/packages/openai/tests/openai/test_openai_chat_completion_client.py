@@ -2442,8 +2442,11 @@ def test_prepare_content_for_openai_image_prompt_cache_breakpoint() -> None:
     assert part["prompt_cache_breakpoint"] == {"mode": "explicit"}
 
 
-def test_prepare_options_prompt_cache_options_passthrough() -> None:
+def test_prepare_options_prompt_cache_options_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
     """Request-level prompt_cache_options reaches the Chat Completions run options."""
+    import agent_framework_openai._chat_completion_client as chat_completion_module
+
+    monkeypatch.setattr(chat_completion_module, "_prompt_cache_options_supported", True)
     client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
     run_options = client._prepare_options(
         [Message(role="user", contents=[Content.from_text("hi")])],

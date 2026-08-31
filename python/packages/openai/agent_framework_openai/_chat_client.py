@@ -73,7 +73,12 @@ from agent_framework.exceptions import (
 )
 from agent_framework.observability import ChatTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
-from openai.types.responses import FunctionShellToolParam, ResponseCustomToolCall, ResponseToolSearchCall
+from openai.types.responses import (
+    FunctionShellToolParam,
+    ResponseCustomToolCall,
+    ResponseToolSearchCall,
+    response_create_params,
+)
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
 from openai.types.responses.function_tool_param import FunctionToolParam
 from openai.types.responses.parsed_response import (
@@ -115,23 +120,12 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # pragma: no cover
 
-try:
-    from openai.types.responses.response_create_params import PromptCacheOptions
+_prompt_cache_options_supported = hasattr(response_create_params, "PromptCacheOptions")
 
-    _prompt_cache_options_supported = True
-except ImportError:  # pragma: no cover
-    _prompt_cache_options_supported = False
 
-    class PromptCacheOptions(TypedDict, total=False):
-        """Fallback for openai versions that predate prompt cache options.
-
-        Mirrors the SDK's shape so ``prompt_cache_options`` type-checks the same on
-        every supported openai version; a runtime guard rejects the option when the
-        installed openai is too old to send it.
-        """
-
-        mode: Literal["implicit", "explicit"]
-        ttl: Literal["30m"]
+class _PromptCacheOptions(TypedDict, total=False):
+    mode: Literal["implicit", "explicit"]
+    ttl: Literal["30m"]
 
 
 if TYPE_CHECKING:
@@ -233,7 +227,7 @@ class OpenAIChatOptions(ChatOptions[ResponseFormatT], Generic[ResponseFormatT], 
     prompt_cache_retention: Literal["24h"]
     """Retention policy for prompt cache. Set to '24h' for extended caching."""
 
-    prompt_cache_options: PromptCacheOptions
+    prompt_cache_options: _PromptCacheOptions
     """Request-wide prompt cache policy for GPT-5.6 and later models.
     Set mode to 'explicit' to use only the breakpoints set on content parts via
     ``Content.additional_properties["prompt_cache_breakpoint"]``.

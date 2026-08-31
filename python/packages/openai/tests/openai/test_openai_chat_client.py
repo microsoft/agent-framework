@@ -8218,8 +8218,11 @@ def test_prepare_content_for_openai_no_prompt_cache_breakpoint_by_default() -> N
     assert part == {"type": "input_text", "text": "hello"}
 
 
-async def test_prepare_options_prompt_cache_options_passthrough() -> None:
+async def test_prepare_options_prompt_cache_options_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
     """Request-level prompt_cache_options reaches the Responses API run options."""
+    import agent_framework_openai._chat_client as chat_client_module
+
+    monkeypatch.setattr(chat_client_module, "_prompt_cache_options_supported", True)
     client = OpenAIChatClient(api_key="test-api-key", model="test-model")
     run_options = await client._prepare_options(
         [Message(role="user", contents=[Content.from_text("hi")])],
