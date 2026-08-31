@@ -937,7 +937,15 @@ class RawGeminiChatClient(
 
     @staticmethod
     def _extract_response_schema(response_format: Any) -> dict[str, Any] | None:
-        """Extract a Gemini response schema from supported mapping response_format shapes."""
+        """Extract a Gemini response schema from supported response_format shapes.
+
+        Handles a Pydantic model class and, for mappings, a ``format`` envelope
+        (unwrapped recursively), a ``json_schema`` envelope, a bare ``schema``
+        envelope, and a raw JSON schema mapping. Anything else returns ``None``.
+        """
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            return response_format.model_json_schema()
+
         if not isinstance(response_format, Mapping):
             return None
         mapping = cast("Mapping[str, Any]", response_format)

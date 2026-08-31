@@ -93,7 +93,7 @@ per-run points and the host owns the session boundaries.
 
 The ``agent-hooks-sdk`` dependency is optional: importing this module (and the lazy root
 exports) works without it, and the factories raise a descriptive ``ModuleNotFoundError``
-when the SDK is missing. Install it via ``pip install agent-framework-core[agent-hooks]``.
+when the SDK is missing. Install it via ``pip install agent-hooks-sdk``.
 """
 
 from __future__ import annotations
@@ -162,7 +162,7 @@ _DEFAULT_TIMEOUT = 5.0
 
 _SDK_MISSING_MESSAGE = (
     "The agent-hooks middleware requires the optional `agent-hooks-sdk` package. "
-    "Please install `agent-framework-core[agent-hooks]` (or `agent-hooks-sdk`)."
+    "Please install it with `pip install agent-hooks-sdk`."
 )
 
 _TRIO_REQUIRED_MESSAGE = (
@@ -191,7 +191,7 @@ def _require_sdk() -> None:
     """Import the SDK surface this module uses at runtime, with a helpful install hint.
 
     Only a genuinely missing ``agent_hooks`` package is translated into the
-    install-the-extra message; anything else (a broken installation, an incompatible
+    SDK installation message; anything else (a broken installation, an incompatible
     SDK version missing symbols, a failing transitive import) propagates unchanged so
     real breakage is not masked as a missing extra.
     """

@@ -6,7 +6,6 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.UnitTests.Futures;
 using Microsoft.Extensions.AI;
 
@@ -81,12 +80,12 @@ public class SequentialWorkflowBuilderTests
 
         _ = await OrchestrationTestHelpers.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "start")]);
 
-        second.MessagesSeen.Should().NotBeNull();
-        second.MessagesSeen.Should().HaveCount(2);
-        second.MessagesSeen![0].Role.Should().Be(ChatRole.User);
-        second.MessagesSeen[0].Text.Should().Be("start");
-        second.MessagesSeen[1].Role.Should().Be(ChatRole.User);
-        second.MessagesSeen[1].Text.Should().Be("step-one");
+        Assert.NotNull(second.MessagesSeen);
+        Assert.Equal(2, second.MessagesSeen.Count);
+        Assert.Equal(ChatRole.User, second.MessagesSeen![0].Role);
+        Assert.Equal("start", second.MessagesSeen[0].Text);
+        Assert.Equal(ChatRole.User, second.MessagesSeen[1].Role);
+        Assert.Equal("step-one", second.MessagesSeen[1].Text);
     }
 
     [Fact]
@@ -101,10 +100,10 @@ public class SequentialWorkflowBuilderTests
 
         _ = await OrchestrationTestHelpers.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "start")]);
 
-        second.MessagesSeen.Should().NotBeNull();
-        second.MessagesSeen.Should().ContainSingle();
-        second.MessagesSeen![0].Role.Should().Be(ChatRole.User);
-        second.MessagesSeen[0].Text.Should().Be("step-one");
+        Assert.NotNull(second.MessagesSeen);
+        Assert.Single(second.MessagesSeen);
+        Assert.Equal(ChatRole.User, second.MessagesSeen![0].Role);
+        Assert.Equal("step-one", second.MessagesSeen[0].Text);
     }
 
     [Fact]
@@ -117,10 +116,8 @@ public class SequentialWorkflowBuilderTests
             .Build();
 
         Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
-        designations.Where(kvp => kvp.Value.Count == 0)
-            .Should().ContainSingle("OutputMessagesExecutor is the sole terminal output by default");
-        designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))
-            .Should().HaveCount(3, "every pipeline agent is designated intermediate by default");
+        Assert.Single(designations, kvp => kvp.Value.Count == 0);
+        Assert.Equal(3, designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))?.Count());
     }
 
     [Fact]
@@ -137,12 +134,9 @@ public class SequentialWorkflowBuilderTests
 
         Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
 
-        designations.Should().HaveCount(2,
-            "only the two explicitly-designated agents land on the inner builder; the end default is suppressed");
-        designations.Values.Where(tags => tags.Count == 0)
-            .Should().ContainSingle("agent1 is the only terminal designation");
-        designations.Values.Where(tags => tags.Contains(OutputTag.Intermediate))
-            .Should().ContainSingle("agent2 is the only intermediate designation");
+        Assert.Equal(2, designations.Count);
+        Assert.Single(designations.Values, tags => tags.Count == 0);
+        Assert.Single(designations.Values, tags => tags.Contains(OutputTag.Intermediate));
     }
 
     [Fact]
@@ -154,8 +148,8 @@ public class SequentialWorkflowBuilderTests
         SequentialWorkflowBuilder builder = new SequentialWorkflowBuilder(participant)
             .WithIntermediateOutputFrom([stranger]);
 
-        Action build = () => builder.Build();
-        build.Should().Throw<InvalidOperationException>().WithMessage("*stranger*");
+        void build() => builder.Build();
+        Assert.Contains("stranger", Assert.Throws<InvalidOperationException>(build).Message);
     }
 
     [Fact]
@@ -165,7 +159,7 @@ public class SequentialWorkflowBuilderTests
             .WithName("named-sequential")
             .Build();
 
-        workflow.Name.Should().Be("named-sequential");
+        Assert.Equal("named-sequential", workflow.Name);
     }
 
     [Fact]
@@ -175,7 +169,7 @@ public class SequentialWorkflowBuilderTests
             .WithDescription("describes the sequential pipeline")
             .Build();
 
-        workflow.Description.Should().Be("describes the sequential pipeline");
+        Assert.Equal("describes the sequential pipeline", workflow.Description);
     }
 
     private sealed class CapturingAgent(string name, string responseText) : AIAgent
@@ -256,11 +250,9 @@ public class SequentialWorkflowBuilderTests
                 .Select(n => n!)
                 .ToHashSet();
 
-            authoredBy.Should().Contain("agent3", "the terminal agent must surface");
-            authoredBy.Should().NotContain("agent1",
-                "the intermediate agent must not surface when only the terminal is designated");
-            authoredBy.Should().NotContain("agent2",
-                "the intermediate agent must not surface when only the terminal is designated");
+            Assert.Contains("agent3", authoredBy);
+            Assert.DoesNotContain("agent1", authoredBy);
+            Assert.DoesNotContain("agent2", authoredBy);
         }
     }
 }

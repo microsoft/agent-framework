@@ -1517,6 +1517,53 @@ async def test_response_format_sets_json_mime_type() -> None:
     assert config.response_mime_type == "application/json"
 
 
+async def test_response_format_pydantic_model_sets_response_schema() -> None:
+    """A Pydantic model response_format must reach Gemini as response_schema, not just JSON mode.
+
+    Without the schema, the model is asked for JSON but is not constrained by it, so it can
+    return arbitrary JSON that then fails to parse into the requested model - the failure mode
+    #5888 described for mapping-shaped schemas, on the shape #5893 left out of scope.
+    """
+    from pydantic import BaseModel
+
+    class Reply(BaseModel):
+        text: str
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="{}")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"response_format": Reply},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.response_mime_type == "application/json"
+    assert config.response_schema == Reply.model_json_schema()
+
+
+async def test_response_schema_option_wins_over_pydantic_response_format() -> None:
+    """An explicit response_schema still takes precedence, as it already does for mapping shapes."""
+    from pydantic import BaseModel
+
+    class Reply(BaseModel):
+        text: str
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="{}")]))
+    explicit = {"type": "object", "properties": {"other": {"type": "string"}}}
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        # response_format binds the options TypedDict to Reply while response_schema only
+        # exists on GeminiChatOptions[None]; no get_response overload accepts the combination.
+        options=cast(Any, {"response_format": Reply, "response_schema": explicit}),
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.response_schema == explicit
+
+
 async def test_response_format_populates_value_on_chat_response() -> None:
     """When response_format is a Pydantic model, ChatResponse.value must be parsed from the response text."""
     from pydantic import BaseModel
