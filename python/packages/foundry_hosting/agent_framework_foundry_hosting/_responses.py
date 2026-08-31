@@ -625,6 +625,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         try:
             if self._uses_hosted_responses_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
+                if not self._allow_stored_output_enabled:
+                    # A service session id on a loaded session points at a thread that already holds
+                    # this conversation, written before storage was turned off. Core resumes it ahead
+                    # of anything in the options, so it would duplicate the transcript the platform
+                    # already supplies. Dropping it also makes the check in `finally` exact: an id
+                    # present by then can only have been set by this run.
+                    session.service_session_id = None
 
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
@@ -677,10 +684,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if self._uses_hosted_responses_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
 
-            # A service session id on the session means the agent's chat client kept the turn
-            # despite `store=False`, so a second record of this conversation now exists that
-            # nothing here reconciles. Leave the session unsaved so later turns do not resume onto
-            # it, and report it: a container configured this way is a server fault, not a bad request.
+            # The session started this run without a service session id, so one now means the
+            # agent's chat client kept the turn despite `store=False`, and a second record of this
+            # conversation exists that nothing here reconciles. Leave the session unsaved so later
+            # turns do not resume onto it, and report it: a container configured this way is a
+            # server fault, not a bad request.
             stored_output_violation = (
                 self._uses_hosted_responses_history
                 and not self._allow_stored_output_enabled

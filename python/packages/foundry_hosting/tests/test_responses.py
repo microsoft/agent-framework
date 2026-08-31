@@ -809,6 +809,41 @@ class TestAgentSessionPersistence:
         assert stored is not None
         assert stored.service_session_id is None
 
+    async def test_session_carrying_a_pre_fix_service_thread_id_heals_instead_of_failing(self) -> None:
+        """A conversation started before storage was disabled continues cleanly after an upgrade.
+
+        Its persisted session still names the service thread that holds the whole transcript, and
+        core resumes that thread ahead of anything in the options. Left in place it duplicates the
+        turn and trips the storage violation, and since a failed turn is never re-saved the same
+        stale session would load again on every later turn.
+        """
+        client = _ServiceStorageRecordingClient()
+        agent = Agent(client=client, name="Upgraded Agent")
+        store = SessionStore()
+        server = _make_server(agent, session_store=store)
+
+        first = await _post(server, input_text="first")
+        # What a pre-fix version left behind: the service thread that already holds turn 1.
+        upgraded = await store.get(first.json()["id"])
+        assert upgraded is not None
+        upgraded.service_session_id = "svc-thread-1"
+        await store.set(first.json()["id"], upgraded)
+
+        second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
+
+        assert second.status_code == 200
+        assert second.json()["status"] == "completed"
+        # The stale thread is neither resumed nor mistaken for a client that stored the turn.
+        assert client.conversation_ids == [None, None]
+        assert [[message.text for message in call] for call in client.calls] == [
+            ["first"],
+            ["first", "recorded", "second"],
+        ]
+
+        stored = await store.get(second.json()["id"])
+        assert stored is not None
+        assert stored.service_session_id is None
+
     async def test_client_that_stores_despite_disabled_storage_fails_and_leaves_session_unsaved(
         self,
         caplog: pytest.LogCaptureFixture,
