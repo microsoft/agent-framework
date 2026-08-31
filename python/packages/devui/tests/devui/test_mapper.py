@@ -355,6 +355,27 @@ async def test_response_id_is_stable_across_lifecycle_and_aggregation(mapper: Me
     assert response.output == []
 
 
+async def test_failed_response_retains_partial_output(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """A failed response includes text emitted before the failure."""
+    partial_events = await mapper.convert_event(
+        create_test_agent_update([Content.from_text(text="Partial output")]),
+        test_request,
+    )
+    failed_events = await mapper.convert_event(
+        AgentFailedEvent(error=RuntimeError("failed after output")),
+        test_request,
+    )
+
+    response = await mapper.aggregate_to_response([*partial_events, *failed_events], test_request)
+
+    assert response.status == "failed"
+    assert response.error is not None
+    assert response.error.message == "failed after output"
+    assert response.output_text == "Partial output"
+
+
 async def test_agent_run_response_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test that mapper handles complete AgentResponse (non-streaming)."""
     response = create_agent_run_response("Complete response from run()")

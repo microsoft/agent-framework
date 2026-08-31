@@ -291,9 +291,6 @@ class MessageMapper:
                 ),
                 None,
             )
-            if failed_response is not None:
-                return cast(OpenAIResponse, failed_response)
-
             # Collect output items in order
             output_items: list[Any] = []
 
@@ -411,7 +408,7 @@ class MessageMapper:
                 output_items.append(response_output_message)
 
             # If no output items at all, create an empty message
-            if not output_items:
+            if not output_items and failed_response is None:
                 response_output_text = ResponseOutputText(type="output_text", text="", annotations=[])
                 response_output_message = ResponseOutputMessage(
                     type="message",
@@ -434,6 +431,8 @@ class MessageMapper:
                 created_at=datetime.now().timestamp(),
                 model=request.model or "devui",
                 output=output_items,
+                status=failed_response.status if failed_response is not None else "completed",
+                error=failed_response.error if failed_response is not None else None,
                 usage=usage,
                 parallel_tool_calls=False,
                 tool_choice="none",

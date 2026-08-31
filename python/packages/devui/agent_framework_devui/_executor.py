@@ -707,7 +707,7 @@ class AgentFrameworkExecutor:
                                 content_dict = cast(dict[str, Any], content_item)
                                 content_type = content_dict.get("type")
 
-                                if content_type == "input_text":
+                                if content_type in ("input_text", "output_text", "text"):
                                     text = content_dict.get("text", "")
                                     if isinstance(text, str):
                                         contents.append(Content.from_text(text=text))
@@ -863,8 +863,10 @@ class AgentFrameworkExecutor:
                                     except Exception as e:
                                         logger.error(f"Failed to process FunctionApprovalResponseContent: {e}")
 
-                    if contents:
-                        messages.append(Message(role=role_value, contents=contents))
+                    if not contents:
+                        raise InputConversionError("OpenAI input message did not contain any supported message content")
+
+                    messages.append(Message(role=role_value, contents=contents))
 
             # Handle other OpenAI input item types as needed
             # (tool calls, function results, etc.)

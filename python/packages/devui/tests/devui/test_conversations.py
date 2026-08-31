@@ -6,6 +6,8 @@ from typing import cast
 
 import pytest
 from openai.types.conversations import InputTextContent
+from openai.types.conversations.message import Message as OpenAIMessage
+from openai.types.responses import ResponseInputFile, ResponseInputImage
 
 from agent_framework_devui._conversations import InMemoryConversationStore
 
@@ -187,18 +189,33 @@ async def test_add_and_list_items_preserves_all_supported_message_parts():
     created_items = await store.add_items(conversation.id, items=request_items)
     listed_items, has_more = await store.list_items(conversation.id)
 
-    assert [item.role for item in created_items] == ["system", "user"]
-    assert [len(item.content) for item in created_items] == [2, 5]
-    assert created_items[1].content[0].image_url == "https://example.com/photo.jpg?download=1"
-    assert created_items[1].content[0].detail == "high"
-    assert created_items[1].content[1].file_id == "file_image"
-    assert created_items[1].content[1].detail == "low"
-    assert created_items[1].content[2].file_url == "data:application/pdf;base64,JVBERi0="
-    assert created_items[1].content[2].filename == "report.pdf"
-    assert created_items[1].content[3].file_id == "file_audio"
-    assert created_items[1].content[3].filename == "recording.mp3"
-    assert created_items[1].content[4].type == "input_file"
-    assert created_items[1].content[4].file_id == "file_scan"
+    created_system, created_user = created_items
+    assert isinstance(created_system, OpenAIMessage)
+    assert isinstance(created_user, OpenAIMessage)
+    assert [created_system.role, created_user.role] == ["system", "user"]
+    assert created_system.content is not None
+    assert created_user.content is not None
+    assert [len(created_system.content), len(created_user.content)] == [2, 5]
+
+    created_url_image = created_user.content[0]
+    created_hosted_image = created_user.content[1]
+    created_data_file = created_user.content[2]
+    created_audio_file = created_user.content[3]
+    created_scan_file = created_user.content[4]
+    assert isinstance(created_url_image, ResponseInputImage)
+    assert isinstance(created_hosted_image, ResponseInputImage)
+    assert isinstance(created_data_file, ResponseInputFile)
+    assert isinstance(created_audio_file, ResponseInputFile)
+    assert isinstance(created_scan_file, ResponseInputFile)
+    assert created_url_image.image_url == "https://example.com/photo.jpg?download=1"
+    assert created_url_image.detail == "high"
+    assert created_hosted_image.file_id == "file_image"
+    assert created_hosted_image.detail == "low"
+    assert created_data_file.file_url == "data:application/pdf;base64,JVBERi0="
+    assert created_data_file.filename == "report.pdf"
+    assert created_audio_file.file_id == "file_audio"
+    assert created_audio_file.filename == "recording.mp3"
+    assert created_scan_file.file_id == "file_scan"
 
     stored_messages = store._conversations[conversation.id]["messages"]
     assert stored_messages[1].contents[0].media_type == "image/jpeg"
@@ -207,14 +224,29 @@ async def test_add_and_list_items_preserves_all_supported_message_parts():
     assert stored_messages[1].contents[4].media_type == "image/jpeg"
 
     assert has_more is False
-    assert [item.role for item in listed_items] == ["system", "user"]
-    assert [len(item.content) for item in listed_items] == [2, 5]
-    assert listed_items[1].content[0].detail == "high"
-    assert listed_items[1].content[1].file_id == "file_image"
-    assert listed_items[1].content[2].file_url == "data:application/pdf;base64,JVBERi0="
-    assert listed_items[1].content[3].file_id == "file_audio"
-    assert listed_items[1].content[4].type == "input_file"
-    assert listed_items[1].content[4].file_id == "file_scan"
+    listed_system, listed_user = listed_items
+    assert isinstance(listed_system, OpenAIMessage)
+    assert isinstance(listed_user, OpenAIMessage)
+    assert [listed_system.role, listed_user.role] == ["system", "user"]
+    assert listed_system.content is not None
+    assert listed_user.content is not None
+    assert [len(listed_system.content), len(listed_user.content)] == [2, 5]
+
+    listed_url_image = listed_user.content[0]
+    listed_hosted_image = listed_user.content[1]
+    listed_data_file = listed_user.content[2]
+    listed_audio_file = listed_user.content[3]
+    listed_scan_file = listed_user.content[4]
+    assert isinstance(listed_url_image, ResponseInputImage)
+    assert isinstance(listed_hosted_image, ResponseInputImage)
+    assert isinstance(listed_data_file, ResponseInputFile)
+    assert isinstance(listed_audio_file, ResponseInputFile)
+    assert isinstance(listed_scan_file, ResponseInputFile)
+    assert listed_url_image.detail == "high"
+    assert listed_hosted_image.file_id == "file_image"
+    assert listed_data_file.file_url == "data:application/pdf;base64,JVBERi0="
+    assert listed_audio_file.file_id == "file_audio"
+    assert listed_scan_file.file_id == "file_scan"
 
 
 @pytest.mark.asyncio

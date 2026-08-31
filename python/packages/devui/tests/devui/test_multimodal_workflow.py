@@ -108,17 +108,26 @@ class TestMultimodalWorkflowInput:
                     {"type": "input_text", "text": "Second part"},
                 ],
             },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Assistant output"},
+                    {"type": "text", "text": "Generic assistant text"},
+                ],
+            },
         ]
 
         result = executor._convert_input_to_chat_message(openai_input)
 
         assert isinstance(result, list)
         assert all(isinstance(message, Message) for message in result)
-        assert [message.role for message in result] == ["system", "developer", "user"]
+        assert [message.role for message in result] == ["system", "developer", "user", "assistant"]
         assert [[content.text for content in message.contents] for message in result] == [
             ["System guidance"],
             ["Developer guidance"],
             ["First part", "Second part"],
+            ["Assistant output", "Generic assistant text"],
         ]
 
     def test_convert_openai_input_preserves_file_ids_and_canonical_media_types(self):
@@ -163,6 +172,21 @@ class TestMultimodalWorkflowInput:
                 "role": "user",
                 "content": [{"type": "unsupported_content", "value": "ignored"}],
             }
+        ]
+
+        with pytest.raises(ValueError, match="did not contain any supported message content"):
+            executor._convert_input_to_chat_message(openai_input)
+
+    def test_convert_openai_input_rejects_each_unsupported_only_message(self):
+        """A valid message must not hide another message with no supported content."""
+        executor = AgentFrameworkExecutor(MagicMock(spec=EntityDiscovery), MagicMock(spec=MessageMapper))
+        openai_input = [
+            {"type": "message", "role": "user", "content": "Valid message"},
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "unsupported_content", "value": "ignored"}],
+            },
         ]
 
         with pytest.raises(ValueError, match="did not contain any supported message content"):
