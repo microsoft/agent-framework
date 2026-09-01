@@ -1018,11 +1018,14 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
         # contents (parallel tool calls). Emit one AG-UI tool message per result so
         # none are dropped and each keeps its own toolCallId.
         if function_results:
-            base_id = msg.message_id if msg.message_id else generate_event_id()
+            # Preserve the source id for the first result; give every additional
+            # message an independent generated id. Deriving suffixes from the source
+            # id (e.g. f"{base_id}-1") risks colliding with a legitimate id elsewhere
+            # in the history, which would let id-keyed clients re-collapse results.
             for idx, fr in enumerate(function_results):
                 result.append(
                     {
-                        "id": base_id if idx == 0 else f"{base_id}-{idx}",
+                        "id": msg.message_id if (idx == 0 and msg.message_id) else generate_event_id(),
                         "role": "tool",
                         "content": fr.result if fr.result is not None else "",
                         "toolCallId": fr.call_id,
@@ -1033,7 +1036,7 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
             # separate, distinctly-identified message so they are not lost.
             if content_text or tool_calls:
                 extra_msg: dict[str, Any] = {
-                    "id": f"{base_id}-{len(function_results)}",
+                    "id": generate_event_id(),
                     "role": role,
                     "content": content_text,
                 }
