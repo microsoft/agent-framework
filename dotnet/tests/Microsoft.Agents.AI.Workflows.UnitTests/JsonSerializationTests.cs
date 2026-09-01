@@ -471,7 +471,7 @@ public class JsonSerializationTests
         Assert.Equal(message.AgentResponse.FinishReason, reconstructedMessage.AgentResponse.FinishReason);
         Assert.Equal(message.AgentResponse.ResponseId, reconstructedMessage.AgentResponse.ResponseId);
         Assert.Equal(message.AgentResponse.Usage?.TotalTokenCount, reconstructedMessage.AgentResponse.Usage?.TotalTokenCount);
-        Assert.Equal(message.FullConversation.Select(m => m.Text), reconstructedMessage.FullConversation.Select(m => m.Text));
+        Assert.Equal(message.CurrentTurnMessages.Select(m => m.Text), reconstructedMessage.CurrentTurnMessages.Select(m => m.Text));
         Assert.Equal(message.ForwardableMessages.Select(m => m.Text), reconstructedMessage.ForwardableMessages.Select(m => m.Text));
     }
 

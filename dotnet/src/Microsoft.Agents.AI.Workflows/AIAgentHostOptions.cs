@@ -74,17 +74,17 @@ public sealed class AIAgentHostResponse
     /// </summary>
     /// <param name="executorId">The ID of the executor that produced the response.</param>
     /// <param name="agentResponse">The complete response returned by the hosted agent.</param>
-    /// <param name="fullConversation">The portable conversation context containing input messages and forwarded response messages.</param>
+    /// <param name="currentTurnMessages">The portable messages for the current host turn, including input messages and forwarded response messages.</param>
     /// <param name="forwardableMessages">The sanitized response messages forwarded on the chat-message path.</param>
     public AIAgentHostResponse(
         string executorId,
         AgentResponse agentResponse,
-        IReadOnlyList<ChatMessage> fullConversation,
+        IReadOnlyList<ChatMessage> currentTurnMessages,
         IReadOnlyList<ChatMessage> forwardableMessages)
     {
         this.ExecutorId = Throw.IfNull(executorId);
         this.AgentResponse = Throw.IfNull(agentResponse);
-        this.FullConversation = new List<ChatMessage>(Throw.IfNull(fullConversation));
+        this.CurrentTurnMessages = new List<ChatMessage>(Throw.IfNull(currentTurnMessages));
         this.ForwardableMessages = new List<ChatMessage>(Throw.IfNull(forwardableMessages));
     }
 
@@ -99,9 +99,9 @@ public sealed class AIAgentHostResponse
     public AgentResponse AgentResponse { get; }
 
     /// <summary>
-    /// Gets the portable conversation context containing the input messages and forwarded response messages.
+    /// Gets the portable messages for the current host turn, including the input messages and forwarded response messages.
     /// </summary>
-    public IReadOnlyList<ChatMessage> FullConversation { get; }
+    public IReadOnlyList<ChatMessage> CurrentTurnMessages { get; }
 
     /// <summary>
     /// Gets the sanitized response messages forwarded on the chat-message path.

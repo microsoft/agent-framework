@@ -3,7 +3,7 @@ Microsoft.Agents.AI.Workflows.AIAgentHostOptions.ForwardAgentResponse.get -> boo
 Microsoft.Agents.AI.Workflows.AIAgentHostOptions.ForwardAgentResponse.set -> void
 Microsoft.Agents.AI.Workflows.AIAgentHostResponse
 Microsoft.Agents.AI.Workflows.AIAgentHostResponse.AgentResponse.get -> Microsoft.Agents.AI.AgentResponse!
-Microsoft.Agents.AI.Workflows.AIAgentHostResponse.AIAgentHostResponse(string! executorId, Microsoft.Agents.AI.AgentResponse! agentResponse, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>! fullConversation, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>! forwardableMessages) -> void
+Microsoft.Agents.AI.Workflows.AIAgentHostResponse.AIAgentHostResponse(string! executorId, Microsoft.Agents.AI.AgentResponse! agentResponse, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>! currentTurnMessages, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>! forwardableMessages) -> void
 Microsoft.Agents.AI.Workflows.AIAgentHostResponse.ExecutorId.get -> string!
 Microsoft.Agents.AI.Workflows.AIAgentHostResponse.ForwardableMessages.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>!
-Microsoft.Agents.AI.Workflows.AIAgentHostResponse.FullConversation.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>!
+Microsoft.Agents.AI.Workflows.AIAgentHostResponse.CurrentTurnMessages.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>!

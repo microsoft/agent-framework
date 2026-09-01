@@ -184,9 +184,9 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
         Assert.Equal("Partial answer", forwardableMessage.Text);
         Assert.Null(forwardableMessage.RawRepresentation);
 
-        Assert.Equal(2, hostResponse.FullConversation.Count);
-        Assert.Equal("Summarize this.", hostResponse.FullConversation[0].Text);
-        Assert.Equal("Partial answer", hostResponse.FullConversation[1].Text);
+        Assert.Equal(2, hostResponse.CurrentTurnMessages.Count);
+        Assert.Equal("Summarize this.", hostResponse.CurrentTurnMessages[0].Text);
+        Assert.Equal("Partial answer", hostResponse.CurrentTurnMessages[1].Text);
     }
 
     [Fact]
