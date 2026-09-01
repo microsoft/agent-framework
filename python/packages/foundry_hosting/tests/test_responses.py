@@ -633,9 +633,27 @@ class TestSerializationHelpers:
             def to_dict(self) -> dict[str, bool]:
                 return {"ok": False}
 
+        class SerializationErrorValue:
+            def to_dict(self) -> dict[str, Any]:
+                raise ValueError("unsupported structure")
+
+            def __str__(self) -> str:
+                return "serialization-error"
+
+        class UnexpectedErrorValue:
+            def to_dict(self) -> dict[str, Any]:
+                raise RuntimeError("unexpected conversion failure")
+
+        cyclic: list[Any] = []
+        cyclic.append(cyclic)
+
         assert json.loads(_json_safe_to_str(DataclassValue(count=0))) == {"count": 0}
         assert json.loads(_json_safe_to_str(ToDictValue())) == {"ok": False}
         assert json.loads(_json_safe_to_str(Path("result.txt"))) == "result.txt"
+        for value in (cyclic, {("kind",): "value"}, SerializationErrorValue()):
+            assert json.loads(_json_safe_to_str(value)) == str(value)
+        with pytest.raises(RuntimeError, match="unexpected conversion failure"):
+            _json_safe_to_str(UnexpectedErrorValue())
 
     def test_stringify_mcp_output_extracts_only_text_content_mappings(self) -> None:
         assert _stringify_mcp_output({"text": "ok"}) == "ok"
@@ -1281,6 +1299,31 @@ class TestNonStreaming:
         result_item = next(item for item in resp.json()["output"] if item["type"] == "function_call_output")
         assert result_item["output"] == expected_output
 
+    async def test_function_result_serialization_failure_falls_back_to_json_string(self) -> None:
+        cyclic: dict[str, Any] = {}
+        cyclic["self"] = cyclic
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[Content.from_function_call("call_1", "get_value", arguments="{}")],
+                    ),
+                    Message(
+                        role="tool",
+                        contents=[Content("function_result", call_id="call_1", result=cyclic)],
+                    ),
+                ]
+            )
+        )
+
+        resp = await _post(_make_server(agent), stream=False)
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "completed"
+        result_item = next(item for item in resp.json()["output"] if item["type"] == "function_call_output")
+        assert json.loads(result_item["output"]) == str(cyclic)
+
     async def test_shell_call_preserves_execution_limits(self) -> None:
         agent = _make_agent(
             response=AgentResponse(
@@ -1362,6 +1405,7 @@ class TestNonStreaming:
             ({"count": 0, "ok": False}, {"count": 0, "ok": False}),
             ({"text": "ok", "count": 0}, {"text": "ok", "count": 0}),
             (Path("result.txt"), "result.txt"),
+            ({("kind",): "value"}, "{('kind',): 'value'}"),
         ],
     )
     async def test_mcp_result_serialization_matches_with_and_without_correlated_call(

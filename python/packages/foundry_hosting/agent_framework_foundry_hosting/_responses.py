@@ -1799,7 +1799,10 @@ def _json_safe_to_str(value: Any | None) -> str:
         return ""
     if isinstance(value, str):
         return value
-    return json.dumps(value, default=_json_default)
+    try:
+        return json.dumps(value, default=_json_default)
+    except (TypeError, ValueError):
+        return json.dumps(str(value))
 
 
 def _reasoning_encrypted_content(content: Content) -> str | None:
