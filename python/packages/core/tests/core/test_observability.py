@@ -4847,10 +4847,13 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
 
 
 @pytest.mark.parametrize("stream", [False, True])
-async def test_agent_and_chat_spans_do_not_duplicate_response_telemetry(
-    span_exporter: InMemorySpanExporter, stream: bool
+@pytest.mark.parametrize("retain_agent_response_id", [False, True])
+async def test_agent_provider_hooks_control_response_telemetry(
+    span_exporter: InMemorySpanExporter,
+    stream: bool,
+    retain_agent_response_id: bool,
 ):
-    """The inner chat span owns response-id; usage is aggregated on the agent span."""
+    """Provider hooks can add root attributes and retain an inner response ID when required."""
 
     class NestedTelemetryChatClient(ChatTelemetryLayer, BaseChatClient[Any]):
         def service_url(self):
@@ -4890,7 +4893,14 @@ async def test_agent_and_chat_spans_do_not_duplicate_response_telemetry(
 
             return _get()
 
-    agent = Agent(
+    class ProviderTelemetryAgent(Agent):
+        def _get_additional_otel_agent_attributes(self) -> Mapping[str, Any]:
+            return {"test.provider.attribute": "provider-value"}
+
+        def _should_capture_agent_response_id(self) -> bool:
+            return retain_agent_response_id
+
+    agent = ProviderTelemetryAgent(
         client=NestedTelemetryChatClient(),  # ty: ignore[invalid-argument-type]
         id="nested_agent_id",
         name="nested_agent",
@@ -4921,7 +4931,11 @@ async def test_agent_and_chat_spans_do_not_duplicate_response_telemetry(
     assert chat_span.attributes[OtelAttr.INPUT_TOKENS] == 11  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert chat_span.attributes[OtelAttr.OUTPUT_TOKENS] == 22  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
-    assert OtelAttr.RESPONSE_ID not in agent_span.attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert agent_span.attributes["test.provider.attribute"] == "provider-value"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    if retain_agent_response_id:
+        assert agent_span.attributes[OtelAttr.RESPONSE_ID] == "nested_resp_123"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    else:
+        assert OtelAttr.RESPONSE_ID not in agent_span.attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
     # The agent span carries the aggregated usage from all inner chat completions
     assert agent_span.attributes[OtelAttr.INPUT_TOKENS] == 11  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert agent_span.attributes[OtelAttr.OUTPUT_TOKENS] == 22  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]

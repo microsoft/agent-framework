@@ -124,6 +124,9 @@ INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS: Final[contextvars.ContextVar[set[str] 
 )
 INNER_RESPONSE_ID_CAPTURED_FIELD: Final[str] = "response_id"
 INNER_USAGE_CAPTURED_FIELD: Final[str] = "usage"
+INNER_CAPTURED_RESPONSE_ID: Final[contextvars.ContextVar[str | None]] = contextvars.ContextVar(
+    "inner_captured_response_id", default=None
+)
 
 # Tracks accumulated token usage from all inner chat completion spans within an agent invoke.
 INNER_ACCUMULATED_USAGE: Final[contextvars.ContextVar[UsageDetails | None]] = contextvars.ContextVar(
@@ -2290,13 +2293,13 @@ class AgentTelemetryLayer:
         self.token_usage_histogram = _get_token_usage_histogram()
         self.duration_histogram = _get_duration_histogram()
 
-    def _get_otel_agent_id(self) -> str:
-        """Return the agent identifier emitted on OpenTelemetry spans."""
-        return getattr(self, "id", "unknown")
+    def _get_additional_otel_agent_attributes(self) -> Mapping[str, Any]:
+        """Return provider-specific attributes emitted on agent spans."""
+        return {}
 
-    def _get_otel_agent_name(self) -> str:
-        """Return the agent name emitted on OpenTelemetry spans."""
-        return getattr(self, "name", None) or self._get_otel_agent_id()
+    def _should_capture_agent_response_id(self) -> bool:
+        """Return whether the agent span must retain an inner response ID."""
+        return False
 
     def _trace_agent_invocation(
         self,
@@ -2334,13 +2337,14 @@ class AgentTelemetryLayer:
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
-            agent_id=self._get_otel_agent_id(),
-            agent_name=self._get_otel_agent_name(),
+            agent_id=getattr(self, "id", "unknown"),
+            agent_name=getattr(self, "name", None) or getattr(self, "id", "unknown"),
             agent_description=getattr(self, "description", None),
             thread_id=conversation_id,
             all_options=dict(merged_options),
             **merged_client_kwargs,
         )
+        attributes.update(self._get_additional_otel_agent_attributes())
 
         if stream:
             # Do NOT set the inner-telemetry context vars here: this synchronous run() body executes
@@ -2352,6 +2356,7 @@ class AgentTelemetryLayer:
             # below), so set and reset both happen in the consumer's context.
             inner_response_telemetry_captured_fields: set[str] = set()
             inner_response_telemetry_captured_fields_token: contextvars.Token[set[str] | None] | None = None
+            inner_captured_response_id_token: contextvars.Token[str | None] | None = None
             inner_accumulated_usage_token: contextvars.Token[UsageDetails | None] | None = None
             # Agent Framework's agents run in-process (the actual network call happens on a nested
             # chat span), so invoke_agent spans use the default INTERNAL kind.
@@ -2419,10 +2424,14 @@ class AgentTelemetryLayer:
                     response_attributes = _get_response_attributes(
                         attributes,
                         response,
-                        capture_response_id=INNER_RESPONSE_ID_CAPTURED_FIELD
-                        not in inner_response_telemetry_captured_fields,
+                        capture_response_id=(
+                            self._should_capture_agent_response_id()
+                            or INNER_RESPONSE_ID_CAPTURED_FIELD not in inner_response_telemetry_captured_fields
+                        ),
                         capture_usage=INNER_USAGE_CAPTURED_FIELD not in inner_response_telemetry_captured_fields,
                     )
+                    if self._should_capture_agent_response_id():
+                        _apply_captured_response_id(response_attributes)
                     _apply_accumulated_usage(response_attributes, inner_response_telemetry_captured_fields)
                     _capture_response(span=span, attributes=response_attributes, duration=duration)
                     if (
@@ -2444,6 +2453,8 @@ class AgentTelemetryLayer:
                     # pull-context factory below set the tokens in — so the reset is cross-context safe.
                     if inner_response_telemetry_captured_fields_token is not None:
                         INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
+                    if inner_captured_response_id_token is not None:
+                        INNER_CAPTURED_RESPONSE_ID.reset(inner_captured_response_id_token)
                     if inner_accumulated_usage_token is not None:
                         INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
                     _close_span()
@@ -2455,11 +2466,14 @@ class AgentTelemetryLayer:
                 # avoiding the cross-context Token reset failure. Setting happens before the
                 # underlying iterator is pulled, so inner chat completion spans created during the
                 # pull can still accumulate usage / mark captured fields.
-                nonlocal inner_response_telemetry_captured_fields_token, inner_accumulated_usage_token
+                nonlocal inner_response_telemetry_captured_fields_token
+                nonlocal inner_captured_response_id_token
+                nonlocal inner_accumulated_usage_token
                 if inner_response_telemetry_captured_fields_token is None:
                     inner_response_telemetry_captured_fields_token = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.set(
                         inner_response_telemetry_captured_fields
                     )
+                    inner_captured_response_id_token = INNER_CAPTURED_RESPONSE_ID.set(None)
                     inner_accumulated_usage_token = INNER_ACCUMULATED_USAGE.set({})
                 return _activate_span(span)
 
@@ -2491,6 +2505,7 @@ class AgentTelemetryLayer:
             inner_response_telemetry_captured_fields_token = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.set(
                 inner_response_telemetry_captured_fields
             )
+            inner_captured_response_id_token = INNER_CAPTURED_RESPONSE_ID.set(None)
             inner_accumulated_usage_token = INNER_ACCUMULATED_USAGE.set({})
             try:
                 with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
@@ -2508,12 +2523,16 @@ class AgentTelemetryLayer:
                             response_attributes = _get_response_attributes(
                                 attributes,
                                 response,
-                                capture_response_id=INNER_RESPONSE_ID_CAPTURED_FIELD
-                                not in inner_response_telemetry_captured_fields,
+                                capture_response_id=(
+                                    self._should_capture_agent_response_id()
+                                    or INNER_RESPONSE_ID_CAPTURED_FIELD not in inner_response_telemetry_captured_fields
+                                ),
                                 capture_usage=(
                                     INNER_USAGE_CAPTURED_FIELD not in inner_response_telemetry_captured_fields
                                 ),
                             )
+                            if self._should_capture_agent_response_id():
+                                _apply_captured_response_id(response_attributes)
                             _apply_accumulated_usage(
                                 response_attributes,
                                 inner_response_telemetry_captured_fields,
@@ -2539,6 +2558,7 @@ class AgentTelemetryLayer:
                         raise
             finally:
                 INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
+                INNER_CAPTURED_RESPONSE_ID.reset(inner_captured_response_id_token)
                 INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
 
         return _run()
@@ -3447,6 +3467,7 @@ def _mark_inner_response_telemetry_captured(
         return
     if response.response_id:
         captured_fields.add(INNER_RESPONSE_ID_CAPTURED_FIELD)
+        INNER_CAPTURED_RESPONSE_ID.set(response.response_id)
     if response.usage_details:
         captured_fields.add(INNER_USAGE_CAPTURED_FIELD)
         accumulated = INNER_ACCUMULATED_USAGE.get()
@@ -3454,6 +3475,12 @@ def _mark_inner_response_telemetry_captured(
             from ._types import add_usage_details
 
             INNER_ACCUMULATED_USAGE.set(add_usage_details(accumulated, response.usage_details))
+
+
+def _apply_captured_response_id(attributes: dict[str, Any]) -> None:
+    """Apply the inner chat response ID to an agent span when the provider requires it."""
+    if response_id := INNER_CAPTURED_RESPONSE_ID.get():
+        attributes.setdefault(OtelAttr.RESPONSE_ID, response_id)
 
 
 def _apply_accumulated_usage(attributes: dict[str, Any], captured_fields: set[str]) -> None:

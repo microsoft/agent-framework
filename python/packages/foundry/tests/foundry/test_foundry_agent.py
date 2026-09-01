@@ -46,6 +46,7 @@ from agent_framework_foundry._agent import (
     RawFoundryAgent,
     RawFoundryAgentChatClient,
     _FoundryAgentChatClient,
+    _get_foundry_project_id,
 )
 from agent_framework_foundry._chat_client import FoundryChatClient
 from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsagePolicy
@@ -950,40 +951,38 @@ def test_raw_foundry_agent_init_creates_client() -> None:
     assert agent.name == "test-agent"
 
 
-def test_foundry_agent_otel_identity_uses_resolved_agent_name(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test that telemetry uses the resolved Foundry name without changing local identity."""
+async def test_get_foundry_project_id_from_application_insights_connection() -> None:
+    """Test that project attribution uses the public project-scoped connection ID."""
 
-    monkeypatch.setenv("FOUNDRY_AGENT_NAME", "environment-agent")
-    mock_project = MagicMock()
-    mock_project.get_openai_client.return_value = MagicMock()
+    project_id = (
+        "/subscriptions/test-sub/resourceGroups/test-rg/providers/"
+        "Microsoft.CognitiveServices/accounts/test-account/projects/test-project"
+    )
+    project_client = MagicMock()
 
-    agent = FoundryAgent(project_client=mock_project)
+    async def connections():
+        yield SimpleNamespace(id=f"{project_id}/connections/appinsights")
 
-    assert agent.id != "environment-agent"
-    assert agent.name is None
-    assert agent._get_otel_agent_id() == "environment-agent"
-    assert agent._get_otel_agent_name() == "environment-agent"
+    project_client.connections.list.return_value = connections()
 
-
-def test_foundry_agent_otel_identity_is_separate_from_explicit_local_identity() -> None:
-    """Test that Foundry trace attribution does not replace local agent identity."""
-
-    mock_project = MagicMock()
-    mock_project.get_openai_client.return_value = MagicMock()
-
-    agent = FoundryAgent(
-        project_client=mock_project,
-        agent_name="deployed-agent",
-        id="custom-id",
-        name="Custom Name",
+    assert await _get_foundry_project_id(project_client) == project_id
+    project_client.connections.list.assert_called_once_with(
+        connection_type=projects_models.ConnectionType.APPLICATION_INSIGHTS
     )
 
-    assert agent.id == "custom-id"
-    assert agent.name == "Custom Name"
-    assert agent._get_otel_agent_id() == "deployed-agent"
-    assert agent._get_otel_agent_name() == "Custom Name"
+
+async def test_get_foundry_project_id_rejects_unexpected_connection_id() -> None:
+    """Test that malformed connection metadata does not silently disable portal attribution."""
+
+    project_client = MagicMock()
+
+    async def connections():
+        yield SimpleNamespace(id="appinsights")
+
+    project_client.connections.list.return_value = connections()
+
+    with pytest.raises(ValueError, match="unexpected format"):
+        await _get_foundry_project_id(project_client)
 
 
 def test_raw_foundry_agent_init_passes_default_headers_to_client() -> None:
@@ -1281,8 +1280,7 @@ def test_foundry_agent_init() -> None:
     assert agent.client is not None
     assert cast(Any, agent.client).agent_name == "test-agent"
     assert agent.name == "test-agent"
-    assert agent._get_otel_agent_id() == "test-agent"
-    assert agent._get_otel_agent_name() == "test-agent"
+    assert agent._should_capture_agent_response_id()
 
 
 def test_foundry_agent_init_with_middleware() -> None:
@@ -1318,6 +1316,10 @@ async def test_foundry_agent_configure_azure_monitor() -> None:
     mock_views = MagicMock(return_value=[])
     mock_resource = MagicMock()
     mock_enable = MagicMock()
+    project_id = (
+        "/subscriptions/test-sub/resourceGroups/test-rg/providers/"
+        "Microsoft.CognitiveServices/accounts/test-account/projects/test-project"
+    )
 
     with (
         patch.dict(
@@ -1327,15 +1329,24 @@ async def test_foundry_agent_configure_azure_monitor() -> None:
         patch("agent_framework.observability.create_metric_views", mock_views),
         patch("agent_framework.observability.create_resource", return_value=mock_resource),
         patch("agent_framework.observability.enable_instrumentation", mock_enable),
+        patch(
+            "agent_framework_foundry._agent._get_foundry_project_id",
+            new_callable=AsyncMock,
+            return_value=project_id,
+        ) as mock_get_project_id,
     ):
         await agent.configure_azure_monitor(enable_sensitive_data=True)
 
     mock_project.telemetry.get_application_insights_connection_string.assert_called_once()
+    mock_get_project_id.assert_awaited_once_with(mock_project)
     call_kwargs = mock_configure.call_args.kwargs
     assert call_kwargs["connection_string"] == "InstrumentationKey=test-key;IngestionEndpoint=https://test.endpoint"
     assert call_kwargs["views"] == []
     assert call_kwargs["resource"] is mock_resource
     mock_enable.assert_called_once_with(enable_sensitive_data=True)
+    assert agent._get_additional_otel_agent_attributes() == {
+        "microsoft.foundry.project.id": project_id,
+    }
 
 
 async def test_foundry_agent_configure_azure_monitor_resource_not_found() -> None:
