@@ -336,6 +336,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
         checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
         function_approval_store_provider: StoreProvider[FunctionApprovalStore] | None = None,
+        history_source: Literal["agent_server", "agent"] = "agent_server",
         **kwargs: Any,
     ) -> None:
         """Initialize a ResponsesHostServer.
@@ -351,14 +352,21 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 If not provided, a default `CheckpointStoreProvider` will be used.
             function_approval_store_provider: Optional provider for function approval storage.
                 If not provided, a default `FunctionApprovalStoreProvider` will be used.
+            history_source: Source of conversation history supplied to the model for regular agents.
+                `"agent_server"` (default) uses the transcript from the configured response store,
+                rejects load-enabled agent history providers, and disables downstream service storage.
+                `"agent"` passes only the current request input and preserves the agent's normal
+                history-provider or service-storage behavior. AgentServer still manages Responses
+                API persistence through `store` in both modes.
             **kwargs: Additional keyword arguments.
 
         Note:
-            1. The agent must not have a history provider with `load_messages=True`,
-               because history is managed by the hosting infrastructure.
-            2. The agent must not have any context providers that maintain context
-               in memory, because the hosting environment may get deactivated between
-               requests, and any in-memory context would be lost.
+            1. When `history_source="agent_server"`, the agent must not have a history provider
+               with `load_messages=True`, because history is managed by the hosting infrastructure.
+            2. Context providers must not keep required state only on their Python instances,
+               because the hosting environment may get deactivated between requests. Provider
+               state carried by `AgentSession`, including `InMemoryHistoryProvider` messages in
+               `history_source="agent"` mode, is persisted by the configured session store.
             3. Resiliency (resilient_background=True) is ONLY supported for workflows; constructing this
                server with a non-workflow agent and `resilient_background=True` raises `RuntimeError`.
                When resiliency is enabled, and the server crashes mid-response:
@@ -374,18 +382,35 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                collected, and that isn't guaranteed to have happened in time.
 
         Raises:
+            ValueError: If `history_source` is not supported.
             RuntimeError: If `resilient_background=True` is requested for a non-workflow agent, or if
                 `steerable_conversations=True` is requested for a workflow agent.
         """
+        if history_source not in ("agent_server", "agent"):
+            raise ValueError("history_source must be either 'agent_server' or 'agent'.")
+
         super().__init__(prefix=prefix, options=options, store=store, **kwargs)
 
-        for provider in getattr(agent, "context_providers", []):
-            if isinstance(provider, HistoryProvider) and provider.load_messages:
-                if _is_hosted_responses_history_sentinel(provider):
-                    continue
+        self._uses_agent_server_history = history_source == "agent_server"
+        if self._uses_agent_server_history:
+            for provider in getattr(agent, "context_providers", []):
+                if isinstance(provider, HistoryProvider) and provider.load_messages:
+                    if _is_hosted_responses_history_sentinel(provider):
+                        continue
+                    raise RuntimeError(
+                        "AgentServer response history is enabled, but the agent has a HistoryProvider "
+                        "with load_messages=True. Remove that provider or construct ResponsesHostServer "
+                        "with history_source='agent' to use the agent's regular history setup."
+                    )
+            default_options = getattr(agent, "default_options", None)
+            typed_default_options: Mapping[str, Any] = (
+                cast(Mapping[str, Any], default_options) if isinstance(default_options, Mapping) else {}
+            )
+            if typed_default_options.get("conversation_id") is not None:
                 raise RuntimeError(
-                    "There shouldn't be a history provider with `load_messages=True` already present. "
-                    "History is managed by the hosting infrastructure."
+                    "AgentServer response history is enabled, but the agent has a default conversation_id. "
+                    "Remove that option or construct ResponsesHostServer with history_source='agent' to resume "
+                    "the downstream service conversation."
                 )
 
         self._is_workflow_agent = False
@@ -398,7 +423,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             self._is_workflow_agent = True
 
         self._uses_hosted_responses_history = False
-        if not self._is_workflow_agent and isinstance(agent, RawAgent):
+        if self._uses_agent_server_history and not self._is_workflow_agent and isinstance(agent, RawAgent):
             self._uses_hosted_responses_history = True
             if not any(
                 _is_hosted_responses_history_sentinel(provider)
@@ -615,21 +640,29 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         request_interrupted = False
 
         try:
-            if self._uses_hosted_responses_history:
+            if self._uses_agent_server_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
+                # A restored service ID belongs to the downstream model service. Replaying the
+                # AgentServer transcript while resuming that service history would duplicate every
+                # prior turn, so AgentServer-history mode always starts the model call statelessly.
+                session.service_session_id = None
 
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
 
-            history = await context.get_history()
+            history_messages: list[Message] = []
+            if self._uses_agent_server_history:
+                history = await context.get_history()
+                history_messages = await _output_items_to_messages(history, approval_storage=approval_storage)
             run_kwargs: dict[str, Any] = {
-                "messages": [
-                    *(await _output_items_to_messages(history, approval_storage=approval_storage)),
-                    *input_messages,
-                ],
+                "messages": [*history_messages, *input_messages],
                 "session": session,
             }
             chat_options, are_options_set = _to_chat_options(request)
+            if self._uses_agent_server_history:
+                # The response provider already owns the transcript used for this run. Keep the
+                # downstream service stateless so it cannot become a second history source.
+                chat_options["store"] = False
 
             if are_options_set and not isinstance(self._agent, RawAgent):
                 logger.warning("Agent doesn't support runtime options. They will be ignored.")
@@ -662,8 +695,22 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         finally:
             if self._uses_hosted_responses_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
+
+            # A service ID here means the client stored the turn despite the forced `store=False`.
+            # Do not persist a session that could resume that unreconciled history on a later turn.
+            stored_output_violation = self._uses_agent_server_history and session.service_session_id is not None
+            if stored_output_violation:
+                misconfigured = RuntimeError(
+                    "The agent's chat client stored this turn server-side while AgentServer response history "
+                    "is supplying the conversation. Configure the client to honor store=False, or construct "
+                    "ResponsesHostServer with history_source='agent' to use the agent's regular history setup."
+                )
+                logger.error("%s", misconfigured)
+                if request_failure is None and not request_interrupted:
+                    request_failure = misconfigured
             try:
-                await session_storage.set(session_save_id, session)
+                if not stored_output_violation:
+                    await session_storage.set(session_save_id, session)
             except Exception as save_error:
                 save_failure = save_error
                 if request_interrupted:

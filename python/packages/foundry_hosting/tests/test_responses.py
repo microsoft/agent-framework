@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -189,6 +190,44 @@ class _RecordingHistoryClient(BaseChatClient):
 
         async def stream_response() -> AsyncIterator[ChatResponseUpdate]:
             yield ChatResponseUpdate(contents=[Content.from_text("recorded")], role="assistant")
+
+        return ResponseStream(stream_response(), finalizer=ChatResponse.from_updates)
+
+
+class _ServiceStorageRecordingClient(BaseChatClient):
+    """Record service-storage options and mimic a client that returns a conversation ID."""
+
+    STORES_BY_DEFAULT = True
+
+    def __init__(self, *, honors_store: bool = True) -> None:
+        super().__init__()
+        self._honors_store = honors_store
+        self.calls: list[list[Message]] = []
+        self.store_options: list[Any] = []
+        self.conversation_ids: list[Any] = []
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        del kwargs
+        assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
+        self.calls.append(list(messages))
+        self.store_options.append(options.get("store"))
+        self.conversation_ids.append(options.get("conversation_id"))
+        stores_response = options.get("store") is not False if self._honors_store else True
+        conversation_id = "service-thread-1" if stores_response else None
+
+        async def stream_response() -> AsyncIterator[ChatResponseUpdate]:
+            yield ChatResponseUpdate(
+                contents=[Content.from_text("recorded")],
+                role="assistant",
+                conversation_id=conversation_id,
+            )
 
         return ResponseStream(stream_response(), finalizer=ChatResponse.from_updates)
 
@@ -725,8 +764,44 @@ class TestResponsesHostServerInit:
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
         agent.context_providers = [hp]
-        with pytest.raises(RuntimeError, match="history provider"):
+        with pytest.raises(RuntimeError, match="HistoryProvider"):
             ResponsesHostServer(agent)
+
+    def test_init_allows_history_provider_with_load_messages_for_agent_history(self) -> None:
+        hp = InMemoryHistoryProvider()
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.context_providers = [hp]
+
+        ResponsesHostServer(agent, history_source="agent")
+
+        assert agent.context_providers == [hp]
+
+    def test_init_rejects_invalid_history_source(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+
+        with pytest.raises(ValueError, match="history_source"):
+            ResponsesHostServer(agent, history_source="invalid")  # type: ignore[arg-type]
+
+    def test_init_rejects_default_conversation_id_for_agent_server_history(self) -> None:
+        agent = Agent(
+            client=_ServiceStorageRecordingClient(),
+            default_options={"conversation_id": "service-thread"},
+        )
+
+        with pytest.raises(RuntimeError, match="default conversation_id"):
+            ResponsesHostServer(agent)
+
+    def test_init_allows_default_conversation_id_for_agent_history(self) -> None:
+        agent = Agent(
+            client=_ServiceStorageRecordingClient(),
+            default_options={"conversation_id": "service-thread"},
+        )
+
+        ResponsesHostServer(agent, history_source="agent")
 
     def test_init_rejects_resilient_background_for_non_workflow_agent(self, tmp_path: Path) -> None:
         agent = _make_agent(
@@ -844,6 +919,115 @@ class TestAgentSessionPersistence:
         assert stored is not None
         assert InMemoryHistoryProvider.DEFAULT_SOURCE_ID not in stored.state
         assert "_foundry_responses_history" not in stored.state
+
+    async def test_agent_server_history_disables_service_storage(self) -> None:
+        client = _ServiceStorageRecordingClient()
+        agent = Agent(
+            client=client,
+            name="Service Storage Agent",
+            default_options={"store": True},
+        )
+        store = SessionStore()
+        server = _make_server(agent, session_store=store)
+
+        first = await _post(server, input_text="first")
+        second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
+
+        assert second.json()["status"] == "completed"
+        assert [[message.text for message in call] for call in client.calls] == [
+            ["first"],
+            ["first", "recorded", "second"],
+        ]
+        assert client.store_options == [False, False]
+        assert client.conversation_ids == [None, None]
+
+        stored = await store.get(second.json()["id"])
+        assert stored is not None
+        assert stored.service_session_id is None
+
+    async def test_agent_server_history_clears_restored_service_session_id(self) -> None:
+        client = _ServiceStorageRecordingClient()
+        agent = Agent(client=client, name="Migrated Agent")
+        store = SessionStore()
+        server = _make_server(agent, session_store=store)
+        first = await _post(server, input_text="first")
+        first_id = first.json()["id"]
+        stale_session = await store.get(first_id)
+        assert stale_session is not None
+        stale_session.service_session_id = "contaminated-service-thread"
+        await store.set(first_id, stale_session)
+        client.store_options.clear()
+        client.conversation_ids.clear()
+
+        response = await _post(server, input_text="next", previous_response_id=first_id)
+
+        assert response.json()["status"] == "completed"
+        assert client.store_options == [False]
+        assert client.conversation_ids == [None]
+        stored = await store.get(response.json()["id"])
+        assert stored is not None
+        assert stored.service_session_id is None
+
+    async def test_agent_history_preserves_service_storage(self) -> None:
+        client = _ServiceStorageRecordingClient()
+        agent = Agent(
+            client=client,
+            name="Agent Managed Service Storage",
+            default_options={"store": True},
+        )
+        store = SessionStore()
+        server = _make_server(agent, session_store=store, history_source="agent")
+
+        first = await _post(server, input_text="first")
+        second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
+
+        assert second.json()["status"] == "completed"
+        assert [[message.text for message in call] for call in client.calls] == [["first"], ["second"]]
+        assert client.store_options == [True, True]
+        assert client.conversation_ids == [None, "service-thread-1"]
+        stored = await store.get(second.json()["id"])
+        assert stored is not None
+        assert stored.service_session_id == "service-thread-1"
+
+    async def test_agent_history_uses_in_memory_history_from_session_store(self) -> None:
+        client = _RecordingHistoryClient()
+        history = InMemoryHistoryProvider()
+        agent = Agent(
+            client=client,
+            name="Agent Managed In-Memory History",
+            context_providers=[history],
+            default_options={"store": False},
+        )
+        store = SessionStore()
+        server = _make_server(agent, session_store=store, history_source="agent")
+
+        first = await _post(server, input_text="first")
+        second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
+
+        assert second.json()["status"] == "completed"
+        assert [[message.text for message in call] for call in client.calls] == [
+            ["first"],
+            ["first", "recorded", "second"],
+        ]
+        stored = await store.get(second.json()["id"])
+        assert stored is not None
+        assert history.source_id in stored.state
+
+    async def test_client_that_ignores_disabled_storage_fails_without_saving_session(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        client = _ServiceStorageRecordingClient(honors_store=False)
+        agent = Agent(client=client, name="Ignores Store Agent")
+        store = SessionStore()
+        server = _make_server(agent, session_store=store)
+
+        with caplog.at_level(logging.ERROR):
+            response = await _post(server, input_text="first")
+
+        assert response.json()["status"] == "failed"
+        assert "stored this turn server-side" in caplog.text
+        assert await store.get(response.json()["id"]) is None
 
     async def test_per_service_call_persistence_preserves_function_loop_history(self) -> None:
         provider = _PerServiceCallHistoryProvider()

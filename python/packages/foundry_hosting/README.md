@@ -2,6 +2,43 @@
 
 This package provides the integration of Agent Framework agents and workflows with the Foundry Agent Server, which can be hosted on Foundry infrastructure.
 
+## Conversation history
+
+`ResponsesHostServer` uses AgentServer response history as the model's conversation history by default:
+
+```python
+server = ResponsesHostServer(agent)
+```
+
+In this mode, the configured AgentServer response provider supplies the prior transcript. Hosting rejects
+`HistoryProvider` instances with `load_messages=True` and agents configured with a default `conversation_id`, adds a
+transient in-memory provider for function-call loops, forces downstream `store=False`, and clears restored downstream
+service IDs. These safeguards ensure the model receives the transcript once.
+
+To preserve the agent's regular history and service-storage behavior, select the agent as the history source:
+
+```python
+server = ResponsesHostServer(agent, history_source="agent")
+```
+
+Hosting then passes only current request input, allows load-enabled history providers, and does not override the
+agent's downstream `store` option. For example, `InMemoryHistoryProvider` stores messages in `AgentSession.state`, which
+the default `FoundryAgentSessionStore` persists in Foundry:
+
+```python
+agent = Agent(
+    client=client,
+    context_providers=[InMemoryHistoryProvider()],
+    default_options={"store": False},
+)
+server = ResponsesHostServer(agent, history_source="agent")
+```
+
+The `store` argument remains independent: it selects the AgentServer response provider used for Responses API
+persistence and retrieval. Omitting it or passing `None` selects the environment default. With
+`history_source="agent_server"`, that response provider also supplies model history; with `history_source="agent"`, it
+does not.
+
 ## State store
 
 ### Local persistence
