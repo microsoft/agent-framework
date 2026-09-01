@@ -21,7 +21,14 @@ from .._types import Content, ResponseStream
 from ..exceptions import WorkflowException
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._checkpoint import CheckpointStorage
-from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, INTERNAL_SOURCE_ID, WORKFLOW_RUN_KWARGS_KEY
+from ._const import (
+    DEFAULT_MAX_ITERATIONS,
+    GLOBAL_KWARGS_KEY,
+    INTERNAL_SOURCE_ID,
+    RAW_CLIENT_KWARGS_KEY,
+    RAW_FUNCTION_INVOCATION_KWARGS_KEY,
+    WORKFLOW_RUN_KWARGS_KEY,
+)
 from ._edge import (
     EdgeGroup,
     FanOutEdgeGroup,
@@ -203,6 +210,18 @@ class OutputDesignation:
         if executor_id in self.intermediates:
             return "intermediate"
         return None
+
+
+@dataclass(frozen=True)
+class WorkflowInvocationKwargs:
+    """Explicit global and executor-specific kwargs for a workflow run.
+
+    Use this wrapper when shared kwargs should be combined with executor-specific
+    overrides. Plain mappings retain their existing global or per-executor behavior.
+    """
+
+    global_kwargs: Mapping[str, Any] = field(default_factory=dict)
+    executor_kwargs: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
 
 class Workflow(DictConvertible):
@@ -480,8 +499,11 @@ class Workflow(DictConvertible):
         initial_executor_fn: Callable[[], Awaitable[None]] | None = None,
         is_continuation: bool = False,
         streaming: bool = False,
-        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Private method to run workflow with proper tracing.
 
@@ -556,10 +578,12 @@ class Workflow(DictConvertible):
                         combined_kwargs["function_invocation_kwargs"] = self._resolve_invocation_kwargs(
                             function_invocation_kwargs, "function_invocation_kwargs"
                         )
+                        combined_kwargs[RAW_FUNCTION_INVOCATION_KWARGS_KEY] = function_invocation_kwargs
                     if client_kwargs is not None:
                         combined_kwargs["client_kwargs"] = self._resolve_invocation_kwargs(
                             client_kwargs, "client_kwargs"
                         )
+                        combined_kwargs[RAW_CLIENT_KWARGS_KEY] = client_kwargs
                     self._runner.state.set(WORKFLOW_RUN_KWARGS_KEY, combined_kwargs)
                 elif not is_continuation:
                     self._runner.state.set(WORKFLOW_RUN_KWARGS_KEY, {})
@@ -688,8 +712,8 @@ class Workflow(DictConvertible):
         responses: Mapping[str, Any] | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None,
     ) -> ResponseStream[WorkflowEvent, WorkflowRunResult]: ...
 
     @overload
@@ -702,8 +726,8 @@ class Workflow(DictConvertible):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         include_status_events: bool = False,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None,
     ) -> Awaitable[WorkflowRunResult]: ...
 
     def run(
@@ -715,8 +739,11 @@ class Workflow(DictConvertible):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         include_status_events: bool = False,
-        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> ResponseStream[WorkflowEvent, WorkflowRunResult] | Awaitable[WorkflowRunResult]:
         """Run the workflow, optionally streaming events.
 
@@ -740,11 +767,14 @@ class Workflow(DictConvertible):
             include_status_events: Whether to include status events (non-streaming only).
             function_invocation_kwargs: Keyword arguments forwarded to tool invocations in
                 subagents. Either a mapping for agent name or agent executor id to kwargs,
-                or a flat mapping of kwargs for all tool invocations. To combine global and
-                executor-specific kwargs, use the ``"__global__"`` key for the global mapping.
+                a flat mapping of kwargs for all tool invocations, or a
+                ``WorkflowInvocationKwargs`` instance to combine global and executor-specific
+                kwargs.
             client_kwargs: Keyword arguments forwarded to chat client calls in
                 subagents. Either a mapping for agent name or agent executor id to kwargs,
-                or a flat mapping of kwargs for all chat client calls.
+                a flat mapping of kwargs for all chat client calls, or a
+                ``WorkflowInvocationKwargs`` instance to combine global and executor-specific
+                kwargs.
 
         Returns:
             When stream=True: A ResponseStream[WorkflowEvent, WorkflowRunResult] for
@@ -803,8 +833,11 @@ class Workflow(DictConvertible):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         streaming: bool = False,
-        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Single core execution path for both streaming and non-streaming modes.
 
@@ -1058,7 +1091,7 @@ class Workflow(DictConvertible):
 
     def _resolve_invocation_kwargs(
         self,
-        kwargs: Mapping[str, Any],
+        kwargs: WorkflowInvocationKwargs | Mapping[str, Any],
         param_name: str,
     ) -> dict[str, Any]:
         """Resolve invocation kwargs into a normalized per-executor or global format.
@@ -1074,17 +1107,14 @@ class Workflow(DictConvertible):
             param_name: The parameter name (for logging), e.g. ``"function_invocation_kwargs"``.
 
         Returns:
-            A dict with either:
-            - ``{"__global__": <original dict>}`` for global kwargs, or
-            - A mapping containing ``"__global__"`` and per-executor kwargs.
+            A dict containing normalized global or per-executor mappings.
         """
-        if GLOBAL_KWARGS_KEY in kwargs:
-            global_kwargs = kwargs[GLOBAL_KWARGS_KEY]
-            if not isinstance(global_kwargs, Mapping):
-                raise ValueError(f"{GLOBAL_KWARGS_KEY} must contain a mapping of global kwargs.")
-            resolved = dict(kwargs)
-            resolved[GLOBAL_KWARGS_KEY] = dict(global_kwargs)
-            logger.info("Explicit global %s provided; applying it with any per-executor overrides.", param_name)
+        if isinstance(kwargs, WorkflowInvocationKwargs):
+            resolved = {GLOBAL_KWARGS_KEY: dict(kwargs.global_kwargs)}
+            resolved.update({
+                executor_id: dict(executor_kwargs) for executor_id, executor_kwargs in kwargs.executor_kwargs.items()
+            })
+            logger.info("Explicit global %s provided with executor-specific overrides.", param_name)
             return resolved
 
         executor_ids = set(self.executors.keys())

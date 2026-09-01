@@ -4,13 +4,18 @@ import asyncio
 import logging
 import sys
 import types
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
 
-from ._const import WORKFLOW_RUN_KWARGS_KEY
+from ._const import (
+    RAW_CLIENT_KWARGS_KEY,
+    RAW_FUNCTION_INVOCATION_KWARGS_KEY,
+    WORKFLOW_RUN_KWARGS_KEY,
+)
 from ._events import (
     WorkflowEvent,
     WorkflowRunState,
@@ -20,7 +25,7 @@ from ._executor import Executor, handler
 from ._request_info_mixin import response_handler
 from ._runner_context import WorkflowMessage
 from ._typing_utils import is_instance_of
-from ._workflow import WorkflowRunResult
+from ._workflow import WorkflowInvocationKwargs, WorkflowRunResult
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 12):
@@ -375,14 +380,16 @@ class WorkflowExecutor(Executor):
         # Get kwargs from parent workflow's State to propagate to subworkflow
         parent_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
 
-        # Extract invocation kwargs recognised by Workflow.run(). The state stores
-        # the resolved format, which can include a global mapping and executor overrides.
-        # Pass it through so the subworkflow resolves it against its own executor IDs.
-        fi_kwargs: dict[str, Any] | None = None
-        ci_kwargs: dict[str, Any] | None = None
+        # Use the caller's raw kwargs so legacy per-executor mappings are resolved
+        # against the child workflow's executor IDs rather than the parent's.
+        fi_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None
+        ci_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None
         for key in ("function_invocation_kwargs", "client_kwargs"):
-            resolved = parent_kwargs.get(key)
-            if isinstance(resolved, dict):
+            raw_key = (
+                RAW_FUNCTION_INVOCATION_KWARGS_KEY if key == "function_invocation_kwargs" else RAW_CLIENT_KWARGS_KEY
+            )
+            resolved = parent_kwargs.get(raw_key, parent_kwargs.get(key))
+            if isinstance(resolved, dict) or resolved is not None:
                 if key == "function_invocation_kwargs":
                     fi_kwargs = resolved
                 else:
