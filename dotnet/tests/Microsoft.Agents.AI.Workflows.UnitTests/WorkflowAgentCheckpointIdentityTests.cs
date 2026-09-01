@@ -8,7 +8,6 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -37,9 +36,7 @@ public class WorkflowAgentCheckpointIdentityTests
 
         // Act: complete a first turn (triage hands off to the specialist), then serialize the session.
         AgentResponse firstResponse = await firstGeneration.RunAsync("Please help me.", session);
-        firstResponse.Text.Should().Be(
-            $"{SpecialistReply}:turn:1",
-            "the first turn should route triage -> specialist, and the specialist observes a single user turn");
+        Assert.Equal($"{SpecialistReply}:turn:1", firstResponse.Text);
 
         JsonElement serialized = await firstGeneration.SerializeSessionAsync(session);
 
@@ -53,9 +50,7 @@ public class WorkflowAgentCheckpointIdentityTests
         // Assert: the specialist observes both user turns, which is only possible if the checkpointed conversation was
         // restored. A fresh (non-resumed) session would restart the count at turn:1, so this distinguishes a genuine
         // resume from a compatible-but-empty restart.
-        secondResponse.Text.Should().Be(
-            $"{SpecialistReply}:turn:2",
-            "stable inner agent ids keep the executor identities compatible and the reconstructed workflow resumes from the checkpoint");
+        Assert.Equal($"{SpecialistReply}:turn:2", secondResponse.Text);
     }
 
     [Fact]
@@ -67,7 +62,7 @@ public class WorkflowAgentCheckpointIdentityTests
 
         // Complete a first turn and serialize the session; a completed handoff turn captures a checkpoint.
         AgentResponse firstResponse = await firstGeneration.RunAsync("Please help me.", session);
-        firstResponse.Text.Should().Contain(SpecialistReply, "the first turn should route triage -> specialist");
+        Assert.Contains(SpecialistReply, firstResponse.Text);
 
         JsonElement serialized = await firstGeneration.SerializeSessionAsync(session);
 
@@ -79,11 +74,11 @@ public class WorkflowAgentCheckpointIdentityTests
         // checkpoint against the reconstructed workflow.
         AgentSession resumedSession = await secondGeneration.DeserializeSessionAsync(serialized);
 
-        Func<Task> resumeAndRun = () => secondGeneration.RunAsync("Anything else?", resumedSession);
+        Task resumeAndRunAsync() => secondGeneration.RunAsync("Anything else?", resumedSession);
 
         // Assert: the second run throws because the reconstructed executor ids no longer match the checkpoint.
-        await resumeAndRun.Should().ThrowAsync<InvalidDataException>()
-            .WithMessage("The specified checkpoint is not compatible with the workflow associated with this runner.");
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(resumeAndRunAsync);
+        Assert.Equal("The specified checkpoint is not compatible with the workflow associated with this runner.", exception.Message);
     }
 
     [Fact]
@@ -94,7 +89,7 @@ public class WorkflowAgentCheckpointIdentityTests
         AgentSession session = await firstGeneration.CreateSessionAsync();
 
         AgentResponse firstResponse = await firstGeneration.RunAsync("Please help me.", session);
-        firstResponse.Text.Should().Contain(SpecialistReply, "the first turn should route triage -> specialist");
+        Assert.Contains(SpecialistReply, firstResponse.Text);
 
         JsonElement serialized = await firstGeneration.SerializeSessionAsync(session);
 
@@ -105,11 +100,11 @@ public class WorkflowAgentCheckpointIdentityTests
         // Act: deserialization succeeds; the incompatibility surfaces on the resuming run.
         AgentSession resumedSession = await secondGeneration.DeserializeSessionAsync(serialized);
 
-        Func<Task> resumeAndRun = () => secondGeneration.RunAsync("Anything else?", resumedSession);
+        Task resumeAndRunAsync() => secondGeneration.RunAsync("Anything else?", resumedSession);
 
         // Assert: changing a set name invalidates the executor identity even though the id is stable.
-        await resumeAndRun.Should().ThrowAsync<InvalidDataException>()
-            .WithMessage("The specified checkpoint is not compatible with the workflow associated with this runner.");
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(resumeAndRunAsync);
+        Assert.Equal("The specified checkpoint is not compatible with the workflow associated with this runner.", exception.Message);
     }
 
     /// <summary>
