@@ -175,6 +175,7 @@ class _RecordingHistoryClient(BaseChatClient):
     def __init__(self) -> None:
         super().__init__()
         self.calls: list[list[Message]] = []
+        self.options: list[dict[str, Any]] = []
 
     def _inner_get_response(
         self,
@@ -184,9 +185,10 @@ class _RecordingHistoryClient(BaseChatClient):
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
-        del options, kwargs
+        del kwargs
         assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
         self.calls.append(list(messages))
+        self.options.append(dict(options))
 
         async def stream_response() -> AsyncIterator[ChatResponseUpdate]:
             yield ChatResponseUpdate(contents=[Content.from_text("recorded")], role="assistant")
@@ -803,6 +805,23 @@ class TestResponsesHostServerInit:
 
         ResponsesHostServer(agent, history_source="agent")
 
+    def test_init_agent_history_removes_hosted_history_sentinel_from_reused_agent(self) -> None:
+        agent = Agent(client=_ServiceStorageRecordingClient())
+        ResponsesHostServer(agent)
+        assert any(
+            provider.source_id == "_foundry_responses_history"
+            for provider in agent.context_providers
+            if isinstance(provider, HistoryProvider)
+        )
+
+        ResponsesHostServer(agent, history_source="agent")
+
+        assert not any(
+            provider.source_id == "_foundry_responses_history"
+            for provider in agent.context_providers
+            if isinstance(provider, HistoryProvider)
+        )
+
     def test_init_rejects_resilient_background_for_non_workflow_agent(self, tmp_path: Path) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
@@ -944,6 +963,35 @@ class TestAgentSessionPersistence:
         stored = await store.get(second.json()["id"])
         assert stored is not None
         assert stored.service_session_id is None
+
+    async def test_agent_server_history_removes_store_for_non_storing_client(self) -> None:
+        client = _RecordingHistoryClient()
+        agent = Agent(
+            client=client,
+            name="Non-Storing Agent",
+            default_options={"store": True},
+        )
+        server = _make_server(agent, session_store=SessionStore())
+
+        response = await _post(server, input_text="first")
+
+        assert response.json()["status"] == "completed"
+        assert "store" not in agent.default_options
+        assert "store" not in client.options[0]
+
+    async def test_agent_server_history_preserves_storage_directive_for_custom_agent_options(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
+            raw_agent=False,
+        )
+        agent.client = MagicMock()
+        agent.client.STORES_BY_DEFAULT = True
+        server = _make_server(agent, session_store=SessionStore())
+
+        response = await _post(server, input_text="first", temperature=0.5)
+
+        assert response.json()["status"] == "completed"
+        assert agent.run.call_args.kwargs["options"] == {"store": False}
 
     async def test_agent_server_history_clears_restored_service_session_id(self) -> None:
         client = _ServiceStorageRecordingClient()

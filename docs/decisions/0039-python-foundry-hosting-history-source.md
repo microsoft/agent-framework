@@ -27,8 +27,9 @@ The host must prevent duplicate model history without removing the regular agent
 - Feed one canonical conversation transcript into each model call.
 - Keep AgentServer response persistence independent from the model's history source.
 - Preserve the normal agent choice between `HistoryProvider` and downstream service storage.
+- Let applications choose storage that satisfies their compliance, residency, retention, deletion, encryption, and
+  audit requirements.
 - Retain AgentServer response history as the default hosting behavior.
-- Avoid forcing the measured Foundry `store=False` streaming latency on users who select regular agent history.
 - Make existing sessions containing a downstream service ID safe after upgrade.
 
 ## Considered Options
@@ -38,12 +39,12 @@ The host must prevent duplicate model history without removing the regular agent
 - Good: one simple default and parity with current .NET Foundry hosting.
 - Good: the selected response provider controls the transcript used by the model.
 - Bad: users cannot use normal agent history providers or service-side continuation.
-- Bad: raw benchmarking measured a 5.43-second median streaming penalty for `store=False` on a Foundry project
-  endpoint using `gpt-5.4-nano`; the OpenAI public endpoint did not show this penalty.
+- Bad: applications cannot choose a history backend that meets their data-governance requirements independently of
+  AgentServer protocol storage.
 
 ### Clear the service ID but leave downstream storage enabled
 
-- Good: avoids duplicated input and preserves Foundry streaming latency.
+- Good: avoids duplicated input.
 - Bad: creates an untracked stored response or conversation on every model call.
 - Bad: service-side storage incurs retention and cost but is never used for continuation.
 
@@ -58,6 +59,7 @@ The host must prevent duplicate model history without removing the regular agent
 - Good: the host makes only the decision it owns: whether AgentServer history supersedes normal agent behavior.
 - Good: regular agent mode preserves service storage, in-session history, and external history providers.
 - Good: `ResponseProviderProtocol`, `HistoryProvider`, and `SessionStore` remain independent extension points.
+- Good: applications can select the storage boundary and lifecycle required by their compliance policies.
 - Neutral: AgentServer still manages protocol-level Responses persistence in regular agent mode, according to the outer
   request, but does not replay that transcript into the model.
 
@@ -70,7 +72,8 @@ With `history_source="agent_server"`:
 - load-enabled `HistoryProvider` instances are rejected;
 - an agent-level default `conversation_id` is rejected;
 - the configured response provider transcript and current input are passed to the agent;
-- downstream `store=False` overrides agent defaults on every run;
+- clients advertising `STORES_BY_DEFAULT=True` receive a downstream `store=False` override;
+- for other clients, an explicit agent-level `store` option is removed and no storage option is forwarded;
 - a restored `service_session_id` is cleared before the run;
 - a client that still returns a service ID fails the response and the contaminated session is not saved; and
 - a transient `InMemoryHistoryProvider` supports intra-run function calls but is removed before session persistence.
@@ -103,7 +106,8 @@ It does not disable response persistence.
 ## Consequences
 
 - Good: existing applications keep AgentServer history as their default.
-- Good: applications can retain service-side storage and its current Foundry latency characteristics.
+- Good: applications can choose service-side, session-backed, or external history storage to meet data-governance
+  requirements.
 - Good: the API does not introduce a second history-selection state machine.
 - Bad: default mode mutates the supplied `RawAgent` by installing a transient history provider.
 - Bad: regular agent history and AgentServer response history may differ, which response-oriented evaluations must

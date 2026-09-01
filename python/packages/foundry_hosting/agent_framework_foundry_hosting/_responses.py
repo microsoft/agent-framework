@@ -392,6 +392,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         super().__init__(prefix=prefix, options=options, store=store, **kwargs)
 
         self._uses_agent_server_history = history_source == "agent_server"
+        self._client_stores_by_default = False
         if self._uses_agent_server_history:
             for provider in getattr(agent, "context_providers", []):
                 if isinstance(provider, HistoryProvider) and provider.load_messages:
@@ -412,6 +413,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     "Remove that option or construct ResponsesHostServer with history_source='agent' to resume "
                     "the downstream service conversation."
                 )
+            agent_client = getattr(agent, "client", None)
+            storage_capability_owner = agent_client if agent_client is not None else agent
+            self._client_stores_by_default = getattr(storage_capability_owner, "STORES_BY_DEFAULT", False) is True
+            if not self._client_stores_by_default and isinstance(default_options, dict):
+                cast(dict[str, Any], default_options).pop("store", None)
+        elif isinstance(agent, RawAgent):
+            # A caller may reuse an agent that was previously attached to an AgentServer-history
+            # host. Restore regular agent behavior by removing only the host-owned sentinel.
+            agent.context_providers[:] = [
+                provider for provider in agent.context_providers if not _is_hosted_responses_history_sentinel(provider)
+            ]
 
         self._is_workflow_agent = False
         if isinstance(agent, WorkflowAgent):
@@ -660,12 +672,21 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             }
             chat_options, are_options_set = _to_chat_options(request)
             if self._uses_agent_server_history:
-                # The response provider already owns the transcript used for this run. Keep the
-                # downstream service stateless so it cannot become a second history source.
-                chat_options["store"] = False
+                if self._client_stores_by_default:
+                    # The response provider already owns the transcript used for this run. Keep a
+                    # storing downstream service stateless so it cannot become a second history source.
+                    chat_options["store"] = False
+                else:
+                    # Do not pass a storage option to clients that do not advertise support for it.
+                    chat_options.pop("store", None)
 
             if are_options_set and not isinstance(self._agent, RawAgent):
                 logger.warning("Agent doesn't support runtime options. They will be ignored.")
+                if self._uses_agent_server_history and self._client_stores_by_default:
+                    # Request generation options are unsupported for custom agents, but the
+                    # host-owned storage directive must still reach an agent that advertises
+                    # service-side storage.
+                    run_kwargs["options"] = {"store": False}
             else:
                 run_kwargs["options"] = chat_options
 
