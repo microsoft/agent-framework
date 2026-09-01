@@ -549,15 +549,13 @@ def test_prepare_content_for_openai_data_content_image(
     assert result["type"] == "image_url"
     assert result["image_url"]["url"] == image_data_content.uri
 
-    # Test DataContent with non-image media type should use default model_dump
+    # Test DataContent with non-image media type is omitted instead of emitting
+    # Agent Framework's internal content shape.
     text_data_content = Content.from_uri(uri="data:text/plain;base64,SGVsbG8gV29ybGQ=", media_type="text/plain")
 
     result = client._prepare_content_for_openai(text_data_content)  # type: ignore
 
-    # Should use default model_dump format
-    assert result["type"] == "data"
-    assert result["uri"] == text_data_content.uri
-    assert result["media_type"] == "text/plain"
+    assert result == {}
 
     # Test DataContent with audio media type
     audio_data_content = Content.from_uri(
@@ -586,6 +584,22 @@ def test_prepare_content_for_openai_data_content_image(
     # Data should contain just the base64 part, not the full data URI
     assert result["input_audio"]["data"] == "//uQAAAAWGluZwAAAA8AAAACAAACcQ=="
     assert result["input_audio"]["format"] == "mp3"
+
+    unsupported_audio = Content.from_uri(uri="data:audio/ogg;base64,abc123", media_type="audio/ogg")
+
+    assert client._prepare_content_for_openai(unsupported_audio) == {}  # type: ignore
+
+
+def test_prepare_message_for_openai_omits_unsupported_content() -> None:
+    client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
+    unsupported = Content.from_uri(uri="data:text/plain;base64,SGVsbG8=", media_type="text/plain")
+
+    prepared = client._prepare_message_for_openai(
+        Message(role="user", contents=[unsupported, Content.from_text("supported")])
+    )
+
+    assert prepared == [{"role": "user", "content": "supported"}]
+    assert client._prepare_message_for_openai(Message(role="user", contents=[unsupported])) == []
 
 
 def test_prepare_content_for_openai_image_url_detail(
@@ -1181,13 +1195,13 @@ def test_mixed_approval_resume_roles_serialize_function_result_as_tool(
 
     prepared = client._prepare_messages_for_openai(messages)
 
-    assert prepared[0] == {
-        "role": "tool",
-        "tool_call_id": "call_completed",
-        "content": "completed",
-    }
-    assert prepared[1]["role"] == "assistant"
-    assert "tool_call_id" not in prepared[1]
+    assert prepared == [
+        {
+            "role": "tool",
+            "tool_call_id": "call_completed",
+            "content": "completed",
+        }
+    ]
 
 
 def test_usage_content_in_streaming_response(
@@ -1228,8 +1242,8 @@ def test_usage_content_in_streaming_response(
     assert usage_content.usage_details["total_token_count"] == 150
 
 
-def test_parse_usage_includes_standard_and_legacy_mapped_token_details() -> None:
-    """Test _parse_usage_from_openai emits standard and legacy mapped token details."""
+def test_parse_usage_preserves_zero_valued_optional_token_details() -> None:
+    """Test _parse_usage_from_openai preserves explicitly reported zero-valued token details."""
     client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
 
     mock_usage = MagicMock()
@@ -1237,19 +1251,23 @@ def test_parse_usage_includes_standard_and_legacy_mapped_token_details() -> None
     mock_usage.completion_tokens = 50
     mock_usage.total_tokens = 150
     mock_usage.completion_tokens_details = MagicMock()
-    mock_usage.completion_tokens_details.accepted_prediction_tokens = None
-    mock_usage.completion_tokens_details.audio_tokens = None
+    mock_usage.completion_tokens_details.accepted_prediction_tokens = 0
+    mock_usage.completion_tokens_details.audio_tokens = 0
     mock_usage.completion_tokens_details.reasoning_tokens = 0
-    mock_usage.completion_tokens_details.rejected_prediction_tokens = None
+    mock_usage.completion_tokens_details.rejected_prediction_tokens = 0
     mock_usage.prompt_tokens_details = MagicMock()
-    mock_usage.prompt_tokens_details.audio_tokens = None
+    mock_usage.prompt_tokens_details.audio_tokens = 0
     mock_usage.prompt_tokens_details.cached_tokens = 0
 
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore[arg-type]
 
     details_dict = cast("dict[str, Any]", details)
+    assert details_dict["completion/accepted_prediction_tokens"] == 0
+    assert details_dict["completion/audio_tokens"] == 0
     assert details_dict["completion/reasoning_tokens"] == 0
     assert details["reasoning_output_token_count"] == 0
+    assert details_dict["completion/rejected_prediction_tokens"] == 0
+    assert details_dict["prompt/audio_tokens"] == 0
     assert details_dict["prompt/cached_tokens"] == 0
     assert details["cache_read_input_token_count"] == 0
 
@@ -2442,8 +2460,11 @@ def test_prepare_content_for_openai_image_prompt_cache_breakpoint() -> None:
     assert part["prompt_cache_breakpoint"] == {"mode": "explicit"}
 
 
-def test_prepare_options_prompt_cache_options_passthrough() -> None:
+def test_prepare_options_prompt_cache_options_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
     """Request-level prompt_cache_options reaches the Chat Completions run options."""
+    import agent_framework_openai._chat_completion_client as chat_completion_module
+
+    monkeypatch.setattr(chat_completion_module, "_prompt_cache_options_supported", True)
     client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
     run_options = client._prepare_options(
         [Message(role="user", contents=[Content.from_text("hi")])],

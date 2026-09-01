@@ -1,0 +1,105 @@
+name: Promote Shipped APIs
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  promote-apis:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Check for existing PR
+        id: check_pr
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $branch = "${{ github.ref_name }}"
+          $prBranch = "promote-shipped-apis-$branch"
+          $prNumber = gh pr list --state open --head $prBranch --base $branch --json number --jq '.[0].number'
+
+          if ($prNumber) {
+            "pr_exists=true" >> $env:GITHUB_OUTPUT
+            "pr_number=$prNumber" >> $env:GITHUB_OUTPUT
+            Write-Host "Found existing PR: $prNumber"
+          } else {
+            "pr_exists=false" >> $env:GITHUB_OUTPUT
+            Write-Host "No existing PR found."
+          }
+
+      - name: Checkout existing PR branch
+        if: steps.check_pr.outputs.pr_exists == 'true'
+        shell: pwsh
+        run: |
+          $branch = "${{ github.ref_name }}"
+          $prBranch = "promote-shipped-apis-$branch"
+
+          git fetch origin $prBranch
+          git checkout $prBranch
+          git merge origin/$branch -m "Merge $branch into promote-shipped-apis branch"
+
+      - name: Run public API promotion script
+        shell: pwsh
+        run: ./dotnet/eng/scripts/promote-shipped-apis.ps1
+
+      - name: Check for changes
+        id: check_changes
+        shell: pwsh
+        run: |
+          $changes = git diff --name-only -- "dotnet/src/**/PublicAPI.*.txt"
+          if ($changes) {
+            "has_changes=true" >> $env:GITHUB_OUTPUT
+            Write-Host "Changed files:"
+            Write-Host $changes
+          } else {
+            "has_changes=false" >> $env:GITHUB_OUTPUT
+            Write-Host "No public API promotion changes detected."
+          }
+
+      - name: Commit and push changes
+        if: steps.check_changes.outputs.has_changes == 'true'
+        shell: pwsh
+        run: |
+          $branch = "${{ github.ref_name }}"
+          $prBranch = "promote-shipped-apis-$branch"
+
+          git checkout -B $prBranch
+          git add dotnet/src/**/PublicAPI.*.txt
+          git commit -m "chore: promote shipped .NET APIs"
+          git push --force-with-lease --set-upstream origin $prBranch
+
+      - name: Create new PR
+        if: steps.check_pr.outputs.pr_exists == 'false' && steps.check_changes.outputs.has_changes == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $branch = "${{ github.ref_name }}"
+          $prBranch = "promote-shipped-apis-$branch"
+          $title = "chore: promote shipped .NET APIs for $branch"
+          $body = "Automatically promotes entries from PublicAPI.Unshipped.txt to PublicAPI.Shipped.txt for released .NET packages."
+
+          gh pr create --title $title --base $branch --head $prBranch --body $body

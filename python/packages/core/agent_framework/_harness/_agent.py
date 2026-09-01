@@ -20,6 +20,7 @@ from .._agents import Agent, SupportsAgentRun
 from .._clients import SupportsShellTool, SupportsWebSearchTool
 from .._compaction import CompactionProvider, ContextWindowCompactionStrategy
 from .._feature_stage import ExperimentalFeature, warn_experimental_feature
+from .._middleware import _copy_middleware_sequence  # pyright: ignore[reportPrivateUsage]
 from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider, MessageInjectionMiddleware
 from .._skills import SkillsProvider
 from .._telemetry import FeatureIndex, mark_feature_used
@@ -347,7 +348,7 @@ def create_harness_agent(
     loop_max_iterations: int | None = DEFAULT_MAX_ITERATIONS,
     otel_provider_name: str | None = None,
     context_providers: Sequence[ContextProvider] | None = None,
-    middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+    middleware: Sequence[MiddlewareTypes] | None = None,
     default_options: Mapping[str, Any] | None = None,
 ) -> Agent[OptionsCoT]:
     """Create a pre-configured agent with batteries included.
@@ -669,11 +670,8 @@ def create_harness_agent(
     # Message injection is always on. It is a no-op when no messages are queued for the session,
     # so there is no opt-out.
     assembled_middleware.append(MessageInjectionMiddleware())
-    # Bare-source normalization (a single middleware object or a MiddlewareBundle is
-    # one element) is owned by _as_middleware_list.
-    from .._middleware import _as_middleware_list  # pyright: ignore[reportPrivateUsage]
-
-    assembled_middleware.extend(_as_middleware_list(middleware))
+    if middleware is not None:
+        assembled_middleware.extend(_copy_middleware_sequence(middleware))
 
     agent = Agent(
         client,

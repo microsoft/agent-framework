@@ -621,6 +621,28 @@ async def test_chat_message_parsing_with_function_calls() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        pytest.param([], "", id="empty-list"),
+        pytest.param([{"value": 1}], '[{"value": 1}]', id="non-empty-list"),
+    ],
+)
+def test_foundry_function_result_list_respects_rich_output_capability(
+    output: list[dict[str, Any]],
+    expected: str,
+) -> None:
+    mock_openai_client = _make_mock_openai_client()
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = mock_openai_client
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    content = Content("function_result", call_id="test-call-id", result=output)
+
+    result = client._prepare_content_for_openai("user", content)
+
+    assert result["output"] == expected
+
+
 async def test_content_filter_exception() -> None:
     mock_openai_client = _make_mock_openai_client()
     project_client = MagicMock()

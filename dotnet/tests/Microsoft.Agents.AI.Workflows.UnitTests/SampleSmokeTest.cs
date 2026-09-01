@@ -6,7 +6,6 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Sample;
 
@@ -254,7 +253,7 @@ public class SampleSmokeTest
                     ChatCount: textToProcess.Length
                 );
 
-                result.Should().Be(expected);
+                Assert.Equal(expected, result);
             };
         }
     }
@@ -275,7 +274,7 @@ public class SampleSmokeTest
     /// callers must observe a stable terminal status and never a transient
     /// <see cref="RunStatus.Running"/>. Step9 is the canonical multi-response resume
     /// sample; prior to the fix in <see cref="Execution.StreamingRunEventStream"/>,
-    /// its `runStatus.Should().Be(RunStatus.Idle)` assertion failed intermittently
+    /// its run status assertion failed intermittently
     /// on roughly 1-in-10 iterations under InProcess_OffThread.
     /// </summary>
     [Fact]
@@ -307,7 +306,7 @@ public class SampleSmokeTest
         Assert.Collection(lines,
                           inputs.Select(CreateValidator).ToArray());
 
-        Action<string> CreateValidator(string expected) => actual => actual.Should().Be($"Echo: {expected}");
+        Action<string> CreateValidator(string expected) => actual => Assert.Equal($"Echo: {expected}", actual);
     }
 
     [Theory]
@@ -334,7 +333,7 @@ public class SampleSmokeTest
         Assert.Collection(lines,
                           expected.Select(CreateValidator).ToArray());
 
-        Action<string> CreateValidator(string expected) => actual => actual.Should().Be(expected);
+        Action<string> CreateValidator(string expected) => actual => Assert.Equal(expected, actual);
     }
 
     public class Step12ExpectedOutputCalculator(int agentCount)
@@ -357,7 +356,7 @@ public class SampleSmokeTest
                 int agentBookmark = this._bookmarks[i];
                 int count = this._history.Count - agentBookmark;
 
-                count.Should().BeGreaterThanOrEqualTo(0);
+                Assert.True(count >= 0);
 
                 foreach (string input in this._history.Skip(agentBookmark).ToList())
                 {
@@ -436,7 +435,7 @@ public class SampleSmokeTest
         Assert.Collection(lines,
                           expected.Select(CreateValidator).ToArray());
 
-        Action<string> CreateValidator(string expected) => actual => actual.Should().Be(expected);
+        Action<string> CreateValidator(string expected) => actual => Assert.Equal(expected, actual);
     }
 
     [Theory]
@@ -523,7 +522,7 @@ public class SampleSmokeTest
         // Act & Assert - All executors inside the subworkflow should share state
         using StringWriter writer = new();
         int result = await Step14EntryPoint.RunSubworkflowInternalStateAsync(Text, writer, executionEnvironment);
-        result.Should().Be(expectedCharCount, "executors within subworkflow should share state correctly");
+        Assert.Equal(expectedCharCount, result);
     }
 
     /// <summary>
@@ -547,14 +546,14 @@ public class SampleSmokeTest
 
         // Assert - Currently, state is isolated across subworkflow boundaries (issue #2419)
         // The subworkflow executor cannot see state written by the parent workflow
-        error.Should().NotBeNull("state written in parent workflow is not visible in subworkflow");
+        Assert.NotNull(error);
 
         // The exception may be wrapped in TargetInvocationException, so check inner exception too
         Exception actualError = error is System.Reflection.TargetInvocationException tie && tie.InnerException != null
             ? tie.InnerException
             : error;
 
-        actualError.Should().BeOfType<InvalidOperationException>();
+        Assert.IsType<InvalidOperationException>(actualError);
     }
 }
 

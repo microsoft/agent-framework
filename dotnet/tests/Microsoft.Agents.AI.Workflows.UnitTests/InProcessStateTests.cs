@@ -3,7 +3,6 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -70,7 +69,7 @@ public partial class InProcessStateTests
     private static Func<int?, int?> ValidateState(int expectedValue, string? because = null, params object[] becauseArgs)
         => currState =>
            {
-               currState.Should().Be(expectedValue, because, becauseArgs);
+               Assert.Equal(expectedValue, currState);
 
                return currState;
            };
@@ -103,10 +102,10 @@ public partial class InProcessStateTests
         Run run = await InProcessExecution.RunAsync<TurnToken>(workflow, new());
 
         RunStatus status = await run.GetStatusAsync();
-        status.Should().Be(RunStatus.Idle);
+        Assert.Equal(RunStatus.Idle, status);
 
-        writer.Completed.Should().BeTrue();
-        validator.Completed.Should().BeTrue();
+        Assert.True(writer.Completed);
+        Assert.True(validator.Completed);
     }
 
     [Fact]
@@ -133,13 +132,13 @@ public partial class InProcessStateTests
 
         Run checkpointed = await InProcessExecution.RunAsync<TurnToken>(workflow, new(), CheckpointManager.Default);
 
-        checkpointed.Checkpoints.Should().HaveCount(4);
+        Assert.Equal(4, checkpointed.Checkpoints.Count);
 
         RunStatus status = await checkpointed.GetStatusAsync();
-        status.Should().Be(RunStatus.Idle);
+        Assert.Equal(RunStatus.Idle, status);
 
-        writer.Completed.Should().BeTrue();
-        validator.Completed.Should().BeTrue();
+        Assert.True(writer.Completed);
+        Assert.True(validator.Completed);
     }
 
     [Fact]
@@ -170,18 +169,18 @@ public partial class InProcessStateTests
         {
             if (evt is WorkflowErrorEvent errorEvent)
             {
-                hadFailure.Should().BeFalse("There can be only one!");
+                Assert.False(hadFailure);
                 hadFailure = true;
 
-                errorEvent.Data.Should().BeOfType<InvalidOperationException>()
-                                        .Subject.Message.Should().Contain("TestKey");
+                InvalidOperationException exception = Assert.IsType<InvalidOperationException>(errorEvent.Data);
+                Assert.Contains("TestKey", exception.Message);
             }
         }
 
-        hadFailure.Should().BeTrue();
+        Assert.True(hadFailure);
 
         //var act = async () => await InProcessExecution.RunAsync(workflow, new TurnToken());
-        //var result = await act.Should()
+        //var result = await act assertion
         //                      .ThrowAsync("multiple writers to the same shared scope key");
     }
 }
