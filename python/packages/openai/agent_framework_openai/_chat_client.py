@@ -1897,7 +1897,19 @@ class RawOpenAIChatClient(
                     ret["summary"].append({"type": "summary_text", "text": content.text})
                 return ret
             case "data" | "uri":
-                if content.has_top_level_media_type("image"):
+                openai_content_type = content.additional_properties.get("openai_content_type")
+                if openai_content_type == "input_file":
+                    filename = content.additional_properties.get("filename")
+                    file_obj = {
+                        "type": "input_file",
+                        "file_data": content.uri,
+                    }
+                    if filename:
+                        file_obj["filename"] = filename
+                    return _attach_prompt_cache_breakpoint(file_obj, content)
+                if openai_content_type == "input_image" or (
+                    openai_content_type is None and content.has_top_level_media_type("image")
+                ):
                     result: dict[str, Any] = {
                         "type": "input_image",
                         "image_url": content.uri,
@@ -2048,6 +2060,15 @@ class RawOpenAIChatClient(
                 # the citation context for round-tripping.
                 if role == "assistant":
                     return {}
+                openai_content_type = content.additional_properties.get("openai_content_type")
+                if openai_content_type == "input_image" or (
+                    openai_content_type is None and content.media_type and content.has_top_level_media_type("image")
+                ):
+                    return {
+                        "type": "input_image",
+                        "file_id": content.file_id,
+                        "detail": content.additional_properties.get("detail", "auto"),
+                    }
                 return {
                     "type": "input_file",
                     "file_id": content.file_id,

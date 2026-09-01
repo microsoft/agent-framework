@@ -376,6 +376,49 @@ async def test_failed_response_retains_partial_output(
     assert response.output_text == "Partial output"
 
 
+async def test_failed_response_retains_populated_message_output_item(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """A failed workflow response retains complete message output items."""
+    output_events = await mapper.convert_event(
+        WorkflowEvent("output", executor_id="final_executor", data="Partial workflow output"),
+        test_request,
+    )
+    failed_events = await mapper.convert_event(
+        AgentFailedEvent(error=RuntimeError("failed after workflow output")),
+        test_request,
+    )
+
+    response = await mapper.aggregate_to_response([*output_events, *failed_events], test_request)
+
+    assert response.status == "failed"
+    assert response.error is not None
+    assert response.error.message == "failed after workflow output"
+    assert response.output_text == "Partial workflow output"
+
+
+async def test_aggregation_preserves_delta_and_complete_message_order(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Delta-built and complete messages retain their first-seen order."""
+    delta_events = await mapper.convert_event(
+        create_test_agent_update([Content.from_text(text="First")]),
+        test_request,
+    )
+    complete_events = await mapper.convert_event(
+        WorkflowEvent("output", executor_id="final_executor", data="Second"),
+        test_request,
+    )
+
+    response = await mapper.aggregate_to_response([*delta_events, *complete_events], test_request)
+
+    assert response.output_text == "FirstSecond"
+    assert [item.id for item in response.output if item.type == "message"] == [
+        delta_events[0].item.id,
+        complete_events[0].item.id,
+    ]
+
+
 async def test_agent_run_response_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
     """Test that mapper handles complete AgentResponse (non-streaming)."""
     response = create_agent_run_response("Complete response from run()")

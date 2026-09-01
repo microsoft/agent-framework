@@ -6,10 +6,8 @@ from __future__ import annotations
 
 import json
 import logging
-import mimetypes
 from collections.abc import AsyncGenerator
 from typing import Any, cast
-from urllib.parse import urlparse
 
 from agent_framework import Content, SupportsAgentRun, Workflow
 
@@ -17,18 +15,13 @@ from ._conversations import ConversationStore, InMemoryConversationStore
 from ._discovery import EntityDiscovery
 from ._mapper import MessageMapper
 from ._tracing import capture_traces
+from ._utils import infer_media_type
 from .models import AgentFrameworkRequest, OpenAIResponse
 from .models._discovery_models import EntityInfo
 
 logger = logging.getLogger(__name__)
 
 _OPENAI_MESSAGE_ROLES = {"user", "assistant", "system", "developer"}
-_CANONICAL_MEDIA_TYPES = {
-    ".jpeg": "image/jpeg",
-    ".jpg": "image/jpeg",
-    ".m4a": "audio/mp4",
-    ".mp3": "audio/mpeg",
-}
 
 
 def _get_event_type(event: Any) -> str | None:
@@ -37,26 +30,6 @@ def _get_event_type(event: Any) -> str | None:
         event_type = cast(dict[str, Any], event).get("type")
         return event_type if isinstance(event_type, str) else None
     return getattr(event, "type", None)
-
-
-def _infer_media_type(*, filename: str | None = None, uri: str | None = None, default: str) -> str:
-    """Infer a canonical media type from explicit data or a filename."""
-    if uri and uri.startswith("data:"):
-        media_type = uri[5:].split(";", 1)[0].split(",", 1)[0]
-        if "/" in media_type:
-            return media_type
-
-    for candidate in (filename, urlparse(uri).path if uri else None):
-        if not candidate:
-            continue
-        candidate_lower = candidate.lower()
-        for suffix, canonical_media_type in _CANONICAL_MEDIA_TYPES.items():
-            if candidate_lower.endswith(suffix):
-                return canonical_media_type
-        if guessed_media_type := mimetypes.guess_type(candidate)[0]:
-            return guessed_media_type
-
-    return default
 
 
 class EntityNotFoundError(Exception):
@@ -263,6 +236,7 @@ class AgentFrameworkExecutor:
             OpenAI response stream events
         """
         try:
+            events: list[Any] = []
             entity_id = request.get_entity_id()
             if not entity_id:
                 logger.error("No entity_id specified in request")
@@ -283,7 +257,12 @@ class AgentFrameworkExecutor:
                         and cast(dict[str, Any], event).get("type") == "response.function_approval.requested"
                     ):
                         self._track_approval_request(cast(dict[str, Any], event))
+                    events.append(event)
+                    if _get_event_type(event) == "response.failed":
+                        continue
                     yield event
+
+            yield await self.message_mapper.finalize_stream(events, request)
 
         except Exception as e:
             logger.exception(f"Error in streaming execution: {e}")
@@ -301,7 +280,14 @@ class AgentFrameworkExecutor:
         # Collect all streaming events
         events = [event async for event in self.execute_streaming(request)]
 
-        # Aggregate into final response
+        for event in reversed(events):
+            if _get_event_type(event) not in ("response.completed", "response.failed"):
+                continue
+            response = getattr(event, "response", None)
+            if isinstance(response, OpenAIResponse):
+                return response
+
+        # Preserve the existing empty-response fallback when execution produced no events.
         return await self.message_mapper.aggregate_to_response(events, request)
 
     async def execute_entity(self, entity_id: str, request: AgentFrameworkRequest) -> AsyncGenerator[Any]:
@@ -722,7 +708,7 @@ class AgentFrameworkExecutor:
                                         "detail": detail if isinstance(detail, str) else "auto",
                                     }
                                     if isinstance(image_url, str) and image_url:
-                                        media_type = _infer_media_type(uri=image_url, default="image/png")
+                                        media_type = infer_media_type(uri=image_url, default="image/png")
                                         contents.append(
                                             Content.from_uri(
                                                 uri=image_url,
@@ -758,7 +744,7 @@ class AgentFrameworkExecutor:
                                         file_properties["detail"] = detail
 
                                     if isinstance(file_data, str) and file_data:
-                                        media_type = _infer_media_type(
+                                        media_type = infer_media_type(
                                             filename=filename,
                                             uri=file_data,
                                             default="application/octet-stream",
@@ -776,7 +762,7 @@ class AgentFrameworkExecutor:
                                             )
                                         )
                                     elif isinstance(file_url, str) and file_url:
-                                        media_type = _infer_media_type(
+                                        media_type = infer_media_type(
                                             filename=filename,
                                             uri=file_url,
                                             default="application/octet-stream",
@@ -789,7 +775,7 @@ class AgentFrameworkExecutor:
                                             )
                                         )
                                     elif isinstance(file_id, str) and file_id:
-                                        media_type = _infer_media_type(
+                                        media_type = infer_media_type(
                                             filename=filename,
                                             default="application/octet-stream",
                                         )

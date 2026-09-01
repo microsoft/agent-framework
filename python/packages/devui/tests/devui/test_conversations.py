@@ -158,6 +158,37 @@ async def test_add_items():
 
 
 @pytest.mark.asyncio
+async def test_add_items_accepts_assistant_output_text():
+    """Assistant Responses history is accepted by the conversation parser."""
+    store = InMemoryConversationStore()
+    conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
+
+    created_items = await store.add_items(
+        conversation.id,
+        items=[
+            {
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Prior answer", "annotations": []}],
+            }
+        ],
+    )
+    listed_items, _ = await store.list_items(conversation.id)
+
+    created_message = created_items[0]
+    listed_message = listed_items[0]
+    assert isinstance(created_message, OpenAIMessage)
+    assert isinstance(listed_message, OpenAIMessage)
+    assert created_message.role == "assistant"
+    assert listed_message.role == "assistant"
+    assert created_message.content is not None
+    assert listed_message.content is not None
+    created_text = cast(InputTextContent, created_message.content[0])
+    listed_text = cast(InputTextContent, listed_message.content[0])
+    assert created_text.text == "Prior answer"
+    assert listed_text.text == "Prior answer"
+
+
+@pytest.mark.asyncio
 async def test_add_and_list_items_preserves_all_supported_message_parts():
     """Conversation conversion retains message boundaries and every supported part."""
     store = InMemoryConversationStore()

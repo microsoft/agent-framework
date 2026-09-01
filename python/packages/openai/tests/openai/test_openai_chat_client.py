@@ -3661,6 +3661,55 @@ def test_hosted_file_content_preparation() -> None:
     assert result["file_id"] == "file_abc123"
 
 
+def test_hosted_image_content_preparation() -> None:
+    """Hosted image IDs retain their image semantics and detail."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    hosted_image = Content.from_hosted_file(
+        file_id="file_image",
+        additional_properties={"openai_content_type": "input_image", "detail": "high"},
+    )
+
+    result = client._prepare_content_for_openai("user", hosted_image)
+
+    assert result == {
+        "type": "input_image",
+        "file_id": "file_image",
+        "detail": "high",
+    }
+
+    explicit_image_file = Content.from_hosted_file(
+        file_id="file_photo",
+        media_type="image/jpeg",
+        name="photo.jpg",
+        additional_properties={"openai_content_type": "input_file", "filename": "photo.jpg"},
+    )
+
+    result = client._prepare_content_for_openai("user", explicit_image_file)
+
+    assert result == {
+        "type": "input_file",
+        "file_id": "file_photo",
+    }
+
+
+def test_explicit_input_file_overrides_image_media_type() -> None:
+    """Explicit input-file semantics take precedence over inferred image media."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    image_file = Content.from_uri(
+        uri="data:image/jpeg;base64,abc",
+        media_type="image/jpeg",
+        additional_properties={"openai_content_type": "input_file", "filename": "scan.jpg"},
+    )
+
+    result = client._prepare_content_for_openai("user", image_file)
+
+    assert result == {
+        "type": "input_file",
+        "file_data": "data:image/jpeg;base64,abc",
+        "filename": "scan.jpg",
+    }
+
+
 def test_assistant_text_preserves_citation_annotations_on_roundtrip() -> None:
     """Citation annotations on assistant text should survive serialization back to the Responses API.
 

@@ -8,13 +8,11 @@ with in-memory message storage.
 
 from __future__ import annotations
 
-import mimetypes
 import time
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import MutableSequence
 from typing import Any, Literal, cast
-from urllib.parse import urlparse
 
 from agent_framework import AgentSession, Content, Message
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage, WorkflowCheckpoint
@@ -30,38 +28,14 @@ from openai.types.responses import (
     ResponseInputImage,
 )
 
+from ._utils import infer_media_type
+
 # Type alias for OpenAI Message role literals
 MessageRole = Literal["unknown", "user", "assistant", "system", "critic", "discriminator", "developer", "tool"]
 
 # Checkpoint item type constants
 CONVERSATION_ITEM_TYPE_CHECKPOINT = "checkpoint"
 CONVERSATION_TYPE_CHECKPOINT_CONTAINER = "checkpoint_container"
-_CANONICAL_MEDIA_TYPES = {
-    ".jpeg": "image/jpeg",
-    ".jpg": "image/jpeg",
-    ".m4a": "audio/mp4",
-    ".mp3": "audio/mpeg",
-}
-
-
-def _infer_media_type(*, filename: str | None = None, uri: str | None = None, default: str) -> str:
-    """Infer a canonical media type from explicit data or a filename."""
-    if uri and uri.startswith("data:"):
-        media_type = uri[5:].split(";", 1)[0].split(",", 1)[0]
-        if "/" in media_type:
-            return media_type
-
-    for candidate in (filename, urlparse(uri).path if uri else None):
-        if not candidate:
-            continue
-        candidate_lower = candidate.lower()
-        for suffix, canonical_media_type in _CANONICAL_MEDIA_TYPES.items():
-            if candidate_lower.endswith(suffix):
-                return canonical_media_type
-        if guessed_media_type := mimetypes.guess_type(candidate)[0]:
-            return guessed_media_type
-
-    return default
 
 
 class ConversationStore(ABC):
@@ -551,7 +525,7 @@ class InMemoryConversationStore(ConversationStore):
     def _to_agent_content(content: dict[str, Any]) -> Content | None:
         """Convert one supported OpenAI conversation message part."""
         content_type = content.get("type")
-        if content_type in ("text", "input_text"):
+        if content_type in ("text", "input_text", "output_text"):
             text = content.get("text")
             return Content.from_text(text=text) if isinstance(text, str) else None
 
@@ -565,7 +539,7 @@ class InMemoryConversationStore(ConversationStore):
             if isinstance(image_url, str) and image_url:
                 return Content.from_uri(
                     uri=image_url,
-                    media_type=_infer_media_type(uri=image_url, default="image/png"),
+                    media_type=infer_media_type(uri=image_url, default="image/png"),
                     additional_properties=image_properties,
                 )
             file_id = content.get("file_id")
@@ -588,7 +562,7 @@ class InMemoryConversationStore(ConversationStore):
 
             file_data = content.get("file_data")
             if isinstance(file_data, str) and file_data:
-                media_type = _infer_media_type(
+                media_type = infer_media_type(
                     filename=filename,
                     uri=file_data,
                     default="application/octet-stream",
@@ -604,7 +578,7 @@ class InMemoryConversationStore(ConversationStore):
             if isinstance(file_url, str) and file_url:
                 return Content.from_uri(
                     uri=file_url,
-                    media_type=_infer_media_type(
+                    media_type=infer_media_type(
                         filename=filename,
                         uri=file_url,
                         default="application/octet-stream",
@@ -616,7 +590,7 @@ class InMemoryConversationStore(ConversationStore):
             if isinstance(file_id, str) and file_id:
                 return Content.from_hosted_file(
                     file_id=file_id,
-                    media_type=_infer_media_type(filename=filename, default="application/octet-stream"),
+                    media_type=infer_media_type(filename=filename, default="application/octet-stream"),
                     name=filename or None,
                     additional_properties=file_properties,
                 )

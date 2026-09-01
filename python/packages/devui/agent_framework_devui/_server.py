@@ -1227,16 +1227,12 @@ class DevServer:
     ) -> AsyncGenerator[str]:
         """Stream execution directly through executor."""
         try:
-            # Collect events for the final terminal event
-            events: list[Any] = []
-
             # Get conversation_id for trace storage
             conversation_getter = getattr(request, "_get_conversation_id", None)
             conversation_id = conversation_getter() if callable(conversation_getter) else None
 
             # Stream all events
             async for event in executor.execute_streaming(request):
-                events.append(event)
                 event_type_value = getattr(event, "type", None)
                 event_type = event_type_value if isinstance(event_type_value, str) else None
 
@@ -1248,11 +1244,6 @@ class DevServer:
                             executor.conversation_store.add_trace(conversation_id, trace_data)
                     except Exception as e:
                         logger.debug(f"Failed to store trace event: {e}")
-
-                # Failure responses need aggregation so their terminal payload includes
-                # any output emitted before the failure.
-                if event_type == "response.failed":
-                    continue
 
                 # IMPORTANT: Check model_dump_json FIRST because to_json() can have newlines (pretty-printing)
                 # which breaks SSE format. model_dump_json() returns single-line JSON.
@@ -1270,37 +1261,6 @@ class DevServer:
                 else:
                     payload = json.dumps(str(event))
                 yield f"data: {payload}\n\n"
-
-            # Aggregate to the final response before emitting its matching terminal event.
-            final_response = await executor.message_mapper.aggregate_to_response(events, request)
-
-            # Use the next sequence number after the last event actually sent to the client.
-            last_seq = 0
-            for event in reversed(events):
-                if getattr(event, "type", None) == "response.failed":
-                    continue
-                sequence_number = getattr(event, "sequence_number", None)
-                if isinstance(sequence_number, int):
-                    last_seq = sequence_number
-                    break
-
-            if final_response.status == "failed":
-                from openai.types.responses import ResponseFailedEvent
-
-                terminal_event = ResponseFailedEvent(
-                    type="response.failed",
-                    response=final_response,
-                    sequence_number=last_seq + 1,
-                )
-            else:
-                from .models import ResponseCompletedEvent
-
-                terminal_event = ResponseCompletedEvent(
-                    type="response.completed",
-                    response=final_response,
-                    sequence_number=last_seq + 1,
-                )
-            yield f"data: {terminal_event.model_dump_json()}\n\n"
 
             # Send final done event
             yield "data: [DONE]\n\n"

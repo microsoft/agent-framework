@@ -11,6 +11,7 @@ import tempfile
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from agent_framework import AgentResponseUpdate, Content
@@ -44,22 +45,21 @@ class _FailedStreamingExecutor(AgentFrameworkExecutor):
     """Executor stub that emits text before a terminal failure."""
 
     def __init__(self) -> None:
-        super().__init__(EntityDiscovery(None), MessageMapper())
+        discovery = MagicMock(spec=EntityDiscovery)
+        discovery.get_entity_info.return_value = MagicMock()
+        super().__init__(discovery, MessageMapper())
 
-    async def execute_streaming(self, request: AgentFrameworkRequest) -> AsyncGenerator[Any]:
-        partial_update = AgentResponseUpdate(
+    async def execute_entity(
+        self, entity_id: str, request: AgentFrameworkRequest
+    ) -> AsyncGenerator[AgentResponseUpdate | AgentFailedEvent]:
+        _ = entity_id, request
+        yield AgentResponseUpdate(
             contents=[Content.from_text(text="Partial output")],
             role="assistant",
             message_id="partial_message",
             response_id="partial_response",
         )
-        for event in await self.message_mapper.convert_event(partial_update, request):
-            yield event
-        for event in await self.message_mapper.convert_event(
-            AgentFailedEvent(error=RuntimeError("failed after output")),
-            request,
-        ):
-            yield event
+        yield AgentFailedEvent(error=RuntimeError("failed after output"))
 
 
 # Note: test_entities_dir fixture is provided by conftest.py
@@ -140,7 +140,7 @@ async def test_stream_execution_emits_one_failed_terminal_event_with_partial_out
     """Failed streams retain prior output and never emit a completion event."""
     server = DevServer(auth_enabled=False)
     executor = _FailedStreamingExecutor()
-    request = AgentFrameworkRequest(input="hello", stream=True)
+    request = AgentFrameworkRequest(input="hello", stream=True, metadata={"entity_id": "failed"})
 
     chunks = [chunk async for chunk in server._stream_execution(executor, request)]
     payloads = [json.loads(chunk.removeprefix("data: ").strip()) for chunk in chunks if chunk != "data: [DONE]\n\n"]

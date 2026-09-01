@@ -32,6 +32,7 @@ from .models import (
     InputTokensDetails,
     OpenAIResponse,
     OutputTokensDetails,
+    ResponseCompletedEvent,
     ResponseErrorEvent,
     ResponseFunctionCallArgumentsDeltaEvent,
     ResponseFunctionResultComplete,
@@ -296,12 +297,16 @@ class MessageMapper:
 
             # Track text content parts per message (keyed by item_id)
             text_parts_by_message: dict[str, list[str]] = {}
+            message_order: list[str] = []
 
             # Track function calls (keyed by call_id) to accumulate arguments
             function_calls: dict[str, dict[str, Any]] = {}
 
             # Track function results (keyed by call_id)
             function_results: dict[str, dict[str, Any]] = {}
+
+            # Track complete message items that do not use the text-delta lifecycle.
+            complete_messages: dict[str, ResponseOutputMessage] = {}
 
             for event in events:
                 event_type = getattr(event, "type", None)
@@ -311,6 +316,8 @@ class MessageMapper:
                     item_id = getattr(event, "item_id", "default")
                     if item_id not in text_parts_by_message:
                         text_parts_by_message[item_id] = []
+                    if item_id not in message_order:
+                        message_order.append(item_id)
                     text_parts_by_message[item_id].append(event.delta)
 
                 # Handle output_item.added events (function_call, message, etc.)
@@ -352,8 +359,11 @@ class MessageMapper:
 
                         # Other output items (message, etc.) - track for later
                         elif item_type == "message":
-                            # Messages will be built from text_parts_by_message
-                            pass
+                            if isinstance(item, ResponseOutputMessage):
+                                if item.id not in message_order:
+                                    message_order.append(item.id)
+                                if item.content:
+                                    complete_messages[item.id] = item
 
                 # Handle function call arguments delta - accumulate arguments
                 elif event_type == "response.function_call_arguments.delta":
@@ -387,22 +397,21 @@ class MessageMapper:
             # but we don't include them in the Response output
             _ = function_results  # Acknowledge but don't use
 
-            # Build final text message from accumulated deltas
-            # Combine all text parts (usually there's just one message)
-            all_text_parts: list[str] = []
-            for _item_id, parts in text_parts_by_message.items():
-                all_text_parts.extend(parts)
-
-            full_content = "".join(all_text_parts)
-
-            # Only add message if there's text content
-            if full_content:
+            # Build messages in first-seen order. Workflow output messages can
+            # arrive complete, while agent messages use an empty item plus deltas.
+            for item_id in message_order:
+                if complete_message := complete_messages.get(item_id):
+                    output_items.append(complete_message)
+                    continue
+                full_content = "".join(text_parts_by_message.get(item_id, []))
+                if not full_content:
+                    continue
                 response_output_text = ResponseOutputText(type="output_text", text=full_content, annotations=[])
                 response_output_message = ResponseOutputMessage(
                     type="message",
                     role="assistant",
                     content=[response_output_text],
-                    id=f"msg_{uuid.uuid4().hex[:8]}",
+                    id=item_id if item_id != "default" else f"msg_{uuid.uuid4().hex[:8]}",
                     status="completed",
                 )
                 output_items.append(response_output_message)
@@ -449,6 +458,34 @@ class MessageMapper:
             if self._conversion_contexts.pop(request_key, None):
                 logger.debug(f"Cleaned up context for request {request_key} after aggregation")
             self._usage_accumulator.pop(str(request_key), None)
+
+    async def finalize_stream(
+        self, events: Sequence[Any], request: AgentFrameworkRequest
+    ) -> ResponseCompletedEvent | ResponseFailedEvent:
+        """Create the single terminal event for a mapped response stream."""
+        final_response = await self.aggregate_to_response(events, request)
+
+        last_sequence_number = 0
+        for event in reversed(events):
+            if getattr(event, "type", None) == "response.failed":
+                continue
+            sequence_number = getattr(event, "sequence_number", None)
+            if isinstance(sequence_number, int):
+                last_sequence_number = sequence_number
+                break
+
+        if final_response.status == "failed":
+            return ResponseFailedEvent(
+                type="response.failed",
+                response=final_response,
+                sequence_number=last_sequence_number + 1,
+            )
+
+        return ResponseCompletedEvent(
+            type="response.completed",
+            response=final_response,
+            sequence_number=last_sequence_number + 1,
+        )
 
     def _get_or_create_context(self, request: AgentFrameworkRequest) -> dict[str, Any]:
         """Get or create conversion context for this request.
