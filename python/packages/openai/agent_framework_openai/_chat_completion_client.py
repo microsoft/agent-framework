@@ -17,6 +17,7 @@ from collections.abc import (
 from datetime import datetime, timezone
 from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, cast, overload
+from uuid import uuid4
 
 from agent_framework._clients import BaseChatClient
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
@@ -29,7 +30,6 @@ from agent_framework._tools import (
     FunctionInvocationLayer,
     FunctionTool,
     ToolTypes,
-    _generate_function_call_occurrence_id,  # pyright: ignore[reportPrivateUsage]
     normalize_tools,
 )
 from agent_framework._types import (
@@ -642,11 +642,13 @@ class RawOpenAIChatCompletionClient(
                             index_key = (choice_index, tool_index)
                             identity = tool_call_identities.get(index_key)
                             if identity is None:
-                                occurrence_id = _generate_function_call_occurrence_id()
-                                provider_call_id = content.call_id or occurrence_id
-                                identity = (occurrence_id, provider_call_id)
-                                tool_call_identities[index_key] = identity
-                            content.id, content.call_id = identity
+                                identity = (f"af-call-{uuid4().hex}", content.call_id or "")
+                            occurrence_id, provider_call_id = identity
+                            if content.call_id:
+                                provider_call_id = content.call_id
+                            tool_call_identities[index_key] = (occurrence_id, provider_call_id)
+                            content.id = occurrence_id
+                            content.call_id = provider_call_id
                         yield update
                 except BadRequestError as ex:
                     if ex.code == "content_filter":

@@ -1563,7 +1563,7 @@ class Content:
             raise AdditionItemMismatch("Cannot merge function calls with different ids")
         other_call_id = getattr(other, "call_id", None)
         self_call_id = getattr(self, "call_id", None)
-        if other_call_id and self_call_id != other_call_id:
+        if self_call_id and other_call_id and self_call_id != other_call_id:
             raise ContentError("Cannot add function calls with different call_ids")
 
         self_arguments = getattr(self, "arguments", None)
@@ -1582,7 +1582,7 @@ class Content:
 
         return Content(
             "function_call",
-            call_id=self_call_id,
+            call_id=self_call_id or other_call_id,
             name=getattr(self, "name", None) or getattr(other, "name", None),
             arguments=arguments,
             id=self.id or other.id,

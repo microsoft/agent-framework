@@ -830,9 +830,9 @@ class AgentFrameworkExecutor:
                                         function_call = Content.from_function_call(
                                             call_id=stored_fc["call_id"],
                                             name=stored_fc["name"],
-                                            id=stored_fc.get("id", request_id),
                                             arguments=stored_fc["arguments"],
                                         )
+                                        function_call.id = stored_fc.get("id", request_id)
 
                                         # Create approval response using server-validated data
                                         approval_response = Content.from_function_approval_response(

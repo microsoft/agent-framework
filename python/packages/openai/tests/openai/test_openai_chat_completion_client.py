@@ -2537,6 +2537,94 @@ async def test_streaming_tool_call_identity_is_request_local_and_scoped_by_choic
     assert set(request_occurrence_ids[0].values()).isdisjoint(request_occurrence_ids[1].values())
 
 
+async def test_streaming_tool_call_adopts_late_provider_id_without_changing_occurrence(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    client = RawOpenAIChatCompletionClient()
+    common = {
+        "object": "chat.completion.chunk",
+        "created": 1234567890,
+        "model": "test-model",
+    }
+    chunks = [
+        ChatCompletionChunk.model_validate({
+            **common,
+            "id": "opening",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "type": "function",
+                                "function": {"name": "lookup", "arguments": '{"value":'},
+                            }
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        }),
+        ChatCompletionChunk.model_validate({
+            **common,
+            "id": "continuation",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "late-service-id",
+                                "type": "function",
+                                "function": {"arguments": "1}"},
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        }),
+    ]
+
+    async def create(**kwargs: Any) -> Any:
+        async def stream_chunks() -> Any:
+            for chunk in chunks:
+                yield chunk
+
+        return stream_chunks()
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        response_stream = client._inner_get_response(
+            messages=[Message(role="user", contents=["test"])], stream=True, options={}
+        )
+        assert isinstance(response_stream, ResponseStream)
+        fragments = [
+            content
+            async for update in response_stream
+            for content in update.contents
+            if content.type == "function_call"
+        ]
+
+    assert len(fragments) == 2
+    assert fragments[0].id
+    assert fragments[0].id == fragments[1].id
+    assert [fragment.call_id for fragment in fragments] == ["", "late-service-id"]
+    final_response = await response_stream.get_final_response()
+    final_calls = [
+        content
+        for message in final_response.messages
+        for content in message.contents
+        if content.type == "function_call"
+    ]
+    assert [(call.id, call.call_id, call.name, call.parse_arguments()) for call in final_calls] == [
+        (fragments[0].id, "late-service-id", "lookup", {"value": 1})
+    ]
+
+
 # endregion
 
 

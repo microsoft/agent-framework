@@ -3479,6 +3479,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 max_function_calls,
             )
             streamed_identities_by_call_id: dict[str, tuple[str, str]] = {}
+            streamed_names_by_call_id: dict[str, str] = {}
             last_streamed_identity: tuple[str, str] | None = None
             warned_empty_call_ids: set[str] = set()
             async for update in inner_stream:
@@ -3487,25 +3488,34 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         continue
                     if not _is_actionable_function_call(content):
                         continue
+                    had_occurrence_id = content.id is not None
                     provider_call_id = content.call_id
                     identity = streamed_identities_by_call_id.get(provider_call_id) if provider_call_id else None
+                    if (
+                        identity is not None
+                        and content.id is None
+                        and content.name
+                        and (
+                            streamed_names_by_call_id.get(provider_call_id) != content.name
+                            or isinstance(content.arguments, Mapping)
+                        )
+                    ):
+                        identity = None
                     if identity is None and not provider_call_id and not content.name:
                         identity = last_streamed_identity
 
                     if identity is None:
-                        occurrence_id = _generate_function_call_occurrence_id()
-                        effective_call_id = provider_call_id or occurrence_id
+                        occurrence_id = content.id or _generate_function_call_occurrence_id()
+                        effective_call_id = provider_call_id or ("" if had_occurrence_id else occurrence_id)
                     else:
                         occurrence_id, effective_call_id = identity
                     if content.id is not None:
                         occurrence_id = content.id
-                        if not provider_call_id:
-                            effective_call_id = occurrence_id
                     if provider_call_id:
                         effective_call_id = provider_call_id
 
                     content.id = occurrence_id
-                    if not content.call_id:
+                    if not content.call_id and not had_occurrence_id:
                         content.call_id = effective_call_id
                         if identity is None and occurrence_id not in warned_empty_call_ids:
                             warnings.warn(
@@ -3517,7 +3527,10 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                             )
                             warned_empty_call_ids.add(occurrence_id)
                     identity = (occurrence_id, effective_call_id)
-                    streamed_identities_by_call_id[effective_call_id] = identity
+                    if effective_call_id:
+                        streamed_identities_by_call_id[effective_call_id] = identity
+                        if content.name:
+                            streamed_names_by_call_id[effective_call_id] = content.name
                     last_streamed_identity = identity
                 if drop_unexecutable_calls:
                     update = _drop_unexecutable_tool_contents_from_update(update)

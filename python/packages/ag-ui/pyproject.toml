@@ -22,7 +22,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.15.0,<2",
+    "agent-framework-core>=1.17.0,<2",
     "ag-ui-protocol>=0.1.19,<0.2",
     "fastapi>=0.121.0,<0.140.0",
     "httpx>=0.28.1,<1",

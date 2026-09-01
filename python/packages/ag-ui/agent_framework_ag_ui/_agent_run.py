@@ -2308,8 +2308,7 @@ def _legacy_tool_message_approval_resume(
             break
         trailing_tool_message_ids.add(id(message))
 
-    confirm_change_call_ids: set[str] = set()
-    function_calls_by_id: dict[str, list[tuple[str, str]]] = {}
+    latest_function_call_by_id: dict[str, tuple[str, str] | None] = {}
     for message in messages:
         if str(message.get("role", "")).lower() != "assistant":
             continue
@@ -2321,7 +2320,7 @@ def _legacy_tool_message_approval_resume(
                 continue
             function = raw_tool_call.get("function")
             if isinstance(function, Mapping) and function.get("name") == "confirm_changes" and raw_tool_call.get("id"):
-                confirm_change_call_ids.add(str(raw_tool_call["id"]))
+                latest_function_call_by_id[str(raw_tool_call["id"])] = None
                 continue
             if not isinstance(function, Mapping) or not raw_tool_call.get("id") or not function.get("name"):
                 continue
@@ -2331,8 +2330,9 @@ def _legacy_tool_message_approval_resume(
                 name=str(function["name"]),
                 arguments=function.get("arguments"),
             )
-            function_calls_by_id.setdefault(call_id, []).append(
-                (str(function["name"]), canonical_function_arguments(parsed_call) or "{}")
+            latest_function_call_by_id[call_id] = (
+                str(function["name"]),
+                canonical_function_arguments(parsed_call) or "{}",
             )
 
     for message in submitted:
@@ -2354,15 +2354,15 @@ def _legacy_tool_message_approval_resume(
         if not isinstance(payload, Mapping) or "accepted" not in payload:
             continue
         call_id_string = str(call_id)
-        if call_id_string in confirm_change_call_ids:
+        if call_id_string in latest_function_call_by_id and latest_function_call_by_id[call_id_string] is None:
             continue
         matching_occurrences = retained_occurrences_by_call_id.get(call_id_string, [])
         pending_occurrences = pending_local_occurrences_by_call_id.get(call_id_string, [])
         if not pending_occurrences:
             continue
         translated_message_ids.add(id(message))
-        submitted_calls = function_calls_by_id.get(call_id_string, [])
-        if len(submitted_calls) != 1 or submitted_calls[0] != (
+        submitted_call = latest_function_call_by_id.get(call_id_string)
+        if submitted_call != (
             pending_occurrences[0].name,
             pending_occurrences[0].arguments,
         ):

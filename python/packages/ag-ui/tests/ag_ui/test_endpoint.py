@@ -2460,6 +2460,69 @@ async def test_endpoint_agent_legacy_tool_message_uses_unique_pending_call_id(
     assert "Translated a legacy AG-UI tool-message approval" in caplog.text
 
 
+async def test_endpoint_agent_legacy_tool_message_reuses_historical_confirm_changes_call_id() -> None:
+    """A sole pending local call may reuse an older synthetic confirmation call id."""
+    executed: list[str] = []
+
+    def guarded_tool(value: str) -> str:
+        executed.append(value)
+        return value
+
+    tool = FunctionTool(name="guarded_tool", description="Guarded", func=guarded_tool)
+    agent = StubAgent(
+        updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")],
+        default_options={"tools": [tool]},
+    )
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    wrapped_agent._approval_state_store.lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-reused-confirm-id",
+        interrupt_id="af-call-current",
+        call_id="provider-reused",
+        name="guarded_tool",
+        arguments='{"value":"current"}',
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/approval")
+
+    response = TestClient(app).post(
+        "/approval",
+        json={
+            "runId": "run-reused-confirm-id",
+            "threadId": "thread-reused-confirm-id",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "toolCalls": [
+                        {
+                            "id": "provider-reused",
+                            "type": "function",
+                            "function": {"name": "confirm_changes", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "toolCallId": "provider-reused", "content": '{"accepted":true}'},
+                {
+                    "role": "assistant",
+                    "toolCalls": [
+                        {
+                            "id": "provider-reused",
+                            "type": "function",
+                            "function": {"name": "guarded_tool", "arguments": '{"value":"current"}'},
+                        }
+                    ],
+                },
+                {"role": "tool", "toolCallId": "provider-reused", "content": '{"accepted":true}'},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert executed == ["current"], events
+    assert not [event for event in events if event.get("type") == "RUN_ERROR"]
+
+
 async def test_endpoint_agent_legacy_tool_message_rejects_reused_call_id(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

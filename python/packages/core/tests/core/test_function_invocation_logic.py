@@ -414,6 +414,56 @@ async def test_streaming_empty_call_id_delta_reuses_opening_call_identity(
     assert caught == []
 
 
+async def test_streaming_named_calls_with_reused_call_id_get_distinct_occurrences(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    @tool(name="first_write", approval_mode="always_require")
+    def first_write() -> str:
+        return "first"
+
+    @tool(name="second_write", approval_mode="always_require")
+    def second_write() -> str:
+        return "second"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="provider-reused", name="first_write", arguments={})],
+                role="assistant",
+            ),
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="provider-reused", name="second_write", arguments={})],
+                role="assistant",
+            ),
+        ]
+    ]
+
+    stream = chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [first_write, second_write]},
+        stream=True,
+    )
+    streamed_calls = [
+        content async for update in stream for content in update.contents if content.type == "function_call"
+    ]
+    final_response = await stream.get_final_response()
+    final_calls = [
+        content
+        for message in final_response.messages
+        for content in message.contents
+        if content.type == "function_call"
+    ]
+
+    assert [call.name for call in streamed_calls] == ["first_write", "second_write"]
+    assert all(call.call_id == "provider-reused" for call in streamed_calls)
+    assert all(call.id for call in streamed_calls)
+    assert streamed_calls[0].id != streamed_calls[1].id
+    assert [(call.id, call.name) for call in final_calls] == [
+        (streamed_calls[0].id, "first_write"),
+        (streamed_calls[1].id, "second_write"),
+    ]
+
+
 async def test_streaming_interleaved_indexed_call_fragments_coalesce_by_occurrence(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
@@ -1101,7 +1151,7 @@ async def test_base_client_with_streaming_function_calling(chat_client_base: Sup
                 role="assistant",
             ),
             ChatResponseUpdate(
-                contents=[Content.from_function_call(call_id="1", name="test_function", arguments='"value1"}')],
+                contents=[Content.from_function_call(call_id="1", name="", arguments='"value1"}')],
                 role="assistant",
             ),
         ],
@@ -1398,7 +1448,7 @@ async def test_function_invocation_scenarios(
                     role="assistant",
                 ),
                 ChatResponseUpdate(
-                    contents=[Content.from_function_call(call_id="1", name=function_name, arguments='"value1"}')],
+                    contents=[Content.from_function_call(call_id="1", name="", arguments='"value1"}')],
                     role="assistant",
                 ),
             ]
@@ -4082,13 +4132,13 @@ async def test_streaming_declaration_only_tool_preserves_metadata_without_duplic
                 contents=[
                     Content.from_function_call(
                         call_id="call_weather",
-                        name="get_weather",
+                        name="get_weather" if index == 0 else "",
                         arguments=arguments,
                     )
                 ],
                 role="assistant",
             )
-            for arguments in argument_chunks
+            for index, arguments in enumerate(argument_chunks)
         ]
     ]
 
@@ -4389,7 +4439,7 @@ async def test_streaming_max_iterations_limit(chat_client_base: SupportsChatGetR
                 role="assistant",
             ),
             ChatResponseUpdate(
-                contents=[Content.from_function_call(call_id="1", name="test_function", arguments='"value1"}')],
+                contents=[Content.from_function_call(call_id="1", name="", arguments='"value1"}')],
                 role="assistant",
             ),
         ],
@@ -4399,7 +4449,7 @@ async def test_streaming_max_iterations_limit(chat_client_base: SupportsChatGetR
                 role="assistant",
             ),
             ChatResponseUpdate(
-                contents=[Content.from_function_call(call_id="2", name="test_function", arguments='"value2"}')],
+                contents=[Content.from_function_call(call_id="2", name="", arguments='"value2"}')],
                 role="assistant",
             ),
         ],
@@ -4445,7 +4495,7 @@ async def test_streaming_max_iterations_blank_final_fallback_synthesizes_update(
                 role="assistant",
             ),
             ChatResponseUpdate(
-                contents=[Content.from_function_call(call_id="call_1", name="test_function", arguments='"v1"}')],
+                contents=[Content.from_function_call(call_id="call_1", name="", arguments='"v1"}')],
                 role="assistant",
             ),
         ],
