@@ -832,7 +832,7 @@ public sealed class ScopedContentProcessorTests
     }
 
     [Fact]
-    public async Task ProcessMessagesAsync_CacheMiss_WhenScopeRetrievalCannotQueue_DoesNotCallProcessContentAsync()
+    public async Task ProcessMessagesAsync_CacheMiss_WhenScopeRetrievalCannotQueue_CallsProcessContentInlineAsync()
     {
         // Arrange
         var messages = new List<ChatMessage>
@@ -851,12 +851,20 @@ public sealed class ScopedContentProcessorTests
         this._mockChannelHandler.Setup(x => x.QueueJob(It.IsAny<ScopeRetrievalJob>()))
             .Throws(new PurviewJobException("queue unavailable"));
 
-        // Act & Assert
-        await Assert.ThrowsAsync<PurviewJobException>(() =>
-            this._processor.ProcessMessagesAsync(
-                messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None));
+        this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
+            It.Is<ProcessContentRequest>(request => request.ProcessInline),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProcessContentResponse());
+
+        // Act
+        await this._processor.ProcessMessagesAsync(
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+
+        // Assert
+        this._mockChannelHandler.Verify(x => x.QueueJob(It.IsAny<ScopeRetrievalJob>()), Times.Once);
         this._mockPurviewClient.Verify(x => x.ProcessContentAsync(
-            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+            It.Is<ProcessContentRequest>(request => request.ProcessInline),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

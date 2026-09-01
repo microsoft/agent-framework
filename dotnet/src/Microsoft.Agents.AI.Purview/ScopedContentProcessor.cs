@@ -198,7 +198,15 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
         if (cacheResponse == null)
         {
             pcRequest.ProcessInline = true;
-            this._channelHandler.QueueJob(new ScopeRetrievalJob(psRequest, cacheKey, pcRequest));
+            try
+            {
+                this._channelHandler.QueueJob(new ScopeRetrievalJob(psRequest, cacheKey, pcRequest));
+            }
+            catch (PurviewJobException)
+            {
+                // QueueJob logs admission failures. Scope refresh is best effort.
+            }
+
             return await this.CallProcessContentAsync(pcRequest, cacheKey, dlpActions: null, cancellationToken).ConfigureAwait(false);
         }
 
