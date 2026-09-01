@@ -3,10 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Logging;
 using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Compaction;
@@ -37,8 +34,9 @@ namespace Microsoft.Agents.AI.Compaction;
 /// built-in default and can be reused inside a custom formatter when needed.
 /// </para>
 /// <para>
-/// <see cref="MinimumPreservedGroups"/> is a hard floor: even if the <see cref="CompactionStrategy.Target"/>
-/// has not been reached, compaction will not touch the last <see cref="MinimumPreservedGroups"/> non-system groups.
+/// <see cref="ToolResultStrategyBase.MinimumPreservedGroups"/> is a hard floor: even if the
+/// <see cref="CompactionStrategy.Target"/> has not been reached, compaction will not touch the last
+/// <see cref="ToolResultStrategyBase.MinimumPreservedGroups"/> non-system groups.
 /// </para>
 /// <para>
 /// The <see cref="CompactionTrigger"/> predicate controls when compaction proceeds. Use
@@ -46,7 +44,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed class ToolResultCompactionStrategy : CompactionStrategy
+public sealed class ToolResultCompactionStrategy : ToolResultStrategyBase
 {
     /// <summary>
     /// The default minimum number of most-recent non-system groups to preserve.
@@ -73,16 +71,9 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
         CompactionTrigger trigger,
         int minimumPreservedGroups = DefaultMinimumPreserved,
         CompactionTrigger? target = null)
-        : base(trigger, target)
+        : base(trigger, minimumPreservedGroups, target)
     {
-        this.MinimumPreservedGroups = EnsureNonNegative(minimumPreservedGroups);
     }
-
-    /// <summary>
-    /// Gets the minimum number of most-recent non-system groups that are always preserved.
-    /// This is a hard floor that compaction cannot exceed, regardless of the target condition.
-    /// </summary>
-    public int MinimumPreservedGroups { get; }
 
     /// <summary>
     /// An optional custom formatter that converts a <see cref="CompactionMessageGroup"/> into a summary string.
@@ -92,73 +83,15 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     public Func<CompactionMessageGroup, string>? ToolCallFormatter { get; init; }
 
     /// <inheritdoc/>
-    protected override ValueTask<bool> CompactCoreAsync(CompactionMessageIndex index, ILogger logger, CancellationToken cancellationToken)
+    protected override (CompactionGroupKind Kind, List<ChatMessage> Messages, string ExcludeReason)
+        TransformToolGroup(CompactionMessageGroup group)
     {
-        // Identify protected groups: the N most-recent non-system, non-excluded groups
-        List<int> nonSystemIncludedIndices = [];
-        for (int i = 0; i < index.Groups.Count; i++)
-        {
-            CompactionMessageGroup group = index.Groups[i];
-            if (!group.IsExcluded && group.Kind != CompactionGroupKind.System)
-            {
-                nonSystemIncludedIndices.Add(i);
-            }
-        }
+        string summary = (this.ToolCallFormatter ?? DefaultToolCallFormatter).Invoke(group);
 
-        int protectedStart = EnsureNonNegative(nonSystemIncludedIndices.Count - this.MinimumPreservedGroups);
-        HashSet<int> protectedGroupIndices = [];
-        for (int i = protectedStart; i < nonSystemIncludedIndices.Count; i++)
-        {
-            protectedGroupIndices.Add(nonSystemIncludedIndices[i]);
-        }
+        ChatMessage summaryMessage = new(ChatRole.Assistant, summary);
+        (summaryMessage.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
 
-        // Collect eligible tool groups in order (oldest first)
-        List<int> eligibleIndices = [];
-        for (int i = 0; i < index.Groups.Count; i++)
-        {
-            CompactionMessageGroup group = index.Groups[i];
-            if (!group.IsExcluded && group.Kind == CompactionGroupKind.ToolCall && !protectedGroupIndices.Contains(i))
-            {
-                eligibleIndices.Add(i);
-            }
-        }
-
-        if (eligibleIndices.Count == 0)
-        {
-            return new ValueTask<bool>(false);
-        }
-
-        // Collapse one tool group at a time from oldest, re-checking target after each
-        bool compacted = false;
-        int offset = 0;
-
-        for (int e = 0; e < eligibleIndices.Count; e++)
-        {
-            int idx = eligibleIndices[e] + offset;
-            CompactionMessageGroup group = index.Groups[idx];
-
-            string summary = (this.ToolCallFormatter ?? DefaultToolCallFormatter).Invoke(group);
-
-            // Exclude the original group and insert a collapsed replacement
-            group.IsExcluded = true;
-            group.ExcludeReason = $"Collapsed by {nameof(ToolResultCompactionStrategy)}";
-
-            ChatMessage summaryMessage = new(ChatRole.Assistant, summary);
-            (summaryMessage.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
-
-            index.InsertGroup(idx + 1, CompactionGroupKind.Summary, [summaryMessage], group.TurnIndex);
-            offset++; // Each insertion shifts subsequent indices by 1
-
-            compacted = true;
-
-            // Stop when target condition is met
-            if (this.Target(index))
-            {
-                break;
-            }
-        }
-
-        return new ValueTask<bool>(compacted);
+        return (CompactionGroupKind.Summary, [summaryMessage], $"Collapsed by {nameof(ToolResultCompactionStrategy)}");
     }
 
     /// <summary>
@@ -171,38 +104,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     /// </remarks>
     public static string DefaultToolCallFormatter(CompactionMessageGroup group)
     {
-        // Collect function calls (callId, name) and results (callId → result text)
-        List<(string CallId, string Name)> functionCalls = [];
-        Dictionary<string, string> resultsByCallId = [];
-        List<string> plainTextResults = [];
-
-        foreach (ChatMessage message in group.Messages)
-        {
-            if (message.Contents is null)
-            {
-                continue;
-            }
-
-            bool hasFunctionResult = false;
-            foreach (AIContent content in message.Contents)
-            {
-                if (content is FunctionCallContent fcc)
-                {
-                    functionCalls.Add((fcc.CallId, fcc.Name));
-                }
-                else if (content is FunctionResultContent frc && frc.CallId is not null)
-                {
-                    resultsByCallId[frc.CallId] = frc.Result?.ToString() ?? string.Empty;
-                    hasFunctionResult = true;
-                }
-            }
-
-            // Collect plain text from Tool-role messages that lack FunctionResultContent
-            if (!hasFunctionResult && message.Role == ChatRole.Tool && message.Text is string text)
-            {
-                plainTextResults.Add(text);
-            }
-        }
+        var (functionCalls, resultsByCallId, plainTextResults) = ExtractToolCallsAndResults(group);
 
         // Match function calls to their results using CallId or positional fallback,
         // grouping by tool name while preserving first-seen order.
