@@ -20,11 +20,13 @@ Final streaming events match the rendered response status:
 `response.completed`, `response.incomplete`, or `response.failed`. Finalizing a
 stream with a nonterminal status produces `response.failed`. Response status is
 read from the raw transport representation rather than free-form agent metadata,
-and failed transport responses preserve their structured error. Usage is emitted
-only when Agent Framework reports every Responses-required input, output, cache,
-and reasoning counter. Missing counters never borrow from another field or become
-invented zeros; an absent total alone is derived from known input and output
-counts. Usage that cannot form a consistent Responses shape is omitted.
+and failed transport responses preserve their structured error. A valid native
+Responses usage object is preserved before considering Agent Framework counters;
+the two sources are never merged. Otherwise, counters map only from matching
+Agent Framework fields and the installed OpenAI SDK schema validates the shape.
+Missing counters never borrow from another field or become invented zeros; an
+absent total alone is derived from known input and output counts. Usage that
+cannot form a consistent Responses shape is omitted.
 
 FastAPI/Starlette/Django/Azure Functions code owns route registration,
 authentication, status codes, response construction, and background work.

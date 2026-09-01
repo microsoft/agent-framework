@@ -12,6 +12,7 @@ from typing import cast
 
 import pytest
 from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream, UsageDetails
+from openai.types.responses.response_usage import InputTokensDetails, ResponseUsage
 
 from agent_framework_hosting_responses import (
     create_conversation_id,
@@ -27,6 +28,19 @@ from agent_framework_hosting_responses import (
 def _sse_payload(event: str) -> dict[str, object]:
     data_line = next(line for line in event.splitlines() if line.startswith("data: "))
     return cast("dict[str, object]", json.loads(data_line.removeprefix("data: ")))
+
+
+def _native_usage_payload() -> dict[str, object]:
+    input_tokens_details = {"cached_tokens": 1}
+    if "cache_write_tokens" in InputTokensDetails.model_fields:
+        input_tokens_details["cache_write_tokens"] = 0
+    return {
+        "input_tokens": 7,
+        "input_tokens_details": input_tokens_details,
+        "output_tokens": 2,
+        "output_tokens_details": {"reasoning_tokens": 0},
+        "total_tokens": 9,
+    }
 
 
 class TestMessagesFromResponsesInput:
@@ -365,16 +379,11 @@ class TestResponsesRunHelpers:
     def test_responses_from_run_uses_raw_response_fields_as_fallback(self) -> None:
         earlier_response = SimpleNamespace(status="completed")
         terminal_response = SimpleNamespace(
+            object="response",
             status="failed",
             metadata={"source": "raw"},
             error={"code": "server_error", "message": "provider failed"},
-            usage={
-                "input_tokens": 7,
-                "input_tokens_details": {"cached_tokens": 1, "cache_write_tokens": 0},
-                "output_tokens": 2,
-                "output_tokens_details": {"reasoning_tokens": 0},
-                "total_tokens": 9,
-            },
+            usage=_native_usage_payload(),
         )
         raw = [
             SimpleNamespace(raw_representation=SimpleNamespace(response=earlier_response)),
@@ -391,6 +400,58 @@ class TestResponsesRunHelpers:
         assert payload["metadata"] == {"source": "raw"}
         assert payload["error"] == {"code": "server_error", "message": "provider failed"}
         assert payload["usage"]["total_tokens"] == 9
+
+    def test_responses_from_run_prefers_valid_raw_usage_without_merging_af_counts(self) -> None:
+        raw_usage = ResponseUsage.model_validate(_native_usage_payload())
+        result = AgentResponse(
+            messages=Message(role="assistant", contents=[Content.from_text("hello")]),
+            usage_details=cast("UsageDetails", {"input_token_count": True}),
+            raw_representation=SimpleNamespace(object="response", usage=raw_usage),
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        assert payload["usage"] == raw_usage.model_dump(mode="json", exclude_none=True)
+
+    def test_responses_from_run_falls_back_to_complete_af_usage_when_raw_usage_is_invalid(self) -> None:
+        result = AgentResponse(
+            messages=Message(role="assistant", contents=[Content.from_text("hello")]),
+            usage_details={
+                "input_token_count": 5,
+                "output_token_count": 3,
+                "cache_read_input_token_count": 2,
+                "cache_creation_input_token_count": 1,
+                "reasoning_output_token_count": 1,
+            },
+            raw_representation=SimpleNamespace(object="response", usage={"input_tokens": 99}),
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        assert payload["usage"]["input_tokens"] == 5
+        assert payload["usage"]["total_tokens"] == 8
+
+    def test_responses_from_run_omits_invalid_raw_and_partial_af_usage(self) -> None:
+        result = AgentResponse(
+            messages=Message(role="assistant", contents=[Content.from_text("hello")]),
+            usage_details={"input_token_count": 5},
+            raw_representation=SimpleNamespace(object="response", usage={"input_tokens": 99}),
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        assert "usage" not in payload
+
+    def test_responses_from_run_does_not_treat_lookalike_raw_usage_as_responses_usage(self) -> None:
+        result = AgentResponse(
+            messages=Message(role="assistant", contents=[Content.from_text("hello")]),
+            usage_details={"input_token_count": 5},
+            raw_representation=SimpleNamespace(usage=_native_usage_payload()),
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        assert "usage" not in payload
 
     def test_responses_from_run_does_not_treat_user_metadata_status_as_transport_status(self) -> None:
         raw_response = SimpleNamespace(status="completed", metadata={"status": "gold"})
@@ -513,15 +574,6 @@ class TestResponsesRunHelpers:
                     "input_token_count": 0,
                     "output_token_count": 0,
                     "cache_read_input_token_count": 0,
-                    "reasoning_output_token_count": 0,
-                },
-                id="missing-cache-creation",
-            ),
-            pytest.param(
-                {
-                    "input_token_count": 0,
-                    "output_token_count": 0,
-                    "cache_read_input_token_count": 0,
                     "cache_creation_input_token_count": 0,
                 },
                 id="missing-reasoning",
@@ -540,6 +592,30 @@ class TestResponsesRunHelpers:
         payload = responses_from_run(result, response_id="resp_new")
 
         assert "usage" not in payload
+
+    def test_responses_from_run_uses_installed_sdk_usage_detail_schema(self) -> None:
+        result = AgentResponse(
+            messages=Message(role="assistant", contents=[Content.from_text("hello")]),
+            usage_details={
+                "input_token_count": 5,
+                "output_token_count": 1,
+                "cache_read_input_token_count": 1,
+                "reasoning_output_token_count": 0,
+            },
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        if "cache_write_tokens" in InputTokensDetails.model_fields:
+            assert "usage" not in payload
+        else:
+            assert payload["usage"] == {
+                "input_tokens": 5,
+                "input_tokens_details": {"cached_tokens": 1},
+                "output_tokens": 1,
+                "output_tokens_details": {"reasoning_tokens": 0},
+                "total_tokens": 6,
+            }
 
     @pytest.mark.parametrize(
         "usage_details",

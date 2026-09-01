@@ -36,11 +36,13 @@ from openai.types.responses import (
     ResponseOutputMessage,
     ResponseOutputText,
 )
+from openai.types.responses.response_usage import ResponseUsage
 from pydantic import TypeAdapter, ValidationError
 
 from ._feature_usage import FeatureIndex
 
 _RESPONSE_OUTPUT_ITEM_ADAPTER: TypeAdapter[Any] = TypeAdapter(ResponseOutputItem)
+_RESPONSE_USAGE_ADAPTER: TypeAdapter[Any] = TypeAdapter(ResponseUsage)
 
 # OpenAI Responses field name → Agent Framework ChatOptions field name.
 _RESPONSES_OPTION_REMAP = {
@@ -334,9 +336,10 @@ def _metadata_from_result(result: AgentResponse[Any]) -> dict[str, str] | None:
 
 
 def _usage_from_result(result: AgentResponse[Any]) -> Any | None:
+    if (raw_usage := _raw_response_usage_from_result(result)) is not None:
+        return raw_usage
+
     usage_details = result.usage_details
-    if usage_details is None:
-        return _response_field_from_result(result, "usage", allow_additional_properties=True)
     if not usage_details:
         return None
 
@@ -346,35 +349,57 @@ def _usage_from_result(result: AgentResponse[Any]) -> Any | None:
     cached_tokens = _usage_count(usage_details, "cache_read_input_token_count")
     cache_write_tokens = _usage_count(usage_details, "cache_creation_input_token_count")
     reasoning_tokens = _usage_count(usage_details, "reasoning_output_token_count")
-    if (
-        input_tokens is None
-        or output_tokens is None
-        or cached_tokens is None
-        or cache_write_tokens is None
-        or reasoning_tokens is None
-    ):
+    if input_tokens is None or output_tokens is None:
         return None
 
     expected_total = input_tokens + output_tokens
-    if (
-        cached_tokens + cache_write_tokens > input_tokens
-        or reasoning_tokens > output_tokens
-        or (total_tokens is not None and total_tokens != expected_total)
-    ):
+    cache_details = [count for count in (cached_tokens, cache_write_tokens) if count is not None]
+    if sum(cache_details) > input_tokens:
+        return None
+    if reasoning_tokens is not None and reasoning_tokens > output_tokens:
+        return None
+    if total_tokens is not None and total_tokens != expected_total:
         return None
     if total_tokens is None:
         total_tokens = expected_total
-    usage: dict[str, Any] = {
+
+    input_tokens_details: dict[str, int] = {}
+    if cached_tokens is not None:
+        input_tokens_details["cached_tokens"] = cached_tokens
+    if cache_write_tokens is not None:
+        input_tokens_details["cache_write_tokens"] = cache_write_tokens
+    output_tokens_details: dict[str, int] = {}
+    if reasoning_tokens is not None:
+        output_tokens_details["reasoning_tokens"] = reasoning_tokens
+    return _validated_response_usage({
         "input_tokens": input_tokens,
-        "input_tokens_details": {
-            "cached_tokens": cached_tokens,
-            "cache_write_tokens": cache_write_tokens,
-        },
+        "input_tokens_details": input_tokens_details,
         "output_tokens": output_tokens,
-        "output_tokens_details": {"reasoning_tokens": reasoning_tokens},
+        "output_tokens_details": output_tokens_details,
         "total_tokens": total_tokens,
-    }
-    return usage
+    })
+
+
+def _raw_response_usage_from_result(result: AgentResponse[Any]) -> Any | None:
+    for source in _raw_response_sources(result.raw_representation):
+        if isinstance(source, Mapping):
+            source_map = cast("Mapping[str, Any]", source)
+            response_object = source_map.get("object")
+            usage = source_map.get("usage")
+        else:
+            response_object = getattr(source, "object", None)
+            usage = getattr(source, "usage", None)
+        if response_object == "response" and usage is not None:
+            return _validated_response_usage(usage)
+    return None
+
+
+def _validated_response_usage(value: Any) -> Any | None:
+    try:
+        _RESPONSE_USAGE_ADAPTER.validate_python(value)
+    except ValidationError:
+        return None
+    return value
 
 
 def _usage_count(usage_details: Mapping[str, Any], key: str) -> int | None:

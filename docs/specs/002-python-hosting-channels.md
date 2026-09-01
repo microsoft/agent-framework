@@ -251,10 +251,12 @@ The helper only extracts the candidate key. App code decides whether to trust an
 OpenAI Responses output item types supported by Agent Framework content. Transport status is read from the nested raw
 Responses representation when available, rather than from free-form `AgentResponse.additional_properties`, where providers
 may flatten user metadata. Failed transport responses preserve the structured error from that same raw representation.
-Usage is emitted only when `UsageDetails` explicitly supplies every Responses-required input, output, cache-read,
-cache-creation, and reasoning counter. Missing counters are not cross-filled or rendered as invented zeros. An absent total
-alone is derived as the sum of the known input and output counts. Explicit zero values are preserved, while usage whose
-detail or total relationships cannot form a consistent Responses shape is omitted.
+A native Responses usage object from that raw representation is preserved when it validates against the installed OpenAI
+SDK; raw and Agent Framework counters are never merged. Without valid raw usage, `UsageDetails` counters map only to their
+matching Responses fields and the installed SDK validates the resulting version-specific detail shape. Missing counters
+are not cross-filled or rendered as invented zeros. An absent total alone is derived as the sum of the known input and
+output counts. Explicit zero values are preserved, while usage whose detail or total relationships cannot form a consistent
+Responses shape is omitted.
 
 `responses_from_streaming_run(...)` renders Server-Sent Event strings for a `ResponseStream`. It emits a created event,
 text deltas, and a terminal event matching the final `completed`, `incomplete`, or `failed` status. A stream that finalizes
