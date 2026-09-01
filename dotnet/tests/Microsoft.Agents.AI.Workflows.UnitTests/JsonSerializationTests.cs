@@ -445,6 +445,37 @@ public class JsonSerializationTests
     }
 
     [Fact]
+    public void Test_PortableMessageEnvelope_JsonRoundtrip_AIAgentHostResponse()
+    {
+        AIAgentHostResponse message = new(
+            "Source1",
+            new AgentResponse(new ChatMessage(ChatRole.Assistant, "Hello from agent"))
+            {
+                FinishReason = ChatFinishReason.Length,
+                ResponseId = "response-id",
+                Usage = new UsageDetails { InputTokenCount = 10, OutputTokenCount = 2, TotalTokenCount = 12 },
+            },
+            [new ChatMessage(ChatRole.User, "Hello"), new ChatMessage(ChatRole.Assistant, "Hello from agent")],
+            [new ChatMessage(ChatRole.Assistant, "Hello from agent")]);
+
+        MessageEnvelope envelope = new(message, "Source1", new TypeId(typeof(AIAgentHostResponse)), targetId: "Target1");
+        PortableMessageEnvelope value = new(envelope);
+        PortableMessageEnvelope result = RunJsonRoundtrip(value);
+
+        MessageEnvelope reconstructed = result.ToMessageEnvelope();
+        AIAgentHostResponse? reconstructedMessage = ((PortableValue)reconstructed.Message).As<AIAgentHostResponse>();
+
+        Assert.NotNull(reconstructedMessage);
+        Assert.Equal(message.ExecutorId, reconstructedMessage.ExecutorId);
+        Assert.Equal(message.AgentResponse.Text, reconstructedMessage.AgentResponse.Text);
+        Assert.Equal(message.AgentResponse.FinishReason, reconstructedMessage.AgentResponse.FinishReason);
+        Assert.Equal(message.AgentResponse.ResponseId, reconstructedMessage.AgentResponse.ResponseId);
+        Assert.Equal(message.AgentResponse.Usage?.TotalTokenCount, reconstructedMessage.AgentResponse.Usage?.TotalTokenCount);
+        Assert.Equal(message.FullConversation.Select(m => m.Text), reconstructedMessage.FullConversation.Select(m => m.Text));
+        Assert.Equal(message.ForwardableMessages.Select(m => m.Text), reconstructedMessage.ForwardableMessages.Select(m => m.Text));
+    }
+
+    [Fact]
     public void Test_PortableMessageEnvelope_JsonRoundtrip_CustomType()
     {
         TestJsonSerializable message = new() { Id = 42, Name = "Test" };
