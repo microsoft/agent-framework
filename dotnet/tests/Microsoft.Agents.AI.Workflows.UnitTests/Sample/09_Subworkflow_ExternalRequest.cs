@@ -7,7 +7,6 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
 
@@ -193,7 +192,7 @@ internal static class Step9EntryPoint
 
         RunStatus part1Status = ExpectedResponsesPart2.Length > 0 ? RunStatus.PendingRequests : RunStatus.Idle;
         runStatus = await workflowRun.GetStatusAsync();
-        runStatus.Should().Be(part1Status);
+        Assert.Equal(part1Status, runStatus);
 
         List<RequestFinished> finishedRequests = [];
         List<ExternalRequest> resourceRequests = [];
@@ -224,34 +223,34 @@ internal static class Step9EntryPoint
         }
 
         finishedRequests.Sort((left, right) => StringComparer.Ordinal.Compare(left.Id, right.Id));
-        finishedRequests.Should().HaveCount(ExpectedResponsesPart1.Count)
-                             .And.ContainInOrder(ExpectedResponsesPart1);
+        Assert.Equal(ExpectedResponsesPart1.Count, finishedRequests.Count);
+        Assert.Equal(ExpectedResponsesPart1, finishedRequests);
 
         int externalResourceRequests = ExpectedResponsesPart2.Count(finishedRequest => finishedRequest.ResourceResponse != null);
         int externalPolicyRequests = ExpectedResponsesPart2.Count(finishedRequest => finishedRequest.PolicyResponse != null);
 
-        resourceRequests.Should().HaveCount(externalResourceRequests);
-        policyRequests.Should().HaveCount(externalPolicyRequests);
+        Assert.Equal(externalResourceRequests, resourceRequests.Count);
+        Assert.Equal(externalPolicyRequests, policyRequests.Count);
 
         List<ExternalResponse> responses = [];
 
         foreach (ExternalRequest request in resourceRequests)
         {
             ResourceRequest resourceRequest = request.Data.As<ResourceRequest>()!;
-            resourceRequest.Id.Should().BeOneOf(ResourceMissIds);
+            Assert.Contains(resourceRequest.Id, ResourceMissIds);
             responses.Add(request.CreateResponse(Part2FinishedResponses[resourceRequest.Id].ResourceResponse!));
         }
 
         foreach (ExternalRequest request in policyRequests)
         {
             PolicyCheckRequest policyRequest = request.Data.As<PolicyCheckRequest>()!;
-            policyRequest.Id.Should().BeOneOf(PolicyMissIds);
+            Assert.Contains(policyRequest.Id, PolicyMissIds);
             responses.Add(request.CreateResponse(Part2FinishedResponses[policyRequest.Id].PolicyResponse!));
         }
 
         if (ExpectedResponsesPart2.Length == 0)
         {
-            responses.Should().BeEmpty();
+            Assert.Empty(responses ?? []);
             return results;
         }
 
@@ -273,7 +272,7 @@ internal static class Step9EntryPoint
             Assert.Fail(errorBuilder.ToString());
         }
 
-        runStatus.Should().Be(RunStatus.Idle);
+        Assert.Equal(RunStatus.Idle, runStatus);
 
         results = finishedRequests;
 
@@ -284,8 +283,8 @@ internal static class Step9EntryPoint
                                                 .ToList();
 
         finishedRequests.Sort((left, right) => StringComparer.Ordinal.Compare(left.Id, right.Id));
-        finishedRequests.Should().HaveCount(ExpectedResponsesPart2.Length)
-                             .And.ContainInOrder(ExpectedResponsesPart2);
+        Assert.Equal(ExpectedResponsesPart2.Length, finishedRequests.Count);
+        Assert.Equal(ExpectedResponsesPart2, finishedRequests);
 
         results.AddRange(finishedRequests);
         return results;

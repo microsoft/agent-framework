@@ -13,7 +13,6 @@ using System.Threading.Tasks;
 using AGUI.Abstractions;
 using AGUI.Client;
 using AGUI.Server;
-using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
@@ -51,12 +50,12 @@ public sealed class SharedStateTests : IAsyncDisposable
         }
 
         // Assert - the state snapshot is surfaced as a StateSnapshotEvent raw representation.
-        updates.Should().NotBeEmpty();
+        Assert.NotEmpty(updates);
 
         StateSnapshotEvent? snapshot = FindStateSnapshot(updates);
-        snapshot.Should().NotBeNull("should receive a STATE_SNAPSHOT event");
-        snapshot!.Snapshot.GetProperty("counter").GetInt32().Should().Be(43, "state should be incremented");
-        snapshot.Snapshot.GetProperty("status").GetString().Should().Be("active");
+        Assert.NotNull(snapshot);
+        Assert.Equal(43, snapshot!.Snapshot.GetProperty("counter").GetInt32());
+        Assert.Equal("active", snapshot.Snapshot.GetProperty("status").GetString());
     }
 
     [Fact]
@@ -83,12 +82,12 @@ public sealed class SharedStateTests : IAsyncDisposable
         // ConversationId unset (state identity stays on the AG-UI wire events).
         AgentResponseUpdate? stateUpdate = updates
             .FirstOrDefault(u => u.AsChatResponseUpdate().RawRepresentation is StateSnapshotEvent);
-        stateUpdate.Should().NotBeNull();
+        Assert.NotNull(stateUpdate);
 
         ChatResponseUpdate chatUpdate = stateUpdate!.AsChatResponseUpdate();
-        chatUpdate.RawRepresentation.Should().BeOfType<StateSnapshotEvent>();
-        chatUpdate.ConversationId.Should().BeNull();
-        chatUpdate.Role.Should().Be(ChatRole.Assistant);
+        Assert.True(chatUpdate.RawRepresentation is StateSnapshotEvent);
+        Assert.Null(chatUpdate.ConversationId);
+        Assert.Equal(ChatRole.Assistant, chatUpdate.Role);
     }
 
     [Fact]
@@ -114,13 +113,13 @@ public sealed class SharedStateTests : IAsyncDisposable
 
         // Assert
         StateSnapshotEvent? snapshot = FindStateSnapshot(updates);
-        snapshot.Should().NotBeNull();
+        Assert.NotNull(snapshot);
 
         JsonElement receivedState = snapshot!.Snapshot;
-        receivedState.GetProperty("sessionId").GetString().Should().Be("test-123");
-        receivedState.GetProperty("nested").GetProperty("count").GetInt32().Should().Be(10);
-        receivedState.GetProperty("array").GetArrayLength().Should().Be(3);
-        receivedState.GetProperty("tags").GetArrayLength().Should().Be(2);
+        Assert.Equal("test-123", receivedState.GetProperty("sessionId").GetString());
+        Assert.Equal(10, receivedState.GetProperty("nested").GetProperty("count").GetInt32());
+        Assert.Equal(3, receivedState.GetProperty("array").GetArrayLength());
+        Assert.Equal(2, receivedState.GetProperty("tags").GetArrayLength());
     }
 
     [Fact]
@@ -145,8 +144,8 @@ public sealed class SharedStateTests : IAsyncDisposable
 
         // Feed the returned state snapshot back into the second round.
         StateSnapshotEvent? firstSnapshot = FindStateSnapshot(firstRoundUpdates);
-        firstSnapshot.Should().NotBeNull();
-        firstSnapshot!.Snapshot.GetProperty("counter").GetInt32().Should().Be(2);
+        Assert.NotNull(firstSnapshot);
+        Assert.Equal(2, firstSnapshot!.Snapshot.GetProperty("counter").GetInt32());
 
         ChatMessage secondUserMessage = new(ChatRole.User, "increment again");
 
@@ -158,8 +157,8 @@ public sealed class SharedStateTests : IAsyncDisposable
 
         // Assert - Second round should have incremented counter again.
         StateSnapshotEvent? secondSnapshot = FindStateSnapshot(secondRoundUpdates);
-        secondSnapshot.Should().NotBeNull();
-        secondSnapshot!.Snapshot.GetProperty("counter").GetInt32().Should().Be(3, "counter should be incremented twice: 1 -> 2 -> 3");
+        Assert.NotNull(secondSnapshot);
+        Assert.Equal(3, secondSnapshot!.Snapshot.GetProperty("counter").GetInt32());
     }
 
     [Fact]
@@ -182,9 +181,9 @@ public sealed class SharedStateTests : IAsyncDisposable
         }
 
         // Assert
-        updates.Should().NotBeEmpty();
-        FindStateSnapshot(updates).Should().BeNull("should not return state snapshot when no state is provided");
-        updates.Should().Contain(u => u.Contents.Any(c => c is TextContent));
+        Assert.NotEmpty(updates);
+        Assert.Null(FindStateSnapshot(updates));
+        Assert.Contains(updates, u => u.Contents.Any(c => c is TextContent));
     }
 
     [Fact]
@@ -208,9 +207,9 @@ public sealed class SharedStateTests : IAsyncDisposable
         }
 
         // Assert - empty state {} should be treated as no state.
-        updates.Should().NotBeEmpty();
-        FindStateSnapshot(updates).Should().BeNull("empty state should be treated as no state");
-        updates.Should().Contain(u => u.Contents.Any(c => c is TextContent));
+        Assert.NotEmpty(updates);
+        Assert.Null(FindStateSnapshot(updates));
+        Assert.Contains(updates, u => u.Contents.Any(c => c is TextContent));
     }
 
     [Fact]
@@ -232,9 +231,9 @@ public sealed class SharedStateTests : IAsyncDisposable
         // content-less STATE_SNAPSHOT update (Microsoft.Extensions.AI only materializes updates that carry
         // content), so the non-streaming path surfaces the aggregated text response. The state round-trip
         // itself is verified by the streaming tests above.
-        response.Should().NotBeNull();
-        response.Messages.Should().NotBeEmpty();
-        response.Text.Should().Contain("State processed");
+        Assert.NotNull(response);
+        Assert.NotEmpty(response.Messages);
+        Assert.Contains("State processed", response.Text);
     }
 
     private ChatClientAgent CreateAgent()

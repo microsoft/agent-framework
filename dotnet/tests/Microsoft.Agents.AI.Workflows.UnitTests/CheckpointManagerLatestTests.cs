@@ -3,7 +3,6 @@
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -38,7 +37,7 @@ public class CheckpointManagerLatestTests
         CheckpointInfo? latest = await manager.GetLatestCheckpointAsync(SessionId);
 
         // Assert: the durable index preserves commit order, so the latest checkpoint is the last committed.
-        index.Should().Equal(committed, "the file-store index should be returned in commit order");
-        latest.Should().Be(committed[^1]);
+        Assert.Equal(committed, index);
+        Assert.Equal(committed[^1], latest);
     }
 }

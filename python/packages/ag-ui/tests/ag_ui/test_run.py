@@ -2,7 +2,7 @@
 
 """Tests for _agent_run.py helper functions and FlowState."""
 
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from ag_ui.core import (
@@ -2568,7 +2568,11 @@ async def test_session_id_matches_thread_id_with_service_session():
     from agent_framework_ag_ui import AgentFrameworkAgent
 
     stub = StubAgent()
-    agent = AgentFrameworkAgent(agent=stub, use_service_session=True)
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        use_service_session=True,
+        service_session_id_from_thread_id=True,
+    )
 
     payload = {
         "thread_id": "service-thread-789",
@@ -2615,7 +2619,11 @@ async def test_service_session_no_thread_id_generates_uuid():
     from agent_framework_ag_ui import AgentFrameworkAgent
 
     stub = StubAgent()
-    agent = AgentFrameworkAgent(agent=stub, use_service_session=True)
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        use_service_session=True,
+        service_session_id_from_thread_id=True,
+    )
 
     payload = {
         "run_id": "run-5",
@@ -2629,3 +2637,93 @@ async def test_service_session_no_thread_id_generates_uuid():
     uuid.UUID(stub.last_session.session_id)
     # service_session_id should be None since no thread_id was supplied
     assert stub.last_session.service_session_id is None
+
+
+async def test_provider_owned_service_session_requires_snapshot_persistence():
+    """Provider-owned continuation needs private snapshot storage across AG-UI requests."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    agent = AgentFrameworkAgent(agent=StubAgent(), use_service_session=True)
+
+    with pytest.raises(ValueError, match="requires snapshot persistence"):
+        _ = [
+            event
+            async for event in agent.run(
+                {
+                    "thread_id": "frontend-thread",
+                    "run_id": "run-6",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                }
+            )
+        ]
+
+
+async def test_service_session_rejects_disabled_provider_storage():
+    """Service-session continuation cannot work when provider storage is disabled."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    agent = AgentFrameworkAgent(
+        agent=StubAgent(default_options={"store": False}),
+        use_service_session=True,
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+    )
+
+    with pytest.raises(ValueError, match="requires provider storage"):
+        _ = [
+            event
+            async for event in agent.run(
+                {
+                    "thread_id": "frontend-thread",
+                    "run_id": "run-store-false",
+                    "__ag_ui_snapshot_scope": "test",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                }
+            )
+        ]
+
+
+async def test_stateless_snapshot_excludes_only_provider_service_session_state():
+    """Stateless runs restore unrelated private state but not provider-owned continuation."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    setattr(stub, "service_session_state_keys", frozenset({"provider_continuation"}))
+    observed_state: list[dict[str, Any]] = []
+    original_run = stub.run
+
+    def capture_state(*args: Any, **kwargs: Any) -> Any:
+        session = kwargs["session"]
+        observed_state.append(dict(session.state))
+        session.state["provider_continuation"] = "provider-session"
+        session.state["private"] = "preserved"
+        return original_run(*args, **kwargs)
+
+    stub.run = capture_state  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkAgent(agent=stub, snapshot_store=store)
+    payload = {
+        "thread_id": "frontend-thread",
+        "__ag_ui_snapshot_scope": "test",
+        "messages": [{"role": "user", "content": "Hello"}],
+        "state": {
+            "provider_continuation": "client-injected",
+            "client_value": "available",
+        },
+    }
+
+    _ = [event async for event in agent.run(payload)]
+    first_snapshot = await store.get(scope="test", thread_id="frontend-thread")
+    assert first_snapshot is not None
+    _ = [event async for event in agent.run(payload)]
+
+    assert first_snapshot.session_state == {"private": "preserved"}
+    assert observed_state == [
+        {"client_value": "available"},
+        {"private": "preserved", "client_value": "available"},
+    ]
