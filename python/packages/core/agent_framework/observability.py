@@ -2290,6 +2290,14 @@ class AgentTelemetryLayer:
         self.token_usage_histogram = _get_token_usage_histogram()
         self.duration_histogram = _get_duration_histogram()
 
+    def _get_otel_agent_id(self) -> str:
+        """Return the agent identifier emitted on OpenTelemetry spans."""
+        return getattr(self, "id", "unknown")
+
+    def _get_otel_agent_name(self) -> str:
+        """Return the agent name emitted on OpenTelemetry spans."""
+        return getattr(self, "name", None) or self._get_otel_agent_id()
+
     def _trace_agent_invocation(
         self,
         *,
@@ -2326,8 +2334,8 @@ class AgentTelemetryLayer:
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
-            agent_id=getattr(self, "id", "unknown"),
-            agent_name=getattr(self, "name", None) or getattr(self, "id", "unknown"),
+            agent_id=self._get_otel_agent_id(),
+            agent_name=self._get_otel_agent_name(),
             agent_description=getattr(self, "description", None),
             thread_id=conversation_id,
             all_options=dict(merged_options),

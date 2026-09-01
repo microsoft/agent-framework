@@ -949,6 +949,16 @@ class FoundryAgent(  # type: ignore[misc]
             )
     """
 
+    @override
+    def _get_otel_agent_id(self) -> str:
+        """Return the deployed Foundry agent name used for trace attribution."""
+        return cast(RawFoundryAgentChatClient, self.client).agent_name
+
+    @override
+    def _get_otel_agent_name(self) -> str:
+        """Return the local display name or the deployed Foundry agent name."""
+        return self.name or self._get_otel_agent_id()
+
     def __init__(
         self,
         *,

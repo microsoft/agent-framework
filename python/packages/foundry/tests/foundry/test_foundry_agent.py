@@ -947,6 +947,43 @@ def test_raw_foundry_agent_init_creates_client() -> None:
 
     assert agent.client is not None
     assert cast(Any, agent.client).agent_name == "test-agent"
+    assert agent.name == "test-agent"
+
+
+def test_foundry_agent_otel_identity_uses_resolved_agent_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that telemetry uses the resolved Foundry name without changing local identity."""
+
+    monkeypatch.setenv("FOUNDRY_AGENT_NAME", "environment-agent")
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    agent = FoundryAgent(project_client=mock_project)
+
+    assert agent.id != "environment-agent"
+    assert agent.name is None
+    assert agent._get_otel_agent_id() == "environment-agent"
+    assert agent._get_otel_agent_name() == "environment-agent"
+
+
+def test_foundry_agent_otel_identity_is_separate_from_explicit_local_identity() -> None:
+    """Test that Foundry trace attribution does not replace local agent identity."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    agent = FoundryAgent(
+        project_client=mock_project,
+        agent_name="deployed-agent",
+        id="custom-id",
+        name="Custom Name",
+    )
+
+    assert agent.id == "custom-id"
+    assert agent.name == "Custom Name"
+    assert agent._get_otel_agent_id() == "deployed-agent"
+    assert agent._get_otel_agent_name() == "Custom Name"
 
 
 def test_raw_foundry_agent_init_passes_default_headers_to_client() -> None:
@@ -1243,6 +1280,9 @@ def test_foundry_agent_init() -> None:
 
     assert agent.client is not None
     assert cast(Any, agent.client).agent_name == "test-agent"
+    assert agent.name == "test-agent"
+    assert agent._get_otel_agent_id() == "test-agent"
+    assert agent._get_otel_agent_name() == "test-agent"
 
 
 def test_foundry_agent_init_with_middleware() -> None:
