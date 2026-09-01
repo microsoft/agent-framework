@@ -69,9 +69,12 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
 
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        return this.ConfigureUserInputHandling(base.ConfigureProtocol(protocolBuilder))
-                   .ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<ResetChatSignal>(this.ResetChat))
-                   .SendsMessage<AIAgentHostResponse>();
+        protocolBuilder = this.ConfigureUserInputHandling(base.ConfigureProtocol(protocolBuilder))
+                              .ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<ResetChatSignal>(this.ResetChat));
+
+        return this._options.ForwardAgentResponse
+             ? protocolBuilder.SendsMessage<AIAgentHostResponse>()
+             : protocolBuilder;
     }
 
     internal void ResetChat(ResetChatSignal signal, IWorkflowContext context)

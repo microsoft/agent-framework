@@ -202,6 +202,7 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
         await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
 
         // Assert
+        Assert.DoesNotContain(typeof(AIAgentHostResponse), executor.Protocol.Describe().Sends);
         Assert.Contains(executor.Id, testContext.QueuedMessages);
         Assert.DoesNotContain(testContext.QueuedMessages[executor.Id], envelope => envelope.Message is AIAgentHostResponse);
     }
