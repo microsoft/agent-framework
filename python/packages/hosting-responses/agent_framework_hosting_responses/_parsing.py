@@ -297,6 +297,8 @@ def responses_from_run(
         response_kwargs["metadata"] = metadata
     if (usage := _usage_from_result(result)) is not None:
         response_kwargs["usage"] = usage
+    if (error := _response_field_from_result(result, "error")) is not None:
+        response_kwargs["error"] = error
     if (incomplete_details := _incomplete_details_from_result(result, status=status)) is not None:
         response_kwargs["incomplete_details"] = incomplete_details
     if conversation_id is not None:
@@ -341,22 +343,27 @@ def _usage_from_result(result: AgentResponse[Any]) -> Any | None:
     input_tokens = _usage_count(usage_details, "input_token_count")
     output_tokens = _usage_count(usage_details, "output_token_count")
     total_tokens = _usage_count(usage_details, "total_token_count")
-    cached_tokens = _usage_count(usage_details, "cache_read_input_token_count") or 0
-    cache_write_tokens = _usage_count(usage_details, "cache_creation_input_token_count") or 0
-    reasoning_tokens = _usage_count(usage_details, "reasoning_output_token_count") or 0
-    if input_tokens is None:
-        input_tokens = max(cached_tokens, cache_write_tokens)
-    elif cached_tokens > input_tokens or cache_write_tokens > input_tokens:
-        raise ValueError("AgentResponse input token details must not exceed `input_token_count`")
-    if output_tokens is None:
-        output_tokens = reasoning_tokens
-    elif reasoning_tokens > output_tokens:
-        raise ValueError("AgentResponse reasoning token count must not exceed `output_token_count`")
-    minimum_total = input_tokens + output_tokens
+    cached_tokens = _usage_count(usage_details, "cache_read_input_token_count")
+    cache_write_tokens = _usage_count(usage_details, "cache_creation_input_token_count")
+    reasoning_tokens = _usage_count(usage_details, "reasoning_output_token_count")
+    if (
+        input_tokens is None
+        or output_tokens is None
+        or cached_tokens is None
+        or cache_write_tokens is None
+        or reasoning_tokens is None
+    ):
+        return None
+
+    expected_total = input_tokens + output_tokens
+    if (
+        cached_tokens + cache_write_tokens > input_tokens
+        or reasoning_tokens > output_tokens
+        or (total_tokens is not None and total_tokens != expected_total)
+    ):
+        return None
     if total_tokens is None:
-        total_tokens = minimum_total
-    elif total_tokens < minimum_total:
-        raise ValueError("AgentResponse `total_token_count` must not be less than input plus output tokens")
+        total_tokens = expected_total
     usage: dict[str, Any] = {
         "input_tokens": input_tokens,
         "input_tokens_details": {

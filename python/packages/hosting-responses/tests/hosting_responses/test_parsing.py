@@ -367,6 +367,7 @@ class TestResponsesRunHelpers:
         terminal_response = SimpleNamespace(
             status="failed",
             metadata={"source": "raw"},
+            error={"code": "server_error", "message": "provider failed"},
             usage={
                 "input_tokens": 7,
                 "input_tokens_details": {"cached_tokens": 1, "cache_write_tokens": 0},
@@ -388,6 +389,7 @@ class TestResponsesRunHelpers:
 
         assert payload["status"] == "failed"
         assert payload["metadata"] == {"source": "raw"}
+        assert payload["error"] == {"code": "server_error", "message": "provider failed"}
         assert payload["usage"]["total_tokens"] == 9
 
     def test_responses_from_run_does_not_treat_user_metadata_status_as_transport_status(self) -> None:
@@ -413,46 +415,47 @@ class TestResponsesRunHelpers:
             responses_from_run(result, response_id="resp_new")
 
     @pytest.mark.parametrize(
-        ("usage_details", "expected_counts", "cached_tokens", "reasoning_tokens"),
+        ("usage_details", "expected_usage"),
         [
             (
-                {"output_token_count": 3},
-                {"input_tokens": 0, "output_tokens": 3, "total_tokens": 3},
-                0,
-                0,
+                {
+                    "input_token_count": 5,
+                    "output_token_count": 3,
+                    "cache_read_input_token_count": 2,
+                    "cache_creation_input_token_count": 1,
+                    "reasoning_output_token_count": 1,
+                },
+                {
+                    "input_tokens": 5,
+                    "input_tokens_details": {"cached_tokens": 2, "cache_write_tokens": 1},
+                    "output_tokens": 3,
+                    "output_tokens_details": {"reasoning_tokens": 1},
+                    "total_tokens": 8,
+                },
             ),
             (
-                {"input_token_count": 2},
-                {"input_tokens": 2, "output_tokens": 0, "total_tokens": 2},
-                0,
-                0,
-            ),
-            (
-                {"total_token_count": 5},
-                {"input_tokens": 0, "output_tokens": 0, "total_tokens": 5},
-                0,
-                0,
-            ),
-            (
-                {"output_token_count": 1, "cache_read_input_token_count": 3},
-                {"input_tokens": 3, "output_tokens": 1, "total_tokens": 4},
-                3,
-                0,
-            ),
-            (
-                {"input_token_count": 1, "reasoning_output_token_count": 2},
-                {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3},
-                0,
-                2,
+                {
+                    "input_token_count": 0,
+                    "output_token_count": 0,
+                    "total_token_count": 0,
+                    "cache_read_input_token_count": 0,
+                    "cache_creation_input_token_count": 0,
+                    "reasoning_output_token_count": 0,
+                },
+                {
+                    "input_tokens": 0,
+                    "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+                    "output_tokens": 0,
+                    "output_tokens_details": {"reasoning_tokens": 0},
+                    "total_tokens": 0,
+                },
             ),
         ],
     )
-    def test_responses_from_run_normalizes_partial_usage(
+    def test_responses_from_run_maps_complete_usage_without_cross_filling(
         self,
         usage_details: UsageDetails,
-        expected_counts: dict[str, int],
-        cached_tokens: int,
-        reasoning_tokens: int,
+        expected_usage: dict[str, object],
     ) -> None:
         result = AgentResponse(
             messages=Message(role="assistant", contents=[Content.from_text("hello")]),
@@ -461,46 +464,172 @@ class TestResponsesRunHelpers:
 
         payload = responses_from_run(result, response_id="resp_new")
 
-        usage = cast("dict[str, object]", payload["usage"])
-        assert {key: usage[key] for key in expected_counts} == expected_counts
-        assert usage["input_tokens_details"] == {"cached_tokens": cached_tokens, "cache_write_tokens": 0}
-        assert usage["output_tokens_details"] == {"reasoning_tokens": reasoning_tokens}
+        assert payload["usage"] == expected_usage
 
     @pytest.mark.parametrize(
-        ("usage_details", "message"),
+        "usage_details",
         [
-            (
-                {"input_token_count": 2, "cache_read_input_token_count": 3},
-                "input token details",
+            pytest.param({"input_token_count": 2}, id="input-only"),
+            pytest.param({"output_token_count": 3}, id="output-only"),
+            pytest.param({"total_token_count": 5}, id="total-only"),
+            pytest.param(
+                {
+                    "cache_read_input_token_count": 1,
+                    "cache_creation_input_token_count": 1,
+                    "reasoning_output_token_count": 1,
+                },
+                id="details-only",
             ),
-            (
-                {"output_token_count": 1, "reasoning_output_token_count": 2},
-                "reasoning token count",
+            pytest.param({"input_token_count": 2, "output_token_count": 3}, id="parents-only"),
+            pytest.param(
+                {
+                    "output_token_count": 0,
+                    "cache_read_input_token_count": 0,
+                    "cache_creation_input_token_count": 0,
+                    "reasoning_output_token_count": 0,
+                },
+                id="missing-input",
             ),
-            (
-                {"input_token_count": 2, "output_token_count": 3, "total_token_count": 4},
-                "total_token_count",
+            pytest.param(
+                {
+                    "input_token_count": 0,
+                    "cache_read_input_token_count": 0,
+                    "cache_creation_input_token_count": 0,
+                    "reasoning_output_token_count": 0,
+                },
+                id="missing-output",
+            ),
+            pytest.param(
+                {
+                    "input_token_count": 0,
+                    "output_token_count": 0,
+                    "cache_creation_input_token_count": 0,
+                    "reasoning_output_token_count": 0,
+                },
+                id="missing-cache-read",
+            ),
+            pytest.param(
+                {
+                    "input_token_count": 0,
+                    "output_token_count": 0,
+                    "cache_read_input_token_count": 0,
+                    "reasoning_output_token_count": 0,
+                },
+                id="missing-cache-creation",
+            ),
+            pytest.param(
+                {
+                    "input_token_count": 0,
+                    "output_token_count": 0,
+                    "cache_read_input_token_count": 0,
+                    "cache_creation_input_token_count": 0,
+                },
+                id="missing-reasoning",
             ),
         ],
     )
-    def test_responses_from_run_rejects_inconsistent_usage(
+    def test_responses_from_run_omits_partial_usage(
         self,
         usage_details: UsageDetails,
-        message: str,
     ) -> None:
         result = AgentResponse(
             messages=Message(role="assistant", contents=[Content.from_text("hello")]),
             usage_details=usage_details,
         )
 
-        with pytest.raises(ValueError, match=message):
-            responses_from_run(result, response_id="resp_new")
+        payload = responses_from_run(result, response_id="resp_new")
 
-    @pytest.mark.parametrize("count", [-1, True])
-    def test_responses_from_run_rejects_invalid_usage_count(self, count: object) -> None:
+        assert "usage" not in payload
+
+    @pytest.mark.parametrize(
+        "usage_details",
+        [
+            pytest.param(
+                {
+                    "input_token_count": 5,
+                    "output_token_count": 1,
+                    "total_token_count": 6,
+                    "cache_read_input_token_count": 100,
+                    "cache_creation_input_token_count": 0,
+                    "reasoning_output_token_count": 0,
+                },
+                id="provider-exclusive-cache-count",
+            ),
+            pytest.param(
+                {
+                    "input_token_count": 5,
+                    "output_token_count": 1,
+                    "total_token_count": 6,
+                    "cache_read_input_token_count": 3,
+                    "cache_creation_input_token_count": 3,
+                    "reasoning_output_token_count": 0,
+                },
+                id="combined-cache-details-exceed-input",
+            ),
+            pytest.param(
+                {
+                    "input_token_count": 1,
+                    "output_token_count": 1,
+                    "total_token_count": 2,
+                    "cache_read_input_token_count": 0,
+                    "cache_creation_input_token_count": 0,
+                    "reasoning_output_token_count": 2,
+                },
+                id="reasoning-exceeds-output",
+            ),
+            pytest.param(
+                {
+                    "input_token_count": 2,
+                    "output_token_count": 3,
+                    "total_token_count": 4,
+                    "cache_read_input_token_count": 0,
+                    "cache_creation_input_token_count": 0,
+                    "reasoning_output_token_count": 0,
+                },
+                id="total-under-counts",
+            ),
+            pytest.param(
+                {
+                    "input_token_count": 2,
+                    "output_token_count": 3,
+                    "total_token_count": 6,
+                    "cache_read_input_token_count": 0,
+                    "cache_creation_input_token_count": 0,
+                    "reasoning_output_token_count": 0,
+                },
+                id="total-over-counts",
+            ),
+        ],
+    )
+    def test_responses_from_run_omits_usage_that_cannot_map_consistently(
+        self,
+        usage_details: UsageDetails,
+    ) -> None:
         result = AgentResponse(
             messages=Message(role="assistant", contents=[Content.from_text("hello")]),
-            usage_details=cast("UsageDetails", {"input_token_count": count}),
+            usage_details=usage_details,
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        assert "usage" not in payload
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "input_token_count",
+            "output_token_count",
+            "total_token_count",
+            "cache_read_input_token_count",
+            "cache_creation_input_token_count",
+            "reasoning_output_token_count",
+        ],
+    )
+    @pytest.mark.parametrize("count", [-1, True, 1.5])
+    def test_responses_from_run_rejects_invalid_usage_count(self, key: str, count: object) -> None:
+        result = AgentResponse(
+            messages=Message(role="assistant", contents=[Content.from_text("hello")]),
+            usage_details=cast("UsageDetails", {key: count}),
         )
 
         with pytest.raises(ValueError, match="non-negative integer"):
@@ -585,6 +714,9 @@ class TestResponsesRunHelpers:
                 input_token_count=5,
                 output_token_count=1,
                 total_token_count=6,
+                cache_read_input_token_count=0,
+                cache_creation_input_token_count=0,
+                reasoning_output_token_count=0,
             )
             response.additional_properties["metadata"] = {"source": "stream"}
             return response
@@ -618,6 +750,29 @@ class TestResponsesRunHelpers:
         assert events[-1].startswith(f"event: response.{status}")
         assert payload["type"] == f"response.{status}"
         assert response["status"] == status
+
+    async def test_responses_from_streaming_run_preserves_failed_transport_error(self) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("partial")], role="assistant")
+
+        def finalizer(items: Sequence[AgentResponseUpdate]) -> AgentResponse:
+            response = AgentResponse.from_updates(items)
+            response.raw_representation = SimpleNamespace(
+                response=SimpleNamespace(
+                    status="failed",
+                    error={"code": "server_error", "message": "provider failed"},
+                )
+            )
+            return response
+
+        stream = ResponseStream(updates(), finalizer=finalizer)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        payload = _sse_payload(events[-1])
+        response = cast("dict[str, object]", payload["response"])
+
+        assert events[-1].startswith("event: response.failed")
+        assert response["error"] == {"code": "server_error", "message": "provider failed"}
 
     @pytest.mark.parametrize("status", ["in_progress", "queued"])
     async def test_responses_from_streaming_run_rejects_nonterminal_final_status(self, status: str) -> None:

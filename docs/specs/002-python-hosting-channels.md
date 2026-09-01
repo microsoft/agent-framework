@@ -250,9 +250,11 @@ The helper only extracts the candidate key. App code decides whether to trust an
 `responses_from_run(...)` renders a full Responses JSON payload from an `AgentResponse`. It renders the full set of
 OpenAI Responses output item types supported by Agent Framework content. Transport status is read from the nested raw
 Responses representation when available, rather than from free-form `AgentResponse.additional_properties`, where providers
-may flatten user metadata. Partial `UsageDetails` values are accepted; missing required Responses input/output counters are
-derived from their detail counters or rendered as zero, and a missing total is derived from the input/output counters.
-Explicit counters that would undercount their details or total are invalid.
+may flatten user metadata. Failed transport responses preserve the structured error from that same raw representation.
+Usage is emitted only when `UsageDetails` explicitly supplies every Responses-required input, output, cache-read,
+cache-creation, and reasoning counter. Missing counters are not cross-filled or rendered as invented zeros. An absent total
+alone is derived as the sum of the known input and output counts. Explicit zero values are preserved, while usage whose
+detail or total relationships cannot form a consistent Responses shape is omitted.
 
 `responses_from_streaming_run(...)` renders Server-Sent Event strings for a `ResponseStream`. It emits a created event,
 text deltas, and a terminal event matching the final `completed`, `incomplete`, or `failed` status. A stream that finalizes
