@@ -6819,6 +6819,9 @@ async def test_integration_stateless_reasoning_survives_json_and_checkpoint_roun
     )
 
     first_message = first_response.messages[0]
+    raw_response = cast(Any, first_response.raw_representation)
+    if not any(getattr(item, "type", None) == "reasoning" for item in raw_response.output):
+        pytest.skip("OpenAI omitted the optional reasoning item for the forced function call.")
     reasoning_contents = [content for content in first_message.contents if content.type == "text_reasoning"]
     assert reasoning_contents
     assert any(content.protected_data for content in reasoning_contents)
