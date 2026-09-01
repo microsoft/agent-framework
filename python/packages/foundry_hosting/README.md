@@ -17,6 +17,9 @@ advertise `STORES_BY_DEFAULT=True`, hosting forces downstream `store=False`; for
 agent-level `store` option and does not forward one. These safeguards ensure the model receives the transcript once
 without sending unsupported storage options.
 
+`ResponsesHostServer` owns the supplied agent instance and may add hosting-specific context providers. Do not reuse that
+agent with another host or invoke it directly after constructing the server.
+
 To preserve the agent's regular history and service-storage behavior, select the agent as the history source:
 
 ```python

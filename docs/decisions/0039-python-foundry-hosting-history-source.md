@@ -110,6 +110,8 @@ It does not disable response persistence.
   requirements.
 - Good: the API does not introduce a second history-selection state machine.
 - Bad: default mode mutates the supplied `RawAgent` by installing a transient history provider.
+- Neutral: a `ResponsesHostServer` owns its supplied agent instance; reusing that agent with another host or invoking it
+  directly after server construction is unsupported.
 - Bad: regular agent history and AgentServer response history may differ, which response-oriented evaluations must
   document.
 - Neutral: switching an existing conversation between modes may require resetting its persisted session/history.

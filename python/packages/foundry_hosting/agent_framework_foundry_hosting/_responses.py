@@ -367,13 +367,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                because the hosting environment may get deactivated between requests. Provider
                state carried by `AgentSession`, including `InMemoryHistoryProvider` messages in
                `history_source="agent"` mode, is persisted by the configured session store.
-            3. Resiliency (resilient_background=True) is ONLY supported for workflows; constructing this
+            3. The server owns the supplied agent instance and may add hosting-specific providers.
+               Do not reuse the same agent with another host or invoke it directly after construction.
+            4. Resiliency (resilient_background=True) is ONLY supported for workflows; constructing this
                server with a non-workflow agent and `resilient_background=True` raises `RuntimeError`.
                When resiliency is enabled, and the server crashes mid-response:
                - Background responses are automatically re-invoked on server restart (client won't see the crash).
                - Stream events are preserved for client reconnection.
                - State is maintained across crashes.
-            4. Steering (steerable_conversations=True) is ONLY supported for non-workflow agents; constructing
+            5. Steering (steerable_conversations=True) is ONLY supported for non-workflow agents; constructing
                this server with a workflow agent and `steerable_conversations=True` raises `RuntimeError`.
                Steering a workflow is conceptually undefined -- a workflow's graph may have loops or parallel
                branches with no single well-defined "current point" to cancel and resume from, unlike an
@@ -418,12 +420,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             self._client_stores_by_default = getattr(storage_capability_owner, "STORES_BY_DEFAULT", False) is True
             if not self._client_stores_by_default and isinstance(default_options, dict):
                 cast(dict[str, Any], default_options).pop("store", None)
-        elif isinstance(agent, RawAgent):
-            # A caller may reuse an agent that was previously attached to an AgentServer-history
-            # host. Restore regular agent behavior by removing only the host-owned sentinel.
-            agent.context_providers[:] = [
-                provider for provider in agent.context_providers if not _is_hosted_responses_history_sentinel(provider)
-            ]
 
         self._is_workflow_agent = False
         if isinstance(agent, WorkflowAgent):

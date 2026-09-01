@@ -786,12 +786,12 @@ class TestResponsesHostServerInit:
         )
 
         with pytest.raises(ValueError, match="history_source"):
-            ResponsesHostServer(agent, history_source="invalid")  # type: ignore[arg-type]
+            ResponsesHostServer(agent, history_source=cast(Any, "invalid"))
 
     def test_init_rejects_default_conversation_id_for_agent_server_history(self) -> None:
         agent = Agent(
             client=_ServiceStorageRecordingClient(),
-            default_options={"conversation_id": "service-thread"},
+            default_options={"conversation_id": "service-thread"},  # pyrefly: ignore[bad-argument-type]
         )
 
         with pytest.raises(RuntimeError, match="default conversation_id"):
@@ -800,27 +800,10 @@ class TestResponsesHostServerInit:
     def test_init_allows_default_conversation_id_for_agent_history(self) -> None:
         agent = Agent(
             client=_ServiceStorageRecordingClient(),
-            default_options={"conversation_id": "service-thread"},
+            default_options={"conversation_id": "service-thread"},  # pyrefly: ignore[bad-argument-type]
         )
 
         ResponsesHostServer(agent, history_source="agent")
-
-    def test_init_agent_history_removes_hosted_history_sentinel_from_reused_agent(self) -> None:
-        agent = Agent(client=_ServiceStorageRecordingClient())
-        ResponsesHostServer(agent)
-        assert any(
-            provider.source_id == "_foundry_responses_history"
-            for provider in agent.context_providers
-            if isinstance(provider, HistoryProvider)
-        )
-
-        ResponsesHostServer(agent, history_source="agent")
-
-        assert not any(
-            provider.source_id == "_foundry_responses_history"
-            for provider in agent.context_providers
-            if isinstance(provider, HistoryProvider)
-        )
 
     def test_init_rejects_resilient_background_for_non_workflow_agent(self, tmp_path: Path) -> None:
         agent = _make_agent(
@@ -944,7 +927,7 @@ class TestAgentSessionPersistence:
         agent = Agent(
             client=client,
             name="Service Storage Agent",
-            default_options={"store": True},
+            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
         )
         store = SessionStore()
         server = _make_server(agent, session_store=store)
@@ -969,7 +952,7 @@ class TestAgentSessionPersistence:
         agent = Agent(
             client=client,
             name="Non-Storing Agent",
-            default_options={"store": True},
+            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
         )
         server = _make_server(agent, session_store=SessionStore())
 
@@ -1021,7 +1004,7 @@ class TestAgentSessionPersistence:
         agent = Agent(
             client=client,
             name="Agent Managed Service Storage",
-            default_options={"store": True},
+            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
         )
         store = SessionStore()
         server = _make_server(agent, session_store=store, history_source="agent")
@@ -1044,7 +1027,7 @@ class TestAgentSessionPersistence:
             client=client,
             name="Agent Managed In-Memory History",
             context_providers=[history],
-            default_options={"store": False},
+            default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
         )
         store = SessionStore()
         server = _make_server(agent, session_store=store, history_source="agent")
