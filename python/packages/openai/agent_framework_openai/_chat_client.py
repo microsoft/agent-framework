@@ -1988,15 +1988,17 @@ class RawOpenAIChatClient(
                 raw_result: Any = content.result
                 if isinstance(raw_result, str):
                     output: str | list[Any] = raw_result
-                elif isinstance(raw_result, list):
+                elif isinstance(raw_result, list) and self.SUPPORTS_RICH_FUNCTION_OUTPUT:
                     output = cast("list[Any]", raw_result)
-                elif raw_result is None:
+                elif raw_result is None or (
+                    isinstance(raw_result, list) and not self.SUPPORTS_RICH_FUNCTION_OUTPUT and not raw_result
+                ):
                     output = ""
                 else:
                     try:
-                        output = json.dumps(raw_result, default=str)
+                        output = json.dumps(cast("Any", raw_result), default=str)
                     except (TypeError, ValueError):
-                        output = str(raw_result)
+                        output = str(cast("Any", raw_result))
                 if (
                     self.SUPPORTS_RICH_FUNCTION_OUTPUT
                     and content.items

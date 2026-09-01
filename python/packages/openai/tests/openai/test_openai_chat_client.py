@@ -5585,8 +5585,14 @@ def test_prepare_content_for_openai_function_result_with_rich_items() -> None:
     assert output[1]["type"] == "input_image"
 
 
-@pytest.mark.parametrize("output", ["", []], ids=["empty-string", "empty-list"])
-def test_prepare_content_for_openai_preserves_falsey_function_output(output: str | list[dict[str, Any]]) -> None:
+@pytest.mark.parametrize(
+    "output",
+    ["", [], [{"type": "input_text", "text": "result"}]],
+    ids=["empty-string", "empty-list", "non-empty-list"],
+)
+def test_prepare_content_for_openai_preserves_supported_function_output(
+    output: str | list[dict[str, Any]],
+) -> None:
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     content = Content("function_result", call_id="call_falsey", result=output)
 
