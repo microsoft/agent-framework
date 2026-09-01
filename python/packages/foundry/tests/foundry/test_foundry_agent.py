@@ -46,7 +46,6 @@ from agent_framework_foundry._agent import (
     RawFoundryAgent,
     RawFoundryAgentChatClient,
     _FoundryAgentChatClient,
-    _get_foundry_project_id,
 )
 from agent_framework_foundry._chat_client import FoundryChatClient
 from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsagePolicy
@@ -951,38 +950,40 @@ def test_raw_foundry_agent_init_creates_client() -> None:
     assert agent.name == "test-agent"
 
 
-async def test_get_foundry_project_id_from_application_insights_connection() -> None:
+async def test_get_foundry_project_arm_id_from_application_insights_connection() -> None:
     """Test that project attribution uses the public project-scoped connection ID."""
 
-    project_id = (
+    project_arm_id = (
         "/subscriptions/test-sub/resourceGroups/test-rg/providers/"
         "Microsoft.CognitiveServices/accounts/test-account/projects/test-project"
     )
     project_client = MagicMock()
 
     async def connections():
-        yield SimpleNamespace(id=f"{project_id}/connections/appinsights")
+        yield SimpleNamespace(id=f"{project_arm_id}/connections/appinsights", name="appinsights")
 
     project_client.connections.list.return_value = connections()
+    agent = RawFoundryAgent(project_client=project_client, agent_name="test-agent")
 
-    assert await _get_foundry_project_id(project_client) == project_id
+    assert await agent._get_foundry_project_arm_id() == project_arm_id
     project_client.connections.list.assert_called_once_with(
         connection_type=projects_models.ConnectionType.APPLICATION_INSIGHTS
     )
 
 
-async def test_get_foundry_project_id_rejects_unexpected_connection_id() -> None:
+async def test_get_foundry_project_arm_id_rejects_unexpected_connection_id() -> None:
     """Test that malformed connection metadata does not silently disable portal attribution."""
 
     project_client = MagicMock()
 
     async def connections():
-        yield SimpleNamespace(id="appinsights")
+        yield SimpleNamespace(id="appinsights", name="appinsights")
 
     project_client.connections.list.return_value = connections()
+    agent = RawFoundryAgent(project_client=project_client, agent_name="test-agent")
 
     with pytest.raises(ValueError, match="unexpected format"):
-        await _get_foundry_project_id(project_client)
+        await agent._get_foundry_project_arm_id()
 
 
 def test_raw_foundry_agent_init_passes_default_headers_to_client() -> None:
@@ -1316,7 +1317,7 @@ async def test_foundry_agent_configure_azure_monitor() -> None:
     mock_views = MagicMock(return_value=[])
     mock_resource = MagicMock()
     mock_enable = MagicMock()
-    project_id = (
+    project_arm_id = (
         "/subscriptions/test-sub/resourceGroups/test-rg/providers/"
         "Microsoft.CognitiveServices/accounts/test-account/projects/test-project"
     )
@@ -1330,22 +1331,22 @@ async def test_foundry_agent_configure_azure_monitor() -> None:
         patch("agent_framework.observability.create_resource", return_value=mock_resource),
         patch("agent_framework.observability.enable_instrumentation", mock_enable),
         patch(
-            "agent_framework_foundry._agent._get_foundry_project_id",
+            "agent_framework_foundry._agent.RawFoundryAgent._get_foundry_project_arm_id",
             new_callable=AsyncMock,
-            return_value=project_id,
-        ) as mock_get_project_id,
+            return_value=project_arm_id,
+        ) as mock_get_project_arm_id,
     ):
         await agent.configure_azure_monitor(enable_sensitive_data=True)
 
     mock_project.telemetry.get_application_insights_connection_string.assert_called_once()
-    mock_get_project_id.assert_awaited_once_with(mock_project)
+    mock_get_project_arm_id.assert_awaited_once_with()
     call_kwargs = mock_configure.call_args.kwargs
     assert call_kwargs["connection_string"] == "InstrumentationKey=test-key;IngestionEndpoint=https://test.endpoint"
     assert call_kwargs["views"] == []
     assert call_kwargs["resource"] is mock_resource
     mock_enable.assert_called_once_with(enable_sensitive_data=True)
     assert agent._get_additional_otel_agent_attributes() == {
-        "microsoft.foundry.project.id": project_id,
+        "microsoft.foundry.project.id": project_arm_id,
     }
 
 

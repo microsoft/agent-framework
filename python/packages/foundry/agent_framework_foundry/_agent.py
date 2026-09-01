@@ -96,26 +96,7 @@ class FoundryAgentSettings(TypedDict, total=False):
 
 
 FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY = "foundry_hosted_agent_session_id"
-_FOUNDRY_PROJECT_ID_ATTRIBUTE = "microsoft.foundry.project.id"
-
-
-async def _get_foundry_project_id(project_client: AIProjectClient) -> str:
-    """Get the Foundry project ARM ID from its Application Insights connection ID."""
-    connections = project_client.connections.list(connection_type=ConnectionType.APPLICATION_INSIGHTS)
-    async for connection in connections:
-        connection_id = getattr(connection, "id", None)
-        if not isinstance(connection_id, str):
-            raise ValueError("The Foundry Application Insights connection does not have a resource ID.")
-
-        marker = "/connections/"
-        marker_index = connection_id.lower().rfind(marker)
-        if marker_index <= 0:
-            raise ValueError(
-                f"The Foundry Application Insights connection ID has an unexpected format: {connection_id!r}."
-            )
-        return connection_id[:marker_index]
-
-    raise ValueError("The Foundry project does not have an Application Insights connection.")
+_FOUNDRY_PROJECT_ARM_ID_ATTRIBUTE = "microsoft.foundry.project.id"
 
 
 class FoundryAgentOptions(OpenAIChatOptions, total=False):
@@ -771,7 +752,7 @@ class RawFoundryAgent(
             client_kwargs["function_invocation_configuration"] = function_invocation_configuration
 
         client = actual_client_type(**client_kwargs)
-        self._foundry_project_id: str | None = None
+        self._foundry_project_arm_id: str | None = None
 
         super().__init__(
             client=client,  # type: ignore[arg-type]
@@ -863,6 +844,22 @@ class RawFoundryAgent(
         if session is not None and isinstance(agent_session_id, str) and agent_session_id:
             session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = agent_session_id
 
+    async def _get_foundry_project_arm_id(self) -> str:
+        """Get the Foundry project ARM ID from its Application Insights connection."""
+        client = cast(RawFoundryAgentChatClient, self.client)
+        # AIProjectClient does not expose the project ARM ID directly. Derive it from the
+        # project-scoped connection until https://github.com/Azure/azure-sdk-for-python/issues/48825 is addressed.
+        connections = client.project_client.connections.list(connection_type=ConnectionType.APPLICATION_INSIGHTS)
+        async for connection in connections:
+            connection_suffix = f"/connections/{connection.name}"
+            if not connection.id.lower().endswith(connection_suffix.lower()):
+                raise ValueError(
+                    f"The Foundry Application Insights connection ID has an unexpected format: {connection.id!r}."
+                )
+            return connection.id[: -len(connection_suffix)]
+
+        raise ValueError("The Foundry project does not have an Application Insights connection.")
+
     async def configure_azure_monitor(
         self,
         enable_sensitive_data: bool = False,
@@ -880,6 +877,8 @@ class RawFoundryAgent(
 
         Raises:
             ImportError: If azure-monitor-opentelemetry-exporter is not installed.
+            ValueError: If the Application Insights connection does not contain the expected
+                project-scoped ARM resource ID.
         """
         from agent_framework.observability import (
             OBSERVABILITY_SETTINGS,
@@ -919,7 +918,7 @@ class RawFoundryAgent(
                 "Install it with: pip install azure-monitor-opentelemetry"
             ) from exc
 
-        self._foundry_project_id = await _get_foundry_project_id(client.project_client)
+        self._foundry_project_arm_id = await self._get_foundry_project_arm_id()
 
         if "resource" not in kwargs:
             kwargs["resource"] = create_resource()
@@ -978,8 +977,8 @@ class FoundryAgent(  # type: ignore[misc]
     @override
     def _get_additional_otel_agent_attributes(self) -> Mapping[str, Any]:
         """Return Foundry attributes required to discover the agent trace."""
-        if self._foundry_project_id:
-            return {_FOUNDRY_PROJECT_ID_ATTRIBUTE: self._foundry_project_id}
+        if self._foundry_project_arm_id:
+            return {_FOUNDRY_PROJECT_ARM_ID_ATTRIBUTE: self._foundry_project_arm_id}
         return {}
 
     @override
