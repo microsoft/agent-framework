@@ -15,10 +15,13 @@ from ._conversations import ConversationStore, InMemoryConversationStore
 from ._discovery import EntityDiscovery
 from ._mapper import MessageMapper
 from ._tracing import capture_traces
+from ._utils import infer_media_type
 from .models import AgentFrameworkRequest, OpenAIResponse
 from .models._discovery_models import EntityInfo
 
 logger = logging.getLogger(__name__)
+
+_OPENAI_MESSAGE_ROLES = {"user", "assistant", "system", "developer"}
 
 
 def _get_event_type(event: Any) -> str | None:
@@ -33,6 +36,10 @@ class EntityNotFoundError(Exception):
     """Raised when an entity is not found."""
 
     pass
+
+
+class InputConversionError(ValueError):
+    """Raised when OpenAI input contains no supported Agent Framework content."""
 
 
 class AgentFrameworkExecutor:
@@ -229,6 +236,7 @@ class AgentFrameworkExecutor:
             OpenAI response stream events
         """
         try:
+            events: list[Any] = []
             entity_id = request.get_entity_id()
             if not entity_id:
                 logger.error("No entity_id specified in request")
@@ -249,7 +257,12 @@ class AgentFrameworkExecutor:
                         and cast(dict[str, Any], event).get("type") == "response.function_approval.requested"
                     ):
                         self._track_approval_request(cast(dict[str, Any], event))
+                    events.append(event)
+                    if _get_event_type(event) == "response.failed":
+                        continue
                     yield event
+
+            yield await self.message_mapper.finalize_stream(events, request)
 
         except Exception as e:
             logger.exception(f"Error in streaming execution: {e}")
@@ -267,7 +280,14 @@ class AgentFrameworkExecutor:
         # Collect all streaming events
         events = [event async for event in self.execute_streaming(request)]
 
-        # Aggregate into final response
+        for event in reversed(events):
+            if _get_event_type(event) not in ("response.completed", "response.failed"):
+                continue
+            response = getattr(event, "response", None)
+            if isinstance(response, OpenAIResponse):
+                return response
+
+        # Preserve the existing empty-response fallback when execution produced no events.
         return await self.message_mapper.aggregate_to_response(events, request)
 
     async def execute_entity(self, entity_id: str, request: AgentFrameworkRequest) -> AsyncGenerator[Any]:
@@ -592,6 +612,10 @@ class AgentFrameworkExecutor:
                     # The workflow is already paused by ctx.request_info() in the framework
                     # DevUI should continue yielding events even during HIL pause
 
+        except InputConversionError as e:
+            from .models._openai_custom import AgentFailedEvent
+
+            yield AgentFailedEvent(error=e)
         except Exception as e:
             logger.error(f"Error in workflow execution: {e}")
             yield {"type": "error", "message": f"Workflow execution error: {e!s}"}
@@ -610,7 +634,7 @@ class AgentFrameworkExecutor:
         """
         # Import Agent Framework types
         try:
-            from agent_framework import Message, Role
+            from agent_framework import Message
         except ImportError:
             # Fallback to string extraction if Agent Framework not available
             return self._extract_user_message_fallback(input_data)
@@ -622,13 +646,13 @@ class AgentFrameworkExecutor:
         # Handle OpenAI ResponseInputParam (List[ResponseInputItemParam])
         if isinstance(input_data, list):
             input_items: Any = cast(Any, input_data)
-            return self._convert_openai_input_to_chat_message(input_items, Message, Role)
+            return self._convert_openai_input_to_chat_message(input_items, Message)
 
         # Fallback for other formats
         return self._extract_user_message_fallback(input_data)
 
-    def _convert_openai_input_to_chat_message(self, input_items: list[Any], Message: Any, Role: Any) -> Any:
-        """Convert OpenAI ResponseInputParam to Agent Framework Message.
+    def _convert_openai_input_to_chat_message(self, input_items: list[Any], Message: Any) -> Any:
+        """Convert OpenAI ResponseInputParam to Agent Framework messages.
 
         Processes text, images, files, and other content types from OpenAI format
         to Agent Framework Message with appropriate content objects.
@@ -636,12 +660,12 @@ class AgentFrameworkExecutor:
         Args:
             input_items: List of OpenAI ResponseInputItemParam objects (dicts or objects)
             Message: Message class for creating chat messages
-            Role: Role enum for message roles
 
         Returns:
-            Message with converted content
+            One Message, or a list of Messages when input contains multiple message items
         """
-        contents: list[Content] = []
+        messages: list[Any] = []
+        approval_request_ids: set[str] = set()
 
         # Process each input item
         for item in input_items:
@@ -649,9 +673,15 @@ class AgentFrameworkExecutor:
             if isinstance(item, dict):
                 item_dict = cast(dict[str, Any], item)
                 item_type = item_dict.get("type")
-                if item_type == "message":
+                is_easy_message = item_type is None and "role" in item_dict and "content" in item_dict
+                if item_type == "message" or is_easy_message:
+                    role_value = item_dict.get("role", "user")
+                    if not isinstance(role_value, str) or role_value not in _OPENAI_MESSAGE_ROLES:
+                        raise InputConversionError(f"Unsupported OpenAI input message role: {role_value!r}")
+
                     # Extract content from OpenAI message
                     message_content = item_dict.get("content", [])
+                    contents: list[Content] = []
 
                     # Handle both string content and list content
                     if isinstance(message_content, str):
@@ -664,78 +694,97 @@ class AgentFrameworkExecutor:
                                 content_dict = cast(dict[str, Any], content_item)
                                 content_type = content_dict.get("type")
 
-                                if content_type == "input_text":
+                                if content_type in ("input_text", "output_text", "text"):
                                     text = content_dict.get("text", "")
                                     if isinstance(text, str):
                                         contents.append(Content.from_text(text=text))
 
                                 elif content_type == "input_image":
                                     image_url = content_dict.get("image_url", "")
+                                    file_id = content_dict.get("file_id")
+                                    detail = content_dict.get("detail", "auto")
+                                    image_properties = {
+                                        "openai_content_type": "input_image",
+                                        "detail": detail if isinstance(detail, str) else "auto",
+                                    }
                                     if isinstance(image_url, str) and image_url:
-                                        # Extract media type from data URI if possible
-                                        # Parse media type from data URL, fallback to image/png
-                                        if image_url.startswith("data:"):
-                                            try:
-                                                # Extract media type from data:image/jpeg;base64,... format
-                                                media_type = image_url.split(";")[0].split(":")[1]
-                                            except (IndexError, AttributeError):
-                                                logger.warning(
-                                                    f"Failed to parse media type from data URL: {image_url[:30]}..."
-                                                )
-                                                media_type = "image/png"
-                                        else:
-                                            media_type = "image/png"
-                                        contents.append(Content.from_uri(uri=image_url, media_type=media_type))
+                                        media_type = infer_media_type(uri=image_url, default="image/png")
+                                        contents.append(
+                                            Content.from_uri(
+                                                uri=image_url,
+                                                media_type=media_type,
+                                                additional_properties=image_properties,
+                                            )
+                                        )
+                                    elif isinstance(file_id, str) and file_id:
+                                        contents.append(
+                                            Content.from_hosted_file(
+                                                file_id=file_id,
+                                                additional_properties=image_properties,
+                                            )
+                                        )
 
                                 elif content_type == "input_file":
                                     # Handle file input
                                     file_data = content_dict.get("file_data")
+                                    file_id = content_dict.get("file_id")
                                     file_url = content_dict.get("file_url")
                                     filename = content_dict.get("filename", "")
+                                    detail = content_dict.get("detail")
 
                                     if not isinstance(filename, str):
                                         filename = ""
 
-                                    # Determine media type from filename
-                                    media_type = "application/octet-stream"  # default
-                                    if filename:
-                                        if filename.lower().endswith(".pdf"):
-                                            media_type = "application/pdf"
-                                        elif filename.lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
-                                            media_type = f"image/{filename.split('.')[-1].lower()}"
-                                        elif filename.lower().endswith((
-                                            ".wav",
-                                            ".mp3",
-                                            ".m4a",
-                                            ".ogg",
-                                            ".flac",
-                                            ".aac",
-                                        )):
-                                            ext = filename.split(".")[-1].lower()
-                                            # Normalize extensions to match audio MIME types
-                                            media_type = "audio/mp4" if ext == "m4a" else f"audio/{ext}"
-
                                     # Use file_data or file_url
                                     # Include filename in additional_properties for OpenAI/Azure file handling
-                                    additional_props: dict[str, Any] | None = (
-                                        {"filename": filename} if filename else None
-                                    )
+                                    file_properties: dict[str, Any] = {"openai_content_type": "input_file"}
+                                    if filename:
+                                        file_properties["filename"] = filename
+                                    if isinstance(detail, str):
+                                        file_properties["detail"] = detail
+
                                     if isinstance(file_data, str) and file_data:
-                                        # Assume file_data is base64, create data URI
-                                        data_uri = f"data:{media_type};base64,{file_data}"
+                                        media_type = infer_media_type(
+                                            filename=filename,
+                                            uri=file_data,
+                                            default="application/octet-stream",
+                                        )
+                                        data_uri = (
+                                            file_data
+                                            if file_data.startswith("data:")
+                                            else f"data:{media_type};base64,{file_data}"
+                                        )
                                         contents.append(
                                             Content.from_uri(
                                                 uri=data_uri,
                                                 media_type=media_type,
-                                                additional_properties=additional_props,
+                                                additional_properties=file_properties,
                                             )
                                         )
                                     elif isinstance(file_url, str) and file_url:
+                                        media_type = infer_media_type(
+                                            filename=filename,
+                                            uri=file_url,
+                                            default="application/octet-stream",
+                                        )
                                         contents.append(
                                             Content.from_uri(
                                                 uri=file_url,
                                                 media_type=media_type,
-                                                additional_properties=additional_props,
+                                                additional_properties=file_properties,
+                                            )
+                                        )
+                                    elif isinstance(file_id, str) and file_id:
+                                        media_type = infer_media_type(
+                                            filename=filename,
+                                            default="application/octet-stream",
+                                        )
+                                        contents.append(
+                                            Content.from_hosted_file(
+                                                file_id=file_id,
+                                                media_type=media_type,
+                                                name=filename or None,
+                                                additional_properties=file_properties,
                                             )
                                         )
 
@@ -752,7 +801,11 @@ class AgentFrameworkExecutor:
 
                                         # Only accept responses that match a request we issued.
                                         # Always use the server-stored function_call data.
-                                        stored_fc = self._pending_approvals.pop(request_id, None)
+                                        stored_fc = (
+                                            None
+                                            if request_id in approval_request_ids
+                                            else self._pending_approvals.get(request_id)
+                                        )
                                         if stored_fc is None:
                                             logger.warning(
                                                 "Rejected function_approval_response with unknown "
@@ -786,6 +839,7 @@ class AgentFrameworkExecutor:
                                             additional_properties=approval_additional_props,
                                         )
                                         contents.append(approval_response)
+                                        approval_request_ids.add(request_id)
                                         logger.info(
                                             "Validated FunctionApprovalResponseContent: id=%s, "
                                             "approved=%s, function=%s, policy_violation=%s",
@@ -801,24 +855,23 @@ class AgentFrameworkExecutor:
                                     except Exception as e:
                                         logger.error(f"Failed to process FunctionApprovalResponseContent: {e}")
 
+                    if not contents:
+                        raise InputConversionError("OpenAI input message did not contain any supported message content")
+
+                    messages.append(Message(role=role_value, contents=contents))
+
             # Handle other OpenAI input item types as needed
             # (tool calls, function results, etc.)
 
-        # If no contents found, create a simple text message
-        if not contents:
-            contents.append(Content.from_text(text=""))
+        if not messages:
+            raise InputConversionError("OpenAI input did not contain any supported message content")
 
-        chat_message = Message(role="user", contents=contents)
+        for request_id in approval_request_ids:
+            self._pending_approvals.pop(request_id, None)
 
-        logger.info(f"Created Message with {len(contents)} contents:")
-        for idx, content in enumerate(contents):
-            content_type = content.__class__.__name__
-            if hasattr(content, "media_type"):
-                logger.info(f"  [{idx}] {content_type} - media_type: {content.media_type}")
-            else:
-                logger.info(f"  [{idx}] {content_type}")
+        logger.info("Created %d Message object(s) from OpenAI input", len(messages))
 
-        return chat_message
+        return messages[0] if len(messages) == 1 else messages
 
     def _extract_user_message_fallback(self, input_data: Any) -> str:
         """Fallback method to extract user message as string.
@@ -857,8 +910,11 @@ class AgentFrameworkExecutor:
         first_item = input_data_items[0]
         if not isinstance(first_item, dict):
             return False
-        first_type = cast(dict[str, Any], first_item).get("type")
-        return isinstance(first_type, str) and first_type == "message"
+        first_item_dict = cast(dict[str, Any], first_item)
+        first_type = first_item_dict.get("type")
+        return first_type == "message" or (
+            first_type is None and "role" in first_item_dict and "content" in first_item_dict
+        )
 
     async def _parse_workflow_input(self, workflow: Any, raw_input: Any) -> Any:
         """Parse input based on workflow's expected input type.
@@ -893,6 +949,8 @@ class AgentFrameworkExecutor:
             # Handle string input
             return self._parse_raw_workflow_input(workflow, str(raw_input))
 
+        except InputConversionError:
+            raise
         except Exception as e:
             logger.warning(f"Error parsing workflow input: {e}")
             return cast(Any, raw_input)

@@ -12,9 +12,9 @@ using Azure.Core;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -489,16 +489,14 @@ public static class FoundryHostingExtensions
     }
 
     /// <summary>
-    /// Binds Kestrel to the port the Foundry hosted runtime probes and routes to, so a plain
-    /// <c>WebApplication.CreateBuilder</c> host (Tier 3) works with no Dockerfile. Mirrors
-    /// <c>AgentHostBuilder</c>, which listens on the <c>PORT</c> value (default 8088).
+    /// Configures the URL used by a plain <c>WebApplication.CreateBuilder</c> host (Tier 3) so
+    /// it listens on the port the Foundry hosted runtime probes and routes to.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The listener is added only when configuration reports a Foundry container through
-    /// <see cref="FoundryHostingEnvironmentKey"/>. A listener configured in code overrides the
-    /// addresses a host resolves from configuration, so adding it everywhere would silently move
-    /// any non-Foundry app off its configured address.
+    /// The URL is configured only when configuration reports a Foundry container through
+    /// <see cref="FoundryHostingEnvironmentKey"/>. Outside Foundry the host keeps its configured
+    /// addresses.
     /// </para>
     /// <para>
     /// Both values come from <see cref="IConfiguration"/> rather than from
@@ -508,16 +506,14 @@ public static class FoundryHostingExtensions
     /// environment.
     /// </para>
     /// <para>
-    /// Inside a Foundry container the listener cannot be skipped based on <c>ASPNETCORE_URLS</c>:
-    /// the .NET base image always sets it to port 80, so such a guard would always trip and leave
-    /// the container failing the readiness probe with HTTP 424. It cannot key off the presence of
-    /// <c>PORT</c> either, because the platform sets that value only when it needs a port other
-    /// than the default.
+    /// Inside a Foundry container this replaces the URL inherited from the .NET base image. When
+    /// <c>AgentHostBuilder</c> is used, its code-configured Kestrel listener takes precedence over
+    /// this URL, so both hosting paths resolve to one listener without identifying the builder
+    /// from its service registrations.
     /// </para>
     /// <para>
-    /// Idempotent, and harmless when no Kestrel server is present (for example under
-    /// <c>TestServer</c>): the <see cref="KestrelServerOptions"/> callback only runs when Kestrel
-    /// is resolved.
+    /// The startup filter is resolved before ASP.NET reads the configured URLs and starts its
+    /// server. Registration is idempotent across repeated <c>AddFoundryResponses</c> calls.
     /// </para>
     /// </remarks>
     private static void ConfigureFoundryListenPort(IServiceCollection services)
@@ -528,16 +524,23 @@ public static class FoundryHostingExtensions
         }
 
         services.AddSingleton<FoundryListenPortMarker>();
-        services.AddOptions<KestrelServerOptions>()
-            .Configure<IConfiguration>(static (options, configuration) =>
-            {
-                if (string.IsNullOrEmpty(configuration[FoundryHostingEnvironmentKey]))
-                {
-                    return;
-                }
+        services.AddSingleton<IStartupFilter, FoundryListenPortStartupFilter>();
+    }
 
-                options.ListenAnyIP(ResolveListenPort(configuration));
-            });
+    private sealed class FoundryListenPortStartupFilter : IStartupFilter
+    {
+        public FoundryListenPortStartupFilter(IConfiguration configuration)
+        {
+            // GenericWebHostService resolves startup filters before it reads this URL and starts
+            // the server, while a code-configured AgentHost listener takes precedence over it.
+            if (!string.IsNullOrEmpty(configuration[FoundryHostingEnvironmentKey]))
+            {
+                configuration[WebHostDefaults.ServerUrlsKey] =
+                    $"http://+:{ResolveListenPort(configuration)}";
+            }
+        }
+
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => next;
     }
 
     /// <summary>

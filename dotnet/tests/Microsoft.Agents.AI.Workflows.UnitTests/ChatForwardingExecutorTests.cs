@@ -3,9 +3,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Extensions.AI;
 
@@ -54,7 +52,7 @@ public class ChatForwardingExecutorTests
         TestWorkflowContext testContext = new(executor.Id);
         object? callResult = await executor.ExecuteCoreAsync(message, new TypeId(typeof(TMessage)), testContext);
 
-        callResult.Should().BeNull(); // ChatForwardingExecutor's do not have a return type
+        Assert.Null(callResult); // ChatForwardingExecutor's do not have a return type
 
         return testContext;
     }
@@ -67,8 +65,8 @@ public class ChatForwardingExecutorTests
         ChatForwardingExecutor executor = new(nameof(ChatForwardingExecutor));
 
         // Act
-        Func<Task<TestWorkflowContext>> action = () => this.RunForwardMessageTestAsync(executor, TestMessageContent);
-        await action.Should().ThrowAsync<NotSupportedException>();
+        Task<TestWorkflowContext> actionAsync() => this.RunForwardMessageTestAsync(executor, TestMessageContent);
+        await Assert.ThrowsAsync<NotSupportedException>((Func<Task<TestWorkflowContext>>)actionAsync);
     }
 
     [Theory]
@@ -87,19 +85,19 @@ public class ChatForwardingExecutorTests
         ChatForwardingExecutor executor = new(nameof(ChatForwardingExecutor), options);
 
         // Act
-        Func<Task<TestWorkflowContext>> action = () => this.RunForwardMessageTestAsync(executor, TestMessageContent);
+        Task<TestWorkflowContext> actionAsync() => this.RunForwardMessageTestAsync(executor, TestMessageContent);
 
         // Assert
         if (options.StringMessageChatRole is ChatRole chatRole)
         {
-            TestWorkflowContext testContext = await action();
+            TestWorkflowContext testContext = await actionAsync();
 
-            testContext.SentMessages.Should().HaveCount(1)
-                                .And.BeEquivalentTo([new ChatMessage(chatRole, TestMessageContent)]);
+            ChatMessage sentMessage = Assert.IsType<ChatMessage>(Assert.Single(testContext.SentMessages));
+            Assert.Equivalent(new ChatMessage(chatRole, TestMessageContent), sentMessage);
         }
         else
         {
-            await action.Should().ThrowAsync<NotSupportedException>();
+            await Assert.ThrowsAsync<NotSupportedException>((Func<Task<TestWorkflowContext>>)actionAsync);
         }
     }
 
@@ -114,7 +112,7 @@ public class ChatForwardingExecutorTests
         TestWorkflowContext testContext = await this.RunForwardMessageTestAsync(executor, testMessage);
 
         // Assert
-        testContext.SentMessages.Should().ContainSingle(message => ReferenceEquals(message, testMessage));
+        Assert.Same(testMessage, Assert.Single(testContext.SentMessages));
     }
 
     [Theory]
@@ -134,7 +132,7 @@ public class ChatForwardingExecutorTests
             : await this.RunForwardMessageTestAsync(executor, testMessages);
 
         // Assert
-        testContext.SentMessages.Should().ContainSingle(messages => ReferenceEquals(messages, testMessages));
+        Assert.Same(testMessages, Assert.Single(testContext.SentMessages));
     }
 
     [Fact]
@@ -149,7 +147,7 @@ public class ChatForwardingExecutorTests
         TestWorkflowContext testContext = await this.RunForwardMessageTestAsync(executor, testMessages);
 
         // Assert
-        testContext.SentMessages.Should().ContainSingle(messages => ReferenceEquals(messages, testMessages));
+        Assert.Same(testMessages, Assert.Single(testContext.SentMessages));
     }
 
     [Fact]
@@ -164,8 +162,9 @@ public class ChatForwardingExecutorTests
         TestWorkflowContext testContext = await this.RunForwardMessageTestAsync(executor, testMessages);
 
         // Assert
-        testContext.SentMessages.Should().ContainSingle(messages => !ReferenceEquals(messages, testMessages))
-                                     .And.Subject.Single().Should().BeEquivalentTo(testMessages);
+        IReadOnlyList<ChatMessage> forwardedMessages =
+            Assert.IsAssignableFrom<IReadOnlyList<ChatMessage>>(Assert.Single(testContext.SentMessages, messages => !ReferenceEquals(messages, testMessages)));
+        Assert.Equivalent(testMessages, forwardedMessages);
     }
 
     [Theory]
@@ -182,6 +181,6 @@ public class ChatForwardingExecutorTests
         TestWorkflowContext testContext = await this.RunForwardMessageTestAsync(executor, testTurnToken);
 
         // Assert
-        testContext.SentMessages.Should().BeEquivalentTo([testTurnToken]);
+        Assert.Equal(testTurnToken, Assert.Single(testContext.SentMessages));
     }
 }

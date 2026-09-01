@@ -4,7 +4,7 @@ description = "Mistral AI integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260813"
+version = "1.0.0b260827"
 license-files = ["LICENSE"]
 urls.homepage = "https://learn.microsoft.com/en-us/agent-framework/"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -24,9 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.13.0,<2",
-    # Talks to the Mistral REST API directly; the mistralai SDK is not used because its
-    # pinned OpenTelemetry requirements conflict with the rest of the framework.
-    "httpx>=0.23.1,<1",
+    "mistralai>=2.9.2,<3",
 ]
 
 [tool.uv]

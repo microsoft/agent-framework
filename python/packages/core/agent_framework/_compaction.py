@@ -375,6 +375,76 @@ def _set_group_summarized_by_summary_id(message: Message, summary_id: str) -> No
     annotation[SUMMARIZED_BY_SUMMARY_ID_KEY] = summary_id
 
 
+def _reconcile_compaction_summaries(  # pyright: ignore[reportUnusedFunction]
+    source_messages: list[Message],
+    working_messages: Sequence[Message],
+    previous_message_ids: set[int],
+) -> None:
+    """Reconcile summaries of source messages without persisting unrelated rewrites."""
+    source_message_ids = {message.message_id for message in source_messages if message.message_id}
+    candidates: list[tuple[Message, set[str]]] = []
+    for message in working_messages:
+        if id(message) in previous_message_ids:
+            continue
+
+        annotation = _read_group_annotation_raw(message)
+        if annotation is None:
+            continue
+        summarized_message_ids: Any = annotation.get(SUMMARY_OF_MESSAGE_IDS_KEY)
+        if (
+            message.message_id
+            and isinstance(summarized_message_ids, list)
+            and summarized_message_ids
+            and all(isinstance(value, str) for value in cast("list[Any]", summarized_message_ids))
+        ):
+            candidates.append((message, set(cast("list[str]", summarized_message_ids))))
+
+    dependencies = {message.message_id: summary_ids for message, summary_ids in candidates if message.message_id}
+    supported_ids = set(source_message_ids)
+    pending_ids = set(dependencies)
+    while pending_ids:
+        newly_supported = {summary_id for summary_id in pending_ids if dependencies[summary_id].issubset(supported_ids)}
+        if not newly_supported:
+            break
+        supported_ids.update(newly_supported)
+        pending_ids.difference_update(newly_supported)
+
+    accepted_ids = set(dependencies).difference(pending_ids)
+    for message in [*source_messages, *(candidate for candidate, _ in candidates)]:
+        annotation = _read_group_annotation_raw(message)
+        if annotation is None:
+            continue
+        summary_id = annotation.get(SUMMARIZED_BY_SUMMARY_ID_KEY)
+        if not isinstance(summary_id, str) or summary_id in accepted_ids or summary_id in source_message_ids:
+            continue
+        annotation.pop(SUMMARIZED_BY_SUMMARY_ID_KEY, None)
+        message.additional_properties.pop(EXCLUDED_KEY, None)
+        message.additional_properties.pop(EXCLUDE_REASON_KEY, None)
+
+    def source_dependencies(summary_id: str) -> set[str]:
+        expanded: set[str] = set()
+        for dependency_id in dependencies[summary_id]:
+            if dependency_id in source_message_ids:
+                expanded.add(dependency_id)
+            elif dependency_id in accepted_ids:
+                expanded.update(source_dependencies(dependency_id))
+        return expanded
+
+    for message, _ in candidates:
+        if message.message_id not in accepted_ids:
+            continue
+        summarized_source_ids = source_dependencies(message.message_id)
+        insertion_index = min(
+            (
+                index
+                for index, source_message in enumerate(source_messages)
+                if source_message.message_id in summarized_source_ids
+            ),
+            default=len(source_messages),
+        )
+        source_messages.insert(insertion_index, message)
+
+
 def _write_group_annotation(
     message: Message,
     *,
@@ -802,8 +872,8 @@ class TruncationStrategy:
     - token count when ``tokenizer`` is provided
     - included message count when ``tokenizer`` is not provided
     Compaction triggers when the metric exceeds ``max_n`` and trims toward
-    ``compact_to``. The minimum retained group is never excluded, so the
-    result may remain above ``compact_to`` when that group alone exceeds it.
+    ``compact_to``. Protected groups are never excluded, so the result may
+    remain above ``compact_to`` when those groups alone exceed it.
     """
 
     def __init__(
@@ -813,6 +883,7 @@ class TruncationStrategy:
         compact_to: int,
         tokenizer: TokenizerProtocol | None = None,
         preserve_system: bool = True,
+        preserve_first_user_group: bool = False,
     ) -> None:
         """Create a truncation strategy.
 
@@ -824,6 +895,8 @@ class TruncationStrategy:
             tokenizer: Optional tokenizer used for token-based truncation.
             preserve_system: When True, system groups remain included and only
                 non-system groups are eligible for exclusion.
+            preserve_first_user_group: When True, the earliest user group
+                remains included along with the minimum retained group.
         """
         if max_n <= 0:
             raise ValueError("max_n must be greater than 0.")
@@ -835,6 +908,7 @@ class TruncationStrategy:
         self.compact_to = compact_to
         self.tokenizer = tokenizer
         self.preserve_system = preserve_system
+        self.preserve_first_user_group = preserve_first_user_group
 
     async def __call__(self, messages: list[Message]) -> bool:
         ordered_group_ids = _ordered_group_ids_from_annotations(messages)
@@ -850,6 +924,13 @@ class TruncationStrategy:
         protected_ids: set[str] = set()
         if self.preserve_system:
             protected_ids = {group_id for group_id in ordered_group_ids if kinds.get(group_id) == "system"}
+        if self.preserve_first_user_group:
+            first_user_group_id = next(
+                (group_id for group_id in ordered_group_ids if kinds.get(group_id) == "user"),
+                None,
+            )
+            if first_user_group_id is not None:
+                protected_ids.add(first_user_group_id)
         protected_ids.update(_minimum_retained_group_ids(messages, ordered_group_ids, kinds))
 
         changed = False
@@ -1472,6 +1553,50 @@ class TokenBudgetComposedStrategy:
         return changed
 
 
+async def _run_compaction_strategy(
+    messages: list[Message],
+    *,
+    strategy: CompactionStrategy,
+    tokenizer: TokenizerProtocol | None = None,
+    phase: str,
+) -> bool:
+    """Apply a strategy and log aggregate metrics when it changes context."""
+    resolved_tokenizer = tokenizer
+    if resolved_tokenizer is None:
+        strategy_tokenizer = getattr(strategy, "tokenizer", None)
+        if isinstance(strategy_tokenizer, TokenizerProtocol):
+            resolved_tokenizer = strategy_tokenizer
+
+    annotate_message_groups(messages)
+    if resolved_tokenizer is not None:
+        annotate_token_counts(messages, tokenizer=resolved_tokenizer)
+    before_message_count = _count_included_messages(messages)
+    before_token_count = included_token_count(messages) if resolved_tokenizer is not None else None
+
+    changed = await strategy(messages)
+    if not changed:
+        return False
+
+    annotate_message_groups(messages)
+    if resolved_tokenizer is not None:
+        annotate_token_counts(messages, tokenizer=resolved_tokenizer)
+    after_message_count = _count_included_messages(messages)
+    after_token_count = included_token_count(messages) if resolved_tokenizer is not None else None
+    strategy_name = getattr(strategy, "__name__", type(strategy).__name__)
+    logger.info(
+        "Compaction applied",
+        extra={
+            "compaction_phase": phase,
+            "compaction_strategy": strategy_name,
+            "compaction_included_messages_before": before_message_count,
+            "compaction_included_messages_after": after_message_count,
+            "compaction_included_tokens_before": before_token_count,
+            "compaction_included_tokens_after": after_token_count,
+        },
+    )
+    return True
+
+
 async def apply_compaction(
     messages: list[Message],
     *,
@@ -1481,10 +1606,12 @@ async def apply_compaction(
     """Apply configured compaction and return projected model-input messages."""
     if strategy is None:
         return messages
-    annotate_message_groups(messages)
-    if tokenizer is not None:
-        annotate_token_counts(messages, tokenizer=tokenizer)
-    await strategy(messages)
+    await _run_compaction_strategy(
+        messages,
+        strategy=strategy,
+        tokenizer=tokenizer,
+        phase="in_run",
+    )
     return project_included_messages(messages)
 
 
@@ -1579,10 +1706,12 @@ class CompactionProvider(ContextProvider):
         if not all_messages:
             return
 
-        annotate_message_groups(all_messages)
-        if self.tokenizer is not None:
-            annotate_token_counts(all_messages, tokenizer=self.tokenizer)
-        await self.before_strategy(all_messages)
+        await _run_compaction_strategy(
+            all_messages,
+            strategy=self.before_strategy,
+            tokenizer=self.tokenizer,
+            phase="before_run",
+        )
 
         projected = project_included_messages(all_messages)
         projected_set = {id(m) for m in projected}
@@ -1611,10 +1740,12 @@ class CompactionProvider(ContextProvider):
             return
         stored_messages: list[Message] = raw_messages  # type: ignore[assignment]
 
-        annotate_message_groups(stored_messages)
-        if self.tokenizer is not None:
-            annotate_token_counts(stored_messages, tokenizer=self.tokenizer)
-        await self.after_strategy(stored_messages)
+        await _run_compaction_strategy(
+            stored_messages,
+            strategy=self.after_strategy,
+            tokenizer=self.tokenizer,
+            phase="after_run",
+        )
 
         # Keep all messages (including excluded) in storage so annotations are
         # preserved. The history provider's ``skip_excluded`` flag controls
@@ -1632,9 +1763,10 @@ class ContextWindowCompactionStrategy:
     2. **Truncation** — removes oldest non-system groups when included tokens
        exceed ``truncation_threshold`` of the input budget.
 
-    The class uses two independent :class:`TokenBudgetComposedStrategy`
-    instances — one per phase — so each fires only when its own threshold
-    is exceeded.
+    Each phase checks its threshold explicitly. Token counts are refreshed
+    after tool-result eviction before deciding whether destructive truncation
+    is necessary. If protected groups still exceed the input budget after
+    truncation, the strategy preserves them and emits a structured warning.
 
     Examples:
         .. code-block:: python
@@ -1663,6 +1795,7 @@ class ContextWindowCompactionStrategy:
         tool_eviction_threshold: float = DEFAULT_TOOL_EVICTION_THRESHOLD,
         truncation_threshold: float = DEFAULT_TRUNCATION_THRESHOLD,
         keep_last_tool_call_groups: int = 4,
+        preserve_first_user_group: bool = False,
     ) -> None:
         """Create a context-window compaction strategy.
 
@@ -1681,6 +1814,8 @@ class ContextWindowCompactionStrategy:
             keep_last_tool_call_groups: Number of most recent tool-call groups
                 to retain verbatim during tool eviction. Older groups are
                 collapsed into summaries. Defaults to 4.
+            preserve_first_user_group: Whether destructive truncation preserves
+                the earliest user group. Defaults to False.
 
         Raises:
             ValueError: If thresholds are out of range or inconsistent.
@@ -1706,24 +1841,18 @@ class ContextWindowCompactionStrategy:
         self.input_budget_tokens = input_budget
         self.tool_eviction_threshold = tool_eviction_threshold
         self.truncation_threshold = truncation_threshold
+        self.tokenizer = resolved_tokenizer
+        self._tool_eviction_tokens = tool_eviction_tokens
+        self._truncation_tokens = truncation_tokens
 
-        self._tool_eviction = TokenBudgetComposedStrategy(
-            token_budget=tool_eviction_tokens,
-            tokenizer=resolved_tokenizer,
-            strategies=[
-                ToolResultCompactionStrategy(keep_last_tool_call_groups=keep_last_tool_call_groups),
-            ],
+        self._tool_eviction = ToolResultCompactionStrategy(
+            keep_last_tool_call_groups=keep_last_tool_call_groups,
         )
-        self._truncation = TokenBudgetComposedStrategy(
-            token_budget=truncation_tokens,
+        self._truncation = TruncationStrategy(
+            max_n=truncation_tokens,
+            compact_to=tool_eviction_tokens,
             tokenizer=resolved_tokenizer,
-            strategies=[
-                TruncationStrategy(
-                    max_n=truncation_tokens,
-                    compact_to=tool_eviction_tokens,
-                    tokenizer=resolved_tokenizer,
-                ),
-            ],
+            preserve_first_user_group=preserve_first_user_group,
         )
 
     async def __call__(self, messages: list[Message]) -> bool:
@@ -1732,8 +1861,28 @@ class ContextWindowCompactionStrategy:
         Returns:
             True if compaction changed message inclusion; otherwise False.
         """
-        changed = await self._tool_eviction(messages)
-        return (await self._truncation(messages)) or changed
+        annotate_message_groups(messages)
+        annotate_token_counts(messages, tokenizer=self.tokenizer)
+
+        changed = False
+        if included_token_count(messages) > self._tool_eviction_tokens:
+            changed = await self._tool_eviction(messages)
+            annotate_message_groups(messages)
+            annotate_token_counts(messages, tokenizer=self.tokenizer)
+
+        if included_token_count(messages) > self._truncation_tokens:
+            changed = (await self._truncation(messages)) or changed
+        remaining_tokens = included_token_count(messages)
+        if remaining_tokens > self.input_budget_tokens:
+            logger.warning(
+                "Compaction could not fit protected messages within the input budget",
+                extra={
+                    "compaction_strategy": type(self).__name__,
+                    "compaction_included_tokens_after": remaining_tokens,
+                    "compaction_input_budget_tokens": self.input_budget_tokens,
+                },
+            )
+        return changed
 
 
 __all__ = [

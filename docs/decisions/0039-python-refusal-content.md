@@ -5,7 +5,7 @@ date: 2026-09-01
 deciders: ["@eavanvalkenburg"]
 ---
 
-# Preserve provider refusals with marked Python text content
+# Preserve model refusals with marked Python text content
 
 ## Context and Problem Statement
 

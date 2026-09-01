@@ -463,19 +463,39 @@ async def test_get_response_no_usage_when_metadata_absent() -> None:
 @pytest.mark.parametrize(
     ("gemini_reason", "expected"),
     [
+        # Currently-mapped values: must keep mapping to exactly what they map to today.
         ("STOP", "stop"),
         ("MAX_TOKENS", "length"),
         ("SAFETY", "content_filter"),
         ("RECITATION", "content_filter"),
+        ("LANGUAGE", "content_filter"),
         ("BLOCKLIST", "content_filter"),
         ("PROHIBITED_CONTENT", "content_filter"),
         ("SPII", "content_filter"),
+        ("IMAGE_SAFETY", "content_filter"),
+        ("IMAGE_PROHIBITED_CONTENT", "content_filter"),
+        ("IMAGE_RECITATION", "content_filter"),
         ("MALFORMED_FUNCTION_CALL", "tool_calls"),
-        ("OTHER", None),
+        ("UNEXPECTED_TOOL_CALL", "tool_calls"),
+        # Real google-genai FinishReason values with no entry in _FINISH_REASON_MAP: must now
+        # pass through as the raw string instead of being silently dropped to None.
+        ("OTHER", "OTHER"),
+        ("TOO_MANY_TOOL_CALLS", "TOO_MANY_TOOL_CALLS"),
+        ("NO_IMAGE", "NO_IMAGE"),
+        ("IMAGE_OTHER", "IMAGE_OTHER"),
+        # Absent / unspecified: must still yield None.
+        (None, None),
+        ("FINISH_REASON_UNSPECIFIED", None),
     ],
 )
-async def test_finish_reason_mapping(gemini_reason: str, expected: str | None) -> None:
-    """Maps Gemini finish reason strings to the correct FinishReasonLiteral values."""
+async def test_finish_reason_mapping(gemini_reason: str | None, expected: str | None) -> None:
+    """Maps Gemini finish reason strings to the correct FinishReasonLiteral values.
+
+    Unmapped-but-real provider values (e.g. TOO_MANY_TOOL_CALLS) must pass through as the raw
+    string rather than vanishing to None, mirroring the fallback PR #7105 added for the other
+    chat clients (bedrock, claude, core, github_copilot, ollama, openai) but not gemini.
+    FINISH_REASON_UNSPECIFIED and an absent reason remain the legitimate None cases.
+    """
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(
         return_value=_make_response([_make_part(text="Hi")], finish_reason=gemini_reason)
@@ -484,6 +504,37 @@ async def test_finish_reason_mapping(gemini_reason: str, expected: str | None) -
     response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
 
     assert response.finish_reason == expected
+
+
+async def test_unmapped_finish_reason_still_attaches_usage_on_streamed_final_chunk() -> None:
+    """An unmapped provider finish reason must not suppress the final chunk's usage/token accounting.
+
+    Before this fix, `_process_chunk` attached usage only when `_map_finish_reason` returned a
+    non-None value. Since TOO_MANY_TOOL_CALLS is a real google-genai FinishReason absent from
+    `_FINISH_REASON_MAP`, it mapped to None, which silently dropped both the finish reason and
+    the whole turn's usage/token accounting for the final streamed chunk.
+    """
+    client, mock = _make_gemini_client()
+    chunks = [
+        _make_response([_make_part(text="Hello ")], finish_reason=None, prompt_tokens=None, output_tokens=None),
+        _make_response(
+            [_make_part(text="world!")],
+            finish_reason="TOO_MANY_TOOL_CALLS",
+            prompt_tokens=10,
+            output_tokens=5,
+        ),
+    ]
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter(chunks))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        stream=True,
+    )
+
+    updates = [update async for update in stream]
+
+    assert updates[-1].finish_reason == "TOO_MANY_TOOL_CALLS"
+    assert any(c.type == "usage" for c in updates[-1].contents)
 
 
 # message conversion
@@ -1464,6 +1515,53 @@ async def test_response_format_sets_json_mime_type() -> None:
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
+
+
+async def test_response_format_pydantic_model_sets_response_schema() -> None:
+    """A Pydantic model response_format must reach Gemini as response_schema, not just JSON mode.
+
+    Without the schema, the model is asked for JSON but is not constrained by it, so it can
+    return arbitrary JSON that then fails to parse into the requested model - the failure mode
+    #5888 described for mapping-shaped schemas, on the shape #5893 left out of scope.
+    """
+    from pydantic import BaseModel
+
+    class Reply(BaseModel):
+        text: str
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="{}")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"response_format": Reply},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.response_mime_type == "application/json"
+    assert config.response_schema == Reply.model_json_schema()
+
+
+async def test_response_schema_option_wins_over_pydantic_response_format() -> None:
+    """An explicit response_schema still takes precedence, as it already does for mapping shapes."""
+    from pydantic import BaseModel
+
+    class Reply(BaseModel):
+        text: str
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="{}")]))
+    explicit = {"type": "object", "properties": {"other": {"type": "string"}}}
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        # response_format binds the options TypedDict to Reply while response_schema only
+        # exists on GeminiChatOptions[None]; no get_response overload accepts the combination.
+        options=cast(Any, {"response_format": Reply, "response_schema": explicit}),
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.response_schema == explicit
 
 
 async def test_response_format_populates_value_on_chat_response() -> None:
