@@ -16,6 +16,7 @@ from agent_framework.exceptions import SettingNotFoundError
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import AzureCliCredential
 from openai import AsyncAzureOpenAI
+from openai._models import FinalRequestOptions
 from pydantic import BaseModel
 from pytest import param
 
@@ -145,15 +146,22 @@ def test_api_version_alone_does_not_override_openai_api_key(
     assert client.azure_endpoint is None
 
 
-def test_explicit_credential_wins_over_openai_api_key(monkeypatch, azure_openai_unit_test_env: dict[str, str]) -> None:
+async def test_explicit_credential_wins_over_openai_api_key(
+    monkeypatch, azure_openai_unit_test_env: dict[str, str]
+) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-dummy-key")
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5")
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "test-azure-key")
 
     client = OpenAIChatClient(credential=lambda: "token")
+    options = FinalRequestOptions.construct(method="GET", url="/models")
+    request = client.client._build_request(await client.client._prepare_options(options))
 
     assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_MODEL"]
     assert isinstance(client.client, AsyncAzureOpenAI)
     assert client.azure_endpoint == azure_openai_unit_test_env["AZURE_OPENAI_ENDPOINT"]
+    assert request.headers["Authorization"] == "Bearer token"
+    assert "api-key" not in request.headers
 
 
 def test_init_falls_back_to_generic_azure_deployment_env(

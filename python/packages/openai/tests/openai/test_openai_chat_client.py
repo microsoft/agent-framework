@@ -3766,6 +3766,55 @@ def test_hosted_file_content_preparation() -> None:
     assert result["file_id"] == "file_abc123"
 
 
+def test_hosted_image_content_preparation() -> None:
+    """Hosted image IDs retain their image semantics and detail."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    hosted_image = Content.from_hosted_file(
+        file_id="file_image",
+        additional_properties={"openai_content_type": "input_image", "detail": "high"},
+    )
+
+    result = client._prepare_content_for_openai("user", hosted_image)
+
+    assert result == {
+        "type": "input_image",
+        "file_id": "file_image",
+        "detail": "high",
+    }
+
+    explicit_image_file = Content.from_hosted_file(
+        file_id="file_photo",
+        media_type="image/jpeg",
+        name="photo.jpg",
+        additional_properties={"openai_content_type": "input_file", "filename": "photo.jpg"},
+    )
+
+    result = client._prepare_content_for_openai("user", explicit_image_file)
+
+    assert result == {
+        "type": "input_file",
+        "file_id": "file_photo",
+    }
+
+
+def test_explicit_input_file_overrides_image_media_type() -> None:
+    """Explicit input-file semantics take precedence over inferred image media."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    image_file = Content.from_uri(
+        uri="data:image/jpeg;base64,abc",
+        media_type="image/jpeg",
+        additional_properties={"openai_content_type": "input_file", "filename": "scan.jpg"},
+    )
+
+    result = client._prepare_content_for_openai("user", image_file)
+
+    assert result == {
+        "type": "input_file",
+        "file_data": "data:image/jpeg;base64,abc",
+        "filename": "scan.jpg",
+    }
+
+
 def test_assistant_text_preserves_citation_annotations_on_roundtrip() -> None:
     """Citation annotations on assistant text should survive serialization back to the Responses API.
 
@@ -5690,6 +5739,36 @@ def test_prepare_content_for_openai_function_result_with_rich_items() -> None:
     assert output[1]["type"] == "input_image"
 
 
+@pytest.mark.parametrize(
+    "output",
+    ["", [], [{"type": "input_text", "text": "result"}]],
+    ids=["empty-string", "empty-list", "non-empty-list"],
+)
+def test_prepare_content_for_openai_preserves_supported_function_output(
+    output: str | list[dict[str, Any]],
+) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    content = Content("function_result", call_id="call_falsey", result=output)
+
+    result = client._prepare_content_for_openai("user", content)
+
+    assert result["output"] == output
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [(False, "false"), (0, "0"), ({}, "{}")],
+    ids=["false", "zero", "empty-dict"],
+)
+def test_prepare_content_for_openai_normalizes_unsupported_falsey_function_output(output: Any, expected: str) -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    content = Content("function_result", call_id="call_falsey", result=output)
+
+    result = client._prepare_content_for_openai("user", content)
+
+    assert result["output"] == expected
+
+
 def test_prepare_content_for_openai_function_result_without_items() -> None:
     """Test _prepare_content_for_openai with plain string function_result."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -6924,6 +7003,9 @@ async def test_integration_stateless_reasoning_survives_json_and_checkpoint_roun
     )
 
     first_message = first_response.messages[0]
+    raw_response = cast(Any, first_response.raw_representation)
+    if not any(getattr(item, "type", None) == "reasoning" for item in raw_response.output):
+        pytest.skip("OpenAI omitted the optional reasoning item for the forced function call.")
     reasoning_contents = [content for content in first_message.contents if content.type == "text_reasoning"]
     assert reasoning_contents
     assert any(content.protected_data for content in reasoning_contents)
@@ -8323,8 +8405,11 @@ def test_prepare_content_for_openai_no_prompt_cache_breakpoint_by_default() -> N
     assert part == {"type": "input_text", "text": "hello"}
 
 
-async def test_prepare_options_prompt_cache_options_passthrough() -> None:
+async def test_prepare_options_prompt_cache_options_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
     """Request-level prompt_cache_options reaches the Responses API run options."""
+    import agent_framework_openai._chat_client as chat_client_module
+
+    monkeypatch.setattr(chat_client_module, "_prompt_cache_options_supported", True)
     client = OpenAIChatClient(api_key="test-api-key", model="test-model")
     run_options = await client._prepare_options(
         [Message(role="user", contents=[Content.from_text("hi")])],

@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from collections.abc import MutableSequence
 from typing import Any, Literal, cast
 
-from agent_framework import AgentSession, Message
+from agent_framework import AgentSession, Content, Message
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage, WorkflowCheckpoint
 from openai.types.conversations import Conversation, ConversationDeletedResource
 from openai.types.conversations.conversation_item import ConversationItem
@@ -27,6 +27,8 @@ from openai.types.responses import (
     ResponseInputFile,
     ResponseInputImage,
 )
+
+from ._utils import infer_media_type
 
 # Type alias for OpenAI Message role literals
 MessageRole = Literal["unknown", "user", "assistant", "system", "critic", "discriminator", "developer", "tool"]
@@ -304,17 +306,23 @@ class InMemoryConversationStore(ConversationStore):
         # Convert items to Messages and add to storage
         chat_messages: list[Message] = []
         for item in items:
-            # Simple conversion - assume text content for now
             role = item.get("role", "user")
             content = item.get("content", [])
-            first_content = cast(
-                dict[str, Any],
-                content[0] if content and isinstance(content, list) and isinstance(content[0], dict) else {},
-            )
-            text_obj = first_content.get("text", "")
-            text = text_obj if isinstance(text_obj, str) else str(text_obj)
+            contents: list[Content] = []
 
-            chat_msg = Message(role=role, contents=[text])
+            if isinstance(content, str):
+                contents.append(Content.from_text(text=content))
+            elif isinstance(content, list):
+                for content_item in cast(list[object], content):
+                    if isinstance(content_item, dict):
+                        agent_content = self._to_agent_content(cast(dict[str, Any], content_item))
+                        if agent_content is not None:
+                            contents.append(agent_content)
+
+            if not contents:
+                raise ValueError("Conversation message did not contain any supported content")
+
+            chat_msg = Message(role=role, contents=contents)
             chat_messages.append(chat_msg)
 
         # Add messages to internal storage
@@ -328,9 +336,9 @@ class InMemoryConversationStore(ConversationStore):
             # Convert Message contents to OpenAI TextContent format
             message_content: MutableSequence[OpenAIContent] = []
             for content_item in msg.contents:
-                if content_item.type == "text":
-                    # Extract text from TextContent object
-                    message_content.append(TextContent(type="text", text=content_item.text or ""))
+                openai_content = self._to_openai_content(content_item)
+                if openai_content is not None:
+                    message_content.append(openai_content)
 
             # Create Message object (concrete type from ConversationItem union)
             message = OpenAIMessage(
@@ -390,29 +398,10 @@ class InMemoryConversationStore(ConversationStore):
 
             for content in msg.contents:
                 content_type = getattr(content, "type", None)
+                mapped_content = self._to_openai_content(content)
 
-                if content_type == "text":
-                    # Text content for Message
-                    text_value = getattr(content, "text", "")
-                    message_contents.append(TextContent(type="text", text=text_value))
-
-                elif content_type == "data":
-                    # Data content (images, files, PDFs)
-                    uri = getattr(content, "uri", "")
-                    media_type = getattr(content, "media_type", None)
-
-                    if media_type and media_type.startswith("image/"):
-                        # Convert to ResponseInputImage
-                        message_contents.append(ResponseInputImage(type="input_image", image_url=uri, detail="auto"))
-                    else:
-                        # Convert to ResponseInputFile
-                        # Extract filename from URI if possible
-                        filename = None
-                        if media_type == "application/pdf":
-                            filename = "document.pdf"
-
-                        message_contents.append(ResponseInputFile(type="input_file", file_url=uri, filename=filename))
-
+                if mapped_content is not None:
+                    message_contents.append(mapped_content)
                 elif content_type == "function_call":
                     # Function call - create separate ConversationItem
                     call_id = getattr(content, "call_id", None)
@@ -531,6 +520,141 @@ class InMemoryConversationStore(ConversationStore):
         has_more = len(items) > start_idx + limit
 
         return paginated_items, has_more
+
+    @staticmethod
+    def _to_agent_content(content: dict[str, Any]) -> Content | None:
+        """Convert one supported OpenAI conversation message part."""
+        content_type = content.get("type")
+        if content_type in ("text", "input_text", "output_text"):
+            text = content.get("text")
+            return Content.from_text(text=text) if isinstance(text, str) else None
+
+        if content_type == "input_image":
+            detail = content.get("detail", "auto")
+            image_properties = {
+                "openai_content_type": "input_image",
+                "detail": detail if isinstance(detail, str) else "auto",
+            }
+            image_url = content.get("image_url")
+            if isinstance(image_url, str) and image_url:
+                return Content.from_uri(
+                    uri=image_url,
+                    media_type=infer_media_type(uri=image_url, default="image/png"),
+                    additional_properties=image_properties,
+                )
+            file_id = content.get("file_id")
+            if isinstance(file_id, str) and file_id:
+                return Content.from_hosted_file(
+                    file_id=file_id,
+                    additional_properties=image_properties,
+                )
+            return None
+
+        if content_type == "input_file":
+            filename = content.get("filename")
+            filename = filename if isinstance(filename, str) else ""
+            detail = content.get("detail")
+            file_properties: dict[str, Any] = {"openai_content_type": "input_file"}
+            if filename:
+                file_properties["filename"] = filename
+            if isinstance(detail, str):
+                file_properties["detail"] = detail
+
+            file_data = content.get("file_data")
+            if isinstance(file_data, str) and file_data:
+                media_type = infer_media_type(
+                    filename=filename,
+                    uri=file_data,
+                    default="application/octet-stream",
+                )
+                uri = file_data if file_data.startswith("data:") else f"data:{media_type};base64,{file_data}"
+                return Content.from_uri(
+                    uri=uri,
+                    media_type=media_type,
+                    additional_properties=file_properties,
+                )
+
+            file_url = content.get("file_url")
+            if isinstance(file_url, str) and file_url:
+                return Content.from_uri(
+                    uri=file_url,
+                    media_type=infer_media_type(
+                        filename=filename,
+                        uri=file_url,
+                        default="application/octet-stream",
+                    ),
+                    additional_properties=file_properties,
+                )
+
+            file_id = content.get("file_id")
+            if isinstance(file_id, str) and file_id:
+                return Content.from_hosted_file(
+                    file_id=file_id,
+                    media_type=infer_media_type(filename=filename, default="application/octet-stream"),
+                    name=filename or None,
+                    additional_properties=file_properties,
+                )
+
+        return None
+
+    @staticmethod
+    def _to_openai_content(content: Content) -> TextContent | ResponseInputImage | ResponseInputFile | None:
+        """Convert one supported Agent Framework message part."""
+        content_type = content.type
+        if content_type == "text":
+            return TextContent(type="text", text=content.text or "")
+
+        additional_properties = content.additional_properties or {}
+        openai_content_type = additional_properties.get("openai_content_type")
+        is_image = openai_content_type == "input_image" or (
+            openai_content_type is None and bool(content.media_type and content.media_type.startswith("image/"))
+        )
+
+        if content_type in ("data", "uri"):
+            if is_image:
+                detail = additional_properties.get("detail", "auto")
+                if detail not in ("low", "high", "auto", "original"):
+                    detail = "auto"
+                return ResponseInputImage(
+                    type="input_image",
+                    image_url=content.uri,
+                    detail=detail,
+                )
+
+            filename = additional_properties.get("filename")
+            detail = additional_properties.get("detail")
+            if detail not in ("low", "high", "auto"):
+                detail = None
+            return ResponseInputFile(
+                type="input_file",
+                file_url=content.uri,
+                filename=filename if isinstance(filename, str) else None,
+                detail=detail,
+            )
+
+        if content_type == "hosted_file":
+            if is_image:
+                detail = additional_properties.get("detail", "auto")
+                if detail not in ("low", "high", "auto", "original"):
+                    detail = "auto"
+                return ResponseInputImage(
+                    type="input_image",
+                    file_id=content.file_id,
+                    detail=detail,
+                )
+
+            filename = content.name or additional_properties.get("filename")
+            detail = additional_properties.get("detail")
+            if detail not in ("low", "high", "auto"):
+                detail = None
+            return ResponseInputFile(
+                type="input_file",
+                file_id=content.file_id,
+                filename=filename if isinstance(filename, str) else None,
+                detail=detail,
+            )
+
+        return None
 
     async def get_item(self, conversation_id: str, item_id: str) -> ConversationItem | None:
         """Get a specific conversation item by ID.
