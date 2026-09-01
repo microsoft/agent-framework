@@ -995,7 +995,7 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
 
         content_text = ""
         tool_calls: list[dict[str, Any]] = []
-        tool_result_call_id: str | None = None
+        function_results: list[Any] = []
 
         for content in msg.contents:
             if content.type == "text":
@@ -1012,9 +1012,38 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
                     }
                 )
             elif content.type == "function_result":
-                # Tool result content - extract call_id and result
-                tool_result_call_id = content.call_id
-                content_text = content.result if content.result is not None else ""
+                function_results.append(content)
+
+        # A single Agent Framework message can carry several function_result
+        # contents (parallel tool calls). Emit one AG-UI tool message per result so
+        # none are dropped and each keeps its own toolCallId.
+        if function_results:
+            # Preserve the source id for the first result; give every additional
+            # message an independent generated id. Deriving suffixes from the source
+            # id (e.g. f"{base_id}-1") risks colliding with a legitimate id elsewhere
+            # in the history, which would let id-keyed clients re-collapse results.
+            for idx, fr in enumerate(function_results):
+                result.append(
+                    {
+                        "id": msg.message_id if (idx == 0 and msg.message_id) else generate_event_id(),
+                        "role": "tool",
+                        "content": fr.result if fr.result is not None else "",
+                        "toolCallId": fr.call_id,
+                    }
+                )
+            # A mixed message may also carry text / function_call contents alongside
+            # the tool results (e.g. a finalized assistant turn). Emit those as a
+            # separate, distinctly-identified message so they are not lost.
+            if content_text or tool_calls:
+                extra_msg: dict[str, Any] = {
+                    "id": generate_event_id(),
+                    "role": role,
+                    "content": content_text,
+                }
+                if tool_calls:
+                    extra_msg["tool_calls"] = tool_calls
+                result.append(extra_msg)
+            continue
 
         agui_msg: dict[str, Any] = {
             "id": msg.message_id if msg.message_id else generate_event_id(),  # Always include id
@@ -1024,12 +1053,6 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
 
         if tool_calls:
             agui_msg["tool_calls"] = tool_calls
-
-        # If this is a tool result message, add toolCallId (using camelCase for Pydantic)
-        if tool_result_call_id:
-            agui_msg["toolCallId"] = tool_result_call_id
-            # Tool result messages should have role="tool"
-            agui_msg["role"] = "tool"
 
         result.append(agui_msg)
 
