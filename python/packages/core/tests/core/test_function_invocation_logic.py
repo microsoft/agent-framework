@@ -303,7 +303,7 @@ async def test_streaming_empty_call_id_keeps_occurrence_identity_through_approva
 
     with pytest.warns(FutureWarning, match="empty.*call_id.*Content.id"):
         async for update in chat_client_base.get_response(
-            "hello",
+            [Message(role="user", contents=["hello"])],
             options={"tool_choice": "auto", "tools": [guarded_write]},
             stream=True,
         ):
@@ -355,7 +355,7 @@ async def test_streaming_empty_call_id_delta_reuses_opening_call_identity(
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         async for update in chat_client_base.get_response(
-            "hello",
+            [Message(role="user", contents=["hello"])],
             options={"tool_choice": "auto", "tools": [guarded_write]},
             stream=True,
         ):
@@ -409,7 +409,7 @@ async def test_streaming_interleaved_indexed_call_fragments_coalesce_by_occurren
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         async for update in chat_client_base.get_response(
-            "hello",
+            [Message(role="user", contents=["hello"])],
             options={"tool_choice": "auto", "tools": [first_write, second_write]},
             stream=True,
         ):
@@ -466,7 +466,7 @@ async def test_streaming_tool_call_indexes_are_scoped_by_choice(
     approval_requests: list[Content] = []
 
     async for update in chat_client_base.get_response(
-        "hello",
+        [Message(role="user", contents=["hello"])],
         options={"tool_choice": "auto", "tools": [first_write, second_write]},
         stream=True,
     ):
@@ -540,6 +540,49 @@ def test_occurrence_aware_approval_mismatched_identity_does_not_consume_pending(
 
     assert messages == []
     assert list(_load_pending_approval_requests(session)) == ["af-call-current"]
+
+
+def test_occurrence_aware_approval_can_retry_after_mismatched_identity() -> None:
+    from agent_framework._tools import (
+        _bind_approval_responses_to_pending_requests,
+        _load_pending_approval_requests,
+        _store_pending_approval_requests,
+    )
+
+    session = AgentSession(session_id="approval-binding-corrected-retry")
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="guarded_write",
+        arguments={"value": "trusted"},
+        id="af-call-current",
+    )
+    request = Content.from_function_approval_request(id="af-call-current", function_call=function_call)
+    _store_pending_approval_requests(session, [request])
+    mismatched_messages = [
+        Message(
+            role="user",
+            contents=[Content("function_approval_response", approved=True, id="af-call-stale")],
+        )
+    ]
+
+    _bind_approval_responses_to_pending_requests(mismatched_messages, session)
+
+    assert mismatched_messages == []
+    assert list(_load_pending_approval_requests(session)) == ["af-call-current"]
+
+    corrected_messages = [
+        Message(
+            role="user",
+            contents=[Content("function_approval_response", approved=True, id="af-call-current")],
+        )
+    ]
+    _bind_approval_responses_to_pending_requests(corrected_messages, session)
+
+    assert len(corrected_messages) == 1
+    assert corrected_messages[0].contents[0].id == "af-call-current"
+    assert corrected_messages[0].contents[0].function_call is not None
+    assert corrected_messages[0].contents[0].function_call.call_id == "provider-call"
+    assert _load_pending_approval_requests(session) == {}
 
 
 def test_occurrence_aware_approval_binds_without_embedded_function_call() -> None:
