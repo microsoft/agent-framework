@@ -41,6 +41,8 @@ from pydantic import TypeAdapter, ValidationError
 
 from ._feature_usage import FeatureIndex
 
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
 _RESPONSE_OUTPUT_ITEM_ADAPTER: TypeAdapter[Any] = TypeAdapter(ResponseOutputItem)
 
 # OpenAI Responses field name → Agent Framework ChatOptions field name.
@@ -51,6 +53,10 @@ _RESPONSES_OPTION_REMAP = {
 # Fields the Responses transport owns; they are consumed separately and must
 # not also appear in options.
 _RESPONSES_RUN_TRANSPORT_KEYS = frozenset({"input", "stream", "previous_response_id", "conversation_id"})
+
+
+def _is_refusal_text_content(content: Content) -> bool:
+    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
 
 
 def _content_from_input_item(item: Mapping[str, Any]) -> Content:
@@ -65,7 +71,10 @@ def _content_from_input_item(item: Mapping[str, Any]) -> Content:
     if item_type in ("input_text", "output_text", "text"):
         return Content.from_text(text=str(item.get("text", "")))
     if item_type == "refusal":
-        return Content.from_refusal(text=str(item.get("refusal", "")))
+        return Content.from_text(
+            text=str(item.get("refusal", "")),
+            additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+        )
     if item_type == "input_image":
         image_url: Any = item.get("image_url")
         if isinstance(image_url, Mapping):
@@ -377,8 +386,6 @@ def _contents_to_output_items(
         match content.type:
             case "text":
                 message_content.append(_message_text_content(content))
-            case "refusal":
-                message_content.append(_message_refusal_content(content))
             case "text_reasoning":
                 flush_message()
                 output_items.append(_reasoning_output_item(content, status=status))
@@ -481,16 +488,12 @@ def _message_output_item(content: Sequence[Any], *, status: str, message_id: str
 
 
 def _message_text_content(content: Content) -> Any:
+    if _is_refusal_text_content(content):
+        return ResponseOutputRefusal(type="refusal", refusal=content.text or "")
     raw_type = _raw_type(content.raw_representation)
     if raw_type in ("output_text", "refusal"):
         return content.raw_representation
     return ResponseOutputText(type="output_text", text=content.text or "", annotations=[])
-
-
-def _message_refusal_content(content: Content) -> Any:
-    if _raw_type(content.raw_representation) == "refusal":
-        return content.raw_representation
-    return ResponseOutputRefusal(type="refusal", refusal=content.text or "")
 
 
 def _reasoning_output_item(content: Content, *, status: str) -> ResponseOutputItem:
@@ -696,7 +699,7 @@ def _content_parts_to_input_items(contents: Sequence[Content] | None) -> list[An
     parts: list[Any] = []
     for content in contents:
         match content.type:
-            case "text" | "refusal":
+            case "text":
                 parts.append(ResponseInputText(type="input_text", text=content.text or ""))
             case "data" | "uri":
                 if not content.uri:
@@ -716,7 +719,7 @@ def _content_parts_to_input_items(contents: Sequence[Content] | None) -> list[An
 def _content_sequence_text(contents: Sequence[Content] | None) -> str | None:
     if not contents:
         return None
-    text = "".join(content.text or "" for content in contents if content.type in {"text", "refusal"})
+    text = "".join(content.text or "" for content in contents if content.type == "text")
     return text or None
 
 
@@ -916,14 +919,11 @@ async def responses_from_streaming_run(
             if model is None:
                 model = _model_from_update(update)
             for content in update.contents:
-                if not content.text:
+                if content.type != "text" or not content.text:
                     continue
-                if content.type == "text":
-                    event_type = "response.output_text.delta"
-                elif content.type == "refusal":
-                    event_type = "response.refusal.delta"
-                else:
-                    continue
+                event_type = (
+                    "response.refusal.delta" if _is_refusal_text_content(content) else "response.output_text.delta"
+                )
                 yield _sse_event(
                     event_type,
                     {
@@ -948,10 +948,7 @@ async def responses_from_streaming_run(
         )
     except Exception as exc:
         partial_contents = [
-            content
-            for update in updates
-            for content in update.contents
-            if content.type in {"text", "refusal"} and content.text
+            content for update in updates for content in update.contents if content.type == "text" and content.text
         ]
         response_kwargs: dict[str, Any] = {
             "id": response_id,

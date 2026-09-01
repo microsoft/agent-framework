@@ -1359,7 +1359,10 @@ def test_streaming_chunk_with_refusal(openai_unit_test_env: dict[str, str]) -> N
 
     update = client._parse_response_update_from_openai(chunk)
 
-    assert [(content.type, content.text) for content in update.contents] == [("refusal", "I cannot help.")]
+    assert len(update.contents) == 1
+    assert update.contents[0].type == "text"
+    assert update.contents[0].text == "I cannot help."
+    assert update.contents[0].additional_properties == {"model_output_kind": "refusal"}
 
 
 def test_parse_text_with_refusal(openai_unit_test_env: dict[str, str]) -> None:
@@ -1390,12 +1393,13 @@ def test_parse_text_with_refusal(openai_unit_test_env: dict[str, str]) -> None:
 
     response = client._parse_response_from_openai(mock_response, {})
 
-    # Should have typed refusal content
+    # Should have text content with refusal message
     assert len(response.messages) == 1
     message = response.messages[0]
     assert len(message.contents) == 1
-    assert message.contents[0].type == "refusal"
+    assert message.contents[0].type == "text"
     assert message.contents[0].text == "I cannot provide that information."
+    assert message.contents[0].additional_properties == {"model_output_kind": "refusal"}
 
 
 def test_parse_text_and_refusal_preserves_both(openai_unit_test_env: dict[str, str]) -> None:
@@ -1423,17 +1427,20 @@ def test_parse_text_and_refusal_preserves_both(openai_unit_test_env: dict[str, s
 
     parsed = client._parse_response_from_openai(response, {})
 
-    assert [(content.type, content.text) for content in parsed.messages[0].contents] == [
-        ("text", "Partial answer."),
-        ("refusal", "I cannot continue."),
+    assert [(content.text, content.additional_properties) for content in parsed.messages[0].contents] == [
+        ("Partial answer.", {}),
+        ("I cannot continue.", {"model_output_kind": "refusal"}),
     ]
 
 
-def test_prepare_refusal_uses_native_assistant_field_and_text_fallback(
+def test_prepare_marked_refusal_uses_native_assistant_field_and_text_fallback(
     openai_unit_test_env: dict[str, str],
 ) -> None:
     client = OpenAIChatCompletionClient()
-    refusal = Content.from_refusal("I cannot help with that.")
+    refusal = Content.from_text(
+        "I cannot help with that.",
+        additional_properties={"model_output_kind": "refusal"},
+    )
 
     assert client._prepare_message_for_openai(Message(role="assistant", contents=[refusal])) == [
         {"role": "assistant", "refusal": "I cannot help with that."}

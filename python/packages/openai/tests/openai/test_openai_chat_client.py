@@ -1610,11 +1610,12 @@ def test_response_content_creation_with_refusal() -> None:
     response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
 
     assert len(response.messages[0].contents) == 1
-    assert response.messages[0].contents[0].type == "refusal"
+    assert response.messages[0].contents[0].type == "text"
     assert response.messages[0].contents[0].text == "I cannot provide that information."
+    assert response.messages[0].contents[0].additional_properties == {"model_output_kind": "refusal"}
 
 
-def test_streaming_refusal_delta_creates_typed_content() -> None:
+def test_streaming_refusal_delta_creates_marked_text() -> None:
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     event = MagicMock()
     event.type = "response.refusal.delta"
@@ -1623,13 +1624,17 @@ def test_streaming_refusal_delta_creates_typed_content() -> None:
     update = client._parse_chunk_from_openai(event, {}, {})
 
     assert len(update.contents) == 1
-    assert update.contents[0].type == "refusal"
+    assert update.contents[0].type == "text"
     assert update.contents[0].text == "I cannot help with that."
+    assert update.contents[0].additional_properties == {"model_output_kind": "refusal"}
 
 
-def test_prepare_refusal_content_uses_native_assistant_shape_and_input_text_fallback() -> None:
+def test_prepare_marked_refusal_text_uses_native_assistant_shape_and_input_text_fallback() -> None:
     client = OpenAIChatClient(model="test-model", api_key="test-key")
-    refusal = Content.from_refusal("I cannot help with that.")
+    refusal = Content.from_text(
+        "I cannot help with that.",
+        additional_properties={"model_output_kind": "refusal"},
+    )
 
     assert client._prepare_message_for_openai(Message(role="assistant", contents=[refusal])) == [
         {

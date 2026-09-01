@@ -142,6 +142,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_framework.openai")
 
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
+
+
+def _is_refusal_text_content(content: Content) -> bool:
+    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+
+
 DEFAULT_AZURE_OPENAI_RESPONSES_API_VERSION = "preview"
 
 OPENAI_SHELL_ENVIRONMENT_KEY = "openai.responses.shell.environment"
@@ -1863,6 +1871,11 @@ class RawOpenAIChatClient(
         role = Role(role)
         match content.type:
             case "text":
+                if role == "assistant" and _is_refusal_text_content(content):
+                    return {
+                        "type": "refusal",
+                        "refusal": content.text,
+                    }
                 if role == "assistant":
                     # Assistant history is represented as output text items; Azure validation
                     # requires `annotations` to be present for this type.
@@ -1878,16 +1891,6 @@ class RawOpenAIChatClient(
                     },
                     content,
                 )
-            case "refusal":
-                if role == "assistant":
-                    return {
-                        "type": "refusal",
-                        "refusal": content.text,
-                    }
-                return {
-                    "type": "input_text",
-                    "text": content.text,
-                }
             case "text_reasoning":
                 ret: dict[str, Any] = {"type": "reasoning", "summary": []}
                 if content.id:
@@ -2699,8 +2702,9 @@ class RawOpenAIChatClient(
                                 contents.append(text_content)
                             case "refusal":
                                 contents.append(
-                                    Content.from_refusal(
+                                    Content.from_text(
                                         text=message_content.refusal,
+                                        additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
                                         raw_representation=message_content,
                                     )
                                 )
@@ -2975,14 +2979,26 @@ class RawOpenAIChatClient(
                         contents.append(Content.from_text(text=event_part.text, raw_representation=event))
                         metadata.update(self._get_metadata_from_response(event_part))
                     case "refusal":
-                        contents.append(Content.from_refusal(text=event_part.refusal, raw_representation=event))
+                        contents.append(
+                            Content.from_text(
+                                text=event_part.refusal,
+                                additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+                                raw_representation=event,
+                            )
+                        )
                     case _:
                         pass
             case "response.output_text.delta":
                 contents.append(Content.from_text(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
             case "response.refusal.delta":
-                contents.append(Content.from_refusal(text=event.delta, raw_representation=event))
+                contents.append(
+                    Content.from_text(
+                        text=event.delta,
+                        additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+                        raw_representation=event,
+                    )
+                )
             case "response.reasoning_text.delta":
                 if seen_reasoning_delta_item_ids is not None:
                     seen_reasoning_delta_item_ids.add(event.item_id)

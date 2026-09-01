@@ -864,7 +864,7 @@ class RawAnthropicClient(
         a_content: list[dict[str, Any]] = []
         for content in message.contents:
             match content.type:
-                case "text" | "refusal":
+                case "text":
                     # Skip empty text content blocks - Anthropic API rejects them
                     if content.text:
                         a_content.append({"type": "text", "text": content.text})

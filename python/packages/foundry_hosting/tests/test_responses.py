@@ -289,14 +289,18 @@ def _make_server(agent: Any, **kwargs: Any) -> ResponsesHostServer:
     return server
 
 
-async def test_output_item_tracker_emits_native_refusal_events() -> None:
+async def test_output_item_tracker_emits_native_refusal_events_for_marked_text() -> None:
     stream = ResponseEventStream(response_id="resp_refusal")
     stream.emit_created()
     stream.emit_in_progress()
     tracker = _OutputItemTracker(stream)
+    refusal = Content.from_text(
+        "I cannot help.",
+        additional_properties={"model_output_kind": "refusal"},
+    )
     events: list[Any] = []
 
-    async for event in tracker.handle(Content.from_refusal("I cannot help."), message_id="msg_refusal"):
+    async for event in tracker.handle(refusal, message_id="msg_refusal"):
         events.append(event)
     events.extend(tracker.close())
 
@@ -311,7 +315,7 @@ async def test_output_item_tracker_emits_native_refusal_events() -> None:
     ]
 
 
-async def test_item_to_message_preserves_refusal_content() -> None:
+async def test_item_to_message_marks_refusal_text() -> None:
     message = await _item_to_message(
         cast(
             Item,
@@ -323,7 +327,9 @@ async def test_item_to_message_preserves_refusal_content() -> None:
         )
     )
 
-    assert message.contents == [Content.from_refusal("I cannot help.")]
+    assert message.contents[0].type == "text"
+    assert message.contents[0].text == "I cannot help."
+    assert message.contents[0].additional_properties == {"model_output_kind": "refusal"}
 
 
 class _CapturingASGITransport(httpx.AsyncBaseTransport):

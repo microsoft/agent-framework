@@ -113,50 +113,50 @@ def test_text_content_keyword():
     content.type = "text"  # This should work fine now
 
 
-def test_refusal_content_is_visible_and_serializable() -> None:
-    content = Content.from_refusal(
+def test_marked_refusal_text_is_visible_and_serializable() -> None:
+    content = Content.from_text(
         "I cannot help with that.",
+        additional_properties={"model_output_kind": "refusal"},
         raw_representation={"type": "refusal"},
-        additional_properties={"policy": "safety"},
     )
+    message = Message("assistant", [content])
+    chat_update = ChatResponseUpdate(contents=[content])
+    agent_update = AgentResponseUpdate(contents=[content])
 
-    assert content.type == "refusal"
-    assert content.text == "I cannot help with that."
+    assert content.type == "text"
     assert str(content) == "I cannot help with that."
+    assert message.text == "I cannot help with that."
+    assert chat_update.text == "I cannot help with that."
+    assert agent_update.text == "I cannot help with that."
     assert content.to_dict() == {
-        "type": "refusal",
+        "type": "text",
         "text": "I cannot help with that.",
-        "additional_properties": {"policy": "safety"},
+        "additional_properties": {"model_output_kind": "refusal"},
     }
-    assert Content.from_dict(content.to_dict()) == Content.from_refusal(
+    assert Content.from_dict(content.to_dict()) == Content.from_text(
         "I cannot help with that.",
-        additional_properties={"policy": "safety"},
+        additional_properties={"model_output_kind": "refusal"},
     )
 
 
-def test_refusal_content_is_included_in_visible_text_but_not_structured_output() -> None:
-    message = Message(
-        "assistant",
-        [
-            Content.from_text("Before refusal."),
-            Content.from_refusal('{"should_not": "parse"}'),
+def test_marked_refusal_text_is_excluded_from_structured_output() -> None:
+    response = ChatResponse(
+        messages=[
+            Message(
+                "assistant",
+                [
+                    Content.from_text(
+                        '{"should_not": "parse"}',
+                        additional_properties={"model_output_kind": "refusal"},
+                    )
+                ],
+            )
         ],
-    )
-    chat_response = ChatResponse(messages=[message], response_format={"type": "object"})
-    agent_response = AgentResponse(messages=[message])
-    chat_update = ChatResponseUpdate(contents=message.contents)
-    agent_update = AgentResponseUpdate(contents=message.contents)
-
-    assert message.text == 'Before refusal. {"should_not": "parse"}'
-    assert chat_response.text == 'Before refusal. {"should_not": "parse"}'
-    assert agent_response.text == 'Before refusal. {"should_not": "parse"}'
-    assert chat_update.text == 'Before refusal.{"should_not": "parse"}'
-    assert agent_update.text == 'Before refusal.{"should_not": "parse"}'
-    refusal_response = ChatResponse(
-        messages=[Message("assistant", [Content.from_refusal('{"should_not": "parse"}')])],
         response_format={"type": "object"},
     )
-    assert refusal_response.value is None
+
+    assert response.text == '{"should_not": "parse"}'
+    assert response.value is None
 
 
 # region DataContent
@@ -2059,18 +2059,24 @@ def test_coalesce_text_reasoning_with_different_ids():
     assert contents[1].text == "Thinking B1 B2"
 
 
-def test_agent_response_from_updates_coalesces_refusals_without_merging_text() -> None:
+def test_agent_response_from_updates_preserves_refusal_marker() -> None:
+    marker = {"model_output_kind": "refusal"}
     response = AgentResponse.from_updates([
-        AgentResponseUpdate(contents=[Content.from_text("Preface")], role="assistant"),
-        AgentResponseUpdate(contents=[Content.from_refusal("I cannot ")], role="assistant"),
-        AgentResponseUpdate(contents=[Content.from_refusal("help.")], role="assistant"),
+        AgentResponseUpdate(
+            contents=[Content.from_text("I cannot ", additional_properties=marker)],
+            role="assistant",
+        ),
+        AgentResponseUpdate(
+            contents=[Content.from_text("help.", additional_properties=marker)],
+            role="assistant",
+        ),
     ])
 
-    assert [(content.type, content.text) for content in response.messages[0].contents] == [
-        ("text", "Preface"),
-        ("refusal", "I cannot help."),
-    ]
-    assert response.text == "Preface I cannot help."
+    assert len(response.messages[0].contents) == 1
+    assert response.messages[0].contents[0].type == "text"
+    assert response.messages[0].contents[0].text == "I cannot help."
+    assert response.messages[0].contents[0].additional_properties == marker
+    assert response.text == "I cannot help."
 
 
 def test_comprehensive_to_dict_exclude_options():

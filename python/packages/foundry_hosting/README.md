@@ -36,7 +36,8 @@ storage locally. Stored sessions are scoped under `agent_sessions`.
 See the [custom storage provider sample](../../samples/04-hosting/foundry-hosted-agents/responses/custom_storage/)
 for an example that uses an in-memory session store locally and Azure Cosmos DB when hosted.
 
-Native Responses refusal parts are preserved as Agent Framework refusal content and emitted as
+Native Responses refusal parts are stored as text carrying
+`additional_properties["model_output_kind"] == "refusal"` and emitted as
 `response.refusal.*` events when streamed back to clients.
 
 ### Workflow checkpoints

@@ -1543,17 +1543,30 @@ class TestFileHistoryProvider:
         assert raw[4 : 4 + first_record_length] == msgspec.msgpack.encode(messages[0].to_dict())
 
     @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
-    async def test_round_trips_refusal_content(
+    async def test_round_trips_marked_refusal_text(
         self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
     ) -> None:
         provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
-        message = Message(role="assistant", contents=[Content.from_refusal("I cannot help with that.")])
+        message = Message(
+            role="assistant",
+            contents=[
+                Content.from_text(
+                    "I cannot help with that.",
+                    additional_properties={"model_output_kind": "refusal"},
+                )
+            ],
+        )
 
         await provider.save_messages("refusal-session", [message])
         restored = await provider.get_messages("refusal-session")
 
         assert len(restored) == 1
-        assert restored[0].contents == [Content.from_refusal("I cannot help with that.")]
+        assert restored[0].contents == [
+            Content.from_text(
+                "I cannot help with that.",
+                additional_properties={"model_output_kind": "refusal"},
+            )
+        ]
         assert restored[0].text == "I cannot help with that."
 
     def test_msgpack_rejects_custom_json_codecs(self, tmp_path: Path) -> None:

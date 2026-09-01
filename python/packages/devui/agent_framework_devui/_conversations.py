@@ -29,6 +29,9 @@ from openai.types.responses import (
     ResponseOutputRefusal,
 )
 
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
+
 # Type alias for OpenAI Message role literals
 MessageRole = Literal["unknown", "user", "assistant", "system", "critic", "discriminator", "developer", "tool"]
 
@@ -315,7 +318,12 @@ class InMemoryConversationStore(ConversationStore):
             if first_content.get("type") == "refusal":
                 refusal_obj = first_content.get("refusal", "")
                 refusal = refusal_obj if isinstance(refusal_obj, str) else str(refusal_obj)
-                message_contents = [Content.from_refusal(refusal)]
+                message_contents = [
+                    Content.from_text(
+                        refusal,
+                        additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+                    )
+                ]
             else:
                 text_obj = first_content.get("text", "")
                 text = text_obj if isinstance(text_obj, str) else str(text_obj)
@@ -336,10 +344,10 @@ class InMemoryConversationStore(ConversationStore):
             message_content: MutableSequence[OpenAIContent] = []
             for content_item in msg.contents:
                 if content_item.type == "text":
-                    # Extract text from TextContent object
-                    message_content.append(TextContent(type="text", text=content_item.text or ""))
-                elif content_item.type == "refusal":
-                    message_content.append(ResponseOutputRefusal(type="refusal", refusal=content_item.text or ""))
+                    if content_item.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL:
+                        message_content.append(ResponseOutputRefusal(type="refusal", refusal=content_item.text or ""))
+                    else:
+                        message_content.append(TextContent(type="text", text=content_item.text or ""))
 
             # Create Message object (concrete type from ConversationItem union)
             message = OpenAIMessage(
@@ -401,13 +409,11 @@ class InMemoryConversationStore(ConversationStore):
                 content_type = getattr(content, "type", None)
 
                 if content_type == "text":
-                    # Text content for Message
                     text_value = getattr(content, "text", "")
-                    message_contents.append(TextContent(type="text", text=text_value))
-
-                elif content_type == "refusal":
-                    refusal_value = getattr(content, "text", "")
-                    message_contents.append(ResponseOutputRefusal(type="refusal", refusal=refusal_value))
+                    if content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL:
+                        message_contents.append(ResponseOutputRefusal(type="refusal", refusal=text_value))
+                    else:
+                        message_contents.append(TextContent(type="text", text=text_value))
 
                 elif content_type == "data":
                     # Data content (images, files, PDFs)

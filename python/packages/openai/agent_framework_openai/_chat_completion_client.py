@@ -109,6 +109,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_framework.openai")
 
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
+
+
+def _is_refusal_text_content(content: Content) -> bool:
+    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+
+
 # Error message shared with tests — extracted to a constant to keep the
 # implementation and its assertions in sync.
 _AZURE_WEB_SEARCH_UNSUPPORTED_MSG = (
@@ -968,10 +976,14 @@ class RawOpenAIChatCompletionClient(
         return None
 
     def _parse_refusal_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
-        """Parse the choice refusal into typed refusal content."""
+        """Parse a refusal as text carrying an experimental model-output marker."""
         message = choice.message if isinstance(choice, Choice) else choice.delta
         if hasattr(message, "refusal") and message.refusal:
-            return Content.from_refusal(text=message.refusal, raw_representation=choice)
+            return Content.from_text(
+                text=message.refusal,
+                additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+                raw_representation=choice,
+            )
         return None
 
     def _get_metadata_from_chat_response(self, response: ChatCompletion) -> dict[str, Any]:
@@ -1067,9 +1079,7 @@ class RawOpenAIChatCompletionClient(
         # exception is a prompt cache breakpoint on a text part: it can only live on
         # a typed part, so opting in switches that message to list content.
         if message.role in ("system", "developer"):
-            text_contents = [
-                content for content in message.contents if content.type in {"text", "refusal"} and content.text
-            ]
+            text_contents = [content for content in message.contents if content.type == "text" and content.text]
             if text_contents:
                 # Keep list form only if a breakpoint actually landed on a built part
                 # (mirrors the flatten logic below); a non-mapping value stays a string.
@@ -1132,7 +1142,7 @@ class RawOpenAIChatCompletionClient(
                     if content.text is None:
                         continue
                     args["content"] = [{"type": "text", "text": content.text}]
-                case "refusal" if message.role == "assistant":
+                case "text" if message.role == "assistant" and _is_refusal_text_content(content):
                     args["refusal"] = content.text or ""
                 case _:
                     if "content" not in args:
@@ -1189,7 +1199,7 @@ class RawOpenAIChatCompletionClient(
     def _prepare_content_for_openai(self, content: Content) -> dict[str, Any]:
         """Prepare content for OpenAI."""
         match content.type:
-            case "text" | "refusal":
+            case "text":
                 return _attach_prompt_cache_breakpoint(
                     {"type": "text", "text": content.text},
                     content,

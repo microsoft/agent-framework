@@ -158,7 +158,7 @@ async def test_add_items():
 
 
 @pytest.mark.asyncio
-async def test_add_and_list_items_preserves_refusal_content():
+async def test_add_and_list_items_preserves_marked_refusal_text():
     store = InMemoryConversationStore()
     conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
 
@@ -174,9 +174,7 @@ async def test_add_and_list_items_preserves_refusal_content():
     retrieved_message = cast(OpenAIMessage, retrieved[0])
     assert retrieved_message.content is not None
     retrieved_refusal = cast(ResponseOutputRefusal, retrieved_message.content[0])
-    assert added_refusal.type == "refusal"
     assert added_refusal.refusal == "I cannot help."
-    assert retrieved_refusal.type == "refusal"
     assert retrieved_refusal.refusal == "I cannot help."
 
 

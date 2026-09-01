@@ -293,7 +293,7 @@ def a2a_from_run(
         for content in item.contents:
             metadata = content.additional_properties or {}
             match content.type:
-                case "text" | "refusal" if content.text is not None:
+                case "text" if content.text is not None:
                     parts.append(_part_from_text(content.text, metadata, output_modes))
                 case "uri" if content.uri is not None:
                     parts.append(

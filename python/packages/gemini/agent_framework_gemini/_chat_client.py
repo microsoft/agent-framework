@@ -704,12 +704,12 @@ class RawGeminiChatClient(
                 # A held signature belongs to the next function call in the message.
                 thought_signature = pending_signature
                 pending_signature = None
-            elif content.type in ("text", "refusal", "function_result", "data", "uri"):
+            elif content.type in ("text", "function_result", "data", "uri"):
                 # Content that emits its own Part breaks the reasoning-to-call pairing. Content that
                 # emits nothing (approval requests and responses) is left transparent.
                 pending_signature = None
             match content.type:
-                case "text" | "refusal":
+                case "text":
                     parts.append(types.Part(text=content.text or ""))
                 case "function_call":
                     call_id = content.call_id or self._generate_tool_call_id()

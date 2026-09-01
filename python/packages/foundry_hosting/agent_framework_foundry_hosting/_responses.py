@@ -82,7 +82,13 @@ from ._state_store import (
 
 logger = logging.getLogger(__name__)
 
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
+
+
+def _is_refusal_text_content(content: Content) -> bool:
+    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
 
 
 def _validate_checkpoint_context_id(context_id: str) -> None:
@@ -999,20 +1005,7 @@ class _OutputItemTracker:
             approval_storage: Used for content types that fall back to one-shot emission
                 (anything not recognized as a streaming delta type) to save/load approval requests.
         """
-        if content.type == "text" and content.text is not None:
-            if self._active_type != "text" or (
-                message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
-            ):
-                for event in self._close():
-                    yield event
-                for event in self._open_message():
-                    yield event
-            self._active_message_id = message_id
-            self._accumulated.append(content.text)
-            if self._text_content is not None:
-                yield self._text_content.emit_delta(content.text)
-
-        elif content.type == "refusal" and content.text is not None:
+        if _is_refusal_text_content(content) and content.text is not None:
             if self._active_type != "refusal" or (
                 message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
             ):
@@ -1024,6 +1017,19 @@ class _OutputItemTracker:
             self._accumulated.append(content.text)
             if self._refusal_content is not None:
                 yield self._refusal_content.emit_delta(content.text)
+
+        elif content.type == "text" and content.text is not None:
+            if self._active_type != "text" or (
+                message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
+            ):
+                for event in self._close():
+                    yield event
+                for event in self._open_message():
+                    yield event
+            self._active_message_id = message_id
+            self._accumulated.append(content.text)
+            if self._text_content is not None:
+                yield self._text_content.emit_delta(content.text)
 
         elif content.type == "text_reasoning":
             if self._active_type != "text_reasoning" or (content.id is not None and content.id != self._active_id):
@@ -1941,7 +1947,10 @@ def _convert_output_message_content(content: OutputMessageContent) -> Content:
     if content["type"] == "output_text":
         return Content.from_text(content["text"])
     if content["type"] == "refusal":
-        return Content.from_refusal(content["refusal"])
+        return Content.from_text(
+            content["refusal"],
+            additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+        )
 
     # Defensive: `OutputMessageContent` currently only supports `output_text` and `refusal`,
     # but if new types are added in the future, this will catch them.
@@ -1994,7 +2003,10 @@ def _convert_message_content(content: MessageContent) -> Content:
     if content["type"] == "summary_text":
         return Content.from_text(content["text"])
     if content["type"] == "refusal":
-        return Content.from_refusal(content["refusal"])
+        return Content.from_text(
+            content["refusal"],
+            additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+        )
     if content["type"] == "reasoning_text":
         return Content.from_text_reasoning(text=content["text"])
     if content["type"] == "input_image":

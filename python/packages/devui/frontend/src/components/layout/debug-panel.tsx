@@ -412,12 +412,11 @@ interface EventItemProps {
 function getEventSummary(event: ExtendedResponseStreamEvent): string {
   switch (event.type) {
     case "response.output_text.delta":
-    case "response.refusal.delta":
       if ("delta" in event) {
         const text = event.delta || "";
         return text.length > 60 ? `${text.slice(0, 60)}...` : text;
       }
-      return event.type === "response.refusal.delta" ? "Refusal" : "Text output";
+      return "Text output";
 
     case "response.function_call.complete":
       if ("data" in event && event.data) {
@@ -509,7 +508,6 @@ function getEventSummary(event: ExtendedResponseStreamEvent): string {
 function getEventIcon(type: string) {
   switch (type) {
     case "response.output_text.delta":
-    case "response.refusal.delta":
       return MessageSquare;
     case "response.function_call.complete":
     case "response.function_call.delta":
@@ -537,7 +535,6 @@ function getEventIcon(type: string) {
 function getEventColor(type: string) {
   switch (type) {
     case "response.output_text.delta":
-    case "response.refusal.delta":
       return "text-gray-600 dark:text-gray-400";
     case "response.function_call.complete":
     case "response.function_call.delta":
@@ -592,7 +589,7 @@ function EventItem({ event }: EventItemProps) {
     (event.type === "response.trace.completed" &&
       "data" in event &&
       event.data) ||
-    ((event.type === "response.output_text.delta" || event.type === "response.refusal.delta") &&
+    (event.type === "response.output_text.delta" &&
       "delta" in event &&
       event.delta &&
       event.delta.length > 100) ||
@@ -993,15 +990,12 @@ function EventExpandedContent({
       break;
 
     case "response.output_text.delta":
-    case "response.refusal.delta":
       if ("delta" in event && event.delta) {
         return (
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <MessageSquare className="h-4 w-4 text-gray-500" />
-              <span className="font-semibold text-sm">
-                {event.type === "response.refusal.delta" ? "Refusal" : "Text Output"}
-              </span>
+              <span className="font-semibold text-sm">Text Output</span>
             </div>
             <div className="max-h-32 overflow-auto">
               <pre className="text-xs bg-background border rounded p-2 whitespace-pre-wrap max-w-full break-all">

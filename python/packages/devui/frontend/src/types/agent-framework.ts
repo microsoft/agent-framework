@@ -108,7 +108,6 @@ export type CreatedAtT = string; // ISO timestamp
 // Content type discriminator
 export type ContentType =
   | "text"
-  | "refusal"
   | "function_call"
   | "function_result"
   | "text_reasoning"
@@ -130,11 +129,6 @@ export interface BaseContent {
 // Specific content types
 export interface TextContent extends BaseContent {
   type: "text";
-  text: string;
-}
-
-export interface RefusalContent extends BaseContent {
-  type: "refusal";
   text: string;
 }
 
@@ -195,7 +189,6 @@ export interface HostedVectorStoreContent extends BaseContent {
 // Union type for all content
 export type Content =
   | TextContent
-  | RefusalContent
   | FunctionCallContent
   | FunctionResultContent
   | TextReasoningContent
@@ -339,10 +332,6 @@ export interface TraceSpan {
 // Helper type guards for Agent Framework content types
 export function isTextContent(content: Content): content is TextContent {
   return content.type === "text";
-}
-
-export function isRefusalContent(content: Content): content is RefusalContent {
-  return content.type === "refusal";
 }
 
 export function isFunctionCallContent(

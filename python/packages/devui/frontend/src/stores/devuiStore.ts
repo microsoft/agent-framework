@@ -23,7 +23,7 @@ const MAX_DEBUG_TEXT_DELTA_CHARS = 2048;
 
 function prepareDebugEvent(event: ExtendedResponseStreamEvent): ExtendedResponseStreamEvent {
   if (
-    (event.type !== "response.output_text.delta" && event.type !== "response.refusal.delta") ||
+    event.type !== "response.output_text.delta" ||
     !("delta" in event) ||
     typeof event.delta !== "string" ||
     event.delta.length <= MAX_DEBUG_TEXT_DELTA_CHARS

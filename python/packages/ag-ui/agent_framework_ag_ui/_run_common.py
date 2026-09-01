@@ -71,7 +71,7 @@ async def _iterate_with_context(
 def _has_only_tool_calls(contents: list[Any]) -> bool:
     """Check if contents have only tool calls (no text)."""
     has_tool_call = any(getattr(c, "type", None) == "function_call" for c in contents)
-    has_text = any(getattr(c, "type", None) in {"text", "refusal"} and getattr(c, "text", None) for c in contents)
+    has_text = any(getattr(c, "type", None) == "text" and getattr(c, "text", None) for c in contents)
     return has_tool_call and not has_text
 
 
@@ -1179,7 +1179,7 @@ def _emit_content(
     else:
         events = []
 
-    if content_type in {"text", "refusal"}:
+    if content_type == "text":
         return events + _emit_text(content, flow, skip_text)
     if content_type == "function_call":
         return events + _emit_tool_call(content, flow, predictive_handler)

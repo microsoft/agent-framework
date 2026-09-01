@@ -151,13 +151,6 @@ def test_a2a_from_run_converts_streaming_update() -> None:
     assert parts[0].text == "chunk"
 
 
-def test_a2a_from_run_converts_refusal_to_text() -> None:
-    parts = a2a_from_run(Message("assistant", [Content.from_refusal("I cannot help.")]))
-
-    assert len(parts) == 1
-    assert parts[0].text == "I cannot help."
-
-
 def test_a2a_from_run_preserves_empty_text_part() -> None:
     parts = a2a_from_run(Message("assistant", [Content.from_text("")]))
 

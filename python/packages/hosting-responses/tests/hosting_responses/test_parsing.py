@@ -59,7 +59,7 @@ class TestMessagesFromResponsesInput:
         ])
         assert msgs[0].text == "describe this"
 
-    def test_message_envelope_preserves_refusal_content(self) -> None:
+    def test_message_envelope_marks_refusal_text(self) -> None:
         msgs = messages_from_responses_input([
             {
                 "type": "message",
@@ -68,8 +68,9 @@ class TestMessagesFromResponsesInput:
             }
         ])
 
-        assert msgs[0].contents == [Content.from_refusal("I cannot help.")]
-        assert msgs[0].text == "I cannot help."
+        assert msgs[0].contents[0].type == "text"
+        assert msgs[0].contents[0].text == "I cannot help."
+        assert msgs[0].contents[0].additional_properties == {"model_output_kind": "refusal"}
 
     def test_message_envelope_rejects_non_object_content_item(self) -> None:
         with pytest.raises(ValueError, match="content.*object"):
@@ -199,8 +200,18 @@ class TestResponsesRunHelpers:
         assert payload["model"] == "test-model"
         assert payload["output"][0]["content"][0]["text"] == "hello"
 
-    def test_responses_from_run_preserves_refusal_content(self) -> None:
-        result = AgentResponse(messages=Message(role="assistant", contents=[Content.from_refusal("I cannot help.")]))
+    def test_responses_from_run_reconstructs_refusal_content_from_marked_text(self) -> None:
+        result = AgentResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_text(
+                        "I cannot help.",
+                        additional_properties={"model_output_kind": "refusal"},
+                    )
+                ],
+            )
+        )
 
         payload = responses_from_run(result, response_id="resp_new")
 
@@ -286,10 +297,18 @@ class TestResponsesRunHelpers:
         assert events[-1].startswith("event: response.completed")
         assert '"conversation":{"id":"conv_1"}' in events[-1]
 
-    async def test_responses_from_streaming_run_preserves_refusal_deltas(self) -> None:
+    async def test_responses_from_streaming_run_preserves_marked_refusal_deltas(self) -> None:
+        marker = {"model_output_kind": "refusal"}
+
         async def updates() -> AsyncIterator[AgentResponseUpdate]:
-            yield AgentResponseUpdate(contents=[Content.from_refusal("I cannot ")], role="assistant")
-            yield AgentResponseUpdate(contents=[Content.from_refusal("help.")], role="assistant")
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("I cannot ", additional_properties=marker)],
+                role="assistant",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("help.", additional_properties=marker)],
+                role="assistant",
+            )
 
         stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
 
@@ -331,9 +350,17 @@ class TestResponsesRunHelpers:
         assert error["message"] == "upstream blew up"
         assert "partial" in events[-1]
 
-    async def test_failed_stream_preserves_partial_refusal_content(self) -> None:
+    async def test_failed_stream_preserves_partial_marked_refusal(self) -> None:
         async def updates() -> AsyncIterator[AgentResponseUpdate]:
-            yield AgentResponseUpdate(contents=[Content.from_refusal("I cannot help.")], role="assistant")
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_text(
+                        "I cannot help.",
+                        additional_properties={"model_output_kind": "refusal"},
+                    )
+                ],
+                role="assistant",
+            )
             raise RuntimeError("upstream blew up")
 
         stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)

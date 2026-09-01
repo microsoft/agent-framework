@@ -62,25 +62,6 @@ class TestStreamAgentResponse:
         assert isinstance(events[2].item.content[0], AssistantMessageContent)
         assert events[2].item.content[0].text == "Hello world"
 
-    async def test_stream_refusal_update_as_text(self):
-        async def refusal_update_stream():
-            yield AgentResponseUpdate(role="assistant", contents=[Content.from_refusal(text="I cannot help.")])
-
-        events = []
-        async for event in stream_agent_response(refusal_update_stream(), thread_id="test_thread"):
-            events.append(event)
-
-        assert isinstance(events[1], ThreadItemUpdated)
-        assert isinstance(events[1].update, AssistantMessageContentPartTextDelta)
-        assert events[1].update.delta == "I cannot help."
-        assert isinstance(events[2], ThreadItemDoneEvent)
-        final_item = events[2].item
-        assert isinstance(final_item, AssistantMessageItem)
-        assert isinstance(final_item.content, list)
-        final_content = final_item.content[0]
-        assert isinstance(final_content, AssistantMessageContent)
-        assert final_content.text == "I cannot help."
-
     async def test_stream_multiple_text_updates(self):
         """Test streaming multiple text updates."""
 

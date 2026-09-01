@@ -54,7 +54,7 @@ agent_framework/
 - **`ChatResponse`** - Response from a chat client containing messages and usage
 - **`ChatResponseUpdate`** - Streaming response update
 - **`AgentResponse`** / **`AgentResponseUpdate`** - Agent-level response wrappers
-- **`Content`** - Unified message content, including text, model refusals, function calls, images, and other variants
+- **`Content`** - Base class for message content (text, function calls, images, etc.)
 - **`ChatOptions`** - TypedDict for chat request options
 
 ### Tools (`_tools.py`)
