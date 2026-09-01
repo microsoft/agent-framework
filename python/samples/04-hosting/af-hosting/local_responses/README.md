@@ -31,10 +31,10 @@ What the route demonstrates:
   caller continue from any earlier response, not just the latest one — so
   every response id needs to stay independently resolvable, not just the
   most recent.
-- Treats an unknown `conversation_id` as a request to create a new local
+- Treats an unknown id supplied through `conversation` as a request to create a new local
   session. Your app can choose a stricter policy, such as requiring a separate
   API to create new conversations before callers can continue them.
-- Explicitly advances a supplied `conversation_id` after each completed run.
+- Explicitly advances a conversation supplied through `conversation` after each completed run.
   A conversation id is a mutable head, so only one caller should advance it at
   a time. The sample and `AgentState` do not provide that locking; production
   apps must serialize writers or use optimistic concurrency. These requests
@@ -55,10 +55,10 @@ to callers, add authentication and authorization at the infrastructure layer,
 the FastAPI app layer, or inside the route body.
 
 Session continuation deserves particular care: treat `previous_response_id` and
-`conversation_id` as untrusted request values, authorize the caller before
+`conversation` as untrusted request values, authorize the caller before
 loading or storing a session for those ids, and partition any durable session
 store by tenant/user as appropriate for your application. Also coordinate
-writers for each stable `conversation_id`; this sample does not do so out of
+writers for each stable conversation id; this sample does not do so out of
 the box.
 
 ## Run

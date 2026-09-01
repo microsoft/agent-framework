@@ -320,7 +320,7 @@ class RawFoundryAgentChatClient(
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: FoundryAgentOptionsT | Mapping[str, Any] | None = None,
         context_providers: Sequence[ContextProvider] | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         require_per_service_call_history_persistence: bool = False,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -680,6 +680,8 @@ class RawFoundryAgent(
             result = await agent.run("Hello!")
     """
 
+    service_session_state_keys: ClassVar[frozenset[str]] = frozenset({FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY})
+
     def __init__(
         self,
         *,
@@ -692,7 +694,7 @@ class RawFoundryAgent(
         default_headers: Mapping[str, str] | None = None,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
         context_providers: Sequence[ContextProvider] | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         client_type: type[RawFoundryAgentChatClient] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -997,7 +999,7 @@ class FoundryAgent(  # type: ignore[misc]
         default_headers: Mapping[str, str] | None = None,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
         context_providers: Sequence[ContextProvider] | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         client_type: type[RawFoundryAgentChatClient] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
