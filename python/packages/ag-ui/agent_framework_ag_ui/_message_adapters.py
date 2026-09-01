@@ -995,7 +995,7 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
 
         content_text = ""
         tool_calls: list[dict[str, Any]] = []
-        tool_result_call_id: str | None = None
+        function_results: list[Any] = []
 
         for content in msg.contents:
             if content.type == "text":
@@ -1012,9 +1012,23 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
                     }
                 )
             elif content.type == "function_result":
-                # Tool result content - extract call_id and result
-                tool_result_call_id = content.call_id
-                content_text = content.result if content.result is not None else ""
+                function_results.append(content)
+
+        # A single Agent Framework tool message can carry several function_result
+        # contents (parallel tool calls). Emit one AG-UI tool message per result so
+        # none are dropped and each keeps its own toolCallId.
+        if function_results:
+            base_id = msg.message_id if msg.message_id else generate_event_id()
+            for idx, fr in enumerate(function_results):
+                result.append(
+                    {
+                        "id": base_id if idx == 0 else f"{base_id}-{idx}",
+                        "role": "tool",
+                        "content": fr.result if fr.result is not None else "",
+                        "toolCallId": fr.call_id,
+                    }
+                )
+            continue
 
         agui_msg: dict[str, Any] = {
             "id": msg.message_id if msg.message_id else generate_event_id(),  # Always include id
@@ -1024,12 +1038,6 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
 
         if tool_calls:
             agui_msg["tool_calls"] = tool_calls
-
-        # If this is a tool result message, add toolCallId (using camelCase for Pydantic)
-        if tool_result_call_id:
-            agui_msg["toolCallId"] = tool_result_call_id
-            # Tool result messages should have role="tool"
-            agui_msg["role"] = "tool"
 
         result.append(agui_msg)
 
