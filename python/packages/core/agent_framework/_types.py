@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import sys
+import warnings
 from asyncio import iscoroutine
 from collections.abc import (
     AsyncGenerator,
@@ -816,6 +817,7 @@ class Content:
         arguments: str | Mapping[str, Any] | None = None,
         exception: str | None = None,
         informational_only: bool = False,
+        id: str | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
@@ -834,6 +836,8 @@ class Content:
                 error state.
             informational_only: Whether the function call is present only for transcript fidelity and should not be
                 executed by Agent Framework function invocation.
+            id: Stable Agent Framework identity for this occurrence. When omitted, the function invocation layer
+                assigns one before a locally actionable call is processed.
             annotations: Optional annotations attached to this content item.
             additional_properties: Extra provider-specific properties to preserve with the content item.
             raw_representation: The original provider-specific object or payload this content item was created from.
@@ -848,6 +852,7 @@ class Content:
             arguments=arguments,
             exception=exception,
             informational_only=informational_only,
+            id=id,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1282,6 +1287,19 @@ class Content:
         raw_representation: Any = None,
     ) -> ContentT:
         """Create function approval request content."""
+        if (
+            function_call.type == "function_call"
+            and function_call.id is not None
+            and id != function_call.id
+            and function_call.additional_properties.get("server_label") is None
+        ):
+            warnings.warn(
+                "Creating a local function_approval_request whose id differs from function_call.id uses the legacy "
+                "provider call_id binding. Use function_call.id as the approval request id; legacy binding support "
+                "will be removed in a future release.",
+                FutureWarning,
+                stacklevel=2,
+            )
         return cls(
             "function_approval_request",
             id=id,

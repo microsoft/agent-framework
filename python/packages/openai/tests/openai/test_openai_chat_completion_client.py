@@ -2356,6 +2356,56 @@ def test_streaming_chunk_with_null_delta_no_tool_calls_parsed(
     assert not any(c.type == "function_call" for c in update.contents)
 
 
+def test_streaming_tool_call_preserves_choice_local_index_scope(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    client = OpenAIChatCompletionClient()
+    chunk = ChatCompletionChunk.model_validate({
+        "id": "test-tool-chunk",
+        "object": "chat.completion.chunk",
+        "created": 1234567890,
+        "model": "test-model",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call-a",
+                            "type": "function",
+                            "function": {"name": "first", "arguments": ""},
+                        }
+                    ]
+                },
+                "finish_reason": None,
+            },
+            {
+                "index": 1,
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call-b",
+                            "type": "function",
+                            "function": {"name": "second", "arguments": ""},
+                        }
+                    ]
+                },
+                "finish_reason": None,
+            },
+        ],
+    })
+
+    update = client._parse_response_update_from_openai(chunk)
+    function_calls = [content for content in update.contents if content.type == "function_call"]
+
+    assert [content.additional_properties["tool_call_index"] for content in function_calls] == [0, 0]
+    assert [content.additional_properties["tool_call_choice_index"] for content in function_calls] == [0, 1]
+
+
 # endregion
 
 

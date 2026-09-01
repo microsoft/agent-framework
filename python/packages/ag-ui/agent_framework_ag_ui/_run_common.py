@@ -903,7 +903,11 @@ def _emit_approval_request(
             },
         )
     )
-    interrupt_id = func_call_id or content.id
+    interrupt_id = (
+        content.id
+        if func_call.additional_properties.get("server_label") is not None
+        else func_call.id or content.id or func_call_id
+    )
     if interrupt_id:
         response_schema = _approval_response_schema() if func_call.additional_properties.get("server_label") else None
         flow.interrupts.append(

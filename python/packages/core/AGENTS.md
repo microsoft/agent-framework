@@ -156,10 +156,13 @@ agent_framework/
   caller messages, returns approved and rejected terminal results in the resumed response (and stream) before any
   final assistant message, and does not mutate the caller's approval `Message` or the earlier approval-request
   response.
-- Approval/result correlation is occurrence-aware. A `call_id` may be reused after a completed round, so approval
-  normalization matches ordered call occurrences and consumes approved results per occurrence rather than using one
-  global result per `call_id`. All contents produced by one execution remain one result group and are consumed
-  together, including multiple user-input requests.
+- Approval/result correlation is occurrence-aware. Provider/service correlation stays in `function_call.call_id`,
+  while new locally actionable calls carry one stable Agent Framework occurrence identity in `function_call.id`.
+  New local approval request ids use that occurrence id; hosted provider-issued approval ids remain unchanged. Legacy
+  stored pending calls without `function_call.id` retain exact request-id binding for one warned compatibility resume.
+  A `call_id` may be reused after a completed round, so approval normalization matches ordered call occurrences and
+  consumes approved results per occurrence rather than using one global result per `call_id`. All contents produced by
+  one execution remain one result group and are consumed together, including multiple user-input requests.
 - Approval resume keeps terminal `function_result` contents in tool-role messages and follow-up user-input requests
   in assistant-role messages, including mixed sibling batches.
 - Function-call budget accounting counts one unit per executed result group, not per emitted `function_result`, so

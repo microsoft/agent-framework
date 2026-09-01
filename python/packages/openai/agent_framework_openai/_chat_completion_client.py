@@ -995,6 +995,9 @@ class RawOpenAIChatCompletionClient(
                     tool_index = getattr(tool, "index", None)
                     if tool_index is not None:
                         fcc.additional_properties["tool_call_index"] = tool_index
+                        choice_index = getattr(choice, "index", None)
+                        if choice_index is not None:
+                            fcc.additional_properties["tool_call_choice_index"] = choice_index
                     resp.append(fcc)
 
         # When you enable asynchronous content filtering in Azure OpenAI, you may receive empty deltas
