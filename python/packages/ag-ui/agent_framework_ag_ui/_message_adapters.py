@@ -1014,7 +1014,7 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
             elif content.type == "function_result":
                 function_results.append(content)
 
-        # A single Agent Framework tool message can carry several function_result
+        # A single Agent Framework message can carry several function_result
         # contents (parallel tool calls). Emit one AG-UI tool message per result so
         # none are dropped and each keeps its own toolCallId.
         if function_results:
@@ -1028,6 +1028,18 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
                         "toolCallId": fr.call_id,
                     }
                 )
+            # A mixed message may also carry text / function_call contents alongside
+            # the tool results (e.g. a finalized assistant turn). Emit those as a
+            # separate, distinctly-identified message so they are not lost.
+            if content_text or tool_calls:
+                extra_msg: dict[str, Any] = {
+                    "id": f"{base_id}-{len(function_results)}",
+                    "role": role,
+                    "content": content_text,
+                }
+                if tool_calls:
+                    extra_msg["tool_calls"] = tool_calls
+                result.append(extra_msg)
             continue
 
         agui_msg: dict[str, Any] = {
