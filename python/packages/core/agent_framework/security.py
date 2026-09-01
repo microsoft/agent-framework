@@ -21,6 +21,7 @@ import logging
 import re
 import threading
 import uuid
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, MutableMapping
 from copy import deepcopy
 from datetime import datetime
@@ -1677,6 +1678,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         block_on_violation: bool = True,
         enable_audit_log: bool = True,
         approval_on_violation: bool = False,
+        max_pending_approvals: int | None = 1000,
     ) -> None:
         """Initialize PolicyEnforcementFunctionMiddleware.
 
@@ -1689,19 +1691,27 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                 when a policy violation is detected. If True, the middleware will return
                 a special result that triggers an approval request in the UI. After user
                 approval, the tool will execute with a warning about untrusted context.
+            max_pending_approvals: Maximum number of pending approvals to retain. When exceeded,
+                the oldest pending approval is evicted (FIFO). Set to None for no limit.
+                Defaults to 1000.
         """
+        if max_pending_approvals is not None and max_pending_approvals <= 0:
+            raise ValueError("max_pending_approvals must be None or a positive integer")
+
         self.allow_untrusted_tools = allow_untrusted_tools or set()
         self.approval_on_violation = approval_on_violation
         # If approval_on_violation is True, we don't block - we request approval instead
         self.block_on_violation = block_on_violation if not approval_on_violation else False
         self.enable_audit_log = enable_audit_log
         self.audit_log: list[dict[str, Any]] = []
+        self._max_pending_approvals = max_pending_approvals
         # Track call_ids awaiting approval, each mapped to a binding record capturing the exact
         # invocation the approval was requested for: the function name + arguments, the security
         # label (integrity/confidentiality) shown for review, and the session. Combined with the
         # call_id key and consume-on-use, an approval cannot re-authorize a repeated call, a
         # different function, changed arguments, a different security label, or a different session.
-        self._pending_policy_approvals: dict[str, _PendingPolicyApproval] = {}
+        # OrderedDict preserves insertion order for FIFO eviction when bounded.
+        self._pending_policy_approvals: OrderedDict[str, _PendingPolicyApproval] = OrderedDict()
 
     def _get_call_id(self, context: FunctionInvocationContext) -> str:
         """Get the tool call id for this invocation context."""
@@ -1843,6 +1853,19 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         pending = self._pending_policy_approvals.get(call_id)
         if pending is None:
             return False
+
+        # Session-mismatch cleanup: if the pending entry is from a different session,
+        # it can never be consumed (approvals are session-bound). Remove it to prevent
+        # unbounded growth when call_ids are reused across sessions.
+        current_session_key = self._session_key(context)
+        if pending.session_key != current_session_key:
+            del self._pending_policy_approvals[call_id]
+            logger.debug(
+                f"Removed stale pending approval '{call_id}' from session '{pending.session_key}' "
+                f"(current session: '{current_session_key}')"
+            )
+            return False
+
         approval_response = context.metadata.get("approval_response")
         if not (
             isinstance(approval_response, Content)
@@ -1900,6 +1923,19 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         )
         call_id = self._get_call_id(context)
         if call_id:
+            # If bounded, evict oldest entry when adding a new unique call_id would exceed limit.
+            # Do not evict when updating an existing call_id (re-request scenario).
+            if (
+                self._max_pending_approvals is not None
+                and call_id not in self._pending_policy_approvals
+                and len(self._pending_policy_approvals) >= self._max_pending_approvals
+            ):
+                # Evict oldest (first) entry
+                oldest_call_id = next(iter(self._pending_policy_approvals))
+                del self._pending_policy_approvals[oldest_call_id]
+                logger.debug(
+                    f"Evicted oldest pending approval '{oldest_call_id}' to maintain limit of {self._max_pending_approvals}"
+                )
             self._pending_policy_approvals[call_id] = self._pending_record(context, violations)
         additional_properties: dict[str, Any] = {
             "policy_violation": True,
