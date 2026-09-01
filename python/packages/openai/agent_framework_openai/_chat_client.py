@@ -861,7 +861,28 @@ class RawOpenAIChatClient(
         """Finalize streamed updates and add post-stream Azure AI Search citation metadata."""
         self._enrich_streamed_azure_ai_search_citations(updates)
         self._enrich_mcp_search_citations([content for update in updates for content in update.contents])
-        return super()._finalize_response_updates(updates, response_format=response_format)
+        response = super()._finalize_response_updates(updates, response_format=response_format)
+        logprobs = [
+            logprob
+            for update in updates
+            for content in update.contents
+            if content.type == "text"
+            for logprob in content.additional_properties.get("logprobs", [])
+        ]
+        if logprobs:
+            assistant_text = next(
+                (
+                    content
+                    for message in response.messages
+                    if message.role == "assistant"
+                    for content in message.contents
+                    if content.type == "text"
+                ),
+                None,
+            )
+            if assistant_text is not None:
+                assistant_text.additional_properties["logprobs"] = logprobs
+        return response
 
     @classmethod
     def _extract_served_model(cls, headers: Any) -> str | None:
@@ -1866,11 +1887,16 @@ class RawOpenAIChatClient(
                 if role == "assistant":
                     # Assistant history is represented as output text items; Azure validation
                     # requires `annotations` to be present for this type.
-                    return {
+                    output_text = {
                         "type": "output_text",
                         "text": content.text,
                         "annotations": _annotations_to_output_text(getattr(content, "annotations", None)),
                     }
+                    if "logprobs" in content.additional_properties:
+                        output_text["logprobs"] = self._serialize_provider_payload(
+                            content.additional_properties["logprobs"]
+                        )
+                    return output_text
                 return _attach_prompt_cache_breakpoint(
                     {
                         "type": "input_text",
@@ -2614,8 +2640,14 @@ class RawOpenAIChatClient(
                     for message_content in item.content:  # type: ignore[reportMissingTypeArgument]
                         match message_content.type:
                             case "output_text":
+                                logprobs = getattr(cast(Any, message_content), "logprobs", None)
                                 text_content = Content.from_text(
                                     text=message_content.text,
+                                    additional_properties=(
+                                        {"logprobs": self._serialize_provider_payload(logprobs)}
+                                        if logprobs is not None
+                                        else None
+                                    ),
                                     raw_representation=message_content,
                                 )
                                 metadata.update(self._get_metadata_from_response(message_content))
@@ -2903,6 +2935,16 @@ class RawOpenAIChatClient(
         continuation_token: OpenAIContinuationToken | None = None
         finish_reason: FinishReason | None = None
         model = self.model
+
+        def output_text_properties(output: Any) -> dict[str, Any] | None:
+            logprobs = getattr(output, "logprobs", None)
+            if logprobs is None:
+                return None
+            serialized = self._serialize_provider_payload(logprobs)
+            if not isinstance(serialized, list):
+                return None
+            return {"logprobs": serialized}
+
         match event.type:
             # types:
             # ResponseAudioDeltaEvent,
@@ -2962,14 +3004,26 @@ class RawOpenAIChatClient(
                 event_part = event.part
                 match event_part.type:
                     case "output_text":
-                        contents.append(Content.from_text(text=event_part.text, raw_representation=event))
+                        contents.append(
+                            Content.from_text(
+                                text=event_part.text,
+                                additional_properties=output_text_properties(cast(Any, event_part)),
+                                raw_representation=event,
+                            )
+                        )
                         metadata.update(self._get_metadata_from_response(event_part))
                     case "refusal":
                         contents.append(Content.from_text(text=event_part.refusal, raw_representation=event))
                     case _:
                         pass
             case "response.output_text.delta":
-                contents.append(Content.from_text(text=event.delta, raw_representation=event))
+                contents.append(
+                    Content.from_text(
+                        text=event.delta,
+                        additional_properties=output_text_properties(cast(Any, event)),
+                        raw_representation=event,
+                    )
+                )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_text.delta":
                 if seen_reasoning_delta_item_ids is not None:
