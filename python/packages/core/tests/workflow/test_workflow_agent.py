@@ -890,6 +890,31 @@ class TestWorkflowAgent:
         assert update.continuation_token == "resume-token"
         assert update.additional_properties == {"provider_marker": "preserve-me"}
 
+    async def test_workflow_as_agent_stream_preserves_empty_additional_properties(self) -> None:
+        """Test that an explicitly empty additional_properties dict is not converted to None."""
+
+        @executor
+        async def empty_props_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponseUpdate]) -> None:  # type: ignore[valid-type]
+            await ctx.yield_output(
+                AgentResponseUpdate(
+                    contents=[Content.from_text(text="payload")],
+                    role="assistant",
+                    response_id="empty-props-response",
+                    additional_properties={},
+                )
+            )
+
+        workflow = WorkflowBuilder(start_executor=empty_props_executor).build()
+        agent = workflow.as_agent("empty-props-test-agent")
+
+        updates: list[AgentResponseUpdate] = []
+        async for update in agent.run("hello", stream=True):
+            updates.append(update)
+
+        forwarded = [u for u in updates if u.response_id == "empty-props-response"]
+        assert len(forwarded) == 1
+        assert forwarded[0].additional_properties == {}
+
     async def test_workflow_as_agent_yield_output_with_content_types(self) -> None:
         """Test that yield_output preserves different content types (Content, Content, etc.)."""
 
