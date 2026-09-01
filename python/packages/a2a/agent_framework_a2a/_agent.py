@@ -1027,7 +1027,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         # Process ALL contents
         for content in message.contents:
             match content.type:
-                case "text":
+                case "text" | "refusal":
                     if content.text is None:
                         raise ValueError("Text content requires a non-null text value")
                     parts.append(

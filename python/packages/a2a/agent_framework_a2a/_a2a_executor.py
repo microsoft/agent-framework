@@ -268,7 +268,7 @@ class A2AExecutor(AgentExecutor):
         contents = getattr(item, "contents", [])
 
         for content in contents:
-            if content.type == "text" and content.text:
+            if content.type in {"text", "refusal"} and content.text:
                 parts.append(Part(text=content.text))
             elif content.type == "data" and content.uri:
                 base64_str = get_uri_data(content.uri)

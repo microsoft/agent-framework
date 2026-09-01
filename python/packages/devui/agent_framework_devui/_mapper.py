@@ -41,8 +41,10 @@ from .models import (
     ResponseOutputImage,
     ResponseOutputItemAddedEvent,
     ResponseOutputMessage,
+    ResponseOutputRefusal,
     ResponseOutputText,
     ResponseReasoningTextDeltaEvent,
+    ResponseRefusalDeltaEvent,
     ResponseStreamEvent,
     ResponseTextDeltaEvent,
     ResponseTraceEventComplete,
@@ -81,6 +83,12 @@ def _workflow_output_metadata(event_type: Any, executor_id: Any) -> dict[str, An
         "workflow_output_kind": "terminal" if event_type == "output" else "intermediate",
         "executor_id": executor_id,
     }
+
+
+def _message_content_part(content_type: str) -> ResponseOutputText | ResponseOutputRefusal:
+    if content_type == "refusal":
+        return ResponseOutputRefusal(type="refusal", refusal="")
+    return ResponseOutputText(type="output_text", text="", annotations=[])
 
 
 def _response_usage(usage_details: UsageDetails) -> ResponseUsage:
@@ -176,6 +184,7 @@ class MessageMapper:
         # Register content type mappers for all 12 Agent Framework content types
         self.content_mappers = {
             "text": self._map_text_content,
+            "refusal": self._map_refusal_content,
             "text_reasoning": self._map_reasoning_content,
             "function_call": self._map_function_call_content,
             "function_result": self._map_function_result_content,
@@ -655,27 +664,31 @@ class MessageMapper:
             if not hasattr(update, "contents") or not update.contents:
                 return events
 
-            # Check if we're streaming text content
-            has_text_content = any(content.type == "text" for content in update.contents)
+            message_content_type = next(
+                (content.type for content in update.contents if content.type in {"text", "refusal"}),
+                None,
+            )
+            has_message_content = message_content_type is not None
 
             # Check if we're in an executor context with an existing item
             executor_id = context.get("current_executor_id")
             executor_item_key = f"exec_item_{executor_id}" if executor_id else None
             workflow_metadata = _workflow_output_metadata(context.get("current_workflow_event_type"), executor_id)
 
-            if has_text_content and workflow_metadata is not None:
+            if has_message_content and workflow_metadata is not None:
                 current_metadata = context.get("current_message_workflow_metadata")
                 if current_metadata != workflow_metadata:
                     context.pop("current_message_id", None)
+                    context.pop("current_message_content_type", None)
                     context["current_message_workflow_metadata"] = workflow_metadata
 
             # If we have an executor item, use it for deltas instead of creating a message
-            if has_text_content and executor_item_key and executor_item_key in context:
+            if has_message_content and executor_item_key and executor_item_key in context:
                 # Use the executor's item ID for this agent's output
                 context["current_message_id"] = context[executor_item_key]
                 # Note: We don't create a new message item here since the executor item already exists
             # Otherwise, create a message item if we haven't yet (for non-executor contexts)
-            elif has_text_content and "current_message_id" not in context:
+            elif has_message_content and "current_message_id" not in context:
                 message_id = f"msg_{uuid4().hex[:8]}"
                 context["current_message_id"] = message_id
                 context["output_index"] = context.get("output_index", -1) + 1
@@ -701,6 +714,7 @@ class MessageMapper:
 
                 # Add content part for text
                 context["content_index"] = 0
+                context["current_message_content_type"] = message_content_type
                 events.append(
                     ResponseContentPartAddedEvent(
                         type="response.content_part.added",
@@ -708,24 +722,45 @@ class MessageMapper:
                         content_index=context["content_index"],
                         item_id=message_id,
                         sequence_number=self._next_sequence(context),
-                        part=ResponseOutputText(type="output_text", text="", annotations=[]),
+                        part=_message_content_part(message_content_type),
                     )
                 )
 
             # Process each content item
             for content in update.contents:
-                # Special handling for TextContent to use proper delta events
-                if content.type == "text" and "current_message_id" in context:
-                    # Stream text content via proper delta events
-                    delta_event = ResponseTextDeltaEvent(
-                        type="response.output_text.delta",
-                        output_index=context["output_index"],
-                        content_index=context.get("content_index", 0),
-                        item_id=context["current_message_id"],
-                        delta=content.text,
-                        logprobs=[],  # We don't have logprobs from Agent Framework
-                        sequence_number=self._next_sequence(context),
-                    )
+                if content.type in {"text", "refusal"} and "current_message_id" in context:
+                    if context.get("current_message_content_type") != content.type:
+                        context["content_index"] = context.get("content_index", 0) + 1
+                        context["current_message_content_type"] = content.type
+                        events.append(
+                            ResponseContentPartAddedEvent(
+                                type="response.content_part.added",
+                                output_index=context["output_index"],
+                                content_index=context["content_index"],
+                                item_id=context["current_message_id"],
+                                sequence_number=self._next_sequence(context),
+                                part=_message_content_part(content.type),
+                            )
+                        )
+                    if content.type == "refusal":
+                        delta_event = ResponseRefusalDeltaEvent(
+                            type="response.refusal.delta",
+                            output_index=context["output_index"],
+                            content_index=context.get("content_index", 0),
+                            item_id=context["current_message_id"],
+                            delta=content.text,
+                            sequence_number=self._next_sequence(context),
+                        )
+                    else:
+                        delta_event = ResponseTextDeltaEvent(
+                            type="response.output_text.delta",
+                            output_index=context["output_index"],
+                            content_index=context.get("content_index", 0),
+                            item_id=context["current_message_id"],
+                            delta=content.text,
+                            logprobs=[],  # We don't have logprobs from Agent Framework
+                            sequence_number=self._next_sequence(context),
+                        )
                     if workflow_metadata is not None:
                         cast(Any, delta_event).metadata = workflow_metadata
                     events.append(delta_event)
@@ -741,8 +776,8 @@ class MessageMapper:
                     # Graceful fallback for unknown content types
                     events.append(await self._create_unknown_content_event(content, context))
 
-                # Don't increment content_index for text deltas within the same part
-                if content.type != "text":
+                # Don't increment content_index for deltas within the same text-bearing part
+                if content.type not in {"text", "refusal"}:
                     context["content_index"] = context.get("content_index", 0) + 1
 
         except Exception as e:
@@ -1313,6 +1348,17 @@ class MessageMapper:
     async def _map_text_content(self, content: Any, context: dict[str, Any]) -> ResponseTextDeltaEvent:
         """Map TextContent to ResponseTextDeltaEvent."""
         return self._create_text_delta_event(content.text, context)
+
+    async def _map_refusal_content(self, content: Any, context: dict[str, Any]) -> ResponseRefusalDeltaEvent:
+        """Map refusal content to a Responses refusal delta."""
+        return ResponseRefusalDeltaEvent(
+            type="response.refusal.delta",
+            delta=content.text,
+            item_id=context["item_id"],
+            output_index=context["output_index"],
+            content_index=context["content_index"],
+            sequence_number=self._next_sequence(context),
+        )
 
     async def _map_reasoning_content(self, content: Any, context: dict[str, Any]) -> ResponseReasoningTextDeltaEvent:
         """Map TextReasoningContent to ResponseReasoningTextDeltaEvent."""

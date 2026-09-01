@@ -80,8 +80,7 @@ async def stream_agent_response(
         # Process the update content
         if update.contents:
             for content in update.contents:
-                # Handle text content - only TextContent has a text attribute
-                if content.type == "text" and content.text is not None:
+                if content.type in {"text", "refusal"} and content.text is not None:
                     # Yield incremental text delta for streaming display
                     yield ThreadItemUpdated(
                         type="thread.item.updated",

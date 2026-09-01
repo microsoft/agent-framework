@@ -17,6 +17,7 @@ export interface StreamingState {
   completed: boolean; // Whether the stream completed successfully
   accumulatedText?: string; // Bounded tail preview for refresh restoration
   accumulatedTextIsPreview?: boolean;
+  accumulatedTextType?: "text" | "refusal";
 }
 
 const STORAGE_KEY_PREFIX = "devui_streaming_state_";
@@ -30,6 +31,7 @@ interface CreateStreamingStateOptions {
   lastSequenceNumber?: number;
   accumulatedText?: string;
   accumulatedTextIsPreview?: boolean;
+  accumulatedTextType?: "text" | "refusal";
 }
 
 /**
@@ -87,6 +89,7 @@ export function createStreamingState({
   lastSequenceNumber = -1,
   accumulatedText,
   accumulatedTextIsPreview = false,
+  accumulatedTextType,
 }: CreateStreamingStateOptions): StreamingState {
   return normalizeAccumulatedTextPreview({
     conversationId,
@@ -97,6 +100,7 @@ export function createStreamingState({
     completed: false,
     accumulatedText,
     accumulatedTextIsPreview,
+    accumulatedTextType,
   });
 }
 
@@ -123,7 +127,7 @@ export function applyStreamingEventToState(
   }
 
   if (
-    event.type === "response.output_text.delta" &&
+    (event.type === "response.output_text.delta" || event.type === "response.refusal.delta") &&
     "delta" in event &&
     typeof event.delta === "string" &&
     event.delta.length > 0
@@ -137,6 +141,7 @@ export function applyStreamingEventToState(
       ? accumulatedText.slice(-MAX_ACCUMULATED_TEXT_PREVIEW_CHARS)
       : accumulatedText;
     nextState.accumulatedTextIsPreview = isPreview;
+    nextState.accumulatedTextType = event.type === "response.refusal.delta" ? "refusal" : "text";
   }
 
   return nextState;

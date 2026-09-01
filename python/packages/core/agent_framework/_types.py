@@ -350,6 +350,7 @@ KNOWN_MEDIA_TYPES = [
 
 ContentType = Literal[
     "text",
+    "refusal",
     "text_reasoning",
     "data",
     "uri",
@@ -475,7 +476,7 @@ class Content:
     """Unified content container covering all content variants.
 
     This class provides a single unified type that handles all content variants.
-    Use the class methods like `Content.from_text()`, `Content.from_data()`,
+    Use the class methods like `Content.from_text()`, `Content.from_refusal()`, `Content.from_data()`,
     `Content.from_uri()`, etc. to create instances.
     """
 
@@ -617,6 +618,24 @@ class Content:
         """Create text content."""
         return cls(
             "text",
+            text=text,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_refusal(
+        cls: type[ContentT],
+        text: str,
+        *,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create model refusal content."""
+        return cls(
+            "refusal",
             text=text,
             annotations=annotations,
             additional_properties=additional_properties,
@@ -1433,7 +1452,7 @@ class Content:
             if self.error_code:
                 return f"Error {self.error_code}: {self.message or ''}"
             return self.message or "Unknown error"
-        if self.type == "text":
+        if self.type in {"text", "refusal"}:
             return self.text or ""
         return f"Content(type={self.type})"
 
@@ -1484,7 +1503,7 @@ class Content:
         if self.type != other.type:
             raise TypeError(f"Cannot add Content of type '{self.type}' with type '{other.type}'")
 
-        if self.type == "text":
+        if self.type in {"text", "refusal"}:
             return self._add_text_content(other)
         if self.type == "text_reasoning":
             return self._add_text_reasoning_content(other)
@@ -1497,7 +1516,7 @@ class Content:
     def _add_text_content(self, other: Content) -> Content:
         """Add two TextContent instances."""
         return Content(
-            "text",
+            "refusal" if self.type == "refusal" else "text",
             text=self.text + other.text,  # type: ignore[attr-defined, operator]
             annotations=_combine_annotations(self.annotations, other.annotations),
             additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
@@ -1839,9 +1858,9 @@ class Message(SerializationMixin):
         """Returns the text content of the message.
 
         Remarks:
-            This property concatenates the text of all TextContent objects in Content.
+            This property concatenates the text of all text and refusal content objects.
         """
-        return " ".join(content.text for content in self.contents if content.type == "text")  # type: ignore[misc]
+        return " ".join(content.text for content in self.contents if content.type in {"text", "refusal"})  # type: ignore[misc]
 
 
 AgentRunInputs = str | Content | Message | Sequence[str | Content | Message]
@@ -2023,7 +2042,7 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
     response.continuation_token = update.continuation_token
 
 
-def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "text_reasoning"]) -> None:
+def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "refusal", "text_reasoning"]) -> None:
     """Take any subsequence Text or TextReasoningContent items and coalesce them into a single item."""
     if not contents:
         return
@@ -2144,6 +2163,7 @@ def _finalize_response(response: ChatResponse | AgentResponse) -> None:
     """Finalizes the response by performing any necessary post-processing."""
     for msg in response.messages:
         _coalesce_text_content(msg.contents, "text")
+        _coalesce_text_content(msg.contents, "refusal")
         _coalesce_text_content(msg.contents, "text_reasoning")
         _coalesce_code_interpreter_content(msg.contents)
 
@@ -2619,7 +2639,7 @@ class ChatResponseUpdate(SerializationMixin):
     @property
     def text(self) -> str:
         """Returns the concatenated text of all contents in the update."""
-        return "".join(content.text for content in self.contents if content.type == "text")  # type: ignore[misc]
+        return "".join(content.text for content in self.contents if content.type in {"text", "refusal"})  # type: ignore[misc]
 
     def __str__(self) -> str:
         return self.text
@@ -3024,8 +3044,12 @@ class AgentResponseUpdate(SerializationMixin):
 
     @property
     def text(self) -> str:
-        """Get the concatenated text of all TextContent objects in contents."""
-        return "".join(content.text for content in self.contents if content.type == "text") if self.contents else ""  # type: ignore[misc]
+        """Get the concatenated text of all text and refusal content objects in contents."""
+        return (
+            "".join((content.text or "") for content in self.contents if content.type in {"text", "refusal"})
+            if self.contents
+            else ""
+        )
 
     @property
     def user_input_requests(self) -> list[Content]:

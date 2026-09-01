@@ -51,6 +51,8 @@ def create_test_content(content_type: str, **kwargs: Any) -> Any:
     """Create test content objects."""
     if content_type == "text":
         return Content.from_text(text=kwargs.get("text", "Hello, world!"))
+    if content_type == "refusal":
+        return Content.from_refusal(text=kwargs.get("text", "I cannot help."))
     if content_type == "function_call":
         return Content.from_function_call(
             call_id=kwargs.get("call_id", "test_call_id"),
@@ -119,6 +121,20 @@ async def test_text_content_mapping(mapper: MessageMapper, test_request: AgentFr
     # Check text delta
     assert events[2].type == "response.output_text.delta"
     assert events[2].delta == "Hello, clean test!"
+
+
+async def test_refusal_content_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
+    update = create_test_agent_update([create_test_content("refusal", text="I cannot help.")])
+
+    events = await mapper.convert_event(update, test_request)
+
+    assert [event.type for event in events] == [
+        "response.output_item.added",
+        "response.content_part.added",
+        "response.refusal.delta",
+    ]
+    assert events[1].part.type == "refusal"
+    assert events[2].delta == "I cannot help."
 
 
 async def test_function_call_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:

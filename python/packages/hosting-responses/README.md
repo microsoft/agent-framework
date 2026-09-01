@@ -16,6 +16,9 @@ This package provides the Responses-specific conversion layer:
 - `responses_from_streaming_run(...)` — convert an Agent Framework
   `ResponseStream` into Responses-compatible SSE events.
 
+Responses refusal parts round-trip as `Content.from_refusal(...)` and
+`response.refusal.*` events instead of being flattened into output text.
+
 FastAPI/Starlette/Django/Azure Functions code owns route registration,
 authentication, status codes, response construction, and background work.
 

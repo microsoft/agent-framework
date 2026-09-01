@@ -302,6 +302,18 @@ def test_prepare_message_for_anthropic_text(mock_anthropic_client: MagicMock) ->
     assert result["content"][0]["text"] == "Hello, world!"
 
 
+def test_prepare_message_for_anthropic_refusal_falls_back_to_text(mock_anthropic_client: MagicMock) -> None:
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(role="assistant", contents=[Content.from_refusal("I cannot help with that.")])
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result == {
+        "role": "assistant",
+        "content": [{"type": "text", "text": "I cannot help with that."}],
+    }
+
+
 def test_prepare_message_for_anthropic_function_call(
     mock_anthropic_client: MagicMock,
 ) -> None:

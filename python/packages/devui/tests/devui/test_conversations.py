@@ -6,6 +6,8 @@ from typing import cast
 
 import pytest
 from openai.types.conversations import InputTextContent
+from openai.types.conversations.message import Message as OpenAIMessage
+from openai.types.responses import ResponseOutputRefusal
 
 from agent_framework_devui._conversations import InMemoryConversationStore
 
@@ -153,6 +155,29 @@ async def test_add_items():
     assert conv_items[0].content[0].type == "text"
     text_content = cast(InputTextContent, conv_items[0].content[0])
     assert text_content.text == "Hello"
+
+
+@pytest.mark.asyncio
+async def test_add_and_list_items_preserves_refusal_content():
+    store = InMemoryConversationStore()
+    conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
+
+    added = await store.add_items(
+        conversation.id,
+        items=[{"role": "assistant", "content": [{"type": "refusal", "refusal": "I cannot help."}]}],
+    )
+    retrieved, _ = await store.list_items(conversation.id)
+
+    added_message = cast(OpenAIMessage, added[0])
+    assert added_message.content is not None
+    added_refusal = cast(ResponseOutputRefusal, added_message.content[0])
+    retrieved_message = cast(OpenAIMessage, retrieved[0])
+    assert retrieved_message.content is not None
+    retrieved_refusal = cast(ResponseOutputRefusal, retrieved_message.content[0])
+    assert added_refusal.type == "refusal"
+    assert added_refusal.refusal == "I cannot help."
+    assert retrieved_refusal.type == "refusal"
+    assert retrieved_refusal.refusal == "I cannot help."
 
 
 @pytest.mark.asyncio

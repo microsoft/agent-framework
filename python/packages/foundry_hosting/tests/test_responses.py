@@ -57,6 +57,7 @@ from azure.ai.agentserver.responses import (
     ResponseExitForRecovery,
     ResponsesServerOptions,
 )
+from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
@@ -286,6 +287,43 @@ def _make_server(agent: Any, **kwargs: Any) -> ResponsesHostServer:
         provider.get_store.return_value = cast(SessionStore | None, session_store)
         server._session_storage_provider = provider  # pyright: ignore[reportPrivateUsage]
     return server
+
+
+async def test_output_item_tracker_emits_native_refusal_events() -> None:
+    stream = ResponseEventStream(response_id="resp_refusal")
+    stream.emit_created()
+    stream.emit_in_progress()
+    tracker = _OutputItemTracker(stream)
+    events: list[Any] = []
+
+    async for event in tracker.handle(Content.from_refusal("I cannot help."), message_id="msg_refusal"):
+        events.append(event)
+    events.extend(tracker.close())
+
+    event_types = [event.get("type") if isinstance(event, Mapping) else event.type for event in events]
+    assert event_types == [
+        "response.output_item.added",
+        "response.content_part.added",
+        "response.refusal.delta",
+        "response.refusal.done",
+        "response.content_part.done",
+        "response.output_item.done",
+    ]
+
+
+async def test_item_to_message_preserves_refusal_content() -> None:
+    message = await _item_to_message(
+        cast(
+            Item,
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "refusal", "refusal": "I cannot help."}],
+            },
+        )
+    )
+
+    assert message.contents == [Content.from_refusal("I cannot help.")]
 
 
 class _CapturingASGITransport(httpx.AsyncBaseTransport):

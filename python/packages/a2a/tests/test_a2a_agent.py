@@ -369,6 +369,15 @@ def test_prepare_message_for_a2a_with_error_content(a2a_agent: A2AAgent) -> None
     assert a2a_message.parts[0].text == "Test error message"
 
 
+def test_prepare_message_for_a2a_with_refusal_content(a2a_agent: A2AAgent) -> None:
+    message = Message(role="assistant", contents=[Content.from_refusal("I cannot help.")])
+
+    a2a_message = a2a_agent._prepare_message_for_a2a(message)
+
+    assert len(a2a_message.parts) == 1
+    assert a2a_message.parts[0].text == "I cannot help."
+
+
 def test_prepare_message_for_a2a_with_uri_content(a2a_agent: A2AAgent) -> None:
     """Test _prepare_message_for_a2a with UriContent."""
 

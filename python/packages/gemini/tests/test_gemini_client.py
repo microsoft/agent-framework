@@ -1163,6 +1163,15 @@ def test_text_and_image_content_both_reach_the_model() -> None:
     assert any(p.inline_data is not None for p in parts)
 
 
+def test_refusal_content_falls_back_to_text_part() -> None:
+    client, _ = _make_gemini_client()
+
+    parts = client._convert_message_contents([Content.from_refusal("I cannot help.")], {})
+
+    assert len(parts) == 1
+    assert parts[0].text == "I cannot help."
+
+
 def test_non_base64_data_uri_is_skipped(caplog: pytest.LogCaptureFixture) -> None:
     """A data URI that is not base64-encoded is skipped with a warning rather than crashing."""
     client, _ = _make_gemini_client()

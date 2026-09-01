@@ -59,6 +59,7 @@ from agent_framework_ag_ui._run_common import (
     _extract_resume_payload,
     _has_only_tool_calls,
 )
+from agent_framework_ag_ui._workflow_run import _text_from_contents
 
 
 def _message_role(message: object) -> object:
@@ -329,6 +330,13 @@ class TestHasOnlyToolCalls:
         ]
         assert _has_only_tool_calls(contents) is False
 
+    def test_tool_call_with_refusal(self):
+        contents = [
+            Content.from_refusal("I cannot call that tool."),
+            Content.from_function_call(call_id="call_1", name="tool1", arguments="{}"),
+        ]
+        assert _has_only_tool_calls(contents) is False
+
     def test_only_text(self):
         """Returns False when only text."""
         contents = [Content.from_text("Just text")]
@@ -569,6 +577,27 @@ def test_emit_text_basic():
     assert len(events) == 2  # TextMessageStartEvent + TextMessageContentEvent
     assert flow.message_id is not None
     assert flow.accumulated_text == "Hello world"
+
+
+def test_emit_content_maps_refusal_to_text_events() -> None:
+    flow = FlowState()
+
+    events = _emit_content(Content.from_refusal("I cannot help."), flow)
+
+    assert [event.type for event in events] == ["TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT"]
+    assert cast(TextMessageContentEvent, events[1]).delta == "I cannot help."
+
+
+def test_text_from_contents_includes_refusal_text() -> None:
+    assert (
+        _text_from_contents(
+            [
+                Content.from_text("Before."),
+                Content.from_refusal("I cannot continue."),
+            ]
+        )
+        == "Before.I cannot continue."
+    )
 
 
 def test_emit_text_skip_empty():

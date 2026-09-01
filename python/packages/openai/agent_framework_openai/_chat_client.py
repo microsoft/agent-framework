@@ -1878,6 +1878,16 @@ class RawOpenAIChatClient(
                     },
                     content,
                 )
+            case "refusal":
+                if role == "assistant":
+                    return {
+                        "type": "refusal",
+                        "refusal": content.text,
+                    }
+                return {
+                    "type": "input_text",
+                    "text": content.text,
+                }
             case "text_reasoning":
                 ret: dict[str, Any] = {"type": "reasoning", "summary": []}
                 if content.id:
@@ -2689,7 +2699,7 @@ class RawOpenAIChatClient(
                                 contents.append(text_content)
                             case "refusal":
                                 contents.append(
-                                    Content.from_text(
+                                    Content.from_refusal(
                                         text=message_content.refusal,
                                         raw_representation=message_content,
                                     )
@@ -2965,12 +2975,14 @@ class RawOpenAIChatClient(
                         contents.append(Content.from_text(text=event_part.text, raw_representation=event))
                         metadata.update(self._get_metadata_from_response(event_part))
                     case "refusal":
-                        contents.append(Content.from_text(text=event_part.refusal, raw_representation=event))
+                        contents.append(Content.from_refusal(text=event_part.refusal, raw_representation=event))
                     case _:
                         pass
             case "response.output_text.delta":
                 contents.append(Content.from_text(text=event.delta, raw_representation=event))
                 metadata.update(self._get_metadata_from_response(event))
+            case "response.refusal.delta":
+                contents.append(Content.from_refusal(text=event.delta, raw_representation=event))
             case "response.reasoning_text.delta":
                 if seen_reasoning_delta_item_ids is not None:
                     seen_reasoning_delta_item_ids.add(event.item_id)

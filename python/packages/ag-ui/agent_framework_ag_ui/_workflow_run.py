@@ -903,7 +903,7 @@ def _text_from_contents(contents: list[Content]) -> str | None:
     """Return normalized assistant text from a content list when present."""
     text_parts: list[str] = []
     for content in contents:
-        if content.type != "text":
+        if content.type not in {"text", "refusal"}:
             continue
         text_value = getattr(content, "text", None)
         if not isinstance(text_value, str):

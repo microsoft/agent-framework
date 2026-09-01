@@ -57,6 +57,16 @@ function getRestoredStreamingText(state: StreamingState): string {
     : state.accumulatedText;
 }
 
+function createStreamingMessageContent(
+  text: string,
+  type: "text" | "refusal"
+): import("@/types/openai").MessageContent {
+  if (type === "refusal") {
+    return { type: "refusal", refusal: text };
+  }
+  return { type: "text", text };
+}
+
 interface AgentViewProps {
   selectedAgent: AgentInfo;
   onDebugEvent: DebugEventHandler;
@@ -79,8 +89,8 @@ function ConversationItemBubble({ item, toolCalls = [], toolResults = [] }: Conv
   const getMessageText = () => {
     if (item.type === "message") {
       return item.content
-        .filter((c) => c.type === "text")
-        .map((c) => (c as import("@/types/openai").MessageTextContent).text)
+        .filter((c) => c.type === "text" || c.type === "output_text" || c.type === "refusal")
+        .map((c) => ("refusal" in c ? c.refusal : c.text))
         .join("\n");
     }
     return "";
@@ -322,6 +332,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   } | null>(null);
   const userJustSentMessage = useRef<boolean>(false);
   const accumulatedTextRef = useRef<string>("");
+  const accumulatedTextTypeRef = useRef<"text" | "refusal">("text");
   const lastAssistantTextRenderAt = useRef(0);
 
   const renderAssistantStreamingText = useCallback(
@@ -347,11 +358,14 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
         const nextText = accumulatedTextRef.current;
         const existingTextContent = item.content.find(
-          (content) => content.type === "text" || content.type === "output_text"
+          (content) =>
+            content.type === "text" || content.type === "output_text" || content.type === "refusal"
         );
         const currentText =
-          existingTextContent && "text" in existingTextContent
-            ? existingTextContent.text
+          existingTextContent
+            ? "refusal" in existingTextContent
+              ? existingTextContent.refusal
+              : existingTextContent.text
             : "";
 
         if (currentText === nextText && item.status === status) {
@@ -360,19 +374,15 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
         changed = true;
         const existingNonTextContent = item.content.filter(
-          (content) => content.type !== "text" && content.type !== "output_text"
+          (content) =>
+            content.type !== "text" && content.type !== "output_text" && content.type !== "refusal"
         );
+        const nextTextContent = createStreamingMessageContent(nextText, accumulatedTextTypeRef.current);
 
         return {
           ...item,
           content: nextText
-            ? [
-                ...existingNonTextContent,
-                {
-                  type: "text",
-                  text: nextText,
-                } as import("@/types/openai").MessageTextContent,
-              ]
+            ? [...existingNonTextContent, nextTextContent]
             : existingNonTextContent,
           status,
         };
@@ -571,10 +581,13 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
           // Handle text delta events
           if (
-            openAIEvent.type === "response.output_text.delta" &&
+            (openAIEvent.type === "response.output_text.delta" ||
+              openAIEvent.type === "response.refusal.delta") &&
             "delta" in openAIEvent &&
             openAIEvent.delta
           ) {
+            accumulatedTextTypeRef.current =
+              openAIEvent.type === "response.refusal.delta" ? "refusal" : "text";
             accumulatedTextRef.current += openAIEvent.delta;
             renderAssistantStreamingText(assistantMessage.id);
           }
@@ -696,12 +709,15 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               if (state && !state.completed) {
                 const restoredText = getRestoredStreamingText(state);
                 accumulatedTextRef.current = restoredText;
+                accumulatedTextTypeRef.current = state.accumulatedTextType ?? "text";
                 // Add assistant message with resumed text
                 const assistantMsg: import("@/types/openai").ConversationMessage = {
                   id: state.lastMessageId || `assistant-${Date.now()}`,
                   type: "message",
                   role: "assistant",
-                  content: restoredText ? [{ type: "text", text: restoredText }] : [],
+                  content: restoredText
+                    ? [createStreamingMessageContent(restoredText, accumulatedTextTypeRef.current)]
+                    : [],
                   status: "in_progress",
                 };
                 setChatItems([...allItems as import("@/types/openai").ConversationItem[], assistantMsg]);
@@ -800,6 +816,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     setIsStreaming(false);
     setCurrentConversation(undefined);
     accumulatedTextRef.current = "";
+    accumulatedTextTypeRef.current = "text";
     lastAssistantTextRenderAt.current = 0;
 
     loadConversations();
@@ -825,6 +842,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       // Reset conversation usage by setting it to initial state
       useDevUIStore.setState({ conversationUsage: { total_tokens: 0, message_count: 0 } });
       accumulatedTextRef.current = "";
+      accumulatedTextTypeRef.current = "text";
 
       // Clear debug panel for fresh conversation
       onDebugEvent("clear");
@@ -881,6 +899,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               setIsStreaming(false);
               useDevUIStore.setState({ conversationUsage: { total_tokens: 0, message_count: 0 } });
               accumulatedTextRef.current = "";
+              accumulatedTextTypeRef.current = "text";
             }
           }
 
@@ -1002,12 +1021,13 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         if (state?.accumulatedText) {
           const restoredText = getRestoredStreamingText(state);
           accumulatedTextRef.current = restoredText;
+          accumulatedTextTypeRef.current = state.accumulatedTextType ?? "text";
           // Add assistant message with resumed text - streaming will continue automatically
           const assistantMsg: import("@/types/openai").ConversationMessage = {
             id: `assistant-${Date.now()}`,
             type: "message",
             role: "assistant",
-            content: [{ type: "output_text", text: restoredText }],
+            content: [createStreamingMessageContent(restoredText, accumulatedTextTypeRef.current)],
             status: "in_progress",
           };
           setChatItems([...items, assistantMsg]);
@@ -1028,6 +1048,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       }
 
       accumulatedTextRef.current = "";
+      accumulatedTextTypeRef.current = "text";
     },
     [availableConversations, onDebugEvent, setCurrentConversation, setChatItems, setIsStreaming]
   );
@@ -1199,6 +1220,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
         // Clear text accumulator for new response
         accumulatedTextRef.current = "";
+        accumulatedTextTypeRef.current = "text";
         lastAssistantTextRenderAt.current = 0;
 
         // Create new AbortController for this request
@@ -1454,10 +1476,13 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
           // Handle text delta events for chat
           if (
-            openAIEvent.type === "response.output_text.delta" &&
+            (openAIEvent.type === "response.output_text.delta" ||
+              openAIEvent.type === "response.refusal.delta") &&
             "delta" in openAIEvent &&
             openAIEvent.delta
           ) {
+            accumulatedTextTypeRef.current =
+              openAIEvent.type === "response.refusal.delta" ? "refusal" : "text";
             accumulatedTextRef.current += openAIEvent.delta;
             renderAssistantStreamingText(assistantMessage.id);
           }
@@ -1641,6 +1666,11 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
                       type: "text",
                       text: (content as { text: string }).text,
                     } as import("@/types/openai").MessageTextContent);
+                  } else if (content.type === "refusal") {
+                    assistantContent.push({
+                      type: "refusal",
+                      refusal: content.refusal,
+                    });
                   } else if (content.type === "output_image") {
                     assistantContent.push(content as unknown as import("@/types/openai").MessageOutputImage);
                   } else if (content.type === "output_file") {

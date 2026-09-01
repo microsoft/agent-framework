@@ -438,6 +438,9 @@ def test_convert_content_to_bedrock_block_handles_errors_and_missing_items() -> 
             "status": "success",
         }
     }
+    assert client._convert_content_to_bedrock_block(Content.from_refusal("I cannot help.")) == {
+        "text": "I cannot help."
+    }
     assert client._convert_content_to_bedrock_block(Content.from_data(data=b"x", media_type="text/plain")) is None
 
 

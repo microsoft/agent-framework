@@ -15,6 +15,9 @@ Interactive developer UI for testing and debugging agents and workflows.
 - **`OpenAIResponse`** / **`OpenAIError`** - OpenAI-compatible response models
 - **`DiscoveryResponse`** / **`EntityInfo`** - Entity discovery models
 
+Agent Framework refusal content is mapped to native Responses refusal parts and events so the
+frontend can retain the discriminator while rendering its text.
+
 ## Usage
 
 ```python

@@ -34,6 +34,7 @@ from openai.types.responses import (
     ResponseInputText,
     ResponseOutputItem,
     ResponseOutputMessage,
+    ResponseOutputRefusal,
     ResponseOutputText,
 )
 from pydantic import TypeAdapter, ValidationError
@@ -63,6 +64,8 @@ def _content_from_input_item(item: Mapping[str, Any]) -> Content:
     item_type = item.get("type")
     if item_type in ("input_text", "output_text", "text"):
         return Content.from_text(text=str(item.get("text", "")))
+    if item_type == "refusal":
+        return Content.from_refusal(text=str(item.get("refusal", "")))
     if item_type == "input_image":
         image_url: Any = item.get("image_url")
         if isinstance(image_url, Mapping):
@@ -374,6 +377,8 @@ def _contents_to_output_items(
         match content.type:
             case "text":
                 message_content.append(_message_text_content(content))
+            case "refusal":
+                message_content.append(_message_refusal_content(content))
             case "text_reasoning":
                 flush_message()
                 output_items.append(_reasoning_output_item(content, status=status))
@@ -480,6 +485,12 @@ def _message_text_content(content: Content) -> Any:
     if raw_type in ("output_text", "refusal"):
         return content.raw_representation
     return ResponseOutputText(type="output_text", text=content.text or "", annotations=[])
+
+
+def _message_refusal_content(content: Content) -> Any:
+    if _raw_type(content.raw_representation) == "refusal":
+        return content.raw_representation
+    return ResponseOutputRefusal(type="refusal", refusal=content.text or "")
 
 
 def _reasoning_output_item(content: Content, *, status: str) -> ResponseOutputItem:
@@ -685,7 +696,7 @@ def _content_parts_to_input_items(contents: Sequence[Content] | None) -> list[An
     parts: list[Any] = []
     for content in contents:
         match content.type:
-            case "text":
+            case "text" | "refusal":
                 parts.append(ResponseInputText(type="input_text", text=content.text or ""))
             case "data" | "uri":
                 if not content.uri:
@@ -705,7 +716,7 @@ def _content_parts_to_input_items(contents: Sequence[Content] | None) -> list[An
 def _content_sequence_text(contents: Sequence[Content] | None) -> str | None:
     if not contents:
         return None
-    text = "".join(content.text or "" for content in contents if content.type == "text")
+    text = "".join(content.text or "" for content in contents if content.type in {"text", "refusal"})
     return text or None
 
 
@@ -904,12 +915,20 @@ async def responses_from_streaming_run(
             updates.append(update)
             if model is None:
                 model = _model_from_update(update)
-            if update.text:
+            for content in update.contents:
+                if not content.text:
+                    continue
+                if content.type == "text":
+                    event_type = "response.output_text.delta"
+                elif content.type == "refusal":
+                    event_type = "response.refusal.delta"
+                else:
+                    continue
                 yield _sse_event(
-                    "response.output_text.delta",
+                    event_type,
                     {
-                        "type": "response.output_text.delta",
-                        "delta": update.text,
+                        "type": event_type,
+                        "delta": content.text,
                     },
                 )
 
@@ -928,14 +947,19 @@ async def responses_from_streaming_run(
             },
         )
     except Exception as exc:
-        partial_text = "".join(update.text for update in updates if update.text)
+        partial_contents = [
+            content
+            for update in updates
+            for content in update.contents
+            if content.type in {"text", "refusal"} and content.text
+        ]
         response_kwargs: dict[str, Any] = {
             "id": response_id,
             "object": "response",
             "created_at": int(time.time()),
             "status": "failed",
             "model": model or "agent",
-            "output": _text_output_items(partial_text, status="failed"),
+            "output": _contents_to_output_items(partial_contents, status="failed"),
             "parallel_tool_calls": False,
             "tool_choice": "auto",
             "tools": [],

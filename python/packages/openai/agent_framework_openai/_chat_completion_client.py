@@ -860,6 +860,8 @@ class RawOpenAIChatCompletionClient(
             contents: list[Content] = []
             if text_content := self._parse_text_from_openai(choice):
                 contents.append(text_content)
+            if refusal_content := self._parse_refusal_from_openai(choice):
+                contents.append(refusal_content)
             if parsed_tool_calls := [tool for tool in self._parse_tool_calls_from_openai(choice)]:
                 contents.extend(parsed_tool_calls)
             if reasoning_details := getattr(choice.message, "reasoning_details", None):
@@ -909,6 +911,8 @@ class RawOpenAIChatCompletionClient(
             choice_contents.extend(self._parse_tool_calls_from_openai(choice))
             if text_content := self._parse_text_from_openai(choice):
                 choice_contents.append(text_content)
+            if refusal_content := self._parse_refusal_from_openai(choice):
+                choice_contents.append(refusal_content)
             if reasoning_details := getattr(choice.delta, "reasoning_details", None):
                 choice_contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
             if self.response_parser is not None:
@@ -961,8 +965,13 @@ class RawOpenAIChatCompletionClient(
             if not isinstance(message.content, str):
                 return None
             return Content.from_text(text=message.content, raw_representation=choice)
+        return None
+
+    def _parse_refusal_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
+        """Parse the choice refusal into typed refusal content."""
+        message = choice.message if isinstance(choice, Choice) else choice.delta
         if hasattr(message, "refusal") and message.refusal:
-            return Content.from_text(text=message.refusal, raw_representation=choice)
+            return Content.from_refusal(text=message.refusal, raw_representation=choice)
         return None
 
     def _get_metadata_from_chat_response(self, response: ChatCompletion) -> dict[str, Any]:
@@ -1058,7 +1067,9 @@ class RawOpenAIChatCompletionClient(
         # exception is a prompt cache breakpoint on a text part: it can only live on
         # a typed part, so opting in switches that message to list content.
         if message.role in ("system", "developer"):
-            text_contents = [content for content in message.contents if content.type == "text" and content.text]
+            text_contents = [
+                content for content in message.contents if content.type in {"text", "refusal"} and content.text
+            ]
             if text_contents:
                 # Keep list form only if a breakpoint actually landed on a built part
                 # (mirrors the flatten logic below); a non-mapping value stays a string.
@@ -1121,12 +1132,14 @@ class RawOpenAIChatCompletionClient(
                     if content.text is None:
                         continue
                     args["content"] = [{"type": "text", "text": content.text}]
+                case "refusal" if message.role == "assistant":
+                    args["refusal"] = content.text or ""
                 case _:
                     if "content" not in args:
                         args["content"] = []
                     # this is a list to allow multi-modal content
                     args["content"].append(self._prepare_content_for_openai(content))  # type: ignore
-            if "content" in args or "tool_calls" in args:
+            if "content" in args or "tool_calls" in args or "refusal" in args:
                 if pending_reasoning is not None:
                     args["reasoning_details"] = pending_reasoning
                     pending_reasoning = None
@@ -1176,7 +1189,7 @@ class RawOpenAIChatCompletionClient(
     def _prepare_content_for_openai(self, content: Content) -> dict[str, Any]:
         """Prepare content for OpenAI."""
         match content.type:
-            case "text":
+            case "text" | "refusal":
                 return _attach_prompt_cache_breakpoint(
                     {"type": "text", "text": content.text},
                     content,

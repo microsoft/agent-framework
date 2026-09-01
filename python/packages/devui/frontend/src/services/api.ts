@@ -520,6 +520,7 @@ class ApiClient {
           lastSequenceNumber,
           accumulatedText: storedState?.accumulatedText,
           accumulatedTextIsPreview: storedState?.accumulatedTextIsPreview,
+          accumulatedTextType: storedState?.accumulatedTextType,
         }),
         event,
         currentResponseId,
@@ -527,7 +528,7 @@ class ApiClient {
       );
 
       const isTextDelta =
-        event.type === "response.output_text.delta" &&
+        (event.type === "response.output_text.delta" || event.type === "response.refusal.delta") &&
         "delta" in event &&
         typeof event.delta === "string" &&
         event.delta.length > 0;

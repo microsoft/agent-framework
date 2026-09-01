@@ -548,7 +548,7 @@ class BedrockChatClient(
 
     def _convert_content_to_bedrock_block(self, content: Content) -> dict[str, Any] | None:
         match content.type:
-            case "text":
+            case "text" | "refusal":
                 return {"text": content.text}
             case "function_call":
                 arguments = content.parse_arguments() or {}

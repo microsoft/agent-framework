@@ -59,6 +59,18 @@ class TestMessagesFromResponsesInput:
         ])
         assert msgs[0].text == "describe this"
 
+    def test_message_envelope_preserves_refusal_content(self) -> None:
+        msgs = messages_from_responses_input([
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "refusal", "refusal": "I cannot help."}],
+            }
+        ])
+
+        assert msgs[0].contents == [Content.from_refusal("I cannot help.")]
+        assert msgs[0].text == "I cannot help."
+
     def test_message_envelope_rejects_non_object_content_item(self) -> None:
         with pytest.raises(ValueError, match="content.*object"):
             messages_from_responses_input([{"type": "message", "role": "user", "content": ["bad"]}])
@@ -187,6 +199,13 @@ class TestResponsesRunHelpers:
         assert payload["model"] == "test-model"
         assert payload["output"][0]["content"][0]["text"] == "hello"
 
+    def test_responses_from_run_preserves_refusal_content(self) -> None:
+        result = AgentResponse(messages=Message(role="assistant", contents=[Content.from_refusal("I cannot help.")]))
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        assert payload["output"][0]["content"] == [{"type": "refusal", "refusal": "I cannot help."}]
+
     def test_responses_from_run_preserves_multimodal_output_items(self) -> None:
         result = AgentResponse(
             messages=Message(
@@ -267,6 +286,23 @@ class TestResponsesRunHelpers:
         assert events[-1].startswith("event: response.completed")
         assert '"conversation":{"id":"conv_1"}' in events[-1]
 
+    async def test_responses_from_streaming_run_preserves_refusal_deltas(self) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_refusal("I cannot ")], role="assistant")
+            yield AgentResponseUpdate(contents=[Content.from_refusal("help.")], role="assistant")
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+
+        assert "response.refusal.delta" in events[1]
+        assert "response.refusal.delta" in events[2]
+        completed = _sse_payload(events[-1])
+        response = cast("dict[str, object]", completed["response"])
+        output = cast("list[dict[str, object]]", response["output"])
+        content = cast("list[dict[str, object]]", output[0]["content"])
+        assert content == [{"type": "refusal", "refusal": "I cannot help."}]
+
     async def test_responses_from_streaming_run_emits_failed_when_iteration_raises(self) -> None:
         async def updates() -> AsyncIterator[AgentResponseUpdate]:
             yield AgentResponseUpdate(contents=[Content.from_text("partial")], role="assistant")
@@ -294,6 +330,21 @@ class TestResponsesRunHelpers:
         assert response["conversation"] == {"id": "conv_1"}
         assert error["message"] == "upstream blew up"
         assert "partial" in events[-1]
+
+    async def test_failed_stream_preserves_partial_refusal_content(self) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_refusal("I cannot help.")], role="assistant")
+            raise RuntimeError("upstream blew up")
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+
+        failed = _sse_payload(events[-1])
+        response = cast("dict[str, object]", failed["response"])
+        output = cast("list[dict[str, object]]", response["output"])
+        content = cast("list[dict[str, object]]", output[0]["content"])
+        assert content == [{"type": "refusal", "refusal": "I cannot help."}]
 
     async def test_responses_from_streaming_run_emits_failed_when_finalizer_raises(self) -> None:
         async def updates() -> AsyncIterator[AgentResponseUpdate]:

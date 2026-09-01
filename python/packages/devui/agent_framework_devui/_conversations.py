@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from collections.abc import MutableSequence
 from typing import Any, Literal, cast
 
-from agent_framework import AgentSession, Message
+from agent_framework import AgentSession, Content, Message
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage, WorkflowCheckpoint
 from openai.types.conversations import Conversation, ConversationDeletedResource
 from openai.types.conversations.conversation_item import ConversationItem
@@ -26,6 +26,7 @@ from openai.types.responses import (
     ResponseFunctionToolCallOutputItem,
     ResponseInputFile,
     ResponseInputImage,
+    ResponseOutputRefusal,
 )
 
 # Type alias for OpenAI Message role literals
@@ -311,10 +312,16 @@ class InMemoryConversationStore(ConversationStore):
                 dict[str, Any],
                 content[0] if content and isinstance(content, list) and isinstance(content[0], dict) else {},
             )
-            text_obj = first_content.get("text", "")
-            text = text_obj if isinstance(text_obj, str) else str(text_obj)
+            if first_content.get("type") == "refusal":
+                refusal_obj = first_content.get("refusal", "")
+                refusal = refusal_obj if isinstance(refusal_obj, str) else str(refusal_obj)
+                message_contents = [Content.from_refusal(refusal)]
+            else:
+                text_obj = first_content.get("text", "")
+                text = text_obj if isinstance(text_obj, str) else str(text_obj)
+                message_contents = [Content.from_text(text)]
 
-            chat_msg = Message(role=role, contents=[text])
+            chat_msg = Message(role=role, contents=message_contents)
             chat_messages.append(chat_msg)
 
         # Add messages to internal storage
@@ -331,6 +338,8 @@ class InMemoryConversationStore(ConversationStore):
                 if content_item.type == "text":
                     # Extract text from TextContent object
                     message_content.append(TextContent(type="text", text=content_item.text or ""))
+                elif content_item.type == "refusal":
+                    message_content.append(ResponseOutputRefusal(type="refusal", refusal=content_item.text or ""))
 
             # Create Message object (concrete type from ConversationItem union)
             message = OpenAIMessage(
@@ -384,7 +393,7 @@ class InMemoryConversationStore(ConversationStore):
             # Process each content item in the message
             # A single Message may produce multiple ConversationItems
             # (e.g., a message with both text and a function call)
-            message_contents: list[TextContent | ResponseInputImage | ResponseInputFile] = []
+            message_contents: list[TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile] = []
             function_calls: list[ResponseFunctionToolCallItem] = []
             function_results: list[ResponseFunctionToolCallOutputItem] = []
 
@@ -395,6 +404,10 @@ class InMemoryConversationStore(ConversationStore):
                     # Text content for Message
                     text_value = getattr(content, "text", "")
                     message_contents.append(TextContent(type="text", text=text_value))
+
+                elif content_type == "refusal":
+                    refusal_value = getattr(content, "text", "")
+                    message_contents.append(ResponseOutputRefusal(type="refusal", refusal=refusal_value))
 
                 elif content_type == "data":
                     # Data content (images, files, PDFs)

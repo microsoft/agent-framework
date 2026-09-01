@@ -63,6 +63,7 @@ from azure.ai.agentserver.responses.streaming._builders import (
     OutputItemMcpCallBuilder,
     OutputItemMessageBuilder,
     ReasoningSummaryPartBuilder,
+    RefusalContentBuilder,
     TextContentBuilder,
 )
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
@@ -951,6 +952,7 @@ class _OutputItemTracker:
         # Builder state — only one is active at a time
         self._message_item: OutputItemMessageBuilder | None = None
         self._text_content: TextContentBuilder | None = None
+        self._refusal_content: RefusalContentBuilder | None = None
         self._reasoning_item: OutputItemBuilder | None = None
         self._summary_part: ReasoningSummaryPartBuilder | None = None
         self._reasoning_encrypted_content: str | None = None
@@ -1009,6 +1011,19 @@ class _OutputItemTracker:
             self._accumulated.append(content.text)
             if self._text_content is not None:
                 yield self._text_content.emit_delta(content.text)
+
+        elif content.type == "refusal" and content.text is not None:
+            if self._active_type != "refusal" or (
+                message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
+            ):
+                for event in self._close():
+                    yield event
+                for event in self._open_refusal_message():
+                    yield event
+            self._active_message_id = message_id
+            self._accumulated.append(content.text)
+            if self._refusal_content is not None:
+                yield self._refusal_content.emit_delta(content.text)
 
         elif content.type == "text_reasoning":
             if self._active_type != "text_reasoning" or (content.id is not None and content.id != self._active_id):
@@ -1220,6 +1235,14 @@ class _OutputItemTracker:
         yield self._message_item.emit_added()
         yield self._text_content.emit_added()
 
+    def _open_refusal_message(self) -> Generator[ResponseStreamEvent]:
+        self._message_item = self._stream.add_output_item_message()
+        self._refusal_content = self._message_item.add_refusal_content()
+        self._active_type = "refusal"
+        self._active_id = None
+        yield self._message_item.emit_added()
+        yield self._refusal_content.emit_added()
+
     def _open_reasoning(self, content: Content) -> Generator[ResponseStreamEvent]:
         item_id = content.id
         if not item_id or not IdGenerator.is_valid(item_id)[0]:
@@ -1272,6 +1295,13 @@ class _OutputItemTracker:
             yield self._text_content.emit_done()
             yield self._message_item.emit_done()
             self._text_content = None
+            self._message_item = None
+
+        elif self._active_type == "refusal" and self._refusal_content and self._message_item:
+            yield self._refusal_content.emit_refusal_done(accumulated)
+            yield self._refusal_content.emit_done()
+            yield self._message_item.emit_done()
+            self._refusal_content = None
             self._message_item = None
 
         elif self._active_type == "text_reasoning" and self._summary_part and self._reasoning_item:
@@ -1911,7 +1941,7 @@ def _convert_output_message_content(content: OutputMessageContent) -> Content:
     if content["type"] == "output_text":
         return Content.from_text(content["text"])
     if content["type"] == "refusal":
-        return Content.from_text(content["refusal"])
+        return Content.from_refusal(content["refusal"])
 
     # Defensive: `OutputMessageContent` currently only supports `output_text` and `refusal`,
     # but if new types are added in the future, this will catch them.
@@ -1964,7 +1994,7 @@ def _convert_message_content(content: MessageContent) -> Content:
     if content["type"] == "summary_text":
         return Content.from_text(content["text"])
     if content["type"] == "refusal":
-        return Content.from_text(content["refusal"])
+        return Content.from_refusal(content["refusal"])
     if content["type"] == "reasoning_text":
         return Content.from_text_reasoning(text=content["text"])
     if content["type"] == "input_image":

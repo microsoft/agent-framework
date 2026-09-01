@@ -630,6 +630,17 @@ class TestA2AExecutorHandleEvents:
         assert call_args.kwargs["state"] == TaskState.TASK_STATE_WORKING
         assert mock_updater.new_agent_message.called
 
+    async def test_handle_refusal_content(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
+        message = Message(
+            contents=[Content.from_refusal("I cannot help.")],
+            role="assistant",
+        )
+
+        await executor.handle_events(message, mock_updater)
+
+        parts = mock_updater.new_agent_message.call_args.kwargs["parts"]
+        assert [part.text for part in parts] == ["I cannot help."]
+
     async def test_handle_multiple_text_contents(self, executor: A2AExecutor, mock_updater: MagicMock) -> None:
         """Test handling messages with multiple text contents."""
         # Arrange
