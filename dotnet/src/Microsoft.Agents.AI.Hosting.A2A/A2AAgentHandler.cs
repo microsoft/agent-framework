@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using A2A;
@@ -57,7 +58,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
         // Handle messages received via streaming endpoint
         if (context.StreamingResponse)
         {
-            return this.HandleNewMessageStreamingAsync(context, eventQueue, cancellationToken);
+            return this.HandleNewMessageStreamingAsync(context, eventQueue, aggregateTaskUpdates: false, cancellationToken);
         }
 
         // Handle new messages received via non-streaming endpoint
@@ -71,62 +72,82 @@ internal sealed class A2AAgentHandler : IAgentHandler
         await taskUpdater.CancelAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Handles a new message received via the non-streaming <c>message/send</c> endpoint.
+    /// </summary>
+    /// <remarks>
+    /// A non-streaming caller receives exactly one response event, so the shape of that event depends on
+    /// both the server configuration and the client request:
+    /// <list type="bullet">
+    /// <item><description>
+    /// Server allows background responses and the client asked for an immediate response
+    /// (<c>ReturnImmediately = true</c>): the initial task is returned right away and the remaining updates
+    /// are streamed into the task by the server, so the client polls for the rest.
+    /// </description></item>
+    /// <item><description>
+    /// Server allows background responses and the client did not ask for an immediate response
+    /// (<c>ReturnImmediately = false</c>): the agent run is aggregated first and a single completed task is returned.
+    /// </description></item>
+    /// <item><description>
+    /// Server disallows background responses: a single aggregated message is returned regardless of
+    /// <c>ReturnImmediately</c>, because a message response cannot be produced incrementally.
+    /// </description></item>
+    /// </list>
+    /// </remarks>
     private async Task HandleNewMessageAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
     {
-        var contextId = context.ContextId ?? Guid.NewGuid().ToString("N");
-        var session = await this._hostAgent.GetOrCreateSessionAsync(contextId, cancellationToken).ConfigureAwait(false);
+        // Aggregate task updates unless the client requests an immediate response.
+        bool aggregateTaskUpdates = context.Configuration?.ReturnImmediately is not true;
 
-        // AIAgent does not support resuming from arbitrary prior tasks.
-        // Throw explicitly so the client gets a clear error rather than a response
-        // that silently ignores the referenced task context.
-        if (context.Message?.ReferenceTaskIds is { Count: > 0 })
-        {
-            throw new NotSupportedException("ReferenceTaskIds is not supported. AIAgent cannot resume from arbitrary prior task context.");
-        }
-
-        List<ChatMessage> chatMessages = context.Message is not null ? [context.Message.ToChatMessage()] : [];
-
-        // Decide whether to run in background based on user preferences and agent capabilities
-        var decisionContext = new A2ARunDecisionContext(context);
-        var allowBackgroundResponses = await this._runMode.ShouldRunInBackgroundAsync(decisionContext, cancellationToken).ConfigureAwait(false);
-
-        var options = CreateRunOptions(context, allowBackgroundResponses);
-
-        AgentResponse response;
-        try
-        {
-            response = await this._hostAgent.RunAsync(
-                chatMessages,
-                session: session,
-                options: options,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            await this._hostAgent.SaveSessionAsync(contextId, session, CancellationToken.None).ConfigureAwait(false);
-        }
-
-        if (response.ContinuationToken is null)
-        {
-            // Return a lightweight message response (no task lifecycle needed).
-            var message = CreateMessageFromResponse(contextId, response);
-            await eventQueue.EnqueueMessageAsync(message, cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            // Long-running operation: emit task lifecycle events.
-            var taskUpdater = new TaskUpdater(eventQueue, context.TaskId, contextId);
-            await taskUpdater.SubmitAsync(cancellationToken).ConfigureAwait(false);
-
-            Message? progressMessage = response.Messages.Count > 0
-                ? CreateMessageFromResponse(contextId, response)
-                : null;
-
-            await taskUpdater.StartWorkAsync(progressMessage, cancellationToken).ConfigureAwait(false);
-        }
+        await this.HandleNewMessageStreamingAsync(context, eventQueue, aggregateTaskUpdates, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task HandleNewMessageStreamingAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
+    /// <summary>
+    /// Runs the agent for a new message and emits the response events, shared by the streaming and non-streaming endpoints.
+    /// </summary>
+    /// <param name="context">The request context of the incoming message.</param>
+    /// <param name="eventQueue">The queue the response events are written to.</param>
+    /// <param name="aggregateTaskUpdates">
+    /// <see langword="true"/> to run the agent to completion before emitting a single completed task;
+    /// <see langword="false"/> to emit task updates as they are produced. Ignored when the server disallows
+    /// background responses, because a message response is always aggregated.
+    /// </param>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> to cancel the operation.</param>
+    /// <remarks>
+    /// The response shape is decided by two independent inputs:
+    /// <list type="number">
+    /// <item><description>
+    /// Whether the server allows background responses. This is configured per agent registration, for example:
+    /// <code>
+    /// builder.AddA2AServer(agent, (A2AServerRegistrationOptions options) =>
+    ///     options.AgentRunMode = AgentRunMode.AllowBackgroundIfSupported);
+    /// </code>
+    /// Use <c>AgentRunMode.DisallowBackground</c> to always respond with a message instead of a task.
+    /// </description></item>
+    /// <item><description>
+    /// Whether the client asked for an immediate response. In the A2A protocol this is the
+    /// <c>MessageSendConfiguration.ReturnImmediately</c> flag on the request; from the Agent Framework side, an
+    /// <c>A2AAgent</c> sets it by passing <c>AgentRunOptions.AllowBackgroundResponses = true</c> to the run call.
+    /// </description></item>
+    /// </list>
+    /// The resulting combinations are:
+    /// <list type="bullet">
+    /// <item><description>
+    /// Server allows background responses and <c>ReturnImmediately = true</c>: returns the initial task, then the
+    /// rest of the updates piece by piece.
+    /// </description></item>
+    /// <item><description>
+    /// Server allows background responses and <c>ReturnImmediately = false</c>: returns a single completed task.
+    /// </description></item>
+    /// <item><description>
+    /// Server disallows background responses and <c>ReturnImmediately = true</c>: returns a message.
+    /// </description></item>
+    /// <item><description>
+    /// Server disallows background responses and <c>ReturnImmediately = false</c>: returns a message.
+    /// </description></item>
+    /// </list>
+    /// </remarks>
+    private async Task HandleNewMessageStreamingAsync(RequestContext context, AgentEventQueue eventQueue, bool aggregateTaskUpdates, CancellationToken cancellationToken)
     {
         var contextId = context.ContextId ?? Guid.NewGuid().ToString("N");
         var session = await this._hostAgent.GetOrCreateSessionAsync(contextId, cancellationToken).ConfigureAwait(false);
@@ -142,7 +163,6 @@ internal sealed class A2AAgentHandler : IAgentHandler
         List<ChatMessage> chatMessages = context.Message is not null ? [context.Message.ToChatMessage()] : [];
 
         var options = CreateRunOptions(context);
-
         // Decide whether to run in background based on user preferences and agent capabilities
         var decisionContext = new A2ARunDecisionContext(context);
         var returnTask = await this._runMode.ShouldRunInBackgroundAsync(decisionContext, cancellationToken).ConfigureAwait(false);
@@ -153,13 +173,24 @@ internal sealed class A2AAgentHandler : IAgentHandler
         {
             if (returnTask)
             {
-                // Stream progress and output through the A2A task lifecycle.
                 var taskUpdater = new TaskUpdater(eventQueue, context.TaskId, contextId);
-                await StreamTaskUpdatesAsync(updates, taskUpdater, cancellationToken).ConfigureAwait(false);
+                if (aggregateTaskUpdates)
+                {
+                    // The server allows background responses, but the non-streaming client request has
+                    // ReturnImmediately disabled, so collect all updates and return a completed task.
+                    await AggregateTaskUpdatesAsync(updates, taskUpdater, eventQueue, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    // The server allows background responses and this is either a streaming request or a
+                    // non-streaming request with ReturnImmediately enabled, so emit task updates as they arrive.
+                    await StreamTaskUpdatesAsync(updates, taskUpdater, cancellationToken).ConfigureAwait(false);
+                }
             }
             else
             {
-                // A2A permits only one message in a message-only stream, so aggregate all updates.
+                // The server disallows background responses, so return one aggregated message regardless
+                // of the client request's ReturnImmediately value.
                 await StreamMessageUpdatesAsync(contextId, updates, eventQueue, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -287,6 +318,16 @@ internal sealed class A2AAgentHandler : IAgentHandler
         return chatMessages;
     }
 
+    /// <summary>
+    /// Emits a task and streams the agent updates into it as artifacts as they are produced.
+    /// </summary>
+    /// <remarks>
+    /// Handles the case where the server allows background responses and the response is delivered incrementally:
+    /// either a streaming (<c>message/stream</c>) request, or a non-streaming request with
+    /// <c>ReturnImmediately = true</c>. In the latter case the caller receives the initial task immediately and
+    /// obtains the remaining updates by polling the task.
+    /// The task transitions <c>Submitted</c> to <c>Working</c> to <c>Completed</c>, or to <c>Canceled</c>/<c>Failed</c> on error.
+    /// </remarks>
     private static async Task StreamTaskUpdatesAsync(IAsyncEnumerable<AgentResponseUpdate> updates, TaskUpdater updater, CancellationToken cancellationToken)
     {
         var artifactWriter = new ArtifactStreamWriter(updater);
@@ -325,14 +366,81 @@ internal sealed class A2AAgentHandler : IAgentHandler
         }
     }
 
+    /// <summary>
+    /// Consumes the agent updates without emitting them and then returns a single completed task.
+    /// </summary>
+    /// <remarks>
+    /// Handles the case where the server allows background responses and a non-streaming client sent
+    /// <c>ReturnImmediately = false</c>, meaning it wants the final result in the response rather than a task
+    /// it has to poll. No task event is emitted until the agent stream finishes, because the server returns on the
+    /// first task event; emitting early would hand the caller an in-progress task instead of a completed one.
+    /// </remarks>
+    private static async Task AggregateTaskUpdatesAsync(IAsyncEnumerable<AgentResponseUpdate> updates, TaskUpdater updater, AgentEventQueue eventQueue, CancellationToken cancellationToken)
+    {
+        AgentResponse response = await updates.ToAgentResponseAsync(cancellationToken).ConfigureAwait(false);
+
+        await updater.SubmitAsync(cancellationToken).ConfigureAwait(false);
+
+        if (response.Messages.ToParts() is { Count: > 0 } parts)
+        {
+            await AddArtifactAsync(
+                eventQueue,
+                updater,
+                parts,
+                metadata: response.AdditionalProperties?.ToA2AMetadata(),
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        await updater.CompleteAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Adds an artifact with metadata until the minimum A2A package version provides this capability on
+    /// <see cref="TaskUpdater.AddArtifactAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// Remove this method and call <see cref="TaskUpdater.AddArtifactAsync"/> directly after upgrading to an A2A
+    /// package version whose overload accepts artifact metadata.
+    /// </remarks>
+    private static ValueTask AddArtifactAsync(
+        AgentEventQueue eventQueue,
+        TaskUpdater updater,
+        IReadOnlyList<Part> parts,
+        string? artifactId = null,
+        string? name = null,
+        string? description = null,
+        bool lastChunk = true,
+        bool append = false,
+        Dictionary<string, JsonElement>? metadata = null,
+        CancellationToken cancellationToken = default) =>
+        eventQueue.EnqueueArtifactUpdateAsync(new TaskArtifactUpdateEvent
+        {
+            TaskId = updater.TaskId,
+            ContextId = updater.ContextId,
+            Artifact = new Artifact
+            {
+                ArtifactId = artifactId ?? Guid.NewGuid().ToString("N"),
+                Name = name,
+                Description = description,
+                Parts = [.. parts],
+                Metadata = metadata,
+            },
+            Append = append,
+            LastChunk = lastChunk,
+        }, cancellationToken);
+
+    /// <summary>
+    /// Consumes the agent updates and emits the aggregated result as a single message.
+    /// </summary>
+    /// <remarks>
+    /// Handles the case where the server disallows background responses, which applies regardless of the client's
+    /// <c>ReturnImmediately</c> value: a message is not a long-running entity, so there is nothing to return early
+    /// or poll for and the full agent run is always aggregated into one message. An empty message is emitted when
+    /// the agent produces no messages.
+    /// </remarks>
     private static async Task StreamMessageUpdatesAsync(string contextId, IAsyncEnumerable<AgentResponseUpdate> responseUpdates, AgentEventQueue eventQueue, CancellationToken cancellationToken)
     {
         AgentResponse response = await responseUpdates.ToAgentResponseAsync(cancellationToken).ConfigureAwait(false);
-
-        if (response.Messages.Count == 0)
-        {
-            return;
-        }
 
         var message = CreateMessageFromResponse(contextId, response);
 
