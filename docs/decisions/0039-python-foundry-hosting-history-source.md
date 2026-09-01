@@ -3,7 +3,6 @@ status: proposed
 contact: eavanvalkenburg
 date: 2026-09-01
 deciders: eavanvalkenburg, moonbox3
-consulted: sachinkahawala
 ---
 
 # Select the conversation history source for Python Foundry hosting
