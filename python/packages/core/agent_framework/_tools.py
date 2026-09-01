@@ -2728,13 +2728,15 @@ def _replace_approval_contents_with_results(
 
 
 def _extract_function_calls(response: ChatResponse) -> list[Content]:
-    completed_call_ids: set[str] = set()
-    seen_call_ids: set[str] = set()
+    completed_occurrence_ids: set[str] = set()
+    open_occurrence_ids_by_call_id: dict[str, deque[str]] = {}
+    seen_occurrence_ids: set[str] = set()
     candidate_calls: list[Content] = []
     for message in response.messages:
         for item in message.contents:
             if item.type == "function_result" and item.call_id:
-                completed_call_ids.add(item.call_id)
+                if open_occurrence_ids := open_occurrence_ids_by_call_id.get(item.call_id):
+                    completed_occurrence_ids.add(open_occurrence_ids.popleft())
                 continue
             if not _is_actionable_function_call(item):
                 continue
@@ -2749,38 +2751,12 @@ def _extract_function_calls(response: ChatResponse) -> list[Content]:
                     FutureWarning,
                     stacklevel=3,
                 )
-            if item.call_id in seen_call_ids:
+            if item.id in seen_occurrence_ids:
                 continue
-            seen_call_ids.add(item.call_id)
+            seen_occurrence_ids.add(item.id)
             candidate_calls.append(item)
-    return [
-        function_call
-        for function_call in candidate_calls
-        if not function_call.call_id or function_call.call_id not in completed_call_ids
-    ]
-
-
-def _coalesce_streamed_function_call_occurrences(response: ChatResponse) -> None:
-    """Merge non-adjacent streamed fragments that share one assigned occurrence identity."""
-    occurrences: dict[str, tuple[list[Content], int, Content]] = {}
-    for message in response.messages:
-        original_contents = message.contents
-        coalesced_contents: list[Content] = []
-        message.contents = coalesced_contents
-        for content in original_contents:
-            if content.type != "function_call" or content.id is None:
-                coalesced_contents.append(content)
-                continue
-            existing = occurrences.get(content.id)
-            if existing is None:
-                coalesced_contents.append(content)
-                occurrences[content.id] = (coalesced_contents, len(coalesced_contents) - 1, content)
-                continue
-            contents, index, accumulated = existing
-            merged = accumulated + content
-            contents[index] = merged
-            occurrences[content.id] = (contents, index, merged)
-    response.messages[:] = [message for message in response.messages if message.contents]
+            open_occurrence_ids_by_call_id.setdefault(item.call_id, deque()).append(item.id)
+    return [function_call for function_call in candidate_calls if function_call.id not in completed_occurrence_ids]
 
 
 def _prepend_function_call_messages(response: ChatResponse, function_call_messages: list[Message]) -> None:
@@ -3503,24 +3479,16 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 max_function_calls,
             )
             streamed_identities_by_call_id: dict[str, tuple[str, str]] = {}
-            streamed_identities_by_index: dict[tuple[int | None, int], tuple[str, str]] = {}
             last_streamed_identity: tuple[str, str] | None = None
             warned_empty_call_ids: set[str] = set()
             async for update in inner_stream:
                 for content in update.contents:
                     if content.type != "function_call":
                         continue
+                    if not _is_actionable_function_call(content):
+                        continue
                     provider_call_id = content.call_id
-                    raw_tool_call_index = content.additional_properties.get("tool_call_index")
-                    tool_call_index = raw_tool_call_index if isinstance(raw_tool_call_index, int) else None
-                    raw_choice_index = content.additional_properties.get("tool_call_choice_index")
-                    choice_index = raw_choice_index if isinstance(raw_choice_index, int) else None
-                    index_key = (choice_index, tool_call_index) if tool_call_index is not None else None
-                    identity = streamed_identities_by_index.get(index_key) if index_key is not None else None
-                    if identity is not None and provider_call_id and provider_call_id != identity[1]:
-                        identity = None
-                    if identity is None and provider_call_id:
-                        identity = streamed_identities_by_call_id.get(provider_call_id)
+                    identity = streamed_identities_by_call_id.get(provider_call_id) if provider_call_id else None
                     if identity is None and not provider_call_id and not content.name:
                         identity = last_streamed_identity
 
@@ -3531,6 +3499,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         occurrence_id, effective_call_id = identity
                     if content.id is not None:
                         occurrence_id = content.id
+                        if not provider_call_id:
+                            effective_call_id = occurrence_id
                     if provider_call_id:
                         effective_call_id = provider_call_id
 
@@ -3547,8 +3517,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                             )
                             warned_empty_call_ids.add(occurrence_id)
                     identity = (occurrence_id, effective_call_id)
-                    if index_key is not None:
-                        streamed_identities_by_index[index_key] = identity
                     streamed_identities_by_call_id[effective_call_id] = identity
                     last_streamed_identity = identity
                 if drop_unexecutable_calls:
@@ -3558,7 +3526,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 yield update
 
             response = await inner_stream.get_final_response()
-            _coalesce_streamed_function_call_occurrences(response)
             function_call_limit_reached = options.get("tool_choice") == "none" and _function_call_limit_reached(
                 total_function_calls, max_function_calls
             )

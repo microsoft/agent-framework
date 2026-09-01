@@ -2406,6 +2406,137 @@ def test_streaming_tool_call_preserves_choice_local_index_scope(
     assert [content.additional_properties["tool_call_choice_index"] for content in function_calls] == [0, 1]
 
 
+async def test_streaming_tool_call_identity_is_request_local_and_scoped_by_choice_index(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    client = RawOpenAIChatCompletionClient()
+
+    def chunks() -> list[ChatCompletionChunk]:
+        common = {
+            "object": "chat.completion.chunk",
+            "created": 1234567890,
+            "model": "test-model",
+        }
+        return [
+            ChatCompletionChunk.model_validate({
+                **common,
+                "id": "opening",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "reused-provider-id",
+                                    "type": "function",
+                                    "function": {"name": "first", "arguments": '{"a":'},
+                                },
+                                {
+                                    "index": 1,
+                                    "id": "reused-provider-id",
+                                    "type": "function",
+                                    "function": {"name": "second", "arguments": '{"b":'},
+                                },
+                            ]
+                        },
+                        "finish_reason": None,
+                    },
+                    {
+                        "index": 1,
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "reused-provider-id",
+                                    "type": "function",
+                                    "function": {"name": "third", "arguments": '{"c":'},
+                                }
+                            ]
+                        },
+                        "finish_reason": None,
+                    },
+                ],
+            }),
+            ChatCompletionChunk.model_validate({
+                **common,
+                "id": "continuation",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [
+                                {"index": 0, "type": "function", "function": {"arguments": "1}"}},
+                                {"index": 1, "type": "function", "function": {"arguments": "2}"}},
+                            ]
+                        },
+                        "finish_reason": None,
+                    },
+                    {
+                        "index": 1,
+                        "delta": {"tool_calls": [{"index": 0, "type": "function", "function": {"arguments": "3}"}}]},
+                        "finish_reason": None,
+                    },
+                ],
+            }),
+        ]
+
+    async def create(**kwargs: Any) -> Any:
+        async def stream_chunks() -> Any:
+            for chunk in chunks():
+                yield chunk
+
+        return stream_chunks()
+
+    request_occurrence_ids: list[dict[tuple[int, int], str | None]] = []
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        for _ in range(2):
+            response_stream = client._inner_get_response(
+                messages=[Message(role="user", contents=["test"])], stream=True, options={}
+            )
+            assert isinstance(response_stream, ResponseStream)
+            calls = [
+                content
+                async for update in response_stream
+                for content in update.contents
+                if content.type == "function_call"
+            ]
+            by_index: dict[tuple[int, int], list[Content]] = {}
+            for call in calls:
+                key = (
+                    call.additional_properties["tool_call_choice_index"],
+                    call.additional_properties["tool_call_index"],
+                )
+                by_index.setdefault(key, []).append(call)
+
+            assert set(by_index) == {(0, 0), (0, 1), (1, 0)}
+            assert all(len(fragments) == 2 for fragments in by_index.values())
+            assert all(
+                fragments[0].id == fragments[1].id
+                and fragments[0].call_id == fragments[1].call_id == "reused-provider-id"
+                for fragments in by_index.values()
+            )
+            occurrence_ids = {key: fragments[0].id for key, fragments in by_index.items()}
+            assert len(set(occurrence_ids.values())) == 3
+            final_response = await response_stream.get_final_response()
+            final_calls = [
+                content
+                for message in final_response.messages
+                for content in message.contents
+                if content.type == "function_call"
+            ]
+            assert [(call.name, call.call_id, call.parse_arguments()) for call in final_calls] == [
+                ("first", "reused-provider-id", {"a": 1}),
+                ("second", "reused-provider-id", {"b": 2}),
+                ("third", "reused-provider-id", {"c": 3}),
+            ]
+            request_occurrence_ids.append(occurrence_ids)
+
+    assert set(request_occurrence_ids[0].values()).isdisjoint(request_occurrence_ids[1].values())
+
+
 # endregion
 
 

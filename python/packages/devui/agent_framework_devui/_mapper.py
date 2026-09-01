@@ -1827,6 +1827,9 @@ class MessageMapper:
             "request_id": getattr(content, "id", "unknown"),
             "function_call": {
                 "id": getattr(content.function_call, "call_id", "") if hasattr(content, "function_call") else "",
+                "occurrence_id": (
+                    getattr(content.function_call, "id", None) if hasattr(content, "function_call") else None
+                ),
                 "name": getattr(content.function_call, "name", "") if hasattr(content, "function_call") else "",
                 "arguments": arguments,
             },

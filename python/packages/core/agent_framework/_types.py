@@ -1559,6 +1559,8 @@ class Content:
 
     def _add_function_call_content(self, other: Content) -> Content:
         """Add two FunctionCallContent instances."""
+        if self.id and other.id and self.id != other.id:
+            raise AdditionItemMismatch("Cannot merge function calls with different ids")
         other_call_id = getattr(other, "call_id", None)
         self_call_id = getattr(self, "call_id", None)
         if other_call_id and self_call_id != other_call_id:
@@ -2166,6 +2168,30 @@ def _finalize_response(response: ChatResponse | AgentResponse) -> None:
         _coalesce_text_content(msg.contents, "text")
         _coalesce_text_content(msg.contents, "text_reasoning")
         _coalesce_code_interpreter_content(msg.contents)
+    _coalesce_function_call_occurrences(response)
+
+
+def _coalesce_function_call_occurrences(response: ChatResponse | AgentResponse) -> None:
+    """Merge streamed function-call fragments that share a stable occurrence id."""
+    occurrences: dict[str, tuple[list[Content], int, Content]] = {}
+    for message in response.messages:
+        original_contents = message.contents
+        coalesced_contents: list[Content] = []
+        message.contents = coalesced_contents
+        for content in original_contents:
+            if content.type != "function_call" or content.id is None:
+                coalesced_contents.append(content)
+                continue
+            existing = occurrences.get(content.id)
+            if existing is None:
+                coalesced_contents.append(content)
+                occurrences[content.id] = (coalesced_contents, len(coalesced_contents) - 1, content)
+                continue
+            contents, index, accumulated = existing
+            merged = accumulated + content
+            contents[index] = merged
+            occurrences[content.id] = (contents, index, merged)
+    response.messages[:] = [message for message in response.messages if message.contents]
 
 
 # region ContinuationToken

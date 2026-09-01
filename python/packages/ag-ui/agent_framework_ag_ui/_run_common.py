@@ -890,11 +890,16 @@ def _emit_approval_request(
         events.append(ToolCallEndEvent(tool_call_id=func_call_id))
         flow.tool_calls_ended.add(func_call_id)
 
+    interrupt_id = (
+        content.id
+        if func_call.additional_properties.get("server_label") is not None
+        else func_call.id or content.id or func_call_id
+    )
     events.append(
         CustomEvent(
             name="function_approval_request",
             value={
-                "id": content.id,
+                "id": interrupt_id,
                 "function_call": {
                     "call_id": func_call_id,
                     "name": func_name,
@@ -902,11 +907,6 @@ def _emit_approval_request(
                 },
             },
         )
-    )
-    interrupt_id = (
-        content.id
-        if func_call.additional_properties.get("server_label") is not None
-        else func_call.id or content.id or func_call_id
     )
     if interrupt_id:
         response_schema = _approval_response_schema() if func_call.additional_properties.get("server_label") else None

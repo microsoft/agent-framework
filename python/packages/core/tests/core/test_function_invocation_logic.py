@@ -269,6 +269,44 @@ def test_actionable_function_call_gets_stable_occurrence_identity() -> None:
     assert caught == []
 
 
+def test_extract_function_calls_preserves_distinct_occurrences_with_reused_call_id() -> None:
+    from agent_framework._tools import _extract_function_calls
+
+    calls = [
+        Content.from_function_call(call_id="provider-reused", name="first", arguments={}, id="occurrence-1"),
+        Content.from_function_call(call_id="provider-reused", name="second", arguments={}, id="occurrence-2"),
+    ]
+    response = ChatResponse(messages=[Message(role="assistant", contents=calls)])
+
+    assert _extract_function_calls(response) == calls
+
+
+def test_extract_function_calls_keeps_later_occurrence_after_reused_call_id_result() -> None:
+    from agent_framework._tools import _extract_function_calls
+
+    completed_call = Content.from_function_call(
+        call_id="provider-reused",
+        name="first",
+        arguments={},
+        id="occurrence-1",
+    )
+    later_call = Content.from_function_call(
+        call_id="provider-reused",
+        name="second",
+        arguments={},
+        id="occurrence-2",
+    )
+    response = ChatResponse(
+        messages=[
+            Message(role="assistant", contents=[completed_call]),
+            Message(role="tool", contents=[Content.from_function_result(call_id="provider-reused", result="done")]),
+            Message(role="assistant", contents=[later_call]),
+        ]
+    )
+
+    assert _extract_function_calls(response) == [later_call]
+
+
 def test_actionable_function_call_uses_occurrence_identity_for_empty_call_id() -> None:
     from agent_framework._tools import _extract_function_calls
 
@@ -392,15 +430,15 @@ async def test_streaming_interleaved_indexed_call_fragments_coalesce_by_occurren
             call_id=call_id,
             name=name,
             arguments=arguments,
-            additional_properties={"tool_call_index": index},
+            id=f"occurrence-{index}",
         )
 
     chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(contents=[fragment("provider-a", "first_write", '{"value":', 0)], role="assistant"),
             ChatResponseUpdate(contents=[fragment("provider-b", "second_write", '{"value":', 1)], role="assistant"),
-            ChatResponseUpdate(contents=[fragment("", "", '"first"}', 0)], role="assistant"),
-            ChatResponseUpdate(contents=[fragment("", "", '"second"}', 1)], role="assistant"),
+            ChatResponseUpdate(contents=[fragment("provider-a", "", '"first"}', 0)], role="assistant"),
+            ChatResponseUpdate(contents=[fragment("provider-b", "", '"second"}', 1)], role="assistant"),
         ]
     ]
     streamed_by_index: dict[int, list[tuple[str | None, str | None]]] = {0: [], 1: []}
@@ -408,17 +446,31 @@ async def test_streaming_interleaved_indexed_call_fragments_coalesce_by_occurren
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        async for update in chat_client_base.get_response(
+        stream = chat_client_base.get_response(
             [Message(role="user", contents=["hello"])],
             options={"tool_choice": "auto", "tools": [first_write, second_write]},
             stream=True,
-        ):
+        )
+        async for update in stream:
             for content in update.contents:
                 if content.type == "function_call":
-                    index = content.additional_properties["tool_call_index"]
+                    assert content.id is not None
+                    index = int(content.id.removeprefix("occurrence-"))
                     streamed_by_index[index].append((content.id, content.call_id))
                 elif content.type == "function_approval_request":
                     approval_requests.append(content)
+
+    final_response = await stream.get_final_response()
+    final_calls = [
+        content
+        for message in final_response.messages
+        for content in message.contents
+        if content.type == "function_call"
+    ]
+    assert [(call.id, call.call_id, call.parse_arguments()) for call in final_calls] == [
+        ("occurrence-0", "provider-a", {"value": "first"}),
+        ("occurrence-1", "provider-b", {"value": "second"}),
+    ]
 
     assert len(approval_requests) == 2
     requests_by_call_id = {
@@ -434,53 +486,6 @@ async def test_streaming_interleaved_indexed_call_fragments_coalesce_by_occurren
         assert streamed_by_index[index][0] == streamed_by_index[index][1]
         assert streamed_by_index[index][0][1] == provider_call_id
     assert caught == []
-
-
-async def test_streaming_tool_call_indexes_are_scoped_by_choice(
-    chat_client_base: SupportsChatGetResponse,
-) -> None:
-    @tool(name="first_write", approval_mode="always_require")
-    def first_write(value: str) -> str:
-        return value
-
-    @tool(name="second_write", approval_mode="always_require")
-    def second_write(value: str) -> str:
-        return value
-
-    def fragment(call_id: str, name: str, arguments: str, choice_index: int) -> Content:
-        return Content.from_function_call(
-            call_id=call_id,
-            name=name,
-            arguments=arguments,
-            additional_properties={"tool_call_index": 0, "tool_call_choice_index": choice_index},
-        )
-
-    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-        [
-            ChatResponseUpdate(contents=[fragment("provider-a", "first_write", '{"value":', 0)], role="assistant"),
-            ChatResponseUpdate(contents=[fragment("provider-b", "second_write", '{"value":', 1)], role="assistant"),
-            ChatResponseUpdate(contents=[fragment("", "", '"first"}', 0)], role="assistant"),
-            ChatResponseUpdate(contents=[fragment("", "", '"second"}', 1)], role="assistant"),
-        ]
-    ]
-    approval_requests: list[Content] = []
-
-    async for update in chat_client_base.get_response(
-        [Message(role="user", contents=["hello"])],
-        options={"tool_choice": "auto", "tools": [first_write, second_write]},
-        stream=True,
-    ):
-        approval_requests.extend(content for content in update.contents if content.type == "function_approval_request")
-
-    assert len(approval_requests) == 2
-    requests_by_call_id = {
-        request.function_call.call_id: request for request in approval_requests if request.function_call is not None
-    }
-    assert set(requests_by_call_id) == {"provider-a", "provider-b"}
-    assert requests_by_call_id["provider-a"].function_call is not None
-    assert requests_by_call_id["provider-a"].function_call.parse_arguments() == {"value": "first"}
-    assert requests_by_call_id["provider-b"].function_call is not None
-    assert requests_by_call_id["provider-b"].function_call.parse_arguments() == {"value": "second"}
 
 
 def test_occurrence_aware_approval_rejects_stale_reused_call_id_response(caplog: pytest.LogCaptureFixture) -> None:
@@ -1610,7 +1615,7 @@ async def test_streaming_informational_only_function_call_is_not_invoked(chat_cl
         return f"Processed {arg1}"
 
     informational_call = Content.from_function_call(
-        call_id="1",
+        call_id="",
         name="no_approval_func",
         arguments='{"arg1": "value1"}',
         informational_only=True,
@@ -1619,18 +1624,23 @@ async def test_streaming_informational_only_function_call_is_not_invoked(chat_cl
         [ChatResponseUpdate(contents=[informational_call], role="assistant")]
     ]
 
-    updates = [
-        update
-        async for update in chat_client_base.get_response(
-            [Message(role="user", contents=["hello"])],
-            options={"tool_choice": "auto", "tools": [func_no_approval]},
-            stream=True,
-        )
-    ]
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        updates = [
+            update
+            async for update in chat_client_base.get_response(
+                [Message(role="user", contents=["hello"])],
+                options={"tool_choice": "auto", "tools": [func_no_approval]},
+                stream=True,
+            )
+        ]
 
     assert exec_counter == 0
     assert len(updates) == 1
     assert updates[0].contents == [informational_call]
+    assert informational_call.id is None
+    assert informational_call.call_id == ""
+    assert caught == []
 
 
 async def test_rejected_approval(chat_client_base: SupportsChatGetResponse):

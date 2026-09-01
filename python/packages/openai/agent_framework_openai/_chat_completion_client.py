@@ -29,6 +29,7 @@ from agent_framework._tools import (
     FunctionInvocationLayer,
     FunctionTool,
     ToolTypes,
+    _generate_function_call_occurrence_id,  # pyright: ignore[reportPrivateUsage]
     normalize_tools,
 )
 from agent_framework._types import (
@@ -619,6 +620,7 @@ class RawOpenAIChatCompletionClient(
 
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 client = self.client
+                tool_call_identities: dict[tuple[int, int], tuple[str, str]] = {}
                 if self._FEATURE_USAGE_INDEX is not None:
                     mark_feature_used(self._FEATURE_USAGE_INDEX)
                 request_options = dict(options_dict)
@@ -629,7 +631,23 @@ class RawOpenAIChatCompletionClient(
                     async for chunk in await client.chat.completions.create(stream=True, **request_options):
                         if len(chunk.choices) == 0 and chunk.usage is None:
                             continue
-                        yield self._parse_response_update_from_openai(chunk)
+                        update = self._parse_response_update_from_openai(chunk)
+                        for content in update.contents:
+                            if content.type != "function_call":
+                                continue
+                            choice_index = content.additional_properties.get("tool_call_choice_index")
+                            tool_index = content.additional_properties.get("tool_call_index")
+                            if not isinstance(choice_index, int) or not isinstance(tool_index, int):
+                                continue
+                            index_key = (choice_index, tool_index)
+                            identity = tool_call_identities.get(index_key)
+                            if identity is None:
+                                occurrence_id = _generate_function_call_occurrence_id()
+                                provider_call_id = content.call_id or occurrence_id
+                                identity = (occurrence_id, provider_call_id)
+                                tool_call_identities[index_key] = identity
+                            content.id, content.call_id = identity
+                        yield update
                 except BadRequestError as ex:
                     if ex.code == "content_filter":
                         raise OpenAIContentFilterException(

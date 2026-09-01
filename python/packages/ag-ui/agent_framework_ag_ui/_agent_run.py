@@ -2287,20 +2287,29 @@ def _legacy_tool_message_approval_resume(
     *,
     lifecycle: ApprovalLifecycle,
     thread_id: str,
+    submitted_messages: Sequence[Mapping[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], set[int], str | None] | None:
     """Translate unambiguous legacy tool-result approvals to canonical resume entries."""
     entries: list[dict[str, Any]] = []
     translated_message_ids: set[int] = set()
     error: str | None = None
     seen_interrupt_ids: set[str] = set()
-    retained_occurrences = lifecycle.occurrences_for_thread(thread_id=thread_id)
+    retained_occurrences_by_call_id: dict[str, list[ApprovalOccurrence]] = {}
+    pending_local_occurrences_by_call_id: dict[str, list[ApprovalOccurrence]] = {}
+    for occurrence in lifecycle.occurrences_for_thread(thread_id=thread_id):
+        retained_occurrences_by_call_id.setdefault(occurrence.identity.call_id, []).append(occurrence)
+        if occurrence.status is ApprovalStatus.PENDING and occurrence.server_label is None:
+            pending_local_occurrences_by_call_id.setdefault(occurrence.identity.call_id, []).append(occurrence)
+
+    submitted = messages if submitted_messages is None else submitted_messages
     trailing_tool_message_ids: set[int] = set()
-    for message in reversed(messages):
+    for message in reversed(submitted):
         if str(message.get("role", "")).lower() != "tool":
             break
         trailing_tool_message_ids.add(id(message))
+
     confirm_change_call_ids: set[str] = set()
-    function_calls_by_id: dict[str, tuple[str, str]] = {}
+    function_calls_by_id: dict[str, list[tuple[str, str]]] = {}
     for message in messages:
         if str(message.get("role", "")).lower() != "assistant":
             continue
@@ -2322,14 +2331,12 @@ def _legacy_tool_message_approval_resume(
                 name=str(function["name"]),
                 arguments=function.get("arguments"),
             )
-            function_calls_by_id[call_id] = (
-                str(function["name"]),
-                canonical_function_arguments(parsed_call) or "{}",
+            function_calls_by_id.setdefault(call_id, []).append(
+                (str(function["name"]), canonical_function_arguments(parsed_call) or "{}")
             )
-    for message in messages:
+
+    for message in submitted:
         if id(message) not in trailing_tool_message_ids:
-            continue
-        if str(message.get("role", "")).lower() != "tool":
             continue
         call_id = message.get("tool_call_id") or message.get("toolCallId") or message.get("actionExecutionId")
         if not call_id:
@@ -2346,21 +2353,16 @@ def _legacy_tool_message_approval_resume(
             payload = raw_content
         if not isinstance(payload, Mapping) or "accepted" not in payload:
             continue
-        if str(call_id) in confirm_change_call_ids:
+        call_id_string = str(call_id)
+        if call_id_string in confirm_change_call_ids:
             continue
-        matching_occurrences = [
-            occurrence for occurrence in retained_occurrences if occurrence.identity.call_id == str(call_id)
-        ]
-        pending_occurrences = [
-            occurrence
-            for occurrence in matching_occurrences
-            if occurrence.status is ApprovalStatus.PENDING and occurrence.server_label is None
-        ]
+        matching_occurrences = retained_occurrences_by_call_id.get(call_id_string, [])
+        pending_occurrences = pending_local_occurrences_by_call_id.get(call_id_string, [])
         if not pending_occurrences:
             continue
         translated_message_ids.add(id(message))
-        submitted_call = function_calls_by_id.get(str(call_id))
-        if submitted_call is None or submitted_call != (
+        submitted_calls = function_calls_by_id.get(call_id_string, [])
+        if len(submitted_calls) != 1 or submitted_calls[0] != (
             pending_occurrences[0].name,
             pending_occurrences[0].arguments,
         ):
@@ -2530,9 +2532,10 @@ async def run_agent_stream(
     tools = merge_tools(server_tools, client_tools)
     if resume_payload is None:
         legacy_resume = _legacy_tool_message_approval_resume(
-            raw_messages,
+            snapshot_seed_messages if snapshot_seed_messages is not None else raw_messages,
             lifecycle=approval_state_store.lifecycle,
             thread_id=approval_thread_id,
+            submitted_messages=raw_messages,
         )
         if legacy_resume is not None:
             resume_payload, translated_message_ids, legacy_resume_error = legacy_resume

@@ -1002,8 +1002,10 @@ def test_emit_local_approval_request_prefers_function_call_occurrence_id() -> No
     with pytest.warns(FutureWarning, match="id differs from function_call.id.*legacy"):
         approval_content = Content.from_function_approval_request(id="call_123", function_call=function_call)
 
-    _emit_approval_request(approval_content, flow)
+    events = _emit_approval_request(approval_content, flow)
 
+    custom_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert custom_event.value["id"] == "af-call-occurrence"
     assert flow.interrupts[0]["id"] == "af-call-occurrence"
     assert flow.interrupts[0]["toolCallId"] == "call_123"
 
@@ -1023,8 +1025,10 @@ def test_emit_hosted_approval_request_preserves_provider_request_id() -> None:
         function_call=function_call,
     )
 
-    _emit_approval_request(approval_content, flow)
+    events = _emit_approval_request(approval_content, flow)
 
+    custom_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert custom_event.value["id"] == "provider-approval-request"
     assert flow.interrupts[0]["id"] == "provider-approval-request"
     assert flow.interrupts[0]["toolCallId"] == "provider-call"
 

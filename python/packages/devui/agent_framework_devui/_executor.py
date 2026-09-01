@@ -135,7 +135,9 @@ class AgentFrameworkExecutor:
         request_id = event.get("request_id")
         fc = event.get("function_call", {})
         if isinstance(request_id, str) and request_id:
+            occurrence_id = fc.get("occurrence_id")
             self._pending_approvals[request_id] = {
+                "id": occurrence_id if isinstance(occurrence_id, str) and occurrence_id else request_id,
                 "call_id": fc.get("id", ""),
                 "name": fc.get("name", ""),
                 "arguments": fc.get("arguments", {}),
@@ -828,6 +830,7 @@ class AgentFrameworkExecutor:
                                         function_call = Content.from_function_call(
                                             call_id=stored_fc["call_id"],
                                             name=stored_fc["name"],
+                                            id=stored_fc.get("id", request_id),
                                             arguments=stored_fc["arguments"],
                                         )
 
