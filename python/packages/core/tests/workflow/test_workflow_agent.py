@@ -852,6 +852,44 @@ class TestWorkflowAgent:
         assert "first output" in texts
         assert "second output" in texts
 
+    async def test_workflow_as_agent_stream_preserves_response_update_metadata(self) -> None:
+        """Test that streaming forwards finish_reason, continuation_token and additional_properties.
+
+        This validates the fix for issue #7952: AgentResponseUpdate metadata should be
+        forwarded as-is when the workflow is wrapped via .as_agent().
+        """
+
+        @executor
+        async def metadata_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponseUpdate]) -> None:  # type: ignore[valid-type]
+            await ctx.yield_output(
+                AgentResponseUpdate(
+                    contents=[Content.from_text(text="payload")],
+                    role="assistant",
+                    agent_id="source-agent",
+                    response_id="source-response",
+                    message_id="source-message",
+                    finish_reason="stop",
+                    continuation_token="resume-token",
+                    additional_properties={"provider_marker": "preserve-me"},
+                )
+            )
+
+        workflow = WorkflowBuilder(start_executor=metadata_executor).build()
+        agent = workflow.as_agent("metadata-test-agent")
+
+        updates: list[AgentResponseUpdate] = []
+        async for update in agent.run("hello", stream=True):
+            updates.append(update)
+
+        metadata_updates = [u for u in updates if u.response_id == "source-response"]
+        assert len(metadata_updates) == 1
+        update = metadata_updates[0]
+        assert update.text == "payload"
+        assert update.agent_id == "source-agent"
+        assert update.finish_reason == "stop"
+        assert update.continuation_token == "resume-token"
+        assert update.additional_properties == {"provider_marker": "preserve-me"}
+
     async def test_workflow_as_agent_yield_output_with_content_types(self) -> None:
         """Test that yield_output preserves different content types (Content, Content, etc.)."""
 

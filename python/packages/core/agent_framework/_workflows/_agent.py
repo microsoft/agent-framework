@@ -636,9 +636,13 @@ class WorkflowAgent(BaseAgent):
                         contents=list(data.contents),
                         role=data.role,
                         author_name=data.author_name or executor_id,
+                        agent_id=data.agent_id,
                         response_id=data.response_id,
                         message_id=data.message_id,
                         created_at=data.created_at,
+                        finish_reason=data.finish_reason,
+                        continuation_token=data.continuation_token,
+                        additional_properties=dict(data.additional_properties) if data.additional_properties else None,
                         raw_representation=data.raw_representation,
                     )
                 ]
