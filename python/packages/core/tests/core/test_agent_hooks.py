@@ -191,15 +191,12 @@ async def test_from_emitter_factory_requires_both_arguments() -> None:
 
 
 @requires_sdk
-async def test_bare_bundle_at_construction_is_fully_enforced(chat_client_base: MockBaseChatClient) -> None:
-    # Passing the bundle bare (instead of inside a list) at construction must install
-    # it exactly like `middleware=[bundle]` — previously it was silently dropped and
-    # the run executed fully unhooked.
+async def test_bundle_at_construction_is_fully_enforced(chat_client_base: MockBaseChatClient) -> None:
     records: list[InterceptionRecord] = []
     guard = PointGuard("output", Verdict.deny(reason="egress_blocked"))
     agent = Agent(
         client=chat_client_base,
-        middleware=create_agent_hooks_middleware([guard], record_sink=records.append),
+        middleware=[create_agent_hooks_middleware([guard], record_sink=records.append)],
     )
 
     with pytest.raises(InterceptionBlocked) as exc_info:
@@ -2736,16 +2733,16 @@ def test_agent_hooks_middleware_importable_without_sdk(monkeypatch: pytest.Monke
         is agent_hooks_module.create_agent_hooks_middleware_from_emitter
     )
 
-    with pytest.raises(ModuleNotFoundError, match=r"agent-framework-core\[agent-hooks\]"):
+    with pytest.raises(ModuleNotFoundError, match="pip install agent-hooks-sdk"):
         agent_framework.create_agent_hooks_middleware([cast("Any", object())])
-    with pytest.raises(ModuleNotFoundError, match=r"agent-framework-core\[agent-hooks\]"):
+    with pytest.raises(ModuleNotFoundError, match="pip install agent-hooks-sdk"):
         agent_framework.create_agent_hooks_middleware_from_emitter(cast("Any", object()), cast("Any", object()))
 
 
-def test_broken_sdk_installation_is_not_masked_as_missing_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_broken_sdk_installation_is_not_masked_as_missing_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     # A transitively missing dependency (or any other breakage inside the SDK) must
-    # propagate unchanged — only a genuinely absent `agent_hooks` package gets the
-    # install-the-extra hint.
+    # propagate unchanged; only a genuinely absent `agent_hooks` package gets the
+    # SDK installation hint.
     _hide_agent_hooks(
         monkeypatch, error=ModuleNotFoundError("No module named 'some_native_dep'", name="some_native_dep")
     )
