@@ -3493,6 +3493,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     identity = streamed_identities_by_call_id.get(provider_call_id) if provider_call_id else None
                     if (
                         identity is not None
+                        and provider_call_id is not None
                         and content.id is None
                         and content.name
                         and (
