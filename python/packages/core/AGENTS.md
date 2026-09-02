@@ -13,6 +13,7 @@ agent_framework/
 ├── _clients.py          # Chat client base classes and protocols
 ├── _types.py            # Core types (Message, ChatResponse, Content, etc.)
 ├── _tools.py            # Tool definitions and function invocation
+├── _vectors.py          # Vector store models, CRUD/search abstractions, and protocols
 ├── _middleware.py       # Middleware system for request/response interception
 ├── _sessions.py         # AgentSession and context provider abstractions
 ├── _skills.py           # Agent Skills system (models, executors, provider)
@@ -63,6 +64,17 @@ agent_framework/
 - **`FunctionTool`** - Wraps Python functions as tools with JSON schema generation
 - **`@tool`** decorator - Converts functions to tools
 - **`use_function_invocation()`** - Decorator to add automatic function calling to chat clients
+
+### Vector stores (`_vectors.py`)
+
+The vector store API is experimental under the shared `VECTOR_STORES` feature ID.
+
+- **`@vectorstoremodel`** - Declares key, data, and vector fields on dataclasses, Pydantic models, and plain classes
+- **`register_vectorstoremodel`** - Registers one definition and msgspec-backed codec pair per model type
+- **`BaseVectorCollection`** - Base class for collection lifecycle and msgspec-backed record CRUD operations
+- **`BaseVectorStore`** - Base class for stores that create collection clients
+- **`BaseVectorSearch`** - Base class for vector and keyword-hybrid search and agent search tools
+- **`SupportsVectorUpsert`** / **`SupportsVectorSearch`** - Structural protocols for vector store capabilities
 
 ### Middleware (`_middleware.py`)
 
