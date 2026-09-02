@@ -647,6 +647,50 @@ async def test_nested_one_shot_collection_survives_the_snapshot(chat_client_base
 
 
 @requires_sdk
+@pytest.mark.parametrize("backing", ["one_shot", "reusable"])
+async def test_wrapper_tools_collections_survive_the_snapshot(
+    chat_client_base: MockBaseChatClient, backing: str
+) -> None:
+    """Wrapper objects' ``.tools`` collections survive observation.
+
+    ``normalize_tools`` flattens a wrapper object through its iterable ``.tools``
+    attribute, so a one-shot (generator-backed) collection is a supported shape the
+    boundary must materialize — otherwise the startup projection drains it and the
+    run executes without the tool. A wrapper whose collection is reusable passes
+    through untouched, keeping its identity for the middleware pipeline.
+    """
+
+    from types import SimpleNamespace
+
+    toolbox = SimpleNamespace(tools=(item for item in [weather_tool]) if backing == "one_shot" else [weather_tool])
+    seen: dict[str, Any] = {}
+
+    class CaptureToolsMiddleware(AgentMiddleware):
+        async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            seen["tools"] = context.tools
+            await call_next()
+
+    guard = AllowGuard()
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(
+        client=chat_client_base,
+        middleware=[create_agent_hooks_middleware([guard]), CaptureToolsMiddleware()],
+    )
+
+    response = await agent.run("Get weather for Seattle", tools=toolbox)
+
+    assert response.text == "Final response"
+    assert weather_tool_calls == ["Seattle"]
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == ["weather_tool"]
+    for pre_model in guard.contexts_for("pre_model_call"):
+        assert [entry["name"] for entry in pre_model["tools"]] == ["weather_tool"]
+    if backing == "reusable":
+        # A reusable wrapper keeps its identity through the pipeline.
+        assert seen["tools"] is toolbox
+
+
+@requires_sdk
 async def test_snapshot_and_per_call_agree_when_both_run_tool_routes_are_supplied(
     chat_client_base: MockBaseChatClient,
 ) -> None:

@@ -171,32 +171,44 @@ def _select_run_level_tools(tools: Any, options: Mapping[str, Any] | None) -> An
 def _materialize_tool_container(tools: Any) -> Any:
     """Materialize one-shot iterable tool containers into lists, tools untouched.
 
-    ``normalize_tools`` recursively flattens any iterable tool collection, so
-    generators and other single-pass iterables are supported containers at every
-    nesting level — but each observer that iterates one consumes it for everyone
-    after it. This walks exactly the container shapes that flattening walks and lists
-    them once, without converting any tool: middleware must keep seeing the caller's
-    original tool objects, so identity-based policy checks still fire. Leaf shapes —
-    tools, dict specs, mapping-like collections (flattened via their re-iterable
-    ``.tools`` attribute), pydantic models, strings, callables — pass through
-    untouched, and an already re-iterable container whose elements needed no
-    materialization keeps its identity.
+    ``normalize_tools`` recursively flattens any iterable tool collection — including
+    the ``.tools`` collection of wrapper objects — so generators and other single-pass
+    iterables are supported containers at every nesting level; but each observer that
+    iterates one consumes it for everyone after it. This walks exactly the container
+    shapes that flattening walks (in flattening's own order) and lists them once,
+    without converting any tool: middleware must keep seeing the caller's original
+    tool objects, so identity-based policy checks still fire. Tool leaves pass through
+    untouched, and any container or wrapper whose contents needed no materialization
+    keeps its identity. A wrapper whose ``.tools`` collection is one-shot (or holds a
+    one-shot) cannot be preserved without mutating the caller's object, so exactly
+    that case is expanded into its materialized tools — the same contents flattening
+    would have produced from it.
     """
     from pydantic import BaseModel
 
     from ._mcp import MCPTool
     from ._tools import FunctionTool
 
-    def is_leaf(value: Any) -> bool:
-        # Mirror the shapes normalize_tools treats as non-container leaves (or
-        # flattens without directly iterating the value itself).
-        if value is None or isinstance(value, (FunctionTool, MCPTool, Mapping, BaseModel, str, bytes, bytearray)):
-            return True
-        return callable(value) or not isinstance(value, Iterable)
-
     def materialize(value: Any) -> Any:
-        if is_leaf(value):
-            return value
+        # Tool leaves flattening never iterates, in flattening's own order.
+        if value is None or isinstance(value, (FunctionTool, dict, MCPTool, str, bytes, bytearray)) or callable(value):
+            return cast("Any", value)
+        # Wrapper objects exposing an iterable ``.tools`` collection (mapping-like
+        # toolboxes, pydantic wrappers): flattening reads and iterates that attribute
+        # — before its Mapping/BaseModel exclusions — so its contents must be
+        # materialized here too.
+        collection = getattr(value, "tools", None)
+        if isinstance(collection, Iterable) and not isinstance(collection, (str, bytes, bytearray, Mapping)):
+            items = [materialize(item) for item in cast("Iterable[Any]", collection)]
+            if isinstance(collection, Collection) and all(
+                new is old for new, old in zip(items, cast("Collection[Any]", collection))
+            ):
+                # The collection is safely re-iterable and its contents needed no
+                # materialization: keep the wrapper itself.
+                return value
+            return items
+        if isinstance(value, (Mapping, BaseModel)) or not isinstance(value, Iterable):
+            return cast("Any", value)
         items = [materialize(item) for item in cast("Iterable[Any]", value)]
         if isinstance(value, Sequence) and all(new is old for new, old in zip(items, cast("Sequence[Any]", value))):
             return cast("Any", value)
