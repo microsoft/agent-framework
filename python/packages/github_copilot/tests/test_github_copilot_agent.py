@@ -2943,6 +2943,24 @@ class TestNormalizeApproveForSession:
         assert isinstance(result, PermissionDecisionApproveForSession)
         assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalCommands)
 
+    async def test_legacy_dict_permission_handlers_are_supported(self) -> None:
+        """The wrapper continues to support handlers typed for the legacy dictionary context."""
+        from copilot.generated.rpc import PermissionDecisionApproveOnce
+        from copilot.session_events import PermissionRequest
+
+        received_context: dict[str, str] = {}
+
+        def legacy_handler(request: PermissionRequest, context: dict[str, str]) -> Any:
+            received_context.update(context)
+            return PermissionDecisionApproveOnce()
+
+        from agent_framework_github_copilot._agent import _with_normalized_permission_decisions
+
+        handler = _with_normalized_permission_decisions(legacy_handler)  # type: ignore[arg-type]
+        await handler(shell_request(["ls"]), {"session_id": "test-session"})
+
+        assert received_context == {"session_id": "test-session"}
+
     async def test_handler_exceptions_propagate(self) -> None:
         """Handler failures must keep reaching the SDK, which denies the request."""
         from agent_framework_github_copilot._agent import _with_normalized_permission_decisions
