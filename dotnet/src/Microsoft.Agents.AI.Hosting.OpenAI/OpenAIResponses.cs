@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI;
 
@@ -43,6 +44,39 @@ public static class OpenAIResponses
     /// <exception cref="ArgumentException">The body could not be parsed as an OpenAI Responses request.</exception>
     /// <exception cref="NotSupportedException">A request setting is not supported by the configured mapping.</exception>
     public static OpenAIResponsesRunRequest ToAgentRunRequest(JsonElement body, OpenAIResponsesMapOptions? mapOptions = null)
+        => ToAgentRunRequestCore(body, mapOptions ?? new OpenAIResponsesMapOptions(), agent: null, logger: null);
+
+    /// <summary>
+    /// Converts an OpenAI Responses request body into Agent Framework run values using the target
+    /// agent to resolve client function tool name conflicts.
+    /// </summary>
+    /// <param name="body">The OpenAI Responses-shaped request body.</param>
+    /// <param name="agent">The target agent whose configured functions participate in conflict resolution.</param>
+    /// <param name="mapOptions">Options controlling how request settings are mapped onto the run.</param>
+    /// <param name="logger">Optional logger used for client function conflict warnings.</param>
+    /// <returns>The parsed messages and mapped run options.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="agent"/> or <paramref name="mapOptions"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="ArgumentException">The body could not be parsed as an OpenAI Responses request.</exception>
+    /// <exception cref="NotSupportedException">A request setting is not supported by the configured mapping.</exception>
+    public static OpenAIResponsesRunRequest ToAgentRunRequest(
+        JsonElement body,
+        AIAgent agent,
+        OpenAIResponsesMapOptions mapOptions,
+        ILogger? logger = null)
+    {
+        ArgumentNullException.ThrowIfNull(agent);
+        ArgumentNullException.ThrowIfNull(mapOptions);
+
+        return ToAgentRunRequestCore(body, mapOptions, agent, logger);
+    }
+
+    private static OpenAIResponsesRunRequest ToAgentRunRequestCore(
+        JsonElement body,
+        OpenAIResponsesMapOptions mapOptions,
+        AIAgent? agent,
+        ILogger? logger)
     {
         CreateResponse request;
         try
@@ -60,7 +94,18 @@ public static class OpenAIResponses
             throw new ArgumentException("The request body is missing the required 'input' field.", nameof(body));
         }
 
-        AgentRunOptions? options = (mapOptions ?? new OpenAIResponsesMapOptions()).RunOptionsFactory(request.ToRequestInfo());
+#pragma warning disable MAAI001
+        if (agent is null && mapOptions.DangerouslyAllowClientFunctionTools is not null)
+        {
+            throw new NotSupportedException(
+                $"{nameof(OpenAIResponsesMapOptions.DangerouslyAllowClientFunctionTools)} requires the " +
+                $"{nameof(ToAgentRunRequest)} overload that accepts an {nameof(AIAgent)}.");
+        }
+#pragma warning restore MAAI001
+
+        AgentRunOptions? options = agent is null
+            ? mapOptions.RunOptionsFactory(request.ToRequestInfo())
+            : request.ToRunOptions(mapOptions, agent, logger, logConflicts: true);
 
         var messages = new List<ChatMessage>();
         foreach (InputMessage inputMessage in request.Input.GetInputMessages())

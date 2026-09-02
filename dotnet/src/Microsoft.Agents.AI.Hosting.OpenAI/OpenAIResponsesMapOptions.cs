@@ -2,6 +2,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI;
@@ -38,6 +40,38 @@ public sealed class OpenAIResponsesMapOptions
             field = Throw.IfNull(value);
         }
     } = RejectRequestSettings;
+
+    /// <summary>
+    /// Gets or sets the explicit opt-in that allows function declarations supplied by the client to
+    /// be forwarded to the hosted agent's inference client.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This setting is dangerous because client-provided function names, descriptions, and schemas
+    /// can change which tools the model chooses. The declarations cannot execute code in the hosted
+    /// server, but matching function calls are returned to the client for execution.
+    /// </para>
+    /// <para>
+    /// The default is <see langword="null"/>, which leaves client-provided tools subject to
+    /// <see cref="RejectRequestSettings"/>. Enabling this setting requires an explicit
+    /// <see cref="OpenAIClientFunctionToolNameConflictBehavior"/>. The request's
+    /// <c>tool_choice</c> is not enabled by this setting and remains controlled by
+    /// <see cref="RunOptionsFactory"/>.
+    /// </para>
+    /// <para>
+    /// This setting applies only to <c>MapOpenAIResponses</c> endpoints because the target agent is
+    /// required to enforce name conflicts. Accepted function declarations are handled by the endpoint
+    /// and removed from <see cref="OpenAIResponseRequestInfo.Tools"/> before
+    /// <see cref="RunOptionsFactory"/> is called. Other tool types remain in that collection.
+    /// </para>
+    /// <para>
+    /// Client functions are forwarded with parallel tool calls disabled. This prevents a response from
+    /// combining a client function call, which must be returned to the client, with a hosted function
+    /// call that must execute inside the hosted agent.
+    /// </para>
+    /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public OpenAIClientFunctionToolsOptions? DangerouslyAllowClientFunctionTools { get; set; }
 
     /// <summary>
     /// The default <see cref="RunOptionsFactory"/> implementation. Throws a <see cref="NotSupportedException"/>
@@ -83,7 +117,7 @@ public sealed class OpenAIResponsesMapOptions
             LocalAdd("tools");
         }
 
-        if (request.ToolChoice is not null)
+        if (request.HasToolChoice || request.ToolChoice is not null)
         {
             LocalAdd("tool_choice");
         }

@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using OpenAI;
 using OpenAI.Responses;
 
@@ -941,6 +942,327 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         Assert.NotNull(response.Id);
     }
 
+    [Fact]
+    public async Task CreateResponse_WithAllowedClientFunctionTool_ForwardsToolAndReturnsFunctionCallAsync()
+    {
+        // Arrange
+        const string AgentName = "request-function-tool-agent";
+        var chatClient = new TestHelpers.FunctionCallMockChatClient(
+            "get_weather",
+            """{"location":"Valencia, Spain","units":"celsius"}""");
+#pragma warning disable MAAI001
+        var mapOptions = new OpenAIResponsesMapOptions
+        {
+            DangerouslyAllowClientFunctionTools =
+                new(OpenAIClientFunctionToolNameConflictBehavior.AllowOverride())
+        };
+#pragma warning restore MAAI001
+
+        this._httpClient = await this.CreateTestServerWithCustomClientAsync(
+            agentName: AgentName,
+            instructions: "You are a helpful assistant.",
+            chatClient,
+            mapOptions);
+
+        using var content = new StringContent(
+            """
+            {
+              "input": "What's the current weather in Valencia?",
+              "tools": [
+                {
+                  "type": "function",
+                  "name": "get_weather",
+                  "description": "Retrieves current weather for the given location.",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "location": { "type": "string" },
+                      "units": { "type": "string", "enum": [ "celsius", "fahrenheit" ] }
+                    },
+                    "required": [ "location", "units" ],
+                    "additionalProperties": false
+                  },
+                  "strict": true
+                }
+              ]
+            }
+            """,
+            Encoding.UTF8,
+            "application/json");
+
+        // Act
+        using HttpResponseMessage httpResponse = await this._httpClient.PostAsync(
+            new Uri($"/{AgentName}/v1/responses", UriKind.Relative),
+            content);
+
+        // Assert
+        Assert.True(httpResponse.IsSuccessStatusCode, $"Response status: {httpResponse.StatusCode}");
+        Assert.NotNull(chatClient.LastChatOptions);
+        Assert.False(chatClient.LastChatOptions.AllowMultipleToolCalls);
+        Assert.Null(chatClient.LastChatOptions.ToolMode);
+        AIFunctionDeclaration tool = Assert.IsAssignableFrom<AIFunctionDeclaration>(Assert.Single(chatClient.LastChatOptions.Tools!));
+        Assert.Equal("get_weather", tool.Name);
+        Assert.Equal("Retrieves current weather for the given location.", tool.Description);
+        Assert.True(tool.JsonSchema.GetProperty("properties").TryGetProperty("units", out _));
+        Assert.True(Assert.IsType<bool>(tool.AdditionalProperties["strict"]));
+
+        using System.Text.Json.JsonDocument document =
+            System.Text.Json.JsonDocument.Parse(await httpResponse.Content.ReadAsStringAsync());
+        System.Text.Json.JsonElement output = Assert.Single(document.RootElement.GetProperty("output").EnumerateArray());
+        Assert.Equal("function_call", output.GetProperty("type").GetString());
+        Assert.Equal("get_weather", output.GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task CreateResponse_WithHostedAIFunction_ForwardsAndExecutesToolAsync()
+    {
+        // Arrange
+        const string AgentName = "hosted-function-tool-agent";
+        const string FunctionName = "get_weather";
+        int invocationCount = 0;
+        var chatClient = new TestHelpers.FunctionToolExecutingMockChatClient(FunctionName);
+        AIFunction function = AIFunctionFactory.Create(GetWeather, FunctionName);
+
+        this._httpClient = await this.CreateTestServerWithHostedToolAsync(
+            AgentName,
+            chatClient,
+            function);
+
+        using var content = new StringContent(
+            """{"input":"What's the weather in Valencia?"}""",
+            Encoding.UTF8,
+            "application/json");
+
+        // Act
+        using HttpResponseMessage response = await this._httpClient.PostAsync(
+            new Uri($"/{AgentName}/v1/responses", UriKind.Relative),
+            content);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, invocationCount);
+        Assert.Equal("Sunny in Valencia", chatClient.FunctionResult);
+        Assert.Contains(
+            chatClient.FirstRequestOptions!.Tools!,
+            tool => tool is AIFunction candidate && candidate.Name == FunctionName);
+
+        string GetWeather(string location)
+        {
+            invocationCount++;
+            return $"Sunny in {location}";
+        }
+    }
+
+    [Fact]
+    public async Task CreateResponse_WithHostedMcpTool_ForwardsToolToResponsesProviderAsync()
+    {
+        // Arrange
+        var chatClient = new TestHelpers.SimpleMockChatClient("Documentation found.");
+#pragma warning disable MEAI001
+        var hostedMcpTool = new HostedMcpServerTool(
+            serverName: "test_mcp",
+            serverAddress: "https://example.test/mcp")
+        {
+            ApprovalMode = HostedMcpServerToolApprovalMode.NeverRequire
+        };
+#pragma warning restore MEAI001
+        const string AgentName = "hosted-mcp-tool-agent";
+
+        this._httpClient = await this.CreateTestServerWithHostedToolAsync(
+            AgentName,
+            chatClient,
+            hostedMcpTool);
+
+        using var content = new StringContent(
+            """{"input":"Search the documentation."}""",
+            Encoding.UTF8,
+            "application/json");
+
+        // Act
+        using HttpResponseMessage response = await this._httpClient.PostAsync(
+            new Uri($"/{AgentName}/v1/responses", UriKind.Relative),
+            content);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        HostedMcpServerTool forwardedTool =
+            Assert.IsType<HostedMcpServerTool>(Assert.Single(chatClient.LastChatOptions!.Tools!));
+        Assert.Equal("test_mcp", forwardedTool.ServerName);
+        Assert.Equal("https://example.test/mcp", forwardedTool.ServerAddress);
+    }
+
+    [Fact]
+    public async Task CreateResponse_WithClientFunctionNamedMcp_DoesNotReplaceHostedMcpToolAsync()
+    {
+        // Arrange
+        const string AgentName = "client-function-and-hosted-mcp-agent";
+        var chatClient = new TestHelpers.SimpleMockChatClient("Documentation found.");
+#pragma warning disable MEAI001
+        var hostedMcpTool = new HostedMcpServerTool(
+            serverName: "test_mcp",
+            serverAddress: "https://example.test/mcp")
+        {
+            ApprovalMode = HostedMcpServerToolApprovalMode.NeverRequire
+        };
+#pragma warning restore MEAI001
+#pragma warning disable MAAI001
+        var mapOptions = new OpenAIResponsesMapOptions
+        {
+            DangerouslyAllowClientFunctionTools =
+                new(OpenAIClientFunctionToolNameConflictBehavior.AllowOverride())
+        };
+#pragma warning restore MAAI001
+
+        this._httpClient = await this.CreateTestServerWithHostedToolAsync(
+            AgentName,
+            chatClient,
+            hostedMcpTool,
+            mapOptions);
+        using StringContent content = CreateClientFunctionRequest("mcp");
+
+        // Act
+        using HttpResponseMessage response = await this._httpClient.PostAsync(
+            new Uri($"/{AgentName}/v1/responses", UriKind.Relative),
+            content);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains(chatClient.LastChatOptions!.Tools!, tool => tool is HostedMcpServerTool);
+        Assert.Contains(chatClient.LastChatOptions.Tools!, tool =>
+            tool is AIFunctionDeclaration function && function.Name == "mcp");
+    }
+
+    [Fact]
+    public async Task CreateResponse_WithConflictingClientFunctionAndRejectPolicy_ReturnsBadRequestAsync()
+    {
+        // Arrange
+        const string AgentName = "reject-client-function-conflict-agent";
+        const string FunctionName = "get_weather";
+        AIFunction hostedFunction = AIFunctionFactory.Create(
+            (string location) => $"Sunny in {location}",
+            FunctionName);
+#pragma warning disable MAAI001
+        var mapOptions = new OpenAIResponsesMapOptions
+        {
+            DangerouslyAllowClientFunctionTools =
+                new(OpenAIClientFunctionToolNameConflictBehavior.Reject())
+        };
+#pragma warning restore MAAI001
+
+        this._httpClient = await this.CreateTestServerWithHostedToolAsync(
+            AgentName,
+            new TestHelpers.SimpleMockChatClient(),
+            hostedFunction,
+            mapOptions);
+        using StringContent content = CreateClientFunctionRequest(FunctionName);
+
+        // Act
+        using HttpResponseMessage response = await this._httpClient.PostAsync(
+            new Uri($"/{AgentName}/v1/responses", UriKind.Relative),
+            content);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains(
+            FunctionName,
+            await response.Content.ReadAsStringAsync(),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CreateResponse_WithConflictingClientFunctionAndIgnorePolicy_UsesHostedFunctionAndLogsWarningAsync()
+    {
+        // Arrange
+        const string AgentName = "ignore-client-function-conflict-agent";
+        const string FunctionName = "get_weather";
+        int invocationCount = 0;
+        var chatClient = new TestHelpers.FunctionToolExecutingMockChatClient(FunctionName);
+        var loggerProvider = new WarningRecordingLoggerProvider();
+        AIFunction hostedFunction = AIFunctionFactory.Create(GetWeather, FunctionName);
+#pragma warning disable MAAI001
+        var mapOptions = new OpenAIResponsesMapOptions
+        {
+            DangerouslyAllowClientFunctionTools =
+                new(OpenAIClientFunctionToolNameConflictBehavior.Ignore())
+        };
+#pragma warning restore MAAI001
+
+        this._httpClient = await this.CreateTestServerWithHostedToolAsync(
+            AgentName,
+            chatClient,
+            hostedFunction,
+            mapOptions,
+            loggerProvider);
+        using StringContent content = CreateClientFunctionRequest(FunctionName);
+
+        // Act
+        using HttpResponseMessage response = await this._httpClient.PostAsync(
+            new Uri($"/{AgentName}/v1/responses", UriKind.Relative),
+            content);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, invocationCount);
+        Assert.Equal("Sunny in Valencia", chatClient.FunctionResult);
+        Assert.Contains(loggerProvider.Messages, message =>
+            message.Contains(FunctionName, StringComparison.Ordinal));
+
+        string GetWeather(string location)
+        {
+            invocationCount++;
+            return $"Sunny in {location}";
+        }
+    }
+
+    [Fact]
+    public async Task CreateResponse_WithConflictingClientFunctionAndAllowOverridePolicy_UsesClientDeclarationAsync()
+    {
+        // Arrange
+        const string AgentName = "override-client-function-conflict-agent";
+        const string FunctionName = "get_weather";
+        int invocationCount = 0;
+        var chatClient = new TestHelpers.FunctionCallMockChatClient(
+            FunctionName,
+            """{"location":"Valencia"}""");
+        AIFunction hostedFunction = AIFunctionFactory.Create(GetWeather, FunctionName);
+#pragma warning disable MAAI001
+        var mapOptions = new OpenAIResponsesMapOptions
+        {
+            DangerouslyAllowClientFunctionTools =
+                new(OpenAIClientFunctionToolNameConflictBehavior.AllowOverride())
+        };
+#pragma warning restore MAAI001
+
+        this._httpClient = await this.CreateTestServerWithHostedToolAsync(
+            AgentName,
+            chatClient,
+            hostedFunction,
+            mapOptions);
+        using StringContent content = CreateClientFunctionRequest(FunctionName);
+
+        // Act
+        using HttpResponseMessage response = await this._httpClient.PostAsync(
+            new Uri($"/{AgentName}/v1/responses", UriKind.Relative),
+            content);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(0, invocationCount);
+        AIFunctionDeclaration forwardedFunction =
+            Assert.IsAssignableFrom<AIFunctionDeclaration>(Assert.Single(chatClient.LastChatOptions!.Tools!));
+        Assert.Equal("Client-provided function.", forwardedFunction.Description);
+        Assert.Contains(
+            "\"type\":\"function_call\"",
+            await response.Content.ReadAsStringAsync(),
+            StringComparison.Ordinal);
+
+        string GetWeather(string location)
+        {
+            invocationCount++;
+            return $"Sunny in {location}";
+        }
+    }
+
     /// <summary>
     /// Verifies that responses with function calls stream correctly.
     /// </summary>
@@ -1410,7 +1732,11 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         return testServer.CreateClient();
     }
 
-    private async Task<HttpClient> CreateTestServerWithCustomClientAsync(string agentName, string instructions, IChatClient chatClient)
+    private async Task<HttpClient> CreateTestServerWithCustomClientAsync(
+        string agentName,
+        string instructions,
+        IChatClient chatClient,
+        OpenAIResponsesMapOptions? mapOptions = null)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
@@ -1421,7 +1747,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
 
         this._app = builder.Build();
         AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
-        this._app.MapOpenAIResponses(agent);
+        this._app.MapOpenAIResponses(agent, responsesPath: null, mapOptions);
 
         await this._app.StartAsync();
 
@@ -1430,6 +1756,61 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
 
         return testServer.CreateClient();
     }
+
+    private async Task<HttpClient> CreateTestServerWithHostedToolAsync(
+        string agentName,
+        IChatClient chatClient,
+        AITool tool,
+        OpenAIResponsesMapOptions? mapOptions = null,
+        ILoggerProvider? loggerProvider = null)
+    {
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+        if (loggerProvider is not null)
+        {
+            builder.Logging.AddProvider(loggerProvider);
+        }
+
+        IHostedAgentBuilder agentBuilder = builder
+            .AddAIAgent(agentName, "You are a helpful assistant.", chatClient)
+            .WithAITool(tool);
+        builder.AddOpenAIResponses();
+
+        this._app = builder.Build();
+        this._app.MapOpenAIResponses(agentBuilder, path: null, mapOptions);
+        await this._app.StartAsync();
+
+        TestServer testServer = this._app.Services.GetRequiredService<IServer>() as TestServer
+            ?? throw new InvalidOperationException("TestServer not found");
+
+        return testServer.CreateClient();
+    }
+
+    private static StringContent CreateClientFunctionRequest(string functionName) =>
+        new(
+            $$"""
+            {
+              "input": "What's the weather in Valencia?",
+              "tools": [
+                {
+                  "type": "function",
+                  "name": "{{functionName}}",
+                  "description": "Client-provided function.",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "location": { "type": "string" }
+                    },
+                    "required": [ "location" ],
+                    "additionalProperties": false
+                  },
+                  "strict": true
+                }
+              ]
+            }
+            """,
+            Encoding.UTF8,
+            "application/json");
 
     private async Task<HttpClient> CreateTestServerWithMultipleAgentsAsync(
         params (string Name, string Instructions, string ResponseText)[] agents)
@@ -1460,5 +1841,37 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
             ?? throw new InvalidOperationException("TestServer not found");
 
         return testServer.CreateClient();
+    }
+
+    private sealed class WarningRecordingLoggerProvider : ILoggerProvider
+    {
+        public List<string> Messages { get; } = [];
+
+        public ILogger CreateLogger(string categoryName) => new WarningRecordingLogger(this.Messages);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class WarningRecordingLogger(List<string> messages) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                if (this.IsEnabled(logLevel))
+                {
+                    messages.Add(formatter(state, exception));
+                }
+            }
+        }
     }
 }

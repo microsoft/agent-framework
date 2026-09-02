@@ -9,6 +9,8 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 
 internal static class OpenAIResponseRequestInfoBuilder
 {
+    private static readonly JsonElement s_emptyJson = JsonElement.Parse("{}");
+
     public static OpenAIResponseRequestInfo ToRequestInfo(this CreateResponse request) => new()
     {
         Temperature = request.Temperature,
@@ -18,7 +20,94 @@ internal static class OpenAIResponseRequestInfoBuilder
         Model = request.Model,
         Tools = request.Tools is { Count: > 0 } tools ? new List<JsonElement>(tools) : null,
         ToolChoice = request.ToolChoice?.ToChatToolMode(),
+        HasToolChoice = request.ToolChoice is not null,
     };
+
+    internal static List<AITool>? ExtractClientFunctionTools(
+        this IReadOnlyList<JsonElement> tools,
+        out List<JsonElement>? unsupportedTools)
+    {
+        List<AITool>? functionTools = null;
+        unsupportedTools = null;
+
+        foreach (JsonElement tool in tools)
+        {
+            if (tool.ToFunctionTool() is { } functionTool)
+            {
+                (functionTools ??= []).Add(functionTool);
+            }
+            else
+            {
+                (unsupportedTools ??= []).Add(tool);
+            }
+        }
+
+        return functionTools;
+    }
+
+    private static ClientAIFunctionDeclaration? ToFunctionTool(this JsonElement tool)
+    {
+        if (tool.ValueKind != JsonValueKind.Object ||
+            !tool.TryGetProperty("type", out JsonElement type) ||
+            type.ValueKind != JsonValueKind.String ||
+            type.GetString() != "function" ||
+            !tool.TryGetProperty("name", out JsonElement name) ||
+            name.ValueKind != JsonValueKind.String ||
+            name.GetString() is not { Length: > 0 } functionName)
+        {
+            return null;
+        }
+
+        JsonElement parameters = tool.TryGetProperty("parameters", out JsonElement requestParameters) &&
+            requestParameters.ValueKind == JsonValueKind.Object
+                ? requestParameters
+                : s_emptyJson;
+
+        string? description = tool.TryGetProperty("description", out JsonElement requestDescription) &&
+            requestDescription.ValueKind == JsonValueKind.String
+                ? requestDescription.GetString()
+                : null;
+
+        AIFunctionDeclaration function = AIFunctionFactory.CreateDeclaration(functionName, description, parameters);
+        bool? strict = tool.TryGetProperty("strict", out JsonElement requestStrict) &&
+            requestStrict.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? requestStrict.GetBoolean()
+                : null;
+
+        return new ClientAIFunctionDeclaration(function, strict);
+    }
+
+    internal sealed class ClientAIFunctionDeclaration : AIFunctionDeclaration
+    {
+        private readonly AIFunctionDeclaration _innerFunction;
+
+        public ClientAIFunctionDeclaration(AIFunctionDeclaration innerFunction, bool? strict)
+        {
+            this._innerFunction = innerFunction;
+            var additionalProperties = new Dictionary<string, object?>();
+            foreach (KeyValuePair<string, object?> property in innerFunction.AdditionalProperties)
+            {
+                additionalProperties.Add(property.Key, property.Value);
+            }
+
+            if (strict is not null)
+            {
+                additionalProperties["strict"] = strict;
+            }
+
+            this.AdditionalProperties = additionalProperties;
+        }
+
+        public override string Name => this._innerFunction.Name;
+
+        public override string Description => this._innerFunction.Description;
+
+        public override JsonElement JsonSchema => this._innerFunction.JsonSchema;
+
+        public override JsonElement? ReturnJsonSchema => this._innerFunction.ReturnJsonSchema;
+
+        public override IReadOnlyDictionary<string, object?> AdditionalProperties { get; }
+    }
 
     /// <summary>
     /// Maps an OpenAI Responses <c>tool_choice</c> value onto its <see cref="ChatToolMode"/> equivalent.

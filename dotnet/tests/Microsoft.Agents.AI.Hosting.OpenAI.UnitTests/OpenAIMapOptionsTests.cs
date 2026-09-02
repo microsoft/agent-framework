@@ -147,6 +147,112 @@ public sealed class OpenAIMapOptionsTests
     }
 
     [Fact]
+    public async Task Responses_DefaultEndpoint_RejectsClientFunctionToolsAsync()
+    {
+        // Arrange
+        using var app = await CreateResponsesServerAsync("reject-tools-agent", mapOptions: null);
+        HttpClient client = GetClient(app);
+
+        // Act
+        HttpResponseMessage response = await client.PostAsync(
+            new Uri("/reject-tools-agent/v1/responses", UriKind.Relative),
+            new StringContent(
+                """{"input":"hello","tools":[{"type":"function","name":"client_function"}]}""",
+                Encoding.UTF8,
+                "application/json"));
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        string body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("tools", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Responses_DangerousClientFunctionOptIn_DoesNotAllowToolChoiceAsync()
+    {
+        // Arrange
+#pragma warning disable MAAI001
+        var mapOptions = new OpenAIResponsesMapOptions
+        {
+            DangerouslyAllowClientFunctionTools =
+                new(OpenAIClientFunctionToolNameConflictBehavior.Reject())
+        };
+#pragma warning restore MAAI001
+        using var app = await CreateResponsesServerAsync("reject-tool-choice-agent", mapOptions);
+        HttpClient client = GetClient(app);
+
+        // Act
+        HttpResponseMessage response = await client.PostAsync(
+            new Uri("/reject-tool-choice-agent/v1/responses", UriKind.Relative),
+            new StringContent(
+                """
+                {
+                  "input": "hello",
+                  "tools": [
+                    { "type": "function", "name": "client_function" }
+                  ],
+                  "tool_choice": "required"
+                }
+                """,
+                Encoding.UTF8,
+                "application/json"));
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        string body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("tool_choice", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Responses_DangerousClientFunctionOptIn_DoesNotAllowOtherToolTypesAsync()
+    {
+        // Arrange
+#pragma warning disable MAAI001
+        var mapOptions = new OpenAIResponsesMapOptions
+        {
+            DangerouslyAllowClientFunctionTools =
+                new(OpenAIClientFunctionToolNameConflictBehavior.Reject())
+        };
+#pragma warning restore MAAI001
+        using var app = await CreateResponsesServerAsync("reject-hosted-tool-agent", mapOptions);
+        HttpClient client = GetClient(app);
+
+        // Act
+        HttpResponseMessage response = await client.PostAsync(
+            new Uri("/reject-hosted-tool-agent/v1/responses", UriKind.Relative),
+            new StringContent(
+                """{"input":"hello","tools":[{"type":"web_search"}]}""",
+                Encoding.UTF8,
+                "application/json"));
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        string body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("tools", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Responses_DefaultEndpoint_RejectsUnrecognizedToolChoiceAsync()
+    {
+        // Arrange
+        using var app = await CreateResponsesServerAsync("reject-unknown-tool-choice-agent", mapOptions: null);
+        HttpClient client = GetClient(app);
+
+        // Act
+        HttpResponseMessage response = await client.PostAsync(
+            new Uri("/reject-unknown-tool-choice-agent/v1/responses", UriKind.Relative),
+            new StringContent(
+                """{"input":"hello","tool_choice":"unsupported"}""",
+                Encoding.UTF8,
+                "application/json"));
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        string body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("tool_choice", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Responses_ConfiguredEndpoint_HonorsRequestSettingsAsync()
     {
         // Arrange
