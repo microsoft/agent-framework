@@ -962,11 +962,16 @@ def _split_mixed_message_to_agui(msg: Message, role: str) -> list[dict[str, Any]
     A single Agent Framework message can interleave assistant content (text,
     function_call) with one or more function_result (tool) contents -- for example a
     parallel tool-call batch or a finalized turn. AG-UI needs each function_result as
-    its own ``tool`` message, but the assistant call that produced a result must still
-    precede it; a result emitted ahead of its matching call is an orphan that providers
-    reject or drop. This walks ``msg.contents`` in order and flushes any accumulated
-    assistant segment (text/tool_calls) before each result, preserving the original
-    call -> result ordering.
+    its own ``tool`` message. Two ordering rules keep the transcript provider-valid:
+
+    * A ``function_call`` must precede its matching result, so a pending assistant
+      segment that carries tool calls is flushed (together with any buffered text) right
+      before the result.
+    * A text-only segment is NOT flushed before a result. Emitting a text-only assistant
+      message between an outstanding call and its result breaks the call -> result
+      adjacency providers require: ``_sanitize_tool_history`` then treats the earlier
+      call as abandoned, clears it, and drops the real result. Such text is deferred and
+      emitted after the results instead.
 
     The source message id is kept on the first emitted message; every additional
     message gets an independent generated id. Deriving suffixes from the source id
@@ -988,8 +993,14 @@ def _split_mixed_message_to_agui(msg: Message, role: str) -> list[dict[str, Any]
         source_id_available = False
         return generate_event_id()
 
-    def flush_segment() -> None:
+    def flush_segment(*, before_result: bool = False) -> None:
         nonlocal seg_text, seg_tool_calls
+        # Before a result, only emit the segment if it carries tool calls (which must
+        # precede their results). A text-only assistant message here would separate an
+        # outstanding call from its result and cause the result to be dropped, so keep
+        # buffering that text until after the results.
+        if before_result and not seg_tool_calls:
+            return
         if not seg_text and not seg_tool_calls:
             return
         assistant_msg: dict[str, Any] = {"id": next_id(), "role": role, "content": seg_text}
@@ -1014,9 +1025,9 @@ def _split_mixed_message_to_agui(msg: Message, role: str) -> list[dict[str, Any]
                 }
             )
         elif content.type == "function_result":
-            # Flush any assistant call/text accumulated before this result so the
-            # matching call precedes it, then emit the result as its own tool message.
-            flush_segment()
+            # Flush a pending assistant call (with any buffered text) so the matching
+            # call precedes its result; text-only content is deferred (see flush_segment).
+            flush_segment(before_result=True)
             messages.append(
                 {
                     "id": next_id(),
@@ -1026,7 +1037,7 @@ def _split_mixed_message_to_agui(msg: Message, role: str) -> list[dict[str, Any]
                 }
             )
 
-    # Emit any trailing assistant segment (e.g. a summary text after the results).
+    # Emit any deferred / trailing assistant text (e.g. a summary after the results).
     flush_segment()
     return messages
 

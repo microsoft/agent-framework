@@ -15,6 +15,7 @@ from agent_framework_ag_ui._message_adapters import (
     agui_messages_to_agent_framework,
     agui_messages_to_snapshot_format,
     extract_text_from_contents,
+    normalize_agui_input_messages,
 )
 
 
@@ -1011,6 +1012,71 @@ def test_agent_framework_to_agui_call_result_text_order_preserved():
     # Only the first emitted message reuses the source id, and all ids are distinct.
     assert messages[0]["id"] == "mixed-order-2"
     assert len({m["id"] for m in messages}) == 3
+
+
+def test_agent_framework_to_agui_text_before_result_deferred_after_result():
+    """Text preceding a result is emitted AFTER the result, never as an assistant-only message before it."""
+    msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_text("Here is the weather."),
+            Content.from_function_result(call_id="weather-call", result="Sunny"),
+        ],
+        message_id="mixed-text-first",
+    )
+
+    messages = agent_framework_messages_to_agui([msg])
+
+    assert len(messages) == 2
+    tool_msg, text_msg = messages
+    # The tool result comes first; the text-only assistant message follows it, so it can
+    # never separate a prior outstanding call from this result.
+    assert tool_msg["role"] == "tool"
+    assert tool_msg["toolCallId"] == "weather-call"
+    assert text_msg["role"] == "assistant"
+    assert "tool_calls" not in text_msg
+    assert text_msg["content"] == "Here is the weather."
+
+
+def test_agent_framework_to_agui_text_before_result_round_trips_without_dropping():
+    """A prior call + a [text, result] message must not drop the result through sanitize_tool_history.
+
+    Regression for the MAF review finding: emitting a text-only assistant message between an
+    outstanding call and its result made ``_sanitize_tool_history`` clear the pending call and
+    drop the real result, leaving the provider with an unanswered tool call.
+    """
+    framework_messages = [
+        Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="call_a", name="get_weather", arguments="{}")],
+            message_id="m1",
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text("Let me check the weather."),
+                Content.from_function_result(call_id="call_a", result="Sunny"),
+            ],
+            message_id="m2",
+        ),
+    ]
+
+    agui_messages = agent_framework_messages_to_agui(framework_messages)
+
+    # The call is immediately followed by its result (no assistant message in between).
+    assert [m["role"] for m in agui_messages] == ["assistant", "tool", "assistant"]
+    assert agui_messages[0]["tool_calls"][0]["id"] == "call_a"
+    assert agui_messages[1]["toolCallId"] == "call_a"
+
+    # Round-trip through provider normalization: the real result must survive.
+    provider_messages, _ = normalize_agui_input_messages(agui_messages, sanitize_tool_history=True)
+    surviving_result_ids = {
+        content.call_id
+        for message in provider_messages
+        for content in (message.contents or [])
+        if content.type == "function_result"
+    }
+    assert "call_a" in surviving_result_ids
 
 
 # Additional tests for better coverage
