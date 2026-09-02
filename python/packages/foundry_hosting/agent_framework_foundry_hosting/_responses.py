@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ipaddress
 import json
 import logging
 import os
+import re
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import Generic, Literal, TypeVar, cast
+from typing import Generic, Literal, TypeGuard, TypeVar, cast
+from urllib.parse import urlparse
 
 from agent_framework import (
     AgentResponseUpdate,
@@ -251,11 +254,51 @@ _LATEST_CHECKPOINT_ID_KEY = "_last_checkpoint_id"
 # Consent-URL error code returned by the Foundry MCP gateway when calling `/list`
 CONSENT_ERROR_CODE = -32006
 
+_OAUTH_HOST_PATTERN = re.compile(r"^[A-Za-z0-9._~-]+$")
+
 
 @dataclass
 class ConsentError:
     name: str
     consent_url: str
+
+
+def _is_safe_oauth_consent_link(consent_link: object) -> TypeGuard[str]:
+    """Return whether a consent link is an absolute HTTPS URL safe to expose as an action."""
+    if not isinstance(consent_link, str) or not consent_link:
+        return False
+    if any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in consent_link):
+        return False
+
+    try:
+        parsed = urlparse(consent_link)
+        hostname = parsed.hostname
+        _ = parsed.port
+    except ValueError:
+        return False
+
+    if parsed.scheme.lower() != "https" or not hostname or parsed.username is not None or parsed.password is not None:
+        return False
+
+    if "%" in hostname:
+        return False
+    authority = parsed.netloc
+    if authority.startswith("["):
+        closing_bracket = authority.find("]")
+        if closing_bracket == -1:
+            return False
+        ipv6_literal = authority[1:closing_bracket]
+        suffix = authority[closing_bracket + 1 :]
+        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
+            return False
+        try:
+            ipaddress.IPv6Address(ipv6_literal)
+        except ValueError:
+            return False
+        return True
+    if "[" in authority or "]" in authority or ":" in hostname:
+        return False
+    return _OAUTH_HOST_PATTERN.fullmatch(hostname) is not None
 
 
 def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
@@ -517,6 +560,23 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if consent_errors_to_emit is None or len(consent_errors_to_emit) == 0:
                 logger.error("Failed to prepare agent: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
                 for event in self._emit_failure(response_event_stream, None, ex):
+                    yield event
+                return
+
+            invalid_consent = next(
+                (
+                    consent_error
+                    for consent_error in consent_errors_to_emit
+                    if not _is_safe_oauth_consent_link(consent_error.consent_url)
+                ),
+                None,
+            )
+            if invalid_consent is not None:
+                validation_error = ValueError(
+                    f"OAuth consent request for tool '{invalid_consent.name}' must include a safe HTTPS consent link."
+                )
+                logger.error("%s", validation_error)
+                for event in self._emit_failure(response_event_stream, None, validation_error):
                     yield event
                 return
 
@@ -985,6 +1045,16 @@ class _OutputItemTracker:
         self._mcp_builder: OutputItemMcpCallBuilder | None = None
         self._outstanding_function_calls: dict[str, str | None] = {}
         self._oauth_consent_requests: set[tuple[str, str]] = set()
+        for item in stream.response.get("output", []):
+            if not isinstance(item, Mapping):
+                continue
+            persisted_item = cast(Mapping[str, Any], item)
+            if persisted_item.get("type") != "oauth_consent_request":
+                continue
+            consent_link = persisted_item.get("consent_link")
+            server_label = persisted_item.get("server_label")
+            if isinstance(consent_link, str) and isinstance(server_label, str):
+                self._oauth_consent_requests.add((consent_link, server_label))
 
     @property
     def usage(self) -> ResponseUsage | None:
@@ -1223,8 +1293,8 @@ class _OutputItemTracker:
                 yield event
 
             consent_link = content.consent_link
-            if not isinstance(consent_link, str) or not consent_link:
-                raise ValueError("OAuth consent request content must include a consent link.")
+            if not _is_safe_oauth_consent_link(consent_link):
+                raise ValueError("OAuth consent request content must include a safe HTTPS consent link.")
 
             server_label = content.additional_properties.get("server_label")
             if not isinstance(server_label, str) or not server_label:
