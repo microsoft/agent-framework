@@ -4591,7 +4591,7 @@ class TestOAuthConsentSurfacing:
     async def test_recovered_consent_is_tracked_and_not_emitted_twice(self) -> None:
         from azure.ai.agentserver.responses._id_generator import IdGenerator
         from azure.ai.agentserver.responses.aio import ResponseEventStream
-        from azure.ai.agentserver.responses.models import OAuthConsentRequestOutputItem
+        from azure.ai.agentserver.responses.models import OAuthConsentRequestOutputItem, ResponseObject
 
         stream = ResponseEventStream(response_id="response-1")
         stream.emit_created()
@@ -4607,7 +4607,8 @@ class TestOAuthConsentSurfacing:
         builder.emit_added(oauth_item)
         builder.emit_done(oauth_item)
 
-        recovered_stream = ResponseEventStream(response=stream.response, response_id="response-1")
+        recovered_response = cast(ResponseObject, stream.response)
+        recovered_stream = ResponseEventStream(response=recovered_response, response_id="response-1")
         tracker = _OutputItemTracker(recovered_stream)
         assert tracker.oauth_consent_requested
 
