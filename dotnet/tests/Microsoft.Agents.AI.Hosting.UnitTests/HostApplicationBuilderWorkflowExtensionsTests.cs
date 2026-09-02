@@ -2,7 +2,9 @@
 
 using System;
 using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -184,6 +186,27 @@ public class HostApplicationBuilderWorkflowExtensionsTests
         var agentDescriptor = builder.Services.FirstOrDefault(
             d => (d.ServiceKey as string) == WorkflowName && d.ServiceType == typeof(AIAgent));
         Assert.NotNull(agentDescriptor);
+    }
+
+    /// <summary>
+    /// Verifies that a workflow registered as an AI agent includes its chat-message output in the response.
+    /// </summary>
+    [Fact]
+    public async Task AddAsAIAgent_IncludesWorkflowOutputInResponseAsync()
+    {
+        // Arrange
+        var builder = new HostApplicationBuilder();
+        const string WorkflowName = "outputWorkflow";
+        builder.AddWorkflow(WorkflowName, (sp, key) => ChatMessageOutputWorkflow.Build(key))
+            .AddAsAIAgent();
+        using var host = builder.Build();
+        AIAgent agent = host.Services.GetRequiredKeyedService<AIAgent>(WorkflowName);
+
+        // Act
+        AgentResponse response = await agent.RunAsync(new ChatMessage(ChatRole.User, "hello"));
+
+        // Assert
+        Assert.Equal("workflow output", response.Text);
     }
 
     /// <summary>
