@@ -2,6 +2,7 @@
 
 import base64
 import json
+import warnings
 from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -594,6 +595,12 @@ def test_function_call_content_add_merging_and_errors():
     with raises(ContentError):
         _ = a + b
 
+    # incompatible occurrence ids
+    a = Content.from_function_call(call_id="1", name="f", arguments="abc", id="occurrence-a")
+    b = Content.from_function_call(call_id="1", name="f", arguments="def", id="occurrence-b")
+    with raises(AdditionItemMismatch, match="different ids"):
+        _ = a + b
+
     # name merging: when the first chunk has no name (e.g. a streaming delta where
     # the function name arrives later), the merged content must keep the name from
     # whichever side provides it, regardless of order.
@@ -738,6 +745,67 @@ def test_function_approval_serialization_roundtrip():
 
     # Skip the BaseModel validation test since we're no longer using Pydantic
     # The Content union will need to be handled differently when we fully migrate
+
+
+def test_function_call_occurrence_id_roundtrips_without_regeneration():
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="f",
+        arguments={"x": 1},
+        id="af-call-existing",
+    )
+
+    restored = Content.from_dict(function_call.to_dict())
+
+    assert restored.id == "af-call-existing"
+    assert restored.call_id == "provider-call"
+
+
+def test_local_function_approval_request_warns_for_legacy_occurrence_identity() -> None:
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="f",
+        id="af-call-occurrence",
+    )
+
+    with pytest.warns(FutureWarning, match="id differs from function_call.id.*legacy"):
+        request = Content.from_function_approval_request(id="provider-call", function_call=function_call)
+
+    assert request.id == "provider-call"
+    assert request.function_call is function_call
+
+
+def test_hosted_function_approval_request_allows_provider_request_identity_without_warning() -> None:
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="hosted",
+        id="af-call-occurrence",
+        additional_properties={"server_label": "provider"},
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        request = Content.from_function_approval_request(
+            id="provider-approval-request",
+            function_call=function_call,
+        )
+
+    assert request.id == "provider-approval-request"
+    assert caught == []
+
+
+def test_legacy_function_call_deserialization_does_not_generate_an_occurrence_id():
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        restored = Content.from_dict({
+            "type": "function_call",
+            "call_id": "legacy-call",
+            "name": "f",
+            "arguments": {},
+        })
+
+    assert restored.id is None
+    assert caught == []
 
 
 def test_function_approval_request_function_call_none_guard():
@@ -1197,7 +1265,7 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
     assert len(chat_response.messages) == 1
     assert isinstance(chat_response.messages[0], Message)
     assert chat_response.messages[0].message_id == "1"
-    assert chat_response.messages[0].contents[0].raw_representation is not None
+    assert chat_response.messages[0].contents[0].raw_representation is None
 
     assert len(chat_response.messages[0].contents) == 3
     assert chat_response.messages[0].contents[0].type == "text"
@@ -1796,17 +1864,17 @@ def test_response_update_propagates_fields_and_metadata():
     assert resp.messages[0].message_id == "mid"
 
 
-def test_text_coalescing_preserves_first_properties():
+def test_text_coalescing_preserves_first_serializable_properties():
     t1 = Content.from_text("A", raw_representation={"r": 1}, additional_properties={"p": 1})
     t2 = Content.from_text("B")
     upd1 = ChatResponseUpdate(contents=[t1], message_id="x")
     upd2 = ChatResponseUpdate(contents=[t2], message_id="x")
     resp = ChatResponse.from_updates([upd1, upd2])
-    # After coalescing there should be a single TextContent with merged text and preserved props from first
+    # After coalescing there should be a single TextContent with merged text and serializable props from first.
     items = [c for c in resp.messages[0].contents if c.type == "text"]
     assert len(items) >= 1
     assert items[0].text == "AB"
-    assert items[0].raw_representation == {"r": 1}
+    assert items[0].raw_representation is None
     assert items[0].additional_properties == {"p": 1}
 
 
@@ -2500,18 +2568,20 @@ class _NonCopyableRaw:
         raise TypeError("Cannot deepcopy this object")
 
 
-def test_content_deepcopy_preserves_raw_representation():
-    """Test that deepcopy of Content keeps raw_representation by reference."""
+def test_content_deepcopy_discards_raw_representation(caplog: pytest.LogCaptureFixture) -> None:
+    """Test that deepcopy of Content discards raw_representation and logs at debug level."""
     import copy
 
     raw = _NonCopyableRaw()
     content = Content.from_text("hello", raw_representation=raw)
 
-    cloned = copy.deepcopy(content)
+    with caplog.at_level("DEBUG", logger="agent_framework"):
+        cloned = copy.deepcopy(content)
 
     assert cloned.text == "hello"
-    assert cloned.raw_representation is raw
+    assert cloned.raw_representation is None
     assert cloned.additional_properties is not content.additional_properties
+    assert caplog.messages == ["Discarding field 'raw_representation' while deep-copying Content."]
 
 
 def test_message_deepcopy_preserves_raw_representation():
@@ -2617,21 +2687,20 @@ def test_nested_deepcopy_preserves_raw_representation():
     assert cloned.text == "hello"
 
 
-def test_content_deepcopy_shallow_copy_fields_identity():
-    """Test that Content._SHALLOW_COPY_FIELDS fields are identity-preserved while others are deep-copied."""
+def test_content_deepcopy_does_not_log_for_empty_shallow_copy_fields(caplog: pytest.LogCaptureFixture) -> None:
+    """Test that empty shallow-copy fields do not emit discard logs."""
     import copy
 
-    raw = _NonCopyableRaw()
-    content = Content.from_text("hello", raw_representation=raw)
+    content = Content.from_text("hello")
     content.additional_properties["key"] = "value"
 
-    cloned = copy.deepcopy(content)
+    with caplog.at_level("DEBUG", logger="agent_framework"):
+        cloned = copy.deepcopy(content)
 
-    # _SHALLOW_COPY_FIELDS (raw_representation) should be same object
-    assert cloned.raw_representation is raw
-    # Non-shallow fields should be independent deep copies
+    assert cloned.raw_representation is None
     assert cloned.additional_properties is not content.additional_properties
     assert cloned.additional_properties == {"key": "value"}
+    assert caplog.messages == []
 
 
 def test_chat_response_deepcopy_deep_copies_additional_properties():

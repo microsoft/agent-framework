@@ -7,6 +7,7 @@ import logging
 import shlex
 import sys
 from collections.abc import (
+    AsyncGenerator,
     AsyncIterable,
     Awaitable,
     Callable,
@@ -14,6 +15,7 @@ from collections.abc import (
     MutableMapping,
     Sequence,
 )
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from itertools import chain
 from typing import (
@@ -71,7 +73,12 @@ from agent_framework.exceptions import (
 )
 from agent_framework.observability import ChatTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
-from openai.types.responses import FunctionShellToolParam, ResponseCustomToolCall, ResponseToolSearchCall
+from openai.types.responses import (
+    FunctionShellToolParam,
+    ResponseCustomToolCall,
+    ResponseToolSearchCall,
+    response_create_params,
+)
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
 from openai.types.responses.function_tool_param import FunctionToolParam
 from openai.types.responses.parsed_response import (
@@ -113,23 +120,12 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # pragma: no cover
 
-try:
-    from openai.types.responses.response_create_params import PromptCacheOptions
+_prompt_cache_options_supported = hasattr(response_create_params, "PromptCacheOptions")
 
-    _prompt_cache_options_supported = True
-except ImportError:  # pragma: no cover
-    _prompt_cache_options_supported = False
 
-    class PromptCacheOptions(TypedDict, total=False):
-        """Fallback for openai versions that predate prompt cache options.
-
-        Mirrors the SDK's shape so ``prompt_cache_options`` type-checks the same on
-        every supported openai version; a runtime guard rejects the option when the
-        installed openai is too old to send it.
-        """
-
-        mode: Literal["implicit", "explicit"]
-        ttl: Literal["30m"]
+class _PromptCacheOptions(TypedDict, total=False):
+    mode: Literal["implicit", "explicit"]
+    ttl: Literal["30m"]
 
 
 if TYPE_CHECKING:
@@ -231,7 +227,7 @@ class OpenAIChatOptions(ChatOptions[ResponseFormatT], Generic[ResponseFormatT], 
     prompt_cache_retention: Literal["24h"]
     """Retention policy for prompt cache. Set to '24h' for extended caching."""
 
-    prompt_cache_options: PromptCacheOptions
+    prompt_cache_options: _PromptCacheOptions
     """Request-wide prompt cache policy for GPT-5.6 and later models.
     Set mode to 'explicit' to use only the breakpoints set on content parts via
     ``Content.additional_properties["prompt_cache_breakpoint"]``.
@@ -293,6 +289,51 @@ OpenAIChatOptionsT = TypeVar(
 
 
 # region Helpers
+
+
+@asynccontextmanager
+async def _open_event_stream(raw_response: Any) -> AsyncGenerator[Any]:
+    """Yield the event stream for a raw streaming response.
+
+    Normally ``raw_response`` is the SDK's raw-response wrapper, whose ``.parse()``
+    returns the event stream as an async context manager so the underlying socket is
+    closed deterministically.
+
+    A telemetry instrumentor can replace that wrapper with one of its own that is
+    itself the async iterator and exposes neither ``.parse()`` nor ``.headers`` -- for
+    example the ``AsyncStreamWrapper`` installed by ``azure-ai-projects`` when
+    ``AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING`` is enabled. That wrapper still holds
+    the unparsed raw response (its ``stream_async_iter``), because
+    ``with_raw_response.create()`` routes through the instrumented ``create``.
+
+    Parse that inner raw response and hand it back to the wrapper, so the wrapper
+    stays in the iteration path and keeps recording telemetry while we iterate real
+    events. Iterating the wrapper as-is would fail, since the unparsed raw response
+    is not an async iterator.
+
+    Args:
+        raw_response: The object returned by a ``with_raw_response`` streaming call.
+
+    Yields:
+        The object to iterate for streaming events.
+    """
+    parse = getattr(raw_response, "parse", None)
+    if callable(parse):
+        async with cast("Any", parse()) as stream:
+            yield stream
+        return
+
+    # Telemetry wrapper: parse the raw response it wraps, in place.
+    inner = getattr(raw_response, "stream_async_iter", None)
+    inner_parse = getattr(inner, "parse", None)
+    if callable(inner_parse):
+        async with cast("Any", inner_parse()) as stream:
+            raw_response.stream_async_iter = stream
+            yield raw_response
+        return
+
+    # Already an event stream (or an unrecognized wrapper): iterate it directly.
+    yield raw_response
 
 
 def _annotations_to_output_text(annotations: Sequence[Annotation] | None) -> list[dict[str, Any]]:
@@ -694,7 +735,7 @@ class RawOpenAIChatClient(
                         # proxy ``.headers``. Degrade gracefully so the served-model surfacing is
                         # best-effort instead of crashing the whole call.
                         served_model = self._extract_served_model(getattr(raw_stream_response, "headers", None))
-                        async with raw_stream_response.parse() as stream_response:
+                        async with _open_event_stream(raw_stream_response) as stream_response:
                             async for chunk in stream_response:
                                 update = self._parse_chunk_from_openai(
                                     chunk,
@@ -738,7 +779,7 @@ class RawOpenAIChatClient(
                             )
                             # See note above on ``raw_stream_response.headers``.
                             served_model = self._extract_served_model(getattr(raw_create_response, "headers", None))
-                            async with raw_create_response.parse() as stream_response:
+                            async with _open_event_stream(raw_create_response) as stream_response:
                                 async for chunk in stream_response:
                                     update = self._parse_chunk_from_openai(
                                         chunk,
@@ -814,7 +855,28 @@ class RawOpenAIChatClient(
         """Finalize streamed updates and add post-stream Azure AI Search citation metadata."""
         self._enrich_streamed_azure_ai_search_citations(updates)
         self._enrich_mcp_search_citations([content for update in updates for content in update.contents])
-        return super()._finalize_response_updates(updates, response_format=response_format)
+        response = super()._finalize_response_updates(updates, response_format=response_format)
+        logprobs = [
+            logprob
+            for update in updates
+            for content in update.contents
+            if content.type == "text"
+            for logprob in content.additional_properties.get("logprobs", [])
+        ]
+        if logprobs:
+            assistant_text = next(
+                (
+                    content
+                    for message in response.messages
+                    if message.role == "assistant"
+                    for content in message.contents
+                    if content.type == "text"
+                ),
+                None,
+            )
+            if assistant_text is not None:
+                assistant_text.additional_properties["logprobs"] = logprobs
+        return response
 
     @classmethod
     def _extract_served_model(cls, headers: Any) -> str | None:
@@ -1819,11 +1881,16 @@ class RawOpenAIChatClient(
                 if role == "assistant":
                     # Assistant history is represented as output text items; Azure validation
                     # requires `annotations` to be present for this type.
-                    return {
+                    output_text = {
                         "type": "output_text",
                         "text": content.text,
                         "annotations": _annotations_to_output_text(getattr(content, "annotations", None)),
                     }
+                    if "logprobs" in content.additional_properties:
+                        output_text["logprobs"] = self._serialize_provider_payload(
+                            content.additional_properties["logprobs"]
+                        )
+                    return output_text
                 return _attach_prompt_cache_breakpoint(
                     {
                         "type": "input_text",
@@ -1850,7 +1917,19 @@ class RawOpenAIChatClient(
                     ret["summary"].append({"type": "summary_text", "text": content.text})
                 return ret
             case "data" | "uri":
-                if content.has_top_level_media_type("image"):
+                openai_content_type = content.additional_properties.get("openai_content_type")
+                if openai_content_type == "input_file":
+                    filename = content.additional_properties.get("filename")
+                    file_obj = {
+                        "type": "input_file",
+                        "file_data": content.uri,
+                    }
+                    if filename:
+                        file_obj["filename"] = filename
+                    return _attach_prompt_cache_breakpoint(file_obj, content)
+                if openai_content_type == "input_image" or (
+                    openai_content_type is None and content.has_top_level_media_type("image")
+                ):
                     result: dict[str, Any] = {
                         "type": "input_image",
                         "image_url": content.uri,
@@ -1938,7 +2017,20 @@ class RawOpenAIChatClient(
                         "output": self._to_local_shell_output_payload(content),
                     }
                 # call_id for the result needs to be the same as the call_id for the function call
-                output: str | list[dict[str, Any]] = content.result or ""
+                raw_result: Any = content.result
+                if isinstance(raw_result, str):
+                    output: str | list[Any] = raw_result
+                elif isinstance(raw_result, list) and self.SUPPORTS_RICH_FUNCTION_OUTPUT:
+                    output = cast("list[Any]", raw_result)
+                elif raw_result is None or (
+                    isinstance(raw_result, list) and not self.SUPPORTS_RICH_FUNCTION_OUTPUT and not raw_result
+                ):
+                    output = ""
+                else:
+                    try:
+                        output = json.dumps(cast("Any", raw_result), default=str)
+                    except (TypeError, ValueError):
+                        output = str(cast("Any", raw_result))
                 if (
                     self.SUPPORTS_RICH_FUNCTION_OUTPUT
                     and content.items
@@ -2001,6 +2093,15 @@ class RawOpenAIChatClient(
                 # the citation context for round-tripping.
                 if role == "assistant":
                     return {}
+                openai_content_type = content.additional_properties.get("openai_content_type")
+                if openai_content_type == "input_image" or (
+                    openai_content_type is None and content.media_type and content.has_top_level_media_type("image")
+                ):
+                    return {
+                        "type": "input_image",
+                        "file_id": content.file_id,
+                        "detail": content.additional_properties.get("detail", "auto"),
+                    }
                 return {
                     "type": "input_file",
                     "file_id": content.file_id,
@@ -2567,8 +2668,14 @@ class RawOpenAIChatClient(
                     for message_content in item.content:  # type: ignore[reportMissingTypeArgument]
                         match message_content.type:
                             case "output_text":
+                                logprobs = getattr(cast(Any, message_content), "logprobs", None)
                                 text_content = Content.from_text(
                                     text=message_content.text,
+                                    additional_properties=(
+                                        {"logprobs": self._serialize_provider_payload(logprobs)}
+                                        if logprobs is not None
+                                        else None
+                                    ),
                                     raw_representation=message_content,
                                 )
                                 metadata.update(self._get_metadata_from_response(message_content))
@@ -2856,6 +2963,16 @@ class RawOpenAIChatClient(
         continuation_token: OpenAIContinuationToken | None = None
         finish_reason: FinishReason | None = None
         model = self.model
+
+        def output_text_properties(output: Any) -> dict[str, Any] | None:
+            logprobs = getattr(output, "logprobs", None)
+            if logprobs is None:
+                return None
+            serialized = self._serialize_provider_payload(logprobs)
+            if not isinstance(serialized, list):
+                return None
+            return {"logprobs": serialized}
+
         match event.type:
             # types:
             # ResponseAudioDeltaEvent,
@@ -2915,14 +3032,26 @@ class RawOpenAIChatClient(
                 event_part = event.part
                 match event_part.type:
                     case "output_text":
-                        contents.append(Content.from_text(text=event_part.text, raw_representation=event))
+                        contents.append(
+                            Content.from_text(
+                                text=event_part.text,
+                                additional_properties=output_text_properties(cast(Any, event_part)),
+                                raw_representation=event,
+                            )
+                        )
                         metadata.update(self._get_metadata_from_response(event_part))
                     case "refusal":
                         contents.append(Content.from_text(text=event_part.refusal, raw_representation=event))
                     case _:
                         pass
             case "response.output_text.delta":
-                contents.append(Content.from_text(text=event.delta, raw_representation=event))
+                contents.append(
+                    Content.from_text(
+                        text=event.delta,
+                        additional_properties=output_text_properties(cast(Any, event)),
+                        raw_representation=event,
+                    )
+                )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_text.delta":
                 if seen_reasoning_delta_item_ids is not None:

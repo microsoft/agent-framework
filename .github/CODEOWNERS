@@ -50,20 +50,20 @@
 
 # Python packages
 /python/packages/a2a/                                           @chetantoshniwal @giles17 @eavanvalkenburg @moonbox3
-/python/packages/ag-ui/                                         @chetantoshniwal @moonbox3 @giles17
+/python/packages/ag-ui/                                         @chetantoshniwal @eavanvalkenburg @moonbox3 @giles17
 /python/packages/anthropic/                                     @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
 /python/packages/azure-ai-search/                               @chetantoshniwal @eavanvalkenburg @giles17
 /python/packages/azure-contentunderstanding/                    @chetantoshniwal @giles17 @eavanvalkenburg
 /python/packages/azure-cosmos/                                  @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
 /python/packages/azure-cosmos-memory/                           @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
 /python/packages/bedrock/                                       @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
-/python/packages/chatkit/                                       @chetantoshniwal @moonbox3 @giles17
+/python/packages/chatkit/                                       @chetantoshniwal @eavanvalkenburg @moonbox3 @giles17
 /python/packages/claude/                                        @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
 /python/packages/copilotstudio/                                 @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
 /python/packages/core/                                          @chetantoshniwal @eavanvalkenburg @moonbox3 @TaoChenOSU @giles17
-/python/packages/core/agent_framework/_workflows/               @chetantoshniwal @moonbox3 @TaoChenOSU
+/python/packages/core/agent_framework/_workflows/               @chetantoshniwal @eavanvalkenburg @moonbox3 @TaoChenOSU
 /python/packages/core/agent_framework/_harness/                 @chetantoshniwal @westey-m @eavanvalkenburg @moonbox3
-/python/packages/declarative/                                   @chetantoshniwal @moonbox3 @peibekwe
+/python/packages/declarative/                                   @chetantoshniwal @eavanvalkenburg @moonbox3 @peibekwe
 /python/packages/devui/                                         @chetantoshniwal @eavanvalkenburg @moonbox3
 /python/packages/foundry/                                       @chetantoshniwal @eavanvalkenburg @TaoChenOSU @moonbox3 @giles17
 /python/packages/foundry_hosting/                               @chetantoshniwal @TaoChenOSU @eavanvalkenburg @moonbox3
@@ -82,7 +82,7 @@
 /python/packages/monty/                                         @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
 /python/packages/ollama/                                        @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
 /python/packages/openai/                                        @chetantoshniwal @eavanvalkenburg @moonbox3 @TaoChenOSU @giles17
-/python/packages/orchestrations/                                @chetantoshniwal @moonbox3 @TaoChenOSU
+/python/packages/orchestrations/                                @chetantoshniwal @eavanvalkenburg @moonbox3 @TaoChenOSU
 /python/packages/purview/                                       @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
 /python/packages/redis/                                         @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
 /python/packages/tools/                                         @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3

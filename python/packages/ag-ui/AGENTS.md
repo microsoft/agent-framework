@@ -40,9 +40,16 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - `_approval_lifecycle.py` is the sole owner of approval occurrence registration, trusted aliases, authority
   validation, claims, terminal outcomes, and retry deduplication. Runner code normalizes AG-UI protocol values and
   projects lifecycle outcomes but must not maintain a parallel pending-approval registry.
+- Local tool-approval interrupt ids use the Agent Framework `function_call.id` occurrence identity; `toolCallId`
+  remains the provider/service `call_id`. Hosted approvals preserve the provider-issued approval request id. The
+  lifecycle stores these identities separately so resume responses carry the authoritative approval occurrence id
+  without rewriting tool-result correlation ids.
 - Default stateless conversation history is client-controlled, including historical tool calls and results. Never
   document conversational tool results as authorization or policy evidence; use deterministic server-side checks,
   server-validated approvals, or scoped authoritative snapshots.
+- AG-UI Thread and Run ids are client-owned protocol correlation ids. Service-session mode stores provider conversation
+  or response ids privately in the thread snapshot. Set `service_session_id_from_thread_id=True` only for compatibility
+  when the application intentionally uses a provider continuation id as its AG-UI Thread id.
 - `confirm_changes` snapshot cleanup resolves the synthetic confirmation back to its original `function_call_id`;
   it must never concatenate unrelated tool results or record accepted changes without a matching real result.
 - SSE keepalive is endpoint-owned transport behavior configured through

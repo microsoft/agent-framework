@@ -7,9 +7,10 @@ import json
 import logging
 import re
 import sys
+import warnings
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from datetime import datetime, timezone
-from typing import Any, ClassVar, Generic, Literal, cast
+from typing import Any, ClassVar, Generic, Literal, NoReturn, cast
 
 import httpx
 from agent_framework import (
@@ -20,6 +21,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReason,
     FinishReasonLiteral,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -39,9 +41,22 @@ from agent_framework.exceptions import (
     ChatClientInvalidResponseException,
 )
 from agent_framework.observability import ChatTelemetryLayer
-from pydantic import BaseModel
+from mistralai.client import Mistral
+from mistralai.client.errors import MistralError
+from mistralai.client.models import (
+    AssistantMessage,
+    ChatCompletionResponse,
+    CompletionChunk,
+    DeltaMessage,
+    TextChunk,
+    ThinkChunk,
+    ToolCall,
+    UsageInfo,
+)
+from pydantic import BaseModel, ValidationError
 
 from ._feature_usage import FeatureIndex
+from ._http_client import AsyncClientUsingConfiguredTimeout
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -113,6 +128,9 @@ class MistralChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
     prompt_cache_key: str
     """Cache key shared by requests with the same prompt prefix."""
 
+    service_tier: Literal["auto", "standard_only"]
+    """Capacity tier used to serve the request."""
+
     reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"]
     """Effort level for models that support reasoning."""
 
@@ -150,10 +168,8 @@ class MistralSettings(TypedDict, total=False):
 # endregion
 
 _MISTRAL_API_BASE_URL = "https://api.mistral.ai"
-_CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
-_DEFAULT_TIMEOUT_SECONDS = 60.0
-_SSE_DATA_PREFIX = "data:"
-_SSE_DONE = "[DONE]"
+_DEFAULT_TIMEOUT_MS = 60_000
+_SDK_TRANSPORT_ARGUMENTS = frozenset({"http_headers", "retries", "server_url", "timeout_ms"})
 
 # Keys mapping to a different Mistral chat-completion parameter name
 _OPTION_TRANSLATIONS: dict[str, str] = {
@@ -187,6 +203,20 @@ _FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
     "tool_calls": "tool_calls",
 }
 
+
+def _map_finish_reason(reason: Any) -> FinishReason | None:
+    """Map a Mistral finish reason onto a framework finish reason.
+
+    Finish reasons that are not in ``_FINISH_REASON_MAP`` are passed through unchanged so that
+    values such as ``error`` still reach the caller instead of being reported as no finish
+    reason at all.
+    """
+    if not reason:
+        return None
+    raw = str(reason)
+    return FinishReason(_FINISH_REASON_MAP.get(raw, raw))
+
+
 # La Plateforme requires tool call IDs to be exactly 9 alphanumeric characters.
 _MISTRAL_TOOL_CALL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9]{9}$")
 
@@ -198,26 +228,25 @@ def _sanitize_tool_call_id(call_id: str) -> str:
     return hashlib.sha256(call_id.encode("utf-8")).hexdigest()[:9]
 
 
-def _tool_call_id_of(tool_call: Mapping[str, Any]) -> str:
+def _tool_call_id_of(tool_call: ToolCall) -> str:
     """Return the wire tool call ID, treating null/"null" placeholders as missing."""
-    call_id = tool_call.get("id")
+    call_id = tool_call.id
     if isinstance(call_id, str) and call_id and call_id != "null":
         return call_id
     return ""
 
 
-def _function_call_content(tool_call: Mapping[str, Any]) -> Content:
-    function: Mapping[str, Any] = tool_call.get("function") or {}
-    arguments = function.get("arguments")
+def _function_call_content(tool_call: ToolCall) -> Content:
+    arguments = tool_call.function.arguments
     if isinstance(arguments, str):
         normalized_arguments: str | dict[str, Any] = arguments
     elif isinstance(arguments, dict):
-        normalized_arguments = cast("dict[str, Any]", arguments)
+        normalized_arguments = arguments
     else:
         normalized_arguments = str(cast(object, arguments))
     return Content.from_function_call(
         call_id=_tool_call_id_of(tool_call),
-        name=function.get("name") or "",
+        name=tool_call.function.name,
         arguments=normalized_arguments,
         raw_representation=tool_call,
     )
@@ -232,10 +261,10 @@ class _StreamedToolCalls:
     """
 
     def __init__(self) -> None:
-        self._pending: dict[tuple[int, int | str], dict[str, Any]] = {}
+        self._pending: dict[tuple[int, int | str], ToolCall] = {}
         self._auto_key_count = 0
 
-    def add(self, choice_index: int, fragment: Mapping[str, Any]) -> list[Content]:
+    def add(self, choice_index: int, fragment: ToolCall) -> list[Content]:
         """Fold a fragment into its pending call; returns calls completed by an index reuse."""
         flushed: list[Content] = []
         key = self._key_for(choice_index, fragment)
@@ -246,7 +275,7 @@ class _StreamedToolCalls:
                 flushed.append(_function_call_content(self._pending.pop(key)))
                 pending = None
         if pending is None:
-            self._pending[key] = {**fragment, "function": dict(fragment.get("function") or {})}
+            self._pending[key] = fragment.model_copy(deep=True)
         else:
             self._merge(pending, fragment)
         return flushed
@@ -260,8 +289,8 @@ class _StreamedToolCalls:
         self._pending.clear()
         return contents
 
-    def _key_for(self, choice_index: int, fragment: Mapping[str, Any]) -> tuple[int, int | str]:
-        index = fragment.get("index")
+    def _key_for(self, choice_index: int, fragment: ToolCall) -> tuple[int, int | str]:
+        index = fragment.index
         if isinstance(index, int):
             return (choice_index, index)
         if fragment_id := _tool_call_id_of(fragment):
@@ -276,23 +305,19 @@ class _StreamedToolCalls:
         return (choice_index, f"auto-{self._auto_key_count}")
 
     @staticmethod
-    def _merge(pending: dict[str, Any], fragment: Mapping[str, Any]) -> None:
+    def _merge(pending: ToolCall, fragment: ToolCall) -> None:
         if fragment_id := _tool_call_id_of(fragment):
-            pending["id"] = fragment_id
-        function: Mapping[str, Any] = fragment.get("function") or {}
-        pending_function: dict[str, Any] = pending["function"]
-        if (name := function.get("name")) and not pending_function.get("name"):
-            pending_function["name"] = name
-        new_arguments = function.get("arguments")
-        old_arguments = pending_function.get("arguments")
-        if new_arguments is None:
-            return
+            pending.id = fragment_id
+        if fragment.function.name and not pending.function.name:
+            pending.function.name = fragment.function.name
+        new_arguments = fragment.function.arguments
+        old_arguments = pending.function.arguments
         if isinstance(old_arguments, str) and isinstance(new_arguments, str):
-            pending_function["arguments"] = old_arguments + new_arguments
+            pending.function.arguments = old_arguments + new_arguments
         elif isinstance(old_arguments, dict) and isinstance(new_arguments, dict):
-            cast("dict[str, Any]", old_arguments).update(cast("dict[str, Any]", new_arguments))
+            old_arguments.update(new_arguments)
         else:
-            pending_function["arguments"] = new_arguments
+            pending.function.arguments = new_arguments
 
 
 class RawMistralChatClient(
@@ -301,7 +326,7 @@ class RawMistralChatClient(
 ):
     """A raw Mistral AI chat client.
 
-    Talks to the Mistral REST API directly over HTTP; the ``mistralai`` SDK is not required.
+    Uses the official ``mistralai`` SDK without the framework's batteries-included layers.
 
     Use this when you want full control over the request pipeline. For instance, to opt out of
     telemetry, use custom middleware, or compose your own layers. If you want the full-featured
@@ -310,7 +335,7 @@ class RawMistralChatClient(
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "mistralai"
 
-    INJECTABLE: ClassVar[set[str]] = {"client"}
+    INJECTABLE: ClassVar[set[str]] = {"client", "http_client"}
 
     def __init__(
         self,
@@ -318,7 +343,8 @@ class RawMistralChatClient(
         model: str | None = None,
         api_key: str | SecretString | None = None,
         server_url: str | None = None,
-        client: httpx.AsyncClient | None = None,
+        client: Mistral | None = None,
+        http_client: httpx.AsyncClient | None = None,
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -331,17 +357,35 @@ class RawMistralChatClient(
             api_key: Mistral API key. Defaults to ``MISTRAL_API_KEY`` environment variable.
             server_url: Optional server URL override. Defaults to ``MISTRAL_SERVER_URL``
                 environment variable, or the Mistral default.
-            client: Optional pre-configured ``httpx.AsyncClient``. When provided, api_key is
-                not required and the client is expected to carry its own auth headers and
-                base URL.
+            client: Optional pre-configured ``mistralai.client.Mistral``.
+            http_client: Optional pre-configured ``httpx.AsyncClient``. When provided, api_key
+                is not required and the client is expected to carry its own auth headers.
+                Passing an HTTP client via ``client`` remains supported but is deprecated.
             additional_properties: Additional properties stored on the client instance.
             env_file_path: Path to ``.env`` file for settings.
             env_file_encoding: Encoding for ``.env`` file.
         """
+        if isinstance(client, httpx.AsyncClient):
+            warnings.warn(
+                "Passing an httpx.AsyncClient via 'client' is deprecated; pass it via 'http_client' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if http_client is not None:
+                raise ValueError("Provide either 'client' or 'http_client', not both.")
+            http_client = client
+            client = None
+        if client is not None and not isinstance(client, Mistral):
+            raise TypeError(
+                f"The 'client' parameter accepts a mistralai.client.Mistral instance; got {type(client).__name__}."
+            )
+        if client is not None and http_client is not None:
+            raise ValueError("Provide either 'client' or 'http_client', not both.")
+
         mistral_settings = load_settings(
             MistralSettings,
             env_prefix="MISTRAL_",
-            required_fields=[] if client is not None else ["api_key"],
+            required_fields=[] if client is not None or http_client is not None else ["api_key"],
             api_key=api_key,
             chat_model=model,
             server_url=server_url,
@@ -351,31 +395,32 @@ class RawMistralChatClient(
 
         self.model = mistral_settings.get("chat_model")
         self.server_url = mistral_settings.get("server_url")
-        self._owns_client = client is None
+        self._owns_client = not isinstance(client, Mistral)
 
-        if client is not None:
+        if isinstance(client, Mistral):
             self.client = client
             if self.server_url is None:
-                client_base_url = str(client.base_url).rstrip("/")
-                self.server_url = client_base_url or None
+                self.server_url = client.sdk_configuration.get_server_details()[0]
         else:
-            resolved_api_key: SecretString = mistral_settings["api_key"]  # type: ignore[assignment]
-            self.client = httpx.AsyncClient(
-                base_url=self.server_url or _MISTRAL_API_BASE_URL,
-                headers={
-                    "Authorization": f"Bearer {resolved_api_key.get_secret_value()}",
-                    "User-Agent": get_user_agent(),
-                    "Accept": "application/json",
-                },
-                timeout=_DEFAULT_TIMEOUT_SECONDS,
-            )
+            client_kwargs: dict[str, Any] = {"timeout_ms": _DEFAULT_TIMEOUT_MS}
+            if resolved_api_key := mistral_settings.get("api_key"):
+                client_kwargs["api_key"] = resolved_api_key.get_secret_value()
+            if http_client is not None:
+                client_kwargs["async_client"] = AsyncClientUsingConfiguredTimeout(http_client)
+                if self.server_url is None:
+                    client_base_url = str(http_client.base_url).rstrip("/")
+                    self.server_url = client_base_url or None
+            if self.server_url:
+                client_kwargs["server_url"] = self.server_url
+            self.client = Mistral(**client_kwargs)
 
         super().__init__(additional_properties=additional_properties)
 
     async def close(self) -> None:
-        """Close the internally created HTTP client."""
+        """Close the internally created Mistral SDK client."""
         if self._owns_client:
-            await self.client.aclose()
+            await self.client.__aexit__(None, None, None)  # type: ignore[no-untyped-call]
+            self.client.__exit__(None, None, None)  # type: ignore[no-untyped-call]
 
     @override
     def service_url(self) -> str:
@@ -396,18 +441,22 @@ class RawMistralChatClient(
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 validated = await self._validate_options(options)
                 request = self._prepare_request(messages, validated, **kwargs)
-                request["stream"] = True
                 mark_feature_used(FeatureIndex.MISTRAL)
+                request.setdefault("http_headers", {"User-Agent": get_user_agent()})
                 tool_calls = _StreamedToolCalls()
                 try:
-                    async with self.client.stream("POST", _CHAT_COMPLETIONS_PATH, json=request) as response:
-                        await self._raise_for_status(response)
-                        async for line in response.aiter_lines():
-                            chunk = self._parse_sse_line(line)
-                            if chunk is not None:
-                                yield self._parse_chunk(chunk, tool_calls)
+                    async with await self.client.chat.stream_async(**request) as response:
+                        async for event in response:
+                            yield self._parse_chunk(event.data, tool_calls)
                     if remaining := tool_calls.flush_all():
                         yield ChatResponseUpdate(contents=remaining, role="assistant")
+                except MistralError as ex:
+                    self._raise_sdk_error(ex, streaming=True)
+                except ValidationError as ex:
+                    raise ChatClientInvalidResponseException(
+                        f"Mistral streaming chat response was invalid: {ex}",
+                        inner_exception=ex,
+                    ) from ex
                 except ChatClientException:
                     raise
                 except Exception as ex:
@@ -422,19 +471,17 @@ class RawMistralChatClient(
             validated = await self._validate_options(options)
             request = self._prepare_request(messages, validated, **kwargs)
             mark_feature_used(FeatureIndex.MISTRAL)
+            request.setdefault("http_headers", {"User-Agent": get_user_agent()})
             try:
-                response = await self.client.post(_CHAT_COMPLETIONS_PATH, json=request)
-                await self._raise_for_status(response)
+                response = await self.client.chat.complete_async(**request)
+            except MistralError as ex:
+                self._raise_sdk_error(ex)
             except ChatClientException:
                 raise
             except Exception as ex:
                 raise ChatClientException(f"Mistral chat request failed: {ex}", inner_exception=ex) from ex
             try:
-                raw_payload = response.json()
-                if not isinstance(raw_payload, Mapping):
-                    raise ChatClientInvalidResponseException("Mistral chat response must be a JSON object.")
-                payload = cast("Mapping[str, Any]", raw_payload)
-                return self._parse_response(payload, response_format=validated.get("response_format"))
+                return self._parse_response(response, response_format=validated.get("response_format"))
             except ChatClientException:
                 raise
             except Exception as ex:
@@ -446,36 +493,22 @@ class RawMistralChatClient(
         return _get_response()
 
     @staticmethod
-    async def _raise_for_status(response: httpx.Response) -> None:
-        if response.status_code < 400:
-            return
-        body = (await response.aread()).decode("utf-8", errors="replace")
-        message = f"Mistral chat request failed with status {response.status_code}: {body[:2000]}"
-        if response.status_code in (401, 403):
-            raise ChatClientInvalidAuthException(message)
-        if response.status_code < 500:
-            raise ChatClientInvalidRequestException(message)
-        raise ChatClientException(message)
-
-    @staticmethod
-    def _parse_sse_line(line: str) -> dict[str, Any] | None:
-        """Parse one server-sent-events line into a completion chunk, or None to skip."""
-        line = line.strip()
-        if not line.startswith(_SSE_DATA_PREFIX):
-            return None
-        data = line[len(_SSE_DATA_PREFIX) :].strip()
-        if not data or data == _SSE_DONE:
-            return None
-        try:
-            parsed = json.loads(data)
-        except json.JSONDecodeError as ex:
+    def _raise_sdk_error(ex: MistralError, *, streaming: bool = False) -> NoReturn:
+        status_code = ex.raw_response.status_code
+        if status_code < 400:
             raise ChatClientInvalidResponseException(
-                "Mistral streaming chat response contained malformed SSE data.",
+                f"Mistral chat response was invalid: {ex}",
                 inner_exception=ex,
             ) from ex
-        if not isinstance(parsed, dict):
-            raise ChatClientInvalidResponseException("Mistral streaming chat SSE data must be a JSON object.")
-        return cast("dict[str, Any]", parsed)
+
+        request_kind = "streaming chat" if streaming else "chat"
+        body = ex.body or str(ex)
+        message = f"Mistral {request_kind} request failed with status {status_code}: {body[:2000]}"
+        if status_code in (401, 403):
+            raise ChatClientInvalidAuthException(message)
+        if status_code < 500:
+            raise ChatClientInvalidRequestException(message)
+        raise ChatClientException(message, inner_exception=ex)
 
     # region Request preparation
 
@@ -495,6 +528,12 @@ class RawMistralChatClient(
         Raises:
             ValueError: If no model is set on the options or the client instance.
         """
+        if transport_arguments := _SDK_TRANSPORT_ARGUMENTS.intersection(kwargs):
+            arguments = ", ".join(sorted(transport_arguments))
+            raise ValueError(
+                f"Mistral transport arguments cannot be supplied per call: {arguments}. Configure the client instead."
+            )
+
         model = options.get("model") or self.model
         if not model:
             raise ValueError(
@@ -745,83 +784,77 @@ class RawMistralChatClient(
 
     def _parse_response(
         self,
-        response: Mapping[str, Any],
+        response: ChatCompletionResponse,
         *,
         response_format: Any | None = None,
     ) -> ChatResponse:
-        """Convert a Mistral chat-completion response payload to a framework ChatResponse."""
-        choices = cast("Sequence[Mapping[str, Any]]", response.get("choices") or ())
-        choice: Mapping[str, Any] = choices[0] if choices else {}
-        message: Mapping[str, Any] = choice.get("message") or {}
-        contents = self._parse_message_contents(message)
-        finish_reason: FinishReasonLiteral | None = None
-        if reason := choice.get("finish_reason"):
-            finish_reason = _FINISH_REASON_MAP.get(str(reason))
+        """Convert a Mistral SDK response to a framework ChatResponse."""
+        choice = response.choices[0] if response.choices else None
+        contents = self._parse_message_contents(choice.message) if choice and choice.message else []
+        finish_reason = _map_finish_reason(choice.finish_reason) if choice else None
         return ChatResponse(
-            response_id=response.get("id"),
-            messages=[Message(role="assistant", contents=contents, raw_representation=choice or None)],
-            usage_details=self._parse_usage(response.get("usage")),
-            model=response.get("model") or self.model,
-            created_at=self._format_created_at(response.get("created")),
+            response_id=response.id,
+            messages=[Message(role="assistant", contents=contents, raw_representation=choice)],
+            usage_details=self._parse_usage(response.usage),
+            model=response.model or self.model,
+            created_at=self._format_created_at(response.created),
             finish_reason=finish_reason,
             response_format=response_format,
+            additional_properties=self._parse_response_metadata(response.usage),
             raw_representation=response,
         )
 
-    def _parse_chunk(self, chunk: Mapping[str, Any], tool_calls: _StreamedToolCalls) -> ChatResponseUpdate:
+    def _parse_chunk(self, chunk: CompletionChunk, tool_calls: _StreamedToolCalls) -> ChatResponseUpdate:
         """Convert a Mistral streaming completion chunk to a framework ChatResponseUpdate.
 
         Tool-call fragments are folded into ``tool_calls`` keyed by (choice, index) and
         emitted as complete calls when their choice finishes.
         """
         contents: list[Content] = []
-        finish_reason: FinishReasonLiteral | None = None
-        choices = cast("Sequence[Mapping[str, Any]]", chunk.get("choices") or ())
-        for choice in choices:
-            choice_index = index if isinstance(index := choice.get("index"), int) else 0
-            delta: Mapping[str, Any] = choice.get("delta") or {}
-            contents.extend(self._parse_content_chunks(delta))
-            for fragment in cast("Sequence[Mapping[str, Any]]", delta.get("tool_calls") or ()):
-                contents.extend(tool_calls.add(choice_index, fragment))
-            if reason := choice.get("finish_reason"):
-                contents.extend(tool_calls.flush_choice(choice_index))
-                if finish_reason is None:
-                    finish_reason = _FINISH_REASON_MAP.get(str(reason))
-        if usage := self._parse_usage(chunk.get("usage")):
+        finish_reason: FinishReason | None = None
+        if chunk.choices:
+            choice = chunk.choices[0]
+            contents.extend(self._parse_content_chunks(choice.delta))
+            for fragment in choice.delta.tool_calls if isinstance(choice.delta.tool_calls, list) else ():
+                contents.extend(tool_calls.add(choice.index, fragment))
+            if reason := choice.finish_reason:
+                contents.extend(tool_calls.flush_choice(choice.index))
+                finish_reason = _map_finish_reason(reason)
+        if usage := self._parse_usage(chunk.usage):
             contents.append(Content.from_usage(usage_details=usage, raw_representation=chunk))
         return ChatResponseUpdate(
             contents=contents,
             role="assistant",
-            response_id=chunk.get("id"),
-            model=chunk.get("model"),
-            created_at=self._format_created_at(chunk.get("created")),
+            response_id=chunk.id,
+            model=chunk.model,
+            created_at=self._format_created_at(chunk.created),
             finish_reason=finish_reason,
+            additional_properties=self._parse_response_metadata(chunk.usage),
             raw_representation=chunk,
         )
 
-    def _parse_message_contents(self, message: Mapping[str, Any]) -> list[Content]:
+    def _parse_message_contents(self, message: AssistantMessage) -> list[Content]:
         contents = self._parse_content_chunks(message)
-        tool_calls = cast("Sequence[Mapping[str, Any]]", message.get("tool_calls") or ())
-        contents.extend(_function_call_content(tool_call) for tool_call in tool_calls)
+        if isinstance(message.tool_calls, list):
+            contents.extend(_function_call_content(tool_call) for tool_call in message.tool_calls)
         return contents
 
-    def _parse_content_chunks(self, message: Mapping[str, Any]) -> list[Content]:
+    def _parse_content_chunks(self, message: AssistantMessage | DeltaMessage) -> list[Content]:
         contents: list[Content] = []
-        content = message.get("content")
+        content = message.content
         if isinstance(content, str):
             if content:
                 contents.append(Content.from_text(text=content))
-        elif content:
-            for chunk in cast("Sequence[Mapping[str, Any]]", content):
-                chunk_type = chunk.get("type")
-                if chunk_type == "text":
-                    if text := chunk.get("text"):
-                        contents.append(Content.from_text(text=text, raw_representation=chunk))
-                elif chunk_type == "thinking":
+        elif isinstance(content, list):
+            for chunk in content:
+                if isinstance(chunk, TextChunk):
+                    if chunk.text:
+                        contents.append(Content.from_text(text=chunk.text, raw_representation=chunk))
+                elif isinstance(chunk, ThinkChunk):
                     if reasoning := self._thinking_to_text(chunk):
                         contents.append(Content.from_text_reasoning(text=reasoning, raw_representation=chunk))
                 else:
-                    logger.debug("Skipping unsupported response chunk from Mistral: %s", chunk_type)
+                    logger.debug("Skipping unsupported response chunk from Mistral: %s", type(chunk).__name__)
         return contents
 
     @staticmethod
@@ -831,35 +864,39 @@ class RawMistralChatClient(
         return datetime.fromtimestamp(created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
     @staticmethod
-    def _thinking_to_text(chunk: Mapping[str, Any]) -> str:
-        thinking = chunk.get("thinking")
-        if isinstance(thinking, str):
-            return thinking
-        if isinstance(thinking, Sequence):
-            return "".join(
-                part.get("text") or ""
-                for part in cast("Sequence[Mapping[str, Any]]", thinking)
-                if isinstance(part, Mapping)
-            )
-        return ""
+    def _thinking_to_text(chunk: ThinkChunk) -> str:
+        return "".join(part.text for part in chunk.thinking if isinstance(part, TextChunk))
 
-    def _parse_usage(self, usage: Mapping[str, Any] | None) -> UsageDetails | None:
+    def _parse_usage(self, usage: UsageInfo | None) -> UsageDetails | None:
         if not usage:
             return None
         details: UsageDetails = {}
-        if (value := usage.get("prompt_tokens")) is not None:
-            details["input_token_count"] = value
-        if (value := usage.get("completion_tokens")) is not None:
-            details["output_token_count"] = value
-        if (value := usage.get("total_tokens")) is not None:
-            details["total_token_count"] = value
-        prompt_tokens_details = usage.get("prompt_tokens_details")
+        fields_set = usage.model_fields_set
+        if "prompt_tokens" in fields_set and usage.prompt_tokens is not None:
+            details["input_token_count"] = usage.prompt_tokens
+        if "completion_tokens" in fields_set and usage.completion_tokens is not None:
+            details["output_token_count"] = usage.completion_tokens
+        if "total_tokens" in fields_set and usage.total_tokens is not None:
+            details["total_token_count"] = usage.total_tokens
+        if isinstance(usage.prompt_audio_seconds, int) and not isinstance(usage.prompt_audio_seconds, bool):
+            cast("dict[str, Any]", details)["mistral.prompt_audio_seconds"] = usage.prompt_audio_seconds
+        prompt_tokens_details = getattr(usage, "prompt_tokens_details", None)
         if isinstance(prompt_tokens_details, Mapping):
-            cached_tokens = cast("Mapping[str, Any]", prompt_tokens_details).get("cached_tokens")
+            prompt_details = cast("Mapping[str, Any]", prompt_tokens_details)
+            cached_tokens = prompt_details.get("cached_tokens")
             if isinstance(cached_tokens, int) and not isinstance(cached_tokens, bool):
-                details["prompt/cached_tokens"] = cached_tokens
+                cast("dict[str, Any]", details)["prompt/cached_tokens"] = cached_tokens
                 details["cache_read_input_token_count"] = cached_tokens
+            audio_tokens = prompt_details.get("audio_tokens")
+            if isinstance(audio_tokens, int) and not isinstance(audio_tokens, bool):
+                cast("dict[str, Any]", details)["mistral.prompt_audio_tokens"] = audio_tokens
         return details or None
+
+    @staticmethod
+    def _parse_response_metadata(usage: UsageInfo | None) -> dict[str, Any] | None:
+        if usage and isinstance(usage.service_tier, str):
+            return {"service_tier": usage.service_tier}
+        return None
 
     # endregion
 
@@ -911,7 +948,8 @@ class MistralChatClient(
         model: str | None = None,
         api_key: str | SecretString | None = None,
         server_url: str | None = None,
-        client: httpx.AsyncClient | None = None,
+        client: Mistral | None = None,
+        http_client: httpx.AsyncClient | None = None,
         additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
@@ -926,9 +964,10 @@ class MistralChatClient(
             api_key: Mistral API key. Defaults to ``MISTRAL_API_KEY`` environment variable.
             server_url: Optional server URL override. Defaults to ``MISTRAL_SERVER_URL``
                 environment variable, or the Mistral default.
-            client: Optional pre-configured ``httpx.AsyncClient``. When provided, api_key is
-                not required and the client is expected to carry its own auth headers and
-                base URL.
+            client: Optional pre-configured ``mistralai.client.Mistral``.
+            http_client: Optional pre-configured ``httpx.AsyncClient``. When provided, api_key
+                is not required and the client is expected to carry its own auth headers.
+                Passing an HTTP client via ``client`` remains supported but is deprecated.
             additional_properties: Additional properties stored on the client instance.
             middleware: Optional middleware chain applied to every call.
             function_invocation_configuration: Optional configuration for the function invocation loop.
@@ -940,6 +979,7 @@ class MistralChatClient(
             api_key=api_key,
             server_url=server_url,
             client=client,
+            http_client=http_client,
             additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,

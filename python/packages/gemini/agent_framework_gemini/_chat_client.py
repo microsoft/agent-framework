@@ -19,6 +19,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReason,
     FinishReasonLiteral,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -936,7 +937,15 @@ class RawGeminiChatClient(
 
     @staticmethod
     def _extract_response_schema(response_format: Any) -> dict[str, Any] | None:
-        """Extract a Gemini response schema from supported mapping response_format shapes."""
+        """Extract a Gemini response schema from supported response_format shapes.
+
+        Handles a Pydantic model class and, for mappings, a ``format`` envelope
+        (unwrapped recursively), a ``json_schema`` envelope, a bare ``schema``
+        envelope, and a raw JSON schema mapping. Anything else returns ``None``.
+        """
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            return response_format.model_json_schema()
+
         if not isinstance(response_format, Mapping):
             return None
         mapping = cast("Mapping[str, Any]", response_format)
@@ -1260,18 +1269,20 @@ class RawGeminiChatClient(
             details["reasoning_output_token_count"] = v
         return details or None
 
-    def _map_finish_reason(self, reason: str | None) -> FinishReasonLiteral | None:
+    def _map_finish_reason(self, reason: str | None) -> FinishReasonLiteral | FinishReason | None:
         """Map a Gemini finish reason string to the framework's FinishReasonLiteral.
 
         Args:
             reason: The finish reason name from the Gemini API (e.g. ``"STOP"``), or None.
 
         Returns:
-            The corresponding ``FinishReasonLiteral``, or None if the reason is absent or unmapped.
+            The corresponding ``FinishReasonLiteral`` for known reasons, the raw reason string for
+            values not yet mapped (so callers still see that the response terminated abnormally
+            instead of losing it), or None if the reason is absent or ``FINISH_REASON_UNSPECIFIED``.
         """
-        if not reason:
+        if not reason or reason == "FINISH_REASON_UNSPECIFIED":
             return None
-        return _FINISH_REASON_MAP.get(reason)
+        return _FINISH_REASON_MAP.get(reason, FinishReason(reason))
 
     # endregion
 

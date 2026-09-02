@@ -4,7 +4,7 @@ import json
 import logging
 import os
 from collections.abc import AsyncIterator, Sequence
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -15,11 +15,16 @@ from agent_framework.exceptions import (
     ChatClientInvalidRequestException,
     ChatClientInvalidResponseException,
 )
+from mistralai.client import Mistral
+from mistralai.client.models import AssistantMessage, ThinkChunk
 from pydantic import BaseModel
 
 import agent_framework_mistral._chat_client as chat_client_module
 from agent_framework_mistral import MistralChatClient, MistralChatOptions
 from agent_framework_mistral._chat_client import _sanitize_tool_call_id  # pyright: ignore[reportPrivateUsage]
+from agent_framework_mistral._http_client import (  # pyright: ignore[reportPrivateUsage]
+    AsyncClientUsingConfiguredTimeout,
+)
 
 # region: Helpers
 
@@ -89,8 +94,10 @@ class MockMistral:
     def __init__(self, responses: Sequence[httpx.Response]) -> None:
         self._responses = list(responses)
         self.requests: list[dict[str, Any]] = []
+        self.http_requests: list[httpx.Request] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
+        self.http_requests.append(request)
         self.requests.append(json.loads(request.content))
         return self._responses.pop(0)
 
@@ -105,7 +112,7 @@ def make_client(*responses: httpx.Response) -> tuple[MistralChatClient, MockMist
         base_url="https://api.mistral.ai",
         transport=httpx.MockTransport(server.handler),
     )
-    client = MistralChatClient(model="mistral-small-latest", client=http_client)
+    client = MistralChatClient(model="mistral-small-latest", http_client=http_client)
     return client, server
 
 
@@ -130,7 +137,8 @@ def test_mistral_chat_construction_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_mistral_chat_construction_with_params() -> None:
     client = MistralChatClient(model="mistral-large-latest", api_key="test-key")
     assert client.model == "mistral-large-latest"
-    assert client.client.headers["Authorization"] == "Bearer test-key"
+    assert isinstance(client.client, Mistral)
+    assert client.client.sdk_configuration.timeout_ms == 60_000
 
 
 def test_mistral_chat_construction_with_server_url() -> None:
@@ -140,14 +148,30 @@ def test_mistral_chat_construction_with_server_url() -> None:
         server_url="https://custom.mistral.ai",
     )
     assert client.service_url() == "https://custom.mistral.ai"
-    assert str(client.client.base_url) == "https://custom.mistral.ai"
+    assert client.client.sdk_configuration.get_server_details()[0] == "https://custom.mistral.ai"
 
 
 def test_mistral_chat_construction_with_client_needs_no_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     http_client = httpx.AsyncClient(base_url="https://api.mistral.ai")
-    client = MistralChatClient(model="mistral-large-latest", client=http_client)
-    assert client.client is http_client
+    client = MistralChatClient(model="mistral-large-latest", http_client=http_client)
+    async_client = client.client.sdk_configuration.async_client
+    assert isinstance(async_client, AsyncClientUsingConfiguredTimeout)
+    assert async_client.client is http_client
+
+
+async def test_mistral_chat_deprecated_client_param_accepts_httpx() -> None:
+    http_client = httpx.AsyncClient(base_url="https://api.mistral.ai")
+    with pytest.deprecated_call(match="http_client"):
+        client = MistralChatClient(
+            model="mistral-large-latest",
+            client=cast("Any", http_client),
+        )
+    async_client = client.client.sdk_configuration.async_client
+    assert isinstance(async_client, AsyncClientUsingConfiguredTimeout)
+    assert async_client.client is http_client
+    await client.close()
+    await http_client.aclose()
 
 
 def test_mistral_chat_construction_missing_api_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -165,11 +189,13 @@ def test_mistral_chat_service_url_default() -> None:
 
 async def test_mistral_chat_close_only_closes_owned_client() -> None:
     owned = MistralChatClient(model="mistral-large-latest", api_key="test-key")
+    owned_http_client = owned.client.sdk_configuration.async_client
     await owned.close()
-    assert owned.client.is_closed
+    assert isinstance(owned_http_client, httpx.AsyncClient)
+    assert owned_http_client.is_closed
 
     http_client = httpx.AsyncClient(base_url="https://custom.mistral.ai")
-    injected = MistralChatClient(model="mistral-large-latest", client=http_client)
+    injected = MistralChatClient(model="mistral-large-latest", http_client=http_client)
     assert injected.service_url() == "https://custom.mistral.ai"
 
     await injected.close()
@@ -181,7 +207,7 @@ async def test_mistral_chat_close_only_closes_owned_client() -> None:
 async def test_mistral_chat_missing_model_raises_at_request(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MISTRAL_CHAT_MODEL", raising=False)
     http_client = httpx.AsyncClient(base_url="https://api.mistral.ai")
-    client = MistralChatClient(client=http_client, api_key="test-key")
+    client = MistralChatClient(http_client=http_client, api_key="test-key")
     with pytest.raises(ValueError, match="Mistral model is required"):
         await client.get_response([Message("user", ["hi"])])
 
@@ -220,6 +246,26 @@ async def test_get_response_basic() -> None:
     assert server.last_request["messages"] == [{"role": "user", "content": "hi"}]
 
 
+async def test_get_response_preserves_injected_http_client_timeout() -> None:
+    server = MockMistral([json_response(make_response_payload(content="hello"))])
+    timeout = httpx.Timeout(connect=1, read=2, write=3, pool=4)
+    http_client = httpx.AsyncClient(
+        base_url="https://api.mistral.ai",
+        transport=httpx.MockTransport(server.handler),
+        timeout=timeout,
+    )
+    client = MistralChatClient(model="mistral-small-latest", http_client=http_client)
+
+    await client.get_response([Message("user", ["hi"])])
+
+    assert server.http_requests[0].extensions["timeout"] == {
+        "connect": 1,
+        "read": 2,
+        "write": 3,
+        "pool": 4,
+    }
+
+
 async def test_get_response_includes_cached_input_tokens() -> None:
     client, _ = make_client(
         json_response(
@@ -239,6 +285,32 @@ async def test_get_response_includes_cached_input_tokens() -> None:
 
     assert response.usage_details is not None
     assert response.usage_details["cache_read_input_token_count"] == 80
+
+
+async def test_get_response_includes_extended_usage() -> None:
+    client, _ = make_client(
+        json_response(
+            make_response_payload(
+                content="hello",
+                usage={
+                    "prompt_tokens": 100,
+                    "completion_tokens": 7,
+                    "total_tokens": 107,
+                    "prompt_audio_seconds": 4,
+                    "prompt_tokens_details": {"audio_tokens": 12},
+                    "service_tier": "priority",
+                },
+            )
+        )
+    )
+
+    response = await client.get_response([Message("user", ["hi"])])
+
+    assert response.usage_details is not None
+    usage_details = cast("dict[str, Any]", response.usage_details)
+    assert usage_details["mistral.prompt_audio_seconds"] == 4
+    assert usage_details["mistral.prompt_audio_tokens"] == 12
+    assert response.additional_properties["service_tier"] == "priority"
 
 
 @pytest.mark.parametrize("cached_tokens", ["80", 80.5, True, False])
@@ -290,7 +362,7 @@ async def test_get_response_network_error_wrapped() -> None:
         base_url="https://api.mistral.ai",
         transport=httpx.MockTransport(raise_connect_error),
     )
-    client = MistralChatClient(model="mistral-small-latest", client=http_client)
+    client = MistralChatClient(model="mistral-small-latest", http_client=http_client)
 
     with pytest.raises(ChatClientException, match="Mistral chat request failed"):
         await client.get_response([Message("user", ["hi"])])
@@ -300,7 +372,7 @@ async def test_get_response_network_error_wrapped() -> None:
     ("response", "message"),
     [
         (httpx.Response(200, content=b"{"), "response was invalid"),
-        (json_response([]), "must be a JSON object"),
+        (json_response([]), "response was invalid"),
         (json_response({"choices": ["not-an-object"]}), "response was invalid"),
     ],
 )
@@ -321,9 +393,10 @@ async def test_get_response_option_mapping() -> None:
         "allow_multiple_tool_calls": False,
         "safe_prompt": True,
         "stop": ["END"],
-        "guardrails": [{"name": "test-guardrail"}],
+        "guardrails": [{"block_on_error": True}],
         "prompt_cache_key": "shared-prefix",
         "reasoning_effort": "high",
+        "service_tier": "standard_only",
     }
     await client.get_response([Message("user", ["hi"])], options=options)
 
@@ -335,9 +408,10 @@ async def test_get_response_option_mapping() -> None:
     assert request["safe_prompt"] is True
     assert request["stop"] == ["END"]
     assert "n" not in request
-    assert request["guardrails"] == [{"name": "test-guardrail"}]
+    assert request["guardrails"] == [{"block_on_error": True}]
     assert request["prompt_cache_key"] == "shared-prefix"
     assert request["reasoning_effort"] == "high"
+    assert request["service_tier"] == "standard_only"
     assert "seed" not in request
     assert "allow_multiple_tool_calls" not in request
 
@@ -349,6 +423,19 @@ async def test_get_response_instructions_prepended_as_system_message() -> None:
 
     assert server.last_request["messages"][0] == {"role": "system", "content": "Be brief."}
     assert "instructions" not in server.last_request
+
+
+@pytest.mark.parametrize("argument", ["http_headers", "retries", "server_url", "timeout_ms"])
+async def test_get_response_rejects_per_call_transport_arguments(argument: str) -> None:
+    client, server = make_client()
+
+    with pytest.raises(ValueError, match="cannot be supplied per call"):
+        await client.get_response(
+            [Message("user", ["hi"])],
+            client_kwargs={argument: "override"},
+        )
+
+    assert server.requests == []
 
 
 async def test_get_response_model_override() -> None:
@@ -382,7 +469,12 @@ async def test_message_conversion_roles() -> None:
     assert sent[2]["role"] == "assistant"
     assert sent[2]["content"] == "Let me check."
     assert sent[2]["tool_calls"] == [
-        {"id": "call123AB", "type": "function", "function": {"name": "lookup", "arguments": '{"q": "x"}'}}
+        {
+            "id": "call123AB",
+            "type": "function",
+            "function": {"name": "lookup", "arguments": '{"q": "x"}'},
+            "index": 0,
+        }
     ]
     assert sent[3]["role"] == "tool"
     assert sent[3]["tool_call_id"] == "call123AB"
@@ -665,23 +757,25 @@ async def test_parse_thinking_chunks() -> None:
 def test_response_content_edge_cases() -> None:
     client, _ = make_client()
     contents = client._parse_message_contents(  # pyright: ignore[reportPrivateUsage]
-        {
-            "content": [
-                {"type": "thinking", "thinking": "reasoning"},
-                {"type": "unsupported"},
-            ],
-            "tool_calls": [
-                tool_call_payload("mapping", {"value": 1}, call_id="abc123XYZ"),
-                tool_call_payload("missing", None, call_id="def456UVW"),
-            ],
-        }
+        AssistantMessage.model_validate(
+            {
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": [{"type": "text", "text": "reasoning"}],
+                    },
+                ],
+                "tool_calls": [
+                    tool_call_payload("mapping", {"value": 1}, call_id="abc123XYZ"),
+                ],
+            }
+        )
     )
     calls = [content for content in contents if content.type == "function_call"]
     assert contents[0].text == "reasoning"
     assert calls[0].arguments == {"value": 1}
-    assert calls[1].arguments == "None"
     assert client._format_created_at("invalid") is None  # pyright: ignore[reportPrivateUsage]
-    assert client._thinking_to_text({"thinking": object()}) == ""  # pyright: ignore[reportPrivateUsage]
+    assert client._thinking_to_text(ThinkChunk(thinking=[])) == ""  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_parse_finish_reason_model_length() -> None:
@@ -690,6 +784,36 @@ async def test_parse_finish_reason_model_length() -> None:
     response = await client.get_response([Message("user", ["hi"])])
 
     assert response.finish_reason == "length"
+
+
+async def test_parse_finish_reason_unmapped_is_preserved() -> None:
+    """A Mistral finish reason with no framework equivalent is passed through unchanged."""
+    client, _ = make_client(json_response(make_response_payload(content="x", finish_reason="error")))
+
+    response = await client.get_response([Message("user", ["hi"])])
+
+    assert response.finish_reason == "error"
+
+
+async def test_parse_finish_reason_null() -> None:
+    """A null finish reason still reports no finish reason."""
+    client, _ = make_client(
+        json_response(
+            make_response_payload(
+                choices=[
+                    {
+                        "index": 0,
+                        "finish_reason": None,
+                        "message": {"role": "assistant", "content": "x"},
+                    }
+                ],
+            )
+        )
+    )
+
+    response = await client.get_response([Message("user", ["hi"])])
+
+    assert response.finish_reason is None
 
 
 async def test_function_invocation_loop() -> None:
@@ -716,6 +840,43 @@ async def test_function_invocation_loop() -> None:
     assert response.text == "It is sunny in Paris."
     assert len(server.requests) == 2
     assert any(m["role"] == "tool" for m in server.requests[1]["messages"])
+
+
+async def test_streaming_function_invocation_loop() -> None:
+    client, server = make_client(
+        stream_response(
+            make_chunk_payload(tool_calls=[tool_call_payload("get_weather", '{"loc', call_id="abc123XYZ", index=0)]),
+            make_chunk_payload(
+                tool_calls=[tool_call_payload("", 'ation": "Paris"}', index=0)],
+                finish_reason="tool_calls",
+            ),
+        ),
+        stream_response(make_chunk_payload(content="It is sunny in Paris.", finish_reason="stop")),
+    )
+    executions = 0
+
+    @tool(approval_mode="never_require")
+    def get_weather(location: str) -> str:
+        """Get the weather."""
+        nonlocal executions
+        executions += 1
+        return f"sunny in {location}"
+
+    response = await client.get_response(
+        [Message("user", ["Weather in Paris?"])],
+        options={"tools": [get_weather]},
+        stream=True,
+    ).get_final_response()
+
+    assert response.text == "It is sunny in Paris."
+    assert executions == 1
+    assert len(server.requests) == 2
+    second_messages = server.requests[1]["messages"]
+    assistant_message = next(message for message in second_messages if message["role"] == "assistant")
+    tool_message = next(message for message in second_messages if message["role"] == "tool")
+    assert assistant_message["tool_calls"][0]["id"] == "abc123XYZ"
+    assert tool_message["tool_call_id"] == "abc123XYZ"
+    assert tool_message["content"] == "sunny in Paris"
 
 
 # region: Streaming
@@ -753,6 +914,34 @@ async def test_streaming_response() -> None:
         "cache_read_input_token_count": 2,
     }
     assert server.last_request["stream"] is True
+
+
+async def test_streaming_uses_first_choice_only() -> None:
+    chunk = make_chunk_payload(content="first", finish_reason="stop")
+    chunk["choices"].append(
+        {
+            "index": 1,
+            "finish_reason": "length",
+            "delta": {"role": "assistant", "content": "second"},
+        }
+    )
+    client, _ = make_client(stream_response(chunk))
+
+    response = await client.get_response([Message("user", ["hi"])], stream=True).get_final_response()
+
+    assert response.text == "first"
+    assert response.finish_reason == "stop"
+
+
+async def test_streaming_finish_reason_unmapped_is_preserved() -> None:
+    """A streamed Mistral finish reason with no framework equivalent is passed through unchanged."""
+    client, _ = make_client(stream_response(make_chunk_payload(content="partial", finish_reason="error")))
+
+    stream = client.get_response([Message("user", ["hi"])], stream=True)
+    updates = [update async for update in stream]
+
+    assert [u.finish_reason for u in updates] == ["error"]
+    assert (await stream.get_final_response()).finish_reason == "error"
 
 
 async def test_streaming_tool_calls() -> None:
@@ -890,6 +1079,21 @@ async def test_streaming_mid_stream_error_wrapped() -> None:
             pass
 
 
+async def test_streaming_invalid_event_wrapped() -> None:
+    client, _ = make_client(
+        httpx.Response(
+            200,
+            content=b"data: {\n\n",
+            headers={"content-type": "text/event-stream"},
+        )
+    )
+
+    stream = client.get_response([Message("user", ["hi"])], stream=True)
+    with pytest.raises(ChatClientInvalidResponseException, match="response was invalid"):
+        async for _ in stream:
+            pass
+
+
 async def test_streaming_http_error_wrapped() -> None:
     client, _ = make_client(httpx.Response(429, json={"message": "rate limited"}))
 
@@ -897,20 +1101,6 @@ async def test_streaming_http_error_wrapped() -> None:
     with pytest.raises(ChatClientException, match="status 429"):
         async for _ in stream:
             pass
-
-
-def test_parse_sse_line_variants() -> None:
-    payload = make_chunk_payload(content="hello")
-    assert MistralChatClient._parse_sse_line(f"data:{json.dumps(payload)}") == payload  # pyright: ignore[reportPrivateUsage]
-    assert MistralChatClient._parse_sse_line("") is None  # pyright: ignore[reportPrivateUsage]
-    assert MistralChatClient._parse_sse_line("event: message") is None  # pyright: ignore[reportPrivateUsage]
-    assert MistralChatClient._parse_sse_line("data:") is None  # pyright: ignore[reportPrivateUsage]
-    assert MistralChatClient._parse_sse_line("data: [DONE]") is None  # pyright: ignore[reportPrivateUsage]
-
-    with pytest.raises(ChatClientInvalidResponseException, match="malformed SSE"):
-        MistralChatClient._parse_sse_line("data: {")  # pyright: ignore[reportPrivateUsage]
-    with pytest.raises(ChatClientInvalidResponseException, match="must be a JSON object"):
-        MistralChatClient._parse_sse_line("data: []")  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_streaming_tool_call_flushed_without_finish_chunk() -> None:

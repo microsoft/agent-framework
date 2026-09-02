@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-08-27
+
+### Added
+- **agent-framework-core**: Add configurable timeouts for waiting on the first background-agent task completion ([#7908](https://github.com/microsoft/agent-framework/pull/7908))
+- **agent-framework-core**: Allow programmatic OpenTelemetry service metadata, resource attributes, and OTLP exporter configuration ([#7703](https://github.com/microsoft/agent-framework/pull/7703))
+
+### Changed
+- **agent-framework-foundry-hosting**: Update Agent Server dependencies and expose parent `FoundryToolbox` constructor options ([#7921](https://github.com/microsoft/agent-framework/pull/7921))
+- **samples**: Apply ChatKit attachment lifecycle checks consistently in the end-to-end sample ([#7846](https://github.com/microsoft/agent-framework/pull/7846))
+
+### Fixed
+- **agent-framework-ag-ui**, **agent-framework-foundry-hosting**: Preserve backend-owned service-session snapshots and validate incremental provider continuation input ([#7770](https://github.com/microsoft/agent-framework/pull/7770))
+- **agent-framework-anthropic**, **agent-framework-mistral**: Preserve unmapped provider finish reasons ([#7850](https://github.com/microsoft/agent-framework/pull/7850))
+- **agent-framework-azure-ai-search**: Preserve the kinds of heterogeneous knowledge sources ([#7875](https://github.com/microsoft/agent-framework/pull/7875))
+- **agent-framework-core**: Prevent workflow checkpoints from being mutated outside storage implementations ([#7847](https://github.com/microsoft/agent-framework/pull/7847))
+- **agent-framework-core**: Discard unsafe `Content` fields during deep copy ([#7903](https://github.com/microsoft/agent-framework/pull/7903))
+- **agent-framework-core**: Avoid mutating caller input in `SerializationMixin.from_dict()` ([#7901](https://github.com/microsoft/agent-framework/pull/7901))
+- **agent-framework-core**: Keep the private agent-loop iteration marker out of provider SDK requests ([#7860](https://github.com/microsoft/agent-framework/pull/7860))
+- **agent-framework-gemini**: Preserve unmapped finish reasons and attach usage details to the correct response ([#7837](https://github.com/microsoft/agent-framework/pull/7837))
+- **agent-framework-openai**: Preserve streaming when GenAI instrumentation replaces the raw SDK response ([#7705](https://github.com/microsoft/agent-framework/pull/7705))
+
 ## [1.15.0] - 2026-08-21
 
 ### Added
@@ -1555,7 +1576,8 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.15.0...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.16.0...HEAD
+[1.16.0]: https://github.com/microsoft/agent-framework/compare/python-1.15.0...python-1.16.0
 [1.15.0]: https://github.com/microsoft/agent-framework/compare/python-1.14.0...python-1.15.0
 [1.14.0]: https://github.com/microsoft/agent-framework/compare/python-1.13.0...python-1.14.0
 [1.13.0]: https://github.com/microsoft/agent-framework/compare/python-1.12.1...python-1.13.0
