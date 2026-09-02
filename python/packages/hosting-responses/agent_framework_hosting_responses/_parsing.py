@@ -1129,8 +1129,11 @@ async def responses_from_streaming_run(
     sequence_number = 0
     model: str | None = None
     updates: list[AgentResponseUpdate] = []
-    projected_updates: list[AgentResponseUpdate] = []
-    projection_dirty = True
+    pending_projection_updates: list[AgentResponseUpdate] = []
+    committed_output_count = 0
+    projection_message_id: str | None = None
+    projection_message_role: str | None = None
+    seen_raw_projection_keys: set[tuple[str, str]] = set()
     output_index = -1
     streamed_message_ids: list[str] = []
     message_id: str | None = None
@@ -1214,12 +1217,12 @@ async def responses_from_streaming_run(
         content_index = -1
         return events
 
-    def projected_message_output_index() -> int:
-        projected_response = AgentResponse.from_updates(projected_updates)
+    def projected_message_output_index(current_update: AgentResponseUpdate) -> int:
+        projected_response = AgentResponse.from_updates([*pending_projection_updates, current_update])
         projected_items = _result_to_output_items(projected_response, status="in_progress")
         for index in range(len(projected_items) - 1, -1, -1):
             if _raw_type(projected_items[index]) == "message":
-                return index
+                return committed_output_count + index
         raise RuntimeError("Text content did not produce a Responses message output item")
 
     def open_message(requested_message_id: str | None, projected_output_index: int) -> str:
@@ -1279,27 +1282,58 @@ async def responses_from_streaming_run(
             updates.append(update)
             if model is None:
                 model = _model_from_update(update)
+            update_role = update.role or projection_message_role
+            projection_message_changed = (
+                projection_message_role is not None
+                and update_role is not None
+                and update_role != projection_message_role
+            ) or (
+                projection_message_id is not None
+                and update.message_id is not None
+                and update.message_id != projection_message_id
+            )
+            if projection_message_changed:
+                if message_id is not None:
+                    for stream_event in close_message("completed"):
+                        yield stream_event
+                    committed_output_count = output_index + 1
+                seen_raw_projection_keys.clear()
+            if update_role is not None:
+                projection_message_role = update_role
+            if update.message_id is not None:
+                projection_message_id = update.message_id
             for content in update.contents:
                 projected_update = copy(update)
                 projected_update.contents = [content]
-                projected_updates.append(projected_update)
                 if content.type != "text" or not content.text:
-                    projection_dirty = True
+                    raw_item = _raw_response_output_item(content.raw_representation)
+                    if raw_item is not None:
+                        raw_key = _response_output_item_key(raw_item)
+                        if raw_key in seen_raw_projection_keys:
+                            continue
+                        seen_raw_projection_keys.add(raw_key)
+                    if content.type == "usage":
+                        continue
+                    if content.type == "error" and message_id is not None:
+                        continue
+                    if message_id is not None:
+                        for stream_event in close_message("completed"):
+                            yield stream_event
+                        committed_output_count = output_index + 1
+                    pending_projection_updates.append(projected_update)
                     continue
                 requested_message_id = update.message_id
                 message_changed = (
                     message_id is not None and requested_message_id is not None and requested_message_id != message_id
                 )
-                if message_id is None or projection_dirty or message_changed:
-                    projected_output_index = projected_message_output_index()
-                else:
-                    projected_output_index = output_index
-                if message_id is not None and (message_changed or projected_output_index != output_index):
+                if message_changed:
                     for stream_event in close_message("completed"):
                         yield stream_event
+                    committed_output_count = output_index + 1
                 if message_id is None:
+                    projected_output_index = projected_message_output_index(projected_update)
                     yield open_message(requested_message_id, projected_output_index)
-                projection_dirty = False
+                    pending_projection_updates.clear()
                 requested_content_type: Literal["output_text", "refusal"] = (
                     "refusal" if _is_refusal_text_content(content) else "output_text"
                 )

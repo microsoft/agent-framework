@@ -8,12 +8,13 @@ import json
 import warnings
 from collections.abc import AsyncIterator, Sequence
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream, UsageDetails
 from openai.types.responses.response_usage import InputTokensDetails, ResponseUsage
 
+import agent_framework_hosting_responses._parsing as parsing_module
 from agent_framework_hosting_responses import (
     create_conversation_id,
     create_response_id,
@@ -979,6 +980,74 @@ class TestResponsesRunHelpers:
         second_content = cast("list[dict[str, object]]", output[2]["content"])
         assert first_content[0]["type"] == "output_text"
         assert second_content[0]["type"] == "refusal"
+
+    async def test_streaming_paired_mcp_output_reserves_one_index_before_refusal(self) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_mcp_server_tool_call(
+                        "mcp_1",
+                        "lookup",
+                        server_name="server",
+                        arguments={"city": "Seattle"},
+                    ),
+                    Content.from_mcp_server_tool_result("mcp_1", output="sunny"),
+                    Content.from_text(
+                        "I cannot continue.",
+                        additional_properties={"model_output_kind": "refusal"},
+                    ),
+                ],
+                role="assistant",
+                message_id="msg_after_mcp",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        added = next(
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.added"
+        )
+        completed = cast("dict[str, object]", _sse_payload(events[-1])["response"])
+        output = cast("list[dict[str, object]]", completed["output"])
+
+        assert [item["type"] for item in output] == ["mcp_call", "message"]
+        assert added["output_index"] == 1
+        assert cast("dict[str, object]", added["item"])["id"] == output[1]["id"]
+
+    async def test_streaming_output_index_projection_work_is_linear(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        projected_content_counts: list[int] = []
+        original = parsing_module._result_to_output_items  # pyright: ignore[reportPrivateUsage]
+
+        def tracking_result_to_output_items(result: object, *, status: str) -> Any:
+            if status == "in_progress":
+                messages = getattr(result, "messages", [])
+                projected_content_counts.append(sum(len(message.contents) for message in messages))
+            return original(result, status=status)
+
+        monkeypatch.setattr(parsing_module, "_result_to_output_items", tracking_result_to_output_items)
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            for index in range(100):
+                message_id = f"msg_{index}"
+                yield AgentResponseUpdate(
+                    contents=[Content.from_function_call(f"call_{index}", "lookup", arguments={})],
+                    role="assistant",
+                    message_id=message_id,
+                )
+                yield AgentResponseUpdate(
+                    contents=[Content.from_text("done")],
+                    role="assistant",
+                    message_id=message_id,
+                )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        _ = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+
+        assert projected_content_counts == [2] * 100
 
     async def test_responses_from_streaming_run_emits_failed_when_iteration_raises(self) -> None:
         async def updates() -> AsyncIterator[AgentResponseUpdate]:
