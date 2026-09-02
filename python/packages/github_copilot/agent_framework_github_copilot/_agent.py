@@ -77,6 +77,7 @@ try:
         Attachment,
         BlobAttachment,
         MCPServerConfig,
+        PermissionInvocation,
         PermissionRequestResult,
         PreToolUseHandler,
         PreToolUseHookOutput,
@@ -111,11 +112,11 @@ DEFAULT_TIMEOUT_SECONDS: float = 60.0
 """Default timeout in seconds for Copilot requests."""
 
 PermissionHandlerType = Callable[
-    [PermissionRequest, dict[str, str]], "PermissionRequestResult | Awaitable[PermissionRequestResult]"
+    [PermissionRequest, PermissionInvocation], "PermissionRequestResult | Awaitable[PermissionRequestResult]"
 ]
 """Type for permission request handlers. Supports both sync and async callbacks."""
 
-AsyncPermissionHandlerType = Callable[[PermissionRequest, dict[str, str]], "Awaitable[PermissionRequestResult]"]
+AsyncPermissionHandlerType = Callable[[PermissionRequest, PermissionInvocation], "Awaitable[PermissionRequestResult]"]
 """Type for permission request handlers that are always asynchronous."""
 
 
@@ -171,7 +172,7 @@ logger = logging.getLogger("agent_framework.github_copilot")
 
 def _deny_all_permissions(
     _request: PermissionRequest,
-    _invocation: dict[str, str],
+    _invocation: PermissionInvocation,
 ) -> PermissionRequestResult:
     """Default permission handler that denies all requests."""
     return PermissionDecisionUserNotAvailable()
@@ -335,7 +336,7 @@ def _with_normalized_permission_decisions(handler: PermissionHandlerType) -> Asy
         An async handler delegating to ``handler`` and normalizing its result.
     """
 
-    async def normalized_handler(request: PermissionRequest, invocation: dict[str, str]) -> PermissionRequestResult:
+    async def normalized_handler(request: PermissionRequest, invocation: PermissionInvocation) -> PermissionRequestResult:
         result = handler(request, invocation)
         if inspect.isawaitable(result):
             result = await result

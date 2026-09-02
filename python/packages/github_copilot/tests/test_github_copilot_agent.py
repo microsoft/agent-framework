@@ -28,7 +28,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework.exceptions import AgentException
-from copilot.session import PermissionHandler, PreToolUseHookInput
+from copilot.session import PermissionHandler, PermissionInvocation, PreToolUseHookInput
 from copilot.session_events import (
     AssistantUsageData,
     Data,
@@ -1329,7 +1329,7 @@ class TestGitHubCopilotAgentSessionManagement:
         from copilot.session import PermissionDecisionApproveOnce, PermissionRequestResult
         from copilot.session_events import PermissionRequest
 
-        def my_handler(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+        def my_handler(request: PermissionRequest, context: PermissionInvocation) -> PermissionRequestResult:
             return PermissionDecisionApproveOnce()
 
         def my_tool(arg: str) -> str:
@@ -2603,7 +2603,7 @@ class TestGitHubCopilotAgentPermissions:
         from copilot.session import PermissionDecisionApproveOnce, PermissionRequestResult
         from copilot.session_events import PermissionRequest
 
-        def approve_shell(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+        def approve_shell(request: PermissionRequest, context: PermissionInvocation) -> PermissionRequestResult:
             if request.kind == "shell":
                 return PermissionDecisionApproveOnce()
             return PermissionDecisionDeniedInteractivelyByUser()
@@ -2621,7 +2621,7 @@ class TestGitHubCopilotAgentPermissions:
         from copilot.session import PermissionDecisionApproveOnce, PermissionRequestResult
         from copilot.session_events import PermissionRequest
 
-        def approve_shell_read(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+        def approve_shell_read(request: PermissionRequest, context: PermissionInvocation) -> PermissionRequestResult:
             if request.kind in ("shell", "read"):
                 return PermissionDecisionApproveOnce()
             return PermissionDecisionDeniedInteractivelyByUser()
