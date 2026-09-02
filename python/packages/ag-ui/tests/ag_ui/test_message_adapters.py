@@ -963,6 +963,56 @@ def test_agent_framework_to_agui_function_result_with_text_preserves_both():
     assert text_msg["id"] != tool_msg["id"]
 
 
+def test_agent_framework_to_agui_function_call_precedes_its_result():
+    """A [function_call, function_result] message keeps the call before the result (no orphan)."""
+    msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="call_a", name="get_weather", arguments={"city": "Seattle"}),
+            Content.from_function_result(call_id="call_a", result="Sunny"),
+        ],
+        message_id="mixed-order-1",
+    )
+
+    messages = agent_framework_messages_to_agui([msg])
+
+    assert len(messages) == 2
+    assistant_msg, tool_msg = messages
+    # The assistant call must be emitted before its result; a result ahead of its
+    # matching call would be an orphan that providers reject.
+    assert assistant_msg["role"] == "assistant"
+    assert [tc["id"] for tc in assistant_msg["tool_calls"]] == ["call_a"]
+    assert tool_msg["role"] == "tool"
+    assert tool_msg["toolCallId"] == "call_a"
+    assert tool_msg["content"] == "Sunny"
+    # First emitted message keeps the source id; the split-off message gets its own.
+    assert assistant_msg["id"] == "mixed-order-1"
+    assert tool_msg["id"] != assistant_msg["id"]
+
+
+def test_agent_framework_to_agui_call_result_text_order_preserved():
+    """[function_call, function_result, text] round-trips in order: call, result, then summary text."""
+    msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="call_a", name="get_weather", arguments="{}"),
+            Content.from_function_result(call_id="call_a", result="Sunny"),
+            Content.from_text("It is sunny."),
+        ],
+        message_id="mixed-order-2",
+    )
+
+    messages = agent_framework_messages_to_agui([msg])
+
+    assert [m["role"] for m in messages] == ["assistant", "tool", "assistant"]
+    assert messages[0]["tool_calls"][0]["id"] == "call_a"
+    assert messages[1]["toolCallId"] == "call_a"
+    assert messages[2]["content"] == "It is sunny."
+    # Only the first emitted message reuses the source id, and all ids are distinct.
+    assert messages[0]["id"] == "mixed-order-2"
+    assert len({m["id"] for m in messages}) == 3
+
+
 # Additional tests for better coverage
 
 

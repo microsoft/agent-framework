@@ -956,6 +956,81 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
     return result
 
 
+def _split_mixed_message_to_agui(msg: Message, role: str) -> list[dict[str, Any]]:
+    """Convert a Message that carries function_result content into ordered AG-UI messages.
+
+    A single Agent Framework message can interleave assistant content (text,
+    function_call) with one or more function_result (tool) contents -- for example a
+    parallel tool-call batch or a finalized turn. AG-UI needs each function_result as
+    its own ``tool`` message, but the assistant call that produced a result must still
+    precede it; a result emitted ahead of its matching call is an orphan that providers
+    reject or drop. This walks ``msg.contents`` in order and flushes any accumulated
+    assistant segment (text/tool_calls) before each result, preserving the original
+    call -> result ordering.
+
+    The source message id is kept on the first emitted message; every additional
+    message gets an independent generated id. Deriving suffixes from the source id
+    (e.g. ``f"{base_id}-1"``) risks colliding with a legitimate id elsewhere in the
+    history, which would let id-keyed clients re-collapse the split messages.
+    """
+    from ._utils import generate_event_id
+
+    messages: list[dict[str, Any]] = []
+    seg_text = ""
+    seg_tool_calls: list[dict[str, Any]] = []
+    source_id_available = bool(msg.message_id)
+
+    def next_id() -> str:
+        nonlocal source_id_available
+        if source_id_available and msg.message_id:
+            source_id_available = False
+            return msg.message_id
+        source_id_available = False
+        return generate_event_id()
+
+    def flush_segment() -> None:
+        nonlocal seg_text, seg_tool_calls
+        if not seg_text and not seg_tool_calls:
+            return
+        assistant_msg: dict[str, Any] = {"id": next_id(), "role": role, "content": seg_text}
+        if seg_tool_calls:
+            assistant_msg["tool_calls"] = seg_tool_calls
+        messages.append(assistant_msg)
+        seg_text = ""
+        seg_tool_calls = []
+
+    for content in msg.contents:
+        if content.type == "text":
+            seg_text += content.text or ""
+        elif content.type == "function_call":
+            seg_tool_calls.append(
+                {
+                    "id": content.call_id,
+                    "type": "function",
+                    "function": {
+                        "name": content.name,
+                        "arguments": content.arguments,
+                    },
+                }
+            )
+        elif content.type == "function_result":
+            # Flush any assistant call/text accumulated before this result so the
+            # matching call precedes it, then emit the result as its own tool message.
+            flush_segment()
+            messages.append(
+                {
+                    "id": next_id(),
+                    "role": "tool",
+                    "content": content.result if content.result is not None else "",
+                    "toolCallId": content.call_id,
+                }
+            )
+
+    # Emit any trailing assistant segment (e.g. a summary text after the results).
+    flush_segment()
+    return messages
+
+
 def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert Agent Framework messages to AG-UI format.
 
@@ -993,13 +1068,21 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
         role_value: str = msg.role if hasattr(msg.role, "value") else msg.role
         role = FRAMEWORK_TO_AGUI_ROLE.get(role_value, "user")
 
+        # A message carrying function_result content may interleave assistant
+        # (text/function_call) and tool (function_result) segments -- e.g. parallel
+        # tool calls or a finalized turn. Split it into ordered AG-UI messages so no
+        # result is dropped and each result stays after its matching call. Messages
+        # with no result use the simple single-message form below.
+        if any(content.type == "function_result" for content in msg.contents):
+            result.extend(_split_mixed_message_to_agui(msg, role))
+            continue
+
         content_text = ""
         tool_calls: list[dict[str, Any]] = []
-        function_results: list[Any] = []
 
         for content in msg.contents:
             if content.type == "text":
-                content_text += content.text  # type: ignore[operator]
+                content_text += content.text or ""
             elif content.type == "function_call":
                 tool_calls.append(
                     {
@@ -1011,39 +1094,6 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
                         },
                     }
                 )
-            elif content.type == "function_result":
-                function_results.append(content)
-
-        # A single Agent Framework message can carry several function_result
-        # contents (parallel tool calls). Emit one AG-UI tool message per result so
-        # none are dropped and each keeps its own toolCallId.
-        if function_results:
-            # Preserve the source id for the first result; give every additional
-            # message an independent generated id. Deriving suffixes from the source
-            # id (e.g. f"{base_id}-1") risks colliding with a legitimate id elsewhere
-            # in the history, which would let id-keyed clients re-collapse results.
-            for idx, fr in enumerate(function_results):
-                result.append(
-                    {
-                        "id": msg.message_id if (idx == 0 and msg.message_id) else generate_event_id(),
-                        "role": "tool",
-                        "content": fr.result if fr.result is not None else "",
-                        "toolCallId": fr.call_id,
-                    }
-                )
-            # A mixed message may also carry text / function_call contents alongside
-            # the tool results (e.g. a finalized assistant turn). Emit those as a
-            # separate, distinctly-identified message so they are not lost.
-            if content_text or tool_calls:
-                extra_msg: dict[str, Any] = {
-                    "id": generate_event_id(),
-                    "role": role,
-                    "content": content_text,
-                }
-                if tool_calls:
-                    extra_msg["tool_calls"] = tool_calls
-                result.append(extra_msg)
-            continue
 
         agui_msg: dict[str, Any] = {
             "id": msg.message_id if msg.message_id else generate_event_id(),  # Always include id
