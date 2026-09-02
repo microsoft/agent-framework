@@ -972,7 +972,7 @@ def test_emit_approval_request_populates_interrupt_metadata():
 
     assert flow.waiting_for_approval is True
     assert len(flow.interrupts) == 1
-    assert flow.interrupts[0]["id"] == "approval_1"
+    assert flow.interrupts[0]["id"] == "call_123"
     assert flow.interrupts[0]["reason"] == "tool_call"
     assert flow.interrupts[0]["toolCallId"] == "call_123"
     assert flow.interrupts[0]["message"] == "Approve running write_doc?"
@@ -1008,6 +1008,28 @@ def test_emit_local_approval_request_prefers_function_call_occurrence_id() -> No
     assert custom_event.value["id"] == "af-call-occurrence"
     assert flow.interrupts[0]["id"] == "af-call-occurrence"
     assert flow.interrupts[0]["toolCallId"] == "call_123"
+
+
+def test_emit_approval_request_normalizes_empty_server_label_for_identity() -> None:
+    """Client events and lifecycle registration treat an empty server label as local."""
+    flow = FlowState(message_id="msg-1")
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="write_doc",
+        arguments={"content": "x"},
+        id="af-call-occurrence",
+        additional_properties={"server_label": ""},
+    )
+    approval_content = Content.from_function_approval_request(
+        id="provider-approval-request",
+        function_call=function_call,
+    )
+
+    events = _emit_approval_request(approval_content, flow)
+
+    custom_event = next(event for event in events if getattr(event, "name", None) == "function_approval_request")
+    assert custom_event.value["id"] == "af-call-occurrence"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert flow.interrupts[0]["id"] == "af-call-occurrence"
 
 
 def test_emit_hosted_approval_request_preserves_provider_request_id() -> None:
@@ -1099,7 +1121,7 @@ def test_emit_approval_request_accumulates_multiple_interrupts():
 
     assert len(flow.interrupts) == 3
     interrupt_ids = {intr["id"] for intr in flow.interrupts}
-    assert interrupt_ids == {"approval_1", "approval_2", "approval_3"}
+    assert interrupt_ids == {"call_1", "call_2", "call_3"}
 
 
 async def test_predictive_confirmation_run_finished_interrupt_links_tool_call():

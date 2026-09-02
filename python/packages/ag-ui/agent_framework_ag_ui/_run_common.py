@@ -37,7 +37,7 @@ from agent_framework import Content, ResponseStream
 
 from ._predictive_state import PredictiveStateHandler
 from ._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
-from ._utils import generate_event_id, make_json_safe, normalize_agui_role
+from ._utils import _approval_interrupt_id, generate_event_id, make_json_safe, normalize_agui_role
 
 logger = logging.getLogger(__name__)
 
@@ -890,11 +890,7 @@ def _emit_approval_request(
         events.append(ToolCallEndEvent(tool_call_id=func_call_id))
         flow.tool_calls_ended.add(func_call_id)
 
-    interrupt_id = (
-        content.id
-        if func_call.additional_properties.get("server_label") is not None
-        else func_call.id or content.id or func_call_id
-    )
+    interrupt_id = _approval_interrupt_id(content)
     events.append(
         CustomEvent(
             name="function_approval_request",
