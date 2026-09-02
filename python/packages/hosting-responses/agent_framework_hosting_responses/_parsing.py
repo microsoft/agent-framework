@@ -17,7 +17,7 @@ import json
 import time
 import uuid
 import warnings
-from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterator, Mapping, MutableMapping, Sequence
 from typing import Any, Literal, cast
 
 from agent_framework import AgentResponse, AgentResponseUpdate, ChatOptions, Content, Message, ResponseStream
@@ -1249,9 +1249,12 @@ async def responses_from_streaming_run(
     def apply_streamed_message_ids(response: dict[str, Any]) -> None:
         message_ids = iter(streamed_message_ids)
         for output_item in response.get("output", []):
-            if isinstance(output_item, dict) and output_item.get("type") == "message":
+            if not isinstance(output_item, MutableMapping):
+                continue
+            output_mapping = cast("MutableMapping[str, Any]", output_item)
+            if output_mapping.get("type") == "message":
                 try:
-                    output_item["id"] = next(message_ids)
+                    output_mapping["id"] = next(message_ids)
                 except StopIteration:
                     return
 
