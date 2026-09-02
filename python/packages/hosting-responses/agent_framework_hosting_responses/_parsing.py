@@ -72,6 +72,15 @@ def _is_refusal_text_content(content: Content) -> bool:
     return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
 
 
+def _code_interpreter_projection_key(content: Content) -> tuple[str, str] | None:
+    if content.type not in {"code_interpreter_tool_call", "code_interpreter_tool_result"}:
+        return None
+    call_id = content.call_id or content.additional_properties.get("item_id")
+    if not isinstance(call_id, str) or not call_id:
+        return None
+    return content.type, call_id
+
+
 def _content_from_input_item(item: Mapping[str, Any]) -> Content:
     """Convert a single OpenAI Responses ``input`` item into a :class:`Content` part.
 
@@ -1134,13 +1143,14 @@ async def responses_from_streaming_run(
     projection_message_id: str | None = None
     projection_message_role: str | None = None
     seen_raw_projection_keys: set[tuple[str, str]] = set()
+    seen_code_interpreter_projection_keys: set[tuple[str, str]] = set()
     output_index = -1
     streamed_message_ids: list[str] = []
     message_id: str | None = None
     message_parts: list[dict[str, Any]] = []
     content_index = -1
     content_type: Literal["output_text", "refusal"] | None = None
-    content_text = ""
+    content_text: str = ""
 
     def event(event_type: str, **payload: Any) -> str:
         nonlocal sequence_number
@@ -1158,7 +1168,7 @@ async def responses_from_streaming_run(
     def part_value(part_type: Literal["output_text", "refusal"], text: str) -> dict[str, Any]:
         if part_type == "refusal":
             return {"type": "refusal", "refusal": text}
-        return {"type": "output_text", "text": text, "annotations": [], "logprobs": []}
+        return {"type": "output_text", "text": text, "annotations": []}
 
     def close_content_part() -> list[str]:
         nonlocal content_type, content_text
@@ -1298,6 +1308,7 @@ async def responses_from_streaming_run(
                         yield stream_event
                     committed_output_count = output_index + 1
                 seen_raw_projection_keys.clear()
+                seen_code_interpreter_projection_keys.clear()
             if update_role is not None:
                 projection_message_role = update_role
             if update.message_id is not None:
@@ -1305,7 +1316,26 @@ async def responses_from_streaming_run(
             for content in update.contents:
                 projected_update = copy(update)
                 projected_update.contents = [content]
-                if content.type != "text" or not content.text:
+                if content.type == "text":
+                    text = content.text
+                    if not isinstance(text, str):
+                        continue
+                    is_active_annotation_carrier = (
+                        not text
+                        and bool(content.annotations)
+                        and message_id is not None
+                        and (update.message_id is None or update.message_id == message_id)
+                    )
+                    if is_active_annotation_carrier:
+                        continue
+                else:
+                    if code_key := _code_interpreter_projection_key(content):
+                        if code_key in seen_code_interpreter_projection_keys:
+                            if message_id is not None:
+                                for stream_event in close_content_part():
+                                    yield stream_event
+                            continue
+                        seen_code_interpreter_projection_keys.add(code_key)
                     raw_item = _raw_response_output_item(content.raw_representation)
                     if raw_item is not None:
                         raw_key = _response_output_item_key(raw_item)
@@ -1341,7 +1371,9 @@ async def responses_from_streaming_run(
                     for stream_event in close_content_part():
                         yield stream_event
                     yield open_content_part(requested_content_type)
-                content_text += content.text
+                content_text += text
+                if not text:
+                    continue
                 delta_type = (
                     "response.refusal.delta" if requested_content_type == "refusal" else "response.output_text.delta"
                 )
@@ -1349,7 +1381,7 @@ async def responses_from_streaming_run(
                     "item_id": message_id,
                     "output_index": output_index,
                     "content_index": content_index,
-                    "delta": content.text,
+                    "delta": text,
                 }
                 if requested_content_type == "output_text":
                     delta_payload["logprobs"] = []

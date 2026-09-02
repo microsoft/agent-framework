@@ -11,7 +11,15 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream, UsageDetails
+from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
+    Annotation,
+    Content,
+    Message,
+    ResponseStream,
+    UsageDetails,
+)
 from openai.types.responses.response_usage import InputTokensDetails, ResponseUsage
 
 import agent_framework_hosting_responses._parsing as parsing_module
@@ -1048,6 +1056,149 @@ class TestResponsesRunHelpers:
         _ = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
 
         assert projected_content_counts == [2] * 100
+
+    async def test_empty_text_annotation_does_not_split_streaming_message(self) -> None:
+        annotation = Annotation(type="citation", title="Source", url="https://example.com")
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Before")],
+                role="assistant",
+                message_id="msg_annotations",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("", annotations=[annotation])],
+                role="assistant",
+                message_id="msg_annotations",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(" after")],
+                role="assistant",
+                message_id="msg_annotations",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        added_events = [
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.added"
+        ]
+        delta_events = [
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_text.delta"
+        ]
+        done = next(
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.done"
+        )
+        completed = cast("dict[str, object]", _sse_payload(events[-1])["response"])
+        output = cast("list[dict[str, object]]", completed["output"])
+
+        assert len(added_events) == 1
+        assert [event["delta"] for event in delta_events] == ["Before", " after"]
+        assert done["output_index"] == 0
+        assert cast("dict[str, object]", done["item"])["id"] == output[0]["id"]
+
+    async def test_empty_annotation_in_new_message_keeps_terminal_output_indexes(self) -> None:
+        annotation = Annotation(type="citation", title="Source", url="https://example.com")
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("First")],
+                role="assistant",
+                message_id="msg_first",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("", annotations=[annotation])],
+                role="assistant",
+                message_id="msg_second",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_function_call("call_1", "lookup", arguments={})],
+                role="assistant",
+                message_id="msg_second",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Second")],
+                role="assistant",
+                message_id="msg_second",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        added_events = [
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.added"
+        ]
+        done_events = [
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.done"
+        ]
+        completed = cast("dict[str, object]", _sse_payload(events[-1])["response"])
+        output = cast("list[dict[str, object]]", completed["output"])
+
+        assert [item["type"] for item in output] == ["message", "message", "function_call", "message"]
+        assert [event["output_index"] for event in added_events] == [0, 1, 3]
+        assert [event["output_index"] for event in done_events] == [0, 1, 3]
+        done_ids = [cast("dict[str, object]", event["item"])["id"] for event in done_events]
+        assert done_ids == [output[0]["id"], output[1]["id"], output[3]["id"]]
+
+    async def test_repeated_code_interpreter_chunk_does_not_reserve_new_output_index(self) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_code_interpreter_tool_call(
+                        call_id="ci_1",
+                        inputs=[Content.from_text("print(")],
+                    )
+                ],
+                role="assistant",
+                message_id="msg_code",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Working.")],
+                role="assistant",
+                message_id="msg_code",
+            )
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_code_interpreter_tool_call(
+                        call_id="ci_1",
+                        inputs=[Content.from_text("'done')")],
+                    )
+                ],
+                role="assistant",
+                message_id="msg_code",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(" Finished.")],
+                role="assistant",
+                message_id="msg_code",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        added_events = [
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.added"
+        ]
+        done = next(
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.done"
+        )
+        completed = cast("dict[str, object]", _sse_payload(events[-1])["response"])
+        output = cast("list[dict[str, object]]", completed["output"])
+
+        assert [item["type"] for item in output] == ["code_interpreter_call", "message"]
+        assert len(added_events) == 1
+        assert added_events[0]["output_index"] == 1
+        assert done["output_index"] == 1
+        done_item = cast("dict[str, object]", done["item"])
+        assert done_item["id"] == output[1]["id"]
+        done_content = cast("list[dict[str, object]]", done_item["content"])
+        terminal_content = cast("list[dict[str, object]]", output[1]["content"])
+        assert [(part["type"], part["text"]) for part in done_content] == [
+            ("output_text", "Working."),
+            ("output_text", " Finished."),
+        ]
+        assert done_content == terminal_content
+        assert output[0]["code"] == "print('done')"
 
     async def test_responses_from_streaming_run_emits_failed_when_iteration_raises(self) -> None:
         async def updates() -> AsyncIterator[AgentResponseUpdate]:
