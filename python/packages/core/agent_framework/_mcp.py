@@ -418,6 +418,33 @@ def _should_propagate_cancelled_error(ex: BaseException) -> bool:
     return task is not None and task.cancelling() > 0
 
 
+def _structured_content_contains_text(structured: Any, text: str) -> bool:
+    """Return whether *text* appears as a string value anywhere in *structured*."""
+    if isinstance(structured, str):
+        return structured == text
+    if isinstance(structured, Mapping):
+        return any(_structured_content_contains_text(value, text) for value in structured.values())
+    if isinstance(structured, Sequence) and not isinstance(structured, (str, bytes, bytearray)):
+        return any(_structured_content_contains_text(item, text) for item in structured)
+    return False
+
+
+def _text_duplicates_structured_content(text: str, structured: Any, structured_json: str) -> bool:
+    """Return whether a text content block is an echo of ``structuredContent``.
+
+    MCP servers often return the same payload as both a text ``content`` block and
+    ``structuredContent`` (for example ``{"result": "<same text>"}``). Treat those as
+    duplicates so agents are not charged twice. Complementary text (a human-readable
+    summary that is not present in the structured payload) is kept.
+    """
+    if text == structured_json:
+        return True
+    with contextlib.suppress(json.JSONDecodeError, TypeError):
+        if json.loads(text) == structured:
+            return True
+    return _structured_content_contains_text(structured, text)
+
+
 # region: MCP Plugin
 
 
@@ -658,6 +685,12 @@ class MCPTool:
     ) -> list[Content]:
         """Parse an MCP CallToolResult into a list of Content items.
 
+        When ``structuredContent`` is present it is emitted first. Text (or embedded
+        text) ``content`` blocks that merely echo that structured payload are skipped
+        so servers such as MS Learn / DeepWiki do not duplicate tokens (#7866).
+        Non-text blocks (images, audio, resources) and complementary text that is not
+        represented in ``structuredContent`` are retained.
+
         If the server attached a ``_meta`` payload to the tool result (e.g. for
         Information Flow Control labels under the ``ifc`` key), a copy of that
         payload is stamped onto each produced :class:`Content` instance under
@@ -675,10 +708,19 @@ class MCPTool:
         # each newly constructed Content; empty when the server provided no meta.
         additional_kwargs: dict[str, Any] = {"additional_properties": {"_meta": meta}} if meta else {}
 
+        structured = mcp_type.structuredContent
+        structured_json: str | None = None
         result: list[Content] = []
+        if structured is not None:
+            structured_json = json.dumps(structured, default=str)
+            result.append(Content.from_text(structured_json, **additional_kwargs))
+
         for item in mcp_type.content:
             match item:
                 case types.TextContent():
+                    if structured is not None and structured_json is not None:
+                        if _text_duplicates_structured_content(item.text, structured, structured_json):
+                            continue
                     result.append(Content.from_text(item.text, **additional_kwargs))
                 case types.ImageContent() | types.AudioContent():
                     decoded = base64.b64decode(item.data)
@@ -700,6 +742,11 @@ class MCPTool:
                 case types.EmbeddedResource():
                     match item.resource:
                         case types.TextResourceContents():
+                            if structured is not None and structured_json is not None:
+                                if _text_duplicates_structured_content(
+                                    item.resource.text, structured, structured_json
+                                ):
+                                    continue
                             result.append(Content.from_text(item.resource.text, **additional_kwargs))
                         case types.BlobResourceContents():
                             blob = item.resource.blob
@@ -714,10 +761,11 @@ class MCPTool:
                                 )
                             )
                 case _:
-                    result.append(Content.from_text(str(item), **additional_kwargs))
-
-        if mcp_type.structuredContent is not None:
-            result.append(Content.from_text(json.dumps(mcp_type.structuredContent, default=str)))
+                    fallback = str(item)
+                    if structured is not None and structured_json is not None:
+                        if _text_duplicates_structured_content(fallback, structured, structured_json):
+                            continue
+                    result.append(Content.from_text(fallback, **additional_kwargs))
 
         if not result:
             result.append(Content.from_text("null", **additional_kwargs))

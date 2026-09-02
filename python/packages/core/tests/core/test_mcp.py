@@ -474,7 +474,7 @@ def test_parse_tool_result_from_mcp_structured_content_only():
 
 
 def test_parse_tool_result_from_mcp_structured_content_with_text():
-    """Test that structuredContent is appended alongside regular content items."""
+    """Complementary human-readable text is kept alongside structuredContent."""
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="Summary")],
         structuredContent={"data": [1, 2, 3]},
@@ -484,11 +484,68 @@ def test_parse_tool_result_from_mcp_structured_content_with_text():
     assert isinstance(result, list)
     assert len(result) == 2
     assert result[0].type == "text"
-    assert result[0].text == "Summary"
+    assert result[0].text is not None
+    assert json.loads(result[0].text) == {"data": [1, 2, 3]}
     assert result[1].type == "text"
-    assert result[1].text is not None
-    parsed = json.loads(result[1].text)
-    assert parsed == {"data": [1, 2, 3]}
+    assert result[1].text == "Summary"
+
+
+def test_parse_tool_result_from_mcp_does_not_duplicate_equivalent_structured_content():
+    """Regression for #7866: servers often echo the same payload in content and structuredContent."""
+    text = (
+        "This repository, `microsoft/agent-framework`, is a multi-language framework "
+        "designed for building, orchestrating, and deploying AI agents."
+    )
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text=text)],
+        structuredContent={"result": text},
+    )
+    result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
+
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text is not None
+    assert json.loads(result[0].text) == {"result": text}
+
+
+def test_parse_tool_result_from_mcp_structured_content_stamps_meta():
+    """structuredContent results must still carry server ``_meta``."""
+    mcp_result = types.CallToolResult(
+        content=[],
+        structuredContent={"ok": True},
+        _meta={"ifc": {"integrity": "untrusted", "confidentiality": "public"}},
+    )
+    result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
+
+    assert len(result) == 1
+    assert result[0].additional_properties.get("_meta") == {
+        "ifc": {"integrity": "untrusted", "confidentiality": "public"},
+    }
+    assert json.loads(result[0].text) == {"ok": True}
+
+
+def test_parse_tool_result_from_mcp_keeps_rich_content_with_structured():
+    """Non-text content blocks must not be dropped when structuredContent is present."""
+    mcp_result = types.CallToolResult(
+        content=[
+            types.ImageContent(
+                type="image",
+                data="ZmFrZS1pbWFnZS1ieXRlcw==",  # base64 for b"fake-image-bytes"
+                mimeType="image/png",
+            ),
+            types.TextContent(type="text", text="caption echoed in structured"),
+        ],
+        structuredContent={"caption": "caption echoed in structured", "width": 32},
+    )
+    result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
+
+    assert len(result) == 2
+    assert result[0].type == "text"
+    assert result[0].text is not None
+    assert json.loads(result[0].text) == {"caption": "caption echoed in structured", "width": 32}
+    assert result[1].type == "data"
+    assert result[1].media_type == "image/png"
+    assert "ZmFrZS1pbWFnZS1ieXRlcw==" in result[1].uri  # type: ignore[operator]
 
 
 def test_parse_tool_result_from_mcp_structured_content_none():
