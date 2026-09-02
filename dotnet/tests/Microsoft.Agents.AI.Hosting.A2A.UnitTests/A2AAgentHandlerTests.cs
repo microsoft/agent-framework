@@ -849,6 +849,97 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
+    /// Verifies that cancellation while emitting an aggregated task transitions the submitted task to Canceled.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenAggregatedTaskEmissionIsCanceled_CancelsTaskAsync()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        AgentResponseUpdate[] updates =
+        [
+            new AgentResponseUpdate(ChatRole.Assistant, "result")
+            {
+                ResponseId = "r1",
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    ["responseKey"] = new CallbackMetadataValue(cts.Cancel)
+                }
+            }
+        ];
+        A2AAgentHandler handler = CreateHandler(
+            CreateStreamingAgentMock(updates),
+            runMode: AgentRunMode.AllowBackgroundIfSupported);
+        var events = new EventCollector();
+        var eventQueue = new AgentEventQueue();
+        var readerTask = ReadEventsAsync(eventQueue, events);
+
+        // Act
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            handler.ExecuteAsync(
+                new RequestContext
+                {
+                    StreamingResponse = false,
+                    TaskId = "task-1",
+                    ContextId = "ctx",
+                    Configuration = new SendMessageConfiguration { ReturnImmediately = false },
+                    Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+                },
+                eventQueue,
+                cts.Token));
+        eventQueue.Complete(null);
+        await readerTask;
+
+        // Assert
+        Assert.Equal(TaskState.Submitted, Assert.Single(events.Tasks).Status.State);
+        Assert.Equal(TaskState.Canceled, Assert.Single(events.StatusUpdates).Status.State);
+        Assert.Empty(events.ArtifactUpdates);
+    }
+
+    /// <summary>
+    /// Verifies that a failure while emitting an aggregated task transitions the submitted task to Failed.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenAggregatedTaskEmissionFails_FailsTaskAsync()
+    {
+        // Arrange
+        AgentResponseUpdate[] updates =
+        [
+            new AgentResponseUpdate(ChatRole.Assistant, "result")
+            {
+                ResponseId = "r1",
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    ["responseKey"] = new CallbackMetadataValue(
+                        () => throw new InvalidOperationException("Metadata serialization failed"))
+                }
+            }
+        ];
+        A2AAgentHandler handler = CreateHandler(
+            CreateStreamingAgentMock(updates),
+            runMode: AgentRunMode.AllowBackgroundIfSupported);
+
+        // Act
+        var events = await CollectEventsForThrowingExecuteAsync<InvalidOperationException>(handler, new RequestContext
+        {
+            StreamingResponse = false,
+            TaskId = "task-1",
+            ContextId = "ctx",
+            Configuration = new SendMessageConfiguration { ReturnImmediately = false },
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+        });
+
+        // Assert
+        Assert.Equal(TaskState.Submitted, Assert.Single(events.Tasks).Status.State);
+        TaskStatusUpdateEvent statusUpdate = Assert.Single(events.StatusUpdates);
+        Assert.Equal(TaskState.Failed, statusUpdate.Status.State);
+        Assert.Equal(
+            "The agent encountered an unexpected error and could not complete the request.",
+            Assert.Single(statusUpdate.Status.Message!.Parts!).Text);
+        Assert.Empty(events.ArtifactUpdates);
+    }
+
+    /// <summary>
     /// Verifies that an immediate request returns one aggregated message when background responses are disabled.
     /// </summary>
     [Fact]
@@ -2641,6 +2732,18 @@ public sealed class A2AAgentHandlerTests
         public List<AgentTask> Tasks { get; } = [];
         public List<TaskStatusUpdateEvent> StatusUpdates { get; } = [];
         public List<TaskArtifactUpdateEvent> ArtifactUpdates { get; } = [];
+    }
+
+    private sealed class CallbackMetadataValue(Action callback)
+    {
+        public string Value
+        {
+            get
+            {
+                callback();
+                return "value";
+            }
+        }
     }
 
     private sealed class TestAgentSession : AgentSession;

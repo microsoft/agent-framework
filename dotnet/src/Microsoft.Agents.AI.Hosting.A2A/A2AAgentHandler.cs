@@ -374,6 +374,8 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// <c>ReturnImmediately = false</c>, meaning it wants the final result in the response rather than a task
     /// it has to poll. No task event is emitted until the agent stream finishes, because the server returns on the
     /// first task event; emitting early would hand the caller an in-progress task instead of a completed one.
+    /// If emitting the result fails after the task has been submitted, the task is transitioned to
+    /// <c>Canceled</c>/<c>Failed</c> so it is never left in a non-terminal state.
     /// </remarks>
     private static async Task AggregateTaskUpdatesAsync(IAsyncEnumerable<AgentResponseUpdate> updates, TaskUpdater updater, AgentEventQueue eventQueue, CancellationToken cancellationToken)
     {
@@ -381,17 +383,30 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
         await updater.SubmitAsync(cancellationToken).ConfigureAwait(false);
 
-        if (response.Messages.ToParts() is { Count: > 0 } parts)
+        try
         {
-            await AddArtifactAsync(
-                eventQueue,
-                updater,
-                parts,
-                metadata: response.AdditionalProperties?.ToA2AMetadata(),
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
+            if (response.Messages.ToParts() is { Count: > 0 } parts)
+            {
+                await AddArtifactAsync(
+                    eventQueue,
+                    updater,
+                    parts,
+                    metadata: response.AdditionalProperties?.ToA2AMetadata(),
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
 
-        await updater.CompleteAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+            await updater.CompleteAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await updater.CancelAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+        catch (Exception)
+        {
+            await updater.FailAsync(CreateFailureMessage(updater.ContextId, updater.TaskId), CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
     }
 
     /// <summary>
