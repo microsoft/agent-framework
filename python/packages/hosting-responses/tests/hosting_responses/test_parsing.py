@@ -887,6 +887,99 @@ class TestResponsesRunHelpers:
             {"type": "refusal", "refusal": "I cannot continue."},
         ]
 
+    @pytest.mark.parametrize(
+        ("text_content", "expected_part_type"),
+        [
+            (Content.from_text("Done."), "output_text"),
+            (
+                Content.from_text(
+                    "I cannot continue.",
+                    additional_properties={"model_output_kind": "refusal"},
+                ),
+                "refusal",
+            ),
+        ],
+    )
+    async def test_streaming_message_reserves_preceding_function_call_index(
+        self,
+        text_content: Content,
+        expected_part_type: str,
+    ) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_function_call("call_1", "lookup", arguments={"city": "Seattle"}),
+                    text_content,
+                ],
+                role="assistant",
+                message_id="msg_after_call",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        added = next(
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.added"
+        )
+        done = next(
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.done"
+        )
+        completed = cast("dict[str, object]", _sse_payload(events[-1])["response"])
+        output = cast("list[dict[str, object]]", completed["output"])
+
+        assert [item["type"] for item in output] == ["function_call", "message"]
+        assert added["output_index"] == 1
+        assert done["output_index"] == 1
+        done_item = cast("dict[str, object]", done["item"])
+        assert done_item["id"] == output[1]["id"]
+        message_content = cast("list[dict[str, object]]", output[1]["content"])
+        assert message_content[0]["type"] == expected_part_type
+
+    async def test_streaming_text_function_refusal_uses_final_output_indexes(self) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Partial answer.")],
+                role="assistant",
+                message_id="msg_mixed_output",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_function_call("call_1", "lookup", arguments={"city": "Seattle"})],
+                role="assistant",
+                message_id="msg_mixed_output",
+            )
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_text(
+                        "I cannot continue.",
+                        additional_properties={"model_output_kind": "refusal"},
+                    )
+                ],
+                role="assistant",
+                message_id="msg_mixed_output",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        added_events = [
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.added"
+        ]
+        done_events = [
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.done"
+        ]
+        completed = cast("dict[str, object]", _sse_payload(events[-1])["response"])
+        output = cast("list[dict[str, object]]", completed["output"])
+
+        assert [item["type"] for item in output] == ["message", "function_call", "message"]
+        assert [event["output_index"] for event in added_events] == [0, 2]
+        assert [event["output_index"] for event in done_events] == [0, 2]
+        done_ids = [cast("dict[str, object]", event["item"])["id"] for event in done_events]
+        assert done_ids == [output[0]["id"], output[2]["id"]]
+        first_content = cast("list[dict[str, object]]", output[0]["content"])
+        second_content = cast("list[dict[str, object]]", output[2]["content"])
+        assert first_content[0]["type"] == "output_text"
+        assert second_content[0]["type"] == "refusal"
+
     async def test_responses_from_streaming_run_emits_failed_when_iteration_raises(self) -> None:
         async def updates() -> AsyncIterator[AgentResponseUpdate]:
             yield AgentResponseUpdate(contents=[Content.from_text("partial")], role="assistant")

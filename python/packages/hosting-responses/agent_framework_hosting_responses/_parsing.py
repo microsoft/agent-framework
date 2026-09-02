@@ -18,6 +18,7 @@ import time
 import uuid
 import warnings
 from collections.abc import AsyncIterator, Iterator, Mapping, MutableMapping, Sequence
+from copy import copy
 from typing import Any, Literal, cast
 
 from agent_framework import AgentResponse, AgentResponseUpdate, ChatOptions, Content, Message, ResponseStream
@@ -1128,6 +1129,8 @@ async def responses_from_streaming_run(
     sequence_number = 0
     model: str | None = None
     updates: list[AgentResponseUpdate] = []
+    projected_updates: list[AgentResponseUpdate] = []
+    projection_dirty = True
     output_index = -1
     streamed_message_ids: list[str] = []
     message_id: str | None = None
@@ -1211,10 +1214,20 @@ async def responses_from_streaming_run(
         content_index = -1
         return events
 
-    def open_message(requested_message_id: str | None) -> str:
+    def projected_message_output_index() -> int:
+        projected_response = AgentResponse.from_updates(projected_updates)
+        projected_items = _result_to_output_items(projected_response, status="in_progress")
+        for index in range(len(projected_items) - 1, -1, -1):
+            if _raw_type(projected_items[index]) == "message":
+                return index
+        raise RuntimeError("Text content did not produce a Responses message output item")
+
+    def open_message(requested_message_id: str | None, projected_output_index: int) -> str:
         nonlocal message_id, output_index
-        output_index += 1
+        output_index = projected_output_index
         message_id = requested_message_id or f"msg_{uuid.uuid4().hex}"
+        if message_id in streamed_message_ids:
+            message_id = f"msg_{uuid.uuid4().hex}"
         streamed_message_ids.append(message_id)
         return event(
             "response.output_item.added",
@@ -1267,14 +1280,26 @@ async def responses_from_streaming_run(
             if model is None:
                 model = _model_from_update(update)
             for content in update.contents:
+                projected_update = copy(update)
+                projected_update.contents = [content]
+                projected_updates.append(projected_update)
                 if content.type != "text" or not content.text:
+                    projection_dirty = True
                     continue
                 requested_message_id = update.message_id
-                if message_id is not None and requested_message_id is not None and requested_message_id != message_id:
+                message_changed = (
+                    message_id is not None and requested_message_id is not None and requested_message_id != message_id
+                )
+                if message_id is None or projection_dirty or message_changed:
+                    projected_output_index = projected_message_output_index()
+                else:
+                    projected_output_index = output_index
+                if message_id is not None and (message_changed or projected_output_index != output_index):
                     for stream_event in close_message("completed"):
                         yield stream_event
                 if message_id is None:
-                    yield open_message(requested_message_id)
+                    yield open_message(requested_message_id, projected_output_index)
+                projection_dirty = False
                 requested_content_type: Literal["output_text", "refusal"] = (
                     "refusal" if _is_refusal_text_content(content) else "output_text"
                 )
