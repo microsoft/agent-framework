@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import warnings
 from ast import AST, unparse
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Annotated, Any, ClassVar, cast
 
@@ -102,7 +102,7 @@ class MockCollection(BaseVectorCollection[str, Record], BaseVectorSearch[str, Re
         self.delete_error: Exception | None = None
         self.search_error: Exception | None = None
         self.upsert_keys: Sequence[str] | None = None
-        self.raw_search_results: Sequence[Any] | None = None
+        self.raw_search_results: AsyncIterable[Any] | Sequence[Any] | None = None
 
     async def ensure_collection_exists(
         self,
@@ -180,7 +180,6 @@ class MockCollection(BaseVectorCollection[str, Record], BaseVectorSearch[str, Re
         vector: Sequence[float | int] | None = None,
         top: int = 3,
         skip: int = 0,
-        include_total_count: bool = False,
         include_vectors: bool = False,
         vector_property_name: str | None = None,
         additional_property_name: str | None = None,
@@ -197,7 +196,7 @@ class MockCollection(BaseVectorCollection[str, Record], BaseVectorSearch[str, Re
         raw_results = self.raw_search_results or [
             {"record": record, "score": score} for record, score in zip(self.records.values(), (0.9, 0.4), strict=False)
         ]
-        return SearchResults(raw_results, total_count=len(raw_results))
+        return SearchResults(raw_results, metadata={"mock_count": len(self.records)})
 
     def _get_record_from_result(self, result: Any) -> Any:
         return result["record"]
@@ -406,6 +405,13 @@ def test_vectorstoremodel_detects_factory_and_required_slotted_defaults() -> Non
     with pytest.raises(ValueError, match="required_but_unmapped"):
         vectorstoremodel(InvalidStruct)
 
+    class RequiredVector(msgspec.Struct):
+        id: Annotated[str, VectorStoreField("key")]
+        vector: Annotated[list[float], VectorStoreField("vector", dimensions=2)]
+
+    with pytest.raises(ValueError, match="must declare defaults"):
+        vectorstoremodel(RequiredVector)
+
 
 def test_vectorstoremodel_rejects_required_unmapped_fields() -> None:
     class InvalidRecord:
@@ -442,9 +448,31 @@ async def test_record_handler_serializes_dict_records_with_explicit_definition()
     serialized = await handler.serialize({"id": "one", "text": "hello"})
     assert serialized == {"record_id": "one", "body": "hello"}
     assert handler.deserialize(serialized) == {"id": "one", "text": "hello"}
+    assert handler.deserialize([]) == []
+
+    with pytest.raises(IntegrationInvalidResponseException, match="missing required field 'body'"):
+        handler.deserialize({"record_id": "one"})
+    assert handler.deserialize({"record_id": "one", "body": None}) == {"id": "one", "text": None}
 
     with pytest.raises(ValueError, match="missing.*text"):
         await handler.serialize({"id": "missing-text"})
+
+
+async def test_batch_serializer_preserves_cardinality() -> None:
+    class DroppingHandler(VectorStoreRecordHandler[Any, Record]):
+        def _serialize_dicts_to_store_models(
+            self,
+            records: Sequence[dict[str, Any]],
+            *,
+            context: Mapping[str, Any] | None = None,
+        ) -> Sequence[Any]:
+            return records[:-1]
+
+    with pytest.raises(IntegrationInvalidResponseException, match="Expected 2 serialized records"):
+        await DroppingHandler(Record).serialize([
+            Record("one", "first"),
+            Record("two", "second"),
+        ])
 
 
 async def test_record_handler_supports_msgspec_structs() -> None:
@@ -557,6 +585,10 @@ async def test_custom_encoder_normalizes_array_like_vectors() -> None:
         CustomArrayRecord,
         definition=definition,
         encoder=lambda record: {"id": record.id, "vector": record.vector},
+        decoder=lambda record: CustomArrayRecord(
+            id=cast(str, record["id"]),
+            vector=ArrayLike(),
+        ),
     )
 
     serialized = await VectorStoreRecordHandler(CustomArrayRecord).serialize(CustomArrayRecord("one", ArrayLike()))
@@ -569,7 +601,7 @@ async def test_pydantic_aliases_round_trip_by_field_name() -> None:
         id: Annotated[str, PydanticField(alias="record_id"), VectorStoreField("key")]
 
     handler = VectorStoreRecordHandler(AliasedRecord)
-    serialized = await handler.serialize(AliasedRecord(record_id="one"))
+    serialized = await handler.serialize(AliasedRecord.model_validate({"record_id": "one"}))
     restored = handler.deserialize(serialized)
 
     assert serialized == {"id": "one"}
@@ -655,7 +687,7 @@ async def test_vector_search_generates_query_vector_and_filters_threshold() -> N
     )
     responses = [response async for response in results]
 
-    assert results.total_count == 2
+    assert results.metadata == {"mock_count": 2}
     assert embedding_client.values == ["find this"]
     assert collection.last_search_vector == [9.0, 0.5]
     assert responses[0]["record"].id == "one"
@@ -767,8 +799,16 @@ async def test_create_search_tool_supports_declared_filter_parameters() -> None:
             "properties": {
                 "query": {"type": "string", "description": "The search query."},
                 "category": {"type": "string", "description": "The category to match."},
-                "top": {"type": "integer", "description": "The maximum number of results."},
-                "skip": {"type": "integer", "description": "The number of results to skip."},
+                "top": {
+                    "type": "integer",
+                    "description": "The maximum number of results.",
+                    "maximum": 5,
+                },
+                "skip": {
+                    "type": "integer",
+                    "description": "The number of results to skip.",
+                    "maximum": 10,
+                },
             },
             "required": ["query", "category"],
             "additionalProperties": False,
@@ -781,6 +821,59 @@ async def test_create_search_tool_supports_declared_filter_parameters() -> None:
     assert collection.last_search_filter == "record.category == 'travel'"
     assert collection.last_search_top == 1
     assert collection.last_search_skip == 2
+
+
+def test_create_search_tool_validates_custom_schema() -> None:
+    collection = MockCollection()
+
+    with pytest.raises(ValueError, match="required string"):
+        collection.create_search_tool(parameters={"type": "object", "properties": {}})
+    with pytest.raises(ValueError, match="required string"):
+        collection.create_search_tool(
+            parameters={
+                "type": "object",
+                "properties": {"query": {"type": "integer"}},
+                "required": ["query"],
+            }
+        )
+    with pytest.raises(ValueError, match="declare an integer maximum"):
+        collection.create_search_tool(
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "top": {"type": "integer"},
+                },
+                "required": ["query"],
+            }
+        )
+
+
+async def test_create_search_tool_enforces_paging_limits_and_result_cap() -> None:
+    collection = MockCollection()
+    collection.raw_search_results = [
+        {"record": {"record_id": str(index), "body": f"record {index}"}, "score": 0.9} for index in range(3)
+    ]
+    tool = collection.create_search_tool(
+        top=2,
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "top": {"type": "integer", "maximum": 2},
+                "skip": {"type": "integer", "maximum": 4},
+            },
+            "required": ["query"],
+        },
+    )
+
+    results = await tool(query="records", top=2, skip=4)
+    assert len(results) == 2
+
+    with pytest.raises(ValueError, match="top must not exceed"):
+        await tool(query="records", top=3)
+    with pytest.raises(ValueError, match="skip must not exceed"):
+        await tool(query="records", skip=5)
 
 
 async def test_create_search_tool_supports_multimodal_results() -> None:
@@ -1112,6 +1205,26 @@ async def test_search_embedding_and_result_conversion_failures() -> None:
     with pytest.raises(IntegrationInvalidResponseException, match="result conversion failed"):
         _ = [result async for result in results]
 
+    async def failing_results() -> AsyncIterable[Any]:
+        yield {"record": {"record_id": "one", "body": "hello"}, "score": 0.9}
+        raise RuntimeError("stream disconnected")
+
+    collection.raw_search_results = failing_results()
+    results = await collection.search(vector=[1.0, 0.0])
+    with pytest.raises(IntegrationException, match="iteration failed.*stream disconnected"):
+        _ = [result async for result in results]
+
+
+async def test_scoreless_results_remain_when_threshold_cannot_be_applied() -> None:
+    collection = MockCollection()
+    collection.raw_search_results = [{"record": {"record_id": "one", "body": "hello"}, "score": None}]
+
+    results = await collection.search(vector=[1.0, 0.0], score_threshold=0.5)
+
+    responses = [result async for result in results]
+    assert len(responses) == 1
+    assert responses[0]["score"] is None
+
 
 def test_filter_parser_and_default_mapper_edge_paths() -> None:
     collection = MockCollection()
@@ -1141,6 +1254,7 @@ async def test_search_tool_filter_mapper_edge_paths() -> None:
         parameters={
             "type": "object",
             "properties": {"query": {"type": "string"}, "bad-name": {"type": "string"}},
+            "required": ["query"],
         },
     )
     with pytest.raises(ValueError, match="cannot be mapped"):

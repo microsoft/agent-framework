@@ -453,6 +453,15 @@ def register_vectorstoremodel(
         if decoder is not None and existing.decoder is not decoder:
             raise ValueError(f"Vector model {record_type.__name__!r} is already registered with another decoder.")
         return
+    if decoder is None:
+        required_vector_fields = [
+            field.name for field in definition.vector_fields if not _has_default(record_type, field.name)
+        ]
+        if required_vector_fields:
+            raise ValueError(
+                "Vector fields omitted by include_vectors=False must declare defaults when using the default decoder. "
+                f"Add defaults or supply a custom decoder for: {', '.join(required_vector_fields)}."
+            )
     resolved_encoder = (
         cast(VectorModelEncoder, encoder) if encoder is not None else _default_vector_model_encoder(record_type)
     )
@@ -598,8 +607,6 @@ def vectorstoremodel(
         decoder: Optional callback that reconstructs a model instance from a mapping.
             This can restore array-like fields such as NumPy arrays without requiring
             Agent Framework to depend on NumPy.
-            This can restore array-like fields such as NumPy arrays without requiring
-            Agent Framework to depend on NumPy.
 
     Returns:
         A decorator that attaches vector store model metadata.
@@ -654,6 +661,10 @@ def vectorstoremodel(
 
 
 def _validate_paging(*, top: int, skip: int) -> None:
+    if not isinstance(top, int) or isinstance(top, bool):
+        raise TypeError("top must be an integer.")
+    if not isinstance(skip, int) or isinstance(skip, bool):
+        raise TypeError("skip must be an integer.")
     if top <= 0:
         raise ValueError("top must be greater than zero.")
     if skip < 0:
@@ -670,18 +681,20 @@ class SearchResponse(TypedDict, Generic[ModelT]):
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
 class SearchResults(Generic[ResultT]):
-    """A lazily consumed set of vector search results."""
+    """A lazily consumed set of vector search results.
+
+    Connector-native counts may be placed in ``metadata`` together with enough
+    provider-specific context to explain their scope.
+    """
 
     def __init__(
         self,
         results: AsyncIterable[ResultT] | Sequence[ResultT],
         *,
-        total_count: int | None = None,
         metadata: Mapping[str, Any] | None = None,
     ) -> None:
         """Initialize search results."""
         self.results = _as_async_iterable(results)
-        self.total_count = total_count
         self.metadata = metadata
 
     def __aiter__(self) -> AsyncIterator[ResultT]:
@@ -789,6 +802,10 @@ class VectorStoreRecordHandler(Generic[KeyT, ModelT]):
         await self._add_vectors_to_records(dict_records)
         store_models = list(self._serialize_dicts_to_store_models(dict_records, context=context))
 
+        if len(store_models) != len(dict_records):
+            raise IntegrationInvalidResponseException(
+                f"Expected {len(dict_records)} serialized records, but the connector returned {len(store_models)}."
+            )
         if is_batch:
             return store_models
         if len(store_models) != 1:
@@ -864,7 +881,7 @@ class VectorStoreRecordHandler(Generic[KeyT, ModelT]):
         input_records = list(records) if is_batch else [records]
         dict_records = self._deserialize_store_models_to_dicts(input_records, context=context)
         if not dict_records:
-            return None
+            return [] if is_batch else None
         deserialized = [
             self._deserialize_dict_to_record(record, include_vectors=include_vectors) for record in dict_records
         ]
@@ -889,11 +906,17 @@ class VectorStoreRecordHandler(Generic[KeyT, ModelT]):
         *,
         include_vectors: bool,
     ) -> dict[str, Any]:
-        return {
-            field.name: record.get(field.storage_name or field.name)
-            for field in self.definition.fields
-            if include_vectors or field.field_type != "vector"
-        }
+        logical_record: dict[str, Any] = {}
+        for field in self.definition.fields:
+            if not include_vectors and field.field_type == "vector":
+                continue
+            storage_name = field.storage_name or field.name
+            if storage_name not in record:
+                raise IntegrationInvalidResponseException(
+                    f"Vector store response is missing required field '{storage_name}'."
+                )
+            logical_record[field.name] = record[storage_name]
+        return logical_record
 
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
@@ -1209,7 +1232,6 @@ class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
         vector: Vector | None = None,
         top: int = 3,
         skip: int = 0,
-        include_total_count: bool = False,
         include_vectors: bool = False,
         vector_property_name: str | None = None,
         additional_property_name: str | None = None,
@@ -1244,7 +1266,6 @@ class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
         filter: RecordFilters | None = None,
         top: int = 3,
         skip: int = 0,
-        include_total_count: bool = False,
         include_vectors: bool = False,
         vector_property_name: str | None = None,
         additional_property_name: str | None = None,
@@ -1260,11 +1281,11 @@ class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
             filter: One or more lambda filters.
             top: The maximum number of results.
             skip: The number of results to skip.
-            include_total_count: Whether to request the total result count.
             include_vectors: Whether returned records include vector fields.
             vector_property_name: The vector field used for search.
             additional_property_name: The data field used for keyword-hybrid search.
             score_threshold: The minimum similarity or maximum distance accepted.
+                Results without scores remain included.
             operation_options: Store-specific operation options.
 
         Returns:
@@ -1286,7 +1307,6 @@ class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
         filter: RecordFilters | None = None,
         top: int = 3,
         skip: int = 0,
-        include_total_count: bool = False,
         include_vectors: bool = False,
         vector_property_name: str | None = None,
         additional_property_name: str | None = None,
@@ -1301,11 +1321,11 @@ class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
             filter: One or more lambda filters.
             top: The maximum number of results.
             skip: The number of results to skip.
-            include_total_count: Whether to request the total result count.
             include_vectors: Whether returned records include vector fields.
             vector_property_name: The vector field used for search.
             additional_property_name: The data field used for keyword-hybrid search.
             score_threshold: The minimum similarity or maximum distance accepted.
+                Results without scores remain included.
             operation_options: Store-specific operation options.
 
         Returns:
@@ -1327,7 +1347,6 @@ class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
         filter: RecordFilters | None = None,
         top: int = 3,
         skip: int = 0,
-        include_total_count: bool = False,
         include_vectors: bool = False,
         vector_property_name: str | None = None,
         additional_property_name: str | None = None,
@@ -1343,11 +1362,11 @@ class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
             filter: One or more lambda filters.
             top: The maximum number of results.
             skip: The number of results to skip.
-            include_total_count: Whether to request the total result count.
             include_vectors: Whether returned records include vector fields.
             vector_property_name: The vector field used for search.
             additional_property_name: The data field used for keyword-hybrid search.
             score_threshold: The minimum similarity or maximum distance accepted.
+                Results without scores remain included.
             operation_options: Store-specific operation options.
 
         Returns:
@@ -1387,7 +1406,6 @@ class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
                 vector=resolved_vector,
                 top=top,
                 skip=skip,
-                include_total_count=include_total_count,
                 include_vectors=include_vectors,
                 vector_property_name=vector_property_name,
                 additional_property_name=additional_property_name,
@@ -1401,7 +1419,6 @@ class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
                     vector_property_name=vector_property_name,
                     score_threshold=score_threshold,
                 ),
-                total_count=raw_results.total_count,
                 metadata=raw_results.metadata,
             )
         except (TypeError, ValueError):
@@ -1485,30 +1502,37 @@ class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
         """Convert raw connector results into deserialized search responses."""
 
         async def generate() -> AsyncIterator[SearchResponse[ModelT]]:
-            async for result in _as_async_iterable(results):
-                try:
-                    record = self.deserialize(
-                        self._get_record_from_result(result),
-                        include_vectors=include_vectors,
-                    )
-                    if record is None or _is_non_string_sequence(record):
-                        if record is None:
-                            continue
-                        raise IntegrationInvalidResponseException(
-                            "A search result must deserialize to exactly one record."
+            try:
+                async for result in _as_async_iterable(results):
+                    try:
+                        record = self.deserialize(
+                            self._get_record_from_result(result),
+                            include_vectors=include_vectors,
                         )
-                    score = self._get_score_from_result(result)
-                    if not self._meets_score_threshold(
-                        score,
-                        score_threshold=score_threshold,
-                        vector_property_name=vector_property_name,
-                    ):
-                        continue
-                    yield SearchResponse(record=cast(ModelT, record), score=score)
-                except IntegrationException:
-                    raise
-                except Exception as exc:
-                    raise IntegrationInvalidResponseException(f"Vector search result conversion failed: {exc}") from exc
+                        if record is None or _is_non_string_sequence(record):
+                            if record is None:
+                                continue
+                            raise IntegrationInvalidResponseException(
+                                "A search result must deserialize to exactly one record."
+                            )
+                        score = self._get_score_from_result(result)
+                        if not self._meets_score_threshold(
+                            score,
+                            score_threshold=score_threshold,
+                            vector_property_name=vector_property_name,
+                        ):
+                            continue
+                        yield SearchResponse(record=cast(ModelT, record), score=score)
+                    except IntegrationException:
+                        raise
+                    except Exception as exc:
+                        raise IntegrationInvalidResponseException(
+                            f"Vector search result conversion failed: {exc}"
+                        ) from exc
+            except IntegrationException:
+                raise
+            except Exception as exc:
+                raise IntegrationException(f"Vector search iteration failed: {exc}") from exc
 
         return generate()
 
@@ -1519,6 +1543,11 @@ class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
         score_threshold: float | None,
         vector_property_name: str | None,
     ) -> bool:
+        """Apply a threshold when a result includes a comparable score.
+
+        Results without scores remain included because the threshold cannot be
+        evaluated for them.
+        """
         if score_threshold is None or score is None:
             return True
         vector_field = self.definition.try_get_vector_field(vector_property_name)
@@ -1549,10 +1578,11 @@ class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
             approval_mode: Whether the tool requires approval before invocation.
             search_type: Whether the tool performs vector or keyword-hybrid search.
             parameters: A Pydantic model or JSON schema declaring the tool parameters.
-                Defaults to a schema containing only ``query``. A custom schema can expose
-                ``top``, ``skip``, and additional fields; additional fields are passed to ``filter_mapper``.
-            top: The maximum number of results.
-            skip: The number of results to skip.
+                It must declare ``query`` as a required string. A custom schema can
+                expose ``top`` and ``skip`` as integers with finite ``maximum`` values;
+                additional fields are passed to ``filter_mapper``.
+            top: The default result limit and the maximum when ``parameters`` does not expose ``top``.
+            skip: The default offset and the maximum when ``parameters`` does not expose ``skip``.
             filter: A fixed filter applied to each tool invocation.
             filter_mapper: Maps additional declared tool arguments to search filters.
                 The default creates equality filters for each additional argument.
@@ -1563,6 +1593,7 @@ class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
             ``top``, ``skip``, and fields mapped into filters by ``filter_mapper``.
 
         Raises:
+            ValueError: If parameters or paging limits are invalid.
             NotImplementedError: If the search type is unsupported.
         """
         if search_type not in self.supported_search_types:
@@ -1571,13 +1602,23 @@ class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
         map_filter = filter_mapper or _default_search_filter_mapper
         map_result = result_mapper or _default_search_result_mapper
         input_model = parameters if parameters is not None else _default_search_tool_parameters()
+        max_top, max_skip = _validate_search_tool_parameters(
+            input_model,
+            default_top=top,
+            default_skip=skip,
+        )
 
         async def search_tool(**arguments: Any) -> list[Content]:
-            query = arguments.pop("query", "")
+            query = arguments.pop("query")
             if not isinstance(query, str):
                 raise TypeError("The search tool 'query' argument must be a string.")
             invocation_top = arguments.pop("top", top)
             invocation_skip = arguments.pop("skip", skip)
+            _validate_paging(top=invocation_top, skip=invocation_skip)
+            if invocation_top > max_top:
+                raise ValueError(f"top must not exceed the configured maximum of {max_top}.")
+            if invocation_skip > max_skip:
+                raise ValueError(f"skip must not exceed the configured maximum of {max_skip}.")
             dynamic_filter = map_filter(filter, arguments)
             results = await self.search(
                 query,
@@ -1587,7 +1628,11 @@ class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
                 skip=invocation_skip,
             )
             mapped_results: list[Content] = []
+            consumed_results = 0
             async for result in results:
+                if consumed_results >= invocation_top:
+                    break
+                consumed_results += 1
                 mapped = map_result(result)
                 if isinstance(mapped, str):
                     mapped_results.append(Content.from_text(mapped))
@@ -1664,7 +1709,6 @@ class SupportsVectorSearch(Protocol[ModelT]):
         filter: RecordFilters | None = None,
         top: int = 3,
         skip: int = 0,
-        include_total_count: bool = False,
         include_vectors: bool = False,
         vector_property_name: str | None = None,
         additional_property_name: str | None = None,
@@ -1680,11 +1724,11 @@ class SupportsVectorSearch(Protocol[ModelT]):
             filter: One or more lambda filters.
             top: The maximum number of results.
             skip: The number of results to skip.
-            include_total_count: Whether to request the total result count.
             include_vectors: Whether returned records include vector fields.
             vector_property_name: The vector field used for search.
             additional_property_name: The data field used for keyword-hybrid search.
             score_threshold: The minimum similarity or maximum distance accepted.
+                Results without scores remain included.
             operation_options: Store-specific operation options.
 
         Returns:
@@ -1706,7 +1750,6 @@ class SupportsVectorSearch(Protocol[ModelT]):
         filter: RecordFilters | None = None,
         top: int = 3,
         skip: int = 0,
-        include_total_count: bool = False,
         include_vectors: bool = False,
         vector_property_name: str | None = None,
         additional_property_name: str | None = None,
@@ -1721,11 +1764,11 @@ class SupportsVectorSearch(Protocol[ModelT]):
             filter: One or more lambda filters.
             top: The maximum number of results.
             skip: The number of results to skip.
-            include_total_count: Whether to request the total result count.
             include_vectors: Whether returned records include vector fields.
             vector_property_name: The vector field used for search.
             additional_property_name: The data field used for keyword-hybrid search.
             score_threshold: The minimum similarity or maximum distance accepted.
+                Results without scores remain included.
             operation_options: Store-specific operation options.
 
         Returns:
@@ -1760,10 +1803,11 @@ class SupportsVectorSearch(Protocol[ModelT]):
             approval_mode: Whether the tool requires approval before invocation.
             search_type: Whether the tool performs vector or keyword-hybrid search.
             parameters: A Pydantic model or JSON schema declaring the tool parameters.
-                Defaults to a schema containing only ``query``. A custom schema can expose
-                ``top``, ``skip``, and additional fields; additional fields are passed to ``filter_mapper``.
-            top: The maximum number of results.
-            skip: The number of results to skip.
+                It must declare ``query`` as a required string. A custom schema can
+                expose ``top`` and ``skip`` as integers with finite ``maximum`` values;
+                additional fields are passed to ``filter_mapper``.
+            top: The default result limit and the maximum when ``parameters`` does not expose ``top``.
+            skip: The default offset and the maximum when ``parameters`` does not expose ``skip``.
             filter: A fixed filter applied to each tool invocation.
             filter_mapper: Maps additional declared tool arguments to search filters.
             result_mapper: Maps each search response to text or one or more multimodal content items.
@@ -1773,6 +1817,7 @@ class SupportsVectorSearch(Protocol[ModelT]):
             ``top``, ``skip``, and fields mapped into filters by ``filter_mapper``.
 
         Raises:
+            ValueError: If parameters or paging limits are invalid.
             NotImplementedError: If the search type is unsupported.
         """
         ...
@@ -1805,6 +1850,48 @@ def _default_search_tool_parameters() -> dict[str, Any]:
         "required": ["query"],
         "additionalProperties": False,
     }
+
+
+def _validate_search_tool_parameters(
+    parameters: type[BaseModel] | Mapping[str, Any],
+    *,
+    default_top: int,
+    default_skip: int,
+) -> tuple[int, int]:
+    schema: Mapping[str, Any] = parameters.model_json_schema() if isinstance(parameters, type) else parameters
+    raw_properties = schema.get("properties")
+    if not isinstance(raw_properties, Mapping):
+        raise ValueError("Search tool parameters must define object properties.")
+    properties = cast(Mapping[str, Any], raw_properties)
+    query_schema = properties.get("query")
+    required = schema.get("required")
+    query_type = cast(Mapping[str, Any], query_schema).get("type") if isinstance(query_schema, Mapping) else None
+    if (
+        not isinstance(query_schema, Mapping)
+        or query_type != "string"
+        or not _is_non_string_sequence(required)
+        or "query" not in required
+    ):
+        raise ValueError("Search tool parameters must define 'query' as a required string.")
+
+    limits = {"top": default_top, "skip": default_skip}
+    for name, minimum in (("top", 1), ("skip", 0)):
+        parameter_schema = properties.get(name)
+        if parameter_schema is None:
+            continue
+        if not isinstance(parameter_schema, Mapping):
+            raise ValueError(f"Search tool parameter '{name}' must be an integer.")
+        typed_parameter_schema = cast(Mapping[str, Any], parameter_schema)
+        if typed_parameter_schema.get("type") != "integer":
+            raise ValueError(f"Search tool parameter '{name}' must be an integer.")
+        maximum = typed_parameter_schema.get("maximum")
+        if not isinstance(maximum, int) or isinstance(maximum, bool) or maximum < minimum:
+            raise ValueError(f"Search tool parameter '{name}' must declare an integer maximum of at least {minimum}.")
+        configured_default = default_top if name == "top" else default_skip
+        if configured_default > maximum:
+            raise ValueError(f"Configured {name}={configured_default} exceeds the parameter maximum of {maximum}.")
+        limits[name] = maximum
+    return limits["top"], limits["skip"]
 
 
 def _default_search_filter_mapper(

@@ -251,6 +251,7 @@ This feature ports the vector store abstractions, embedding generator abstractio
 - Wraps the single `search()` method, passing `search_type` parameter
 - Accepts: `name`, `description`, `approval_mode`, `search_type`, `parameters`, `top`, `skip`, `filter`, `filter_mapper`, `result_mapper`
 - Defaults to `query`; a custom Pydantic model or JSON schema can expose `top`, `skip`, and additional filter fields
+- Custom schemas must require a string `query`; exposed `top` and `skip` fields must declare finite maximum values
 - The tool vectorizes the query, searches, and maps results to text or multimodal `Content`
 - Can also be a standalone factory function in `_vectors.py`
 
