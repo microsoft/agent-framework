@@ -79,6 +79,8 @@ def test_apim_policy_preserves_update_and_injects_channel() -> None:
     assert 'name="Content-Encoding" exists-action="delete"' in rendered
     assert 'name="agent_session_id"' in rendered
     assert 'name="X-Telegram-Bot-Api-Secret-Token" exists-action="delete"' in rendered
+    assert 'name="X-Agent-Framework-Ingress-Secret" exists-action="override"' in rendered
+    assert "<value>{{TelegramWebhookSecret}}</value>" in rendered
 
 
 def test_cosmos_partition_key_is_session_id() -> None:
@@ -88,9 +90,10 @@ def test_cosmos_partition_key_is_session_id() -> None:
     assert "'/session_id'" in resources
 
 
-def test_deployment_health_check_is_authenticated_and_subscription_scoped() -> None:
+def test_deployment_health_check_rejects_direct_invocation_and_is_subscription_scoped() -> None:
     deploy_script = (SAMPLE_ROOT / "deploy.sh").read_text()
 
+    assert 'if [[ "$health_status" != "401" ]]' in deploy_script
     assert "Authorization: Bearer ${FOUNDRY_TOKEN}" in deploy_script
     assert 'az account get-access-token \\\n        --subscription "$SUBSCRIPTION_ID"' in deploy_script
     assert 'az cosmosdb sql role assignment create \\\n        --subscription "$SUBSCRIPTION_ID"' in deploy_script
@@ -100,6 +103,20 @@ def test_deployment_health_check_is_authenticated_and_subscription_scoped() -> N
     assert "&& scope=='$COSMOS_ACCOUNT_SCOPE'" in deploy_script
     assert "/namedValues/telegram-webhook-secret/refreshSecret?api-version=2024-05-01" in deploy_script
     assert 'if [[ "$valid_secret_status" == "400" ]]' in deploy_script
+
+
+def test_deployment_and_removal_require_sample_owned_resource_group() -> None:
+    main_bicep = (SAMPLE_ROOT / "infra" / "main.bicep").read_text()
+    deploy_script = (SAMPLE_ROOT / "deploy.sh").read_text()
+    remove_script = (SAMPLE_ROOT / "remove.sh").read_text()
+    ownership_tag = "agent-framework-telegram-hosted-agent"
+
+    assert f"sample: '{ownership_tag}'" in main_bicep
+    assert f'!= "{ownership_tag}"' in deploy_script
+    assert "already exists without the Telegram sample ownership tag" in deploy_script
+    assert f'!= "{ownership_tag}"' in remove_script
+    assert "Refusing to remove resource group" in remove_script
+    assert remove_script.index("Refusing to remove resource group") < remove_script.index("/deleteWebhook")
 
 
 def test_default_model_is_gpt_5_6_luna() -> None:

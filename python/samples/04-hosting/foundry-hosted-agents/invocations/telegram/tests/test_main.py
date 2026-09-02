@@ -87,7 +87,58 @@ async def test_runtime_configures_azure_monitor_with_sensitive_data(monkeypatch:
         enable_live_metrics=True,
     )
     assert agent_constructor.call_args.kwargs["instructions"] == main.AGENT_INSTRUCTIONS
-    main._runtime = None
+    monkeypatch.setattr(main, "_runtime", None)
+
+
+@pytest.mark.parametrize("ingress_secret", [None, "wrong-secret"])
+async def test_invoke_rejects_unauthenticated_ingress_before_dispatch(
+    ingress_secret: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secrets = SimpleNamespace(
+        get_secret=AsyncMock(return_value=SimpleNamespace(value="expected-secret")),
+    )
+    runtime = cast(Any, SimpleNamespace(secrets=secrets))
+    dispatch = AsyncMock()
+    monkeypatch.setattr(main, "get_runtime", AsyncMock(return_value=runtime))
+    monkeypatch.setattr(main, "dispatch_channel", dispatch)
+    headers = {main.INGRESS_SECRET_HEADER: ingress_secret} if ingress_secret is not None else {}
+    request = cast(
+        Any,
+        SimpleNamespace(
+            headers=headers,
+            json=AsyncMock(return_value={"channel": "telegram", **_message_update()}),
+        ),
+    )
+
+    response = await main.handle_invoke(request)
+
+    assert response.status_code == 401
+    dispatch.assert_not_awaited()
+
+
+async def test_invoke_dispatches_authenticated_channel(monkeypatch: pytest.MonkeyPatch) -> None:
+    secrets = SimpleNamespace(
+        get_secret=AsyncMock(return_value=SimpleNamespace(value="expected-secret")),
+    )
+    runtime = cast(Any, SimpleNamespace(secrets=secrets))
+    dispatch = AsyncMock()
+    payload = {"channel": "telegram", **_message_update()}
+    monkeypatch.setattr(main, "get_runtime", AsyncMock(return_value=runtime))
+    monkeypatch.setattr(main, "get_request_context", Mock(return_value=SimpleNamespace(session_id="123")))
+    monkeypatch.setattr(main, "dispatch_channel", dispatch)
+    request = cast(
+        Any,
+        SimpleNamespace(
+            headers={main.INGRESS_SECRET_HEADER: "expected-secret"},
+            json=AsyncMock(return_value=payload),
+        ),
+    )
+
+    response = await main.handle_invoke(request)
+
+    assert response.status_code == 200
+    dispatch.assert_awaited_once_with(payload, "123", runtime)
 
 
 async def test_dispatches_telegram_without_channel_field(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -123,15 +174,30 @@ async def test_new_clears_durable_history(monkeypatch: pytest.MonkeyPatch) -> No
     execute = AsyncMock(return_value={})
     monkeypatch.setattr(main, "execute_telegram_operation", execute)
 
-    await main.handle_telegram_update(_message_update("/new"), "apim-session-123", runtime)
+    await main.handle_telegram_update(_message_update("/new"), "123", runtime)
 
-    history.clear.assert_awaited_once_with("apim-session-123")
+    history.clear.assert_awaited_once_with("123")
     execute_call = execute.await_args
     assert execute_call is not None
     operation = execute_call.args[1]
     assert operation["method"] == "sendMessage"
     assert operation["payload"]["chat_id"] == 123
     assert "empty history" in operation["payload"]["text"]
+
+
+async def test_rejects_mismatched_session_before_telegram_side_effect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history = SimpleNamespace(clear=AsyncMock())
+    runtime = cast(Any, SimpleNamespace(history=history))
+    execute = AsyncMock(return_value={})
+    monkeypatch.setattr(main, "execute_telegram_operation", execute)
+
+    with pytest.raises(ValueError, match="chat id does not match"):
+        await main.handle_telegram_update(_message_update("/new"), "different-chat", runtime)
+
+    history.clear.assert_not_awaited()
+    execute.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -151,7 +217,7 @@ async def test_application_commands_bypass_model(
     runtime = cast(Any, SimpleNamespace(agent=agent))
     monkeypatch.setattr(main, "execute_telegram_operation", execute)
 
-    await main.handle_telegram_update(_message_update(command), "session-1", runtime)
+    await main.handle_telegram_update(_message_update(command), "123", runtime)
 
     execute_call = execute.await_args
     assert execute_call is not None
@@ -191,14 +257,14 @@ async def test_callback_is_acknowledged_then_streamed_with_apim_session(
         },
     }
 
-    await main.handle_telegram_update(update, "apim-session-123", runtime)
+    await main.handle_telegram_update(update, "123", runtime)
 
     assert operations[:2] == ["answerCallbackQuery", "sendMessage"]
     telegram_to_run.assert_awaited_once()
     telegram_to_run_call = telegram_to_run.await_args
     assert telegram_to_run_call is not None
     assert telegram_to_run_call.kwargs["stream"] is True
-    agent.create_session.assert_called_once_with(session_id="apim-session-123")
+    agent.create_session.assert_called_once_with(session_id="123")
     agent.run.assert_called_once_with(["confirm"], session=session, options={}, stream=True)
     deliver.assert_awaited_once_with(runtime, stream, chat_id=123, message_id=42)
 
@@ -243,9 +309,11 @@ async def test_rejects_media_the_model_serializer_does_not_support(
     runtime = cast(Any, SimpleNamespace(agent=agent))
     monkeypatch.setattr(main, "execute_telegram_operation", execute)
 
-    await main.handle_telegram_update(_message_update(text="", **message_fields), "session-1", runtime)
+    await main.handle_telegram_update(_message_update(text="", **message_fields), "123", runtime)
 
-    operation = execute.await_args.args[1]
+    execute_call = execute.await_args
+    assert execute_call is not None
+    operation = execute_call.args[1]
     assert operation["method"] == "sendMessage"
     assert "photos, PDF documents, and MP3 or WAV audio" in operation["payload"]["text"]
     agent.run.assert_not_called()
@@ -272,7 +340,7 @@ async def test_normalizes_telegram_mpeg_audio_for_model_serialization(monkeypatc
 
     await main.handle_telegram_update(
         _message_update(text="", audio={"file_id": "audio-1", "mime_type": "audio/mpeg"}),
-        "session-1",
+        "123",
         runtime,
     )
 
@@ -281,7 +349,10 @@ async def test_normalizes_telegram_mpeg_audio_for_model_serialization(monkeypatc
     assert content.type == "data"
     assert content.media_type == "audio/mp3"
     assert content.uri == "data:audio/mp3;base64,bXAz"
-    serialized = OpenAIChatClient(api_key="test")._prepare_content_for_openai(  # pyright: ignore[reportPrivateUsage]
+    serialized = OpenAIChatClient(
+        api_key="test",
+        model="test",
+    )._prepare_content_for_openai(  # pyright: ignore[reportPrivateUsage]
         "user",
         content,
     )
@@ -306,7 +377,10 @@ def test_supported_media_types_serialize_for_foundry(
 ) -> None:
     content = Content.from_uri(uri=f"data:{media_type};base64,dGVzdA==", media_type=media_type)
 
-    serialized = OpenAIChatClient(api_key="test")._prepare_content_for_openai(  # pyright: ignore[reportPrivateUsage]
+    serialized = OpenAIChatClient(
+        api_key="test",
+        model="test",
+    )._prepare_content_for_openai(  # pyright: ignore[reportPrivateUsage]
         "user",
         content,
     )
@@ -481,7 +555,7 @@ async def test_image_only_stream_deletes_placeholder_and_sends_photo(
 
     monkeypatch.setattr(main, "execute_telegram_operation", execute)
 
-    await main.handle_telegram_update(_message_update("show a cat"), "session-1", runtime)
+    await main.handle_telegram_update(_message_update("show a cat"), "123", runtime)
 
     assert methods == ["sendMessage", "deleteMessage", "sendPhoto"]
 
@@ -500,4 +574,4 @@ async def test_requires_response_stream(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(main, "execute_telegram_operation", AsyncMock(return_value={"message_id": 42}))
 
     with pytest.raises(RuntimeError, match="response stream"):
-        await main.handle_telegram_update(_message_update(), "session-1", runtime)
+        await main.handle_telegram_update(_message_update(), "123", runtime)

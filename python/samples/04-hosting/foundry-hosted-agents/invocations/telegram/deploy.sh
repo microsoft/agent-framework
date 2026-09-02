@@ -93,6 +93,25 @@ if [[ ! "$INFRA_RETRY_DELAY_SECONDS" =~ ^[0-9]+$ ]]; then
 fi
 
 SUBSCRIPTION_ID="${AZURE_SUBSCRIPTION_ID:-$(az account show --query id -o tsv)}"
+if [[ "$(
+    az group exists \
+        --subscription "$SUBSCRIPTION_ID" \
+        --name "$RESOURCE_GROUP_NAME"
+)" == "true" ]]; then
+    existing_group_tags="$(
+        az group show \
+            --subscription "$SUBSCRIPTION_ID" \
+            --name "$RESOURCE_GROUP_NAME" \
+            --query tags \
+            -o json
+    )"
+    if [[ "$(jq -r '.sample // ""' <<<"$existing_group_tags")" != "agent-framework-telegram-hosted-agent" ]]; then
+        printf 'Resource group %s already exists without the Telegram sample ownership tag.\n' \
+            "$RESOURCE_GROUP_NAME" >&2
+        exit 1
+    fi
+fi
+
 ACCOUNT_TYPE="$(az account show --subscription "$SUBSCRIPTION_ID" --query user.type -o tsv)"
 if [[ -n "${DEPLOYER_OBJECT_ID:-}" ]]; then
     DEPLOYER_ID="$DEPLOYER_OBJECT_ID"
@@ -352,7 +371,7 @@ if [[ "$permissions_changed" == "1" && "$RBAC_PROPAGATION_WAIT_SECONDS" -gt 0 ]]
     sleep "$RBAC_PROPAGATION_WAIT_SECONDS"
 fi
 
-printf 'Checking the hosted endpoint rejects a request without a channel...\n'
+printf 'Checking the hosted endpoint rejects unauthenticated direct invocation...\n'
 FOUNDRY_TOKEN="$(
     az account get-access-token \
         --subscription "$SUBSCRIPTION_ID" \
@@ -375,7 +394,7 @@ health_response="$(
         -d '{}'
 )"
 health_status="${health_response##*$'\n'}"
-if [[ "$health_status" != "400" ]]; then
+if [[ "$health_status" != "401" ]]; then
     printf 'Unexpected hosted-agent health response: %s\n' "$health_status" >&2
     exit 1
 fi

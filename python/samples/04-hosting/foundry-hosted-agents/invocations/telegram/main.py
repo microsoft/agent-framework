@@ -2,16 +2,17 @@
 
 """Run a Telegram bot as a Foundry Hosted Agent using Invocations 2.0.
 
-API Management authenticates Telegram, stamps ``channel="telegram"``, and
-supplies the Telegram chat id as the Foundry ``agent_session_id``. The hosted
-agent keeps conversation history in Cosmos DB and sends streamed responses
-back through the Telegram Bot API.
+API Management authenticates Telegram, stamps ``channel="telegram"`` and a
+trusted ingress secret, and supplies the Telegram chat id as the Foundry
+``agent_session_id``. The hosted agent keeps conversation history in Cosmos DB
+and sends streamed responses back through the Telegram Bot API.
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import hmac
 import logging
 import os
 import time
@@ -49,6 +50,8 @@ EDIT_INTERVAL_SECONDS = 0.4
 MAX_MEDIA_BYTES = 1024 * 1024
 PLACEHOLDER_TEXT = "..."
 BOT_TOKEN_SECRET_NAME = "telegram-bot-token"
+WEBHOOK_SECRET_NAME = "telegram-webhook-secret"
+INGRESS_SECRET_HEADER = "X-Agent-Framework-Ingress-Secret"
 ENABLE_SENSITIVE_DATA = os.getenv("ENABLE_SENSITIVE_DATA", "true").casefold() in {"1", "true", "yes", "on"}
 AGENT_INSTRUCTIONS = (Path(__file__).parent / "instructions.md").read_text(encoding="utf-8").strip()
 MODEL_MEDIA_TYPES = {
@@ -141,6 +144,19 @@ async def get_bot_token(runtime: Runtime) -> str:
         raise RuntimeError("The Telegram bot token secret is empty")
     runtime.bot_token = value
     return value
+
+
+async def authenticate_ingress(request: Request, runtime: Runtime) -> bool:
+    """Validate the secret stamped by API Management."""
+    provided_secret = request.headers.get(INGRESS_SECRET_HEADER)
+    if not provided_secret:
+        return False
+
+    secret = await runtime.secrets.get_secret(WEBHOOK_SECRET_NAME)
+    expected_secret = secret.value
+    if not isinstance(expected_secret, str) or not expected_secret:
+        raise RuntimeError("The Telegram webhook secret is empty")
+    return hmac.compare_digest(provided_secret, expected_secret)
 
 
 def _telegram_result(response: httpx.Response, method: str) -> dict[str, Any]:
@@ -321,6 +337,8 @@ async def handle_telegram_update(update: Mapping[str, Any], session_id: str, run
     chat_id = telegram_chat_id(update)
     if chat_id is None:
         raise ValueError("Telegram update does not contain a supported chat")
+    if str(chat_id) != session_id:
+        raise ValueError("Telegram chat id does not match agent_session_id")
 
     callback_query_id = telegram_callback_query_id(update)
     if callback_query_id is not None:
@@ -347,9 +365,10 @@ async def handle_telegram_update(update: Mapping[str, Any], session_id: str, run
             ),
         )
         return
+    resolved_media_type = model_media_type or "application/octet-stream"
 
     async def resolve_file(file_id: str) -> str | None:
-        media_type = model_media_type if media is not None and media[0] == file_id else "application/octet-stream"
+        media_type = resolved_media_type if media is not None and media[0] == file_id else "application/octet-stream"
         return await resolve_telegram_file(file_id, runtime, media_type=media_type)
 
     try:
@@ -370,8 +389,8 @@ async def handle_telegram_update(update: Mapping[str, Any], session_id: str, run
             ),
         )
         return
-    if media is not None and model_media_type != media[1]:
-        _normalize_run_media_type(run["messages"], media[1], model_media_type)
+    if media is not None and resolved_media_type != media[1]:
+        _normalize_run_media_type(run["messages"], media[1], resolved_media_type)
 
     placeholder = await execute_telegram_operation(
         runtime,
@@ -415,6 +434,10 @@ enable_instrumentation(enable_sensitive_data=ENABLE_SENSITIVE_DATA, force=True)
 @app.invoke_handler
 async def handle_invoke(request: Request) -> Response:
     """Process an update forwarded by API Management."""
+    runtime = await get_runtime()
+    if not await authenticate_ingress(request, runtime):
+        return Response("Unauthorized ingress", status_code=401)
+
     session_id = get_request_context().session_id
     if not session_id:
         return Response("Missing agent_session_id", status_code=400)
@@ -423,7 +446,7 @@ async def handle_invoke(request: Request) -> Response:
         payload: dict[str, Any] = await request.json()
         if not isinstance(payload, dict):
             raise ValueError("Request body must be a JSON object")
-        await dispatch_channel(payload, session_id, await get_runtime())
+        await dispatch_channel(payload, session_id, runtime)
     except ValueError as exc:
         return Response(str(exc), status_code=400)
 

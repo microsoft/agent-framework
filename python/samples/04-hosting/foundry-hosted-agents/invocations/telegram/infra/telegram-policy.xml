@@ -9,6 +9,9 @@
       <value>{{TelegramWebhookSecret}}</value>
     </check-header>
     <set-header name="X-Telegram-Bot-Api-Secret-Token" exists-action="delete" />
+    <set-header name="X-Agent-Framework-Ingress-Secret" exists-action="override">
+      <value>{{TelegramWebhookSecret}}</value>
+    </set-header>
     <set-variable
       name="telegramBody"
       value="@(context.Request.Body.As&lt;JObject&gt;(preserveContent: true))" />

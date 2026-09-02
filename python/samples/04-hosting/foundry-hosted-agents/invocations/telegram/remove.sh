@@ -25,6 +25,28 @@ fi
 
 SUBSCRIPTION_ID="${AZURE_SUBSCRIPTION_ID:-$(az account show --query id -o tsv)}"
 
+if [[ "$(
+    az group exists \
+        --subscription "$SUBSCRIPTION_ID" \
+        --name "$RESOURCE_GROUP_NAME"
+)" != "true" ]]; then
+    printf 'Resource group does not exist: %s\n' "$RESOURCE_GROUP_NAME"
+    exit 0
+fi
+
+group_tags="$(
+    az group show \
+        --subscription "$SUBSCRIPTION_ID" \
+        --name "$RESOURCE_GROUP_NAME" \
+        --query tags \
+        -o json
+)"
+if [[ "$(jq -r '.sample // ""' <<<"$group_tags")" != "agent-framework-telegram-hosted-agent" ]]; then
+    printf 'Refusing to remove resource group %s without the Telegram sample ownership tag.\n' \
+        "$RESOURCE_GROUP_NAME" >&2
+    exit 1
+fi
+
 printf 'Removing the Telegram webhook...\n'
 webhook_deletion="$(
     curl -sS \
@@ -36,15 +58,6 @@ if [[ "$(jq -r '.ok' <<<"$webhook_deletion")" != "true" ]]; then
     printf 'Telegram webhook removal failed: %s\n' \
         "$(jq -r '.description // "unknown error"' <<<"$webhook_deletion")" >&2
     exit 1
-fi
-
-if [[ "$(
-    az group exists \
-        --subscription "$SUBSCRIPTION_ID" \
-        --name "$RESOURCE_GROUP_NAME"
-)" != "true" ]]; then
-    printf 'Resource group does not exist: %s\n' "$RESOURCE_GROUP_NAME"
-    exit 0
 fi
 
 printf 'Deleting resource group %s...\n' "$RESOURCE_GROUP_NAME"

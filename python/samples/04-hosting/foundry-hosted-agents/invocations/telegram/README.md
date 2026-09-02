@@ -53,7 +53,7 @@ From this directory, run:
 
 The script:
 
-1. validates prerequisites and configuration;
+1. validates prerequisites, configuration, and resource-group ownership;
 2. builds and previews Bicep before provisioning;
 3. creates or selects an isolated azd environment and sets non-secret deployment outputs;
 4. validates metadata and performs a Python 3.13 direct-code deployment whose remote build installs
@@ -76,7 +76,7 @@ All settings are optional except `TELEGRAM_BOT_TOKEN`.
 | `AZURE_SUBSCRIPTION_ID` | current Azure CLI subscription | Target subscription |
 | `AZURE_LOCATION` | `eastus2` | Foundry, APIM, Key Vault, and monitoring region |
 | `COSMOS_LOCATION` | `AZURE_LOCATION` | Cosmos DB region; change if serverless capacity is unavailable |
-| `RESOURCE_GROUP_NAME` | `rg-$NAME_PREFIX` | Resource group name |
+| `RESOURCE_GROUP_NAME` | `rg-$NAME_PREFIX` | Dedicated resource group name |
 | `AZD_ENV_NAME` | `$NAME_PREFIX-telegram` | Isolated azd environment |
 | `APIM_PUBLISHER_EMAIL` | Azure account name | Required APIM publisher email |
 | `APIM_PUBLISHER_NAME` | `Agent Framework sample` | APIM publisher name |
@@ -109,13 +109,15 @@ step registers the same new value with Telegram.
 ## How requests flow
 
 1. Telegram sends an authenticated HTTPS webhook to APIM.
-2. APIM compares `X-Telegram-Bot-Api-Secret-Token` with a Key Vault-backed named value, then removes the header.
+2. APIM compares `X-Telegram-Bot-Api-Secret-Token` with a Key Vault-backed named value, removes the caller-controlled
+   header, and stamps an internal ingress header from the same named value.
 3. The policy reads the original JSON object, adds only the top-level `channel: "telegram"` discriminator, and
    preserves the Telegram update fields.
 4. It extracts the chat id from `message`, `edited_message`, or `callback_query.message`, sets it as
    `agent_session_id`, and authenticates to Foundry with APIM's managed identity.
-5. The hosted handler validates and dispatches `channel`, then uses the APIM-provided session id for the
-   `AgentSession` and Cosmos history partition.
+5. The hosted handler authenticates the internal ingress header, validates and dispatches `channel`, and requires the
+   APIM-provided session id to match the Telegram chat id before using it for the `AgentSession` and Cosmos history
+   partition.
 
 One bot is deployed per sample environment, so the chat-derived session key is scoped by that environment.
 `/new` clears that Cosmos history without invoking the model. `/start` and `/help` are also handled in application
@@ -184,9 +186,11 @@ export TELEGRAM_BOT_TOKEN="<bot-token>"
 ./remove.sh
 ```
 
-The script verifies that Telegram removed the webhook before deleting the resource group. It uses the same
-`NAME_PREFIX`, `RESOURCE_GROUP_NAME`, and `AZURE_SUBSCRIPTION_ID` defaults and overrides as `deploy.sh`. The bot token
-is read only from the current shell, and the script does not print the token or Telegram response.
+The deployment refuses to adopt an existing resource group unless it carries this sample's ownership tag. The removal
+script verifies the same tag before unregistering the webhook or deleting the dedicated resource group, and then
+verifies that Telegram removed the webhook before deletion. It uses the same `NAME_PREFIX`, `RESOURCE_GROUP_NAME`, and
+`AZURE_SUBSCRIPTION_ID` defaults and overrides as `deploy.sh`. The bot token is read only from the current shell, and
+the script does not print the token or Telegram response.
 
 To also remove the local azd environment after the resource group is gone:
 
