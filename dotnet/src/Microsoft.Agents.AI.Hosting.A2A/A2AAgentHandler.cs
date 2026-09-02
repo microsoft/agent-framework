@@ -57,11 +57,13 @@ internal sealed class A2AAgentHandler : IAgentHandler
         // Handle messages received via streaming endpoint
         if (context.StreamingResponse)
         {
-            return this.HandleNewMessageStreamingAsync(context, eventQueue, aggregateTaskUpdates: false, cancellationToken);
+            return this.HandleNewMessageAsync(context, eventQueue, aggregateTaskUpdates: false, cancellationToken);
         }
 
         // Handle new messages received via non-streaming endpoint
-        return this.HandleNewMessageAsync(context, eventQueue, cancellationToken);
+        // Aggregate task updates unless the caller requests an immediate response.
+        bool aggregateTaskUpdates = context.Configuration?.ReturnImmediately is not true;
+        return this.HandleNewMessageAsync(context, eventQueue, aggregateTaskUpdates, cancellationToken);
     }
 
     /// <inheritdoc/>
@@ -69,36 +71,6 @@ internal sealed class A2AAgentHandler : IAgentHandler
     {
         var taskUpdater = new TaskUpdater(eventQueue, context.TaskId, context.ContextId);
         await taskUpdater.CancelAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Handles a new message received via the non-streaming <c>message/send</c> endpoint.
-    /// </summary>
-    /// <remarks>
-    /// A non-streaming caller receives exactly one response event, so the shape of that event depends on
-    /// both the server configuration and the client request:
-    /// <list type="bullet">
-    /// <item><description>
-    /// Server allows background responses and the client asked for an immediate response
-    /// (<c>ReturnImmediately = true</c>): the initial task is returned right away and the remaining updates
-    /// are streamed into the task by the server, so the client polls for the rest.
-    /// </description></item>
-    /// <item><description>
-    /// Server allows background responses and the client did not ask for an immediate response
-    /// (<c>ReturnImmediately = false</c>): the agent run is aggregated first and a single completed task is returned.
-    /// </description></item>
-    /// <item><description>
-    /// Server disallows background responses: a single aggregated message is returned regardless of
-    /// <c>ReturnImmediately</c>, because a message response cannot be produced incrementally.
-    /// </description></item>
-    /// </list>
-    /// </remarks>
-    private async Task HandleNewMessageAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
-    {
-        // Aggregate task updates unless the client requests an immediate response.
-        bool aggregateTaskUpdates = context.Configuration?.ReturnImmediately is not true;
-
-        await this.HandleNewMessageStreamingAsync(context, eventQueue, aggregateTaskUpdates, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -146,7 +118,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// </description></item>
     /// </list>
     /// </remarks>
-    private async Task HandleNewMessageStreamingAsync(RequestContext context, AgentEventQueue eventQueue, bool aggregateTaskUpdates, CancellationToken cancellationToken)
+    private async Task HandleNewMessageAsync(RequestContext context, AgentEventQueue eventQueue, bool aggregateTaskUpdates, CancellationToken cancellationToken)
     {
         var contextId = context.ContextId ?? Guid.NewGuid().ToString("N");
         var session = await this._hostAgent.GetOrCreateSessionAsync(contextId, cancellationToken).ConfigureAwait(false);
@@ -162,6 +134,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
         List<ChatMessage> chatMessages = context.Message is not null ? [context.Message.ToChatMessage()] : [];
 
         var options = CreateRunOptions(context);
+
         // Decide whether to run in background based on user preferences and agent capabilities
         var decisionContext = new A2ARunDecisionContext(context);
         var returnTask = await this._runMode.ShouldRunInBackgroundAsync(decisionContext, cancellationToken).ConfigureAwait(false);
