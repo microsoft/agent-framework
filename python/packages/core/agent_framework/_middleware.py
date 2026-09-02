@@ -7,7 +7,7 @@ import inspect
 import logging
 import sys
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Iterable, Mapping, Sequence
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, cast, overload
 
@@ -151,6 +151,72 @@ class MiddlewareType(str, Enum):
     CHAT = "chat"
 
 
+def _select_run_level_tools(tools: Any, options: Mapping[str, Any] | None) -> Any:
+    """Select this invocation's run-level tool source.
+
+    The named ``tools`` parameter takes precedence over a ``tools`` entry in the
+    options mapping. This is the framework's single statement of that rule — the run-start
+    resolution (:meth:`AgentContext._resolve_run_start_tools`, projected into
+    ``agent_startup`` by observability middleware) and the run's own setup
+    (``Agent._prepare_run_context``) both consume it, so the run-start view can never
+    disagree with what the run executes.
+    """
+    if tools is not None:
+        return tools
+    if options is not None:
+        return options.get("tools")
+    return None
+
+
+def _materialize_tool_container(tools: Any) -> Any:
+    """Materialize one-shot iterable tool containers into lists, tools untouched.
+
+    ``normalize_tools`` recursively flattens any iterable tool collection — including
+    the ``.tools`` collection of wrapper objects — so generators and other single-pass
+    iterables are supported containers at every nesting level; but each observer that
+    iterates one consumes it for everyone after it. This walks exactly the container
+    shapes that flattening walks (in flattening's own order) and lists them once,
+    without converting any tool: middleware must keep seeing the caller's original
+    tool objects, so identity-based policy checks still fire. Tool leaves pass through
+    untouched, and any container or wrapper whose contents needed no materialization
+    keeps its identity. A wrapper whose ``.tools`` collection is one-shot (or holds a
+    one-shot) cannot be preserved without mutating the caller's object, so exactly
+    that case is expanded into its materialized tools — the same contents flattening
+    would have produced from it.
+    """
+    from pydantic import BaseModel
+
+    from ._mcp import MCPTool
+    from ._tools import FunctionTool
+
+    def materialize(value: Any) -> Any:
+        # Tool leaves flattening never iterates, in flattening's own order.
+        if value is None or isinstance(value, (FunctionTool, dict, MCPTool, str, bytes, bytearray)) or callable(value):
+            return cast("Any", value)
+        # Wrapper objects exposing an iterable ``.tools`` collection (mapping-like
+        # toolboxes, pydantic wrappers): flattening reads and iterates that attribute
+        # — before its Mapping/BaseModel exclusions — so its contents must be
+        # materialized here too.
+        collection = getattr(value, "tools", None)
+        if isinstance(collection, Iterable) and not isinstance(collection, (str, bytes, bytearray, Mapping)):
+            items = [materialize(item) for item in cast("Iterable[Any]", collection)]
+            if isinstance(collection, Collection) and all(
+                new is old for new, old in zip(items, cast("Collection[Any]", collection))
+            ):
+                # The collection is safely re-iterable and its contents needed no
+                # materialization: keep the wrapper itself.
+                return value
+            return items
+        if isinstance(value, (Mapping, BaseModel)) or not isinstance(value, Iterable):
+            return cast("Any", value)
+        items = [materialize(item) for item in cast("Iterable[Any]", value)]
+        if isinstance(value, Sequence) and all(new is old for new, old in zip(items, cast("Sequence[Any]", value))):
+            return cast("Any", value)
+        return items
+
+    return materialize(tools)
+
+
 class AgentContext:
     """Context object for agent middleware invocations.
 
@@ -265,6 +331,34 @@ class AgentContext:
         # the run it starts (see _sessions._offer_run_persistence_gate_claim), so the
         # gate binds to that run's identity and never to middleware-initiated runs.
         self._run_persistence_gate: _RunPersistenceGate | None = None
+
+    def _resolve_run_start_tools(self) -> list[ToolTypes]:
+        """Resolve the run-start tool list for this invocation, normalized.
+
+        This is the framework's one statement of the run-start tool policy, kept next
+        to the run-option rules it mirrors so they evolve together (middleware such as
+        agent-hooks reads it instead of re-deriving the precedence): the agent's
+        declared tools (:class:`~agent_framework.Agent` keeps them in
+        ``default_options["tools"]``; other agent implementations may expose a
+        ``tools`` attribute) followed by this invocation's run-level tools, where the
+        named ``tools`` parameter takes precedence over a ``tools`` entry in the
+        options mapping — matching the run's own resolution in
+        ``Agent._prepare_run_context``. Tools registered later in the run (context
+        providers during run preparation, MCP servers expanding at connect time,
+        progressive tool exposure) are deliberately not part of the run-start view.
+
+        Normalization errors propagate; callers that must not fail should guard.
+        """
+        from ._tools import normalize_tools
+
+        declared_options = getattr(self.agent, "default_options", None)
+        declared: Any = (
+            cast("Mapping[str, Any]", declared_options).get("tools") if isinstance(declared_options, Mapping) else None
+        )
+        if declared is None:
+            declared = getattr(self.agent, "tools", None)
+        run_level = _select_run_level_tools(self.tools, self.options)
+        return [*normalize_tools(declared), *normalize_tools(run_level)]
 
 
 class FunctionInvocationContext:
@@ -1573,6 +1667,32 @@ class AgentMiddlewareLayer:
         effective_function_invocation_kwargs = (
             dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
         )
+        # Select the winning run-level tool route first, then materialize only that
+        # source: the losing route is never iterated — a losing one-shot options
+        # entry stays untouched for its owner and cannot raise or trigger side
+        # effects — and it is dropped from the forwarded options (on a copy), so no
+        # layer below (telemetry serialization, run setup) ever consumes or records a
+        # source the run will not use. Materialization covers the nested collection
+        # forms normalize_tools recursively flattens, so every observer of the run —
+        # middleware pipeline, telemetry, run setup — shares one re-iterable
+        # structure of the caller's original tool objects: observation never consumes
+        # the run's tool source, and identity-based policy checks (for example
+        # rejecting one specific privileged callable) keep seeing exactly what the
+        # caller supplied.
+        selected_tools = _select_run_level_tools(tools, options)
+        materialized_tools = _materialize_tool_container(selected_tools)
+        if tools is not None:
+            tools = materialized_tools
+            if options is not None and "tools" in options:
+                options = cast(
+                    "ChatOptions[Any]",
+                    {key: item for key, item in options.items() if key != "tools"},
+                )
+        elif materialized_tools is not selected_tools:
+            # The options mapping supplied the winner; swap the materialized value in
+            # on a copy (the caller's mapping is never mutated).
+            options = cast("ChatOptions[Any]", {**cast("Mapping[str, Any]", options), "tools": materialized_tools})
+
         # Execute with middleware if available
         if not pipeline.has_middlewares:
             return super().run(  # type: ignore[misc, no-any-return]

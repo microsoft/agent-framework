@@ -23,8 +23,8 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.15.0,<2",
-    "openai>=2.25.0,<3",
+    "agent-framework-core>=1.17.0,<2",
+    "openai>=2.25.0,<4",
 ]
 
 [tool.uv]

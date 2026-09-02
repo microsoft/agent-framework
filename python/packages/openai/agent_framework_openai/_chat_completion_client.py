@@ -17,6 +17,7 @@ from collections.abc import (
 from datetime import datetime, timezone
 from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, cast, overload
+from uuid import uuid4
 
 from agent_framework._clients import BaseChatClient
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
@@ -49,6 +50,7 @@ from agent_framework.observability import ChatTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
 from openai.types import CompletionUsage
+from openai.types.chat import completion_create_params
 from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDelta
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
@@ -82,23 +84,12 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # pragma: no cover
 
-try:
-    from openai.types.chat.completion_create_params import PromptCacheOptions
+_prompt_cache_options_supported = hasattr(completion_create_params, "PromptCacheOptions")
 
-    _prompt_cache_options_supported = True
-except ImportError:  # pragma: no cover
-    _prompt_cache_options_supported = False
 
-    class PromptCacheOptions(TypedDict, total=False):
-        """Fallback for openai versions that predate prompt cache options.
-
-        Mirrors the SDK's shape so ``prompt_cache_options`` type-checks the same on
-        every supported openai version; a runtime guard rejects the option when the
-        installed openai is too old to send it.
-        """
-
-        mode: Literal["implicit", "explicit"]
-        ttl: Literal["30m"]
+class _PromptCacheOptions(TypedDict, total=False):
+    mode: Literal["implicit", "explicit"]
+    ttl: Literal["30m"]
 
 
 if TYPE_CHECKING:
@@ -229,7 +220,7 @@ class OpenAIChatCompletionOptions(ChatOptions[ResponseModelT], Generic[ResponseM
     """Output verbosity for GPT-5 family models. Lower values yield shorter responses.
     See: https://developers.openai.com/cookbook/examples/gpt-5/gpt-5_new_params_and_tools#1-verbosity-parameter"""
 
-    prompt_cache_options: PromptCacheOptions
+    prompt_cache_options: _PromptCacheOptions
     """Request-wide prompt cache policy for GPT-5.6 and later models.
     Set mode to 'explicit' to use only the breakpoints set on content parts via
     ``Content.additional_properties["prompt_cache_breakpoint"]``.
@@ -629,6 +620,7 @@ class RawOpenAIChatCompletionClient(
 
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 client = self.client
+                tool_call_identities: dict[tuple[int, int], tuple[str, str]] = {}
                 if self._FEATURE_USAGE_INDEX is not None:
                     mark_feature_used(self._FEATURE_USAGE_INDEX)
                 request_options = dict(options_dict)
@@ -639,7 +631,25 @@ class RawOpenAIChatCompletionClient(
                     async for chunk in await client.chat.completions.create(stream=True, **request_options):
                         if len(chunk.choices) == 0 and chunk.usage is None:
                             continue
-                        yield self._parse_response_update_from_openai(chunk)
+                        update = self._parse_response_update_from_openai(chunk)
+                        for content in update.contents:
+                            if content.type != "function_call":
+                                continue
+                            choice_index = content.additional_properties.get("tool_call_choice_index")
+                            tool_index = content.additional_properties.get("tool_call_index")
+                            if not isinstance(choice_index, int) or not isinstance(tool_index, int):
+                                continue
+                            index_key = (choice_index, tool_index)
+                            identity = tool_call_identities.get(index_key)
+                            if identity is None:
+                                identity = (f"af-call-{uuid4().hex}", content.call_id or "")
+                            occurrence_id, provider_call_id = identity
+                            if content.call_id:
+                                provider_call_id = content.call_id
+                            tool_call_identities[index_key] = (occurrence_id, provider_call_id)
+                            content.id = occurrence_id
+                            content.call_id = provider_call_id
+                        yield update
                 except BadRequestError as ex:
                     if ex.code == "content_filter":
                         raise OpenAIContentFilterException(
@@ -933,17 +943,17 @@ class RawOpenAIChatCompletionClient(
             total_token_count=usage.total_tokens,
         )
         if usage.completion_tokens_details:
-            if tokens := usage.completion_tokens_details.accepted_prediction_tokens:
+            if (tokens := usage.completion_tokens_details.accepted_prediction_tokens) is not None:
                 details["completion/accepted_prediction_tokens"] = tokens
-            if tokens := usage.completion_tokens_details.audio_tokens:
+            if (tokens := usage.completion_tokens_details.audio_tokens) is not None:
                 details["completion/audio_tokens"] = tokens
             if (tokens := usage.completion_tokens_details.reasoning_tokens) is not None:
                 details["completion/reasoning_tokens"] = tokens
                 details["reasoning_output_token_count"] = tokens
-            if tokens := usage.completion_tokens_details.rejected_prediction_tokens:
+            if (tokens := usage.completion_tokens_details.rejected_prediction_tokens) is not None:
                 details["completion/rejected_prediction_tokens"] = tokens
         if usage.prompt_tokens_details:
-            if tokens := usage.prompt_tokens_details.audio_tokens:
+            if (tokens := usage.prompt_tokens_details.audio_tokens) is not None:
                 details["prompt/audio_tokens"] = tokens
             cache_write_tokens = cast("int | None", getattr(usage.prompt_tokens_details, "cache_write_tokens", None))
             if cache_write_tokens is not None:
@@ -1005,6 +1015,9 @@ class RawOpenAIChatCompletionClient(
                     tool_index = getattr(tool, "index", None)
                     if tool_index is not None:
                         fcc.additional_properties["tool_call_index"] = tool_index
+                        choice_index = getattr(choice, "index", None)
+                        if choice_index is not None:
+                            fcc.additional_properties["tool_call_choice_index"] = choice_index
                     resp.append(fcc)
 
         # When you enable asynchronous content filtering in Azure OpenAI, you may receive empty deltas
@@ -1122,10 +1135,12 @@ class RawOpenAIChatCompletionClient(
                         continue
                     args["content"] = [{"type": "text", "text": content.text}]
                 case _:
-                    if "content" not in args:
-                        args["content"] = []
-                    # this is a list to allow multi-modal content
-                    args["content"].append(self._prepare_content_for_openai(content))  # type: ignore
+                    prepared_content = self._prepare_content_for_openai(content)
+                    if prepared_content:
+                        if "content" not in args:
+                            args["content"] = []
+                        # this is a list to allow multi-modal content
+                        args["content"].append(prepared_content)  # type: ignore
             if "content" in args or "tool_calls" in args:
                 if pending_reasoning is not None:
                     args["reasoning_details"] = pending_reasoning
@@ -1211,8 +1226,8 @@ class RawOpenAIChatCompletionClient(
                 elif content.media_type and "mp3" in content.media_type:
                     audio_format = "mp3"
                 else:
-                    # Fallback to default to_dict for unsupported audio formats
-                    return content.to_dict(exclude_none=True)
+                    logger.debug("Unsupported audio media type: %s", content.media_type)
+                    return {}
 
                 # Extract base64 data from data URI
                 audio_data = content.uri
@@ -1248,8 +1263,8 @@ class RawOpenAIChatCompletionClient(
                     content,
                 )
             case _:
-                # Default fallback for all other content types
-                return content.to_dict(exclude_none=True)
+                logger.debug("Unsupported content type passed (type: %s)", content.type)
+                return {}
 
     @override
     def service_url(self) -> str:

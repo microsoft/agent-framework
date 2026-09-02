@@ -2,6 +2,7 @@
 
 import base64
 import json
+import warnings
 from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -594,6 +595,12 @@ def test_function_call_content_add_merging_and_errors():
     with raises(ContentError):
         _ = a + b
 
+    # incompatible occurrence ids
+    a = Content.from_function_call(call_id="1", name="f", arguments="abc", id="occurrence-a")
+    b = Content.from_function_call(call_id="1", name="f", arguments="def", id="occurrence-b")
+    with raises(AdditionItemMismatch, match="different ids"):
+        _ = a + b
+
     # name merging: when the first chunk has no name (e.g. a streaming delta where
     # the function name arrives later), the merged content must keep the name from
     # whichever side provides it, regardless of order.
@@ -738,6 +745,67 @@ def test_function_approval_serialization_roundtrip():
 
     # Skip the BaseModel validation test since we're no longer using Pydantic
     # The Content union will need to be handled differently when we fully migrate
+
+
+def test_function_call_occurrence_id_roundtrips_without_regeneration():
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="f",
+        arguments={"x": 1},
+        id="af-call-existing",
+    )
+
+    restored = Content.from_dict(function_call.to_dict())
+
+    assert restored.id == "af-call-existing"
+    assert restored.call_id == "provider-call"
+
+
+def test_local_function_approval_request_warns_for_legacy_occurrence_identity() -> None:
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="f",
+        id="af-call-occurrence",
+    )
+
+    with pytest.warns(FutureWarning, match="id differs from function_call.id.*legacy"):
+        request = Content.from_function_approval_request(id="provider-call", function_call=function_call)
+
+    assert request.id == "provider-call"
+    assert request.function_call is function_call
+
+
+def test_hosted_function_approval_request_allows_provider_request_identity_without_warning() -> None:
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="hosted",
+        id="af-call-occurrence",
+        additional_properties={"server_label": "provider"},
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        request = Content.from_function_approval_request(
+            id="provider-approval-request",
+            function_call=function_call,
+        )
+
+    assert request.id == "provider-approval-request"
+    assert caught == []
+
+
+def test_legacy_function_call_deserialization_does_not_generate_an_occurrence_id():
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        restored = Content.from_dict({
+            "type": "function_call",
+            "call_id": "legacy-call",
+            "name": "f",
+            "arguments": {},
+        })
+
+    assert restored.id is None
+    assert caught == []
 
 
 def test_function_approval_request_function_call_none_guard():

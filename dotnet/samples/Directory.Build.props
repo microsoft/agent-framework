@@ -11,6 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Using Include="SampleHelpers.AzureOpenAIEndpoint" Alias="AzureOpenAIEndpoint" />
     <Using Include="SampleHelpers.SampleEnvironment" Alias="Environment" />
   </ItemGroup>
 

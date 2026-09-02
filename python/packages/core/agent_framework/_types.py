@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import sys
+import warnings
 from asyncio import iscoroutine
 from collections.abc import (
     AsyncGenerator,
@@ -816,6 +817,7 @@ class Content:
         arguments: str | Mapping[str, Any] | None = None,
         exception: str | None = None,
         informational_only: bool = False,
+        id: str | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
@@ -834,6 +836,8 @@ class Content:
                 error state.
             informational_only: Whether the function call is present only for transcript fidelity and should not be
                 executed by Agent Framework function invocation.
+            id: Stable Agent Framework identity for this occurrence. When omitted, the function invocation layer
+                assigns one before a locally actionable call is processed.
             annotations: Optional annotations attached to this content item.
             additional_properties: Extra provider-specific properties to preserve with the content item.
             raw_representation: The original provider-specific object or payload this content item was created from.
@@ -848,6 +852,7 @@ class Content:
             arguments=arguments,
             exception=exception,
             informational_only=informational_only,
+            id=id,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -1282,6 +1287,19 @@ class Content:
         raw_representation: Any = None,
     ) -> ContentT:
         """Create function approval request content."""
+        if (
+            function_call.type == "function_call"
+            and function_call.id is not None
+            and id != function_call.id
+            and function_call.additional_properties.get("server_label") is None
+        ):
+            warnings.warn(
+                "Creating a local function_approval_request whose id differs from function_call.id uses the legacy "
+                "provider call_id binding. Use function_call.id as the approval request id; legacy binding support "
+                "will be removed in a future release.",
+                FutureWarning,
+                stacklevel=2,
+            )
         return cls(
             "function_approval_request",
             id=id,
@@ -1541,9 +1559,11 @@ class Content:
 
     def _add_function_call_content(self, other: Content) -> Content:
         """Add two FunctionCallContent instances."""
+        if self.id and other.id and self.id != other.id:
+            raise AdditionItemMismatch("Cannot merge function calls with different ids")
         other_call_id = getattr(other, "call_id", None)
         self_call_id = getattr(self, "call_id", None)
-        if other_call_id and self_call_id != other_call_id:
+        if self_call_id and other_call_id and self_call_id != other_call_id:
             raise ContentError("Cannot add function calls with different call_ids")
 
         self_arguments = getattr(self, "arguments", None)
@@ -1562,7 +1582,7 @@ class Content:
 
         return Content(
             "function_call",
-            call_id=self_call_id,
+            call_id=self_call_id or other_call_id,
             name=getattr(self, "name", None) or getattr(other, "name", None),
             arguments=arguments,
             id=self.id or other.id,
@@ -2148,6 +2168,30 @@ def _finalize_response(response: ChatResponse | AgentResponse) -> None:
         _coalesce_text_content(msg.contents, "text")
         _coalesce_text_content(msg.contents, "text_reasoning")
         _coalesce_code_interpreter_content(msg.contents)
+    _coalesce_function_call_occurrences(response)
+
+
+def _coalesce_function_call_occurrences(response: ChatResponse | AgentResponse) -> None:
+    """Merge streamed function-call fragments that share a stable occurrence id."""
+    occurrences: dict[str, tuple[list[Content], int, Content]] = {}
+    for message in response.messages:
+        original_contents = message.contents
+        coalesced_contents: list[Content] = []
+        message.contents = coalesced_contents
+        for content in original_contents:
+            if content.type != "function_call" or content.id is None:
+                coalesced_contents.append(content)
+                continue
+            existing = occurrences.get(content.id)
+            if existing is None:
+                coalesced_contents.append(content)
+                occurrences[content.id] = (coalesced_contents, len(coalesced_contents) - 1, content)
+                continue
+            contents, index, accumulated = existing
+            merged = accumulated + content
+            contents[index] = merged
+            occurrences[content.id] = (contents, index, merged)
+    response.messages[:] = [message for message in response.messages if message.contents]
 
 
 # region ContinuationToken

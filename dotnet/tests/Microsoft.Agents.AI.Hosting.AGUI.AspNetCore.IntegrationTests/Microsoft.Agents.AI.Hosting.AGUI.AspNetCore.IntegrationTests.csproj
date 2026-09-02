@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
@@ -10,7 +10,6 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.Identity" />
-    <PackageReference Include="Azure.AI.OpenAI" />
     <PackageReference Include="Microsoft.AspNetCore.TestHost" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
