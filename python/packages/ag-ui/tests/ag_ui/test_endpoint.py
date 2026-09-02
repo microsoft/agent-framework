@@ -31,6 +31,7 @@ from agent_framework import (
     SupportsAgentRun,
     ToolApprovalMiddleware,
     WorkflowBuilder,
+    WorkflowCheckpoint,
     WorkflowContext,
     WorkflowExecutor,
     executor,
@@ -54,7 +55,11 @@ from agent_framework_ag_ui import (
 from agent_framework_ag_ui._agent import AgentFrameworkAgent
 from agent_framework_ag_ui._approval_lifecycle import ApprovalExecutionOwner, ApprovalLifecycle, ApprovalStatus
 from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore, approval_state_thread_id
-from agent_framework_ag_ui._workflow import AgentFrameworkWorkflow
+from agent_framework_ag_ui._workflow import (
+    _CHECKPOINT_REQUEST_OWNER_KEY,
+    AgentFrameworkWorkflow,
+    _OwnedWorkflowCheckpointStorage,
+)
 
 
 def _decode_sse_events(response: Any) -> list[dict[str, Any]]:
@@ -4723,6 +4728,21 @@ async def test_endpoint_workflow_request_info_rejects_unowned_pending_interrupt(
         attacker_errors = [event for event in attacker_events if event.get("type") == "RUN_ERROR"]
         assert len(attacker_errors) == 1
         assert attacker_errors[0]["code"] == "WORKFLOW_RESUME_NOT_FOUND"
+
+
+async def test_owned_checkpoint_storage_stamps_owner_without_pending_events() -> None:
+    """The request owner is stamped on every save, not only when pending request events exist."""
+    storage = InMemoryCheckpointStorage()
+    owned_storage = _OwnedWorkflowCheckpointStorage(storage, ("scope-1", "thread-1"))
+    checkpoint = WorkflowCheckpoint(workflow_name="owned-workflow", graph_signature_hash="signature")
+    assert not checkpoint.pending_request_info_events
+
+    checkpoint_id = await owned_storage.save(checkpoint)
+
+    expected_owner = {"snapshot_scope": "scope-1", "thread_id": "thread-1"}
+    assert checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] == expected_owner
+    stored = await storage.load(checkpoint_id)
+    assert stored.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] == expected_owner
 
 
 async def test_endpoint_workflow_checkpoint_resume_rejects_threaded_resume_after_restart():
