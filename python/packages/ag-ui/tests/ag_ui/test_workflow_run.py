@@ -120,6 +120,72 @@ async def test_workflow_run_maps_custom_and_text_events():
     assert custom_events[0].value == {"progress": 10}  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
+async def test_workflow_run_maps_intermediate_text_to_reasoning_events():
+    """Intermediate workflow output is surfaced as AG-UI reasoning, not a generic CustomEvent."""
+
+    @executor(id="thinker")
+    async def thinker(message: Any, ctx: WorkflowContext[str, str]) -> None:
+        # Intermediate-designated executor: text should render as reasoning.
+        await ctx.yield_output("Analyzing the problem...")
+        await ctx.send_message("go")
+
+    @executor(id="finalizer")
+    async def finalizer(message: str, ctx: WorkflowContext[None, str]) -> None:
+        # Output-designated executor: final assistant text.
+        await ctx.yield_output("Here's my answer!")
+
+    workflow = (
+        WorkflowBuilder(
+            start_executor=thinker,
+            output_from=[finalizer],
+            intermediate_output_from=[thinker],
+        )
+        .add_edge(thinker, finalizer)
+        .build()
+    )
+    input_data = {"messages": [{"role": "user", "content": "solve it"}]}
+
+    events = [event async for event in run_workflow_stream(input_data, workflow)]
+    event_types = [event.type for event in events]
+
+    # The intermediate text renders as reasoning ...
+    assert "REASONING_MESSAGE_CONTENT" in event_types
+    reasoning_deltas = [event.delta for event in events if event.type == "REASONING_MESSAGE_CONTENT"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert "Analyzing the problem..." in reasoning_deltas
+
+    # ... and is not swallowed by the generic custom-event fallback.
+    assert not [event for event in events if event.type == "CUSTOM" and event.name == "intermediate"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    # The final output still renders as an assistant text message.
+    assert "TEXT_MESSAGE_CONTENT" in event_types
+    text_deltas = [event.delta for event in events if event.type == "TEXT_MESSAGE_CONTENT"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert "Here's my answer!" in text_deltas
+
+
+async def test_workflow_run_maps_data_alias_text_to_reasoning_events():
+    """The deprecated ``type='data'`` alias is treated like ``intermediate`` and renders as reasoning."""
+
+    @executor(id="emitter")
+    async def emitter(message: Any, ctx: WorkflowContext[Any, str]) -> None:
+        # Deprecated compatibility alias for an intermediate emission.
+        await ctx.add_event(WorkflowEvent.emit("emitter", "legacy reasoning"))
+        await ctx.yield_output("final answer")
+
+    workflow = WorkflowBuilder(start_executor=emitter).build()
+    input_data = {"messages": [{"role": "user", "content": "go"}]}
+
+    with pytest.warns(DeprecationWarning):
+        events = [event async for event in run_workflow_stream(input_data, workflow)]
+
+    reasoning_deltas = [event.delta for event in events if event.type == "REASONING_MESSAGE_CONTENT"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert "legacy reasoning" in reasoning_deltas
+    assert not [event for event in events if event.type == "CUSTOM" and event.name == "data"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    # The genuine output is still emitted as an assistant text message.
+    text_deltas = [event.delta for event in events if event.type == "TEXT_MESSAGE_CONTENT"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert "final answer" in text_deltas
+
+
 async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(monkeypatch: pytest.MonkeyPatch) -> None:
     """Workflow spans use supplied AG-UI threads without replacing provider fallback behavior."""
     import agent_framework.observability as observability

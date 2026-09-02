@@ -954,6 +954,25 @@ def _workflow_payload_to_contents(payload: Any) -> list[Content] | None:
     return None
 
 
+def _as_reasoning_content(content: Content) -> Content:
+    """Re-tag plain text content as ``text_reasoning``.
+
+    Intermediate workflow output should surface as AG-UI reasoning (a collapsible
+    "thinking" block) rather than a final assistant message. Only ``text`` content
+    is converted; tool calls, results, and other content types pass through
+    unchanged so they still emit as their native AG-UI events.
+    """
+    if content.type != "text":
+        return content
+    return Content.from_text_reasoning(
+        id=content.id,
+        text=content.text,
+        annotations=content.annotations,
+        additional_properties=content.additional_properties or None,
+        raw_representation=content.raw_representation,
+    )
+
+
 def _event_name(event: Any) -> str:
     event_type = getattr(event, "type", None)
     if isinstance(event_type, str) and event_type:
@@ -1274,7 +1293,12 @@ async def run_workflow_stream(
                     yield CustomEvent(name=_INTERRUPT_CARD_EVENT_NAME, value=interrupt_event_value)
                 continue
 
-            if event_type in {"output", "data"}:
+            if event_type in {"output", "intermediate", "data"}:
+                # "intermediate" (and its deprecated alias "data") carry non-terminal
+                # output. Their text is surfaced as AG-UI reasoning so consumers render
+                # it as a collapsible "thinking" block instead of a final assistant
+                # message. "output" keeps the terminal-message behavior.
+                is_intermediate = event_type in {"intermediate", "data"}
                 output_payload = getattr(event, "data", None)
                 if isinstance(output_payload, BaseEvent):
                     yield output_payload
@@ -1293,15 +1317,25 @@ async def run_workflow_stream(
                             yield out_event
                 contents = _workflow_payload_to_contents(output_payload)
                 if contents:
-                    output_text = _text_from_contents(contents)
-                    skip_text = bool(output_text and output_text == last_assistant_text)
-                    for content in contents:
-                        for out_event in _emit_content(content, flow, predictive_handler=None, skip_text=skip_text):
-                            yield out_event
-                    if flow.message_id and flow.accumulated_text:
-                        last_assistant_text = flow.accumulated_text.strip() or last_assistant_text
-                    elif output_text:
-                        last_assistant_text = output_text
+                    if is_intermediate:
+                        # Reasoning is a separate channel from the final assistant
+                        # message, so the last_assistant_text dedup does not apply.
+                        for content in contents:
+                            reasoning_content = _as_reasoning_content(content)
+                            for out_event in _emit_content(
+                                reasoning_content, flow, predictive_handler=None, skip_text=False
+                            ):
+                                yield out_event
+                    else:
+                        output_text = _text_from_contents(contents)
+                        skip_text = bool(output_text and output_text == last_assistant_text)
+                        for content in contents:
+                            for out_event in _emit_content(content, flow, predictive_handler=None, skip_text=skip_text):
+                                yield out_event
+                        if flow.message_id and flow.accumulated_text:
+                            last_assistant_text = flow.accumulated_text.strip() or last_assistant_text
+                        elif output_text:
+                            last_assistant_text = output_text
                 else:
                     yield CustomEvent(name="workflow_output", value=make_json_safe(output_payload))
                 continue
