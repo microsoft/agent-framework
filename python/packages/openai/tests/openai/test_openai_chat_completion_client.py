@@ -1461,10 +1461,56 @@ def test_prepare_marked_refusal_uses_native_assistant_field_and_text_fallback(
     )
 
     assert client._prepare_message_for_openai(Message(role="assistant", contents=[refusal])) == [
-        {"role": "assistant", "refusal": "I cannot help with that."}
+        {"role": "assistant", "content": None, "refusal": "I cannot help with that."}
     ]
     assert client._prepare_message_for_openai(Message(role="user", contents=[refusal])) == [
         {"role": "user", "content": "I cannot help with that."}
+    ]
+
+
+def test_prepare_mixed_text_and_refusal_uses_one_assistant_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text("Partial answer."),
+            Content.from_text(
+                "I cannot continue.",
+                additional_properties={"model_output_kind": "refusal"},
+            ),
+        ],
+    )
+
+    assert client._prepare_message_for_openai(message) == [
+        {
+            "role": "assistant",
+            "content": "Partial answer.",
+            "refusal": "I cannot continue.",
+        }
+    ]
+
+
+def test_prepare_text_refusal_text_uses_one_assistant_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text("A"),
+            Content.from_text("B", additional_properties={"model_output_kind": "refusal"}),
+            Content.from_text("C"),
+        ],
+    )
+
+    assert client._prepare_message_for_openai(message) == [
+        {
+            "role": "assistant",
+            "content": "A\nC",
+            "refusal": "B",
+        }
     ]
 
 

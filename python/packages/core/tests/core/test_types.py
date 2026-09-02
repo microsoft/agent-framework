@@ -159,6 +159,47 @@ def test_marked_refusal_text_is_excluded_from_structured_output() -> None:
     assert response.value is None
 
 
+@pytest.mark.parametrize("response_type", [ChatResponse, AgentResponse])
+def test_final_marked_refusal_does_not_fall_back_to_earlier_structured_output(response_type: type) -> None:
+    response = response_type(
+        messages=[
+            Message("assistant", [Content.from_text('{"result": "stale"}')]),
+            Message(
+                "assistant",
+                [
+                    Content.from_text(
+                        "I cannot provide a result.",
+                        additional_properties={"model_output_kind": "refusal"},
+                    )
+                ],
+            ),
+        ],
+        response_format={"type": "object"},
+    )
+
+    assert response.value is None
+
+
+def test_mixed_final_message_with_refusal_has_no_structured_output() -> None:
+    response = ChatResponse(
+        messages=[
+            Message(
+                "assistant",
+                [
+                    Content.from_text('{"result": "partial"}'),
+                    Content.from_text(
+                        "I cannot continue.",
+                        additional_properties={"model_output_kind": "refusal"},
+                    ),
+                ],
+            )
+        ],
+        response_format={"type": "object"},
+    )
+
+    assert response.value is None
+
+
 # region DataContent
 
 
@@ -2077,6 +2118,48 @@ def test_agent_response_from_updates_preserves_refusal_marker() -> None:
     assert response.messages[0].contents[0].text == "I cannot help."
     assert response.messages[0].contents[0].additional_properties == marker
     assert response.text == "I cannot help."
+
+
+@pytest.mark.parametrize(
+    ("updates", "expected"),
+    [
+        (
+            [
+                Content.from_text("Partial answer."),
+                Content.from_text(
+                    "I cannot continue.",
+                    additional_properties={"model_output_kind": "refusal"},
+                ),
+            ],
+            [
+                ("Partial answer.", {}),
+                ("I cannot continue.", {"model_output_kind": "refusal"}),
+            ],
+        ),
+        (
+            [
+                Content.from_text(
+                    "I cannot continue.",
+                    additional_properties={"model_output_kind": "refusal"},
+                ),
+                Content.from_text("Additional context."),
+            ],
+            [
+                ("I cannot continue.", {"model_output_kind": "refusal"}),
+                ("Additional context.", {}),
+            ],
+        ),
+    ],
+)
+def test_response_coalescing_preserves_model_output_kind_boundaries(
+    updates: list[Content],
+    expected: list[tuple[str, dict[str, str]]],
+) -> None:
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(contents=[content], role="assistant") for content in updates
+    ])
+
+    assert [(content.text, content.additional_properties) for content in response.messages[0].contents] == expected
 
 
 def test_comprehensive_to_dict_exclude_options():

@@ -521,6 +521,7 @@ class ApiClient {
           accumulatedText: storedState?.accumulatedText,
           accumulatedTextIsPreview: storedState?.accumulatedTextIsPreview,
           accumulatedTextType: storedState?.accumulatedTextType,
+          accumulatedParts: storedState?.accumulatedParts,
         }),
         event,
         currentResponseId,

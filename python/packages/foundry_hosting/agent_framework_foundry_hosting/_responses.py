@@ -1007,26 +1007,16 @@ class _OutputItemTracker:
                 (anything not recognized as a streaming delta type) to save/load approval requests.
         """
         if _is_refusal_text_content(content) and content.text is not None:
-            if self._active_type != "refusal" or (
-                message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
-            ):
-                for event in self._close():
-                    yield event
-                for event in self._open_refusal_message():
-                    yield event
+            for event in self._ensure_message_content("refusal", message_id):
+                yield event
             self._active_message_id = message_id
             self._accumulated.append(content.text)
             if self._refusal_content is not None:
                 yield self._refusal_content.emit_delta(content.text)
 
         elif content.type == "text" and content.text is not None:
-            if self._active_type != "text" or (
-                message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
-            ):
-                for event in self._close():
-                    yield event
-                for event in self._open_message():
-                    yield event
+            for event in self._ensure_message_content("text", message_id):
+                yield event
             self._active_message_id = message_id
             self._accumulated.append(content.text)
             if self._text_content is not None:
@@ -1223,21 +1213,42 @@ class _OutputItemTracker:
 
     # -- Private open/close helpers --
 
-    def _open_message(self) -> Generator[ResponseStreamEvent]:
-        self._message_item = self._stream.add_output_item_message()
-        self._text_content = self._message_item.add_text_content()
-        self._active_type = "text"
-        self._active_id = None
-        yield self._message_item.emit_added()
-        yield self._text_content.emit_added()
+    def _ensure_message_content(
+        self,
+        content_type: Literal["text", "refusal"],
+        message_id: str | None,
+    ) -> Generator[ResponseStreamEvent]:
+        message_changed = (
+            message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
+        )
+        if self._active_type == content_type and not message_changed:
+            return
+        if self._message_item is not None and self._active_type in {"text", "refusal"} and not message_changed:
+            yield from self._close_message_content()
+            yield from self._open_message_content(content_type)
+            return
+        yield from self._close()
+        yield from self._open_message(content_type)
 
-    def _open_refusal_message(self) -> Generator[ResponseStreamEvent]:
+    def _open_message(self, content_type: Literal["text", "refusal"]) -> Generator[ResponseStreamEvent]:
         self._message_item = self._stream.add_output_item_message()
-        self._refusal_content = self._message_item.add_refusal_content()
-        self._active_type = "refusal"
-        self._active_id = None
         yield self._message_item.emit_added()
-        yield self._refusal_content.emit_added()
+        yield from self._open_message_content(content_type)
+
+    def _open_message_content(
+        self,
+        content_type: Literal["text", "refusal"],
+    ) -> Generator[ResponseStreamEvent]:
+        if self._message_item is None:
+            raise RuntimeError("Cannot open message content without an active message")
+        self._active_type = content_type
+        self._active_id = None
+        if content_type == "refusal":
+            self._refusal_content = self._message_item.add_refusal_content()
+            yield self._refusal_content.emit_added()
+        else:
+            self._text_content = self._message_item.add_text_content()
+            yield self._text_content.emit_added()
 
     def _open_reasoning(self, content: Content) -> Generator[ResponseStreamEvent]:
         item_id = content.id
@@ -1284,23 +1295,14 @@ class _OutputItemTracker:
         yield self._mcp_builder.emit_added()
 
     def _close(self) -> Generator[ResponseStreamEvent]:
-        accumulated = "".join(self._accumulated)
-
-        if self._active_type == "text" and self._text_content and self._message_item:
-            yield self._text_content.emit_text_done(accumulated)
-            yield self._text_content.emit_done()
-            yield self._message_item.emit_done()
-            self._text_content = None
-            self._message_item = None
-
-        elif self._active_type == "refusal" and self._refusal_content and self._message_item:
-            yield self._refusal_content.emit_refusal_done(accumulated)
-            yield self._refusal_content.emit_done()
-            yield self._message_item.emit_done()
-            self._refusal_content = None
+        if self._active_type in {"text", "refusal"}:
+            yield from self._close_message_content()
+            if self._message_item is not None:
+                yield self._message_item.emit_done()
             self._message_item = None
 
         elif self._active_type == "text_reasoning" and self._summary_part and self._reasoning_item:
+            accumulated = "".join(self._accumulated)
             yield self._summary_part.emit_text_done(accumulated)
             yield self._summary_part.emit_done()
             yield self._reasoning_item.emit_done(
@@ -1316,11 +1318,13 @@ class _OutputItemTracker:
             self._reasoning_encrypted_content = None
 
         elif self._active_type == "function_call" and self._fc_builder:
+            accumulated = "".join(self._accumulated)
             yield self._fc_builder.emit_arguments_done(accumulated)
             yield self._fc_builder.emit_done()
             self._fc_builder = None
 
         elif self._active_type == "mcp_server_tool_call" and self._mcp_builder:
+            accumulated = "".join(self._accumulated)
             yield self._mcp_builder.emit_arguments_done(accumulated)
             yield self._mcp_builder.emit_completed()
             yield self._mcp_builder.emit_done()
@@ -1329,6 +1333,20 @@ class _OutputItemTracker:
         self._active_type = None
         self._active_id = None
         self._active_message_id = None
+        self._accumulated.clear()
+
+    def _close_message_content(self) -> Generator[ResponseStreamEvent]:
+        accumulated = "".join(self._accumulated)
+        if self._active_type == "text" and self._text_content is not None:
+            yield self._text_content.emit_text_done(accumulated)
+            yield self._text_content.emit_done()
+            self._text_content = None
+        elif self._active_type == "refusal" and self._refusal_content is not None:
+            yield self._refusal_content.emit_refusal_done(accumulated)
+            yield self._refusal_content.emit_done()
+            self._refusal_content = None
+        self._active_type = None
+        self._active_id = None
         self._accumulated.clear()
 
 

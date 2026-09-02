@@ -309,8 +309,8 @@ class MessageMapper:
             # Collect output items in order
             output_items: list[Any] = []
 
-            # Track text content parts per message (keyed by item_id)
-            text_parts_by_message: dict[str, list[str]] = {}
+            # Track text-bearing content parts per message and content index.
+            content_parts_by_message: dict[str, dict[int, dict[str, Any]]] = {}
             message_order: list[str] = []
 
             # Track function calls (keyed by call_id) to accumulate arguments
@@ -325,14 +325,21 @@ class MessageMapper:
             for event in events:
                 event_type = getattr(event, "type", None)
 
-                # Handle text deltas - accumulate text per message
-                if event_type == "response.output_text.delta":
+                # Handle text/refusal deltas - accumulate each content part independently.
+                if event_type in {"response.output_text.delta", "response.refusal.delta"}:
                     item_id = getattr(event, "item_id", "default")
-                    if item_id not in text_parts_by_message:
-                        text_parts_by_message[item_id] = []
+                    content_index = getattr(event, "content_index", 0)
+                    parts = content_parts_by_message.setdefault(item_id, {})
+                    part = parts.setdefault(
+                        content_index,
+                        {
+                            "type": "refusal" if event_type == "response.refusal.delta" else "output_text",
+                            "deltas": [],
+                        },
+                    )
                     if item_id not in message_order:
                         message_order.append(item_id)
-                    text_parts_by_message[item_id].append(event.delta)
+                    part["deltas"].append(event.delta)
 
                 # Handle output_item.added events (function_call, message, etc.)
                 elif event_type == "response.output_item.added":
@@ -417,14 +424,26 @@ class MessageMapper:
                 if complete_message := complete_messages.get(item_id):
                     output_items.append(complete_message)
                     continue
-                full_content = "".join(text_parts_by_message.get(item_id, []))
-                if not full_content:
+                response_contents: list[ResponseOutputText | ResponseOutputRefusal] = []
+                for part in (
+                    content_parts_by_message.get(item_id, {}).get(index, {})
+                    for index in sorted(content_parts_by_message.get(item_id, {}))
+                ):
+                    full_content = "".join(part.get("deltas", []))
+                    if not full_content:
+                        continue
+                    if part.get("type") == "refusal":
+                        response_contents.append(ResponseOutputRefusal(type="refusal", refusal=full_content))
+                    else:
+                        response_contents.append(
+                            ResponseOutputText(type="output_text", text=full_content, annotations=[])
+                        )
+                if not response_contents:
                     continue
-                response_output_text = ResponseOutputText(type="output_text", text=full_content, annotations=[])
                 response_output_message = ResponseOutputMessage(
                     type="message",
                     role="assistant",
-                    content=[response_output_text],
+                    content=response_contents,
                     id=item_id if item_id != "default" else f"msg_{uuid.uuid4().hex[:8]}",
                     status="completed",
                 )
@@ -724,6 +743,7 @@ class MessageMapper:
                 current_metadata = context.get("current_message_workflow_metadata")
                 if current_metadata != workflow_metadata:
                     context.pop("current_message_id", None)
+                    context.pop("current_message_content_type", None)
                     context["current_message_workflow_metadata"] = workflow_metadata
 
             # If we have an executor item, use it for deltas instead of creating a message
@@ -758,6 +778,9 @@ class MessageMapper:
 
                 # Add content part for text
                 context["content_index"] = 0
+                context["current_message_content_type"] = (
+                    "refusal" if _is_refusal_text_content(first_text_content) else "output_text"
+                )
                 events.append(
                     ResponseContentPartAddedEvent(
                         type="response.content_part.added",
@@ -773,6 +796,20 @@ class MessageMapper:
             for content in update.contents:
                 # Special handling for TextContent to use proper delta events
                 if content.type == "text" and "current_message_id" in context:
+                    requested_content_type = "refusal" if _is_refusal_text_content(content) else "output_text"
+                    if context.get("current_message_content_type") != requested_content_type:
+                        context["content_index"] = context.get("content_index", 0) + 1
+                        context["current_message_content_type"] = requested_content_type
+                        events.append(
+                            ResponseContentPartAddedEvent(
+                                type="response.content_part.added",
+                                output_index=context["output_index"],
+                                content_index=context["content_index"],
+                                item_id=context["current_message_id"],
+                                sequence_number=self._next_sequence(context),
+                                part=_message_content_part(content),
+                            )
+                        )
                     if _is_refusal_text_content(content):
                         delta_event = ResponseRefusalDeltaEvent(
                             type="response.refusal.delta",

@@ -317,6 +317,49 @@ async def test_output_item_tracker_emits_native_refusal_events_for_marked_text()
     ]
 
 
+async def test_output_item_tracker_keeps_mixed_text_and_refusal_in_one_message() -> None:
+    stream = ResponseEventStream(response_id="resp_mixed")
+    stream.emit_created()
+    stream.emit_in_progress()
+    tracker = _OutputItemTracker(stream)
+    events: list[Any] = []
+
+    for content in [
+        Content.from_text("Partial answer."),
+        Content.from_text(
+            "I cannot continue.",
+            additional_properties={"model_output_kind": "refusal"},
+        ),
+    ]:
+        async for event in tracker.handle(content, message_id="msg_mixed"):
+            events.append(event)
+    events.extend(tracker.close())
+
+    event_types = [event.get("type") if isinstance(event, Mapping) else event.type for event in events]
+    assert event_types == [
+        "response.output_item.added",
+        "response.content_part.added",
+        "response.output_text.delta",
+        "response.output_text.done",
+        "response.content_part.done",
+        "response.content_part.added",
+        "response.refusal.delta",
+        "response.refusal.done",
+        "response.content_part.done",
+        "response.output_item.done",
+    ]
+    output_items = [event["item"] for event in events if isinstance(event, Mapping) and event.get("item") is not None]
+    assert {item["id"] for item in output_items} == {output_items[0]["id"]}
+    assert [part["type"] for part in output_items[-1]["content"]] == ["output_text", "refusal"]
+    part_events = [
+        event for event in events if isinstance(event, Mapping) and event.get("type") == "response.content_part.added"
+    ]
+    assert [(event["content_index"], event["part"]["type"]) for event in part_events] == [
+        (0, "output_text"),
+        (1, "refusal"),
+    ]
+
+
 async def test_item_to_message_marks_refusal_text() -> None:
     message = await _item_to_message(
         cast(

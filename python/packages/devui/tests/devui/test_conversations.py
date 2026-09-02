@@ -179,6 +179,33 @@ async def test_add_and_list_items_preserves_marked_refusal_text():
 
 
 @pytest.mark.asyncio
+async def test_add_and_list_items_preserves_mixed_text_and_refusal_order():
+    store = InMemoryConversationStore()
+    conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
+
+    added = await store.add_items(
+        conversation.id,
+        items=[
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Partial answer.", "annotations": []},
+                    {"type": "refusal", "refusal": "I cannot continue."},
+                ],
+            }
+        ],
+    )
+    retrieved, _ = await store.list_items(conversation.id)
+
+    for item in [added[0], retrieved[0]]:
+        message = cast(OpenAIMessage, item)
+        assert message.content is not None
+        assert [content.type for content in message.content] == ["text", "refusal"]
+        assert cast(InputTextContent, message.content[0]).text == "Partial answer."
+        assert cast(ResponseOutputRefusal, message.content[1]).refusal == "I cannot continue."
+
+
+@pytest.mark.asyncio
 async def test_add_items_accepts_assistant_output_text():
     """Assistant Responses history is accepted by the conversation parser."""
     store = InMemoryConversationStore()

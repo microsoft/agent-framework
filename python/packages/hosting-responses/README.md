@@ -18,7 +18,9 @@ This package provides the Responses-specific conversion layer:
 
 Responses refusal parts round-trip as text carrying
 `additional_properties["model_output_kind"] == "refusal"` and native
-`response.refusal.*` events.
+`response.refusal.*` events. Streaming text and refusal output includes the
+standard output-item and content-part lifecycle with stable item IDs, indexes,
+and sequence numbers.
 
 Final streaming events match the rendered response status:
 `response.completed`, `response.incomplete`, or `response.failed`. Finalizing a

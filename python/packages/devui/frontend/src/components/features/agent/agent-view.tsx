@@ -40,21 +40,37 @@ import type {
   ExtendedResponseStreamEvent,
 } from "@/types";
 import { useDevUIStore } from "@/stores";
-import { loadStreamingState, type StreamingState } from "@/services/streaming-state";
+import {
+  applyTextDeltaToParts,
+  loadStreamingState,
+  type StreamingState,
+  type StreamingTextPart,
+} from "@/services/streaming-state";
 
 type DebugEventHandler = (event: ExtendedResponseStreamEvent | "clear") => void;
 
 const ASSISTANT_TEXT_RENDER_INTERVAL_MS = 50;
 const STREAMING_PREVIEW_PREFIX = "[Earlier streaming content omitted after refresh]\n\n";
 
-function getRestoredStreamingText(state: StreamingState): string {
-  if (!state.accumulatedText) {
-    return "";
+function getRestoredStreamingParts(state: StreamingState): StreamingTextPart[] {
+  const parts = state.accumulatedParts?.map((part) => ({ ...part })) ??
+    (state.accumulatedText
+      ? [{
+          itemId: state.lastMessageId,
+          contentIndex: 0,
+          type: state.accumulatedTextType ?? "text",
+          text: state.accumulatedText,
+        } satisfies StreamingTextPart]
+      : []);
+  if (state.accumulatedTextIsPreview) {
+    parts.unshift({
+      itemId: state.lastMessageId,
+      contentIndex: -1,
+      type: "text",
+      text: STREAMING_PREVIEW_PREFIX,
+    });
   }
-
-  return state.accumulatedTextIsPreview
-    ? `${STREAMING_PREVIEW_PREFIX}${state.accumulatedText}`
-    : state.accumulatedText;
+  return parts;
 }
 
 function createStreamingMessageContent(
@@ -65,6 +81,12 @@ function createStreamingMessageContent(
     return { type: "refusal", refusal: text };
   }
   return { type: "text", text };
+}
+
+function streamingPartsToMessageContent(
+  parts: StreamingTextPart[]
+): import("@/types/openai").MessageContent[] {
+  return parts.map((part) => createStreamingMessageContent(part.text, part.type));
 }
 
 interface AgentViewProps {
@@ -332,7 +354,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
   } | null>(null);
   const userJustSentMessage = useRef<boolean>(false);
   const accumulatedTextRef = useRef<string>("");
-  const accumulatedTextTypeRef = useRef<"text" | "refusal">("text");
+  const accumulatedPartsRef = useRef<StreamingTextPart[]>([]);
   const lastAssistantTextRenderAt = useRef(0);
 
   const renderAssistantStreamingText = useCallback(
@@ -356,34 +378,26 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
           return item;
         }
 
-        const nextText = accumulatedTextRef.current;
-        const existingTextContent = item.content.find(
-          (content) =>
-            content.type === "text" || content.type === "output_text" || content.type === "refusal"
-        );
-        const currentText =
-          existingTextContent
-            ? "refusal" in existingTextContent
-              ? existingTextContent.refusal
-              : existingTextContent.text
-            : "";
-
-        if (currentText === nextText && item.status === status) {
-          return item;
-        }
-
-        changed = true;
         const existingNonTextContent = item.content.filter(
           (content) =>
             content.type !== "text" && content.type !== "output_text" && content.type !== "refusal"
         );
-        const nextTextContent = createStreamingMessageContent(nextText, accumulatedTextTypeRef.current);
+        const nextTextContent = streamingPartsToMessageContent(accumulatedPartsRef.current);
+        const currentTextContent = item.content.filter(
+          (content) =>
+            content.type === "text" || content.type === "output_text" || content.type === "refusal"
+        );
+        if (
+          JSON.stringify(currentTextContent) === JSON.stringify(nextTextContent) &&
+          item.status === status
+        ) {
+          return item;
+        }
 
+        changed = true;
         return {
           ...item,
-          content: nextText
-            ? [...existingNonTextContent, nextTextContent]
-            : existingNonTextContent,
+          content: [...existingNonTextContent, ...nextTextContent],
           status,
         };
       });
@@ -586,9 +600,11 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             "delta" in openAIEvent &&
             openAIEvent.delta
           ) {
-            accumulatedTextTypeRef.current =
-              openAIEvent.type === "response.refusal.delta" ? "refusal" : "text";
-            accumulatedTextRef.current += openAIEvent.delta;
+            accumulatedPartsRef.current = applyTextDeltaToParts(
+              accumulatedPartsRef.current,
+              openAIEvent
+            );
+            accumulatedTextRef.current = accumulatedPartsRef.current.map((part) => part.text).join("");
             renderAssistantStreamingText(assistantMessage.id);
           }
         }
@@ -707,17 +723,15 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               const state = loadStreamingState(mostRecent.id);
 
               if (state && !state.completed) {
-                const restoredText = getRestoredStreamingText(state);
-                accumulatedTextRef.current = restoredText;
-                accumulatedTextTypeRef.current = state.accumulatedTextType ?? "text";
+                const restoredParts = getRestoredStreamingParts(state);
+                accumulatedPartsRef.current = restoredParts;
+                accumulatedTextRef.current = restoredParts.map((part) => part.text).join("");
                 // Add assistant message with resumed text
                 const assistantMsg: import("@/types/openai").ConversationMessage = {
                   id: state.lastMessageId || `assistant-${Date.now()}`,
                   type: "message",
                   role: "assistant",
-                  content: restoredText
-                    ? [createStreamingMessageContent(restoredText, accumulatedTextTypeRef.current)]
-                    : [],
+                  content: streamingPartsToMessageContent(restoredParts),
                   status: "in_progress",
                 };
                 setChatItems([...allItems as import("@/types/openai").ConversationItem[], assistantMsg]);
@@ -816,7 +830,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
     setIsStreaming(false);
     setCurrentConversation(undefined);
     accumulatedTextRef.current = "";
-    accumulatedTextTypeRef.current = "text";
+    accumulatedPartsRef.current = [];
     lastAssistantTextRenderAt.current = 0;
 
     loadConversations();
@@ -842,7 +856,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       // Reset conversation usage by setting it to initial state
       useDevUIStore.setState({ conversationUsage: { total_tokens: 0, message_count: 0 } });
       accumulatedTextRef.current = "";
-      accumulatedTextTypeRef.current = "text";
+      accumulatedPartsRef.current = [];
 
       // Clear debug panel for fresh conversation
       onDebugEvent("clear");
@@ -899,7 +913,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
               setIsStreaming(false);
               useDevUIStore.setState({ conversationUsage: { total_tokens: 0, message_count: 0 } });
               accumulatedTextRef.current = "";
-              accumulatedTextTypeRef.current = "text";
+              accumulatedPartsRef.current = [];
             }
           }
 
@@ -1019,15 +1033,15 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
         // Check for incomplete stream and restore accumulated text
         const state = loadStreamingState(conversationId);
         if (state?.accumulatedText) {
-          const restoredText = getRestoredStreamingText(state);
-          accumulatedTextRef.current = restoredText;
-          accumulatedTextTypeRef.current = state.accumulatedTextType ?? "text";
+          const restoredParts = getRestoredStreamingParts(state);
+          accumulatedPartsRef.current = restoredParts;
+          accumulatedTextRef.current = restoredParts.map((part) => part.text).join("");
           // Add assistant message with resumed text - streaming will continue automatically
           const assistantMsg: import("@/types/openai").ConversationMessage = {
             id: `assistant-${Date.now()}`,
             type: "message",
             role: "assistant",
-            content: [createStreamingMessageContent(restoredText, accumulatedTextTypeRef.current)],
+            content: streamingPartsToMessageContent(restoredParts),
             status: "in_progress",
           };
           setChatItems([...items, assistantMsg]);
@@ -1048,7 +1062,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
       }
 
       accumulatedTextRef.current = "";
-      accumulatedTextTypeRef.current = "text";
+      accumulatedPartsRef.current = [];
     },
     [availableConversations, onDebugEvent, setCurrentConversation, setChatItems, setIsStreaming]
   );
@@ -1220,7 +1234,7 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
 
         // Clear text accumulator for new response
         accumulatedTextRef.current = "";
-        accumulatedTextTypeRef.current = "text";
+        accumulatedPartsRef.current = [];
         lastAssistantTextRenderAt.current = 0;
 
         // Create new AbortController for this request
@@ -1481,9 +1495,11 @@ export function AgentView({ selectedAgent, onDebugEvent }: AgentViewProps) {
             "delta" in openAIEvent &&
             openAIEvent.delta
           ) {
-            accumulatedTextTypeRef.current =
-              openAIEvent.type === "response.refusal.delta" ? "refusal" : "text";
-            accumulatedTextRef.current += openAIEvent.delta;
+            accumulatedPartsRef.current = applyTextDeltaToParts(
+              accumulatedPartsRef.current,
+              openAIEvent
+            );
+            accumulatedTextRef.current = accumulatedPartsRef.current.map((part) => part.text).join("");
             renderAssistantStreamingText(assistantMessage.id);
           }
 

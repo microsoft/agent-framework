@@ -30,6 +30,10 @@ def _sse_payload(event: str) -> dict[str, object]:
     return cast("dict[str, object]", json.loads(data_line.removeprefix("data: ")))
 
 
+def _sse_types(events: Sequence[str]) -> list[object]:
+    return [_sse_payload(event)["type"] for event in events]
+
+
 def _native_usage_payload() -> dict[str, object]:
     input_tokens_details = {"cached_tokens": 1}
     if "cache_write_tokens" in InputTokensDetails.model_fields:
@@ -776,11 +780,25 @@ class TestResponsesRunHelpers:
 
         assert events[0].startswith("event: response.created")
         assert '"conversation":{"id":"conv_1"}' in events[0]
-        assert "response.output_text.delta" in events[1]
-        assert "hel" in events[1]
-        assert "lo" in events[2]
+        assert _sse_types(events) == [
+            "response.created",
+            "response.output_item.added",
+            "response.content_part.added",
+            "response.output_text.delta",
+            "response.output_text.delta",
+            "response.output_text.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "response.completed",
+        ]
+        assert "hel" in events[3]
+        assert "lo" in events[4]
         assert events[-1].startswith("event: response.completed")
         assert '"conversation":{"id":"conv_1"}' in events[-1]
+        done_item = cast("dict[str, object]", _sse_payload(events[-2])["item"])
+        completed_response = cast("dict[str, object]", _sse_payload(events[-1])["response"])
+        completed_output = cast("list[dict[str, object]]", completed_response["output"])
+        assert done_item["id"] == completed_output[0]["id"]
 
     async def test_responses_from_streaming_run_preserves_marked_refusal_deltas(self) -> None:
         marker = {"model_output_kind": "refusal"}
@@ -799,13 +817,75 @@ class TestResponsesRunHelpers:
 
         events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
 
-        assert "response.refusal.delta" in events[1]
-        assert "response.refusal.delta" in events[2]
+        assert _sse_types(events) == [
+            "response.created",
+            "response.output_item.added",
+            "response.content_part.added",
+            "response.refusal.delta",
+            "response.refusal.delta",
+            "response.refusal.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "response.completed",
+        ]
+        refusal_delta = _sse_payload(events[3])
+        assert refusal_delta["item_id"]
+        assert refusal_delta["output_index"] == 0
+        assert refusal_delta["content_index"] == 0
+        assert refusal_delta["sequence_number"] == 3
         completed = _sse_payload(events[-1])
         response = cast("dict[str, object]", completed["response"])
         output = cast("list[dict[str, object]]", response["output"])
         content = cast("list[dict[str, object]]", output[0]["content"])
         assert content == [{"type": "refusal", "refusal": "I cannot help."}]
+
+    async def test_responses_from_streaming_run_preserves_mixed_text_and_refusal_parts(self) -> None:
+        marker = {"model_output_kind": "refusal"}
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Partial answer.")],
+                role="assistant",
+                message_id="msg_mixed",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("I cannot continue.", additional_properties=marker)],
+                role="assistant",
+                message_id="msg_mixed",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+
+        assert _sse_types(events) == [
+            "response.created",
+            "response.output_item.added",
+            "response.content_part.added",
+            "response.output_text.delta",
+            "response.output_text.done",
+            "response.content_part.done",
+            "response.content_part.added",
+            "response.refusal.delta",
+            "response.refusal.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "response.completed",
+        ]
+        part_events = [
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.content_part.added"
+        ]
+        assert [(part["item_id"], part["content_index"]) for part in part_events] == [
+            ("msg_mixed", 0),
+            ("msg_mixed", 1),
+        ]
+        completed = _sse_payload(events[-1])
+        response = cast("dict[str, object]", completed["response"])
+        output = cast("list[dict[str, object]]", response["output"])
+        assert output[0]["content"] == [
+            {"type": "output_text", "text": "Partial answer.", "annotations": []},
+            {"type": "refusal", "refusal": "I cannot continue."},
+        ]
 
     async def test_responses_from_streaming_run_emits_failed_when_iteration_raises(self) -> None:
         async def updates() -> AsyncIterator[AgentResponseUpdate]:
@@ -824,7 +904,7 @@ class TestResponsesRunHelpers:
         ]
 
         assert events[0].startswith("event: response.created")
-        assert "response.output_text.delta" in events[1]
+        assert "response.output_text.delta" in _sse_types(events)
         assert events[-1].startswith("event: response.failed")
         payload = _sse_payload(events[-1])
         response = cast("dict[str, object]", payload["response"])
@@ -961,7 +1041,7 @@ class TestResponsesRunHelpers:
         events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
 
         assert events[0].startswith("event: response.created")
-        assert "response.output_text.delta" in events[1]
+        assert "response.output_text.delta" in _sse_types(events)
         assert events[-1].startswith("event: response.failed")
         payload = _sse_payload(events[-1])
         response = cast("dict[str, object]", payload["response"])

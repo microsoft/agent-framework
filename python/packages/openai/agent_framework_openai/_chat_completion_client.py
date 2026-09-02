@@ -1087,6 +1087,7 @@ class RawOpenAIChatCompletionClient(
 
         all_messages: list[dict[str, Any]] = []
         pending_reasoning: Any = None
+        assistant_refusal_parts: list[str] = []
         for content in message.contents:
             # Skip approval content - it's internal framework state, not for the LLM
             if content.type in ("function_approval_request", "function_approval_response"):
@@ -1133,7 +1134,8 @@ class RawOpenAIChatCompletionClient(
                         continue
                     args["content"] = [{"type": "text", "text": content.text}]
                 case "text" if message.role == "assistant" and _is_refusal_text_content(content):
-                    args["refusal"] = content.text or ""
+                    assistant_refusal_parts.append(content.text or "")
+                    continue
                 case _:
                     prepared_content = self._prepare_content_for_openai(content)
                     if prepared_content:
@@ -1141,7 +1143,7 @@ class RawOpenAIChatCompletionClient(
                             args["content"] = []
                         # this is a list to allow multi-modal content
                         args["content"].append(prepared_content)  # type: ignore
-            if "content" in args or "tool_calls" in args or "refusal" in args:
+            if "content" in args or "tool_calls" in args:
                 if pending_reasoning is not None:
                     args["reasoning_details"] = pending_reasoning
                     pending_reasoning = None
@@ -1160,6 +1162,48 @@ class RawOpenAIChatCompletionClient(
                 if message.role != "tool" and (author_name := _sanitize_author_name(message.author_name)):
                     pending_args["name"] = author_name
                 all_messages.append(pending_args)
+
+        if assistant_refusal_parts:
+            merged_assistant: dict[str, Any] | None = None
+            merged_messages: list[dict[str, Any]] = []
+            for prepared_message in all_messages:
+                if prepared_message.get("role") != "assistant" or "tool_call_id" in prepared_message:
+                    merged_messages.append(prepared_message)
+                    continue
+                if merged_assistant is None:
+                    merged_assistant = prepared_message
+                    merged_messages.append(merged_assistant)
+                    continue
+                incoming_content = prepared_message.get("content")
+                existing_content = merged_assistant.get("content")
+                if isinstance(existing_content, list) and isinstance(incoming_content, list):
+                    cast("list[Any]", existing_content).extend(cast("list[Any]", incoming_content))
+                elif isinstance(existing_content, str) and isinstance(incoming_content, str):
+                    merged_assistant["content"] = existing_content + incoming_content
+                elif isinstance(existing_content, list) and isinstance(incoming_content, str):
+                    cast("list[Any]", existing_content).append({"type": "text", "text": incoming_content})
+                elif isinstance(existing_content, str) and isinstance(incoming_content, list):
+                    merged_assistant["content"] = [
+                        {"type": "text", "text": existing_content},
+                        *cast("list[Any]", incoming_content),
+                    ]
+                elif incoming_content is not None:
+                    merged_assistant["content"] = incoming_content
+                if incoming_tool_calls := prepared_message.get("tool_calls"):
+                    merged_assistant.setdefault("tool_calls", []).extend(incoming_tool_calls)
+                for key, value in prepared_message.items():
+                    if key not in {"role", "content", "tool_calls"}:
+                        merged_assistant.setdefault(key, value)
+            if merged_assistant is None:
+                merged_assistant = {
+                    "role": "assistant",
+                    "content": None,
+                }
+                if author_name := _sanitize_author_name(message.author_name):
+                    merged_assistant["name"] = author_name
+                merged_messages.append(merged_assistant)
+            merged_assistant["refusal"] = "".join(assistant_refusal_parts)
+            all_messages = merged_messages
 
         # Flatten text-only content lists to plain strings for broader
         # compatibility with OpenAI-like endpoints (e.g. Foundry Local).
