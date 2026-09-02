@@ -56,8 +56,19 @@ app.MapOpenAIConversations();
 2. **Aggregates entities** from all configured agent service backends into a single `/v1/entities` listing. Each entity ID is prefixed with the backend name to ensure uniqueness across services (e.g., `writer-agent/writer`, `editor-agent/editor`).
 3. **Routes requests** to the correct backend based on the entity ID prefix. When DevUI sends a `POST /v1/responses` or `/v1/conversations` request, the aggregator strips the prefix and forwards it to the appropriate service.
 4. **Streams SSE responses** for the `/v1/responses` endpoint, so agent responses stream back to the DevUI frontend in real time.
+5. **Correlates OpenTelemetry traces** with each response when the Aspire Dashboard telemetry API is available. The aggregator propagates a unique W3C trace context to the selected agent service, retrieves matching spans from the dashboard after the response completes, and displays them in DevUI's Traces tab.
 
 The aggregator publishes its URL to the Aspire dashboard, where it appears as a clickable link.
+
+## Tracing
+
+Tracing is enabled automatically when the running Aspire Dashboard exposes its telemetry API, available in Aspire 13.2 and later. DevUI checks this capability at startup, so older or unavailable dashboards do not delay agent responses or produce trace errors in the UI. The current Agent Framework dependency is Aspire 13.5.2.
+
+Agent services must still be configured to emit and export OpenTelemetry spans to Aspire. This normally means using Aspire service defaults and registering the Agent Framework activity sources used by the service. The aggregator keeps the dashboard API key server-side; it is never returned to the browser.
+
+Aspire commonly exports spans in batches, so trace events may appear shortly after an answer completes. Trace retrieval works for streaming and non-streaming responses, happens in the background, and does not keep the chat response in a streaming state.
+
+OpenTelemetry attributes can contain sensitive prompts, responses, tool arguments, or results when sensitive-data capture is enabled. Only enable sensitive telemetry in an appropriately secured development environment.
 
 ## Agent discovery
 
