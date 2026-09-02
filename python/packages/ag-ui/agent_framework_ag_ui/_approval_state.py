@@ -99,6 +99,7 @@ class InMemoryAGUIApprovalStateStore:
             name=name,
             arguments=arguments,
             aliases=[request_id],
+            response_id=request_id,
             already_approved_requests=already_approved_requests,
             server_label=server_label,
         )

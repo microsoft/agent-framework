@@ -32,6 +32,7 @@ from agent_framework import (
     ToolApprovalMiddleware,
     WorkflowBuilder,
     WorkflowContext,
+    WorkflowExecutor,
     executor,
     handler,
     response_handler,
@@ -451,6 +452,475 @@ async def test_workflow_endpoint_accepts_canonical_tool_approval_resume() -> Non
     assert not [event for event in events if event.get("type") == "RUN_ERROR"]
     assert "Refund approved." == "".join(
         str(event.get("delta", "")) for event in events if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    )
+
+
+async def test_endpoint_workflow_as_agent_resumes_with_client_tools() -> None:
+    """A workflow exposed through AgentFrameworkAgent accepts client tools across approval resume."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, Any]) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345", "amount": 89.99},
+            )
+            await ctx.request_info(
+                Content.from_function_approval_request(id="approval-1", function_call=function_call),
+                Content,
+                request_id="approval-1",
+            )
+
+        @response_handler
+        async def approve(
+            self,
+            original_request: Content,
+            response: Content,
+            ctx: WorkflowContext[Any, Any],
+        ) -> None:
+            del original_request
+            arguments = response.function_call.parse_arguments() if response.function_call is not None else None
+            await ctx.yield_output(json.dumps(arguments, sort_keys=True))  # type: ignore[arg-type]
+
+    client_tool = {
+        "name": "submit_refund",
+        "description": "Submit a refund",
+        "parameters": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string"}, "amount": {"type": "number"}},
+        },
+    }
+    app = FastAPI()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    wrapped_agent = AgentFrameworkAgent(agent=workflow.as_agent())
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/workflow-as-agent")
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow-as-agent",
+            json={
+                "runId": "run-pause",
+                "threadId": "thread-client-tools",
+                "messages": [{"role": "user", "content": "Refund the order"}],
+                "tools": [client_tool],
+            },
+        )
+        pause_events = _decode_sse_events(pause_response)
+        assert not [event for event in pause_events if event.get("type") == "RUN_ERROR"]
+        pause_finished = [event for event in pause_events if event.get("type") == "RUN_FINISHED"]
+        assert _run_finished_interrupts(pause_finished[-1])[0]["id"] == "refund-call"
+
+        resume_response = client.post(
+            "/workflow-as-agent",
+            json={
+                "runId": "run-resume",
+                "threadId": "thread-client-tools",
+                "messages": [],
+                "tools": [client_tool],
+                "resume": [
+                    {
+                        "interruptId": "refund-call",
+                        "status": "resolved",
+                        "payload": {"accepted": True, "amount": 49.5},
+                    }
+                ],
+            },
+        )
+        resume_events = _decode_sse_events(resume_response)
+
+    assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
+    assert '{"amount": 49.5, "order_id": "12345"}' == "".join(
+        str(event.get("delta", "")) for event in resume_events if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    )
+
+
+async def test_endpoint_workflow_as_agent_cancellation_allows_next_turn() -> None:
+    """Cancelling a wrapped workflow approval consumes its pending request correlation."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval")
+            self.run_count = 0
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, Any]) -> None:
+            del message
+            self.run_count += 1
+            if self.run_count > 1:
+                await ctx.yield_output("Follow-up completed.")  # type: ignore[arg-type]
+                return
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345"},
+            )
+            await ctx.request_info(
+                Content.from_function_approval_request(id="approval-1", function_call=function_call),
+                Content,
+                request_id="approval-1",
+            )
+
+        @response_handler
+        async def approve(
+            self,
+            original_request: Content,
+            response: Content,
+            ctx: WorkflowContext[Any, Any],
+        ) -> None:
+            del original_request, response
+            await ctx.yield_output("Approval resolved.")  # type: ignore[arg-type]
+
+    client_tool = {
+        "name": "submit_refund",
+        "description": "Submit a refund",
+        "parameters": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string"}},
+        },
+    }
+    app = FastAPI()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    add_agent_framework_fastapi_endpoint(app, AgentFrameworkAgent(agent=workflow.as_agent()), path="/workflow-agent")
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow-agent",
+            json={
+                "runId": "run-pause",
+                "threadId": "thread-cancel",
+                "messages": [{"role": "user", "content": "Refund the order"}],
+                "tools": [client_tool],
+            },
+        )
+        pause_events = _decode_sse_events(pause_response)
+        assert not [event for event in pause_events if event.get("type") == "RUN_ERROR"]
+
+        cancel_response = client.post(
+            "/workflow-agent",
+            json={
+                "runId": "run-cancel",
+                "threadId": "thread-cancel",
+                "messages": [],
+                "tools": [client_tool],
+                "resume": [{"interruptId": "refund-call", "status": "cancelled"}],
+            },
+        )
+        cancel_events = _decode_sse_events(cancel_response)
+        assert not [event for event in cancel_events if event.get("type") == "RUN_ERROR"]
+
+        follow_up_response = client.post(
+            "/workflow-agent",
+            json={
+                "runId": "run-follow-up",
+                "threadId": "thread-cancel",
+                "messages": [{"role": "user", "content": "Continue without the refund"}],
+                "tools": [client_tool],
+            },
+        )
+        follow_up_events = _decode_sse_events(follow_up_response)
+
+    assert not [event for event in follow_up_events if event.get("type") == "RUN_ERROR"]
+    assert "Follow-up completed." == "".join(
+        str(event.get("delta", "")) for event in follow_up_events if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    )
+
+
+async def test_workflow_endpoint_nested_mixed_approval_resume(streaming_chat_client_stub) -> None:
+    """Cancelling one nested approval does not block its approved sibling."""
+
+    def function_call(order_id: str, call_id: str) -> Content:
+        return Content.from_function_call(
+            call_id=call_id,
+            name="submit_refund",
+            arguments={"order_id": order_id},
+        )
+
+    call_count = 0
+    executed_orders: list[str] = []
+
+    def submit_refund(order_id: str) -> str:
+        executed_orders.append(order_id)
+        return f"Refunded {order_id}"
+
+    async def stream_fn(messages: Any, options: Any, **kwargs: Any) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal call_count
+        del messages, options, kwargs
+        call_count += 1
+        if call_count == 1:
+            yield ChatResponseUpdate(
+                contents=[
+                    function_call("order-1", "refund-call-1"),
+                    function_call("order-2", "refund-call-2"),
+                ]
+            )
+            return
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Approved sibling completed.")])
+
+    child_agent = Agent(
+        name="nested-agent",
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                name="submit_refund",
+                description="Submit a refund",
+                func=submit_refund,
+                approval_mode="always_require",
+            )
+        ],
+    )
+    child_workflow = WorkflowBuilder(start_executor=child_agent).build()
+    parent_workflow = WorkflowBuilder(
+        start_executor=WorkflowExecutor(
+            child_workflow,
+            id="nested-workflow",
+            propagate_request=True,
+            allow_direct_output=True,
+        )
+    ).build()
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        parent_workflow,
+        path="/nested-workflow",
+    )
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/nested-workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "thread-nested-mixed",
+                "messages": [{"role": "user", "content": "Refund both orders"}],
+            },
+        )
+        pause_events = _decode_sse_events(pause_response)
+        pause_finished = [event for event in pause_events if event.get("type") == "RUN_FINISHED"]
+        pause_interrupts = _run_finished_interrupts(pause_finished[-1])
+        assert {interrupt["id"] for interrupt in pause_interrupts} == {
+            "refund-call-1",
+            "refund-call-2",
+        }, pause_events
+
+        resume_response = client.post(
+            "/nested-workflow",
+            json={
+                "runId": "run-resume",
+                "threadId": "thread-nested-mixed",
+                "messages": [],
+                "resume": [
+                    {"interruptId": "refund-call-1", "status": "cancelled"},
+                    {"interruptId": "refund-call-2", "status": "resolved", "payload": {"approved": True}},
+                ],
+            },
+        )
+
+    resume_events = _decode_sse_events(resume_response)
+    assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
+    assert "Approved sibling completed." == "".join(
+        str(event.get("delta", "")) for event in resume_events if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    )
+    assert call_count == 2
+    assert executed_orders == ["order-2"]
+
+
+async def test_endpoint_workflow_as_agent_rejection_reaches_response_handler() -> None:
+    """A rejected deferred approval remains typed until the wrapped workflow consumes it."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, Any]) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345"},
+            )
+            await ctx.request_info(
+                Content.from_function_approval_request(id="approval-1", function_call=function_call),
+                Content,
+                request_id="approval-1",
+            )
+
+        @response_handler
+        async def approve(
+            self,
+            original_request: Content,
+            response: Content,
+            ctx: WorkflowContext[Any, Any],
+        ) -> None:
+            del original_request
+            await ctx.yield_output(f"{response.type}:{response.approved}")  # type: ignore[arg-type]
+
+    client_tool = {
+        "name": "submit_refund",
+        "description": "Submit a refund",
+        "parameters": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string"}},
+        },
+    }
+    app = FastAPI()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    add_agent_framework_fastapi_endpoint(app, AgentFrameworkAgent(agent=workflow.as_agent()), path="/workflow-agent")
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow-agent",
+            json={
+                "runId": "run-pause",
+                "threadId": "thread-reject",
+                "messages": [{"role": "user", "content": "Refund the order"}],
+                "tools": [client_tool],
+            },
+        )
+        assert not [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_ERROR"]
+
+        reject_response = client.post(
+            "/workflow-agent",
+            json={
+                "runId": "run-reject",
+                "threadId": "thread-reject",
+                "messages": [],
+                "tools": [client_tool],
+                "resume": [
+                    {
+                        "interruptId": "refund-call",
+                        "status": "resolved",
+                        "payload": {"accepted": False},
+                    }
+                ],
+            },
+        )
+        reject_events = _decode_sse_events(reject_response)
+
+    assert not [event for event in reject_events if event.get("type") == "RUN_ERROR"]
+    assert "function_approval_response:False" == "".join(
+        str(event.get("delta", "")) for event in reject_events if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    )
+
+
+async def test_endpoint_workflow_as_agent_rejection_retries_after_transient_failure() -> None:
+    """A deferred rejection remains retryable until the wrapped workflow consumes it."""
+
+    class FailFirstResumeProvider(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__("fail-first-resume")
+            self.call_count = 0
+
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session, context, state
+            self.call_count += 1
+            if self.call_count == 2:
+                raise RuntimeError("transient workflow failure")
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, Any]) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345"},
+            )
+            await ctx.request_info(
+                Content.from_function_approval_request(id="approval-1", function_call=function_call),
+                Content,
+                request_id="approval-1",
+            )
+
+        @response_handler
+        async def approve(
+            self,
+            original_request: Content,
+            response: Content,
+            ctx: WorkflowContext[Any, Any],
+        ) -> None:
+            del original_request
+            await ctx.yield_output(f"{response.type}:{response.approved}")  # type: ignore[arg-type]
+
+    provider = FailFirstResumeProvider()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    workflow_agent = workflow.as_agent(context_providers=[provider])
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        AgentFrameworkAgent(agent=workflow_agent),
+        path="/workflow-agent-retry",
+    )
+    resume = [
+        {
+            "interruptId": "refund-call",
+            "status": "resolved",
+            "payload": {"accepted": False},
+        }
+    ]
+    client_tool = {
+        "name": "submit_refund",
+        "description": "Submit a refund",
+        "parameters": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string"}},
+        },
+    }
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow-agent-retry",
+            json={
+                "runId": "run-pause",
+                "threadId": "thread-reject-retry",
+                "messages": [{"role": "user", "content": "Refund the order"}],
+                "tools": [client_tool],
+            },
+        )
+        assert not [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_ERROR"]
+
+        failed_response = client.post(
+            "/workflow-agent-retry",
+            json={
+                "runId": "run-failed",
+                "threadId": "thread-reject-retry",
+                "messages": [],
+                "tools": [client_tool],
+                "resume": resume,
+            },
+        )
+        failed_errors = [event for event in _decode_sse_events(failed_response) if event.get("type") == "RUN_ERROR"]
+        assert len(failed_errors) == 1
+
+        retry_response = client.post(
+            "/workflow-agent-retry",
+            json={
+                "runId": "run-retry",
+                "threadId": "thread-reject-retry",
+                "messages": [],
+                "tools": [client_tool],
+                "resume": resume,
+            },
+        )
+
+    retry_events = _decode_sse_events(retry_response)
+    assert not [event for event in retry_events if event.get("type") == "RUN_ERROR"]
+    assert "function_approval_response:False" == "".join(
+        str(event.get("delta", "")) for event in retry_events if event.get("type") == "TEXT_MESSAGE_CONTENT"
     )
 
 
@@ -4374,6 +4844,97 @@ async def test_endpoint_workflow_checkpoint_resume_same_owner_after_restart():
         assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
         text_deltas = [event["delta"] for event in resume_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
         assert "Booked KLM" in text_deltas
+
+
+async def test_endpoint_workflow_checkpoint_cancellation_survives_cold_restore() -> None:
+    """Cold restore applies cancellation before resolving the remaining sibling."""
+
+    class BatchApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="batch-approval")
+
+        @handler
+        async def start(self, messages: list[Message], ctx: WorkflowContext[Any, Any]) -> None:
+            del messages
+            await ctx.request_info({"order_id": "order-1"}, dict, request_id="approval-1")
+            await ctx.request_info({"order_id": "order-2"}, dict, request_id="approval-2")
+
+        @response_handler
+        async def approve(
+            self,
+            original_request: dict[str, Any],
+            response: dict[str, Any],
+            ctx: WorkflowContext[Any, Any],
+        ) -> None:
+            assert response == {"approved": True}
+            await ctx.yield_output(f"Approved {original_request['order_id']}")  # type: ignore[arg-type]
+
+    def build_workflow() -> Any:
+        return WorkflowBuilder(
+            name="cold-checkpoint-cancellation",
+            start_executor=BatchApprovalExecutor(),
+        ).build()
+
+    storage = InMemoryCheckpointStorage()
+    first_app = FastAPI()
+    first_workflow = build_workflow()
+    add_agent_framework_fastapi_endpoint(
+        first_app,
+        first_workflow,
+        path="/workflow",
+        checkpoint_storage=storage,
+    )
+
+    with TestClient(first_app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "owner-thread",
+                "messages": [{"role": "user", "content": "Approve both orders"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+    checkpoints = await storage.list_checkpoints(workflow_name=first_workflow.name)
+    pending_checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint.pending_request_info_events]
+    assert pending_checkpoints
+    checkpoint_id = max(pending_checkpoints, key=lambda checkpoint: checkpoint.timestamp).checkpoint_id
+
+    second_app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        second_app,
+        build_workflow(),
+        path="/workflow",
+        checkpoint_storage=storage,
+    )
+
+    with TestClient(second_app) as client:
+        cancel_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-cancel",
+                "threadId": "owner-thread",
+                "messages": [],
+                "forwardedProps": {"checkpointId": checkpoint_id},
+                "resume": [
+                    {"interruptId": "approval-1", "status": "cancelled"},
+                    {
+                        "interruptId": "approval-2",
+                        "status": "resolved",
+                        "payload": {"approved": True},
+                    },
+                ],
+            },
+        )
+
+    cancel_events = _decode_sse_events(cancel_response)
+    assert not [event for event in cancel_events if event.get("type") == "RUN_ERROR"]
+    finished = [event for event in cancel_events if event.get("type") == "RUN_FINISHED"]
+    assert finished[-1].get("outcome") is None
+    assert "Approved order-2" == "".join(
+        str(event.get("delta", "")) for event in cancel_events if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    )
 
 
 async def test_endpoint_workflow_checkpoint_resume_uses_checkpoint_owner_not_live_reused_id():

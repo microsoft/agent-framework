@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ipaddress
 import json
 import logging
 import os
+import re
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import Generic, Literal, TypeVar, cast
+from typing import Generic, Literal, TypeGuard, TypeVar, cast
+from urllib.parse import urlparse
 
 from agent_framework import (
     AgentResponseUpdate,
@@ -251,11 +254,51 @@ _LATEST_CHECKPOINT_ID_KEY = "_last_checkpoint_id"
 # Consent-URL error code returned by the Foundry MCP gateway when calling `/list`
 CONSENT_ERROR_CODE = -32006
 
+_OAUTH_HOST_PATTERN = re.compile(r"^[A-Za-z0-9._~-]+$")
+
 
 @dataclass
 class ConsentError:
     name: str
     consent_url: str
+
+
+def _is_safe_oauth_consent_link(consent_link: object) -> TypeGuard[str]:
+    """Return whether a consent link is an absolute HTTPS URL safe to expose as an action."""
+    if not isinstance(consent_link, str) or not consent_link:
+        return False
+    if any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in consent_link):
+        return False
+
+    try:
+        parsed = urlparse(consent_link)
+        hostname = parsed.hostname
+        _ = parsed.port
+    except ValueError:
+        return False
+
+    if parsed.scheme.lower() != "https" or not hostname or parsed.username is not None or parsed.password is not None:
+        return False
+
+    if "%" in hostname:
+        return False
+    authority = parsed.netloc
+    if authority.startswith("["):
+        closing_bracket = authority.find("]")
+        if closing_bracket == -1:
+            return False
+        ipv6_literal = authority[1:closing_bracket]
+        suffix = authority[closing_bracket + 1 :]
+        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
+            return False
+        try:
+            ipaddress.IPv6Address(ipv6_literal)
+        except ValueError:
+            return False
+        return True
+    if "[" in authority or "]" in authority or ":" in hostname:
+        return False
+    return _OAUTH_HOST_PATTERN.fullmatch(hostname) is not None
 
 
 def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
@@ -520,6 +563,49 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     yield event
                 return
 
+            invalid_consent = next(
+                (
+                    consent_error
+                    for consent_error in consent_errors_to_emit
+                    if not _is_safe_oauth_consent_link(consent_error.consent_url)
+                ),
+                None,
+            )
+            if invalid_consent is not None:
+                validation_error = ValueError(
+                    f"OAuth consent request for tool '{invalid_consent.name}' must include a safe HTTPS consent link."
+                )
+                logger.error("%s", validation_error)
+                for event in self._emit_failure(response_event_stream, None, validation_error):
+                    yield event
+                return
+
+            if not self._is_workflow_agent:
+                try:
+                    request_context = get_request_context()
+                    session_storage = self._session_storage_provider.get_store(
+                        config=self.config, platform_context=request_context
+                    )
+                    previous_response_id = request.get("previous_response_id")
+                    session_load_id = context.conversation_id or previous_response_id
+                    session = await session_storage.get(session_load_id) if session_load_id is not None else None
+                    if session is None:
+                        if previous_response_id is not None and context.conversation_id is None:
+                            raise RuntimeError(
+                                "Cannot find an existing agent session for "
+                                f"previous_response_id={previous_response_id}."
+                            )
+                        session = self._agent.create_session()
+                    await session_storage.set(context.conversation_id or context.response_id, session)
+                except Exception as save_error:
+                    logger.error(
+                        "Failed to persist the Agent Framework session for OAuth consent",
+                        exc_info=(type(save_error), save_error, save_error.__traceback__),
+                    )
+                    for event in self._emit_failure(response_event_stream, None, save_error):
+                        yield event
+                    return
+
             for consent_error in consent_errors_to_emit:
                 logger.warning("Consent URL for tool '%s': %s", consent_error.name, consent_error.consent_url)
                 oauth_item = OAuthConsentRequestOutputItem(
@@ -533,9 +619,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 yield builder.emit_added(oauth_item)
                 yield builder.emit_done(oauth_item)
 
-            yield response_event_stream.emit_incomplete(
-                reason=f"OAuth consent required for {len(consent_errors_to_emit)} tool(s)."
-            )
+            yield response_event_stream.emit_incomplete()
             return
 
         tracker = _OutputItemTracker(response_event_stream)
@@ -557,7 +641,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             for event in tracker.close():
                 yield event
 
-            yield response_event_stream.emit_completed(usage=tracker.usage)
+            if tracker.oauth_consent_requested:
+                yield response_event_stream.emit_incomplete(usage=tracker.usage)
+            else:
+                yield response_event_stream.emit_completed(usage=tracker.usage)
         except Exception as ex:
             logger.error("Failed to produce response for agent", exc_info=(type(ex), ex, ex.__traceback__))
             for event in tracker.close():
@@ -957,6 +1044,17 @@ class _OutputItemTracker:
         self._fc_builder: OutputItemFunctionCallBuilder | None = None
         self._mcp_builder: OutputItemMcpCallBuilder | None = None
         self._outstanding_function_calls: dict[str, str | None] = {}
+        self._oauth_consent_requests: set[tuple[str, str]] = set()
+        for item in stream.response.get("output", []):
+            if not isinstance(item, Mapping):
+                continue
+            persisted_item = cast(Mapping[str, Any], item)
+            if persisted_item.get("type") != "oauth_consent_request":
+                continue
+            consent_link = persisted_item.get("consent_link")
+            server_label = persisted_item.get("server_label")
+            if isinstance(consent_link, str) and isinstance(server_label, str):
+                self._oauth_consent_requests.add((consent_link, server_label))
 
     @property
     def usage(self) -> ResponseUsage | None:
@@ -979,6 +1077,11 @@ class _OutputItemTracker:
             ),
             total_tokens=int(total_tokens) if total_tokens is not None else input_tokens + output_tokens,
         )
+
+    @property
+    def oauth_consent_requested(self) -> bool:
+        """Return whether this response emitted an OAuth consent request."""
+        return bool(self._oauth_consent_requests)
 
     async def handle(
         self,
@@ -1184,6 +1287,36 @@ class _OutputItemTracker:
                     "Approval request was not saved to approval storage because the approval request ID "
                     "could not be extracted from the stream event."
                 )
+
+        elif content.type == "oauth_consent_request":
+            for event in self._close():
+                yield event
+
+            consent_link = content.consent_link
+            if not _is_safe_oauth_consent_link(consent_link):
+                raise ValueError("OAuth consent request content must include a safe HTTPS consent link.")
+
+            server_label = content.additional_properties.get("server_label")
+            if not isinstance(server_label, str) or not server_label:
+                server_label = getattr(content.raw_representation, "server_label", None)
+            if not isinstance(server_label, str) or not server_label:
+                server_label = "agent_framework"
+
+            consent_key = (consent_link, server_label)
+            if consent_key in self._oauth_consent_requests:
+                return
+            self._oauth_consent_requests.add(consent_key)
+
+            oauth_item = OAuthConsentRequestOutputItem(
+                id=IdGenerator.new_id("oacr"),
+                response_id=str(self._stream.response["id"]),
+                type="oauth_consent_request",
+                consent_link=consent_link,
+                server_label=server_label,
+            )
+            builder = self._stream.add_output_item(oauth_item["id"])
+            yield builder.emit_added(oauth_item)
+            yield builder.emit_done(oauth_item)
 
         elif content.type == "usage":
             self._usage_details = add_usage_details(self._usage_details, content.usage_details)

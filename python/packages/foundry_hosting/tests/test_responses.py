@@ -4480,6 +4480,7 @@ class TestOAuthConsentSurfacing:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "incomplete"
+        assert body.get("incomplete_details") is None
 
         oauth_items = [it for it in body["output"] if it["type"] == "oauth_consent_request"]
         assert len(oauth_items) == 1
@@ -4502,6 +4503,8 @@ class TestOAuthConsentSurfacing:
         assert types[0] == "response.created"
         assert types[1] == "response.in_progress"
         assert types[-1] == "response.incomplete"
+        incomplete = next(event for event in events if event["event"] == "response.incomplete")
+        assert incomplete["data"]["response"].get("incomplete_details") is None
 
         added = [e for e in events if e["event"] == "response.output_item.added"]
         oauth_added = [e for e in added if e["data"]["item"]["type"] == "oauth_consent_request"]
@@ -4549,13 +4552,190 @@ class TestOAuthConsentSurfacing:
         agent.run.assert_not_called()
 
         # After the user authenticates, the next request enters successfully.
-        resp2 = await _post(server, input_text="second", stream=False)
+        resp2 = await _post(server, input_text="second", stream=False, previous_response_id=body1["id"])
         assert resp2.status_code == 200
         body2 = resp2.json()
         assert body2["status"] == "completed"
         assert any(it["type"] == "message" for it in body2["output"])
         assert agent.__aenter__.await_count == 2
         agent.run.assert_called_once()
+
+    async def test_connect_time_consent_preserves_an_existing_session(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hello!")])])
+        )
+        session_store = SessionStore()
+        server = _make_server(agent, session_store=session_store)
+
+        first = await _post(server, input_text="first", stream=False)
+        first_response_id = first.json()["id"]
+        session = await session_store.get(first_response_id)
+        assert session is not None
+        session.state["marker"] = "preserved"
+        await session_store.set(first_response_id, session)
+
+        await server._cleanup_agent()  # pyright: ignore[reportPrivateUsage]
+        agent.__aenter__.side_effect = _make_consent_error()
+        consent = await _post(
+            server,
+            input_text="second",
+            stream=False,
+            previous_response_id=first_response_id,
+        )
+        assert consent.json()["status"] == "incomplete"
+
+        preserved = await session_store.get(consent.json()["id"])
+        assert preserved is not None
+        assert preserved.state["marker"] == "preserved"
+
+    async def test_recovered_consent_is_tracked_and_not_emitted_twice(self) -> None:
+        from azure.ai.agentserver.responses._id_generator import IdGenerator
+        from azure.ai.agentserver.responses.aio import ResponseEventStream
+        from azure.ai.agentserver.responses.models import OAuthConsentRequestOutputItem, ResponseObject
+
+        stream = ResponseEventStream(response_id="response-1")
+        stream.emit_created()
+        stream.emit_in_progress()
+        oauth_item = OAuthConsentRequestOutputItem(
+            id=IdGenerator.new_id("oacr"),
+            response_id="response-1",
+            type="oauth_consent_request",
+            consent_link="https://consent.example.com/obo",
+            server_label="Foundry Toolbox",
+        )
+        builder = stream.add_output_item(oauth_item["id"])
+        builder.emit_added(oauth_item)
+        builder.emit_done(oauth_item)
+
+        recovered_response = cast(ResponseObject, stream.response)
+        recovered_stream = ResponseEventStream(response=recovered_response, response_id="response-1")
+        tracker = _OutputItemTracker(recovered_stream)
+        assert tracker.oauth_consent_requested
+
+        duplicate = Content.from_oauth_consent_request(
+            consent_link="https://consent.example.com/obo",
+            additional_properties={"server_label": "Foundry Toolbox"},
+        )
+        assert [event async for event in tracker.handle(duplicate)] == []
+
+    async def test_mid_run_consent_is_persisted_without_an_incomplete_reason(self) -> None:
+        raw_item = MagicMock()
+        raw_item.server_label = "Foundry Toolbox"
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_oauth_consent_request(
+                                consent_link="https://consent.example.com/obo",
+                                raw_representation=raw_item,
+                            )
+                        ],
+                    )
+                ]
+            )
+        )
+        response_store = InMemoryResponseProvider()
+        server = _make_server(agent, response_store=response_store)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "incomplete"
+        assert body.get("incomplete_details") is None
+
+        oauth_items = [item for item in body["output"] if item["type"] == "oauth_consent_request"]
+        assert len(oauth_items) == 1
+        assert oauth_items[0]["consent_link"] == "https://consent.example.com/obo"
+        assert oauth_items[0]["server_label"] == "Foundry Toolbox"
+
+    async def test_streaming_mid_run_consent_is_emitted_once_and_can_be_retried(self) -> None:
+        consent = Content.from_oauth_consent_request(
+            consent_link="https://consent.example.com/obo",
+            additional_properties={"server_label": "Foundry Toolbox"},
+        )
+
+        async def consent_updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[consent], role="assistant")
+            yield AgentResponseUpdate(contents=[consent], role="assistant")
+
+        async def success_updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("tool result")], role="assistant")
+
+        agent = _make_agent(stream_updates=[])
+        agent.run.side_effect = [
+            ResponseStream(consent_updates(), finalizer=AgentResponse.from_updates),
+            ResponseStream(success_updates(), finalizer=AgentResponse.from_updates),
+        ]
+        server = _make_server(agent)
+
+        first = await _post(server, input_text="first", stream=True)
+        assert first.status_code == 200
+        events = _parse_sse_events(first.text)
+        oauth_items = [
+            event
+            for event in events
+            if event["event"] == "response.output_item.added"
+            and event["data"]["item"]["type"] == "oauth_consent_request"
+        ]
+        assert len(oauth_items) == 1
+        incomplete = next(event for event in events if event["event"] == "response.incomplete")
+        assert incomplete["data"]["response"].get("incomplete_details") is None
+
+        response_id = incomplete["data"]["response"]["id"]
+        second = await _post(server, input_text="second", stream=False, previous_response_id=response_id)
+        assert second.status_code == 200
+        assert second.json()["status"] == "completed"
+        assert agent.run.call_count == 2
+
+    @pytest.mark.parametrize(
+        "consent_link",
+        [
+            "http://consent.example.com/obo",
+            "javascript:alert(1)",
+            "https://user@consent.example.com/obo",
+            "https://consent.example.com:invalid/obo",
+            "https://cons ent.example.com/obo",
+            "https://%zz.example.com/obo",
+            "https://%0d%0a.example.com/obo",
+            "https://[::::]/obo",
+            "https://[example.com]/obo",
+            "https://[::1]evil.com/obo",
+        ],
+    )
+    async def test_mid_run_consent_rejects_unsafe_links(self, consent_link: str) -> None:
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[Content.from_oauth_consent_request(consent_link=consent_link)],
+                    )
+                ]
+            )
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "failed"
+        assert not any(item["type"] == "oauth_consent_request" for item in body["output"])
+
+    async def test_connect_time_consent_rejects_unsafe_links(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.__aenter__.side_effect = _make_consent_error("javascript:alert(1)")
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "failed"
+        assert not any(item["type"] == "oauth_consent_request" for item in body["output"])
+        agent.run.assert_not_called()
 
 
 # endregion
