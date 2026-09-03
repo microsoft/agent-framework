@@ -45,6 +45,7 @@ ModelT = TypeVar("ModelT", default=Any)
 KeyT = TypeVar("KeyT", default=Any)
 FilterT = TypeVar("FilterT")
 ResultT = TypeVar("ResultT")
+DecoratedModelT = TypeVar("DecoratedModelT")
 
 SearchType: TypeAlias = Literal["vector", "keyword_hybrid"]
 FieldTypes: TypeAlias = Literal["key", "vector", "data"]
@@ -575,6 +576,12 @@ def _parse_model_definition(
     return VectorStoreCollectionDefinition(fields, collection_name=collection_name)
 
 
+class _VectorStoreModelDecorator(Protocol):
+    def __call__(self, record_type: type[DecoratedModelT]) -> type[DecoratedModelT]:
+        """Decorate a model while preserving its concrete type."""
+        ...
+
+
 @overload
 def vectorstoremodel(cls: type[ModelT]) -> type[ModelT]:
     """Decorate a vector store model without arguments.
@@ -596,9 +603,9 @@ def vectorstoremodel(
     cls: None = None,
     *,
     collection_name: str | None = None,
-    encoder: Callable[[ModelT], Mapping[str, Any]] | None = None,
-    decoder: Callable[[Mapping[str, Any]], ModelT] | None = None,
-) -> Callable[[type[ModelT]], type[ModelT]]:
+    encoder: Callable[[Any], Mapping[str, Any]] | None = None,
+    decoder: Callable[[Mapping[str, Any]], Any] | None = None,
+) -> _VectorStoreModelDecorator:
     """Create a vector store model decorator with a collection name.
 
     Args:
@@ -620,12 +627,12 @@ def vectorstoremodel(
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
 def vectorstoremodel(
-    cls: type[ModelT] | None = None,
+    cls: type[Any] | None = None,
     *,
     collection_name: str | None = None,
-    encoder: Callable[[ModelT], Mapping[str, Any]] | None = None,
-    decoder: Callable[[Mapping[str, Any]], ModelT] | None = None,
-) -> type[ModelT] | Callable[[type[ModelT]], type[ModelT]]:
+    encoder: Callable[[Any], Mapping[str, Any]] | None = None,
+    decoder: Callable[[Mapping[str, Any]], Any] | None = None,
+) -> type[Any] | _VectorStoreModelDecorator:
     """Mark a class as a vector store model.
 
     Class fields or constructor parameters use ``Annotated`` metadata to describe their
@@ -645,7 +652,7 @@ def vectorstoremodel(
         ValueError: If the model definition is invalid.
     """
 
-    def wrap(record_type: type[ModelT]) -> type[ModelT]:
+    def wrap(record_type: type[DecoratedModelT]) -> type[DecoratedModelT]:
         definition = _parse_model_definition(record_type, collection_name=collection_name)
         register_vectorstoremodel(
             record_type,
