@@ -13,7 +13,7 @@ Prerequisites:
 import asyncio
 import os
 
-from agent_framework import Agent, EvalItem, FunctionTool, Message
+from agent_framework import Agent, EvalItem, Message, tool
 from agent_framework.foundry import FoundryChatClient, FoundryEvals
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+@tool
 def get_weather(location: str) -> str:
     """Get the current weather for a location."""
     weather_data = {
@@ -31,6 +32,7 @@ def get_weather(location: str) -> str:
     return weather_data.get(location.lower(), f"Weather data not available for {location}")
 
 
+@tool
 def get_flight_price(origin: str, destination: str) -> str:
     """Get the price of a flight between two cities."""
     return f"Flights from {origin} to {destination}: $450 round-trip"
@@ -43,18 +45,7 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    tools = [
-        FunctionTool(
-            name="get_weather",
-            description="Get the current weather for a location.",
-            func=get_weather,
-        ),
-        FunctionTool(
-            name="get_flight_price",
-            description="Get the price of a flight between two cities.",
-            func=get_flight_price,
-        ),
-    ]
+    tools = [get_weather, get_flight_price]
 
     # Create an agent with tools
     agent = Agent(

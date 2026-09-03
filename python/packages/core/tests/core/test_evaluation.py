@@ -45,16 +45,17 @@ class TestToEvalItem:
         assert item.context == "Some reference document."
 
     def test_with_explicit_tools(self) -> None:
-        tool = FunctionTool(
-            name="search",
-            description="Search the web",
-            func=lambda query: f"Results for {query}",
-        )
+        def search(query: str) -> str:
+            """Search the web."""
+            return f"Results for {query}"
+
         response = AgentResponse(messages=[Message("assistant", ["Found it."])])
 
-        item = _to_eval_item(query="Find info", response=response, tools=[tool])
+        item = _to_eval_item(query="Find info", response=response, tools=[search])
 
-        assert item.tools == [tool]
+        assert item.tools is not None
+        assert len(item.tools) == 1
+        assert item.tools[0].name == "search"
 
     def test_with_agent_and_mcp_tools(self) -> None:
         agent_tool = FunctionTool(name="calculate", description="Calculate", func=lambda value: str(value))

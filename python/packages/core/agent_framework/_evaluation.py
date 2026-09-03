@@ -53,7 +53,7 @@ from typing import (
 )
 
 from ._feature_stage import ExperimentalFeature, experimental
-from ._tools import FunctionTool
+from ._tools import FunctionTool, normalize_tools
 from ._types import AgentResponse, Message
 
 if TYPE_CHECKING:
@@ -732,7 +732,7 @@ def _to_eval_item(
     query: str | Sequence[Message],
     response: AgentResponse[Any],
     agent: Any | None = None,
-    tools: Sequence[FunctionTool] | None = None,
+    tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
     context: str | None = None,
 ) -> EvalItem:
     """Build a provider-neutral ``EvalItem`` from an agent interaction."""
@@ -741,10 +741,10 @@ def _to_eval_item(
 
     typed_tools: list[FunctionTool] = []
     if tools:
-        typed_tools = list(tools)
+        typed_tools = [tool for tool in normalize_tools(tools) if isinstance(tool, FunctionTool)]
     elif agent:
         raw_tools = getattr(agent, "default_options", {}).get("tools", [])
-        typed_tools = [tool for tool in raw_tools if isinstance(tool, FunctionTool)]
+        typed_tools = [tool for tool in normalize_tools(raw_tools) if isinstance(tool, FunctionTool)]
         seen = {tool.name for tool in typed_tools}
         for mcp in getattr(agent, "mcp_tools", []):
             for tool in getattr(mcp, "functions", []):
