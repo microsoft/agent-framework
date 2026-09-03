@@ -36,6 +36,7 @@ from typing_extensions import Self, TypedDict, TypeVar
 
 from ._clients import SupportsGetEmbeddings
 from ._feature_stage import ExperimentalFeature, experimental
+from ._telemetry import FeatureIndex, mark_feature_used
 from ._tools import FunctionTool
 from ._types import Content, EmbeddingGenerationOptions
 from .exceptions import IntegrationException, IntegrationInvalidResponseException
@@ -795,6 +796,7 @@ class VectorStoreRecordHandler(Generic[KeyT, ModelT]):
             ValueError: If required record data is missing or has an invalid shape.
             IntegrationInvalidResponseException: If embedding generation returns an unexpected result count.
         """
+        mark_feature_used(FeatureIndex.CORE_VECTOR_STORES)
         is_batch = _is_non_string_sequence(records)
         input_records = list(cast(Sequence[ModelT], records)) if is_batch else [cast(ModelT, records)]
         dict_records = [self._serialize_record_to_dict(record) for record in input_records]
@@ -875,6 +877,7 @@ class VectorStoreRecordHandler(Generic[KeyT, ModelT]):
             TypeError: If a store record has an unsupported type.
             ValueError: If records cannot be reconstructed into the requested model shape.
         """
+        mark_feature_used(FeatureIndex.CORE_VECTOR_STORES)
         if records is None:
             return None
         is_batch = _is_non_string_sequence(records)
@@ -1032,6 +1035,7 @@ class BaseVectorCollection(VectorStoreRecordHandler[KeyT, ModelT], ABC):
             IntegrationException: If the backing store operation fails.
             IntegrationInvalidResponseException: If the backing store returns an unexpected key count.
         """
+        mark_feature_used(FeatureIndex.CORE_VECTOR_STORES)
         if not _is_non_string_sequence(records):
             raise TypeError("records must be a sequence.")
         try:
@@ -1080,6 +1084,7 @@ class BaseVectorCollection(VectorStoreRecordHandler[KeyT, ModelT], ABC):
             TypeError: If keys or a returned record has an unsupported type.
             IntegrationException: If retrieval fails.
         """
+        mark_feature_used(FeatureIndex.CORE_VECTOR_STORES)
         _validate_paging(top=top, skip=skip)
         if keys is not None and not _is_non_string_sequence(keys):
             raise TypeError("keys must be a sequence.")
@@ -1119,6 +1124,7 @@ class BaseVectorCollection(VectorStoreRecordHandler[KeyT, ModelT], ABC):
             TypeError: If keys is not a sequence.
             IntegrationException: If the backing store operation fails.
         """
+        mark_feature_used(FeatureIndex.CORE_VECTOR_STORES)
         if not _is_non_string_sequence(keys):
             raise TypeError("keys must be a sequence.")
         try:
@@ -1180,6 +1186,7 @@ class BaseVectorStore(ABC):
         operation_options: Mapping[str, Any] | None = None,
     ) -> bool:
         """Check whether a collection exists."""
+        mark_feature_used(FeatureIndex.CORE_VECTOR_STORES)
         return collection_name in await self.list_collection_names(operation_options=operation_options)
 
     async def ensure_collection_deleted(
@@ -1377,6 +1384,7 @@ class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
             NotImplementedError: If the search type is unsupported.
             IntegrationException: If the backing store search fails.
         """
+        mark_feature_used(FeatureIndex.CORE_VECTOR_STORES)
         if search_type not in ("vector", "keyword_hybrid"):
             raise ValueError(f"Unknown search type '{search_type}'.")
         if search_type not in self.supported_search_types:

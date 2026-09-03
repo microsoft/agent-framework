@@ -7,6 +7,7 @@ from ast import AST, unparse
 from collections.abc import AsyncIterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Annotated, Any, ClassVar, cast
+from unittest.mock import patch
 
 import msgspec
 import pytest
@@ -40,6 +41,7 @@ from agent_framework import (
     vectorstoremodel,
 )
 from agent_framework._feature_stage import ExperimentalWarning
+from agent_framework._telemetry import FeatureIndex
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
 
 pytestmark = pytest.mark.filterwarnings("ignore::agent_framework._feature_stage.ExperimentalWarning")
@@ -1261,3 +1263,36 @@ async def test_search_tool_filter_mapper_edge_paths() -> None:
         await invalid_tool(query="query", **{"bad-name": "value"})
     with pytest.raises(TypeError, match="'query'.*string"):
         await cast(Any, collection.create_search_tool())(query=1)
+
+
+async def test_runtime_operations_mark_vector_store_feature_usage() -> None:
+    collection = MockCollection()
+    store = MockStore(collection)
+
+    with patch("agent_framework._vectors.mark_feature_used") as mark_feature_used_mock:
+        await collection.serialize(Record("one", "hello"))
+        mark_feature_used_mock.assert_called_with(FeatureIndex.CORE_VECTOR_STORES)
+
+        mark_feature_used_mock.reset_mock()
+        collection.deserialize({"record_id": "one", "body": "hello", "vector": None})
+        mark_feature_used_mock.assert_called_once_with(FeatureIndex.CORE_VECTOR_STORES)
+
+        mark_feature_used_mock.reset_mock()
+        await collection.upsert([Record("one", "hello")])
+        mark_feature_used_mock.assert_any_call(FeatureIndex.CORE_VECTOR_STORES)
+
+        mark_feature_used_mock.reset_mock()
+        await collection.get(["one"])
+        mark_feature_used_mock.assert_any_call(FeatureIndex.CORE_VECTOR_STORES)
+
+        mark_feature_used_mock.reset_mock()
+        await collection.delete(["one"])
+        mark_feature_used_mock.assert_called_once_with(FeatureIndex.CORE_VECTOR_STORES)
+
+        mark_feature_used_mock.reset_mock()
+        await store.collection_exists("records")
+        mark_feature_used_mock.assert_called_once_with(FeatureIndex.CORE_VECTOR_STORES)
+
+        mark_feature_used_mock.reset_mock()
+        await collection.search(vector=[1.0, 0.0])
+        mark_feature_used_mock.assert_called_once_with(FeatureIndex.CORE_VECTOR_STORES)
