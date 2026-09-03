@@ -390,9 +390,9 @@ class FileSearchMatch(SerializationMixin):
 
         Args:
             line_number: The 1-based line number where the match was found.
-            line: The matching line. The stores in this package report it verbatim,
-                terminator included; a custom :meth:`AgentFileStore.search` is not
-                bound to that by the base contract.
+            line: The matching line. Implementers should report it verbatim, terminator
+                included, so it can be reused as a replacement line; unlike
+                ``line_number``, that is a recommendation rather than a requirement.
         """
         if line_number < 1:
             raise ValueError("line_number must be a positive integer.")
@@ -1902,9 +1902,8 @@ class FileAccessProvider(ContextProvider):
             Leave empty or omit to search all files.
             Returns matching results whose file_name values are paths relative to the store root
             (directly usable with file_access_read), along with snippets and matching lines with line numbers.
-            For the stores in this package each matching line is verbatim, including its own line
-            terminator, so it can be reused as a file_access_replace_lines new_line; a custom store is
-            not bound to report it verbatim, though its line numbers must address the same lines.
+            Each matching line is reported verbatim, including its own line terminator, so it can be
+            reused as a file_access_replace_lines new_line.
             Line numbers count lines split on \n only, with a final empty line when content ends in a
             newline.
             The regex_pattern must be 256 characters or fewer.

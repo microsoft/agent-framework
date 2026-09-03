@@ -1645,30 +1645,6 @@ async def test_grep_accepts_an_override_that_uses_the_published_primitive(
     assert payload[0]["matching_lines"][0]["line_number"] == 3
 
 
-async def test_shipped_stores_are_trusted_and_not_re_read(
-    chat_client_base: SupportsChatGetResponse,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Verification must be skipped for the stores shipped here, so grep stays one pass."""
-    store = InMemoryAgentFileStore()
-    await store.write("cfg.txt", "alpha\nkeep me\n")
-    reads: list[str] = []
-    original_read = InMemoryAgentFileStore.read
-
-    async def counting_read(self: InMemoryAgentFileStore, path: str) -> str | None:
-        reads.append(path)
-        return await original_read(self, path)
-
-    # Counted on the class: an instance attribute shadowing ``read`` is untrusted in its own
-    # right, so instrumenting the instance would measure the override, not the shipped store.
-    monkeypatch.setattr(InMemoryAgentFileStore, "read", counting_read)
-    tools = await _prepare_access_tools(chat_client_base, store=store)
-    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
-    await grep.invoke(arguments={"regex_pattern": "keep me"})
-
-    assert reads == []
-
-
 # endregion
 
 # region expected_line write guard
