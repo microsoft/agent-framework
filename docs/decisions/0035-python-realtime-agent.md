@@ -65,7 +65,8 @@ Related prior decisions and designs:
 ## Decision Drivers
 
 - **Agent composition**: realtime agents should still compose with existing agent middleware, telemetry, context
-  providers, workflows, and handoffs where possible.
+  providers, and protocol-based workflows/utilities where their contracts accept `SupportsAgentRun`. Existing handoff
+  orchestration requires concrete `Agent` instances and is not part of phase 1 compatibility.
 - **Direct and sandwich coverage**: the architecture should handle both direct realtime model sessions and
   STT-agent-TTS pipelines in a later phase.
 - **Different semantics stay visible**: a shared surface must not imply identical latency, interruption, continuation,
@@ -251,6 +252,10 @@ class RealtimeConversation:
 - **Serialize outbound writes**. It should prevent overlapping sends from corrupting provider state. A simple async lock
   around `send(...)` and `interrupt(...)` is enough unless
   a provider proves otherwise.
+- **Bound pending updates**. The projection queue between the receive loop and caller must have a finite, configurable
+  capacity. The receive loop must not block indefinitely or grow memory without bound when a caller is slow. If the queue
+  fills, the conversation fails with an explicit backpressure error, initiates provider cleanup, and makes that failure
+  observable to the iterator without requiring another queue slot. Events must not be silently dropped or overwritten.
 - **Own lifecycle and cleanup**. It is an async context manager. Exiting it closes the provider session, cancels the
   receive task, drains/terminates queues, and surfaces receive-loop failures.
 - **Preserve session state**. Durable continuation values discovered during the live conversation are copied back to the
@@ -307,11 +312,24 @@ This keeps the user-facing stream uniform: callers always receive `AgentResponse
 contains text/audio/function/error content. For control-only signals the update contains realtime-event content. Callers
 that care about provider details can inspect the realtime-event content metadata or the update's `raw_representation`.
 
+Response and history aggregation must be realtime-specific rather than calling `AgentResponse.from_updates(...)` over the
+unfiltered update stream:
+
+- the event mapper classifies mapped updates as authored content or protocol/control signals;
+- bounded `run(...)` finalization correlates the requested response and reconstructs only authored assistant and tool
+  messages;
+- conversation-close finalization uses an authored-turn ledger for user, assistant, and tool messages rather than
+  reconstructing durable history from all emitted updates;
+- `Content.from_realtime_event(...)`, VAD, lifecycle, rate-limit, raw audio-buffer, and other control events remain visible
+  in the update stream and raw representations but never enter `AgentResponse.messages` or durable history.
+
 Continuous conversation and scoped response requests are different:
 
 - `conversation.updates` is the open-ended full-duplex update stream. It may run until the conversation is closed and
   does not necessarily have a final `AgentResponse`.
 - `async for update in conversation` is shorthand for iterating `conversation.updates`.
+- Temporary idleness does not end iteration. The open-ended stream terminates only after explicit close/context exit or a
+  terminal provider, receive-loop, or backpressure failure; a provider response-complete event ends only that response.
 - The minimal `RealtimeConversation` shape does not need a `request_response()` method. Use
   `conversation.send(RealtimeEvent(...))` for explicit provider response commands such as response creation when the
   provider requires them.
@@ -329,6 +347,8 @@ Entering and exiting the async context should be deterministic:
   exception, writes durable continuation state back to the associated `AgentSession`, and runs normal context-provider
   finalization only for authored messages that should become durable history.
 - `close()` should be idempotent and should perform the same cleanup as `__aexit__`.
+- Terminal state and errors must be recorded independently of the bounded update queue so explicit close and exceptional
+  shutdown can always wake iterators and complete even when that queue is full.
 
 ### Audio I/O and hosted media bridges
 
@@ -382,10 +402,13 @@ Add `RawRealtimeAgent` / `RealtimeAgent` over this client/session shape:
 - `run(..., stream=True)` does the same but yields `AgentResponseUpdate` values through `ResponseStream`;
 - `start_conversation(...)` returns `RealtimeConversation` for full-duplex live use.
 
-`RealtimeAgent` must satisfy `SupportsAgentRun` so it can participate in half-duplex agent scenarios, including
-workflows, delegation, and any utility that accepts agent-like objects. It does not need to be a subclass of `Agent`.
-Shared behavior should come from `BaseAgent`, the structural protocol, and middleware/telemetry concepts that are
-compatible with the realtime `run(...)` shape.
+`RealtimeAgent` must satisfy `SupportsAgentRun` so it can participate in half-duplex agent scenarios whose contracts accept
+the structural protocol, including protocol-based workflows, hosting surfaces, and agent-like utilities. This does not make
+it compatible with the current `HandoffBuilder`: handoff participants must be concrete `Agent` instances because that
+orchestration relies on cloning, tool injection, and middleware. Realtime handoff support is deferred until that
+orchestration is independently generalized beyond `Agent`. `RealtimeAgent` does not need to be a subclass of `Agent`.
+Shared behavior should come from `BaseAgent`, the structural protocol, and middleware/telemetry concepts that are compatible
+with the realtime `run(...)` shape.
 
 The implementation should mirror the existing Raw/Layered pattern without inheriting the chat-specific `RawAgent`.
 The exact layered class names are implementation details, but the dependency direction should be:
@@ -571,9 +594,10 @@ Validation should happen in stages:
 
 1. ADR review validates the architecture before implementation.
 2. Unit tests with fake realtime sessions validate direct realtime model behavior, half-duplex finalization, streaming
-   finalization, event preservation, cleanup, receive-loop errors, and single-reader behavior.
-3. Unit tests validate `Content.from_realtime_event(...)` serialization and `AgentResponse.from_updates(...)`
-   aggregation.
+   finalization, event preservation, bounded-queue backpressure, slow-consumer overflow, cleanup with a full queue,
+   receive-loop errors, and single-reader behavior.
+3. Unit tests validate `Content.from_realtime_event(...)` serialization and realtime-specific response/history
+   finalization, including exclusion of control events from messages and durable history.
 4. Regression tests validate that extracting the shared function-invocation executor does not change existing chat client
    tool behavior.
 5. Realtime tool tests validate direct function call -> function result / approval / user-input flows through the shared
@@ -595,7 +619,8 @@ This proposal keeps those lessons but maps them into Agent Framework's agent mod
 
 - **Client versus agent**: Semantic Kernel exposes a realtime client surface directly. Agent Framework should expose a
   `RealtimeAgent` and `RealtimeConversation`, with provider clients below that surface, so realtime composes with agent
-  middleware, sessions, workflows, handoffs, telemetry, and tools.
+  middleware, sessions, protocol-based workflows, hosting surfaces, telemetry, and tools. Current `Agent`-only handoff
+  orchestration remains outside that compatibility claim.
 - **Event shape**: Semantic Kernel returns `RealtimeEvent` subclasses directly. Agent Framework should surface
   `AgentResponseUpdate` values whose `contents` are normal `Content` items where possible, plus a small
   realtime-event content type for control signals. Raw provider events remain available through `raw_representation`.
@@ -741,14 +766,28 @@ async with client(settings=settings, create_response=True, kernel=kernel):
 ### Proposed Agent Framework Call Automation bridge shape
 
 ```python
+import base64
+
 from agent_framework import Content
 from agent_framework.realtime import RealtimeConversation
+
+
+def get_base64_audio(content: Content) -> str:
+    if content.type != "data" or content.uri is None:
+        raise ValueError("Expected audio data content.")
+
+    prefix, separator, encoded = content.uri.partition(",")
+    if not separator or not prefix.startswith("data:audio/") or not prefix.endswith(";base64"):
+        raise ValueError("Expected a base64 audio data URI.")
+
+    base64.b64decode(encoded, validate=True)
+    return encoded
 
 
 async def from_realtime_to_acs(websocket: WebSocket, content: Content) -> None:
     await websocket.send(json.dumps({
         "kind": "AudioData",
-        "audioData": {"data": content.data},
+        "audioData": {"data": get_base64_audio(content)},
     }))
 
 
