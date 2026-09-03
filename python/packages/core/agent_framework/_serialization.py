@@ -303,6 +303,19 @@ class SerializationMixin:
                 object.__setattr__(result, k, copy.deepcopy(v, memo))
         return result
 
+    def __getstate__(self) -> dict[str, Any]:
+        """Return pickle state without runtime-only shallow-copy fields."""
+        state = dict(self.__dict__)
+        for field_name in self._SHALLOW_COPY_FIELDS:
+            state.pop(field_name, None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore pickle state and reset runtime-only shallow-copy fields."""
+        self.__dict__.update(state)
+        for field_name in self._SHALLOW_COPY_FIELDS:
+            self.__dict__.setdefault(field_name, None)
+
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance and any nested objects to a dictionary.
 
