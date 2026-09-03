@@ -66,6 +66,7 @@ from azure.ai.agentserver.responses.streaming._builders import (
     OutputItemMcpCallBuilder,
     OutputItemMessageBuilder,
     ReasoningSummaryPartBuilder,
+    RefusalContentBuilder,
     TextContentBuilder,
 )
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
@@ -84,7 +85,13 @@ from ._state_store import (
 
 logger = logging.getLogger(__name__)
 
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
+
+
+def _is_refusal_text_content(content: Content) -> bool:
+    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
 
 
 def _validate_checkpoint_context_id(context_id: str) -> None:
@@ -1038,6 +1045,7 @@ class _OutputItemTracker:
         # Builder state — only one is active at a time
         self._message_item: OutputItemMessageBuilder | None = None
         self._text_content: TextContentBuilder | None = None
+        self._refusal_content: RefusalContentBuilder | None = None
         self._reasoning_item: OutputItemBuilder | None = None
         self._summary_part: ReasoningSummaryPartBuilder | None = None
         self._reasoning_encrypted_content: str | None = None
@@ -1101,14 +1109,17 @@ class _OutputItemTracker:
             approval_storage: Used for content types that fall back to one-shot emission
                 (anything not recognized as a streaming delta type) to save/load approval requests.
         """
-        if content.type == "text" and content.text is not None:
-            if self._active_type != "text" or (
-                message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
-            ):
-                for event in self._close():
-                    yield event
-                for event in self._open_message():
-                    yield event
+        if _is_refusal_text_content(content) and content.text is not None:
+            for event in self._ensure_message_content("refusal", message_id):
+                yield event
+            self._active_message_id = message_id
+            self._accumulated.append(content.text)
+            if self._refusal_content is not None:
+                yield self._refusal_content.emit_delta(content.text)
+
+        elif content.type == "text" and content.text is not None:
+            for event in self._ensure_message_content("text", message_id):
+                yield event
             self._active_message_id = message_id
             self._accumulated.append(content.text)
             if self._text_content is not None:
@@ -1335,13 +1346,42 @@ class _OutputItemTracker:
 
     # -- Private open/close helpers --
 
-    def _open_message(self) -> Generator[ResponseStreamEvent]:
+    def _ensure_message_content(
+        self,
+        content_type: Literal["text", "refusal"],
+        message_id: str | None,
+    ) -> Generator[ResponseStreamEvent]:
+        message_changed = (
+            message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
+        )
+        if self._active_type == content_type and not message_changed:
+            return
+        if self._message_item is not None and self._active_type in {"text", "refusal"} and not message_changed:
+            yield from self._close_message_content()
+            yield from self._open_message_content(content_type)
+            return
+        yield from self._close()
+        yield from self._open_message(content_type)
+
+    def _open_message(self, content_type: Literal["text", "refusal"]) -> Generator[ResponseStreamEvent]:
         self._message_item = self._stream.add_output_item_message()
-        self._text_content = self._message_item.add_text_content()
-        self._active_type = "text"
-        self._active_id = None
         yield self._message_item.emit_added()
-        yield self._text_content.emit_added()
+        yield from self._open_message_content(content_type)
+
+    def _open_message_content(
+        self,
+        content_type: Literal["text", "refusal"],
+    ) -> Generator[ResponseStreamEvent]:
+        if self._message_item is None:
+            raise RuntimeError("Cannot open message content without an active message")
+        self._active_type = content_type
+        self._active_id = None
+        if content_type == "refusal":
+            self._refusal_content = self._message_item.add_refusal_content()
+            yield self._refusal_content.emit_added()
+        else:
+            self._text_content = self._message_item.add_text_content()
+            yield self._text_content.emit_added()
 
     def _open_reasoning(self, content: Content) -> Generator[ResponseStreamEvent]:
         item_id = content.id
@@ -1388,16 +1428,14 @@ class _OutputItemTracker:
         yield self._mcp_builder.emit_added()
 
     def _close(self) -> Generator[ResponseStreamEvent]:
-        accumulated = "".join(self._accumulated)
-
-        if self._active_type == "text" and self._text_content and self._message_item:
-            yield self._text_content.emit_text_done(accumulated)
-            yield self._text_content.emit_done()
-            yield self._message_item.emit_done()
-            self._text_content = None
+        if self._active_type in {"text", "refusal"}:
+            yield from self._close_message_content()
+            if self._message_item is not None:
+                yield self._message_item.emit_done()
             self._message_item = None
 
         elif self._active_type == "text_reasoning" and self._summary_part and self._reasoning_item:
+            accumulated = "".join(self._accumulated)
             yield self._summary_part.emit_text_done(accumulated)
             yield self._summary_part.emit_done()
             yield self._reasoning_item.emit_done(
@@ -1413,11 +1451,13 @@ class _OutputItemTracker:
             self._reasoning_encrypted_content = None
 
         elif self._active_type == "function_call" and self._fc_builder:
+            accumulated = "".join(self._accumulated)
             yield self._fc_builder.emit_arguments_done(accumulated)
             yield self._fc_builder.emit_done()
             self._fc_builder = None
 
         elif self._active_type == "mcp_server_tool_call" and self._mcp_builder:
+            accumulated = "".join(self._accumulated)
             yield self._mcp_builder.emit_arguments_done(accumulated)
             yield self._mcp_builder.emit_completed()
             yield self._mcp_builder.emit_done()
@@ -1426,6 +1466,20 @@ class _OutputItemTracker:
         self._active_type = None
         self._active_id = None
         self._active_message_id = None
+        self._accumulated.clear()
+
+    def _close_message_content(self) -> Generator[ResponseStreamEvent]:
+        accumulated = "".join(self._accumulated)
+        if self._active_type == "text" and self._text_content is not None:
+            yield self._text_content.emit_text_done(accumulated)
+            yield self._text_content.emit_done()
+            self._text_content = None
+        elif self._active_type == "refusal" and self._refusal_content is not None:
+            yield self._refusal_content.emit_refusal_done(accumulated)
+            yield self._refusal_content.emit_done()
+            self._refusal_content = None
+        self._active_type = None
+        self._active_id = None
         self._accumulated.clear()
 
 
@@ -1826,7 +1880,10 @@ def _convert_output_message_content(content: OutputMessageContent) -> Content:
     if content["type"] == "output_text":
         return Content.from_text(content["text"])
     if content["type"] == "refusal":
-        return Content.from_text(content["refusal"])
+        return Content.from_text(
+            content["refusal"],
+            additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+        )
 
     # Defensive: `OutputMessageContent` currently only supports `output_text` and `refusal`,
     # but if new types are added in the future, this will catch them.
@@ -1879,7 +1936,10 @@ def _convert_message_content(content: MessageContent) -> Content:
     if content["type"] == "summary_text":
         return Content.from_text(content["text"])
     if content["type"] == "refusal":
-        return Content.from_text(content["refusal"])
+        return Content.from_text(
+            content["refusal"],
+            additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+        )
     if content["type"] == "reasoning_text":
         return Content.from_text_reasoning(text=content["text"])
     if content["type"] == "input_image":

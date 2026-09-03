@@ -400,6 +400,8 @@ class Annotation(TypedDict, total=False):
 
 
 ContentT = TypeVar("ContentT", bound="Content")
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
 
 # endregion
 
@@ -2055,6 +2057,11 @@ def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "t
         if content.type == type_str:
             if first_new_content is None:
                 first_new_content = deepcopy(content)
+            elif type_str == "text" and first_new_content.additional_properties.get(
+                _MODEL_OUTPUT_KIND_KEY
+            ) != content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY):
+                coalesced_contents.append(first_new_content)
+                first_new_content = deepcopy(content)
             else:
                 try:
                     first_new_content += content
@@ -2254,7 +2261,18 @@ def _last_non_empty_assistant_message_text(messages: Sequence[Message]) -> str:
     for message in reversed(messages):
         if message.role != "assistant":
             continue
-        text = "".join((content.text or "") for content in message.contents if content.type == "text")
+        if any(
+            content.type == "text"
+            and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+            for content in message.contents
+        ):
+            return ""
+        text = "".join(
+            (content.text or "")
+            for content in message.contents
+            if content.type == "text"
+            and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) != _MODEL_OUTPUT_REFUSAL
+        )
         if text.strip():
             return text
     return ""

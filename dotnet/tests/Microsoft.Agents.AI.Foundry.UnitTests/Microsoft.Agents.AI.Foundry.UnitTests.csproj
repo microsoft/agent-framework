@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
-    <NoWarn>$(NoWarn);NU1605;NU1903</NoWarn>
+    <NoWarn>$(NoWarn);AAIP001;NU1605;NU1903</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
