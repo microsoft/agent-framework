@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewTyp
 from typing_extensions import TypedDict
 
 from ._feature_stage import ExperimentalFeature, experimental
-from ._serialization import SerializationMixin, _get_pickle_state, _restore_pickle_state
+from ._serialization import SerializationMixin, get_pickle_state, restore_pickle_state
 from .exceptions import AdditionItemMismatch, ContentError
 
 if sys.version_info >= (3, 13):
@@ -621,7 +621,7 @@ class Content:
 
     def __getstate__(self) -> dict[str, Any]:
         """Return pickle state without runtime-only shallow-copy fields."""
-        state = _get_pickle_state(self, self._PICKLE_OMIT_FIELDS)
+        state = get_pickle_state(self, self._PICKLE_OMIT_FIELDS)
         if self.annotations is not None:
             state["annotations"] = [
                 {key: value for key, value in annotation.items() if key != "raw_representation"}
@@ -631,7 +631,7 @@ class Content:
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Restore pickle state and reset runtime-only shallow-copy fields."""
-        _restore_pickle_state(self, state, self._PICKLE_OMIT_FIELDS)
+        restore_pickle_state(self, state, self._PICKLE_OMIT_FIELDS)
 
     @classmethod
     def from_text(

@@ -164,7 +164,7 @@ def _iter_instance_fields(instance: Any) -> dict[str, Any]:
     return fields
 
 
-def _get_pickle_state(instance: Any, omitted_fields: set[str]) -> dict[str, Any]:
+def get_pickle_state(instance: Any, omitted_fields: set[str]) -> dict[str, Any]:
     """Build pickle state while omitting runtime-only fields."""
     state = _iter_instance_fields(instance)
     for field_name in omitted_fields:
@@ -172,7 +172,7 @@ def _get_pickle_state(instance: Any, omitted_fields: set[str]) -> dict[str, Any]
     return state
 
 
-def _restore_pickle_state(
+def restore_pickle_state(
     instance: Any,
     state: dict[str, Any] | tuple[dict[str, Any], dict[str, Any]],
     omitted_fields: set[str],
@@ -351,11 +351,11 @@ class SerializationMixin:
 
     def __getstate__(self) -> dict[str, Any]:
         """Return pickle state without runtime-only shallow-copy fields."""
-        return _get_pickle_state(self, self._PICKLE_OMIT_FIELDS)
+        return get_pickle_state(self, self._PICKLE_OMIT_FIELDS)
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Restore pickle state and reset runtime-only shallow-copy fields."""
-        _restore_pickle_state(self, state, self._PICKLE_OMIT_FIELDS)
+        restore_pickle_state(self, state, self._PICKLE_OMIT_FIELDS)
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance and any nested objects to a dictionary.
