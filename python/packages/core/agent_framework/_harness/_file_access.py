@@ -317,7 +317,7 @@ def _apply_replace_lines(content: str, edits: list[tuple[int, str, str | None]])
             actual = _strip_line_terminator(lines[line_number - 1])
             if actual != _strip_line_terminator(expected_line):
                 raise ValueError(
-                    f"line_number {line_number} does not contain the expected text "
+                    f"line_number {line_number} does not match the expected text "
                     f"(expected {_strip_line_terminator(expected_line)!r}, found {actual!r}). "
                     "Re-read the file to get current line numbers."
                 )
@@ -1477,9 +1477,11 @@ class _LineEdit(BaseModel):
             default=None,
             description=(
                 "Optional: the text you believe is currently on that line, as reported by "
-                "file_access_grep or file_access_read_lines. When supplied, the edit is rejected "
-                "unless it matches, which catches an out-of-date line number or a file that changed "
-                "since you looked. The trailing newline is ignored in the comparison."
+                "file_access_grep. Give the line's own text only: file_access_read_lines prefixes "
+                "each line with its number and a tab, and that prefix is not part of the line. "
+                "When supplied, the edit is rejected unless it matches, which catches an "
+                "out-of-date line number or a file that changed since you looked. The trailing "
+                "newline is ignored in the comparison."
             ),
         ),
     ] = None

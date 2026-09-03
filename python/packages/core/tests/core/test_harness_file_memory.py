@@ -533,7 +533,7 @@ async def test_file_memory_replace_lines_honours_expected_line() -> None:
             }
         )
     )
-    assert "does not contain the expected text" in refused
+    assert "does not match the expected text" in refused
 
     await replace.invoke(
         arguments={

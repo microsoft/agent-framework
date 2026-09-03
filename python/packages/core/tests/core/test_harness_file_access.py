@@ -1688,7 +1688,7 @@ async def test_replace_lines_refuses_when_expected_line_differs(
         )[0]
     )
 
-    assert "does not contain the expected text" in result
+    assert "does not match the expected text" in result
     assert await store.read("f.txt") == "one\ntwo\nthree\n"
 
 
