@@ -956,13 +956,40 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
     return result
 
 
+def _encode_agui_segment(contents: list[Content]) -> tuple[str, list[dict[str, Any]]]:
+    """Encode assistant contents into an AG-UI ``(content, tool_calls)`` pair.
+
+    Shared by both the single-message path (``agent_framework_messages_to_agui``) and the
+    split path (``_split_mixed_message_to_agui``) so the text / function_call
+    serialization lives in one place. A future argument-format or supported-content
+    change then updates both paths at once instead of drifting between them.
+    """
+    text = ""
+    tool_calls: list[dict[str, Any]] = []
+    for content in contents:
+        if content.type == "text":
+            text += content.text or ""
+        elif content.type == "function_call":
+            tool_calls.append(
+                {
+                    "id": content.call_id,
+                    "type": "function",
+                    "function": {
+                        "name": content.name,
+                        "arguments": content.arguments,
+                    },
+                }
+            )
+    return text, tool_calls
+
+
 def _split_mixed_message_to_agui(msg: Message, role: str) -> list[dict[str, Any]]:
     """Convert a Message that carries function_result content into ordered AG-UI messages.
 
     A single Agent Framework message can interleave assistant content (text,
     function_call) with one or more function_result (tool) contents -- for example a
     parallel tool-call batch or a finalized turn. AG-UI needs each function_result as
-    its own ``tool`` message. Two ordering rules keep the transcript provider-valid:
+    its own ``tool`` message. Three ordering rules keep the transcript provider-valid:
 
     * A ``function_call`` must precede its matching result, so a pending assistant
       segment that carries tool calls is flushed (together with any buffered text) right
@@ -972,6 +999,13 @@ def _split_mixed_message_to_agui(msg: Message, role: str) -> list[dict[str, Any]
       adjacency providers require: ``_sanitize_tool_history`` then treats the earlier
       call as abandoned, clears it, and drops the real result. Such text is deferred and
       emitted after the results instead.
+    * A new assistant segment is NOT flushed while earlier emitted calls are still
+      awaiting their results (``unresolved_call_ids``). For an interleaved batch such as
+      ``[call A, call B, result A, call C, result B, result C]``, flushing ``assistant(C)``
+      before ``result B`` would separate the still-open call B from its result, and
+      ``_sanitize_tool_history`` would drop result B as orphaned. Deferring the new
+      segment yields ``[assistant(A,B), tool(A), tool(B), assistant(C), tool(C)]`` --
+      every call stays adjacent to its results.
 
     The source message id is kept on the first emitted message; every additional
     message gets an independent generated id. Deriving suffixes from the source id
@@ -981,8 +1015,10 @@ def _split_mixed_message_to_agui(msg: Message, role: str) -> list[dict[str, Any]
     from ._utils import generate_event_id
 
     messages: list[dict[str, Any]] = []
-    seg_text = ""
-    seg_tool_calls: list[dict[str, Any]] = []
+    seg_contents: list[Content] = []
+    seg_has_call = False
+    # Call ids emitted in an assistant segment whose results have not been emitted yet.
+    unresolved_call_ids: set[str] = set()
     source_id_available = bool(msg.message_id)
 
     def next_id() -> str:
@@ -993,41 +1029,34 @@ def _split_mixed_message_to_agui(msg: Message, role: str) -> list[dict[str, Any]
         source_id_available = False
         return generate_event_id()
 
-    def flush_segment(*, before_result: bool = False) -> None:
-        nonlocal seg_text, seg_tool_calls
-        # Before a result, only emit the segment if it carries tool calls (which must
-        # precede their results). A text-only assistant message here would separate an
-        # outstanding call from its result and cause the result to be dropped, so keep
-        # buffering that text until after the results.
-        if before_result and not seg_tool_calls:
+    def flush_segment() -> None:
+        nonlocal seg_contents, seg_has_call
+        if not seg_contents:
             return
+        seg_text, seg_tool_calls = _encode_agui_segment(seg_contents)
+        seg_contents = []
+        seg_has_call = False
         if not seg_text and not seg_tool_calls:
             return
         assistant_msg: dict[str, Any] = {"id": next_id(), "role": role, "content": seg_text}
         if seg_tool_calls:
             assistant_msg["tool_calls"] = seg_tool_calls
+            unresolved_call_ids.update(str(tc["id"]) for tc in seg_tool_calls if tc["id"] is not None)
         messages.append(assistant_msg)
-        seg_text = ""
-        seg_tool_calls = []
 
     for content in msg.contents:
-        if content.type == "text":
-            seg_text += content.text or ""
-        elif content.type == "function_call":
-            seg_tool_calls.append(
-                {
-                    "id": content.call_id,
-                    "type": "function",
-                    "function": {
-                        "name": content.name,
-                        "arguments": content.arguments,
-                    },
-                }
-            )
+        if content.type in ("text", "function_call"):
+            seg_contents.append(content)
+            seg_has_call = seg_has_call or content.type == "function_call"
         elif content.type == "function_result":
-            # Flush a pending assistant call (with any buffered text) so the matching
-            # call precedes its result; text-only content is deferred (see flush_segment).
-            flush_segment(before_result=True)
+            # Flush the buffered call-bearing segment before its result so the call
+            # precedes it -- but only when no earlier batch is still open. While
+            # unresolved_call_ids is non-empty, flushing a new assistant segment here
+            # would split those earlier calls from their results (see docstring), so the
+            # new segment stays buffered until the open batch's results are emitted.
+            # Text-only segments are likewise deferred (they carry no function_call).
+            if seg_has_call and not unresolved_call_ids:
+                flush_segment()
             messages.append(
                 {
                     "id": next_id(),
@@ -1036,8 +1065,11 @@ def _split_mixed_message_to_agui(msg: Message, role: str) -> list[dict[str, Any]
                     "toolCallId": content.call_id,
                 }
             )
+            if content.call_id is not None:
+                unresolved_call_ids.discard(str(content.call_id))
 
-    # Emit any deferred / trailing assistant text (e.g. a summary after the results).
+    # Emit any deferred / trailing segment: buffered text (e.g. a summary after the
+    # results) and/or a new-call segment whose results arrive in a later message.
     flush_segment()
     return messages
 
@@ -1088,23 +1120,7 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
             result.extend(_split_mixed_message_to_agui(msg, role))
             continue
 
-        content_text = ""
-        tool_calls: list[dict[str, Any]] = []
-
-        for content in msg.contents:
-            if content.type == "text":
-                content_text += content.text or ""
-            elif content.type == "function_call":
-                tool_calls.append(
-                    {
-                        "id": content.call_id,
-                        "type": "function",
-                        "function": {
-                            "name": content.name,
-                            "arguments": content.arguments,
-                        },
-                    }
-                )
+        content_text, tool_calls = _encode_agui_segment(msg.contents)
 
         agui_msg: dict[str, Any] = {
             "id": msg.message_id if msg.message_id else generate_event_id(),  # Always include id

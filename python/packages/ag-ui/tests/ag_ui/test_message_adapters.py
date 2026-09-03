@@ -1079,6 +1079,76 @@ def test_agent_framework_to_agui_text_before_result_round_trips_without_dropping
     assert "call_a" in surviving_result_ids
 
 
+def test_agent_framework_to_agui_interleaved_parallel_batch_order_preserved():
+    """An interleaved parallel batch keeps every call adjacent to its results.
+
+    A new call (C) appearing before the preceding batch's results are all emitted must not
+    start a new assistant segment ahead of the still-open results (A, B). The split defers
+    ``assistant(C)`` until B's result has been emitted.
+    """
+    msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="call_a", name="fa", arguments="{}"),
+            Content.from_function_call(call_id="call_b", name="fb", arguments="{}"),
+            Content.from_function_result(call_id="call_a", result="ra"),
+            Content.from_function_call(call_id="call_c", name="fc", arguments="{}"),
+            Content.from_function_result(call_id="call_b", result="rb"),
+            Content.from_function_result(call_id="call_c", result="rc"),
+        ],
+        message_id="interleaved-1",
+    )
+
+    messages = agent_framework_messages_to_agui([msg])
+
+    # assistant(A,B) -> tool(A) -> tool(B) -> assistant(C) -> tool(C): the new call C is
+    # deferred until the open batch {A, B} is fully resolved, so no assistant message ever
+    # separates B's call from B's result.
+    assert [m["role"] for m in messages] == ["assistant", "tool", "tool", "assistant", "tool"]
+    assert [tc["id"] for tc in messages[0]["tool_calls"]] == ["call_a", "call_b"]
+    assert messages[1]["toolCallId"] == "call_a"
+    assert messages[2]["toolCallId"] == "call_b"
+    assert [tc["id"] for tc in messages[3]["tool_calls"]] == ["call_c"]
+    assert messages[4]["toolCallId"] == "call_c"
+    # First emitted message keeps the source id; every other id is independent.
+    assert messages[0]["id"] == "interleaved-1"
+    assert len({m["id"] for m in messages}) == len(messages)
+
+
+def test_agent_framework_to_agui_interleaved_batch_round_trips_without_dropping():
+    """An interleaved parallel batch must not drop any result through sanitize_tool_history.
+
+    Regression for the review finding: with the naive split, ``[call A, call B, result A,
+    call C, result B, result C]`` became ``[assistant(A,B), tool(A), assistant(C), tool(B),
+    tool(C)]``; the intervening ``assistant(C)`` cleared the pending call B, so
+    ``_sanitize_tool_history`` dropped B's real result.
+    """
+    msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="call_a", name="fa", arguments="{}"),
+            Content.from_function_call(call_id="call_b", name="fb", arguments="{}"),
+            Content.from_function_result(call_id="call_a", result="ra"),
+            Content.from_function_call(call_id="call_c", name="fc", arguments="{}"),
+            Content.from_function_result(call_id="call_b", result="rb"),
+            Content.from_function_result(call_id="call_c", result="rc"),
+        ],
+        message_id="interleaved-2",
+    )
+
+    agui_messages = agent_framework_messages_to_agui([msg])
+
+    # Round-trip through provider normalization: every result must survive.
+    provider_messages, _ = normalize_agui_input_messages(agui_messages, sanitize_tool_history=True)
+    surviving_result_ids = {
+        content.call_id
+        for message in provider_messages
+        for content in (message.contents or [])
+        if content.type == "function_result"
+    }
+    assert surviving_result_ids == {"call_a", "call_b", "call_c"}
+
+
 # Additional tests for better coverage
 
 
