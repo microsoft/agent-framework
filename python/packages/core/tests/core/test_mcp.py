@@ -6466,8 +6466,7 @@ async def test_mcp_streamable_http_tool_removes_header_hook_on_close():
             tool_b.get_mcp_client()
         assert len(user_client.event_hooks["request"]) == 2
 
-        with patch.object(MCPTool, "close", new_callable=AsyncMock):
-            await tool_a.close()
+        await tool_a.close()
         assert user_client.event_hooks["request"] == [tool_b._inject_headers_hook]
 
         # Reconnecting after close re-attaches exactly one hook for tool A.
@@ -6477,6 +6476,57 @@ async def test_mcp_streamable_http_tool_removes_header_hook_on_close():
         assert user_client.event_hooks["request"].count(tool_a._inject_headers_hook) == 1
         assert len(user_client.event_hooks["request"]) == 2
     finally:
+        await user_client.aclose()
+
+
+async def test_mcp_streamable_http_tool_keeps_header_hook_until_cancelled_close_finishes():
+    """Caller cancellation must not remove the hook while lifecycle teardown continues."""
+    import httpx
+
+    user_client = httpx.AsyncClient()
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        http_client=user_client,
+        header_provider=lambda _kw: {"Authorization": "Bearer token"},
+    )
+    close_started = asyncio.Event()
+    allow_close = asyncio.Event()
+    # Recorded rather than asserted here: an assertion raised on the lifecycle owner task
+    # is swallowed by its error handling, so it would pass even when the hook is detached.
+    hook_attached_during_teardown: list[bool] = []
+
+    async def delayed_close() -> None:
+        close_started.set()
+        await allow_close.wait()
+        hook_attached_during_teardown.append(tool._inject_headers_hook in user_client.event_hooks["request"])
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+        assert tool._inject_headers_hook in user_client.event_hooks["request"]
+
+        with patch.object(MCPTool, "_close_on_owner", side_effect=delayed_close):
+            close_task = asyncio.create_task(tool.close())
+            await close_started.wait()
+            owner_task = tool._lifecycle_owner_task
+            assert owner_task is not None
+
+            close_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await close_task
+            assert tool._inject_headers_hook in user_client.event_hooks["request"]
+
+            allow_close.set()
+            await owner_task
+
+        assert hook_attached_during_teardown == [True]
+        assert tool._inject_headers_hook not in user_client.event_hooks["request"]
+    finally:
+        allow_close.set()
+        owner_task = tool._lifecycle_owner_task
+        if owner_task is not None:
+            await owner_task
         await user_client.aclose()
 
 

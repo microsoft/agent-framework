@@ -3279,10 +3279,10 @@ class MCPStreamableHTTPTool(MCPTool):
             request_hooks.remove(self._inject_headers_hook)
         self._header_hook_client = None
 
-    async def close(self) -> None:
-        """Disconnect and remove the tool-specific hook from its HTTP client."""
+    async def _close_on_owner(self) -> None:
+        """Disconnect on the lifecycle owner before removing the request hook."""
         try:
-            await super().close()
+            await super()._close_on_owner()
         finally:
             self._remove_header_hook()
 
