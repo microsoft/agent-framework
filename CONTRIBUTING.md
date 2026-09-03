@@ -117,10 +117,10 @@ If local or CI builds report Public API Analyzer warnings or errors, handle each
   dotnet format .\dotnet\agent-framework-dotnet.slnx analyzers --diagnostics RS0016
   ```
 
-- `RS0017` reports that a declared public API was deleted. Restore the API if the deletion was accidental; otherwise, record the removed signature in the package's `PublicAPI.Unshipped.txt` file with the `*REMOVED*` prefix:
+- `RS0017` reports that a declared public API was deleted. Restore the API if the deletion was accidental; otherwise, record the removed signature in the package's `PublicAPI.Unshipped.txt` file with the `*REMOVED*` prefix by using the corresponding code fix, or the following dotnet format script:
 
   ```powershell
-  Add-Content -Path .\dotnet\src\<package>\PublicAPI\<target-framework>\PublicAPI.Unshipped.txt -Value "*REMOVED*<removed-api-signature>"
+  dotnet format .\dotnet\agent-framework-dotnet.slnx analyzers --diagnostics RS0017
   ```
 
 After a release, the `Promote Shipped APIs` workflow moves entries from `PublicAPI.Unshipped.txt` to `PublicAPI.Shipped.txt` and opens or updates a promotion PR. Publish builds fail if released packages still contain unshipped public API entries.
