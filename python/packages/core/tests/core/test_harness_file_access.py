@@ -1104,7 +1104,6 @@ async def _prepare_access_tools(
     disable_write_tools: bool = False,
     disable_readonly_tool_approval: bool = False,
     disable_write_tool_approval: bool = False,
-    disable_search_alignment_check: bool = False,
 ) -> list[object]:
     """Prepare a FileAccessProvider and return its registered tools."""
     session = AgentSession(session_id="session-1")
@@ -1113,7 +1112,6 @@ async def _prepare_access_tools(
         disable_write_tools=disable_write_tools,
         disable_readonly_tool_approval=disable_readonly_tool_approval,
         disable_write_tool_approval=disable_write_tool_approval,
-        disable_search_alignment_check=disable_search_alignment_check,
     )
     agent = Agent(client=chat_client_base, context_providers=[provider])
     _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
@@ -1633,24 +1631,10 @@ async def test_base_search_skips_files_read_cannot_decode() -> None:
     assert [result.file_name for result in results] == ["good.txt"]
 
 
-async def test_grep_refuses_a_store_whose_line_numbers_are_skewed(
-    chat_client_base: SupportsChatGetResponse,
-) -> None:
-    """A store that numbers lines differently must not hand those numbers to the model."""
-    store = _SkewedStore()
-    await store.write("cfg.txt", "header\x0cintro\nDEBUG = 1\nkeep me\nDEBUG = 2\n")
-
-    tools = await _prepare_access_tools(chat_client_base, store=store)
-    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
-    result = _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
-
-    assert "do not line up" in result
-
-
 async def test_grep_accepts_an_override_that_uses_the_published_primitive(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    """An overriding store that numbers through ``scan_content`` passes verification."""
+    """An overriding store that numbers through ``scan_content`` stays aligned with the editor."""
     store = _AlignedOverrideStore()
     await store.write("cfg.txt", "header\x0cintro\nDEBUG = 1\nkeep me\nDEBUG = 2\n")
 
@@ -1683,111 +1667,6 @@ async def test_shipped_stores_are_trusted_and_not_re_read(
     await grep.invoke(arguments={"regex_pattern": "keep me"})
 
     assert reads == []
-
-
-async def test_instance_level_read_override_is_not_trusted(
-    chat_client_base: SupportsChatGetResponse,
-) -> None:
-    """A shipped store scans its own storage, so a wrapped instance ``read`` desynchronizes it."""
-    store = InMemoryAgentFileStore()
-    await store.write("cfg.txt", "alpha\nkeep me\n")
-    original_read = store.read
-
-    async def prefixed_read(path: str) -> str | None:
-        content = await original_read(path)
-        return None if content is None else f"banner\n{content}"
-
-    store.read = prefixed_read  # pyright: ignore[reportAttributeAccessIssue]
-    tools = await _prepare_access_tools(chat_client_base, store=store)
-    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
-
-    assert "do not line up" in _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
-
-
-async def test_instance_level_search_override_is_not_trusted(
-    chat_client_base: SupportsChatGetResponse,
-) -> None:
-    """The trust rules read the class, so an instance ``search`` would be vouched for unchecked."""
-    store = _ContentOnlyStore()
-    await store.write("cfg.txt", "alpha\nkeep me\n")
-
-    async def skewed_search(
-        directory: str,
-        regex_pattern: str,
-        glob_pattern: str | None = None,
-        *,
-        recursive: bool = False,
-    ) -> list[FileSearchResult]:
-        return [
-            FileSearchResult(
-                file_name="cfg.txt",
-                matching_lines=[FileSearchMatch(line_number=1, line="keep me")],
-            )
-        ]
-
-    store.search = skewed_search  # pyright: ignore[reportAttributeAccessIssue]
-    tools = await _prepare_access_tools(chat_client_base, store=store)
-    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
-
-    assert "do not line up" in _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
-
-
-async def test_unreadable_matched_file_fails_the_whole_verification(
-    chat_client_base: SupportsChatGetResponse,
-) -> None:
-    """An unchecked file must not ship its line numbers alongside checked ones."""
-
-    class _UnreadableSecondFile(_AlignedOverrideStore):
-        async def read(self, path: str) -> str | None:
-            if path.endswith("b.txt"):
-                raise OSError("vanished mid-search")
-            return await super().read(path)
-
-    store = _UnreadableSecondFile()
-    await store.write("a.txt", "keep me\n")
-    await store.write("b.txt", "keep me\n")
-    tools = await _prepare_access_tools(chat_client_base, store=store)
-    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
-
-    assert "do not line up" in _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
-
-
-async def test_verification_batches_its_checks_without_changing_results(
-    chat_client_base: SupportsChatGetResponse,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Batch size must control how often the check is offloaded, and nothing else.
-
-    Verification reads, checks and discards a batch at a time, so its peak memory follows
-    ``_SCAN_BATCH_CHARS`` rather than the combined size of every matched file.
-    """
-    store = _AlignedOverrideStore()
-    for index in range(4):
-        await store.write(f"f{index}.txt", "keep me\n")
-
-    offloads: list[str] = []
-    original_to_thread = asyncio.to_thread
-
-    async def counting_to_thread(func, /, *args, **kwargs):  # type: ignore[no-untyped-def]
-        offloads.append(getattr(func, "__name__", repr(func)))
-        return await original_to_thread(func, *args, **kwargs)
-
-    monkeypatch.setattr(asyncio, "to_thread", counting_to_thread)
-    tools = await _prepare_access_tools(chat_client_base, store=store)
-    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
-
-    # The whole corpus is far below the default batch size, so one offload.
-    whole = _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
-    whole_offloads = len(offloads)
-
-    # Force a batch per file and the results must not move.
-    offloads.clear()
-    monkeypatch.setattr(_file_access_module, "_SCAN_BATCH_CHARS", 1)
-    split = _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
-
-    assert whole_offloads == 1
-    assert len(offloads) == 4
-    assert whole == split
 
 
 # endregion
@@ -1866,189 +1745,6 @@ async def test_replace_lines_without_expected_line_is_unchanged(
 
     await replace.invoke(arguments={"file_name": "f.txt", "edits": [{"line_number": 1, "new_line": "ONE\n"}]})
     assert await store.read("f.txt") == "ONE\ntwo\n"
-
-
-# endregion
-
-
-# region verification opt-outs
-
-
-async def test_store_can_declare_its_line_numbers_aligned(
-    chat_client_base: SupportsChatGetResponse,
-) -> None:
-    """``reports_aligned_line_numbers`` opts one store out of the alignment check."""
-
-    class _DeclaredAligned(_AlignedOverrideStore):
-        reports_aligned_line_numbers = True
-
-    store = _DeclaredAligned()
-    await store.write("cfg.txt", "alpha\nkeep me\n")
-    reads: list[str] = []
-    original_read = store.read
-
-    async def counting_read(path: str) -> str | None:
-        reads.append(path)
-        return await original_read(path)
-
-    store.read = counting_read  # pyright: ignore[reportAttributeAccessIssue]
-    tools = await _prepare_access_tools(chat_client_base, store=store)
-    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
-    payload = json.loads(_text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0]))
-
-    assert payload[0]["matching_lines"][0]["line_number"] == 2
-    assert reads == []  # The check never re-read the file.
-
-
-async def test_declaring_alignment_is_trusted_even_when_wrong(
-    chat_client_base: SupportsChatGetResponse,
-) -> None:
-    """The declaration is a promise: a store that lies is believed, and edits go wrong.
-
-    Pins the documented hazard so nobody "fixes" the opt-out into a no-op.
-    """
-
-    class _LyingStore(_SkewedStore):
-        reports_aligned_line_numbers = True
-
-    store = _LyingStore()
-    await store.write("cfg.txt", "header\x0cintro\nDEBUG = 1\nkeep me\nDEBUG = 2\n")
-    tools = await _prepare_access_tools(chat_client_base, store=store)
-    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
-    result = _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
-
-    assert "do not line up" not in result
-    assert json.loads(result)[0]["matching_lines"][0]["line_number"] == 4  # the skewed number
-
-
-async def test_provider_can_disable_the_alignment_check(
-    chat_client_base: SupportsChatGetResponse,
-) -> None:
-    """``disable_search_alignment_check`` turns the check off for every store."""
-    store = _SkewedStore()
-    await store.write("cfg.txt", "header\x0cintro\nDEBUG = 1\nkeep me\nDEBUG = 2\n")
-
-    checked = await _prepare_access_tools(chat_client_base, store=store)
-    assert "do not line up" in _text(
-        (
-            await _tool_by_name(checked, FileAccessProvider.GREP_TOOL_NAME).invoke(
-                arguments={"regex_pattern": "keep me"}
-            )
-        )[0]
-    )
-
-    unchecked = await _prepare_access_tools(chat_client_base, store=store, disable_search_alignment_check=True)
-    payload = json.loads(
-        _text(
-            (
-                await _tool_by_name(unchecked, FileAccessProvider.GREP_TOOL_NAME).invoke(
-                    arguments={"regex_pattern": "keep me"}
-                )
-            )[0]
-        )
-    )
-    assert payload[0]["matching_lines"][0]["line_number"] == 4
-
-
-def test_stores_do_not_declare_alignment_by_default() -> None:
-    """Nothing ships with the declaration set, including the two stores that are trusted.
-
-    They are trusted through ``_ALIGNED_STORE_TYPES`` instead, matched by exact type.
-    Declaring the attribute on them would be inherited by any subclass, so a store extending
-    one would keep the declaration and be trusted with numbers it computed itself — pinned by
-    the next two tests.
-    """
-    assert AgentFileStore.reports_aligned_line_numbers is False
-    assert InMemoryAgentFileStore.reports_aligned_line_numbers is False
-    assert FileSystemAgentFileStore.reports_aligned_line_numbers is False
-
-
-async def test_subclassing_a_shipped_store_and_overriding_read_is_verified(
-    chat_client_base: SupportsChatGetResponse,
-) -> None:
-    """A shipped store's ``search`` scans its own storage, so an overridden ``read`` can disagree with it.
-
-    ``search`` is untouched here, so keying trust on the ``search`` function alone would let this
-    through: grep numbers the backing dictionary while ``read_lines`` and ``replace_lines`` index
-    the prepended text.
-    """
-
-    class _PrependingSubclass(InMemoryAgentFileStore):
-        async def read(self, path: str) -> str | None:
-            content = await super().read(path)
-            return None if content is None else "banner\n" + content
-
-    store = _PrependingSubclass()
-    await store.write("cfg.txt", "alpha\nkeep me\n")
-    tools = await _prepare_access_tools(chat_client_base, store=store)
-    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
-
-    result = _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
-    assert "do not line up" in result
-
-
-async def test_search_alignment_refuses_a_non_positive_line_number(
-    chat_client_base: SupportsChatGetResponse,
-) -> None:
-    """Line 0 must be refused rather than indexing from the end of the file.
-
-    ``FileSearchMatch.__init__`` rejects it, so this store sets the attribute afterwards. The file
-    deliberately ends without a newline and its last line matches the pattern, so an unchecked
-    ``lines[-1]`` verifies successfully and the skew goes unnoticed.
-    """
-
-    class _ZeroLineStore(InMemoryAgentFileStore):
-        async def search(
-            self,
-            directory: str,
-            regex_pattern: str,
-            glob_pattern: str | None = None,
-            *,
-            recursive: bool = False,
-        ) -> list[FileSearchResult]:
-            del directory, glob_pattern, recursive
-            match = FileSearchMatch(line_number=1, line=regex_pattern)
-            match.line_number = 0
-            return [FileSearchResult(file_name="cfg.txt", snippet="", matching_lines=[match])]
-
-    store = _ZeroLineStore()
-    await store.write("cfg.txt", "alpha\nkeep me")
-    tools = await _prepare_access_tools(chat_client_base, store=store)
-    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
-
-    result = _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
-    assert "do not line up" in result
-
-
-async def test_subclassing_a_shipped_store_does_not_inherit_its_trust(
-    chat_client_base: SupportsChatGetResponse,
-) -> None:
-    """Overriding ``search`` on a subclass of a shipped store must drop it out of the trusted set."""
-
-    class _SkewedSubclass(InMemoryAgentFileStore):
-        async def search(
-            self,
-            directory: str,
-            regex_pattern: str,
-            glob_pattern: str | None = None,
-            *,
-            recursive: bool = False,
-        ) -> list[FileSearchResult]:
-            del directory, glob_pattern, recursive
-            return [
-                FileSearchResult(
-                    file_name="cfg.txt",
-                    snippet="",
-                    matching_lines=[FileSearchMatch(line_number=1, line=regex_pattern)],
-                )
-            ]
-
-    store = _SkewedSubclass()
-    await store.write("cfg.txt", "alpha\nkeep me\n")
-    tools = await _prepare_access_tools(chat_client_base, store=store)
-    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
-
-    assert "do not line up" in _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
 
 
 # endregion

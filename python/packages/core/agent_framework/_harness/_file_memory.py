@@ -51,7 +51,6 @@ from ._file_access import (
     _line_edits,  # pyright: ignore[reportPrivateUsage]
     _matches_glob,  # pyright: ignore[reportPrivateUsage]
     _normalize_relative_path,  # pyright: ignore[reportPrivateUsage]
-    _verify_search_alignment,  # pyright: ignore[reportPrivateUsage]
 )
 
 logger = logging.getLogger(__name__)
@@ -74,14 +73,6 @@ DEFAULT_FILE_MEMORY_INSTRUCTIONS = (
     "compacted or truncated. This ensures important data remains accessible across long-running sessions."
 )
 
-# The file-access wording names tools this provider does not register: there is no
-# ``file_memory_read_lines``, so the model is pointed at ``file_memory_read`` instead.
-_MISALIGNED_MEMORY_SEARCH_MESSAGE = (
-    "Could not search memory files: this store's line numbers do not line up with the numbering "
-    "used by file_memory_replace_lines, so editing by the reported numbers would change the wrong "
-    "lines (or a file changed while the search ran). Use file_memory_read to locate the content "
-    "before editing."
-)
 
 _DESCRIPTION_SUFFIX = "_description.md"
 _MEMORY_INDEX_FILE_NAME = "memories.md"
@@ -265,7 +256,6 @@ class FileMemoryProvider(ContextProvider):
         source_id: str = DEFAULT_FILE_MEMORY_SOURCE_ID,
         scope: str | None = None,
         instructions: str | None = None,
-        disable_search_alignment_check: bool = False,
     ) -> None:
         """Initialize the file memory provider.
 
@@ -280,20 +270,11 @@ class FileMemoryProvider(ContextProvider):
                 ``session_id`` is used, isolating memories per session.
             instructions: Optional instruction override. When ``None`` the
                 default file-memory instructions are used.
-            disable_search_alignment_check: When ``True``, ``file_memory_grep`` skips the
-                check that a store's reported ``line_number`` values address the same
-                lines ``file_memory_replace_lines`` acts on. See the same argument on
-                :class:`~agent_framework.FileAccessProvider`; prefer declaring
-                :attr:`AgentFileStore.reports_aligned_line_numbers` on the store instead.
-                Weigh it more carefully here: these tools are registered
-                ``approval_mode="never_require"``, so a wrong-line edit is applied with
-                no host approval. Defaults to ``False`` (the check runs).
         """
         super().__init__(source_id)
         self.store = store
         self.scope = scope
         self.instructions = instructions or DEFAULT_FILE_MEMORY_INSTRUCTIONS
-        self.disable_search_alignment_check = disable_search_alignment_check
         # Serializes write/delete operations (and their index rebuilds) so the
         # ``memories.md`` index stays consistent. A single per-instance lock is
         # sufficient for v1; concurrent writes across scopes are rare in practice.
@@ -513,14 +494,6 @@ class FileMemoryProvider(ContextProvider):
                 # Drop the internal files first: the index and the description sidecars are never
                 # shown to the agent, so a match inside one must not refuse the whole grep.
                 visible = [result for result in results if not _is_internal_file(result.file_name)]
-                if not self.disable_search_alignment_check:
-                    # Inside the same guard: the check compiles the pattern itself, so a store that
-                    # accepts one this package would reject must not throw out of the tool.
-                    misaligned = await _verify_search_alignment(
-                        self.store, working_folder, visible, regex_pattern, _MISALIGNED_MEMORY_SEARCH_MESSAGE
-                    )
-                    if misaligned is not None:
-                        return misaligned
             except ValueError as exc:
                 return f"Could not search memory files: {exc}"
             except OSError as exc:

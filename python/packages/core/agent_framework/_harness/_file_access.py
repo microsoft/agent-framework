@@ -265,7 +265,8 @@ def _split_lines_keepends(content: str) -> list[str]:
     :class:`AgentFileStore` implementations in this package, so for those stores a ``line_number``
     obtained from ``grep`` always targets the same line in the others and stays in range. A custom
     store supplies its own :meth:`AgentFileStore.search`, which must number by this split but does
-    not inherit it, so the alignment does not follow automatically and the providers verify it.
+    not inherit it; nothing checks that at runtime, so a store numbering differently edits the
+    wrong line silently.
 
     Splitting solely on ``\n`` (a trailing ``\r``
     stays attached to the line) means the result has ``len(content.split("\n"))``
@@ -683,19 +684,6 @@ class AgentFileStore(ABC):
             path: The relative path of the file to check.
         """
 
-    # Set to ``True`` by a store that overrides :meth:`search` and guarantees its
-    # ``line_number`` values are coordinates in :meth:`split_lines` — normally because
-    # it reports through :meth:`scan_content`. Declaring this opts the store out of the
-    # alignment check :class:`FileAccessProvider` otherwise runs on every ``grep``,
-    # which costs one extra read per *matched* file. Stores that do not override
-    # :meth:`search` need not set it: the base implementation is aligned by
-    # construction and is never checked.
-    #
-    # This is a promise, not a hint. Declaring it while numbering lines differently
-    # reinstates exactly the failure the check exists to catch — ``replace_lines``
-    # silently editing the wrong line — so only set it if a test pins the alignment.
-    reports_aligned_line_numbers: ClassVar[bool] = False
-
     @staticmethod
     def split_lines(content: str) -> list[str]:
         r"""Split ``content`` into the lines this store's line numbers address.
@@ -742,10 +730,11 @@ class AgentFileStore(ABC):
         *,
         recursive: bool = False,
     ) -> list[str]:
-        """Return the names of files that **may** contain a match for ``regex_pattern``.
+        """Return the names of the files that **may** satisfy this search.
 
-        This is the hook a store uses to narrow the search to the files worth
-        reading. Semantics are deliberately a **superset**:
+        A candidate is a file whose content **may** contain text matching ``regex_pattern`` and
+        whose name **may** match ``glob_pattern``. This is the hook a store uses to narrow the
+        search to the files worth reading. Semantics are deliberately a **superset**:
         returning a file that turns out not to match is harmless — the base
         :meth:`search` re-scans every candidate and discards it — while omitting
         a file loses the match. A backend with a native search index should
@@ -753,9 +742,13 @@ class AgentFileStore(ABC):
         guessing where the dialect cannot express the pattern.
 
         The default implementation has no index to narrow with, so it walks :meth:`list_children`
-        and returns every file in scope. Overriding :meth:`search` instead is also
-        supported, but then line numbering is the store's responsibility (see
-        :meth:`split_lines`) and :class:`FileAccessProvider` verifies it.
+        and returns every file in scope, leaving :meth:`search` to read and scan all of them.
+        Override this when the backing store can answer either question more cheaply than that —
+        a name index for ``glob_pattern``, a content or full-text index for ``regex_pattern`` — and
+        return the candidates it finds. That is the whole purpose of the hook: the store does the
+        narrowing it is good at, and the base keeps the scanning and the line numbering. Overriding
+        :meth:`search` instead is also supported, but then line numbering is the store's
+        responsibility (see :meth:`split_lines`), and nothing checks it at runtime.
 
         Args:
             directory: The relative directory to search. Use ``""`` for the root.
@@ -763,7 +756,10 @@ class AgentFileStore(ABC):
                 source string: :meth:`search` compiles it **case-insensitively**, so an index
                 queried case-sensitively with it will miss files and silently lose those matches.
             glob_pattern: The same optional glob :meth:`search` received, matched
-                against each file's path relative to ``directory``.
+                against each file's path relative to ``directory``, also
+                **case-insensitively**. The same rule applies: widen rather than narrow when
+                the backend cannot reproduce that, since returning only case-exact names
+                drops files the caller would have got.
 
         Keyword Args:
             recursive: When ``False`` (default) only direct children are in scope.
@@ -804,8 +800,15 @@ class AgentFileStore(ABC):
         model-supplied regex runs in a worker thread.
 
         Overriding this method is supported — a backend that can perform the
-        whole search natively should — but the override then owns line numbering
-        and must follow :meth:`split_lines`, typically via :meth:`scan_content`.
+        whole search natively should — but the override then owns line numbering.
+        An override must report ``line_number`` as a 1-based coordinate into
+        :meth:`split_lines` of the same content :meth:`read` returns, and should
+        report the matching line verbatim, terminator included;
+        :meth:`scan_content` produces both correctly. Numbering against anything
+        else is a bug with a silent failure mode: the search looks correct, and
+        the damage appears later when a line edit applies to a line the caller
+        never saw. Cover it with a test that greps and then edits by the reported
+        number.
 
         Args:
             directory: The relative directory to search. Use ``""`` for the root.
@@ -1383,127 +1386,6 @@ class FileSystemAgentFileStore(AgentFileStore):
         await asyncio.to_thread(lambda: full_path.mkdir(parents=True, exist_ok=True))
 
 
-# Store types whose ``search`` numbers lines with :meth:`AgentFileStore.split_lines`. Matched by
-# exact type rather than ``isinstance``: both scan their own storage instead of going through
-# ``read``, so a subclass overriding only ``read`` would have grep and the line editor looking at
-# different text while inheriting the trust. (The .NET port declares a property instead, which is
-# safe there only because both of its shipped stores are sealed.)
-_ALIGNED_STORE_TYPES: frozenset[type[AgentFileStore]] = frozenset({
-    InMemoryAgentFileStore,
-    FileSystemAgentFileStore,
-})
-
-
-def _numbers_are_trusted(store: AgentFileStore) -> bool:
-    """Whether ``store``'s line numbers are known to be :meth:`AgentFileStore.split_lines` coordinates."""
-    if store.reports_aligned_line_numbers:
-        return True
-    # Both rules below read the class, so an instance attribute shadowing ``search`` would let
-    # the class-level identity vouch for a method that never runs.
-    instance_attributes = getattr(store, "__dict__", {})
-    if "search" in instance_attributes:
-        return False
-    # The base ``search`` numbers whatever ``self.read`` returns, which is the text the editor
-    # indexes, so it stays aligned however ``read`` is replaced, on the class or the instance.
-    if type(store).search is AgentFileStore.search:
-        return True
-    # The shipped stores scan their own storage instead of going through ``read``, so wrapping
-    # ``read`` on the instance leaves grep numbering text the editor never sees.
-    return type(store) in _ALIGNED_STORE_TYPES and "read" not in instance_attributes
-
-
-_MISALIGNED_SEARCH_MESSAGE = (
-    "Could not search files: this store's line numbers do not line up with the numbering used by "
-    "file_access_read_lines and file_access_replace_lines, so editing by the reported numbers would "
-    "change the wrong lines (or a file changed while the search ran). Use file_access_read or "
-    "file_access_read_lines to locate the content before editing."
-)
-
-
-async def _verify_search_alignment(
-    store: AgentFileStore,
-    directory: str,
-    results: list[FileSearchResult],
-    regex_pattern: str,
-    message: str = _MISALIGNED_SEARCH_MESSAGE,
-) -> str | None:
-    """Check that a store's reported line numbers address the lines the editor will edit.
-
-    Skipped entirely when the store uses a ``search`` implementation already known to
-    be aligned. Otherwise every reported ``line_number`` is re-checked by running the
-    pattern against that line of :meth:`AgentFileStore.split_lines`, which is what
-    ``replace_lines`` will index into. Matching by pattern rather than by string
-    equality is deliberate: a custom store is not required to report the line verbatim
-    with its terminator, so comparing text would reject correct stores.
-
-    This is detection, not proof — a pattern that matches every line (``.``) passes
-    even if the numbering is skewed — and it is deliberately whole-call: a single
-    skewed file means the store's coordinates cannot be trusted anywhere. A matched
-    file that cannot be read fails the call for the same reason, since its numbers
-    go unchecked; the message names a mid-search change as one of its causes.
-
-    Args:
-        store: The store whose numbers are being checked.
-        directory: The directory the search ran in.
-        results: The results to check.
-        regex_pattern: The pattern the search ran with.
-        message: Returned on a mismatch. The default names the file-access tools; the memory
-            provider passes its own, because it registers neither of them.
-
-    Returns:
-        ``None`` when the numbers are trustworthy, otherwise a message for the model.
-    """
-    if not results or _numbers_are_trusted(store):
-        return None
-
-    regex = _compile_search_regex(regex_pattern)
-
-    def check(scanned: list[tuple[FileSearchResult, str]]) -> bool:
-        for result, content in scanned:
-            lines = AgentFileStore.split_lines(content)
-            for match in result.matching_lines:
-                # Both bounds: 0 or negative would index from the end and could match, passing a
-                # store whose numbers the editor will reject.
-                if not 1 <= match.line_number <= len(lines):
-                    return False
-                if regex.search(_strip_line_terminator(lines[match.line_number - 1])) is None:
-                    return False
-        return True
-
-    async def verify() -> bool:
-        batch: list[tuple[FileSearchResult, str]] = []
-        batched_chars = 0
-        for result in results:
-            try:
-                content = await store.read(_combine_search_path(directory, result.file_name))
-            except (OSError, ValueError):
-                # Deleted, unreadable, or not UTF-8. Its numbers went unchecked, and the check
-                # is whole-call, so nothing here can be certified.
-                logger.warning("Unverifiable file during search check: %s", result.file_name)
-                return False
-            if content is None:
-                return False
-            batch.append((result, content))
-            batched_chars += len(content)
-            if batched_chars < _SCAN_BATCH_CHARS:
-                continue
-            # The model supplies this pattern, so it runs in a worker thread rather than on the
-            # loop. Discarding each batch bounds peak memory by the budget the scan already uses.
-            if not await asyncio.to_thread(check, batch):
-                return False
-            batch.clear()
-            batched_chars = 0
-        return not batch or await asyncio.to_thread(check, batch)
-
-    try:
-        # The bound covers the reads as well as the scan: on a remote store the reads dominate,
-        # and an unbounded verification pass would hang grep for as long as they take.
-        aligned = await asyncio.wait_for(verify(), timeout=_SEARCH_TIMEOUT_SECONDS)
-    except asyncio.TimeoutError:
-        return message
-    return None if aligned else message
-
-
 class _WriteFileInput(BaseModel):
     """Input schema for ``file_access_write``."""
 
@@ -1740,7 +1622,6 @@ class FileAccessProvider(ContextProvider):
         disable_write_tools: bool = False,
         disable_readonly_tool_approval: bool = False,
         disable_write_tool_approval: bool = False,
-        disable_search_alignment_check: bool = False,
     ) -> None:
         """Initialize the file access provider.
 
@@ -1767,18 +1648,6 @@ class FileAccessProvider(ContextProvider):
                 ``file_access_replace``, ``file_access_replace_lines``) are
                 registered with ``approval_mode="never_require"`` so they run
                 without host approval. Defaults to ``False`` (approval required).
-            disable_search_alignment_check: When ``True``, ``file_access_grep`` skips the
-                check that a store's reported ``line_number`` values address the same
-                lines ``file_access_read_lines`` and ``file_access_replace_lines`` act
-                on. That check only runs for a store which overrides
-                :meth:`AgentFileStore.search` without declaring
-                :attr:`AgentFileStore.reports_aligned_line_numbers`, and costs one extra
-                read per *matched* file. Turn it off only when the store's alignment is
-                established some other way: without it, a mis-numbered grep result is
-                handed to the model and an edit can land on the wrong line silently.
-                Prefer setting ``reports_aligned_line_numbers`` on the store, which is
-                narrower — it opts out one store rather than every store this provider
-                is ever given. Defaults to ``False`` (the check runs).
         """
         super().__init__(source_id)
         self.store = store
@@ -1786,7 +1655,6 @@ class FileAccessProvider(ContextProvider):
         self.disable_write_tools = disable_write_tools
         self.disable_readonly_tool_approval = disable_readonly_tool_approval
         self.disable_write_tool_approval = disable_write_tool_approval
-        self.disable_search_alignment_check = disable_search_alignment_check
         # Serializes mutating tool operations (write/delete/replace/replace_lines).
         # The provider is shared across sessions/agents, so read-modify-write tools
         # (replace/replace_lines) could otherwise interleave and lose updates. Note
@@ -2045,12 +1913,6 @@ class FileAccessProvider(ContextProvider):
             target = directory if directory and directory.strip() else ""
             try:
                 results = await self.store.search(target, regex_pattern, glob_filter, recursive=True)
-                if not self.disable_search_alignment_check:
-                    # Inside the same guard: the check compiles the pattern itself, so a store that
-                    # accepts one this package would reject must not throw out of the tool.
-                    misaligned = await _verify_search_alignment(self.store, target, results, regex_pattern)
-                    if misaligned is not None:
-                        return misaligned
             except ValueError as exc:
                 return f"Could not search files: {exc}"
             except OSError as exc:

@@ -544,43 +544,4 @@ async def test_file_memory_replace_lines_honours_expected_line() -> None:
     assert await store.read("scope-1/notes.md") == "one\nTWO\nthree\n"
 
 
-async def test_file_memory_grep_refuses_a_skewed_store() -> None:
-    """A store whose numbers disagree must not have them handed to the model."""
-    store = _MemorySkewedStore()
-    tools = await _memory_tools(store)
-    await _tool_by_name(tools, "file_memory_write").invoke(
-        arguments={"file_name": "notes.md", "content": "alpha\nkeep me\n"}
-    )
-
-    result = _text(await _tool_by_name(tools, "file_memory_grep").invoke(arguments={"regex_pattern": "keep me"}))
-    assert "do not line up" in result
-
-
-async def test_file_memory_grep_refusal_names_memory_tools() -> None:
-    """The refusal reaches the model, so it must not send it to tools this provider never registered."""
-    store = _MemorySkewedStore()
-    tools = await _memory_tools(store)
-    await _tool_by_name(tools, "file_memory_write").invoke(
-        arguments={"file_name": "notes.md", "content": "alpha\nkeep me\n"}
-    )
-
-    result = _text(await _tool_by_name(tools, "file_memory_grep").invoke(arguments={"regex_pattern": "keep me"}))
-    assert "file_memory_read" in result
-    assert "file_access" not in result
-
-
-async def test_file_memory_grep_alignment_check_can_be_disabled() -> None:
-    """``disable_search_alignment_check`` switches it off for the memory provider as well."""
-    store = _MemorySkewedStore()
-    tools = await _memory_tools(store, disable_search_alignment_check=True)
-    await _tool_by_name(tools, "file_memory_write").invoke(
-        arguments={"file_name": "notes.md", "content": "alpha\nkeep me\n"}
-    )
-
-    payload = json.loads(
-        _text(await _tool_by_name(tools, "file_memory_grep").invoke(arguments={"regex_pattern": "keep me"}))
-    )
-    assert payload[0]["matching_lines"][0]["line_number"] == 1
-
-
 # endregion
