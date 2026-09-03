@@ -406,7 +406,7 @@ public class FoundryAgentTests
         // FoundryAgent-built chat client carries the new agent-framework-dotnet/{version}
         // segment (stamped by AgentFrameworkUserAgentPolicy registered via the MEAI
         // OpenAIRequestPolicies hook). The local MEAI/{version} stamp was removed because
-        // MEAI 10.5.1 stamps that itself; this test only verifies the framework-wide segment
+        // MEAI 10.9.0 stamps that itself; this test only verifies the framework-wide segment
         // that the Foundry package now guarantees.
         bool agentFrameworkUserAgentFound = false;
         using HttpHandlerAssert httpHandler = new(request =>

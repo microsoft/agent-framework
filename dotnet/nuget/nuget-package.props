@@ -1,14 +1,14 @@
 <Project>
   <PropertyGroup>
     <!-- Central version prefix - applies to all nuget packages. -->
-    <VersionPrefix>1.19.0</VersionPrefix>
+    <VersionPrefix>1.20.0</VersionPrefix>
     <RCNumber>1</RCNumber>
-    <DateSuffix>260822</DateSuffix>
+    <DateSuffix>260831</DateSuffix>
     <PackageVersion Condition="'$(IsReleaseCandidate)' == 'true'">$(VersionPrefix)-rc$(RCNumber)</PackageVersion>
     <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix).$(DateSuffix).1</PackageVersion>
     <PackageVersion Condition="'$(IsReleaseCandidate)' != 'true' AND '$(VersionSuffix)' == ''">$(VersionPrefix)-preview.$(DateSuffix).1</PackageVersion>
     <PackageVersion Condition="'$(IsReleased)' == 'true'">$(VersionPrefix)</PackageVersion>
-    <GitTag>1.19.0</GitTag>
+    <GitTag>1.20.0</GitTag>
 
     <Configurations>Debug;Release;Publish</Configurations>
     <IsPackable>true</IsPackable>
@@ -64,7 +64,24 @@
     <!-- SourceLink allows step-through debugging for source hosted on GitHub. -->
     <!-- https://github.com/dotnet/sourcelink -->
     <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
+    <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" PrivateAssets="All" Condition="'$(IsReleased)' == 'true'">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <AdditionalFiles Include="PublicAPI\$(TargetFramework)\PublicAPI.Shipped.txt" Condition="'$(IsReleased)' == 'true' AND '$(TargetFramework)' != ''" />
+    <AdditionalFiles Include="PublicAPI\$(TargetFramework)\PublicAPI.Unshipped.txt" Condition="'$(IsReleased)' == 'true' AND '$(TargetFramework)' != ''" />
   </ItemGroup>
+
+  <Target Name="ValidatePublicApiBaselineFiles" BeforeTargets="CoreCompile" Condition="'$(IsReleased)' == 'true' AND '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <_MissingPublicApiBaselineFile Include="PublicAPI\$(TargetFramework)\PublicAPI.Shipped.txt" Condition="!Exists('$(MSBuildProjectDirectory)\PublicAPI\$(TargetFramework)\PublicAPI.Shipped.txt')" />
+      <_MissingPublicApiBaselineFile Include="PublicAPI\$(TargetFramework)\PublicAPI.Unshipped.txt" Condition="!Exists('$(MSBuildProjectDirectory)\PublicAPI\$(TargetFramework)\PublicAPI.Unshipped.txt')" />
+    </ItemGroup>
+    <Error Condition="'@(_MissingPublicApiBaselineFile)' != ''" Text="Released project '$(MSBuildProjectName)' targets '$(TargetFramework)' but is missing required public API baseline file(s): @(_MissingPublicApiBaselineFile, ', ')" />
+  </Target>
+
+  <Target Name="ValidateNoUnshippedPublicApis" BeforeTargets="Pack" Condition="'$(IsReleased)' == 'true' AND '$(Configuration)' == 'Publish'">
+    <Exec Command="pwsh &quot;$(RepoRoot)\dotnet\eng\scripts\test-unshipped-public-apis.ps1&quot; -Path &quot;$(MSBuildProjectDirectory)&quot;" />
+  </Target>
 
   <ItemGroup>
     <!-- Include icon.png and NUGET.md in the project. -->
