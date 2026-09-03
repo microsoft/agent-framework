@@ -31,6 +31,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
+      DevUIAggregatorHostedService loads the Microsoft.Agents.AI.DevUI assembly at runtime via
+      Assembly.Load to serve the DevUI frontend, so the assembly must be present in the AppHost's
+      published output. Referencing the project here flows the dependency to consumers of the
+      Aspire.Hosting.AgentFramework.DevUI NuGet package.
+    -->
+    <ProjectReference Include="..\Microsoft.Agents.AI.DevUI\Microsoft.Agents.AI.DevUI.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>
