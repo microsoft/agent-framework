@@ -43,12 +43,13 @@ public sealed class AgentRunMode : IEquatable<AgentRunMode>
 
     /// <summary>
     /// Defers the choice between an <c>AgentMessage</c> and an <c>AgentTask</c> to the supplied
-    /// <paramref name="returnTask"/> delegate, which is invoked per request. The delegate receives an
-    /// <see cref="A2ARunDecisionContext"/> describing the incoming request and returns <see langword="true"/>
-    /// to return an <c>AgentTask</c>, or <see langword="false"/> to return an <c>AgentMessage</c>.
+    /// <paramref name="returnTask"/> delegate, which is invoked for each new-message request. The delegate receives
+    /// an <see cref="A2ARunDecisionContext"/> describing the incoming request and returns <see langword="true"/> to
+    /// return an <c>AgentTask</c>, or <see langword="false"/> to return an <c>AgentMessage</c>. Continuations of an
+    /// existing task remain task responses and do not invoke the delegate.
     /// </summary>
     /// <param name="returnTask">
-    /// An async delegate that decides whether the response is returned as an <c>AgentTask</c>.
+    /// An async delegate that decides whether a new-message response is returned as an <c>AgentTask</c>.
     /// </param>
     public static AgentRunMode ReturnTaskWhen(Func<A2ARunDecisionContext, CancellationToken, ValueTask<bool>> returnTask)
     {

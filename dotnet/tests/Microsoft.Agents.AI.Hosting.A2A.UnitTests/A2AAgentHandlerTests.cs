@@ -2132,6 +2132,36 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
+    /// Verifies that the ReturnTaskWhen delegate is not invoked when updating an existing task.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_OnContinuation_DoesNotInvokeDynamicModeCallbackAsync()
+    {
+        // Arrange
+        bool callbackInvoked = false;
+        A2AAgentHandler handler = CreateHandler(
+            CreateAgentMock(_ => { }),
+            runMode: AgentRunMode.ReturnTaskWhen((_, _) =>
+            {
+                callbackInvoked = true;
+                return ValueTask.FromResult(false);
+            }));
+
+        // Act
+        await InvokeExecuteAsync(handler, new RequestContext
+        {
+            StreamingResponse = false,
+            TaskId = "task-1",
+            ContextId = "ctx-1",
+            Message = new Message { MessageId = "empty", Role = Role.User, Parts = [] },
+            Task = new AgentTask { Id = "task-1", ContextId = "ctx-1", History = [new Message { Role = Role.User, Parts = [new Part { Text = "Hello" }] }] }
+        });
+
+        // Assert
+        Assert.False(callbackInvoked);
+    }
+
+    /// <summary>
     /// Verifies that in the non-streaming endpoint path, SaveSessionAsync is called with
     /// CancellationToken.None even when RunStreamingAsync throws an exception.
     /// </summary>
