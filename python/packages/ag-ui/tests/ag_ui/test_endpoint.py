@@ -5303,6 +5303,61 @@ async def test_owned_checkpoint_storage_stamps_owner_without_pending_events() ->
     assert stored.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] == expected_owner
 
 
+async def test_endpoint_workflow_checkpoint_resume_rejects_foreign_clean_checkpoint():
+    """A checkpoint with no pending request events is still owned and cannot be resumed by another thread."""
+    storage = InMemoryCheckpointStorage()
+    first_app = FastAPI()
+    first_workflow = _build_flight_choice_workflow()
+    add_agent_framework_fastapi_endpoint(
+        first_app,
+        first_workflow,
+        path="/workflow",
+        checkpoint_storage=storage,
+    )
+
+    with TestClient(first_app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "victim-thread",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+    checkpoints = await storage.list_checkpoints(workflow_name=first_workflow.name)
+    clean_checkpoints = [checkpoint for checkpoint in checkpoints if not checkpoint.pending_request_info_events]
+    assert clean_checkpoints, "expected at least one checkpoint without pending request events"
+    checkpoint = min(clean_checkpoints, key=lambda checkpoint: checkpoint.timestamp)
+    assert checkpoint.metadata.get(_CHECKPOINT_REQUEST_OWNER_KEY) is not None
+
+    second_app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        second_app,
+        _build_flight_choice_workflow(),
+        path="/workflow",
+        checkpoint_storage=storage,
+    )
+
+    with TestClient(second_app) as client:
+        attacker_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-attacker",
+                "threadId": "attacker-thread",
+                "messages": [],
+                "forwardedProps": {"checkpointId": checkpoint.checkpoint_id},
+            },
+        )
+
+        attacker_events = _decode_sse_events(attacker_response)
+        attacker_errors = [event for event in attacker_events if event.get("type") == "RUN_ERROR"]
+        assert len(attacker_errors) == 1
+        assert attacker_errors[0]["code"] == "WORKFLOW_RESUME_NOT_FOUND"
+        assert not [event for event in attacker_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+
+
 async def test_endpoint_workflow_checkpoint_resume_rejects_threaded_resume_after_restart():
     """An explicitly threaded cold checkpoint resume fails closed when ownership is unavailable."""
     storage = InMemoryCheckpointStorage()
