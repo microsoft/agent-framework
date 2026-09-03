@@ -15,7 +15,9 @@ builder.Services.AddHttpClient().AddLogging();
 builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.TypeInfoResolverChain.Add(AGUIServerSerializerContext.Default));
 builder.Services.AddAGUIServer();
 
-string endpoint = builder.Configuration["AZURE_OPENAI_ENDPOINT"] ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+Uri endpoint = AzureOpenAIEndpoint.From(
+    builder.Configuration["AZURE_OPENAI_ENDPOINT"])
+    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 string deploymentName = builder.Configuration["AZURE_OPENAI_DEPLOYMENT_NAME"] ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT_NAME is not set.");
 
 const string AgentName = "AGUIAssistant";
@@ -26,7 +28,7 @@ const string AgentName = "AGUIAssistant";
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 IChatClient chatClient = new OpenAIClient(
         new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
-        new OpenAIClientOptions { Endpoint = new Uri(endpoint) })
+        new OpenAIClientOptions { Endpoint = endpoint })
     .GetResponsesClient()
     .AsIChatClientWithStoredOutputDisabled(model: deploymentName);
 

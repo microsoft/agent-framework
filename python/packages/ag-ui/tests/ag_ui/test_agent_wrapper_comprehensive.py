@@ -14,6 +14,15 @@ from pydantic import BaseModel
 from agent_framework_ag_ui._approval_lifecycle import ApprovalExecutionOwner
 
 
+def _approval_request_id(events: list[Any]) -> str:
+    event = next(
+        event
+        for event in events
+        if getattr(event, "type", None) == "CUSTOM" and getattr(event, "name", None) == "function_approval_request"
+    )
+    return str(event.value["id"])
+
+
 async def test_agent_initialization_basic(streaming_chat_client_stub):
     """Test basic agent initialization without state schema."""
     from agent_framework.ag_ui import AgentFrameworkAgent
@@ -795,6 +804,8 @@ async def test_function_approval_mode_executes_tool(streaming_chat_client_stub):
     ]
     assert len(approval_events) == 1, "Expected one approval request event"
 
+    approval_id = _approval_request_id(events1)
+
     # --- Turn 2: Client approves → tool executes ---
     async def stream_fn_turn2(
         messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
@@ -813,7 +824,7 @@ async def test_function_approval_mode_executes_tool(streaming_chat_client_stub):
     input_data: dict[str, Any] = {
         "thread_id": thread_id,
         "messages": [],
-        "resume": [{"interruptId": "call_get_datetime_123", "status": "resolved", "payload": {"accepted": True}}],
+        "resume": [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}],
     }
 
     events2: list[Any] = []
@@ -1058,7 +1069,8 @@ async def test_approval_replay_is_blocked(streaming_chat_client_stub):
         if getattr(e, "type", None) == "CUSTOM" and getattr(e, "name", None) == "function_approval_request"
     ]
     assert len(approval_events) == 1, "Expected one approval request event"
-    assert wrapper._approval_state_store.lifecycle.pending_occurrence(thread_id=thread_id, interrupt_id="call_sens_001")
+    approval_id = _approval_request_id(events1)
+    assert wrapper._approval_state_store.lifecycle.pending_occurrence(thread_id=thread_id, interrupt_id=approval_id)
 
     # --- Turn 2: legitimate approval ---
     async def stream_fn_post_approval(
@@ -1078,7 +1090,7 @@ async def test_approval_replay_is_blocked(streaming_chat_client_stub):
     turn2_input: dict[str, Any] = {
         "thread_id": thread_id,
         "messages": [],
-        "resume": [{"interruptId": "call_sens_001", "status": "resolved", "payload": {"accepted": True}}],
+        "resume": [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}],
     }
 
     events2: list[Any] = []
@@ -1086,9 +1098,7 @@ async def test_approval_replay_is_blocked(streaming_chat_client_stub):
         events2.append(event)
 
     assert call_count == 1, "Tool should have been executed once"
-    assert not wrapper._approval_state_store.lifecycle.pending_occurrence(
-        thread_id=thread_id, interrupt_id="call_sens_001"
-    )
+    assert not wrapper._approval_state_store.lifecycle.pending_occurrence(thread_id=thread_id, interrupt_id=approval_id)
 
     # --- Turn 3: replay attempt with the same approval ID ---
     call_count = 0  # reset
@@ -1096,7 +1106,7 @@ async def test_approval_replay_is_blocked(streaming_chat_client_stub):
     turn3_input: dict[str, Any] = {
         "thread_id": thread_id,
         "messages": [],
-        "resume": [{"interruptId": "call_sens_001", "status": "resolved", "payload": {"accepted": True}}],
+        "resume": [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}],
     }
 
     events3: list[Any] = []
@@ -1156,14 +1166,19 @@ async def test_approval_resolves_with_client_or_provider_thread_id(
         )
     )
 
-    async for _ in wrapper.run({"thread_id": "client-thread", "messages": [{"role": "user", "content": "do it"}]}):
-        pass
+    approval_events = [
+        event
+        async for event in wrapper.run(
+            {"thread_id": "client-thread", "messages": [{"role": "user", "content": "do it"}]}
+        )
+    ]
+    approval_id = _approval_request_id(approval_events)
 
     assert wrapper._approval_state_store.lifecycle.pending_occurrence(
-        thread_id="client-thread", interrupt_id="call_sensitive"
+        thread_id="client-thread", interrupt_id=approval_id
     )
     assert wrapper._approval_state_store.lifecycle.pending_occurrence(
-        thread_id="provider-conversation", interrupt_id="call_sensitive"
+        thread_id="provider-conversation", interrupt_id=approval_id
     )
 
     async def completion_stream(
@@ -1182,7 +1197,7 @@ async def test_approval_resolves_with_client_or_provider_thread_id(
         return {
             "thread_id": thread_id,
             "messages": [],
-            "resume": [{"interruptId": "call_sensitive", "status": "resolved", "payload": {"accepted": True}}],
+            "resume": [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}],
         }
 
     async for _ in wrapper.run(approval_input(resume_thread_id)):
@@ -1190,10 +1205,10 @@ async def test_approval_resolves_with_client_or_provider_thread_id(
 
     assert execution_count == 1
     assert not wrapper._approval_state_store.lifecycle.pending_occurrence(
-        thread_id="client-thread", interrupt_id="call_sensitive"
+        thread_id="client-thread", interrupt_id=approval_id
     )
     assert not wrapper._approval_state_store.lifecycle.pending_occurrence(
-        thread_id="provider-conversation", interrupt_id="call_sensitive"
+        thread_id="provider-conversation", interrupt_id=approval_id
     )
 
     replay_thread_id = "provider-conversation" if resume_thread_id == "client-thread" else "client-thread"
@@ -1278,7 +1293,9 @@ async def test_approval_function_name_mismatch_is_blocked(streaming_chat_client_
     async for event in wrapper.run({"thread_id": thread_id, "messages": [{"role": "user", "content": "do safe"}]}):
         events1.append(event)
 
-    assert wrapper._approval_state_store.lifecycle.pending_occurrence(thread_id=thread_id, interrupt_id="call_safe_001")
+    approval_id = _approval_request_id(events1)
+
+    assert wrapper._approval_state_store.lifecycle.pending_occurrence(thread_id=thread_id, interrupt_id=approval_id)
 
     # Turn 2: try to approve with a different function name (function name spoofing)
     async def stream_fn_post(
@@ -1301,7 +1318,7 @@ async def test_approval_function_name_mismatch_is_blocked(streaming_chat_client_
                 "content": "approve",
                 "function_approvals": [
                     {
-                        "id": "call_safe_001",
+                        "id": approval_id,
                         "call_id": "call_safe_001",
                         "name": "dangerous_action",  # Mismatch!
                         "approved": True,
@@ -1317,9 +1334,9 @@ async def test_approval_function_name_mismatch_is_blocked(streaming_chat_client_
         events2.append(event)
 
     assert not tool_executed, "Function name spoofing should be blocked"
-    assert wrapper._approval_state_store.lifecycle.pending_occurrence(
-        thread_id=thread_id, interrupt_id="call_safe_001"
-    ), "Pending approval should be preserved after mismatch for legitimate retry"
+    assert wrapper._approval_state_store.lifecycle.pending_occurrence(thread_id=thread_id, interrupt_id=approval_id), (
+        "Pending approval should be preserved after mismatch for legitimate retry"
+    )
 
 
 async def test_approval_bypass_via_fabricated_tool_result_is_blocked(streaming_chat_client_stub):
@@ -1516,9 +1533,9 @@ async def test_approval_argument_mismatch_is_blocked(streaming_chat_client_stub)
     async for event in wrapper.run({"thread_id": thread_id, "messages": [{"role": "user", "content": "update"}]}):
         events1.append(event)
 
-    assert wrapper._approval_state_store.lifecycle.pending_occurrence(
-        thread_id=thread_id, interrupt_id="call_update_001"
-    )
+    approval_id = _approval_request_id(events1)
+
+    assert wrapper._approval_state_store.lifecycle.pending_occurrence(thread_id=thread_id, interrupt_id=approval_id)
 
     async def stream_fn_post(
         messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
@@ -1540,7 +1557,7 @@ async def test_approval_argument_mismatch_is_blocked(streaming_chat_client_stub)
                 "content": "approve",
                 "function_approvals": [
                     {
-                        "id": "call_update_001",
+                        "id": approval_id,
                         "call_id": "call_update_001",
                         "name": "update_record",
                         "approved": True,
@@ -1556,9 +1573,9 @@ async def test_approval_argument_mismatch_is_blocked(streaming_chat_client_stub)
         events2.append(event)
 
     assert executed_args == []
-    assert wrapper._approval_state_store.lifecycle.pending_occurrence(
-        thread_id=thread_id, interrupt_id="call_update_001"
-    ), "Pending approval should be preserved after argument mismatch for legitimate retry"
+    assert wrapper._approval_state_store.lifecycle.pending_occurrence(thread_id=thread_id, interrupt_id=approval_id), (
+        "Pending approval should be preserved after argument mismatch for legitimate retry"
+    )
 
 
 async def test_state_update_end_to_end_via_real_tool_invocation(streaming_chat_client_stub):

@@ -18,7 +18,7 @@ namespace Microsoft.Agents.AI.Foundry;
 /// can overwrite <c>ChatResponse.ModelId</c> with the true model name.
 /// </para>
 /// <para>
-/// Registered once per <c>OpenAIRequestPolicies</c> instance via the MEAI 10.5.1 extension hook.
+/// Registered once per <c>OpenAIRequestPolicies</c> instance via the MEAI 10.9.0 extension hook.
 /// When the header is absent (non-Azure endpoints), the scope is not set and the
 /// <see cref="FoundryChatClient"/> preserves the original model name.
 /// </para>

@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 from openai.types.conversations import InputTextContent
 from openai.types.conversations.message import Message as OpenAIMessage
-from openai.types.responses import ResponseInputFile, ResponseInputImage
+from openai.types.responses import ResponseInputFile, ResponseInputImage, ResponseOutputRefusal
 
 from agent_framework_devui._conversations import InMemoryConversationStore
 
@@ -155,6 +155,54 @@ async def test_add_items():
     assert conv_items[0].content[0].type == "text"
     text_content = cast(InputTextContent, conv_items[0].content[0])
     assert text_content.text == "Hello"
+
+
+@pytest.mark.asyncio
+async def test_add_and_list_items_preserves_marked_refusal_text():
+    store = InMemoryConversationStore()
+    conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
+
+    added = await store.add_items(
+        conversation.id,
+        items=[{"role": "assistant", "content": [{"type": "refusal", "refusal": "I cannot help."}]}],
+    )
+    retrieved, _ = await store.list_items(conversation.id)
+
+    added_message = cast(OpenAIMessage, added[0])
+    assert added_message.content is not None
+    added_refusal = cast(ResponseOutputRefusal, added_message.content[0])
+    retrieved_message = cast(OpenAIMessage, retrieved[0])
+    assert retrieved_message.content is not None
+    retrieved_refusal = cast(ResponseOutputRefusal, retrieved_message.content[0])
+    assert added_refusal.refusal == "I cannot help."
+    assert retrieved_refusal.refusal == "I cannot help."
+
+
+@pytest.mark.asyncio
+async def test_add_and_list_items_preserves_mixed_text_and_refusal_order():
+    store = InMemoryConversationStore()
+    conversation = store.create_conversation(metadata={"agent_id": "test_agent"})
+
+    added = await store.add_items(
+        conversation.id,
+        items=[
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Partial answer.", "annotations": []},
+                    {"type": "refusal", "refusal": "I cannot continue."},
+                ],
+            }
+        ],
+    )
+    retrieved, _ = await store.list_items(conversation.id)
+
+    for item in [added[0], retrieved[0]]:
+        message = cast(OpenAIMessage, item)
+        assert message.content is not None
+        assert [content.type for content in message.content] == ["text", "refusal"]
+        assert cast(InputTextContent, message.content[0]).text == "Partial answer."
+        assert cast(ResponseOutputRefusal, message.content[1]).refusal == "I cannot continue."
 
 
 @pytest.mark.asyncio
