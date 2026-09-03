@@ -726,6 +726,7 @@ class Evaluator(Protocol):
 # endregion
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 def _to_eval_item(
     *,
     query: str | Sequence[Message],
