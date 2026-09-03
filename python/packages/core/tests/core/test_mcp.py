@@ -6301,6 +6301,54 @@ async def test_mcp_streamable_http_tool_header_provider_skips_cross_origin_redir
             await tool._httpx_client.aclose()  # type: ignore[union-attr]
 
 
+async def test_mcp_streamable_http_tool_replaces_headers_on_same_origin_redirect():
+    """A redirected request must retain only the provider's latest header set."""
+    import httpx
+
+    provider_headers = {"X-Previous": "old"}
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=lambda _kw: provider_headers,
+    )
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1
+
+            initial = _request_for_mcp_tool(tool, "http://example.com/start")
+            await hooks[0](initial)
+            assert initial.headers.get("X-Previous") == "old"
+
+            provider_headers = {"X-Current": "new"}
+            same_origin_redirect = httpx.Request(
+                "POST",
+                "http://example.com/redirected",
+                headers=initial.headers,
+                extensions=initial.extensions,
+            )
+            await hooks[0](same_origin_redirect)
+            assert "X-Previous" not in same_origin_redirect.headers
+            assert same_origin_redirect.headers.get("X-Current") == "new"
+
+            cross_origin_redirect = httpx.Request(
+                "POST",
+                "http://other.example/redirected",
+                headers=same_origin_redirect.headers,
+                extensions=same_origin_redirect.extensions,
+            )
+            await hooks[0](cross_origin_redirect)
+            assert "X-Previous" not in cross_origin_redirect.headers
+            assert "X-Current" not in cross_origin_redirect.headers
+    finally:
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()  # type: ignore[union-attr]
+
+
 async def test_mcp_streamable_http_tool_header_provider_with_user_httpx_client():
     """Test that header_provider works when the user provides their own httpx client."""
     import httpx

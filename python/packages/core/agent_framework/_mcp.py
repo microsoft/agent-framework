@@ -3246,6 +3246,8 @@ class MCPStreamableHTTPTool(MCPTool):
                                 exc_info=True,
                             )
                             headers = {}
+                    for key in request.extensions.pop(_MCP_INJECTED_HEADER_KEYS_EXTENSION, ()):
+                        request.headers.pop(key, None)
                     for key, value in headers.items():
                         request.headers[key] = value
                     request.extensions[_MCP_INJECTED_HEADER_KEYS_EXTENSION] = tuple(headers)
