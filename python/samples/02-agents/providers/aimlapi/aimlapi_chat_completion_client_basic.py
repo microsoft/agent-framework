@@ -41,7 +41,7 @@ AIMLAPI_DEFAULT_MODEL = "openai/gpt-4o-mini"
 AIMLAPI_ATTRIBUTION_HEADERS = {
     "HTTP-Referer": "https://github.com/microsoft/agent-framework",
     "X-Title": "Microsoft Agent Framework",
-    "X-AIMLAPI-Partner-ID": "part_agentframework",
+    "X-AIMLAPI-Partner-ID": "part_eIXDWUdHyVKVaVSZNotgkTZ5",
     "X-AIMLAPI-Source": "agent/agent-framework",
 }
 

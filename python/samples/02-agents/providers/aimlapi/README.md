@@ -59,7 +59,7 @@ Both samples pass four headers via the client's `default_headers` argument:
 |---|---|---|
 | `HTTP-Referer` | `https://github.com/microsoft/agent-framework` | Identifies the calling project (OpenRouter convention) |
 | `X-Title` | `Microsoft Agent Framework` | Identifies the calling project |
-| `X-AIMLAPI-Partner-ID` | `part_agentframework` | Integration attribution |
+| `X-AIMLAPI-Partner-ID` | `part_eIXDWUdHyVKVaVSZNotgkTZ5` | Integration attribution |
 | `X-AIMLAPI-Source` | `agent/agent-framework` | Channel attribution |
 
 `default_headers` is a first-class constructor argument on `OpenAIChatCompletionClient`,
