@@ -563,18 +563,21 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # Let the base host resolve its hosted/local default and validate any
         # explicitly supplied store before wrapping the resolved provider.
         self._failed_sync_response_ids: set[str] = set()
-        orchestrator = self._orchestrator
-        if orchestrator is None:
-            raise RuntimeError("Responses host did not initialize its orchestrator.")
-        history_store = orchestrator._provider
-        wrapped_history_store = _OmitFailedConversationInputProvider(
-            history_store,
-            self._failed_sync_response_ids,
-        )
-        wrapped_provider = cast(ResponseProviderProtocol, wrapped_history_store)
-        orchestrator._provider = wrapped_provider
-        orchestrator._resilient_orchestrator._provider = wrapped_provider
-        self._endpoint._provider = wrapped_provider  # pyright: ignore[reportPrivateUsage]
+        if uses_agent_server_history and not is_workflow_agent:
+            # Agent-owned history does not replay this transcript. Preserve its
+            # protocol-level response storage without filtering failed inputs.
+            orchestrator = self._orchestrator
+            if orchestrator is None:
+                raise RuntimeError("Responses host did not initialize its orchestrator.")
+            history_store = orchestrator._provider
+            wrapped_history_store = _OmitFailedConversationInputProvider(
+                history_store,
+                self._failed_sync_response_ids,
+            )
+            wrapped_provider = cast(ResponseProviderProtocol, wrapped_history_store)
+            orchestrator._provider = wrapped_provider
+            orchestrator._resilient_orchestrator._provider = wrapped_provider
+            self._endpoint._provider = wrapped_provider  # pyright: ignore[reportPrivateUsage]
 
         self._uses_agent_server_history = uses_agent_server_history
         self._client_stores_by_default = client_stores_by_default
@@ -664,7 +667,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
     ) -> AsyncIterable[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Handle the creation of a response."""
         events = self._handle_response_events(request, context, cancellation_signal)
-        if not self._is_workflow_agent and request.get("stream") is not True and request.get("background") is not True:
+        if (
+            self._uses_agent_server_history
+            and not self._is_workflow_agent
+            and request.get("stream") is not True
+            and request.get("background") is not True
+        ):
             events = self._buffer_sync_response_events(
                 events,
                 context.response_id,

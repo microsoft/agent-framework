@@ -1296,7 +1296,10 @@ class TestAgentSessionPersistence:
         assert stored is not None
         assert stored.state["before_failure"] == "saved"
 
-    async def test_failed_conversation_input_is_not_in_subsequent_history(self) -> None:
+    @pytest.mark.parametrize("history_source", ["agent_server", "agent"])
+    async def test_failed_conversation_input_is_not_in_subsequent_history(
+        self, history_source: Literal["agent_server", "agent"]
+    ) -> None:
         """Failed conversation input must not be replayed on the next turn.
 
         The agentserver store, not the MAF session, is what #7630 poisons:
@@ -1319,7 +1322,7 @@ class TestAgentSessionPersistence:
 
         agent.run = MagicMock(side_effect=run_dispatch)
         response_store = InMemoryResponseProvider()
-        server = _make_server(agent, response_store=response_store)
+        server = _make_server(agent, response_store=response_store, history_source=history_source)
 
         failed = await _post_json(
             server,
@@ -1361,7 +1364,23 @@ class TestAgentSessionPersistence:
         history_ids = await response_store.get_history_item_ids(None, "conv-failed", 100)
         history_items = await response_store.get_items(history_ids)
         history_blob = json.dumps(history_items)
-        assert "call_12345abc" not in history_blob
+        if history_source == "agent_server":
+            assert "call_12345abc" not in history_blob
+        else:
+            # AgentServer still retains the protocol transcript in agent-history
+            # mode, but hosting does not replay it into the model.
+            assert "call_12345abc" in history_blob
+
+    async def test_agent_history_does_not_buffer_or_wrap_response_storage(self) -> None:
+        agent = _make_agent(response=AgentResponse(messages=[Message("assistant", ["done"])]))
+        response_store = InMemoryResponseProvider()
+        server = _make_server(agent, response_store=response_store, history_source="agent")
+
+        assert server._endpoint._provider is response_store  # pyright: ignore[reportPrivateUsage]
+        with patch.object(server, "_buffer_sync_response_events", side_effect=AssertionError("must not buffer")):
+            response = await _post(server, input_text="first", stream=False)
+
+        assert response.json()["status"] == "completed"
 
     async def test_omit_failed_conversation_input_provider_drops_terminal_failed_input(self) -> None:
         inner = InMemoryResponseProvider()
@@ -1479,7 +1498,7 @@ class TestAgentSessionPersistence:
         options = ResponsesServerOptions(resilient_background=True)
 
         with pytest.raises(ValueError, match="resilient_background=True"):
-            ResponsesHostServer(_make_agent(), store=InMemoryResponseProvider(), options=options)
+            ResponsesHostServer(_build_text_workflow_agent("done"), store=InMemoryResponseProvider(), options=options)
 
     async def test_run_save_failure_emits_failed_response(self) -> None:
         store = _FailingSessionStore()
