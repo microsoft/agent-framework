@@ -147,7 +147,9 @@ public abstract class AgentFileStore
     }
 
     /// <summary>
-    /// Gets the names of the files that <em>may</em> contain a match for <paramref name="regexPattern"/>.
+    /// Gets the names of the files that <em>may</em> contain text that matches
+    /// <paramref name="regexPattern"/> and where file names <em>may</em> match
+    /// <paramref name="globPattern"/>.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -160,7 +162,12 @@ public abstract class AgentFileStore
     /// </para>
     /// <para>
     /// The default implementation has no index to narrow with, so it walks
-    /// <see cref="ListChildrenAsync"/> and returns every file in scope. Overriding
+    /// <see cref="ListChildrenAsync"/> and returns every file in scope, leaving
+    /// <see cref="SearchAsync"/> to read and scan all of them. Override this when the backing store
+    /// can answer either question more cheaply than that — a name index for
+    /// <paramref name="globPattern"/>, a content or full-text index for <paramref name="regexPattern"/> —
+    /// and return the candidates it finds. That is the whole purpose of the hook: the store does the
+    /// narrowing it is good at, and the base keeps the scanning and the line numbering. Overriding
     /// <see cref="SearchAsync"/> instead is also supported, but then line numbering is the store's
     /// responsibility (see <see cref="SplitLines"/>), and nothing checks it at runtime.
     /// </para>
