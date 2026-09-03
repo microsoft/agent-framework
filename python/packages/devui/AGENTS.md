@@ -15,6 +15,10 @@ Interactive developer UI for testing and debugging agents and workflows.
 - **`OpenAIResponse`** / **`OpenAIError`** - OpenAI-compatible response models
 - **`DiscoveryResponse`** / **`EntityInfo`** - Entity discovery models
 
+Text content carrying `additional_properties["model_output_kind"] == "refusal"` is mapped to native
+Responses refusal parts and events. Mapper aggregation, live rendering, and recovery state retain
+text/refusal boundaries by item and content index.
+
 ## Usage
 
 ```python

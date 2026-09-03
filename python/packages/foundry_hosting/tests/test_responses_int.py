@@ -34,6 +34,7 @@ from agent_framework import (
     Agent,
     Content,
     Executor,
+    InMemoryHistoryProvider,
     Message,
     SlidingWindowStrategy,
     WorkflowBuilder,
@@ -73,7 +74,6 @@ def server() -> ResponsesHostServer:
     agent = Agent(
         client=client,  # ty: ignore[invalid-argument-type]
         instructions="You are a concise assistant. Keep answers very short (one or two sentences).",
-        default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
     )
 
     return ResponsesHostServer(agent, store=InMemoryResponseProvider())
@@ -85,19 +85,37 @@ async def get_weather(location: Annotated[str, "The city name"]) -> str:
     return f"The weather in {location} is 72°F and sunny."
 
 
-@pytest.fixture
-def server_with_tools() -> ResponsesHostServer:
-    """Create a ResponsesHostServer whose agent has a tool."""
+@pytest.fixture(params=["agent_server", "agent"], ids=["agent-server-history", "agent-history"])
+def history_server(request: pytest.FixtureRequest) -> ResponsesHostServer:
+    """Create a real Foundry server for each model-history source."""
     client = FoundryChatClient(credential=AzureCliCredential())  # pyrefly: ignore[bad-argument-type]
+    agent = Agent(
+        client=client,  # ty: ignore[invalid-argument-type]
+        instructions="You are a concise assistant. Keep answers very short (one or two sentences).",
+        default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+    )
+    return ResponsesHostServer(
+        agent,
+        store=InMemoryResponseProvider(),
+        history_source=request.param,
+    )
 
+
+@pytest.fixture(params=["agent_server", "agent"], ids=["agent-server-history", "agent-history"])
+def history_server_with_tools(request: pytest.FixtureRequest) -> ResponsesHostServer:
+    """Create a real Foundry tool-calling server for each model-history source."""
+    client = FoundryChatClient(credential=AzureCliCredential())  # pyrefly: ignore[bad-argument-type]
     agent = Agent(
         client=client,  # ty: ignore[invalid-argument-type]
         instructions="You are a concise assistant. Use the provided tools when appropriate. Keep answers very short.",
         tools=[get_weather],
-        default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
+        default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
     )
-
-    return ResponsesHostServer(agent, store=InMemoryResponseProvider())
+    return ResponsesHostServer(
+        agent,
+        store=InMemoryResponseProvider(),
+        history_source=request.param,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -445,11 +463,11 @@ class TestMultiTurn:
     @pytest.mark.flaky
     @pytest.mark.integration
     @skip_if_foundry_hosting_integration_tests_disabled
-    async def test_two_turn_conversation(self, server: ResponsesHostServer) -> None:
+    async def test_two_turn_conversation(self, history_server: ResponsesHostServer) -> None:
         """Turn 1: introduce context. Turn 2: ask about it using previous_response_id."""
         # Turn 1
         resp1 = await _post_json(
-            server,
+            history_server,
             {
                 "input": "My favorite color is blue. Remember that.",
                 "stream": False,
@@ -463,7 +481,7 @@ class TestMultiTurn:
 
         # Turn 2 — references turn 1
         resp2 = await _post_json(
-            server,
+            history_server,
             {
                 "input": "What is my favorite color?",
                 "stream": False,
@@ -482,11 +500,11 @@ class TestMultiTurn:
     @pytest.mark.flaky
     @pytest.mark.integration
     @skip_if_foundry_hosting_integration_tests_disabled
-    async def test_three_turn_conversation(self, server: ResponsesHostServer) -> None:
+    async def test_three_turn_conversation(self, history_server: ResponsesHostServer) -> None:
         """Three sequential turns to verify history accumulates correctly."""
         # Turn 1
         resp1 = await _post_json(
-            server,
+            history_server,
             {
                 "input": "I have a pet dog named Max.",
                 "stream": False,
@@ -497,7 +515,7 @@ class TestMultiTurn:
 
         # Turn 2
         resp2 = await _post_json(
-            server,
+            history_server,
             {
                 "input": "I also have a cat named Luna.",
                 "stream": False,
@@ -509,7 +527,7 @@ class TestMultiTurn:
 
         # Turn 3 — should remember both pets
         resp3 = await _post_json(
-            server,
+            history_server,
             {
                 "input": "What are my pets' names?",
                 "stream": False,
@@ -527,11 +545,11 @@ class TestMultiTurn:
     @pytest.mark.flaky
     @pytest.mark.integration
     @skip_if_foundry_hosting_integration_tests_disabled
-    async def test_multi_turn_streaming(self, server: ResponsesHostServer) -> None:
+    async def test_multi_turn_streaming(self, history_server: ResponsesHostServer) -> None:
         """Multi-turn conversation with streaming on the second turn."""
         # Turn 1 — non-streaming
         resp1 = await _post_json(
-            server,
+            history_server,
             {
                 "input": "My favorite number is 42.",
                 "stream": False,
@@ -542,7 +560,7 @@ class TestMultiTurn:
 
         # Turn 2 — streaming
         resp2 = await _post_json(
-            server,
+            history_server,
             {
                 "input": "What is my favorite number?",
                 "stream": True,
@@ -561,6 +579,46 @@ class TestMultiTurn:
 
         done_events = [e for e in events if e["event"] == "response.output_text.done"]
         assert "42" in done_events[0]["data"]["text"]
+
+    @pytest.mark.flaky
+    @pytest.mark.integration
+    @skip_if_foundry_hosting_integration_tests_disabled
+    async def test_agent_history_with_in_memory_provider(self) -> None:
+        """Regular agent mode can persist in-session history while the model service stays stateless."""
+        agent = Agent(
+            client=FoundryChatClient(credential=AzureCliCredential()),  # ty: ignore[invalid-argument-type]
+            instructions="Answer questions using the supplied conversation history. Keep answers very short.",
+            context_providers=[InMemoryHistoryProvider()],
+            default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
+        )
+        server = ResponsesHostServer(
+            agent,
+            store=InMemoryResponseProvider(),
+            history_source="agent",
+        )
+
+        first = await _post_json(
+            server,
+            {
+                "input": "My favorite city is Lisbon. Remember that.",
+                "stream": False,
+            },
+        )
+        assert first.status_code == 200
+
+        second = await _post_json(
+            server,
+            {
+                "input": "What is my favorite city?",
+                "stream": False,
+                "previous_response_id": first.json()["id"],
+            },
+        )
+
+        assert second.status_code == 200
+        output_messages = [item for item in second.json()["output"] if item["type"] == "message"]
+        assert len(output_messages) == 1
+        assert "lisbon" in output_messages[0]["content"][0]["text"].lower()
 
 
 class TestReasoningHostedMcpReplay:
@@ -761,10 +819,10 @@ class TestToolCalling:
     @pytest.mark.flaky
     @pytest.mark.integration
     @skip_if_foundry_hosting_integration_tests_disabled
-    async def test_tool_call_non_streaming(self, server_with_tools: ResponsesHostServer) -> None:
+    async def test_tool_call_non_streaming(self, history_server_with_tools: ResponsesHostServer) -> None:
         """Agent invokes a tool and returns a final answer (non-streaming)."""
         resp = await _post_json(
-            server_with_tools,
+            history_server_with_tools,
             {
                 "input": "What is the weather in Seattle?",
                 "stream": False,
@@ -784,10 +842,10 @@ class TestToolCalling:
     @pytest.mark.flaky
     @pytest.mark.integration
     @skip_if_foundry_hosting_integration_tests_disabled
-    async def test_tool_call_streaming(self, server_with_tools: ResponsesHostServer) -> None:
+    async def test_tool_call_streaming(self, history_server_with_tools: ResponsesHostServer) -> None:
         """Agent invokes a tool and returns a final answer (streaming)."""
         resp = await _post_json(
-            server_with_tools,
+            history_server_with_tools,
             {
                 "input": "What is the weather in Seattle?",
                 "stream": True,

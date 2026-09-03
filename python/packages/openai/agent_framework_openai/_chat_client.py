@@ -136,6 +136,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_framework.openai")
 
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
+
+
+def _is_refusal_text_content(content: Content) -> bool:
+    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+
+
 DEFAULT_AZURE_OPENAI_RESPONSES_API_VERSION = "preview"
 
 OPENAI_SHELL_ENVIRONMENT_KEY = "openai.responses.shell.environment"
@@ -1878,6 +1886,11 @@ class RawOpenAIChatClient(
         role = Role(role)
         match content.type:
             case "text":
+                if role == "assistant" and _is_refusal_text_content(content):
+                    return {
+                        "type": "refusal",
+                        "refusal": content.text,
+                    }
                 if role == "assistant":
                     # Assistant history is represented as output text items; Azure validation
                     # requires `annotations` to be present for this type.
@@ -2751,6 +2764,7 @@ class RawOpenAIChatClient(
                                 contents.append(
                                     Content.from_text(
                                         text=message_content.refusal,
+                                        additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
                                         raw_representation=message_content,
                                     )
                                 )
@@ -3041,7 +3055,13 @@ class RawOpenAIChatClient(
                         )
                         metadata.update(self._get_metadata_from_response(event_part))
                     case "refusal":
-                        contents.append(Content.from_text(text=event_part.refusal, raw_representation=event))
+                        contents.append(
+                            Content.from_text(
+                                text=event_part.refusal,
+                                additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+                                raw_representation=event,
+                            )
+                        )
                     case _:
                         pass
             case "response.output_text.delta":
@@ -3053,6 +3073,14 @@ class RawOpenAIChatClient(
                     )
                 )
                 metadata.update(self._get_metadata_from_response(event))
+            case "response.refusal.delta":
+                contents.append(
+                    Content.from_text(
+                        text=event.delta,
+                        additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+                        raw_representation=event,
+                    )
+                )
             case "response.reasoning_text.delta":
                 if seen_reasoning_delta_item_ids is not None:
                     seen_reasoning_delta_item_ids.add(event.item_id)
@@ -3563,7 +3591,16 @@ class OpenAIChatClient(
     RawOpenAIChatClient[OpenAIChatOptionsT],
     Generic[OpenAIChatOptionsT],
 ):
-    """OpenAI Responses client class with middleware, telemetry, and function invocation support."""
+    """OpenAI Responses client class with middleware, telemetry, and function invocation support.
+
+    Note:
+        One client instance can be shared by concurrent asynchronous calls on the same event loop,
+        including any combination of streaming and non-streaming calls. Each call must use its own
+        ``Agent``, ``AgentSession``, messages, and options. User-supplied mutable extensions, such as
+        middleware, tools, and callbacks, are safe only if their implementations support concurrent use.
+        Sharing a client across OS threads or event loops, or mutating its configuration while calls are
+        active, is not supported.
+    """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "openai"
 
