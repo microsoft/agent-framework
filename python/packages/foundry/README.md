@@ -28,6 +28,16 @@ For manual control, construct public `EvalItem` instances and pass them to
 `evaluate_traces()` and `evaluate_foundry_target()` provide Foundry-specific
 entry points for existing traces, response IDs, and registered targets.
 
+## Concurrent reuse
+
+A `FoundryChatClient` instance can be shared by concurrent asynchronous calls on the same event loop. Streaming,
+non-streaming, and mixed calls are supported. Keep mutable run state isolated by creating a separate `Agent` and
+`AgentSession` for each concurrent run and by passing separate messages and options.
+
+This guarantee does not extend to user-supplied middleware, tools, or callbacks unless those implementations are
+also safe for concurrent use. Do not share one client across OS threads or event loops, and do not mutate its
+configuration while calls are active.
+
 ## Toolboxes
 
 A *toolbox* is a named, versioned bundle of hosted tool configurations — code interpreter, file search, image generation, MCP, web search, and so on — stored inside a Microsoft Foundry project. Toolboxes let you manage tool configuration once and reuse it across agents.

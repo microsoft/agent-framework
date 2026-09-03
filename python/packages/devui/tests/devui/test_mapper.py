@@ -30,6 +30,7 @@ from conftest import (  # pyrefly: ignore[missing-import] # pyright: ignore[repo
     create_executor_failed_event,
     create_executor_invoked_event,
 )  # pyrefly: ignore[missing-import]
+from openai.types.responses import ResponseOutputRefusal, ResponseOutputText
 
 from agent_framework_devui._mapper import MessageMapper
 from agent_framework_devui.models._openai_custom import (
@@ -119,6 +120,73 @@ async def test_text_content_mapping(mapper: MessageMapper, test_request: AgentFr
     # Check text delta
     assert events[2].type == "response.output_text.delta"
     assert events[2].delta == "Hello, clean test!"
+
+
+async def test_marked_refusal_text_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
+    content = Content.from_text(
+        "I cannot help.",
+        additional_properties={"model_output_kind": "refusal"},
+    )
+    update = create_test_agent_update([content])
+
+    events = await mapper.convert_event(update, test_request)
+
+    assert [event.type for event in events] == [
+        "response.output_item.added",
+        "response.content_part.added",
+        "response.refusal.delta",
+    ]
+    assert events[1].part.type == "refusal"
+    assert events[2].delta == "I cannot help."
+
+
+async def test_marked_refusal_text_aggregation(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
+    update = create_test_agent_update([
+        Content.from_text(
+            "I cannot help.",
+            additional_properties={"model_output_kind": "refusal"},
+        )
+    ])
+
+    events = await mapper.convert_event(update, test_request)
+    response = await mapper.aggregate_to_response(events, test_request)
+
+    messages = [item for item in response.output if item.type == "message"]
+    assert len(messages) == 1
+    assert len(messages[0].content) == 1
+    assert messages[0].content[0].type == "refusal"
+    assert messages[0].content[0].refusal == "I cannot help."
+
+
+async def test_mixed_text_and_refusal_keep_separate_content_indexes(
+    mapper: MessageMapper,
+    test_request: AgentFrameworkRequest,
+) -> None:
+    update = create_test_agent_update([
+        Content.from_text("Partial answer."),
+        Content.from_text(
+            "I cannot continue.",
+            additional_properties={"model_output_kind": "refusal"},
+        ),
+    ])
+
+    events = await mapper.convert_event(update, test_request)
+    response = await mapper.aggregate_to_response(events, test_request)
+
+    part_events = [event for event in events if event.type == "response.content_part.added"]
+    assert [(event.content_index, event.part.type) for event in part_events] == [
+        (0, "output_text"),
+        (1, "refusal"),
+    ]
+    messages = [item for item in response.output if item.type == "message"]
+    assert len(messages) == 1
+    assert [content.type for content in messages[0].content] == ["output_text", "refusal"]
+    output_text = messages[0].content[0]
+    refusal = messages[0].content[1]
+    assert isinstance(output_text, ResponseOutputText)
+    assert isinstance(refusal, ResponseOutputRefusal)
+    assert output_text.text == "Partial answer."
+    assert refusal.refusal == "I cannot continue."
 
 
 async def test_function_call_mapping(mapper: MessageMapper, test_request: AgentFrameworkRequest) -> None:
