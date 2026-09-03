@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 # Run with: uv run samples/02-agents/vector_stores/vector_store_models.py
-import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Annotated, Any, cast
@@ -12,7 +11,6 @@ import msgspec
 from agent_framework import (
     VectorStoreCollectionDefinition,
     VectorStoreField,
-    VectorStoreRecordHandler,
     register_vectorstoremodel,
     vectorstoremodel,
 )
@@ -145,8 +143,8 @@ class Product(BaseModel):
     vector: Annotated[list[float] | None, VectorStoreField("vector", dimensions=3)] = None
 
 
-async def main() -> None:
-    """Inspect model definitions and demonstrate codec round-trips."""
+def main() -> None:
+    """Inspect model definitions and registration choices."""
     model_definitions = (
         ("LegacyFaq", cast(VectorStoreCollectionDefinition, vars(LegacyFaq)["__vectorstoremodel_definition__"])),
         ("LegacyArticle", legacy_definition),
@@ -159,29 +157,9 @@ async def main() -> None:
     for model_name, definition in model_definitions:
         print(f"{model_name}: collection={definition.collection_name}, fields={definition.names}")
 
-    faq_handler = VectorStoreRecordHandler(LegacyFaq)
-    serialized_faq = await faq_handler.serialize(LegacyFaq("faq-1", "How does registration work?"))
-    restored_faq = faq_handler.deserialize(serialized_faq)
-    print(f"LegacyFaq serialized: {serialized_faq}")
-    print(f"LegacyFaq restored: {restored_faq}")
-
-    legacy_handler = VectorStoreRecordHandler(LegacyArticle)
-    serialized_legacy = await legacy_handler.serialize(LegacyArticle(42, "Registered codecs"))
-    restored_legacy = legacy_handler.deserialize(serialized_legacy)
-    print(f"LegacyArticle serialized: {serialized_legacy}")
-    print(f"LegacyArticle restored: {restored_legacy}")
-
-    dictionary_handler = VectorStoreRecordHandler(dict, definition=dictionary_definition)
-    serialized_dictionary = await dictionary_handler.serialize({
-        "id": "doc-1",
-        "text": "Explicit dictionary schema",
-        "vector": [0.1, 0.2, 0.3],
-    })
-    print(f"Dictionary serialized: {serialized_dictionary}")
-
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
 
 
 """
@@ -193,9 +171,4 @@ Note: collection=notes, fields=['note_id', 'text']
 Document: collection=documents, fields=['document_id', 'title', 'vector']
 Hotel: collection=hotels, fields=['hotel_id', 'name', 'description']
 Product: collection=products, fields=['product_id', 'name', 'vector']
-LegacyFaq serialized: {'id': 'faq-1', 'question': 'How does registration work?'}
-LegacyFaq restored: LegacyFaq(faq_number='faq-1', prompt='How does registration work?')
-LegacyArticle serialized: {'article_id': '42', 'heading': 'Registered codecs'}
-LegacyArticle restored: LegacyArticle(article_id=42, heading='Registered codecs')
-Dictionary serialized: {'id': 'doc-1', 'text': 'Explicit dictionary schema', 'vector': [0.1, 0.2, 0.3]}
 """

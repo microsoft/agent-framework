@@ -10,7 +10,7 @@ This feature ports the vector store abstractions, embedding generator abstractio
 | Vector store collections | CRUD operations on vector store collections (upsert, get, delete) |
 | Vector search | Unified search interface with `search_type` parameter (`"vector"`, `"keyword_hybrid"`) |
 | Data model decorator | `@vectorstoremodel` decorator for defining vector store data models (supports Pydantic, dataclasses, plain classes, dicts) |
-| Agent tools | `create_search_tool`, `create_upsert_tool`, `create_get_tool`, `create_delete_tool` for agent-usable vector store operations |
+| Agent tools | `create_vector_search_tool`, `create_upsert_tool`, `create_get_tool`, `create_delete_tool` for agent-usable vector store operations |
 | In-memory store | Zero-dependency vector store for testing and development |
 | 13+ connectors | Azure AI Search, Qdrant, Redis, PostgreSQL, MongoDB, Cosmos DB, Pinecone, Chroma, Weaviate, Oracle, SQL Server, FAISS |
 
@@ -52,7 +52,7 @@ This feature ports the vector store abstractions, embedding generator abstractio
   - `SearchResponse`, `SearchResults`, and explicit CRUD/search keyword arguments
   - `@vectorstoremodel` decorator
   - `register_vectorstoremodel` with msgspec-backed default codecs and optional custom codecs
-  - `VectorStoreRecordHandler`, `BaseVectorCollection`, `BaseVectorStore`, `BaseVectorSearch`
+  - Internal record conversion shared by `BaseVectorCollection` and `BaseVectorSearch`
   - `SupportsVectorUpsert`, `SupportsVectorSearch` protocols
 - **OpenAI embeddings** in `agent_framework/openai/` (built into core, like OpenAI chat)
 - **Azure OpenAI embeddings** in `agent_framework/azure/` (built into core, follows `AzureOpenAIChatClient` pattern)
@@ -88,7 +88,6 @@ This feature ports the vector store abstractions, embedding generator abstractio
 | `@vectorstoremodel` | `_vectors.py` |
 | `VectorStoreField` | `_vectors.py` |
 | `VectorStoreCollectionDefinition` | `_vectors.py` |
-| `VectorStoreRecordHandler` | `_vectors.py` |
 | `FieldTypes` | `_vectors.py` |
 | `IndexKind` | `_vectors.py` |
 | `DistanceFunction` | `_vectors.py` |
@@ -107,7 +106,7 @@ This feature ports the vector store abstractions, embedding generator abstractio
 | `EmbeddingTelemetryLayer` | `observability.py` | MRO-based OTel tracing for embeddings |
 | `SupportsVectorUpsert` | `_vectors.py` | Protocol for collection CRUD |
 | `SupportsVectorSearch` | `_vectors.py` | Protocol for vector search |
-| `create_search_tool` | `_vectors.py` | Creates AF `FunctionTool` from vector search |
+| `create_vector_search_tool` | `_vectors.py` | Creates AF `FunctionTool` from vector search |
 
 ## Source Files Reference (SK → AF mapping)
 
@@ -217,11 +216,12 @@ This feature ports the vector store abstractions, embedding generator abstractio
   supply a custom decoder that calls `numpy.array` or `numpy.asarray` when the model should restore an array
 
 #### 3.4 — Vector store base classes in `_vectors.py`
-- `VectorStoreRecordHandler` — internal base class that handles serialization/deserialization between user data models and store-specific formats, plus embedding generation for vector fields. Both `BaseVectorCollection` and `BaseVectorSearch` extend this.
-- `BaseVectorCollection(VectorStoreRecordHandler)` — base for collections
+- `_VectorStoreRecordHandler` — private base class that handles record conversion and embedding generation
+- `BaseVectorCollection` — base for collections
   - Uses `SupportsGetEmbeddings` instead of `EmbeddingGeneratorBase`
   - Not a Pydantic model — use `__init__` with explicit params
   - Batch-oriented `upsert`, `get`, and `delete`
+  - CRUD `get()` includes vectors by default so read-edit-upsert preserves stored embeddings
   - `ensure_collection_exists`, `collection_exists`, `ensure_collection_deleted`
   - Async context manager support
 - `BaseVectorStore` — base for stores
@@ -229,7 +229,7 @@ This feature ports the vector store abstractions, embedding generator abstractio
   - Async context manager support
 
 #### 3.5 — Vector search base class
-- `BaseVectorSearch(VectorStoreRecordHandler)` — base for vector search
+- `BaseVectorSearch` — base for vector search
   - Single `search(search_type=...)` method with `search_type: Literal["vector", "keyword_hybrid"]` parameter — no enum, just a literal
   - `_inner_search` abstract method for implementations
   - Filter building with lambda parser (AST-based)
@@ -246,8 +246,8 @@ This feature ports the vector store abstractions, embedding generator abstractio
 - Use `NotImplementedError` for connector capabilities that are not supported
 - Use the existing `IntegrationException` and `IntegrationInvalidResponseException` at connector boundaries
 
-#### 3.8 — `create_search_tool` on `BaseVectorSearch`
-- Method on `BaseVectorSearch` that creates an AF `FunctionTool` from the vector search
+#### 3.8 — `create_vector_search_tool`
+- Standalone factory that creates an AF `FunctionTool` from any `SupportsVectorSearch` implementation
 - Wraps the single `search()` method, passing `search_type` parameter
 - Accepts: `name`, `description`, `approval_mode`, `search_type`, `parameters`, `top`, `skip`, `filter`, `filter_mapper`, `result_mapper`
 - Defaults to `query`; a custom Pydantic model or JSON schema can expose `top`, `skip`, and additional filter fields
@@ -337,7 +337,7 @@ Each connector follows the AF package structure:
 #### 8.1 — `create_upsert_tool` — tool for upserting records into a collection
 #### 8.2 — `create_get_tool` — tool for retrieving records by key
 - Key-based lookup only (by primary key), not a search tool
-- Documentation must clearly distinguish this from `create_search_tool`: get_tool retrieves specific records by their known key, while search_tool performs similarity/filtered search across the collection
+- Documentation must clearly distinguish this from `create_vector_search_tool`: get_tool retrieves specific records by their known key, while the search tool performs similarity/filtered search across the collection
 - Consider if this overlaps with filtered search and document when to use which
 #### 8.3 — `create_delete_tool` — tool for deleting records by key
 #### 8.4 — Tests and samples for CRUD tools
@@ -386,11 +386,11 @@ Each connector follows the AF package structure:
 
 7. **Reusable data models**: The `@vectorstoremodel` decorator and `VectorStoreCollectionDefinition` should be agnostic enough to work with both SK and AF. The core types (`FieldTypes`, `IndexKind`, `DistanceFunction`, `VectorStoreField`) should be identical or easily mapped.
 
-8. **`create_search_tool`**: The AF-native equivalent of SK's `create_search_function`. Instead of creating a `KernelFunction`, this creates an AF `FunctionTool` (via the `@tool` decorator pattern) from a vector search. This allows agents to use vector search as a tool during conversations. Design:
-   - `create_search_tool(name, description, search_type, ...)` → returns a `FunctionTool` that wraps `VectorSearch.search(search_type=...)`
+8. **`create_vector_search_tool`**: The AF-native equivalent of SK's `create_search_function`. Instead of creating a `KernelFunction`, this creates an AF `FunctionTool` from any `SupportsVectorSearch` implementation. This allows agents to use vector search as a tool during conversations. Design:
+   - `create_vector_search_tool(search, name, description, search_type, ...)` returns a `FunctionTool`
    - The tool accepts declared parameters, performs embedding + vector search, and returns text or multimodal content
    - Defaults to `query`; custom parameters can expose `top`, `skip`, and additional fields for the filter mapper
-   - Lives in `_vectors.py` as a method on `BaseVectorSearch` and/or as a standalone factory function
+   - Lives in `_vectors.py` without expanding the structural search protocol
 
 9. **CRUD tools**: A full set of create/read/update/delete tools for vector store collections, allowing agents to manage data in vector stores. Design:
    - `create_upsert_tool(...)` → tool for upserting records

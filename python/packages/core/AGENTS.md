@@ -73,7 +73,8 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 - **`register_vectorstoremodel`** - Registers one definition and msgspec-backed codec pair per model type
 - **`BaseVectorCollection`** - Base class for collection lifecycle and msgspec-backed record CRUD operations
 - **`BaseVectorStore`** - Base class for stores that create collection clients
-- **`BaseVectorSearch`** - Base class for vector and keyword-hybrid search and agent search tools
+- **`BaseVectorSearch`** - Base class for vector and keyword-hybrid search
+- **`create_vector_search_tool`** - Creates an agent tool from any `SupportsVectorSearch` implementation
 - **`SupportsVectorUpsert`** / **`SupportsVectorSearch`** - Structural protocols for vector store capabilities
 
 ### Middleware (`_middleware.py`)

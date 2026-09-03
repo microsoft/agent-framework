@@ -126,8 +126,20 @@ def _normalize_vector(value: Any) -> Vector:
 
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
+@dataclass(frozen=True, slots=True, init=False)
 class VectorStoreField:
     """Describe one field in a vector store model."""
+
+    field_type: FieldTypes
+    name: str
+    type_: str | None
+    storage_name: str | None
+    is_indexed: bool | None
+    is_full_text_indexed: bool | None
+    dimensions: int | None
+    index_kind: IndexKind | None
+    distance_function: DistanceFunction | None
+    embedding_generator: EmbeddingClient | None
 
     @overload
     def __init__(
@@ -234,33 +246,38 @@ class VectorStoreField:
         """
         if field_type not in ("key", "vector", "data"):
             raise ValueError(f"Unknown vector store field type '{field_type}'.")
-        self.field_type = field_type
-        self.name = name or ""
-        self.type_ = type_
-        self.storage_name = storage_name
-        self.is_indexed = is_indexed
-        self.is_full_text_indexed = is_full_text_indexed
-        self.dimensions: int | None = None
-        self.index_kind: IndexKind | None = None
-        self.distance_function: DistanceFunction | None = None
-        self.embedding_generator: EmbeddingClient | None = None
-
-        if self.field_type == "vector":
+        resolved_dimensions: int | None = None
+        resolved_index_kind: IndexKind | None = None
+        resolved_distance_function: DistanceFunction | None = None
+        resolved_embedding_generator: EmbeddingClient | None = None
+        if field_type == "vector":
             if dimensions is None or dimensions <= 0:
                 raise ValueError("Vector fields must specify a positive number of dimensions.")
             if index_kind is not None and index_kind not in _INDEX_KINDS:
                 raise ValueError(f"Unknown vector index kind '{index_kind}'.")
             if distance_function is not None and distance_function not in _DISTANCE_FUNCTIONS:
                 raise ValueError(f"Unknown vector distance function '{distance_function}'.")
-            self.dimensions = dimensions
-            self.index_kind = index_kind or "default"
-            self.distance_function = distance_function or "DEFAULT"
-            self.embedding_generator = embedding_generator
+            resolved_dimensions = dimensions
+            resolved_index_kind = index_kind or "default"
+            resolved_distance_function = distance_function or "DEFAULT"
+            resolved_embedding_generator = embedding_generator
         elif any(value is not None for value in (dimensions, index_kind, distance_function, embedding_generator)):
             raise ValueError("Vector-only options can only be set on vector fields.")
 
+        object.__setattr__(self, "field_type", field_type)
+        object.__setattr__(self, "name", name or "")
+        object.__setattr__(self, "type_", type_)
+        object.__setattr__(self, "storage_name", storage_name)
+        object.__setattr__(self, "is_indexed", is_indexed)
+        object.__setattr__(self, "is_full_text_indexed", is_full_text_indexed)
+        object.__setattr__(self, "dimensions", resolved_dimensions)
+        object.__setattr__(self, "index_kind", resolved_index_kind)
+        object.__setattr__(self, "distance_function", resolved_distance_function)
+        object.__setattr__(self, "embedding_generator", resolved_embedding_generator)
+
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
+@dataclass(frozen=True, slots=True, init=False)
 class VectorStoreCollectionDefinition:
     """Describe the records stored in a vector collection.
 
@@ -272,6 +289,10 @@ class VectorStoreCollectionDefinition:
     or when adapting an externally owned model through
     :func:`register_vectorstoremodel`.
     """
+
+    fields: tuple[VectorStoreField, ...]
+    collection_name: str | None
+    key_name: str
 
     def __init__(
         self,
@@ -288,12 +309,11 @@ class VectorStoreCollectionDefinition:
         Raises:
             ValueError: If field names or key fields are invalid.
         """
-        self.fields = list(fields)
-        self.collection_name = collection_name
-        self.key_name = ""
-        self._validate()
+        object.__setattr__(self, "fields", tuple(fields))
+        object.__setattr__(self, "collection_name", collection_name)
+        object.__setattr__(self, "key_name", self._validate())
 
-    def _validate(self) -> None:
+    def _validate(self) -> str:
         if not self.fields:
             raise ValueError("A vector store definition must contain at least one field.")
         if any(not field.name for field in self.fields):
@@ -309,7 +329,7 @@ class VectorStoreCollectionDefinition:
         key_fields = [field for field in self.fields if field.field_type == "key"]
         if len(key_fields) != 1:
             raise ValueError("A vector store definition must contain exactly one key field.")
-        self.key_name = key_fields[0].name
+        return key_fields[0].name
 
     @property
     def names(self) -> list[str]:
@@ -710,8 +730,7 @@ class SearchResults(Generic[ResultT]):
         return self.results.__aiter__()
 
 
-@experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
-class VectorStoreRecordHandler(Generic[KeyT, ModelT]):
+class _VectorStoreRecordHandler(Generic[KeyT, ModelT]):
     """Serialize and deserialize application records for a vector store."""
 
     supported_key_types: ClassVar[set[str] | None] = None
@@ -930,7 +949,7 @@ class VectorStoreRecordHandler(Generic[KeyT, ModelT]):
 
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
-class BaseVectorCollection(VectorStoreRecordHandler[KeyT, ModelT], ABC):
+class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
     """Base class for vector store collection CRUD operations."""
 
     def __init__(
@@ -1005,7 +1024,7 @@ class BaseVectorCollection(VectorStoreRecordHandler[KeyT, ModelT], ABC):
         top: int = 10,
         skip: int = 0,
         order_by: Mapping[str, bool] | None = None,
-        include_vectors: bool = False,
+        include_vectors: bool = True,
         operation_options: Mapping[str, Any] | None = None,
     ) -> Sequence[Any] | None:
         """Retrieve store-specific records."""
@@ -1070,7 +1089,7 @@ class BaseVectorCollection(VectorStoreRecordHandler[KeyT, ModelT], ABC):
         top: int = 10,
         skip: int = 0,
         order_by: Mapping[str, bool] | None = None,
-        include_vectors: bool = False,
+        include_vectors: bool = True,
         operation_options: Mapping[str, Any] | None = None,
     ) -> Sequence[ModelT]:
         """Get records by keys or list a page of records.
@@ -1231,7 +1250,7 @@ class _LambdaVisitor(NodeVisitor, Generic[FilterT]):
 
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
-class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
+class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
     """Base class for vector and keyword-hybrid search."""
 
     supported_search_types: ClassVar[set[SearchType]] = {"vector"}
@@ -1571,100 +1590,6 @@ class BaseVectorSearch(VectorStoreRecordHandler[KeyT, ModelT], ABC):
         comparison = DISTANCE_FUNCTION_DIRECTION_HELPER.get(vector_field.distance_function)
         return comparison(score, score_threshold) if comparison is not None else True
 
-    def create_search_tool(
-        self,
-        *,
-        name: str = _DEFAULT_SEARCH_TOOL_NAME,
-        description: str = _DEFAULT_SEARCH_TOOL_DESCRIPTION,
-        approval_mode: Literal["always_require", "never_require"] = "never_require",
-        search_type: SearchType = "vector",
-        parameters: type[BaseModel] | Mapping[str, Any] | None = None,
-        top: int = 5,
-        skip: int = 0,
-        filter: RecordFilters | None = None,
-        filter_mapper: Callable[[RecordFilters | None, Mapping[str, Any]], RecordFilters | None] | None = None,
-        result_mapper: Callable[[SearchResponse[ModelT]], str | Content | Sequence[Content]] | None = None,
-    ) -> FunctionTool:
-        """Create an agent-usable tool backed by this vector search.
-
-        Args:
-            name: The tool name.
-            description: The tool description shown to the model.
-            approval_mode: Whether the tool requires approval before invocation.
-            search_type: Whether the tool performs vector or keyword-hybrid search.
-            parameters: A Pydantic model or JSON schema declaring the tool parameters.
-                It must declare ``query`` as a required string. A custom schema can
-                expose ``top`` and ``skip`` as integers with finite ``maximum`` values;
-                additional fields are passed to ``filter_mapper``.
-            top: The default result limit and the maximum when ``parameters`` does not expose ``top``.
-            skip: The default offset and the maximum when ``parameters`` does not expose ``skip``.
-            filter: A fixed filter applied to each tool invocation.
-            filter_mapper: Maps additional declared tool arguments to search filters.
-                The default creates equality filters for each additional argument.
-            result_mapper: Maps each search response to text or one or more multimodal content items.
-
-        Returns:
-            A function tool with only a ``query`` parameter by default. Custom parameters can expose
-            ``top``, ``skip``, and fields mapped into filters by ``filter_mapper``.
-
-        Raises:
-            ValueError: If parameters or paging limits are invalid.
-            NotImplementedError: If the search type is unsupported.
-        """
-        if search_type not in self.supported_search_types:
-            raise NotImplementedError(f"Search type '{search_type}' is not supported by {type(self).__name__}.")
-        _validate_paging(top=top, skip=skip)
-        map_filter = filter_mapper or _default_search_filter_mapper
-        map_result = result_mapper or _default_search_result_mapper
-        input_model = parameters if parameters is not None else _default_search_tool_parameters()
-        max_top, max_skip = _validate_search_tool_parameters(
-            input_model,
-            default_top=top,
-            default_skip=skip,
-        )
-
-        async def search_tool(**arguments: Any) -> list[Content]:
-            query = arguments.pop("query")
-            if not isinstance(query, str):
-                raise TypeError("The search tool 'query' argument must be a string.")
-            invocation_top = arguments.pop("top", top)
-            invocation_skip = arguments.pop("skip", skip)
-            _validate_paging(top=invocation_top, skip=invocation_skip)
-            if invocation_top > max_top:
-                raise ValueError(f"top must not exceed the configured maximum of {max_top}.")
-            if invocation_skip > max_skip:
-                raise ValueError(f"skip must not exceed the configured maximum of {max_skip}.")
-            dynamic_filter = map_filter(filter, arguments)
-            results = await self.search(
-                query,
-                search_type=search_type,
-                filter=dynamic_filter,
-                top=invocation_top,
-                skip=invocation_skip,
-            )
-            mapped_results: list[Content] = []
-            consumed_results = 0
-            async for result in results:
-                if consumed_results >= invocation_top:
-                    break
-                consumed_results += 1
-                mapped = map_result(result)
-                if isinstance(mapped, str):
-                    mapped_results.append(Content.from_text(mapped))
-                elif isinstance(mapped, Content):
-                    mapped_results.append(mapped)
-                else:
-                    mapped_results.extend(mapped)
-            return mapped_results
-
-        return FunctionTool(
-            name=name,
-            description=description,
-            approval_mode=approval_mode,
-            func=search_tool,
-            input_model=input_model,
-        )
-
 
 @runtime_checkable
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
@@ -1691,7 +1616,7 @@ class SupportsVectorUpsert(Protocol[KeyT, ModelT]):
         top: int = 10,
         skip: int = 0,
         order_by: Mapping[str, bool] | None = None,
-        include_vectors: bool = False,
+        include_vectors: bool = True,
         operation_options: Mapping[str, Any] | None = None,
     ) -> Sequence[ModelT]:
         """Get records by keys or list a page of records."""
@@ -1711,8 +1636,6 @@ class SupportsVectorUpsert(Protocol[KeyT, ModelT]):
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
 class SupportsVectorSearch(Protocol[ModelT]):
     """Protocol for vector and keyword-hybrid search."""
-
-    supported_search_types: ClassVar[set[SearchType]]
 
     @overload
     async def search(
@@ -1796,46 +1719,100 @@ class SupportsVectorSearch(Protocol[ModelT]):
         """
         ...
 
-    def create_search_tool(
-        self,
-        *,
-        name: str = _DEFAULT_SEARCH_TOOL_NAME,
-        description: str = _DEFAULT_SEARCH_TOOL_DESCRIPTION,
-        approval_mode: Literal["always_require", "never_require"] = "never_require",
-        search_type: SearchType = "vector",
-        parameters: type[BaseModel] | Mapping[str, Any] | None = None,
-        top: int = 5,
-        skip: int = 0,
-        filter: RecordFilters | None = None,
-        filter_mapper: Callable[[RecordFilters | None, Mapping[str, Any]], RecordFilters | None] | None = None,
-        result_mapper: Callable[[SearchResponse[ModelT]], str | Content | Sequence[Content]] | None = None,
-    ) -> FunctionTool:
-        """Create an agent-usable vector search tool.
 
-        Args:
-            name: The tool name.
-            description: The tool description shown to the model.
-            approval_mode: Whether the tool requires approval before invocation.
-            search_type: Whether the tool performs vector or keyword-hybrid search.
-            parameters: A Pydantic model or JSON schema declaring the tool parameters.
-                It must declare ``query`` as a required string. A custom schema can
-                expose ``top`` and ``skip`` as integers with finite ``maximum`` values;
-                additional fields are passed to ``filter_mapper``.
-            top: The default result limit and the maximum when ``parameters`` does not expose ``top``.
-            skip: The default offset and the maximum when ``parameters`` does not expose ``skip``.
-            filter: A fixed filter applied to each tool invocation.
-            filter_mapper: Maps additional declared tool arguments to search filters.
-            result_mapper: Maps each search response to text or one or more multimodal content items.
+@experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
+def create_vector_search_tool(
+    search: SupportsVectorSearch[ModelT],
+    *,
+    name: str = _DEFAULT_SEARCH_TOOL_NAME,
+    description: str = _DEFAULT_SEARCH_TOOL_DESCRIPTION,
+    approval_mode: Literal["always_require", "never_require"] = "never_require",
+    search_type: SearchType = "vector",
+    parameters: type[BaseModel] | Mapping[str, Any] | None = None,
+    top: int = 5,
+    skip: int = 0,
+    filter: RecordFilters | None = None,
+    filter_mapper: Callable[[RecordFilters | None, Mapping[str, Any]], RecordFilters | None] | None = None,
+    result_mapper: Callable[[SearchResponse[ModelT]], str | Content | Sequence[Content]] | None = None,
+) -> FunctionTool:
+    """Create an agent-usable tool backed by vector search.
 
-        Returns:
-            A function tool with only a ``query`` parameter by default. Custom parameters can expose
-            ``top``, ``skip``, and fields mapped into filters by ``filter_mapper``.
+    Args:
+        search: The vector search capability invoked by the tool.
+        name: The tool name.
+        description: The tool description shown to the model.
+        approval_mode: Whether the tool requires approval before invocation.
+        search_type: Whether the tool performs vector or keyword-hybrid search.
+        parameters: A Pydantic model or JSON schema declaring the tool parameters.
+            It must declare ``query`` as a required string. A custom schema can
+            expose ``top`` and ``skip`` as integers with finite ``maximum`` values;
+            additional fields are passed to ``filter_mapper``.
+        top: The default result limit and the maximum when ``parameters`` does not expose ``top``.
+        skip: The default offset and the maximum when ``parameters`` does not expose ``skip``.
+        filter: A fixed filter applied to each tool invocation.
+        filter_mapper: Maps additional declared tool arguments to search filters.
+            The default creates equality filters for each additional argument.
+        result_mapper: Maps each search response to text or one or more multimodal content items.
 
-        Raises:
-            ValueError: If parameters or paging limits are invalid.
-            NotImplementedError: If the search type is unsupported.
-        """
-        ...
+    Returns:
+        A function tool with only a ``query`` parameter by default. Custom parameters can expose
+        ``top``, ``skip``, and fields mapped into filters by ``filter_mapper``.
+
+    Raises:
+        ValueError: If parameters or paging limits are invalid.
+        NotImplementedError: If the search type is unsupported.
+    """
+    _validate_paging(top=top, skip=skip)
+    map_filter = filter_mapper or _default_search_filter_mapper
+    map_result = result_mapper or _default_search_result_mapper
+    input_model = parameters if parameters is not None else _default_search_tool_parameters()
+    max_top, max_skip = _validate_search_tool_parameters(
+        input_model,
+        default_top=top,
+        default_skip=skip,
+    )
+
+    async def search_tool(**arguments: Any) -> list[Content]:
+        query = arguments.pop("query")
+        if not isinstance(query, str):
+            raise TypeError("The search tool 'query' argument must be a string.")
+        invocation_top = arguments.pop("top", top)
+        invocation_skip = arguments.pop("skip", skip)
+        _validate_paging(top=invocation_top, skip=invocation_skip)
+        if invocation_top > max_top:
+            raise ValueError(f"top must not exceed the configured maximum of {max_top}.")
+        if invocation_skip > max_skip:
+            raise ValueError(f"skip must not exceed the configured maximum of {max_skip}.")
+        dynamic_filter = map_filter(filter, arguments)
+        results = await search.search(
+            query,
+            search_type=search_type,
+            filter=dynamic_filter,
+            top=invocation_top,
+            skip=invocation_skip,
+        )
+        mapped_results: list[Content] = []
+        consumed_results = 0
+        async for result in results:
+            if consumed_results >= invocation_top:
+                break
+            consumed_results += 1
+            mapped = map_result(result)
+            if isinstance(mapped, str):
+                mapped_results.append(Content.from_text(mapped))
+            elif isinstance(mapped, Content):
+                mapped_results.append(mapped)
+            else:
+                mapped_results.extend(mapped)
+        return mapped_results
+
+    return FunctionTool(
+        name=name,
+        description=description,
+        approval_mode=approval_mode,
+        func=search_tool,
+        input_model=input_model,
+    )
 
 
 def _is_non_string_sequence(value: Any) -> TypeGuard[Sequence[Any]]:

@@ -33,8 +33,8 @@ fields. Results are medians of seven warmed runs:
 | Dataclass | 3.17 μs | 16.81 μs |
 | Pydantic | 5.52 μs | 37.32 μs |
 
-These results measure only `VectorStoreRecordHandler.serialize()` followed by
-`deserialize()`. They do not include database SDK conversion, network I/O,
+These results measure only the framework's internal record conversion path.
+They do not include database SDK conversion, network I/O,
 embedding generation, validation complexity, nested fields, alternate vector
 representations, or memory allocation. Custom codecs are especially favorable
 here because the benchmark codec returns the existing vector reference rather

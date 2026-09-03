@@ -15,8 +15,7 @@
 from __future__ import annotations
 
 # Run with: uv run samples/02-agents/vector_stores/optimized_data_formats.py
-import asyncio
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Annotated, Any, cast
 
@@ -25,7 +24,6 @@ import pandas as pd  # pyright: ignore[reportMissingImports]
 from agent_framework import (
     VectorStoreCollectionDefinition,
     VectorStoreField,
-    VectorStoreRecordHandler,
     vectorstoremodel,
 )
 from numpy.typing import NDArray
@@ -82,13 +80,11 @@ dataframe_definition = VectorStoreCollectionDefinition(
 )
 
 
-async def main() -> None:
-    """Round-trip a NumPy model and a complete DataFrame."""
+def main() -> None:
+    """Convert NumPy and DataFrame values at the vector store boundary."""
     numpy_vector = np.arange(DIMENSIONS, dtype=np.float32) / np.float32(DIMENSIONS)
-    numpy_handler = VectorStoreRecordHandler(NumpyRecord)
-    serialized_numpy = await numpy_handler.serialize(NumpyRecord("numpy-1", numpy_vector))
-    restored_numpy = numpy_handler.deserialize(serialized_numpy)
-    assert isinstance(restored_numpy, NumpyRecord)
+    serialized_numpy = {"record_id": "numpy-1", "vector": numpy_vector.tolist()}
+    restored_numpy = decode_numpy_record(serialized_numpy)
 
     print(f"Serialized vector type: {type(serialized_numpy['vector']).__name__}")
     print(f"Restored vector type: {type(restored_numpy.vector).__name__} ({restored_numpy.vector.dtype})")
@@ -98,26 +94,23 @@ async def main() -> None:
         "text": ["First record", "Second record"],
         "vector": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
     })
-    dataframe_handler = VectorStoreRecordHandler(dict, definition=dataframe_definition)
     dataframe_rows = cast(list[dict[str, Any]], frame.to_dict(orient="records"))
-    serialized_frame = await dataframe_handler.serialize(dataframe_rows)
-    restored_rows = cast(Sequence[Mapping[str, Any]], dataframe_handler.deserialize(serialized_frame))
-    restored_frame = pd.DataFrame.from_records(restored_rows)
+    restored_frame = pd.DataFrame.from_records(dataframe_rows)
 
-    print(f"Serialized rows: {serialized_frame}")
+    print(f"Rows passed to batch upsert: {dataframe_rows}")
     print("Restored DataFrame:")
     print(restored_frame)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
 
 
 """
 Sample output:
 Serialized vector type: list
 Restored vector type: ndarray (float32)
-Serialized rows: [
+Rows passed to batch upsert: [
     {'id': 'one', 'text': 'First record', 'vector': [0.1, 0.2, 0.3]},
     {'id': 'two', 'text': 'Second record', 'vector': [0.4, 0.5, 0.6]}
 ]

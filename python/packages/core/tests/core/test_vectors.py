@@ -5,7 +5,7 @@ from __future__ import annotations
 import warnings
 from ast import AST, unparse
 from collections.abc import AsyncIterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import FrozenInstanceError, dataclass, field
 from typing import Annotated, Any, ClassVar, cast
 from unittest.mock import patch
 
@@ -36,12 +36,13 @@ from agent_framework import (
     SupportsVectorUpsert,
     VectorStoreCollectionDefinition,
     VectorStoreField,
-    VectorStoreRecordHandler,
+    create_vector_search_tool,
     register_vectorstoremodel,
     vectorstoremodel,
 )
 from agent_framework._feature_stage import ExperimentalWarning
 from agent_framework._telemetry import FeatureIndex
+from agent_framework._vectors import _VectorStoreRecordHandler as VectorStoreRecordHandler
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
 
 pytestmark = pytest.mark.filterwarnings("ignore::agent_framework._feature_stage.ExperimentalWarning")
@@ -265,7 +266,6 @@ def test_vector_apis_are_marked_experimental() -> None:
         vectorstoremodel,
         SearchResponse,
         SearchResults,
-        VectorStoreRecordHandler,
         BaseVectorCollection,
         BaseVectorStore,
         BaseVectorSearch,
@@ -307,6 +307,14 @@ def test_collection_definition_exposes_fields() -> None:
     assert definition.vector_field_names == ["vector"]
     assert definition.get_names(include_vector_fields=False) == ["id", "text"]
     assert definition.get_storage_names(include_key_field=False) == ["body", "vector"]
+    assert isinstance(definition.fields, tuple)
+
+    frozen_field = cast(Any, definition.fields[0])
+    with pytest.raises(FrozenInstanceError):
+        frozen_field.name = "changed"
+    frozen_definition = cast(Any, definition)
+    with pytest.raises(FrozenInstanceError):
+        frozen_definition.fields = ()
 
 
 @pytest.mark.parametrize(
@@ -641,12 +649,12 @@ async def test_collection_crud_preserves_single_and_batch_shapes() -> None:
 
     assert first_keys == ["one"]
     assert keys == ["two", "three"]
-    assert one == [Record("one", "first")]
+    assert one == [Record("one", "first", [5.0, 0.5])]
     assert many == [
         Record("one", "first", [5.0, 0.5]),
         Record("two", "second", [6.0, 0.5]),
     ]
-    assert filtered == [Record("one", "first")]
+    assert filtered == [Record("one", "first", [5.0, 0.5])]
 
     await collection.delete(["one", "two"])
     assert await collection.get(["one", "two"]) == []
@@ -777,7 +785,8 @@ def test_vector_search_rejects_filter_without_lambda() -> None:
 async def test_create_search_tool_returns_mapped_results() -> None:
     collection = MockCollection()
     collection.records["one"] = {"record_id": "one", "body": "first", "vector": [1.0, 0.0]}
-    tool = collection.create_search_tool(
+    tool = create_vector_search_tool(
+        collection,
         name="search_records",
         approval_mode="always_require",
         top=1,
@@ -795,7 +804,8 @@ async def test_create_search_tool_returns_mapped_results() -> None:
 async def test_create_search_tool_supports_declared_filter_parameters() -> None:
     collection = MockCollection()
     collection.records["one"] = {"record_id": "one", "body": "first", "vector": [1.0, 0.0]}
-    tool = collection.create_search_tool(
+    tool = create_vector_search_tool(
+        collection,
         parameters={
             "type": "object",
             "properties": {
@@ -829,17 +839,19 @@ def test_create_search_tool_validates_custom_schema() -> None:
     collection = MockCollection()
 
     with pytest.raises(ValueError, match="required string"):
-        collection.create_search_tool(parameters={"type": "object", "properties": {}})
+        create_vector_search_tool(collection, parameters={"type": "object", "properties": {}})
     with pytest.raises(ValueError, match="required string"):
-        collection.create_search_tool(
+        create_vector_search_tool(
+            collection,
             parameters={
                 "type": "object",
                 "properties": {"query": {"type": "integer"}},
                 "required": ["query"],
-            }
+            },
         )
     with pytest.raises(ValueError, match="declare an integer maximum"):
-        collection.create_search_tool(
+        create_vector_search_tool(
+            collection,
             parameters={
                 "type": "object",
                 "properties": {
@@ -847,7 +859,7 @@ def test_create_search_tool_validates_custom_schema() -> None:
                     "top": {"type": "integer"},
                 },
                 "required": ["query"],
-            }
+            },
         )
 
 
@@ -856,7 +868,8 @@ async def test_create_search_tool_enforces_paging_limits_and_result_cap() -> Non
     collection.raw_search_results = [
         {"record": {"record_id": str(index), "body": f"record {index}"}, "score": 0.9} for index in range(3)
     ]
-    tool = collection.create_search_tool(
+    tool = create_vector_search_tool(
+        collection,
         top=2,
         parameters={
             "type": "object",
@@ -881,7 +894,8 @@ async def test_create_search_tool_enforces_paging_limits_and_result_cap() -> Non
 async def test_create_search_tool_supports_multimodal_results() -> None:
     collection = MockCollection()
     collection.records["one"] = {"record_id": "one", "body": "first", "vector": [1.0, 0.0]}
-    tool = collection.create_search_tool(
+    tool = create_vector_search_tool(
+        collection,
         top=1,
         result_mapper=lambda response: [
             Content.from_text(response["record"].text),
@@ -898,21 +912,46 @@ async def test_create_search_tool_uses_msgspec_for_default_result_mapping() -> N
     collection = MockCollection()
     collection.records["one"] = {"record_id": "one", "body": "first", "vector": [1.0, 0.0]}
 
-    result = await collection.create_search_tool(top=1)(query="first")
+    result = await create_vector_search_tool(collection, top=1)(query="first")
 
     assert result[0].text is not None
     decoded = msgspec.json.decode(result[0].text)
-    assert set(collection.create_search_tool().parameters()["properties"]) == {"query"}
+    assert set(create_vector_search_tool(collection).parameters()["properties"]) == {"query"}
     assert decoded["record"]["id"] == "one"
     assert decoded["score"] == 0.9
 
 
-def test_create_search_tool_rejects_unsupported_type() -> None:
+async def test_create_search_tool_defers_unsupported_type_to_search() -> None:
     class VectorOnlyCollection(MockCollection):
         supported_search_types: ClassVar[set[SearchType]] = {"vector"}
 
+    tool = create_vector_search_tool(VectorOnlyCollection(), search_type="keyword_hybrid")
     with pytest.raises(NotImplementedError, match="not supported"):
-        VectorOnlyCollection().create_search_tool(search_type="keyword_hybrid")
+        await tool(query="query")
+
+
+def test_search_protocol_and_tool_factory_only_require_search() -> None:
+    class SearchOnly:
+        async def search(
+            self,
+            values: Any,
+            *,
+            search_type: SearchType = "vector",
+            vector: Sequence[float | int] | None = None,
+            filter: Any = None,
+            top: int = 3,
+            skip: int = 0,
+            include_vectors: bool = False,
+            vector_property_name: str | None = None,
+            additional_property_name: str | None = None,
+            score_threshold: float | None = None,
+            operation_options: Mapping[str, Any] | None = None,
+        ) -> SearchResults[SearchResponse[Record]]:
+            return SearchResults([])
+
+    search = SearchOnly()
+    assert isinstance(cast(Any, search), SupportsVectorSearch)
+    assert create_vector_search_tool(cast(SupportsVectorSearch[Record], search)).name == "search"
 
 
 def test_collection_satisfies_vector_protocols() -> None:
@@ -1245,14 +1284,16 @@ async def test_search_tool_filter_mapper_edge_paths() -> None:
         },
         "required": ["query", "category"],
     }
-    tool = collection.create_search_tool(
+    tool = create_vector_search_tool(
+        collection,
         parameters=parameters,
         filter=["lambda record: record.id != 'ignored'"],
     )
     await tool(query="query", category="travel")
     assert collection.last_search_filter == ["record.id != 'ignored'", "record.category == 'travel'"]
 
-    invalid_tool = collection.create_search_tool(
+    invalid_tool = create_vector_search_tool(
+        collection,
         parameters={
             "type": "object",
             "properties": {"query": {"type": "string"}, "bad-name": {"type": "string"}},
@@ -1262,7 +1303,7 @@ async def test_search_tool_filter_mapper_edge_paths() -> None:
     with pytest.raises(ValueError, match="cannot be mapped"):
         await invalid_tool(query="query", **{"bad-name": "value"})
     with pytest.raises(TypeError, match="'query'.*string"):
-        await cast(Any, collection.create_search_tool())(query=1)
+        await cast(Any, create_vector_search_tool(collection))(query=1)
 
 
 async def test_runtime_operations_mark_vector_store_feature_usage() -> None:
