@@ -109,11 +109,19 @@ For more details, see the [Package Validation diagnostic IDs](https://learn.micr
 
 Released .NET packages also use `Microsoft.CodeAnalysis.PublicApiAnalyzers` to make source-level public API changes visible during builds. The `PublicAPI.*.txt` files use `#nullable enable` so nullability annotations are tracked as part of the public API surface. When adding, changing, or removing public APIs in a released package, update the package's `PublicAPI.Unshipped.txt` file with the analyzer-provided entries and include that change in your PR. The build will fail if public API changes are not reflected in the baseline files.
 
-If local or CI builds report `RS0016` or `RS0017` warnings or errors, new public APIs were typically introduced but the exported API baseline was not updated. The preferred fix is to use the analyzer code fix on the affected code symbol to add the missing API entry automatically. Alternatively, run `dotnet format` for those diagnostics from the repository root:
+If local or CI builds report Public API Analyzer warnings or errors, handle each diagnostic separately:
 
-```powershell
-dotnet format .\dotnet\agent-framework-dotnet.slnx analyzers --diagnostics RS0016 RS0017
-```
+- `RS0016` reports a newly exposed public API that is missing from the baseline. The preferred fix is to use the analyzer code fix on the affected code symbol to add the missing API entry automatically. Alternatively, run `dotnet format` for `RS0016` from the repository root:
+
+  ```powershell
+  dotnet format .\dotnet\agent-framework-dotnet.slnx analyzers --diagnostics RS0016
+  ```
+
+- `RS0017` reports that a declared public API was deleted. Restore the API if the deletion was accidental; otherwise, record the removed signature in the package's `PublicAPI.Unshipped.txt` file with the `*REMOVED*` prefix:
+
+  ```powershell
+  Add-Content -Path .\dotnet\src\<package>\PublicAPI\<target-framework>\PublicAPI.Unshipped.txt -Value "*REMOVED*<removed-api-signature>"
+  ```
 
 After a release, the `Promote Shipped APIs` workflow moves entries from `PublicAPI.Unshipped.txt` to `PublicAPI.Shipped.txt` and opens or updates a promotion PR. Publish builds fail if released packages still contain unshipped public API entries.
 
