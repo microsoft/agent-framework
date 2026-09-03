@@ -240,10 +240,8 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// <param name="allowBackgroundResponses">
     /// Whether to enable <see cref="AgentRunOptions.AllowBackgroundResponses"/> for the hosted agent run.
     /// </param>
-    /// <returns>
-    /// The run options to invoke the agent with, or <see langword="null"/> when there is nothing to forward.
-    /// </returns>
-    private static AgentRunOptions? CreateRunOptions(RequestContext context, bool allowBackgroundResponses)
+    /// <returns>The run options to invoke the agent with.</returns>
+    private static AgentRunOptions CreateRunOptions(RequestContext context, bool allowBackgroundResponses)
     {
         AdditionalPropertiesDictionary? additionalProperties = context.Metadata is { Count: > 0 }
             ? context.Metadata.ToAdditionalProperties()
@@ -254,11 +252,6 @@ internal sealed class A2AAgentHandler : IAgentHandler
         if (context.Configuration is { } configuration)
         {
             (additionalProperties ??= [])[ConfigurationPropertyKey] = configuration;
-        }
-
-        if (!allowBackgroundResponses && additionalProperties is null)
-        {
-            return null;
         }
 
         return new AgentRunOptions

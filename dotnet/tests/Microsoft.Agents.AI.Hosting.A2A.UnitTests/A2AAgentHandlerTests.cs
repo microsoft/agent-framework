@@ -24,10 +24,10 @@ public sealed class A2AAgentHandlerTests
     private const string ConfigurationPropertyKey = "a2a.configuration";
 
     /// <summary>
-    /// Verifies that when there is no request data to forward, null options are passed to RunStreamingAsync.
+    /// Verifies that when there is no request data to forward, empty options are passed to RunStreamingAsync.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_WhenMetadataIsNull_PassesNullOptionsToRunStreamingAsync()
+    public async Task ExecuteAsync_WhenMetadataIsNull_PassesEmptyOptionsToRunStreamingAsync()
     {
         // Arrange
         AgentRunOptions? capturedOptions = null;
@@ -40,7 +40,9 @@ public sealed class A2AAgentHandlerTests
         });
 
         // Assert
-        Assert.Null(capturedOptions);
+        Assert.NotNull(capturedOptions);
+        Assert.Null(capturedOptions.AllowBackgroundResponses);
+        Assert.Null(capturedOptions.AdditionalProperties);
     }
 
     /// <summary>
@@ -1500,10 +1502,10 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
-    /// Verifies that streaming mode passes null options when metadata is null.
+    /// Verifies that streaming mode passes empty options when metadata is null.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_Streaming_WithNullMetadata_PassesNullOptionsAsync()
+    public async Task ExecuteAsync_Streaming_WithNullMetadata_PassesEmptyOptionsAsync()
     {
         // Arrange
         AgentRunOptions? capturedOptions = null;
@@ -1522,7 +1524,9 @@ public sealed class A2AAgentHandlerTests
 
         // Assert
         Assert.True(optionsCaptured);
-        Assert.Null(capturedOptions);
+        Assert.NotNull(capturedOptions);
+        Assert.Null(capturedOptions.AllowBackgroundResponses);
+        Assert.Null(capturedOptions.AdditionalProperties);
     }
 
     /// <summary>
