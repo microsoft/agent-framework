@@ -8,12 +8,21 @@ import json
 import warnings
 from collections.abc import AsyncIterator, Sequence
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
-from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, ResponseStream, UsageDetails
+from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
+    Annotation,
+    Content,
+    Message,
+    ResponseStream,
+    UsageDetails,
+)
 from openai.types.responses.response_usage import InputTokensDetails, ResponseUsage
 
+import agent_framework_hosting_responses._parsing as parsing_module
 from agent_framework_hosting_responses import (
     create_conversation_id,
     create_response_id,
@@ -28,6 +37,10 @@ from agent_framework_hosting_responses import (
 def _sse_payload(event: str) -> dict[str, object]:
     data_line = next(line for line in event.splitlines() if line.startswith("data: "))
     return cast("dict[str, object]", json.loads(data_line.removeprefix("data: ")))
+
+
+def _sse_types(events: Sequence[str]) -> list[object]:
+    return [_sse_payload(event)["type"] for event in events]
 
 
 def _native_usage_payload() -> dict[str, object]:
@@ -78,6 +91,19 @@ class TestMessagesFromResponsesInput:
             }
         ])
         assert msgs[0].text == "describe this"
+
+    def test_message_envelope_marks_refusal_text(self) -> None:
+        msgs = messages_from_responses_input([
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "refusal", "refusal": "I cannot help."}],
+            }
+        ])
+
+        assert msgs[0].contents[0].type == "text"
+        assert msgs[0].contents[0].text == "I cannot help."
+        assert msgs[0].contents[0].additional_properties == {"model_output_kind": "refusal"}
 
     def test_message_envelope_rejects_non_object_content_item(self) -> None:
         with pytest.raises(ValueError, match="content.*object"):
@@ -262,6 +288,23 @@ class TestResponsesRunHelpers:
         assert payload["id"] == "resp_new"
         assert payload["model"] == "test-model"
         assert payload["output"][0]["content"][0]["text"] == "hello"
+
+    def test_responses_from_run_reconstructs_refusal_content_from_marked_text(self) -> None:
+        result = AgentResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_text(
+                        "I cannot help.",
+                        additional_properties={"model_output_kind": "refusal"},
+                    )
+                ],
+            )
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+
+        assert payload["output"][0]["content"] == [{"type": "refusal", "refusal": "I cannot help."}]
 
     def test_responses_from_run_preserves_message_boundaries(self) -> None:
         result = AgentResponse(
@@ -746,11 +789,416 @@ class TestResponsesRunHelpers:
 
         assert events[0].startswith("event: response.created")
         assert '"conversation":{"id":"conv_1"}' in events[0]
-        assert "response.output_text.delta" in events[1]
-        assert "hel" in events[1]
-        assert "lo" in events[2]
+        assert _sse_types(events) == [
+            "response.created",
+            "response.output_item.added",
+            "response.content_part.added",
+            "response.output_text.delta",
+            "response.output_text.delta",
+            "response.output_text.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "response.completed",
+        ]
+        assert "hel" in events[3]
+        assert "lo" in events[4]
         assert events[-1].startswith("event: response.completed")
         assert '"conversation":{"id":"conv_1"}' in events[-1]
+        done_item = cast("dict[str, object]", _sse_payload(events[-2])["item"])
+        completed_response = cast("dict[str, object]", _sse_payload(events[-1])["response"])
+        completed_output = cast("list[dict[str, object]]", completed_response["output"])
+        assert done_item["id"] == completed_output[0]["id"]
+
+    async def test_responses_from_streaming_run_preserves_marked_refusal_deltas(self) -> None:
+        marker = {"model_output_kind": "refusal"}
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("I cannot ", additional_properties=marker)],
+                role="assistant",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("help.", additional_properties=marker)],
+                role="assistant",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+
+        assert _sse_types(events) == [
+            "response.created",
+            "response.output_item.added",
+            "response.content_part.added",
+            "response.refusal.delta",
+            "response.refusal.delta",
+            "response.refusal.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "response.completed",
+        ]
+        refusal_delta = _sse_payload(events[3])
+        assert refusal_delta["item_id"]
+        assert refusal_delta["output_index"] == 0
+        assert refusal_delta["content_index"] == 0
+        assert refusal_delta["sequence_number"] == 3
+        completed = _sse_payload(events[-1])
+        response = cast("dict[str, object]", completed["response"])
+        output = cast("list[dict[str, object]]", response["output"])
+        content = cast("list[dict[str, object]]", output[0]["content"])
+        assert content == [{"type": "refusal", "refusal": "I cannot help."}]
+
+    async def test_responses_from_streaming_run_preserves_mixed_text_and_refusal_parts(self) -> None:
+        marker = {"model_output_kind": "refusal"}
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Partial answer.")],
+                role="assistant",
+                message_id="msg_mixed",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("I cannot continue.", additional_properties=marker)],
+                role="assistant",
+                message_id="msg_mixed",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+
+        assert _sse_types(events) == [
+            "response.created",
+            "response.output_item.added",
+            "response.content_part.added",
+            "response.output_text.delta",
+            "response.output_text.done",
+            "response.content_part.done",
+            "response.content_part.added",
+            "response.refusal.delta",
+            "response.refusal.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "response.completed",
+        ]
+        part_events = [
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.content_part.added"
+        ]
+        assert [(part["item_id"], part["content_index"]) for part in part_events] == [
+            ("msg_mixed", 0),
+            ("msg_mixed", 1),
+        ]
+        completed = _sse_payload(events[-1])
+        response = cast("dict[str, object]", completed["response"])
+        output = cast("list[dict[str, object]]", response["output"])
+        assert output[0]["content"] == [
+            {"type": "output_text", "text": "Partial answer.", "annotations": []},
+            {"type": "refusal", "refusal": "I cannot continue."},
+        ]
+
+    @pytest.mark.parametrize(
+        ("text_content", "expected_part_type"),
+        [
+            (Content.from_text("Done."), "output_text"),
+            (
+                Content.from_text(
+                    "I cannot continue.",
+                    additional_properties={"model_output_kind": "refusal"},
+                ),
+                "refusal",
+            ),
+        ],
+    )
+    async def test_streaming_message_reserves_preceding_function_call_index(
+        self,
+        text_content: Content,
+        expected_part_type: str,
+    ) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_function_call("call_1", "lookup", arguments={"city": "Seattle"}),
+                    text_content,
+                ],
+                role="assistant",
+                message_id="msg_after_call",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        added = next(
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.added"
+        )
+        done = next(
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.done"
+        )
+        completed = cast("dict[str, object]", _sse_payload(events[-1])["response"])
+        output = cast("list[dict[str, object]]", completed["output"])
+
+        assert [item["type"] for item in output] == ["function_call", "message"]
+        assert added["output_index"] == 1
+        assert done["output_index"] == 1
+        done_item = cast("dict[str, object]", done["item"])
+        assert done_item["id"] == output[1]["id"]
+        message_content = cast("list[dict[str, object]]", output[1]["content"])
+        assert message_content[0]["type"] == expected_part_type
+
+    async def test_streaming_text_function_refusal_uses_final_output_indexes(self) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Partial answer.")],
+                role="assistant",
+                message_id="msg_mixed_output",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_function_call("call_1", "lookup", arguments={"city": "Seattle"})],
+                role="assistant",
+                message_id="msg_mixed_output",
+            )
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_text(
+                        "I cannot continue.",
+                        additional_properties={"model_output_kind": "refusal"},
+                    )
+                ],
+                role="assistant",
+                message_id="msg_mixed_output",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        added_events = [
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.added"
+        ]
+        done_events = [
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.done"
+        ]
+        completed = cast("dict[str, object]", _sse_payload(events[-1])["response"])
+        output = cast("list[dict[str, object]]", completed["output"])
+
+        assert [item["type"] for item in output] == ["message", "function_call", "message"]
+        assert [event["output_index"] for event in added_events] == [0, 2]
+        assert [event["output_index"] for event in done_events] == [0, 2]
+        done_ids = [cast("dict[str, object]", event["item"])["id"] for event in done_events]
+        assert done_ids == [output[0]["id"], output[2]["id"]]
+        first_content = cast("list[dict[str, object]]", output[0]["content"])
+        second_content = cast("list[dict[str, object]]", output[2]["content"])
+        assert first_content[0]["type"] == "output_text"
+        assert second_content[0]["type"] == "refusal"
+
+    async def test_streaming_paired_mcp_output_reserves_one_index_before_refusal(self) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_mcp_server_tool_call(
+                        "mcp_1",
+                        "lookup",
+                        server_name="server",
+                        arguments={"city": "Seattle"},
+                    ),
+                    Content.from_mcp_server_tool_result("mcp_1", output="sunny"),
+                    Content.from_text(
+                        "I cannot continue.",
+                        additional_properties={"model_output_kind": "refusal"},
+                    ),
+                ],
+                role="assistant",
+                message_id="msg_after_mcp",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        added = next(
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.added"
+        )
+        completed = cast("dict[str, object]", _sse_payload(events[-1])["response"])
+        output = cast("list[dict[str, object]]", completed["output"])
+
+        assert [item["type"] for item in output] == ["mcp_call", "message"]
+        assert added["output_index"] == 1
+        assert cast("dict[str, object]", added["item"])["id"] == output[1]["id"]
+
+    async def test_streaming_output_index_projection_work_is_linear(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        projected_content_counts: list[int] = []
+        original = parsing_module._result_to_output_items  # pyright: ignore[reportPrivateUsage]
+
+        def tracking_result_to_output_items(result: object, *, status: str) -> Any:
+            if status == "in_progress":
+                messages = getattr(result, "messages", [])
+                projected_content_counts.append(sum(len(message.contents) for message in messages))
+            return original(result, status=status)
+
+        monkeypatch.setattr(parsing_module, "_result_to_output_items", tracking_result_to_output_items)
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            for index in range(100):
+                message_id = f"msg_{index}"
+                yield AgentResponseUpdate(
+                    contents=[Content.from_function_call(f"call_{index}", "lookup", arguments={})],
+                    role="assistant",
+                    message_id=message_id,
+                )
+                yield AgentResponseUpdate(
+                    contents=[Content.from_text("done")],
+                    role="assistant",
+                    message_id=message_id,
+                )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        _ = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+
+        assert projected_content_counts == [2] * 100
+
+    async def test_empty_text_annotation_does_not_split_streaming_message(self) -> None:
+        annotation = Annotation(type="citation", title="Source", url="https://example.com")
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Before")],
+                role="assistant",
+                message_id="msg_annotations",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("", annotations=[annotation])],
+                role="assistant",
+                message_id="msg_annotations",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(" after")],
+                role="assistant",
+                message_id="msg_annotations",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        added_events = [
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.added"
+        ]
+        delta_events = [
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_text.delta"
+        ]
+        done = next(
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.done"
+        )
+        completed = cast("dict[str, object]", _sse_payload(events[-1])["response"])
+        output = cast("list[dict[str, object]]", completed["output"])
+
+        assert len(added_events) == 1
+        assert [event["delta"] for event in delta_events] == ["Before", " after"]
+        assert done["output_index"] == 0
+        assert cast("dict[str, object]", done["item"])["id"] == output[0]["id"]
+
+    async def test_empty_annotation_in_new_message_keeps_terminal_output_indexes(self) -> None:
+        annotation = Annotation(type="citation", title="Source", url="https://example.com")
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("First")],
+                role="assistant",
+                message_id="msg_first",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("", annotations=[annotation])],
+                role="assistant",
+                message_id="msg_second",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_function_call("call_1", "lookup", arguments={})],
+                role="assistant",
+                message_id="msg_second",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Second")],
+                role="assistant",
+                message_id="msg_second",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        added_events = [
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.added"
+        ]
+        done_events = [
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.done"
+        ]
+        completed = cast("dict[str, object]", _sse_payload(events[-1])["response"])
+        output = cast("list[dict[str, object]]", completed["output"])
+
+        assert [item["type"] for item in output] == ["message", "message", "function_call", "message"]
+        assert [event["output_index"] for event in added_events] == [0, 1, 3]
+        assert [event["output_index"] for event in done_events] == [0, 1, 3]
+        done_ids = [cast("dict[str, object]", event["item"])["id"] for event in done_events]
+        assert done_ids == [output[0]["id"], output[1]["id"], output[3]["id"]]
+
+    async def test_repeated_code_interpreter_chunk_does_not_reserve_new_output_index(self) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_code_interpreter_tool_call(
+                        call_id="ci_1",
+                        inputs=[Content.from_text("print(")],
+                    )
+                ],
+                role="assistant",
+                message_id="msg_code",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("Working.")],
+                role="assistant",
+                message_id="msg_code",
+            )
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_code_interpreter_tool_call(
+                        call_id="ci_1",
+                        inputs=[Content.from_text("'done')")],
+                    )
+                ],
+                role="assistant",
+                message_id="msg_code",
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(" Finished.")],
+                role="assistant",
+                message_id="msg_code",
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+        added_events = [
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.added"
+        ]
+        done = next(
+            _sse_payload(event) for event in events if _sse_payload(event)["type"] == "response.output_item.done"
+        )
+        completed = cast("dict[str, object]", _sse_payload(events[-1])["response"])
+        output = cast("list[dict[str, object]]", completed["output"])
+
+        assert [item["type"] for item in output] == ["code_interpreter_call", "message"]
+        assert len(added_events) == 1
+        assert added_events[0]["output_index"] == 1
+        assert done["output_index"] == 1
+        done_item = cast("dict[str, object]", done["item"])
+        assert done_item["id"] == output[1]["id"]
+        done_content = cast("list[dict[str, object]]", done_item["content"])
+        terminal_content = cast("list[dict[str, object]]", output[1]["content"])
+        assert [(part["type"], part["text"]) for part in done_content] == [
+            ("output_text", "Working."),
+            ("output_text", " Finished."),
+        ]
+        assert done_content == terminal_content
+        assert output[0]["code"] == "print('done')"
 
     async def test_responses_from_streaming_run_emits_failed_when_iteration_raises(self) -> None:
         async def updates() -> AsyncIterator[AgentResponseUpdate]:
@@ -769,7 +1217,7 @@ class TestResponsesRunHelpers:
         ]
 
         assert events[0].startswith("event: response.created")
-        assert "response.output_text.delta" in events[1]
+        assert "response.output_text.delta" in _sse_types(events)
         assert events[-1].startswith("event: response.failed")
         payload = _sse_payload(events[-1])
         response = cast("dict[str, object]", payload["response"])
@@ -779,6 +1227,29 @@ class TestResponsesRunHelpers:
         assert response["conversation"] == {"id": "conv_1"}
         assert error["message"] == "upstream blew up"
         assert "partial" in events[-1]
+
+    async def test_failed_stream_preserves_partial_marked_refusal(self) -> None:
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                contents=[
+                    Content.from_text(
+                        "I cannot help.",
+                        additional_properties={"model_output_kind": "refusal"},
+                    )
+                ],
+                role="assistant",
+            )
+            raise RuntimeError("upstream blew up")
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
+
+        failed = _sse_payload(events[-1])
+        response = cast("dict[str, object]", failed["response"])
+        output = cast("list[dict[str, object]]", response["output"])
+        content = cast("list[dict[str, object]]", output[0]["content"])
+        assert content == [{"type": "refusal", "refusal": "I cannot help."}]
 
     async def test_responses_from_streaming_run_preserves_final_metadata_and_usage(self) -> None:
         async def updates() -> AsyncIterator[AgentResponseUpdate]:
@@ -883,7 +1354,7 @@ class TestResponsesRunHelpers:
         events = [event async for event in responses_from_streaming_run(stream, response_id="resp_new")]
 
         assert events[0].startswith("event: response.created")
-        assert "response.output_text.delta" in events[1]
+        assert "response.output_text.delta" in _sse_types(events)
         assert events[-1].startswith("event: response.failed")
         payload = _sse_payload(events[-1])
         response = cast("dict[str, object]", payload["response"])

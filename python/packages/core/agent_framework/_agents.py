@@ -32,6 +32,7 @@ from ._middleware import (
     MiddlewareTypes,
     _as_middleware_list,  # pyright: ignore[reportPrivateUsage]
     _copy_middleware_sequence,  # pyright: ignore[reportPrivateUsage]
+    _select_run_level_tools,  # pyright: ignore[reportPrivateUsage]
     categorize_middleware,
 )
 from ._serialization import SerializationMixin
@@ -1359,8 +1360,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         opts = dict(options) if options else {}
         existing_additional_args: dict[str, Any] = opts.pop("additional_function_arguments", None) or {}
 
-        # Get tools from options or named parameter (named param takes precedence)
-        tools_ = tools if tools is not None else opts.pop("tools", None)
+        # Run-level tools: the named parameter takes precedence over an options entry
+        # (_select_run_level_tools is the framework's single statement of that rule,
+        # shared with the middleware layer's run-start resolution). The options entry
+        # is consumed either way, so a losing options["tools"] can never ride the
+        # remaining options into the request and silently override the resolved list.
+        tools_ = _select_run_level_tools(tools, opts)
+        opts.pop("tools", None)
 
         input_messages = normalize_messages(messages)
 

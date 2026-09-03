@@ -16,6 +16,12 @@ This package provides the Responses-specific conversion layer:
 - `responses_from_streaming_run(...)` — convert an Agent Framework
   `ResponseStream` into Responses-compatible SSE events.
 
+Responses refusal parts round-trip as text carrying
+`additional_properties["model_output_kind"] == "refusal"` and native
+`response.refusal.*` events. Streaming text and refusal output includes the
+standard output-item and content-part lifecycle with stable item IDs, indexes,
+and sequence numbers.
+
 Final streaming events match the rendered response status:
 `response.completed`, `response.incomplete`, or `response.failed`. Finalizing a
 stream with a nonterminal status produces `response.failed`. Response status is

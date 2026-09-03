@@ -22,8 +22,36 @@ permissions:
   issues: write
   pull-requests: write
 
+# Keep likely review-capable requests ordered from the moment they are created,
+# while bounding other per-PR events in a separate lane. Team membership is
+# still verified before review work begins.
 concurrency:
-  group: devflow-pr-review-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number || github.run_id }}
+  group: >-
+    devflow-pr-review-${{ github.repository }}-${{
+      github.event.pull_request.number || github.event.issue.number || inputs.pr_number || github.run_id
+    }}-${{
+      (
+        (
+          github.event_name == 'pull_request_target' &&
+          (
+            github.event.pull_request.author_association == 'MEMBER' ||
+            github.event.pull_request.author_association == 'OWNER'
+          )
+        ) ||
+        (
+          github.event_name == 'issue_comment' &&
+          github.event.issue.pull_request &&
+          github.event.comment.body == '/review' &&
+          (
+            github.event.comment.author_association == 'MEMBER' ||
+            github.event.comment.author_association == 'OWNER'
+          )
+        ) ||
+        github.event_name == 'workflow_dispatch'
+      )
+      && 'review'
+      || 'gate'
+    }}
   cancel-in-progress: true
 
 env:
@@ -137,7 +165,12 @@ jobs:
         id: check
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
-          MEMBERSHIP_USER: ${{ github.event_name == 'issue_comment' && github.event.comment.user.login || '' }}
+          MEMBERSHIP_USER: >-
+            ${{
+              github.event_name == 'issue_comment' && github.event.comment.user.login ||
+              github.event_name == 'workflow_dispatch' && github.actor ||
+              ''
+            }}
           TEAM_NAME: ${{ secrets.DEVELOPER_TEAM }}
           PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
         with:
