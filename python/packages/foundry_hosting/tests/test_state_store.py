@@ -1,11 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 from collections.abc import Callable
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import AgentSession, Content, WorkflowCheckpoint, WorkflowCheckpointException
+from agent_framework._workflows._checkpoint_encoding import encode_checkpoint_value
 from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
 from azure.ai.agentserver.core.storage import FoundryStorageConflictError
 
@@ -18,6 +20,13 @@ from agent_framework_foundry_hosting._state_store import (
     FoundryFunctionApprovalStore,
     FunctionApprovalStoreProvider,
 )
+
+
+@dataclass
+class _NotAllowed:
+    """A type outside the built-in safe set, standing in for an application type."""
+
+    value: int
 
 
 def _checkpoint(
@@ -98,6 +107,69 @@ async def test_load_returns_checkpoint() -> None:
 
     assert result == checkpoint
     store.get_item.assert_awaited_once_with("checkpoint-1", call_id="call-1")
+
+
+async def test_load_restricts_checkpoint_deserialization() -> None:
+    """A checkpoint value naming a type outside the allow set is refused.
+
+    The file and Cosmos checkpoint stores both restrict deserialization this
+    way; this store reaches the same decoder, so it restricts it too.
+    """
+    store = _store()
+    checkpoint = _checkpoint("checkpoint-1")
+    value = checkpoint.to_dict()
+    value["state"] = encode_checkpoint_value({"payload": _NotAllowed(7)})
+    store.get_item = AsyncMock(return_value=SimpleNamespace(value=value))
+
+    with (
+        patch(
+            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+            new=AsyncMock(return_value=store),
+        ),
+        pytest.raises(WorkflowCheckpointException),
+    ):
+        await FoundryCheckpointStore("context-1", _platform_context()).load("checkpoint-1")
+
+
+async def test_load_accepts_a_declared_checkpoint_type() -> None:
+    """A caller can still name the types its checkpoints carry."""
+    store = _store()
+    checkpoint = _checkpoint("checkpoint-1")
+    value = checkpoint.to_dict()
+    value["state"] = encode_checkpoint_value({"payload": _NotAllowed(7)})
+    store.get_item = AsyncMock(return_value=SimpleNamespace(value=value))
+
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(return_value=store),
+    ):
+        result = await FoundryCheckpointStore(
+            "context-1",
+            _platform_context(),
+            allowed_checkpoint_types=[f"{_NotAllowed.__module__}:{_NotAllowed.__qualname__}"],
+        ).load("checkpoint-1")
+
+    assert result.state["payload"].value == 7
+
+
+async def test_list_checkpoints_restricts_checkpoint_deserialization() -> None:
+    store = _store()
+    checkpoint = _checkpoint("checkpoint-1")
+    value = checkpoint.to_dict()
+    value["state"] = encode_checkpoint_value({"payload": _NotAllowed(7)})
+    store.list_keys = AsyncMock(
+        return_value=SimpleNamespace(keys=[SimpleNamespace(key="checkpoint-1")], has_more=False, last_id=None)
+    )
+    store.get_item = AsyncMock(return_value=SimpleNamespace(value=value))
+
+    with (
+        patch(
+            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+            new=AsyncMock(return_value=store),
+        ),
+        pytest.raises(WorkflowCheckpointException),
+    ):
+        await FoundryCheckpointStore("context-1", _platform_context()).list_checkpoints(workflow_name="workflow")
 
 
 async def test_load_raises_for_missing_checkpoint() -> None:
