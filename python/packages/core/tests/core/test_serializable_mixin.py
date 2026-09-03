@@ -598,6 +598,20 @@ class TestSerializationMixin:
 
         assert restored.value == "value"
 
+    def test_pickle_restores_legacy_tuple_state(self):
+        """Pickle restoration should accept the legacy dict-and-slots tuple."""
+
+        class TestClass(SerializationMixin):
+            __slots__ = ("value",)
+
+            def __init__(self):
+                self.value = "new"
+
+        restored = TestClass.__new__(TestClass)
+        restored.__setstate__(({"other": "dict"}, {"value": "legacy"}))
+
+        assert restored.value == "legacy"
+
     def test_pickle_omission_is_separate_from_shallow_copy_policy(self):
         """Fields shallow-copied by default remain persistent unless explicitly omitted."""
         class TestClass(SerializationMixin):

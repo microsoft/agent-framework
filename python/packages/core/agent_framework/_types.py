@@ -611,6 +611,14 @@ class Content:
                 object.__setattr__(result, k, deepcopy(v, memo))
         return result
 
+    def __copy__(self) -> Content:
+        """Create a shallow copy while preserving provider runtime fields."""
+        cls = type(self)
+        result = cls.__new__(cls)
+        for field_name, value in self.__dict__.items():
+            object.__setattr__(result, field_name, value)
+        return result
+
     def __getstate__(self) -> dict[str, Any]:
         """Return pickle state without runtime-only shallow-copy fields."""
         state = _get_pickle_state(self, self._PICKLE_OMIT_FIELDS)

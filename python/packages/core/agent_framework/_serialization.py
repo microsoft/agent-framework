@@ -172,12 +172,20 @@ def _get_pickle_state(instance: Any, omitted_fields: set[str]) -> dict[str, Any]
     return state
 
 
-def _restore_pickle_state(instance: Any, state: dict[str, Any], omitted_fields: set[str]) -> None:
+def _restore_pickle_state(
+    instance: Any,
+    state: dict[str, Any] | tuple[dict[str, Any], dict[str, Any]],
+    omitted_fields: set[str],
+) -> None:
     """Restore dict- and slot-backed pickle state."""
+    if isinstance(state, tuple):
+        dict_state, slot_state = state
+        state = {**dict_state, **slot_state}
     for field_name, value in state.items():
         object.__setattr__(instance, field_name, value)
     for field_name in omitted_fields:
-        object.__setattr__(instance, field_name, None)
+        if field_name in _iter_instance_fields(instance) or hasattr(instance, "__dict__"):
+            object.__setattr__(instance, field_name, None)
 
 
 class SerializationMixin:

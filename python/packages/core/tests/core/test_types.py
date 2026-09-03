@@ -2746,6 +2746,16 @@ def test_content_pickle_discards_nested_annotation_raw_representation() -> None:
     assert restored.annotations == [{"type": "citation", "url": "https://example.com"}]
 
 
+def test_content_shallow_copy_preserves_raw_representation() -> None:
+    """Shallow copies of Content retain provider runtime fields."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    cloned = copy.copy(Content.from_text("hello", raw_representation=raw))
+
+    assert cloned.raw_representation is raw
+
+
 def test_message_deepcopy_preserves_raw_representation():
     """Test that deepcopy of Message keeps raw_representation by reference."""
     import copy
