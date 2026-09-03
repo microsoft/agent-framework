@@ -2907,6 +2907,32 @@ def test_prepare_content_for_openai_hosted_vector_store_content() -> None:
     assert result == {}
 
 
+def test_prepare_content_for_openai_function_result_omits_call_id_when_absent() -> None:
+    """Function result without a call id omits the call_id key (Responses API no longer requires it)."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    function_result = Content.from_function_result(call_id=None, result="done")
+
+    result = client._prepare_content_for_openai("assistant", function_result)
+
+    assert "call_id" not in result
+    assert result["type"] == "function_call_output"
+    assert result["output"] == "done"
+
+
+def test_prepare_content_for_openai_function_result_keeps_call_id_when_present() -> None:
+    """Function result with a call id keeps the call_id key unchanged."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    function_result = Content.from_function_result(call_id="call_1", result="done")
+
+    result = client._prepare_content_for_openai("assistant", function_result)
+
+    assert result["call_id"] == "call_1"
+    assert result["type"] == "function_call_output"
+    assert result["output"] == "done"
+
+
 def test_prepare_content_for_openai_text_uses_role_specific_type() -> None:
     """Text content should use input_text for user and output_text for assistant."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")

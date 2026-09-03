@@ -886,7 +886,7 @@ class Content:
     @classmethod
     def from_function_result(
         cls: type[ContentT],
-        call_id: str,
+        call_id: str | None = None,
         *,
         result: Any = None,
         exception: str | None = None,
@@ -902,6 +902,8 @@ class Content:
 
         Args:
             call_id: The ID of the function call this result corresponds to.
+                May be None for results translated from external OpenAI-spec
+                sources, where the Responses API no longer requires a call id.
 
         Keyword Args:
             result: The tool output.  Accepts a ``list[Content]`` (the canonical

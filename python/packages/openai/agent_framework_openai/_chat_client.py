@@ -2059,11 +2059,15 @@ class RawOpenAIChatClient(
                                 output_parts.append(part)
                     if output_parts:
                         output = output_parts
-                return {
-                    "call_id": content.call_id,
+                function_output_item: dict[str, Any] = {
                     "type": "function_call_output",
                     "output": output,
                 }
+                # The Responses API no longer requires a call id on function call
+                # results, so omit the key rather than sending ``"call_id": null``.
+                if content.call_id:
+                    function_output_item["call_id"] = content.call_id
+                return function_output_item
             case "function_approval_request":
                 return {
                     "type": "mcp_approval_request",

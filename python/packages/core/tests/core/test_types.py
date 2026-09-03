@@ -3460,6 +3460,19 @@ def test_from_function_result_with_string():
     assert result.items[0].text == "just text"
 
 
+def test_from_function_result_without_call_id():
+    """Test Content.from_function_result accepts a missing call_id.
+
+    The OpenAI Responses API no longer requires a call id on function call
+    results, so content translated from external OpenAI-spec sources may not
+    have one.
+    """
+    result = Content.from_function_result(call_id=None, result="some result")
+    assert result.type == "function_result"
+    assert result.call_id is None
+    assert result.result == "some result"
+
+
 def test_content_from_function_result_items_in_to_dict():
     """Test that items are included in to_dict serialization."""
     content_list = [
