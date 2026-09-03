@@ -485,6 +485,79 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         Assert.NotNull(response.Message);
     }
 
+    /// <summary>
+    /// Verifies that a non-immediate request waits for all streaming updates and returns a completed task.
+    /// </summary>
+    [Fact]
+    public async Task AddA2AServer_WithBackgroundResponsesAndNonImmediateRequest_ReturnsCompletedTaskAsync()
+    {
+        // Arrange
+        const string AgentName = "completed-task-request";
+        var services = new ServiceCollection();
+        Mock<AIAgent> agentMock = CreateAgentMockForRequests(AgentName);
+        agentMock
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(() => ToAsyncEnumerableAsync(
+            [
+                new AgentResponseUpdate(ChatRole.Assistant, "chunk 1") { ResponseId = "r1", MessageId = "m1" },
+                new AgentResponseUpdate(ChatRole.Assistant, "chunk 2") { ResponseId = "r1", MessageId = "m1" }
+            ]));
+        services.AddKeyedSingleton(AgentName, (_, _) => agentMock.Object);
+        services.AddA2AServer(
+            AgentName,
+            options => options.AgentRunMode = AgentRunMode.AllowBackgroundIfSupported);
+        await using var provider = services.BuildServiceProvider();
+        var server = provider.GetRequiredKeyedService<A2AServer>(AgentName);
+        SendMessageRequest request = CreateTestSendMessageRequest();
+        request.Configuration = new SendMessageConfiguration { ReturnImmediately = false };
+
+        // Act
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        SendMessageResponse response = await server.SendMessageAsync(request, cts.Token);
+
+        // Assert
+        Assert.Equal(SendMessageResponseCase.Task, response.PayloadCase);
+        Assert.Equal(TaskState.Completed, response.Task!.Status.State);
+        Assert.Equal("chunk 1chunk 2", Assert.Single(Assert.Single(response.Task.Artifacts!).Parts!).Text);
+    }
+
+    /// <summary>
+    /// Verifies that a non-streaming request returns an empty message when the agent produces no updates.
+    /// </summary>
+    [Fact]
+    public async Task AddA2AServer_WithEmptyAgentResponse_ReturnsEmptyMessageAsync()
+    {
+        // Arrange
+        const string AgentName = "empty-response-request";
+        var services = new ServiceCollection();
+        Mock<AIAgent> agentMock = CreateAgentMockForRequests(AgentName);
+        agentMock
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(() => ToAsyncEnumerableAsync<AgentResponseUpdate>([]));
+        services.AddKeyedSingleton(AgentName, (_, _) => agentMock.Object);
+        services.AddA2AServer(AgentName);
+        await using var provider = services.BuildServiceProvider();
+        var server = provider.GetRequiredKeyedService<A2AServer>(AgentName);
+
+        // Act
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        SendMessageResponse response = await server.SendMessageAsync(CreateTestSendMessageRequest(), cts.Token);
+
+        // Assert
+        Assert.Equal(SendMessageResponseCase.Message, response.PayloadCase);
+        Assert.Empty(response.Message!.Parts!);
+    }
+
     private static SendMessageRequest CreateTestSendMessageRequest() =>
         new()
         {
@@ -512,6 +585,15 @@ public sealed class A2AServerServiceCollectionExtensionsTests
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new AgentResponse([new ChatMessage(ChatRole.Assistant, "Test response")]));
+        agentMock
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(() => ToAsyncEnumerableAsync(
+                new AgentResponse([new ChatMessage(ChatRole.Assistant, "Test response")]).ToAgentResponseUpdates()));
 
         return agentMock;
     }
@@ -532,6 +614,15 @@ public sealed class A2AServerServiceCollectionExtensionsTests
             .ReturnsAsync(JsonDocument.Parse("{}").RootElement);
 
         return agentMock;
+    }
+
+    private static async IAsyncEnumerable<T> ToAsyncEnumerableAsync<T>(IEnumerable<T> items)
+    {
+        await Task.Yield();
+        foreach (T item in items)
+        {
+            yield return item;
+        }
     }
 
     private sealed class TestAgentSession : AgentSession;
