@@ -19,23 +19,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.GHA_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.GHA_TOKEN_PROVIDER_PEM }}
+
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Configure git
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global url."https://$($env:GH_TOKEN)@github.com/".insteadOf "https://github.com/"
 
       - name: Check for existing PR
         id: check_pr
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           $branch = "${{ github.ref_name }}"
           $prBranch = "promote-shipped-apis-$branch"
@@ -95,7 +105,7 @@ jobs:
         if: steps.check_pr.outputs.pr_exists == 'false' && steps.check_changes.outputs.has_changes == 'true'
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           $branch = "${{ github.ref_name }}"
           $prBranch = "promote-shipped-apis-$branch"
