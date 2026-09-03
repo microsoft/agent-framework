@@ -354,7 +354,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 If not provided, a default `FunctionApprovalStoreProvider` will be used.
             history_source: Source of conversation history supplied to the model for regular agents.
                 `"agent_server"` (default) uses the transcript from the configured response store,
-                rejects load-enabled agent history providers, and disables downstream service storage.
+                requires a `RawAgent` whose client declares `STORES_BY_DEFAULT`, rejects load-enabled
+                agent history providers, and disables downstream service storage.
                 `"agent"` passes only the current request input and preserves the agent's normal
                 history-provider or service-storage behavior. AgentServer still manages Responses
                 API persistence through `store` in both modes.
@@ -385,18 +386,42 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         Raises:
             ValueError: If `history_source` is not supported.
-            RuntimeError: If `resilient_background=True` is requested for a non-workflow agent, or if
+            RuntimeError: If the agent configuration conflicts with the selected history source,
+                `resilient_background=True` is requested for a non-workflow agent, or
                 `steerable_conversations=True` is requested for a workflow agent.
         """
         if history_source not in ("agent_server", "agent"):
             raise ValueError("history_source must be either 'agent_server' or 'agent'.")
 
-        super().__init__(prefix=prefix, options=options, store=store, **kwargs)
+        is_workflow_agent = isinstance(agent, WorkflowAgent)
+        if is_workflow_agent and agent.workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
+            raise RuntimeError(
+                "There should not be a checkpoint storage already present in the workflow agent. "
+                "The hosting infrastructure will manage checkpoints instead."
+            )
 
-        self._uses_agent_server_history = history_source == "agent_server"
-        self._client_stores_by_default = False
-        if self._uses_agent_server_history:
-            for provider in getattr(agent, "context_providers", []):
+        resilient_background = bool(options and options.resilient_background)
+        if resilient_background and not is_workflow_agent:
+            raise RuntimeError(
+                "resilient_background=True is only supported for workflow agents. "
+                "Crash recovery cannot be provided for non-workflow agents."
+            )
+        if options and options.steerable_conversations and is_workflow_agent:
+            raise RuntimeError(
+                "steerable_conversations=True is only supported for non-workflow agents. "
+                "Steering cannot be provided reliably for workflow agents."
+            )
+
+        uses_agent_server_history = history_source == "agent_server"
+        client_stores_by_default = False
+        if uses_agent_server_history and not is_workflow_agent:
+            if not isinstance(agent, RawAgent):
+                raise RuntimeError(
+                    "history_source='agent_server' requires a RawAgent so hosting can enforce downstream "
+                    "storage options. Construct ResponsesHostServer with history_source='agent' for a custom "
+                    "SupportsAgentRun implementation."
+                )
+            for provider in agent.context_providers:
                 if isinstance(provider, HistoryProvider) and provider.load_messages:
                     if _is_hosted_responses_history_sentinel(provider):
                         continue
@@ -405,34 +430,38 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         "with load_messages=True. Remove that provider or construct ResponsesHostServer "
                         "with history_source='agent' to use the agent's regular history setup."
                     )
-            default_options = getattr(agent, "default_options", None)
-            typed_default_options: Mapping[str, Any] = (
-                cast(Mapping[str, Any], default_options) if isinstance(default_options, Mapping) else {}
-            )
-            if typed_default_options.get("conversation_id") is not None:
+            service_continuation_options = [
+                name
+                for name in ("conversation_id", "previous_response_id", "conversation")
+                if agent.default_options.get(name) is not None
+            ]
+            if service_continuation_options:
                 raise RuntimeError(
-                    "AgentServer response history is enabled, but the agent has a default conversation_id. "
-                    "Remove that option or construct ResponsesHostServer with history_source='agent' to resume "
-                    "the downstream service conversation."
+                    "AgentServer response history is enabled, but the agent has downstream service continuation "
+                    f"option(s): {', '.join(service_continuation_options)}. Remove them or construct "
+                    "ResponsesHostServer with history_source='agent' to resume the downstream service conversation."
                 )
-            agent_client = getattr(agent, "client", None)
-            storage_capability_owner = agent_client if agent_client is not None else agent
-            self._client_stores_by_default = getattr(storage_capability_owner, "STORES_BY_DEFAULT", False) is True
-            if not self._client_stores_by_default and isinstance(default_options, dict):
-                cast(dict[str, Any], default_options).pop("store", None)
+            stores_by_default = getattr(cast(Any, agent).client, "STORES_BY_DEFAULT", None)
+            if not isinstance(stores_by_default, bool):
+                raise RuntimeError(
+                    "history_source='agent_server' requires the agent's chat client to declare "
+                    "STORES_BY_DEFAULT so hosting can enforce downstream storage behavior."
+                )
+            client_stores_by_default = stores_by_default
 
-        self._is_workflow_agent = False
-        if isinstance(agent, WorkflowAgent):
-            if agent.workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
-                raise RuntimeError(
-                    "There should not be a checkpoint storage already present in the workflow agent. "
-                    "The hosting infrastructure will manage checkpoints instead."
-                )
-            self._is_workflow_agent = True
+        # No caller-owned agent state is mutated until all validation and base-host construction succeed.
+        super().__init__(prefix=prefix, options=options, store=store, **kwargs)
+
+        self._uses_agent_server_history = uses_agent_server_history
+        self._client_stores_by_default = client_stores_by_default
+        self._is_workflow_agent = is_workflow_agent
+        self._resilient_background = resilient_background
 
         self._uses_hosted_responses_history = False
         if self._uses_agent_server_history and not self._is_workflow_agent and isinstance(agent, RawAgent):
             self._uses_hosted_responses_history = True
+            if not self._client_stores_by_default:
+                agent.default_options.pop("store", None)
             if not any(
                 _is_hosted_responses_history_sentinel(provider)
                 for provider in cast(Sequence[ContextProvider], agent.context_providers)
@@ -462,21 +491,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if function_approval_store_provider is None
             else function_approval_store_provider
         )
-
-        # Resiliency check: fail loud rather than silently downgrading to a non-recoverable row.
-        self._resilient_background = bool(options and options.resilient_background)
-        if self._resilient_background and not self._is_workflow_agent:
-            raise RuntimeError(
-                "resilient_background=True is only supported for workflow agents. "
-                "Crash recovery cannot be provided for non-workflow agents."
-            )
-
-        # Steering check: steering a workflow is conceptually undefined and also impractical today.
-        if options and options.steerable_conversations and self._is_workflow_agent:
-            raise RuntimeError(
-                "steerable_conversations=True is only supported for non-workflow agents. "
-                "Steering cannot be provided reliably for workflow agents."
-            )
 
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
         # the first request rather than at server startup, so that authentication
@@ -676,15 +690,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     # Do not pass a storage option to clients that do not advertise support for it.
                     chat_options.pop("store", None)
 
-            if are_options_set and not isinstance(self._agent, RawAgent):
-                logger.warning("Agent doesn't support runtime options. They will be ignored.")
-                if self._uses_agent_server_history and self._client_stores_by_default:
-                    # Request generation options are unsupported for custom agents, but the
-                    # host-owned storage directive must still reach an agent that advertises
-                    # service-side storage.
-                    run_kwargs["options"] = {"store": False}
-            else:
+            if isinstance(self._agent, RawAgent):
                 run_kwargs["options"] = chat_options
+            elif are_options_set:
+                logger.warning("Agent doesn't support runtime options. They will be ignored.")
 
             # Non-workflow agents can't be resilient, so there is no exit_for_recovery path here:
             # both shutdown and steering/cancel just wind the turn down once observed.

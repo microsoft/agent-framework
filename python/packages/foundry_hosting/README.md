@@ -11,11 +11,15 @@ server = ResponsesHostServer(agent)
 ```
 
 In this mode, the configured AgentServer response provider supplies the prior transcript. Hosting rejects
-`HistoryProvider` instances with `load_messages=True` and agents configured with a default `conversation_id`, adds a
-transient in-memory provider for function-call loops, and clears restored downstream service IDs. For clients that
-advertise `STORES_BY_DEFAULT=True`, hosting forces downstream `store=False`; for other clients it removes an explicit
-agent-level `store` option and does not forward one. These safeguards ensure the model receives the transcript once
-without sending unsupported storage options.
+`HistoryProvider` instances with `load_messages=True` and agents configured with a default `conversation_id`,
+`previous_response_id`, or `conversation`, adds a transient in-memory provider for function-call loops, and clears
+restored downstream service IDs. For clients that advertise `STORES_BY_DEFAULT=True`, hosting forces downstream
+`store=False`; for other clients it removes an explicit agent-level `store` option and does not forward one. These
+safeguards ensure the model receives the transcript once without sending unsupported storage options.
+
+AgentServer history requires a framework `RawAgent` whose client declares the boolean `STORES_BY_DEFAULT` capability;
+the agent's runtime options then let hosting enforce downstream storage behavior. Custom `SupportsAgentRun`
+implementations must use `history_source="agent"` because that protocol does not accept runtime chat options.
 
 `ResponsesHostServer` owns the supplied agent instance and may add hosting-specific context providers. Do not reuse that
 agent with another host or invoke it directly after constructing the server.

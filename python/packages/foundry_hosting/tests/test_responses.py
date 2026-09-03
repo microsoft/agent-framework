@@ -137,6 +137,9 @@ def _make_agent(
     agent.name = "Test Agent"
     agent.description = "A mock agent for testing"
     agent.context_providers = []
+    agent.default_options = {}
+    agent.client = MagicMock()
+    agent.client.STORES_BY_DEFAULT = False
 
     def create_session(*, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
@@ -169,6 +172,39 @@ def _make_agent(
         agent.run = MagicMock(side_effect=run_streaming)
 
     return agent
+
+
+class _StrictCustomAgent:
+    """Custom SupportsAgentRun implementation without a runtime options keyword."""
+
+    id = "strict-custom-agent"
+    name = "Strict Custom Agent"
+    description = "Exercises the exact SupportsAgentRun keyword contract."
+
+    def __init__(self) -> None:
+        self.context_providers: list[Any] = []
+        self.calls: list[Any] = []
+
+    def create_session(self, *, session_id: str | None = None) -> AgentSession:
+        return AgentSession(session_id=session_id)
+
+    def run(
+        self,
+        messages: Any = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        del session, function_invocation_kwargs, client_kwargs
+        assert stream is True
+        self.calls.append(messages)
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("ok")], role="assistant")
+
+        return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
 
 
 class _RecordingHistoryClient(BaseChatClient):
@@ -788,13 +824,14 @@ class TestResponsesHostServerInit:
         with pytest.raises(ValueError, match="history_source"):
             ResponsesHostServer(agent, history_source=cast(Any, "invalid"))
 
-    def test_init_rejects_default_conversation_id_for_agent_server_history(self) -> None:
+    @pytest.mark.parametrize("option_name", ["conversation_id", "previous_response_id", "conversation"])
+    def test_init_rejects_default_service_continuation_for_agent_server_history(self, option_name: str) -> None:
         agent = Agent(
             client=_ServiceStorageRecordingClient(),
-            default_options={"conversation_id": "service-thread"},  # pyrefly: ignore[bad-argument-type]
+            default_options=cast(Any, {option_name: "service-thread"}),
         )
 
-        with pytest.raises(RuntimeError, match="default conversation_id"):
+        with pytest.raises(RuntimeError, match=option_name):
             ResponsesHostServer(agent)
 
     def test_init_allows_default_conversation_id_for_agent_history(self) -> None:
@@ -804,6 +841,32 @@ class TestResponsesHostServerInit:
         )
 
         ResponsesHostServer(agent, history_source="agent")
+
+    def test_init_rejects_custom_agent_for_agent_server_history(self) -> None:
+        with pytest.raises(RuntimeError, match="history_source='agent'"):
+            ResponsesHostServer(cast(Any, _StrictCustomAgent()))
+
+    def test_init_requires_storage_capability_for_agent_server_history(self) -> None:
+        agent = _make_agent()
+        agent.client = object()
+
+        with pytest.raises(RuntimeError, match="STORES_BY_DEFAULT"):
+            ResponsesHostServer(agent)
+
+    def test_failed_init_does_not_mutate_agent(self) -> None:
+        agent = Agent(
+            client=_RecordingHistoryClient(),
+            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+        )
+
+        with pytest.raises(RuntimeError, match="resilient_background"):
+            ResponsesHostServer(
+                agent,
+                options=ResponsesServerOptions(resilient_background=True),
+            )
+
+        assert agent.default_options["store"] is True
+        assert agent.context_providers == []
 
     def test_init_rejects_resilient_background_for_non_workflow_agent(self, tmp_path: Path) -> None:
         agent = _make_agent(
@@ -962,19 +1025,14 @@ class TestAgentSessionPersistence:
         assert "store" not in agent.default_options
         assert "store" not in client.options[0]
 
-    async def test_agent_server_history_preserves_storage_directive_for_custom_agent_options(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
-            raw_agent=False,
-        )
-        agent.client = MagicMock()
-        agent.client.STORES_BY_DEFAULT = True
-        server = _make_server(agent, session_store=SessionStore())
+    async def test_agent_history_does_not_forward_runtime_options_to_custom_agent(self) -> None:
+        agent = _StrictCustomAgent()
+        server = _make_server(agent, session_store=SessionStore(), history_source="agent")
 
         response = await _post(server, input_text="first", temperature=0.5)
 
         assert response.json()["status"] == "completed"
-        assert agent.run.call_args.kwargs["options"] == {"store": False}
+        assert len(agent.calls) == 1
 
     async def test_agent_server_history_clears_restored_service_session_id(self) -> None:
         client = _ServiceStorageRecordingClient()
@@ -3303,6 +3361,9 @@ def _make_multi_response_agent(
     agent.name = "Test Agent"
     agent.description = "A mock agent for testing"
     agent.context_providers = []
+    agent.default_options = {}
+    agent.client = MagicMock()
+    agent.client.STORES_BY_DEFAULT = False
 
     def create_session(*, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
@@ -4819,6 +4880,9 @@ class TestResponseFailedSurfacing:
         agent.name = "Test Agent"
         agent.description = "A mock agent for testing"
         agent.context_providers = []
+        agent.default_options = {}
+        agent.client = MagicMock()
+        agent.client.STORES_BY_DEFAULT = False
 
         def create_session(*, session_id: str | None = None) -> AgentSession:
             return AgentSession(session_id=session_id)
@@ -4867,6 +4931,9 @@ class TestResponseFailedSurfacing:
         agent.name = "Test Agent"
         agent.description = "A mock agent for testing"
         agent.context_providers = []
+        agent.default_options = {}
+        agent.client = MagicMock()
+        agent.client.STORES_BY_DEFAULT = False
 
         def create_session(*, session_id: str | None = None) -> AgentSession:
             return AgentSession(session_id=session_id)

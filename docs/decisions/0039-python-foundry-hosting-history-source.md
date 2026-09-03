@@ -70,7 +70,9 @@ Add `history_source: Literal["agent_server", "agent"] = "agent_server"` to `Resp
 With `history_source="agent_server"`:
 
 - load-enabled `HistoryProvider` instances are rejected;
-- an agent-level default `conversation_id` is rejected;
+- regular agents must implement `RawAgent` and their clients must declare `STORES_BY_DEFAULT` so hosting can enforce
+  runtime storage options;
+- agent-level `conversation_id`, `previous_response_id`, and `conversation` defaults are rejected;
 - the configured response provider transcript and current input are passed to the agent;
 - clients advertising `STORES_BY_DEFAULT=True` receive a downstream `store=False` override;
 - for other clients, an explicit agent-level `store` option is removed and no storage option is forwarded;
@@ -83,7 +85,8 @@ With `history_source="agent"`:
 - only current request input is passed by hosting;
 - load-enabled history providers are allowed;
 - downstream storage options are not changed; and
-- normal `Agent` behavior selects service storage, an explicit history provider, or automatic in-session history.
+- normal `Agent` behavior selects service storage, an explicit history provider, or automatic in-session history;
+- custom `SupportsAgentRun` implementations remain supported without receiving unsupported runtime chat options.
 
 The AgentServer response provider continues to control Responses API persistence and retrieval in both modes, according
 to the outer request. The session-store provider also remains independent. Consequently, regular agent mode can combine
