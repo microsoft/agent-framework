@@ -1149,6 +1149,34 @@ async def test_apply_compaction_projects_included_messages_only() -> None:
     assert projected[0].role == "system"
 
 
+async def test_apply_compaction_logs_changed_context_without_content(caplog: Any) -> None:
+    messages = [
+        Message(role="user", contents=["sensitive old request"]),
+        Message(role="user", contents=["latest request"]),
+    ]
+    strategy = TruncationStrategy(max_n=1, compact_to=1)
+
+    with caplog.at_level(logging.INFO, logger="agent_framework"):
+        await apply_compaction(messages, strategy=strategy)
+
+    assert len(caplog.messages) == 1
+    assert caplog.messages[0] == "Compaction applied"
+    record = caplog.records[0]
+    assert record.compaction_phase == "in_run"
+    assert record.compaction_strategy == "TruncationStrategy"
+    assert record.compaction_included_messages_before == 2
+    assert record.compaction_included_messages_after == 1
+    assert record.compaction_included_tokens_before is record.compaction_included_tokens_after is None
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="agent_framework"):
+        await apply_compaction(
+            [Message(role="user", contents=["request"])],
+            strategy=TruncationStrategy(max_n=2, compact_to=1),
+        )
+    assert caplog.messages == []
+
+
 # --- ToolResultCompactionStrategy tests ---
 
 
@@ -1634,7 +1662,7 @@ class _MockSession:
         self.state: dict[str, Any] = {}
 
 
-async def test_compaction_provider_after_run_compacts_stored_history() -> None:
+async def test_compaction_provider_after_run_compacts_stored_history(caplog: Any) -> None:
     """after_run annotates exclusions on stored messages without removing them."""
     provider = CompactionProvider(
         after_strategy=SelectiveToolCallCompactionStrategy(keep_last_tool_call_groups=0),
@@ -1652,8 +1680,8 @@ async def test_compaction_provider_after_run_compacts_stored_history() -> None:
         ]
     }
 
-    context = _MockSessionContext()
-    await provider.after_run(agent=None, session=session, context=context, state={})
+    with caplog.at_level(logging.INFO, logger="agent_framework"):
+        await provider.after_run(agent=None, session=session, context=_MockSessionContext(), state={})
 
     stored = session.state["in_memory_history"]["messages"]
     # All messages are kept; tool-call group is excluded via annotation.
@@ -1661,6 +1689,10 @@ async def test_compaction_provider_after_run_compacts_stored_history() -> None:
     excluded = [m for m in stored if m.additional_properties.get("_excluded", False)]
     assert len(excluded) == 2  # assistant function_call + tool result
     assert any(m.text == "final answer" for m in stored if not m.additional_properties.get("_excluded", False))
+    assert len(caplog.messages) == 1
+    record = caplog.records[0]
+    assert record.compaction_phase == "after_run"
+    assert record.compaction_strategy == "SelectiveToolCallCompactionStrategy"
 
 
 async def test_compaction_provider_after_run_noop_without_history() -> None:
@@ -1839,6 +1871,22 @@ async def test_context_window_strategy_tool_eviction_triggers_at_threshold() -> 
     assert len(truncation_excluded) == 0
 
 
+async def test_context_window_strategy_does_not_truncate_between_thresholds_without_tools() -> None:
+    messages = [
+        Message(role="user", contents=["u " * 500]),
+        Message(role="assistant", contents=["a " * 500]),
+    ]
+    strategy = ContextWindowCompactionStrategy(
+        max_context_window_tokens=1000,
+        max_output_tokens=100,
+    )
+
+    changed = await strategy(messages)
+
+    assert changed is False
+    assert included_messages(messages) == messages
+
+
 async def test_context_window_strategy_truncation_triggers_above_80_pct() -> None:
     """Truncation fires when tokens exceed 80% of input budget."""
     # input_budget = 1000 - 100 = 900
@@ -1865,6 +1913,29 @@ async def test_context_window_strategy_truncation_triggers_above_80_pct() -> Non
     assert projected[0].role == "system"
     # Some messages should have been excluded
     assert len(projected) < 5
+
+
+async def test_context_window_strategy_can_preserve_first_user_group(caplog: Any) -> None:
+    messages = [
+        Message(role="user", contents=["original " * 400]),
+        Message(role="assistant", contents=["old answer " * 400]),
+        Message(role="user", contents=["latest " * 400]),
+    ]
+    strategy = ContextWindowCompactionStrategy(
+        max_context_window_tokens=1000,
+        max_output_tokens=100,
+        preserve_first_user_group=True,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        changed = await strategy(messages)
+
+    assert changed is True
+    projected = included_messages(messages)
+    assert any(message.text == "original " * 400 for message in projected)
+    assert any(message.text == "latest " * 400 for message in projected)
+    warning = next(record for record in caplog.records if record.levelno == logging.WARNING)
+    assert warning.compaction_included_tokens_after > warning.compaction_input_budget_tokens
 
 
 async def test_context_window_strategy_keep_last_tool_call_groups_respected() -> None:

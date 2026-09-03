@@ -1696,17 +1696,24 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         self.block_on_violation = block_on_violation if not approval_on_violation else False
         self.enable_audit_log = enable_audit_log
         self.audit_log: list[dict[str, Any]] = []
-        # Track call_ids awaiting approval, each mapped to a binding record capturing the exact
-        # invocation the approval was requested for: the function name + arguments, the security
-        # label (integrity/confidentiality) shown for review, and the session. Combined with the
-        # call_id key and consume-on-use, an approval cannot re-authorize a repeated call, a
-        # different function, changed arguments, a different security label, or a different session.
+        # Track occurrence-aware approval ids, each mapped to a binding record capturing the exact
+        # invocation the approval was requested for: the provider call id, function name + arguments,
+        # security label shown for review, and session. Combined with consume-on-use, an approval
+        # cannot re-authorize a repeated call, a different function, changed arguments, a different
+        # security label, or a different session.
         self._pending_policy_approvals: dict[str, _PendingPolicyApproval] = {}
 
     def _get_call_id(self, context: FunctionInvocationContext) -> str:
         """Get the tool call id for this invocation context."""
         call_id = context.metadata.get("call_id", "")
         return call_id if isinstance(call_id, str) else ""
+
+    def _get_approval_id(self, context: FunctionInvocationContext) -> str:
+        """Get the occurrence-aware approval id, falling back for legacy direct callers."""
+        occurrence_id = context.metadata.get("function_call_occurrence_id")
+        if isinstance(occurrence_id, str) and occurrence_id:
+            return occurrence_id
+        return self._get_call_id(context)
 
     def _current_arguments(self, context: FunctionInvocationContext) -> dict[str, Any]:
         """Resolve the current call arguments, preferring unexpanded ([var_xxx]) originals."""
@@ -1728,6 +1735,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
             call_id=self._get_call_id(context),
             name=context.function.name,
             arguments=self._current_arguments(context),
+            id=self._get_approval_id(context),
         )
 
     def _signature_from_parts(self, name: str | None, arguments: dict[str, Any]) -> str:
@@ -1802,16 +1810,17 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
     def _response_matches_pending(
         self,
         approval_response: Content,
+        approval_id: str,
         call_id: str,
         body_signature: str,
     ) -> bool:
         """Validate that the approval response itself corresponds to the pending request.
 
-        The response must carry the request id that was shown for review and embed the exact
-        function call (name + arguments) that was requested. Both the response id and the embedded
-        function-call id are **required** to be present and equal to the pending ``call_id`` — a
-        crafted response that omits either identifier (``id=None`` / ``function_call.call_id=None``)
-        is rejected rather than allowed to skip the binding.
+        The response must carry the request id shown for review and embed the exact function call
+        (name + arguments) reconstructed from the authoritative pending snapshot. The embedded
+        ``call_id`` must match provider correlation; an occurrence-aware response and embedded call
+        must also carry the Agent Framework approval id. Legacy direct middleware callers continue
+        to use ``call_id`` for both identities.
         """
         embedded = getattr(approval_response, "function_call", None)
         if self._signature_from_function_call(embedded) != body_signature:
@@ -1819,7 +1828,12 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         # Both identifiers must be present and name the pending request (no None bypass).
         response_id = getattr(approval_response, "id", None)
         embedded_call_id = getattr(embedded, "call_id", None)
-        return response_id == call_id and embedded_call_id == call_id
+        embedded_occurrence_id = getattr(embedded, "id", None)
+        return (
+            response_id == approval_id
+            and embedded_call_id == call_id
+            and (approval_id == call_id or embedded_occurrence_id == approval_id)
+        )
 
     def _matches_pending_approval(
         self,
@@ -1838,9 +1852,10 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         :meth:`_consume_pending_approval` once the approval actually waves the detected violations.
         """
         call_id = self._get_call_id(context)
-        if not call_id:
+        approval_id = self._get_approval_id(context)
+        if not call_id or not approval_id:
             return False
-        pending = self._pending_policy_approvals.get(call_id)
+        pending = self._pending_policy_approvals.get(approval_id)
         if pending is None:
             return False
         approval_response = context.metadata.get("approval_response")
@@ -1854,7 +1869,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         # and the invocation about to execute must match every recorded binding dimension, including
         # the exact set of violations that was disclosed for review.
         return (
-            self._response_matches_pending(approval_response, call_id, pending.body_signature)
+            self._response_matches_pending(approval_response, approval_id, call_id, pending.body_signature)
             and self._call_body_signature(context) == pending.body_signature
             and self._context_label_key(context) == pending.label_key
             and self._session_key(context) == pending.session_key
@@ -1867,7 +1882,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         Idempotent: safe to call for both the integrity and confidentiality checks of a single
         invocation.
         """
-        self._pending_policy_approvals.pop(self._get_call_id(context), None)
+        self._pending_policy_approvals.pop(self._get_approval_id(context), None)
 
     def _mark_policy_violation_approved(
         self,
@@ -1898,9 +1913,9 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
             f"APPROVAL REQUESTED: Tool '{context.function.name}' requires user approval "
             f"due to policy violation(s): {disclosed}."
         )
-        call_id = self._get_call_id(context)
-        if call_id:
-            self._pending_policy_approvals[call_id] = self._pending_record(context, violations)
+        approval_id = self._get_approval_id(context)
+        if approval_id:
+            self._pending_policy_approvals[approval_id] = self._pending_record(context, violations)
         additional_properties: dict[str, Any] = {
             "policy_violation": True,
             "violation_type": primary["violation_type"],
@@ -1917,7 +1932,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                 {"violation_type": v["violation_type"], "reason": v["approval_reason"]} for v in violations
             ]
         context.result = Content.from_function_approval_request(
-            id=call_id,
+            id=approval_id,
             function_call=self._build_function_call_content(context),
             additional_properties=additional_properties,
         )
