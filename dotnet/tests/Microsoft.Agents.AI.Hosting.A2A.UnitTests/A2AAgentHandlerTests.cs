@@ -2132,35 +2132,6 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
-    /// Verifies that the agent run mode is applied on the continuation/task-update path,
-    /// not just the new message path.
-    /// </summary>
-    [Fact]
-    public async Task ExecuteAsync_OnContinuation_RunModeIsAppliedAsync()
-    {
-        // Arrange
-        AgentRunOptions? capturedOptions = null;
-        A2AAgentHandler handler = CreateHandler(
-            CreateAgentMock(options => capturedOptions = options),
-            runMode: AgentRunMode.ReturnTask);
-
-        // Act
-        await InvokeExecuteAsync(handler, new RequestContext
-        {
-            StreamingResponse = false,
-            TaskId = "task-1",
-            ContextId = "ctx-1",
-            Message = new Message { MessageId = "empty", Role = Role.User, Parts = [] },
-
-            Task = new AgentTask { Id = "task-1", ContextId = "ctx-1", History = [new Message { Role = Role.User, Parts = [new Part { Text = "Hello" }] }] }
-        });
-
-        // Assert
-        Assert.NotNull(capturedOptions);
-        Assert.True(capturedOptions.AllowBackgroundResponses);
-    }
-
-    /// <summary>
     /// Verifies that in the non-streaming endpoint path, SaveSessionAsync is called with
     /// CancellationToken.None even when RunStreamingAsync throws an exception.
     /// </summary>

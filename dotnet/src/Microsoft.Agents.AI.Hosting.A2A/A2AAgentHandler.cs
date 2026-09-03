@@ -136,12 +136,11 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
         List<ChatMessage> chatMessages = context.Message is not null ? [context.Message.ToChatMessage()] : [];
 
-        // Decide which A2A artifact to return based on the configured run mode. Returning a task also allows
-        // background responses so that the streamed updates carry continuation tokens for stream resumption.
+        // Decide which A2A artifact to return based on the configured run mode.
         var decisionContext = new A2ARunDecisionContext(context);
         var returnTask = await this._runMode.ShouldReturnTaskAsync(decisionContext, cancellationToken).ConfigureAwait(false);
 
-        var options = CreateRunOptions(context, returnTask);
+        var options = CreateRunOptions(context);
 
         var updates = this._hostAgent.RunStreamingAsync(chatMessages, session, options, cancellationToken);
 
@@ -183,10 +182,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
         List<ChatMessage> chatMessages = ExtractChatMessagesFromTaskHistory(context.Task);
 
-        var decisionContext = new A2ARunDecisionContext(context);
-        var returnTask = await this._runMode.ShouldReturnTaskAsync(decisionContext, cancellationToken).ConfigureAwait(false);
-
-        var options = CreateRunOptions(context, returnTask);
+        var options = CreateRunOptions(context);
 
         AgentResponse response;
         try
@@ -237,11 +233,8 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// <c>MessageSendParams.metadata</c> and <c>MessageSendParams.configuration</c> to the hosted agent.
     /// </summary>
     /// <param name="context">The A2A request context of the incoming request.</param>
-    /// <param name="allowBackgroundResponses">
-    /// Whether to enable <see cref="AgentRunOptions.AllowBackgroundResponses"/> for the hosted agent run.
-    /// </param>
     /// <returns>The run options to invoke the agent with.</returns>
-    private static AgentRunOptions CreateRunOptions(RequestContext context, bool allowBackgroundResponses)
+    private static AgentRunOptions CreateRunOptions(RequestContext context)
     {
         AdditionalPropertiesDictionary? additionalProperties = context.Metadata is { Count: > 0 }
             ? context.Metadata.ToAdditionalProperties()
@@ -256,7 +249,6 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
         return new AgentRunOptions
         {
-            AllowBackgroundResponses = allowBackgroundResponses,
             AdditionalProperties = additionalProperties
         };
     }
