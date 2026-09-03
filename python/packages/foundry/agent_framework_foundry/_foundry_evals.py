@@ -3,8 +3,7 @@
 """Microsoft Foundry Evals integration for Microsoft Agent Framework.
 
 Provides ``FoundryEvals``, an ``Evaluator`` implementation backed by Azure AI
-Foundry's built-in evaluators. See docs/decisions/0023-foundry-evals-integration.md
-for the design rationale.
+Foundry's built-in evaluators.
 
 Example:
 

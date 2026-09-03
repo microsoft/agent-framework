@@ -45,8 +45,6 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    tools = [get_weather, get_flight_price]
-
     # Create an agent with tools
     agent = Agent(
         client=chat_client,
@@ -54,7 +52,7 @@ async def main() -> None:
         instructions=(
             "You are a helpful travel assistant. Use your tools to answer questions about weather and flights."
         ),
-        tools=tools,
+        tools=[get_weather, get_flight_price],
     )
 
     # Run the agent and convert responses to eval items
@@ -71,7 +69,7 @@ async def main() -> None:
 
         item = EvalItem(
             conversation=[Message("user", [q]), *response.messages],
-            tools=tools,
+            tools=[get_weather, get_flight_price],
         )
         items.append(item)
 
