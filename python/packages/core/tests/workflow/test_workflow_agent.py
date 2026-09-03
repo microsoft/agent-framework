@@ -3,7 +3,7 @@
 import uuid
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, overload
+from typing import Any, Literal, cast, overload
 
 import pytest
 from typing_extensions import Never
@@ -869,7 +869,7 @@ class TestWorkflowAgent:
                     response_id="source-response",
                     message_id="source-message",
                     finish_reason="stop",
-                    continuation_token="resume-token",
+                    continuation_token=cast(Any, {"token": "resume-token"}),
                     additional_properties={"provider_marker": "preserve-me"},
                 )
             )
@@ -887,14 +887,14 @@ class TestWorkflowAgent:
         assert update.text == "payload"
         assert update.agent_id == "source-agent"
         assert update.finish_reason == "stop"
-        assert update.continuation_token == "resume-token"
+        assert update.continuation_token == {"token": "resume-token"}
         assert update.additional_properties == {"provider_marker": "preserve-me"}
 
     async def test_workflow_as_agent_stream_preserves_empty_additional_properties(self) -> None:
         """Test that an explicitly empty additional_properties dict is not converted to None."""
 
         @executor
-        async def empty_props_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponseUpdate]) -> None:  # type: ignore[valid-type]
+        async def empty_props_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponseUpdate]) -> None:  # type: ignore[valid-type]  # noqa: E501
             await ctx.yield_output(
                 AgentResponseUpdate(
                     contents=[Content.from_text(text="payload")],

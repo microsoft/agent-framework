@@ -642,7 +642,9 @@ class WorkflowAgent(BaseAgent):
                         created_at=data.created_at,
                         finish_reason=data.finish_reason,
                         continuation_token=data.continuation_token,
-                        additional_properties=dict(data.additional_properties) if data.additional_properties is not None else None,
+                        additional_properties=dict(data.additional_properties)
+                        if data.additional_properties is not None
+                        else None,
                         raw_representation=data.raw_representation,
                     )
                 ]
