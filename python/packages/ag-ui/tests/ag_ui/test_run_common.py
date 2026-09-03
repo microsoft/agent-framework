@@ -216,7 +216,7 @@ class TestEmitToolResult:
 
     def test_tool_result_without_call_id_returns_empty(self):
         """Tool result Content without call_id returns empty event list."""
-        content = Content.from_function_result(call_id=None, result="some result")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        content = Content.from_function_result(call_id=None, result="some result")
         flow = FlowState()
         events = _emit_tool_result(content, flow)
         assert events == []
