@@ -220,8 +220,10 @@ class WorkflowInvocationKwargs:
     overrides. Plain mappings retain their existing global or per-executor behavior.
     """
 
-    global_kwargs: Mapping[str, Any] = field(default_factory=dict)
-    executor_kwargs: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    global_kwargs: Mapping[str, Any] = field(default_factory=lambda: dict[str, Any]())
+    executor_kwargs: Mapping[str, Mapping[str, Any]] = field(
+        default_factory=lambda: dict[str, Mapping[str, Any]]()
+    )
 
 
 class Workflow(DictConvertible):

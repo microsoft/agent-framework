@@ -581,8 +581,8 @@ class AgentExecutor(Executor):
         """
         if not isinstance(resolved, dict):
             return None
-        global_kwargs = resolved.get(GLOBAL_KWARGS_KEY)
-        executor_kwargs = resolved.get(self.id)
+        global_kwargs: Any = resolved.get(GLOBAL_KWARGS_KEY)
+        executor_kwargs: Any = resolved.get(self.id)
         if global_kwargs is None and executor_kwargs is None:
             return None
 
@@ -590,7 +590,7 @@ class AgentExecutor(Executor):
             logger.warning(
                 "Executor %s expected a dict for global kwargs, but got %s. Ignoring.",
                 self.id,
-                type(global_kwargs),
+                cast(type[Any], type(global_kwargs)),
             )
             return None
 
@@ -598,7 +598,7 @@ class AgentExecutor(Executor):
             logger.warning(
                 "Executor %s expected a dict for its kwargs, but got %s. Ignoring.",
                 self.id,
-                type(executor_kwargs),
+                cast(type[Any], type(executor_kwargs)),
             )
             return None
 

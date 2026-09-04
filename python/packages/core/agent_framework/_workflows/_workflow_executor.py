@@ -6,7 +6,7 @@ import sys
 import types
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
@@ -388,8 +388,11 @@ class WorkflowExecutor(Executor):
             raw_key = (
                 RAW_FUNCTION_INVOCATION_KWARGS_KEY if key == "function_invocation_kwargs" else RAW_CLIENT_KWARGS_KEY
             )
-            resolved = parent_kwargs.get(raw_key, parent_kwargs.get(key))
-            if isinstance(resolved, dict) or resolved is not None:
+            resolved = cast(
+                WorkflowInvocationKwargs | Mapping[str, Any] | None,
+                parent_kwargs.get(raw_key, parent_kwargs.get(key)),
+            )
+            if resolved is not None:
                 if key == "function_invocation_kwargs":
                     fi_kwargs = resolved
                 else:
@@ -398,8 +401,8 @@ class WorkflowExecutor(Executor):
         # Run the sub-workflow and collect all events, passing parent kwargs
         result = await self.workflow.run(
             input_data,
-            function_invocation_kwargs=fi_kwargs,  # type: ignore
-            client_kwargs=ci_kwargs,  # type: ignore
+            function_invocation_kwargs=fi_kwargs,
+            client_kwargs=ci_kwargs,
         )
 
         logger.debug(f"WorkflowExecutor {self.id} sub-workflow {self.workflow.id} completed with {len(result)} events")
