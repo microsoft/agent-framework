@@ -39,6 +39,7 @@ import contextlib
 import inspect
 import json
 import logging
+import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -54,7 +55,7 @@ from typing import (
 )
 
 from ._feature_stage import ExperimentalFeature, experimental
-from ._tools import FunctionTool
+from ._tools import FunctionTool, normalize_tools
 from ._types import AgentResponse, Message
 
 if TYPE_CHECKING:
@@ -726,157 +727,121 @@ class Evaluator(Protocol):
 
 # endregion
 
-# region Converter
+
+def _warn_agent_eval_converter_deprecated() -> None:
+    """Warn when the legacy evaluation converter compatibility surface is used."""
+    warnings.warn(
+        "`AgentEvalConverter` is deprecated and will be removed in a future version. "
+        "Construct `EvalItem` directly or use `evaluate_agent()` / `evaluate_workflow()`; "
+        "Foundry wire conversion is internal to `agent-framework-foundry`.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
+
+def _convert_legacy_foundry_message(message: Message) -> list[dict[str, Any]]:
+    """Preserve the legacy Foundry wire conversion for package compatibility."""
+    content_items: list[dict[str, Any]] = []
+    tool_results: list[dict[str, Any]] = []
+
+    for content in message.contents or []:
+        if content.type == "text" and content.text:
+            content_items.append({"type": "text", "text": content.text})
+        elif content.type in ("data", "uri") and content.uri:
+            image: dict[str, Any] = {
+                "type": "input_image",
+                "image_url": content.uri,
+            }
+            if content.media_type:
+                image["detail"] = "auto"
+            content_items.append(image)
+        elif content.type == "function_call":
+            arguments = content.arguments
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except (json.JSONDecodeError, TypeError):
+                    arguments = {"_raw_arguments": "[unparseable]"}
+            content_items.append({
+                "type": "tool_call",
+                "tool_call_id": content.call_id or "",
+                "name": content.name or "",
+                "arguments": arguments if arguments is not None else {},
+            })
+        elif content.type == "function_result":
+            result = content.result
+            if isinstance(result, str):
+                with contextlib.suppress(json.JSONDecodeError, TypeError):
+                    result = json.loads(result)
+            tool_results.append({
+                "call_id": content.call_id or "",
+                "result": result,
+            })
+
+    if tool_results:
+        return [
+            {
+                "role": "tool",
+                "tool_call_id": tool_result["call_id"],
+                "content": [{"type": "tool_result", "tool_result": tool_result["result"]}],
+            }
+            for tool_result in tool_results
+        ]
+    if content_items:
+        return [{"role": message.role, "content": content_items}]
+    return [
+        {
+            "role": message.role,
+            "content": [{"type": "text", "text": ""}],
+        }
+    ]
 
 
 @experimental(feature_id=ExperimentalFeature.EVALS)
 class AgentEvalConverter:
-    """Converts agent-framework types to evaluation format.
+    """Deprecated compatibility surface for earlier Agent Framework releases.
 
-    Handles the type gap between agent-framework's ``Message`` / ``Content`` /
-    ``FunctionTool`` types and the OpenAI-style agent message schema used by
-    evaluation providers.  All methods are static — no instantiation needed.
+    New code should construct :class:`EvalItem` directly or use
+    :func:`evaluate_agent` / :func:`evaluate_workflow`. Foundry-specific wire
+    serialization is owned by ``agent-framework-foundry``.
     """
 
     @staticmethod
     def convert_message(message: Message) -> list[dict[str, Any]]:
-        """Convert a single ``Message`` to Foundry agent evaluator format.
-
-        Uses typed content lists as required by Foundry evaluators:
-
-        .. code-block:: python
-
-            {"role": "assistant", "content": [{"type": "tool_call", ...}]}
-            {"role": "user", "content": [{"type": "input_image", ...}]}
-
-        Supported content types:
-
-        * ``text`` → ``{"type": "text", "text": ...}``
-        * ``data`` / ``uri`` (images) → ``{"type": "input_image", "image_url": ...}``
-        * ``function_call`` → ``{"type": "tool_call", ...}``
-        * ``function_result`` → ``{"type": "tool_result", ...}``
-
-        A single agent-framework ``Message`` with multiple ``function_result``
-        contents produces multiple output messages (one per tool result).
-
-        Args:
-            message: An agent-framework ``Message``.
-
-        Returns:
-            A list of Foundry-format message dicts.
-        """
-        role = message.role
-        contents = message.contents or []
-
-        content_items: list[dict[str, Any]] = []
-        tool_results: list[dict[str, Any]] = []
-
-        for c in contents:
-            if c.type == "text" and c.text:
-                content_items.append({"type": "text", "text": c.text})
-            elif c.type in ("data", "uri") and c.uri:
-                # Image / media content → OpenAI input_image format
-                img: dict[str, Any] = {
-                    "type": "input_image",
-                    "image_url": c.uri,
-                }
-                if c.media_type:
-                    img["detail"] = "auto"
-                content_items.append(img)
-            elif c.type == "function_call":
-                args = c.arguments
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except (json.JSONDecodeError, TypeError):
-                        # Sanitize to avoid leaking sensitive tool-call arguments
-                        # to external evaluation services.
-                        args = {"_raw_arguments": "[unparseable]"}
-                tc: dict[str, Any] = {
-                    "type": "tool_call",
-                    "tool_call_id": c.call_id or "",
-                    "name": c.name or "",
-                }
-                tc["arguments"] = args if args is not None else {}
-                content_items.append(tc)
-            elif c.type == "function_result":
-                result_val = c.result
-                if isinstance(result_val, str):
-                    with contextlib.suppress(json.JSONDecodeError, TypeError):
-                        result_val = json.loads(result_val)
-                tool_results.append({
-                    "call_id": c.call_id or "",
-                    "result": result_val,
-                })
-
-        output: list[dict[str, Any]] = []
-
-        if tool_results:
-            for tr in tool_results:
-                output.append({
-                    "role": "tool",
-                    "tool_call_id": tr["call_id"],
-                    "content": [{"type": "tool_result", "tool_result": tr["result"]}],
-                })
-        elif content_items:
-            output.append({"role": role, "content": content_items})
-        else:
-            output.append({
-                "role": role,
-                "content": [{"type": "text", "text": ""}],
-            })
-
-        return output
+        """Convert one message using the legacy Foundry evaluator wire format."""
+        _warn_agent_eval_converter_deprecated()
+        return _convert_legacy_foundry_message(message)
 
     @staticmethod
     def convert_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
-        """Convert a sequence of ``Message`` objects to Foundry evaluator format.
-
-        Args:
-            messages: Agent-framework messages.
-
-        Returns:
-            A list of Foundry-format message dicts with typed content lists.
-        """
-        result: list[dict[str, Any]] = []
-        for msg in messages:
-            result.extend(AgentEvalConverter.convert_message(msg))
-        return result
+        """Convert messages using the legacy Foundry evaluator wire format."""
+        _warn_agent_eval_converter_deprecated()
+        return [converted for message in messages for converted in _convert_legacy_foundry_message(message)]
 
     @staticmethod
     def extract_tools(agent: Any) -> list[dict[str, Any]]:
-        """Extract tool definitions from an agent instance.
-
-        Reads ``agent.default_options["tools"]`` and ``agent.mcp_tools``
-        and converts each ``FunctionTool`` to ``{name, description, parameters}``.
-
-        Args:
-            agent: An agent-framework agent instance.
-
-        Returns:
-            A list of tool definition dicts.
-        """
+        """Extract legacy evaluator tool-definition dictionaries from an agent."""
+        _warn_agent_eval_converter_deprecated()
         tools: list[dict[str, Any]] = []
         seen: set[str] = set()
         raw_tools = getattr(agent, "default_options", {}).get("tools", [])
-        for t in raw_tools:
-            if isinstance(t, FunctionTool) and t.name not in seen:
+        for tool in raw_tools:
+            if isinstance(tool, FunctionTool) and tool.name not in seen:
                 tools.append({
-                    "name": t.name,
-                    "description": t.description,
-                    "parameters": t.parameters(),
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters(),
                 })
-                seen.add(t.name)
-        # Include tools from connected MCP servers
+                seen.add(tool.name)
         for mcp in getattr(agent, "mcp_tools", []):
-            for t in getattr(mcp, "functions", []):
-                if isinstance(t, FunctionTool) and t.name not in seen:
+            for tool in getattr(mcp, "functions", []):
+                if isinstance(tool, FunctionTool) and tool.name not in seen:
                     tools.append({
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.parameters(),
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters(),
                     })
-                    seen.add(t.name)
+                    seen.add(tool.name)
         return tools
 
     @staticmethod
@@ -885,47 +850,46 @@ class AgentEvalConverter:
         query: str | Sequence[Message],
         response: AgentResponse[Any],
         agent: Any | None = None,
-        tools: Sequence[FunctionTool] | None = None,
+        tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
         context: str | None = None,
     ) -> EvalItem:
-        """Convert a complete agent interaction to an ``EvalItem``.
-
-        Args:
-            query: The user query string, or input messages.
-            response: The agent's response.
-            agent: Optional agent instance to auto-extract tool definitions.
-            tools: Explicit tool list (takes precedence over *agent*).
-            context: Optional context document for groundedness evaluation.
-
-        Returns:
-            An ``EvalItem`` suitable for passing to any ``Evaluator``.
-        """
-        input_msgs = [Message("user", [query])] if isinstance(query, str) else list(query)
-
-        all_msgs = list(input_msgs) + list(response.messages or [])
-
-        typed_tools: list[FunctionTool] = []
-        if tools:
-            typed_tools = list(tools)
-        elif agent:
-            raw_tools = getattr(agent, "default_options", {}).get("tools", [])
-            typed_tools = [t for t in raw_tools if isinstance(t, FunctionTool)]
-            # Include tools from connected MCP servers
-            seen = {t.name for t in typed_tools}
-            for mcp in getattr(agent, "mcp_tools", []):
-                for t in getattr(mcp, "functions", []):
-                    if isinstance(t, FunctionTool) and t.name not in seen:
-                        typed_tools.append(t)
-                        seen.add(t.name)
-
-        return EvalItem(
-            conversation=all_msgs,
-            tools=typed_tools or None,
-            context=context,
-        )
+        """Build an ``EvalItem`` through the provider-neutral compatibility path."""
+        _warn_agent_eval_converter_deprecated()
+        return _to_eval_item(query=query, response=response, agent=agent, tools=tools, context=context)
 
 
-# endregion
+@experimental(feature_id=ExperimentalFeature.EVALS)
+def _to_eval_item(
+    *,
+    query: str | Sequence[Message],
+    response: AgentResponse[Any],
+    agent: Any | None = None,
+    tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
+    context: str | None = None,
+) -> EvalItem:
+    """Build a provider-neutral ``EvalItem`` from an agent interaction."""
+    input_msgs = [Message("user", [query])] if isinstance(query, str) else list(query)
+    all_msgs = list(input_msgs) + list(response.messages or [])
+
+    typed_tools: list[FunctionTool] = []
+    if tools:
+        typed_tools = [tool for tool in normalize_tools(tools) if isinstance(tool, FunctionTool)]
+    elif agent:
+        raw_tools = getattr(agent, "default_options", {}).get("tools", [])
+        typed_tools = [tool for tool in normalize_tools(raw_tools) if isinstance(tool, FunctionTool)]
+        seen = {tool.name for tool in typed_tools}
+        for mcp in getattr(agent, "mcp_tools", []):
+            for tool in getattr(mcp, "functions", []):
+                if isinstance(tool, FunctionTool) and tool.name not in seen:
+                    typed_tools.append(tool)
+                    seen.add(tool.name)
+
+    return EvalItem(
+        conversation=all_msgs,
+        tools=typed_tools or None,
+        context=context,
+    )
+
 
 # region Workflow extraction helpers
 
@@ -1772,7 +1736,7 @@ async def evaluate_agent(
                 raise ValueError(f"Got {len(query_list)} queries but {len(resp_list)} responses.")
             for q, r in zip(query_list, resp_list):
                 items.append(
-                    AgentEvalConverter.to_eval_item(
+                    _to_eval_item(
                         query=q,
                         response=r,
                         agent=agent,
@@ -1792,7 +1756,7 @@ async def evaluate_agent(
             for query in queries:
                 response = await agent.run([Message("user", [query])])
                 items.append(
-                    AgentEvalConverter.to_eval_item(
+                    _to_eval_item(
                         query=query,
                         response=response,
                         agent=agent,
@@ -1962,7 +1926,7 @@ async def evaluate_workflow(
     agent_items_by_id: dict[str, list[EvalItem]] = {}
     for executor_id, agent_data_list in agents_by_id.items():
         agent_items_by_id[executor_id] = [
-            AgentEvalConverter.to_eval_item(
+            _to_eval_item(
                 query=ad["query"],
                 response=ad["response"],
                 agent=ad["agent"],
@@ -2051,7 +2015,7 @@ def _build_overall_item(
             messages=[Message("assistant", [str(final_output)])]  # type: ignore[reportUnknownArgumentType]
         )
 
-    return AgentEvalConverter.to_eval_item(query=query, response=overall_response)
+    return _to_eval_item(query=query, response=overall_response)
 
 
 def _resolve_evaluators(

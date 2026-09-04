@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import pickle
+
 from collections.abc import AsyncIterable, Awaitable
 from typing import Any, Literal, overload
 
@@ -336,6 +338,9 @@ class _NonCopyableRaw:
     def __deepcopy__(self, memo: dict) -> Any:
         raise TypeError("Cannot deepcopy this object")
 
+    def __reduce__(self) -> Any:
+        raise TypeError("Cannot pickle this object")
+
 
 class _AgentWithRawRepr(BaseAgent):
     """Agent that returns responses with a non-copyable raw_representation."""
@@ -385,6 +390,20 @@ async def test_agent_executor_workflow_with_non_copyable_raw_representation() ->
     assert len(agent_responses) > 0
     assert agent_responses[0].text == "reply from AgentA"
     assert agent_responses[0].raw_representation is raw
+
+
+def test_serialization_mixin_omits_non_pickleable_raw_representation() -> None:
+    """Pickling framework objects should not include runtime-only raw representations."""
+    raw = _NonCopyableRaw()
+    response = AgentResponse(
+        messages=[Message("assistant", [Content.from_text(text="reply", raw_representation=raw)])],
+        raw_representation=raw,
+    )
+
+    restored = pickle.loads(pickle.dumps(response))
+
+    assert restored.raw_representation is None
+    assert restored.messages[0].contents[0].raw_representation is None
 
 
 # ---------------------------------------------------------------------------

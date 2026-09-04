@@ -418,6 +418,52 @@ def _should_propagate_cancelled_error(ex: BaseException) -> bool:
     return task is not None and task.cancelling() > 0
 
 
+_MAX_ERROR_UNWRAP_HOPS = 10  # pathological chains only; normally 0-2 hops
+
+
+def _describe_error(ex: BaseException) -> str:
+    """Return the most specific message in *ex*'s chain, unmasking cancel scopes.
+
+    AnyIO cancel scopes and task groups surface internal failures as a bare
+    ``CancelledError`` ("Cancelled via cancel scope ...") or a single-member
+    ``ExceptionGroup``; the real error (e.g. an HTTP 401 from the MCP server)
+    sits in ``__cause__``/``__context__`` or the group's single leaf. Follow
+    those links so the reported message names the actual failure. A genuine
+    bare cancellation keeps its own message.
+    """
+    current = ex
+    for _ in range(_MAX_ERROR_UNWRAP_HOPS):
+        # Group membership is gated on the type name (not the attribute) so a
+        # non-group exception that happens to carry .exceptions is not unwrapped.
+        inner = (
+            getattr(current, "exceptions", None)
+            if type(current).__name__ in ("ExceptionGroup", "BaseExceptionGroup")
+            else None
+        )
+        if inner is not None and len(inner) == 1:
+            current = inner[0]
+            continue
+        cause = current.__cause__ or current.__context__
+        if cause is None or cause is current:
+            break
+        if isinstance(current, asyncio.CancelledError) and isinstance(cause, asyncio.CancelledError):
+            break  # cancel-of-cancel carries no information
+        current = cause
+    return str(current) or repr(current)
+
+
+def _describe_with_cleanup(ex: BaseException, cleanup_error: BaseException | None) -> str:
+    """Describe *ex*, preferring the cleanup failure when *ex* is a bare cancellation.
+
+    A bare CancelledError from the task group carries no detail of its own; the
+    real failure (e.g. an HTTP 401 from the MCP server) can surface only when
+    the exit stack is closed, so the close's leaf is the better message then.
+    """
+    if isinstance(ex, asyncio.CancelledError) and cleanup_error is not None:
+        return _describe_error(cleanup_error)
+    return _describe_error(ex)
+
+
 # region: MCP Plugin
 
 
@@ -1236,8 +1282,13 @@ class MCPTool:
         await queue.put((action, reset, load_configured, future))
         await future
 
-    async def _safe_close_exit_stack(self) -> None:
-        """Safely close the exit stack, handling unexpected cleanup failures."""
+    async def _safe_close_exit_stack(self) -> BaseException | None:
+        """Safely close the exit stack, handling unexpected cleanup failures.
+
+        Returns the swallowed cleanup failure, if any. A caller that only saw a
+        bare cancellation from the task group can still name the real cause the
+        close surfaced (e.g. the HTTP status error of a rejected handshake).
+        """
         try:
             await self._exit_stack.aclose()
         except RuntimeError as e:
@@ -1248,26 +1299,33 @@ class MCPTool:
                     "This indicates MCP lifecycle ownership was lost. Error: %s",
                     e,
                 )
-            else:
-                raise
-        except asyncio.CancelledError:
+                return e
+            raise
+        except asyncio.CancelledError as e:
             logger.warning("Could not cleanly close MCP exit stack because the lifecycle owner task was cancelled.")
+            return e
         except Exception as e:
             if type(e).__name__ == "ExceptionGroup":
                 logger.warning("Could not cleanly close MCP exit stack due to cleanup error group. Error: %s", e)
-            else:
+                return e
+            raise
+        return None
+
+    async def _close_and_check_cancelled(self, ex: BaseException) -> tuple[bool, BaseException | None]:
+        """Close the exit stack and report whether *ex* is a genuine task cancellation.
+
+        Returns ``(should_reraise, cleanup_error)``. Callers should immediately
+        re-raise when the first element is True::
+
+            cancelled, cleanup_error = await self._close_and_check_cancelled(ex)
+            if cancelled:
                 raise
 
-    async def _close_and_check_cancelled(self, ex: BaseException) -> bool:
-        """Close the exit stack and return True if *ex* is a genuine task cancellation.
-
-        Callers should immediately re-raise when this returns True::
-
-            if await self._close_and_check_cancelled(ex):
-                raise
+        The second element carries the failure swallowed while closing, so an
+        error path holding only a bare cancellation can still describe it.
         """
-        await self._safe_close_exit_stack()
-        return _should_propagate_cancelled_error(ex)
+        cleanup_error = await self._safe_close_exit_stack()
+        return _should_propagate_cancelled_error(ex), cleanup_error
 
     def _reset_session_state(self) -> None:
         self._server_capabilities = None
@@ -1332,13 +1390,14 @@ class MCPTool:
                 # instead of wrapping it in ToolException. On Python < 3.11, task.cancelling()
                 # is unavailable so MCP-internal CancelledErrors cannot be distinguished from
                 # caller-driven cancellation; they are wrapped as ToolException in that case.
-                if await self._close_and_check_cancelled(ex):
+                cancelled, cleanup_error = await self._close_and_check_cancelled(ex)
+                if cancelled:
                     raise
                 command = getattr(self, "command", None)
                 if command:
-                    error_msg = f"Failed to start MCP server '{command}': {ex}"
+                    error_msg = f"Failed to start MCP server '{command}': {_describe_with_cleanup(ex, cleanup_error)}"
                 else:
-                    error_msg = f"Failed to connect to MCP server: {ex}"
+                    error_msg = f"Failed to connect to MCP server: {_describe_with_cleanup(ex, cleanup_error)}"
                 # CancelledError is a BaseException (not Exception) on Python >= 3.8, so
                 # inner_exception=None and ToolException.__init__ won't log exc_info.
                 if isinstance(ex, asyncio.CancelledError):
@@ -1374,9 +1433,10 @@ class MCPTool:
                     )
                 )
             except (Exception, asyncio.CancelledError) as ex:
-                if await self._close_and_check_cancelled(ex):
+                cancelled, cleanup_error = await self._close_and_check_cancelled(ex)
+                if cancelled:
                     raise
-                session_error_msg = f"Failed to create MCP session: {ex}"
+                session_error_msg = f"Failed to create MCP session: {_describe_with_cleanup(ex, cleanup_error)}"
                 if isinstance(ex, asyncio.CancelledError):
                     logger.debug(session_error_msg, exc_info=True)
                 raise ToolException(
@@ -1389,16 +1449,18 @@ class MCPTool:
                     init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocolVersion)
                     self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
             except (Exception, asyncio.CancelledError) as ex:
-                if await self._close_and_check_cancelled(ex):
+                cancelled, cleanup_error = await self._close_and_check_cancelled(ex)
+                if cancelled:
                     raise
                 # Provide context about initialization failure
                 command = getattr(self, "command", None)
                 if command:
                     args_str = " ".join(getattr(self, "args", []))
                     full_command = f"{command} {args_str}".strip()
-                    error_msg = f"MCP server '{full_command}' failed to initialize: {ex}"
+                    described = _describe_with_cleanup(ex, cleanup_error)
+                    error_msg = f"MCP server '{full_command}' failed to initialize: {described}"
                 else:
-                    error_msg = f"MCP server failed to initialize: {ex}"
+                    error_msg = f"MCP server failed to initialize: {_describe_with_cleanup(ex, cleanup_error)}"
                 if isinstance(ex, asyncio.CancelledError):
                     logger.debug(error_msg, exc_info=True)
                 raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
