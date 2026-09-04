@@ -20,6 +20,7 @@ from agent_framework._tools import (
     _auto_invoke_function,
     _parse_annotation,
     _parse_inputs,
+    _try_execute_function_call_groups,
     normalize_function_invocation_configuration,
 )
 from agent_framework.observability import OtelAttr
@@ -1573,6 +1574,40 @@ def test_skip_parsing_is_singleton() -> None:
 
     assert _SkipParsingSentinel() is SKIP_PARSING
     assert repr(SKIP_PARSING) == "SKIP_PARSING"
+
+
+# endregion
+
+
+async def test_try_execute_function_call_groups_sequential_config():
+    """When allow_concurrent_invocation is False, ALL tools run one-by-one."""
+    execution_order: list[str] = []
+
+    @tool()
+    async def tool_a():
+        execution_order.append("a_start")
+        await asyncio.sleep(0.03)
+        execution_order.append("a_end")
+        return "a"
+
+    @tool()
+    async def tool_b():
+        execution_order.append("b_start")
+        await asyncio.sleep(0.01)
+        execution_order.append("b_end")
+        return "b"
+
+    call_a = Content.from_function_call(call_id="1", name="tool_a", arguments="{}")
+    call_b = Content.from_function_call(call_id="2", name="tool_b", arguments="{}")
+    config = normalize_function_invocation_configuration({"allow_concurrent_invocation": False})
+    results, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[call_a, call_b],
+        tools=[tool_a, tool_b],
+        config=config,
+    )
+    assert not should_terminate
+    assert execution_order == ["a_start", "a_end", "b_start", "b_end"]
 
 
 # endregion

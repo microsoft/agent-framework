@@ -342,10 +342,11 @@ class FunctionTool(SerializationMixin):
             max_invocations: The maximum number of times this function can be invoked
                 across the **lifetime of this tool instance**. If None (default),
                 there is no limit. Should be at least 1. If the tool is called multiple
-                times in one iteration, those will execute, after that it will stop working. For example,
-                if max_invocations is 3 and the tool is called 5 times in a single iteration,
-                these will complete, but any subsequent calls to the tool (in the same or future iterations)
-                will raise a ToolException.
+                times in one iteration, those will execute, after that it will stop
+                working. For example, if max_invocations is 3 and the tool is called 5
+                times in a single iteration, these will complete, but any subsequent
+                calls to the tool (in the same or future iterations) will raise a
+                ToolException.
 
                 .. note::
                     This counter lives on the tool instance and is never automatically
@@ -356,30 +357,32 @@ class FunctionTool(SerializationMixin):
                     ``FunctionInvocationConfiguration["max_function_calls"]``
                     for per-request limits instead.
 
-            max_invocation_exceptions: The maximum number of exceptions allowed during invocations.
-                If None, there is no limit. Should be at least 1.
+            max_invocation_exceptions: The maximum number of exceptions allowed
+                during invocations. If None, there is no limit. Should be at least 1.
             additional_properties: Additional properties to set on the function.
-            func: The function to wrap. When ``None``, creates a declaration-only tool
-                that has no implementation. Declaration-only tools are useful when you want
-                the agent to reason about tool usage without executing them, or when the
-                actual implementation exists elsewhere (e.g., client-side rendering).
-            input_model: The Pydantic model that defines the input parameters for the function.
-                This can also be a JSON schema dictionary.
-                If not provided and ``func`` is not ``None``, it will be inferred from
-                the function signature. When ``func`` is ``None`` and ``input_model`` is
-                not provided, the tool will use an empty input model (no parameters) in
-                its JSON schema. For declaration-only tools that should declare
-                parameters, explicitly provide ``input_model`` (either a Pydantic
-                ``BaseModel`` or a JSON schema dictionary) so the model can reason about
-                the expected arguments.
-            result_parser: An optional callable with signature ``Callable[[Any], str]`` that
-                overrides the default result parsing behavior. When provided, this callable
-                is used to convert the raw function return value to a string instead of the
-                built-in :meth:`parse_result` logic. Pass the :data:`SKIP_PARSING` sentinel
-                instead of a callable to opt out of parsing entirely; in that case
-                :meth:`invoke` returns the wrapped function's raw return value. Depending
-                on your function, it may be easiest to just do the serialization directly
-                in the function body rather than providing a custom ``result_parser``.
+            func: The function to wrap. When ``None``, creates a declaration-only
+                tool that has no implementation. Declaration-only tools are useful
+                when you want the agent to reason about tool usage without executing
+                them, or when the actual implementation exists elsewhere (e.g.,
+                client-side rendering).
+            input_model: The Pydantic model that defines the input parameters for the
+                function. This can also be a JSON schema dictionary.
+                If not provided and ``func`` is not ``None``, it will be inferred
+                from the function signature. When ``func`` is ``None`` and
+                ``input_model`` is not provided, the tool will use an empty input
+                model (no parameters) in its JSON schema. For declaration-only tools
+                that should declare parameters, explicitly provide ``input_model``
+                (either a Pydantic ``BaseModel`` or a JSON schema dictionary) so the
+                model can reason about the expected arguments.
+            result_parser: An optional callable with signature ``Callable[[Any], str]``
+                that overrides the default result parsing behavior. When provided,
+                this callable is used to convert the raw function return value to a
+                string instead of the built-in :meth:`parse_result` logic. Pass the
+                :data:`SKIP_PARSING` sentinel instead of a callable to opt out of
+                parsing entirely; in that case :meth:`invoke` returns the wrapped
+                function's raw return value. Depending on your function, it may be
+                easiest to just do the serialization directly in the function body
+                rather than providing a custom ``result_parser``.
             **kwargs: Additional keyword arguments.
         """
         # Core attributes (formerly from BaseTool)
@@ -914,7 +917,7 @@ class FunctionTool(SerializationMixin):
         as_dict = super().to_dict(exclude=exclude, exclude_none=exclude_none)
         if (exclude and "input_model" in exclude) or not self.input_model:
             return as_dict
-        as_dict["input_model"] = self.parameters()  # Use cached parameters()
+        as_dict["input_model"] = self.parameters()
         return as_dict
 
 
@@ -1391,6 +1394,7 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
     terminate_on_unknown_calls: bool
     additional_tools: Sequence[FunctionTool]
     include_detailed_errors: bool
+    allow_concurrent_invocation: bool
 
 
 def normalize_function_invocation_configuration(
@@ -1404,6 +1408,7 @@ def normalize_function_invocation_configuration(
         "terminate_on_unknown_calls": False,
         "additional_tools": [],
         "include_detailed_errors": False,
+        "allow_concurrent_invocation": True,
     }
     if config:
         normalized.update(config)
@@ -1786,7 +1791,8 @@ async def _try_execute_function_call_groups(
     has_declaration_only_call = False
     # A user-input pause takes precedence over unknown-call termination in mixed batches.
     for function_call in actionable_calls:
-        function_name = function_call.name
+        function_name = _underlying_function_call(function_call).name
+
         logger.debug(
             "Checking function call: type=%s, name=%s, in approval_tools=%s",
             function_call.type,
@@ -1855,36 +1861,37 @@ async def _try_execute_function_call_groups(
     # Only a fully executable batch reaches this point; run calls concurrently but retain per-call result groups.
     # Create each task inside a copied context so the active agent span is
     # preserved for every parallel tool invocation.
-    execution_tasks = [
-        contextvars.copy_context().run(
-            asyncio.create_task,
-            _execute_single_function_call(
-                function_call,
-                custom_args=custom_args,
-                config=config,
-                tool_map=tool_map,
-                invocation_session=invocation_session,
-                middleware_pipeline=middleware_pipeline,
-                live_tools=live_tools,
-            ),
-        )
-        for function_call in function_calls
-    ]
-    try:
-        execution_results = await asyncio.gather(*execution_tasks)
-    except BaseException:
-        # A loud escape from one call (e.g. MiddlewareFailure aborting the run
-        # fail-closed) fails the whole batch: cancel in-flight siblings and wait for
-        # them so no new tool work starts after the loop is abandoned. Cancellation
-        # is cooperative — a synchronous tool body already running in a worker thread
-        # (asyncio.to_thread) cannot be interrupted and may complete its side effects,
-        # but its result is discarded with the batch and never reaches the transcript,
-        # the model, or history.
-        for task in execution_tasks:
-            task.cancel()
-        await asyncio.gather(*execution_tasks, return_exceptions=True)
-        raise
+    allow_concurrent = config.get("allow_concurrent_invocation", True)
+    execution_results: list[tuple[list[Content], bool]] = []
 
+    async def _execute_single(call: Content) -> tuple[list[Content], bool]:
+        ctx = contextvars.copy_context()
+        return await ctx.run(
+            _execute_single_function_call,
+            call,
+            custom_args=custom_args,
+            config=config,
+            tool_map=tool_map,
+            invocation_session=invocation_session,
+            middleware_pipeline=middleware_pipeline,
+            live_tools=live_tools,
+        )
+
+    if allow_concurrent:
+        tasks = [asyncio.create_task(_execute_single(call)) for call in function_calls]
+        try:
+            execution_results = await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+    else:
+        for call in function_calls:
+            res = await _execute_single(call)
+            execution_results.append(res)
+            if res[1]:
+                break
     should_terminate = any(terminate for _, terminate in execution_results)
     return [result_contents for result_contents, _ in execution_results], should_terminate
 
@@ -1921,6 +1928,13 @@ async def _execute_function_calls(
     invocation_session: AgentSession | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
 ) -> _FunctionExecutionBatch:
+
+    run_config = cast("FunctionInvocationConfiguration", dict(config) if config else {})
+    if custom_args and "allow_concurrent_invocation" in custom_args:
+        if "allow_concurrent_invocation" not in run_config:
+            run_config["allow_concurrent_invocation"] = custom_args["allow_concurrent_invocation"]
+        custom_args.pop("allow_concurrent_invocation")
+
     tools = _extract_tools(options)
     if not tools:
         return _FunctionExecutionBatch(result_groups=[])
@@ -1930,7 +1944,7 @@ async def _execute_function_calls(
         tools=tools,
         invocation_session=invocation_session,
         middleware_pipeline=middleware_pipeline,
-        config=config,
+        config=run_config,
     )
     return _FunctionExecutionBatch(
         result_groups=result_groups,
@@ -3743,17 +3757,23 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         invocation_session = raw_session if isinstance(raw_session, _AgentSession) else None
 
         # Bind one executor with the run's custom arguments, middleware, configuration, and session.
+        mutable_options: dict[str, Any] = dict(options) if options else {}
+        run_config = cast(
+            "FunctionInvocationConfiguration",
+            dict(self.function_invocation_configuration) if self.function_invocation_configuration else {},
+        )
+
+        if allow_concurrent := mutable_options.pop("allow_concurrent_invocation", None):
+            run_config["allow_concurrent_invocation"] = allow_concurrent
+
         execute_function_calls = partial(
             _execute_function_calls,
             custom_args=additional_function_arguments,
-            config=self.function_invocation_configuration,
+            config=run_config,
             invocation_session=invocation_session,
             middleware_pipeline=function_middleware_pipeline,
         )
 
-        # Give the loop private mutable options and one shared run-local tool list for progressive tool changes.
-        # Make options mutable so we can update conversation_id during function invocation loop
-        mutable_options: dict[str, Any] = dict(options) if options else {}
         # Remove additional_function_arguments from options passed to underlying chat client
         # It's for tool invocation only and not recognized by chat service APIs
         mutable_options.pop("additional_function_arguments", None)
