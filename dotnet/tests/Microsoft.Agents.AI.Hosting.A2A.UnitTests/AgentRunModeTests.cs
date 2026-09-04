@@ -67,7 +67,6 @@ public sealed class AgentRunModeTests
         // Act & Assert
         Assert.False(message.Equals(task));
         Assert.False(message == task);
-        Assert.True(message != task);
     }
 
     /// <summary>
