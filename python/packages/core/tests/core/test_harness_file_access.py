@@ -1588,6 +1588,27 @@ async def test_store_without_search_now_works_and_stays_aligned() -> None:
     assert _split_lines_keepends(raw)[number - 1] == "keep me\n"
 
 
+async def test_base_traversal_walks_a_non_root_directory() -> None:
+    """The inherited walk must scope to ``directory`` and descend only when asked.
+
+    The other base-search tests either sit at the root or supply their own
+    ``find_matching_files``, so this is what covers the default traversal a custom store
+    inherits: the directory prefix it joins, the descent it makes, and the names it returns.
+    """
+    store = _ContentOnlyStore()
+    await store.write("docs/a.txt", "needle\n")
+    await store.write("docs/sub/b.txt", "needle\n")
+    await store.write("other/c.txt", "needle\n")
+    await store.write("top.txt", "needle\n")
+
+    shallow = await store.search("docs", "needle")
+    deep = await store.search("docs", "needle", recursive=True)
+
+    # Names come back relative to the searched directory, and nothing outside it is reachable.
+    assert sorted(result.file_name for result in shallow) == ["a.txt"]
+    assert sorted(result.file_name for result in deep) == ["a.txt", "sub/b.txt"]
+
+
 async def test_base_search_reapplies_glob_and_recursion_when_a_store_over_returns() -> None:
     """``find_matching_files`` may over-return; the base must not widen the caller's scope."""
 
