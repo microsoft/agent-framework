@@ -2,6 +2,7 @@
 
 """Unit tests for prompt injection defense system."""
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -1437,6 +1438,457 @@ class TestPolicyEnforcementMiddleware:
             await middleware.process(replay_context, execute)
         assert isinstance(replay_context.result, Content)
         assert replay_context.result.type == "function_approval_request"
+
+    async def test_unique_unconsumed_approvals_are_bounded(self, mock_function):
+        """Unique unconsumed approvals must not grow beyond the configured limit.
+
+        Regression test for issue #7890: when many unique call_ids trigger policy violations
+        and are never approved, the pending state must remain bounded by max_pending_approvals.
+        """
+        limit = 100
+        middleware = PolicyEnforcementFunctionMiddleware(
+            approval_on_violation=True, max_pending_approvals=limit
+        )
+
+        # Create 500 unique call_ids with violations, never approve them
+        for i in range(500):
+            context = FunctionInvocationContext(
+                function=mock_function,
+                arguments=mock_function.args_schema(arg="test"),
+            )
+            context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+            context.metadata["call_id"] = f"call-{i}"
+
+            async def stop_before_execute() -> None:
+                pytest.fail("Tool execution should not continue before approval")
+
+            with pytest.raises(MiddlewareTermination):
+                await middleware.process(context, stop_before_execute)
+
+        # Assert: pending state is bounded by the limit
+        assert len(middleware._pending_policy_approvals) == limit
+        # The oldest entries were evicted, so the newest 100 should remain
+        for i in range(400, 500):
+            assert f"call-{i}" in middleware._pending_policy_approvals
+        for i in range(400):
+            assert f"call-{i}" not in middleware._pending_policy_approvals
+
+    async def test_valid_approval_still_works_with_bound(self, mock_function):
+        """Valid approval/replay must still work when the bound is active.
+
+        Regression test: the FIFO eviction must not interfere with normal approval flow.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(
+            approval_on_violation=True, max_pending_approvals=10
+        )
+
+        # Request approval for a call
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = "call-approved"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+
+        # Replay with valid approval
+        replay_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        replay_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        replay_context.metadata["call_id"] = "call-approved"
+        replay_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        await middleware.process(replay_context, execute)
+        assert executed is True
+        assert "call-approved" not in middleware._pending_policy_approvals
+
+    async def test_boundary_condition_eviction(self, mock_function):
+        """When the limit is reached, adding one more entry evicts the oldest.
+
+        Regression test: verify FIFO eviction happens at the exact boundary.
+        """
+        limit = 5
+        middleware = PolicyEnforcementFunctionMiddleware(
+            approval_on_violation=True, max_pending_approvals=limit
+        )
+
+        # Fill to exactly the limit
+        for i in range(limit):
+            context = FunctionInvocationContext(
+                function=mock_function,
+                arguments=mock_function.args_schema(arg="test"),
+            )
+            context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+            context.metadata["call_id"] = f"call-{i}"
+
+            async def stop_before_execute() -> None:
+                pytest.fail("Tool execution should not continue before approval")
+
+            with pytest.raises(MiddlewareTermination):
+                await middleware.process(context, stop_before_execute)
+
+        assert len(middleware._pending_policy_approvals) == limit
+
+        # Add one more - should evict call-0
+        extra_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        extra_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        extra_context.metadata["call_id"] = "call-new"
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(extra_context, lambda: None)
+
+        assert len(middleware._pending_policy_approvals) == limit
+        assert "call-0" not in middleware._pending_policy_approvals
+        assert "call-new" in middleware._pending_policy_approvals
+        assert "call-4" in middleware._pending_policy_approvals
+
+    async def test_existing_call_id_does_not_cause_eviction(self, mock_function):
+        """Updating an existing call_id must not evict an unrelated older entry.
+
+        Regression test: when the dictionary is full and an existing call_id is re-requested,
+        the update should not trigger eviction of a different entry.
+        """
+        limit = 3
+        middleware = PolicyEnforcementFunctionMiddleware(
+            approval_on_violation=True, max_pending_approvals=limit
+        )
+
+        # Fill to limit
+        for i in range(limit):
+            context = FunctionInvocationContext(
+                function=mock_function,
+                arguments=mock_function.args_schema(arg="test"),
+            )
+            context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+            context.metadata["call_id"] = f"call-{i}"
+
+            with pytest.raises(MiddlewareTermination):
+                await middleware.process(context, lambda: None)
+
+        assert len(middleware._pending_policy_approvals) == limit
+
+        # Re-request an existing call_id (e.g., user rejected and clicked approve again)
+        re_request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        re_request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        re_request_context.metadata["call_id"] = "call-1"  # Existing
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(re_request_context, lambda: None)
+
+        # Size should still be limit (no eviction happened)
+        assert len(middleware._pending_policy_approvals) == limit
+        # All original entries should still be present
+        assert "call-0" in middleware._pending_policy_approvals
+        assert "call-1" in middleware._pending_policy_approvals
+        assert "call-2" in middleware._pending_policy_approvals
+
+    def test_invalid_max_pending_approvals_raises(self, mock_function):
+        """Invalid max_pending_approvals values must raise ValueError."""
+        with pytest.raises(ValueError, match="must be None or a positive integer"):
+            PolicyEnforcementFunctionMiddleware(approval_on_violation=True, max_pending_approvals=0)
+
+        with pytest.raises(ValueError, match="must be None or a positive integer"):
+            PolicyEnforcementFunctionMiddleware(approval_on_violation=True, max_pending_approvals=-1)
+
+    async def test_max_pending_approvals_none_disables_limit(self, mock_function):
+        """Setting max_pending_approvals=None must disable the bound."""
+        middleware = PolicyEnforcementFunctionMiddleware(
+            approval_on_violation=True, max_pending_approvals=None
+        )
+
+        # Create many entries - should not be bounded
+        for i in range(200):
+            context = FunctionInvocationContext(
+                function=mock_function,
+                arguments=mock_function.args_schema(arg="test"),
+            )
+            context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+            context.metadata["call_id"] = f"call-{i}"
+
+            with pytest.raises(MiddlewareTermination):
+                await middleware.process(context, lambda: None)
+
+        # Should grow beyond default limit of 1000
+        assert len(middleware._pending_policy_approvals) == 200
+
+    async def test_custom_max_pending_approvals(self, mock_function):
+        """Custom max_pending_approvals value must be respected."""
+        custom_limit = 50
+        middleware = PolicyEnforcementFunctionMiddleware(
+            approval_on_violation=True, max_pending_approvals=custom_limit
+        )
+
+        for i in range(200):
+            context = FunctionInvocationContext(
+                function=mock_function,
+                arguments=mock_function.args_schema(arg="test"),
+            )
+            context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+            context.metadata["call_id"] = f"call-{i}"
+
+            with pytest.raises(MiddlewareTermination):
+                await middleware.process(context, lambda: None)
+
+        assert len(middleware._pending_policy_approvals) == custom_limit
+
+    async def test_session_mismatch_cleanup_removes_stale_entry(self, mock_function):
+        """When the same call_id is used from a different session, the stale entry is removed.
+
+        Regression test: session-mismatch cleanup prevents unbounded growth when call_ids
+        are reused across sessions. Since approvals are session-bound, a pending entry from
+        an ended session can never be consumed and should be cleaned up.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Create a pending approval in session-a
+        session_a_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+            session=AgentSession(session_id="session-a"),
+        )
+        session_a_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        session_a_context.metadata["call_id"] = "call-reused"
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(session_a_context, lambda: None)
+
+        assert "call-reused" in middleware._pending_policy_approvals
+        assert len(middleware._pending_policy_approvals) == 1
+
+        # Reuse the same call_id from session-b (different session)
+        session_b_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+            session=AgentSession(session_id="session-b"),
+        )
+        session_b_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        session_b_context.metadata["call_id"] = "call-reused"
+
+        # This should trigger session-mismatch cleanup and request a fresh approval
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(session_b_context, lambda: None)
+
+        # The stale entry from session-a should have been removed
+        # A new entry for session-b should be created
+        assert "call-reused" in middleware._pending_policy_approvals
+        assert len(middleware._pending_policy_approvals) == 1
+        # Verify the entry is now bound to session-b
+        pending = middleware._pending_policy_approvals["call-reused"]
+        assert pending.session_key == "session-b"
+
+    async def test_evicted_approval_cannot_execute(self, mock_function):
+        """An evicted approval must not authorize tool execution.
+
+        Regression test: when FIFO eviction removes a pending entry, a later
+        approval response for that evicted call_id must not execute the tool.
+        This is security-critical - eviction must fail closed.
+        """
+        limit = 2
+        middleware = PolicyEnforcementFunctionMiddleware(
+            approval_on_violation=True, max_pending_approvals=limit
+        )
+
+        # Create pending approvals for call-A and call-B (filling the limit)
+        for call_id in ["call-A", "call-B"]:
+            context = FunctionInvocationContext(
+                function=mock_function,
+                arguments=mock_function.args_schema(arg="test"),
+            )
+            context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+            context.metadata["call_id"] = call_id
+
+            with pytest.raises(MiddlewareTermination):
+                await middleware.process(context, lambda: None)
+
+        assert len(middleware._pending_policy_approvals) == limit
+        assert "call-A" in middleware._pending_policy_approvals
+        assert "call-B" in middleware._pending_policy_approvals
+
+        # Save the approval request for call-A before it gets evicted
+        call_a_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        call_a_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        call_a_context.metadata["call_id"] = "call-A"
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(call_a_context, lambda: None)
+
+        call_a_approval_request = call_a_context.result
+        assert isinstance(call_a_approval_request, Content)
+
+        # Add call-C, which evicts call-A (oldest)
+        call_c_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        call_c_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        call_c_context.metadata["call_id"] = "call-C"
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(call_c_context, lambda: None)
+
+        assert len(middleware._pending_policy_approvals) == limit
+        assert "call-A" not in middleware._pending_policy_approvals
+        assert "call-B" in middleware._pending_policy_approvals
+        assert "call-C" in middleware._pending_policy_approvals
+
+        # Try to execute with an approved response for the evicted call-A
+        evicted_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        evicted_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        evicted_context.metadata["call_id"] = "call-A"
+        evicted_context.metadata["approval_response"] = call_a_approval_request.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute():
+            nonlocal executed
+            executed = True
+
+        # Assert: the evicted approval does NOT authorize execution
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(evicted_context, execute)
+
+        assert executed is False
+        assert isinstance(evicted_context.result, Content)
+        assert evicted_context.result.type == "function_approval_request"
+
+    async def test_concurrent_burst_remains_bounded(self, mock_function):
+        """Many concurrent approval requests must remain bounded by the limit.
+
+        Regression test: when many unique call_ids trigger policy violations
+        concurrently (simulating a burst of requests), the pending state must
+        not exceed the configured limit.
+        """
+        limit = 100
+        middleware = PolicyEnforcementFunctionMiddleware(
+            approval_on_violation=True, max_pending_approvals=limit
+        )
+
+        # Create 500 unique call_ids with violations concurrently (simulating a burst)
+        async def create_violation(i):
+            context = FunctionInvocationContext(
+                function=mock_function,
+                arguments=mock_function.args_schema(arg="test"),
+            )
+            context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+            context.metadata["call_id"] = f"call-{i}"
+            with pytest.raises(MiddlewareTermination):
+                await middleware.process(context, lambda: None)
+
+        # Execute all requests concurrently
+        await asyncio.gather(*[create_violation(i) for i in range(500)])
+
+        # Assert: pending state is bounded by the limit
+        assert len(middleware._pending_policy_approvals) <= limit
+        assert len(middleware._pending_policy_approvals) == limit
+
+    async def test_occurrence_aware_approval_id_lifecycle(self, mock_function):
+        """Occurrence-aware approval IDs must store, match, consume, and execute exactly once.
+
+        Regression test: when function_call_occurrence_id is present (occurrence-aware
+        function calls), the approval lifecycle must use it as the canonical key for
+        _pending_policy_approvals. This test verifies the full flow: request with
+        occurrence_id -> stored under occurrence_id -> matched on replay -> consumed
+        on execution -> cannot replay again.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        occurrence_id = "occ-12345"
+        call_id = "call-shared"
+
+        # Request approval with occurrence-aware metadata
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = call_id
+        request_context.metadata["function_call_occurrence_id"] = occurrence_id
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+        assert approval_request.type == "function_approval_request"
+        # The approval request id should be the occurrence_id
+        assert approval_request.id == occurrence_id
+
+        # Verify it was stored under occurrence_id (not call_id)
+        assert occurrence_id in middleware._pending_policy_approvals
+        assert call_id not in middleware._pending_policy_approvals
+
+        # Replay with valid approval response
+        replay_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        replay_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        replay_context.metadata["call_id"] = call_id
+        replay_context.metadata["function_call_occurrence_id"] = occurrence_id
+        replay_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        await middleware.process(replay_context, execute)
+        assert executed is True
+        # Verify it was consumed (removed from pending)
+        assert occurrence_id not in middleware._pending_policy_approvals
+
+        # Try to replay again - should fail (consume-once)
+        second_replay = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        second_replay.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        second_replay.metadata["call_id"] = call_id
+        second_replay.metadata["function_call_occurrence_id"] = occurrence_id
+        second_replay.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        executed2 = False
+
+        async def execute2() -> None:
+            nonlocal executed2
+            executed2 = True
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(second_replay, execute2)
+        assert executed2 is False
+        assert isinstance(second_replay.result, Content)
+        assert second_replay.result.type == "function_approval_request"
 
 
 class TestAutomaticHiding:
@@ -3581,7 +4033,7 @@ class TestMCPIFCMetaLabels:
 
     def test_parse_tool_result_propagates_meta(self):
         """``_parse_tool_result_from_mcp`` stamps ``_meta`` on each Content."""
-        from mcp import types as mcp_types
+        mcp_types = pytest.importorskip("mcp").types
 
         from agent_framework._mcp import MCPTool
 
@@ -3607,7 +4059,7 @@ class TestMCPIFCMetaLabels:
             }
 
     def test_parse_tool_result_without_meta_has_no_sentinel(self):
-        from mcp import types as mcp_types
+        mcp_types = pytest.importorskip("mcp").types
 
         from agent_framework._mcp import MCPTool
 
