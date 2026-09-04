@@ -11,6 +11,7 @@ import os
 import re
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Generic, Literal, TypeGuard, TypeVar, cast
 from urllib.parse import urlparse
@@ -394,10 +395,10 @@ class _OmitFailedConversationInputProvider:
     together.
     """
 
-    def __init__(self, inner: ResponseProviderProtocol, failed_response_ids: set[str]) -> None:
+    def __init__(self, inner: ResponseProviderProtocol, failed_response_id: ContextVar[str | None]) -> None:
         """Wrap ``inner`` so failed turns persist without input items."""
         self._inner = inner
-        self._failed_response_ids = failed_response_ids
+        self._failed_response_id = failed_response_id
 
     async def create_response(
         self,
@@ -409,12 +410,13 @@ class _OmitFailedConversationInputProvider:
     ) -> None:
         """Persist ``response``, dropping input items when the turn failed."""
         response_id = response["id"]
-        known_failed = response_id in self._failed_response_ids
-        if _is_failed_stored_response(response) or known_failed:
+        known_failed = self._failed_response_id.get() == response_id
+        belongs_to_history = (
+            response.get("conversation") is not None or response.get("previous_response_id") is not None
+        )
+        if belongs_to_history and (_is_failed_stored_response(response) or known_failed):
             input_items = None
         await self._inner.create_response(response, input_items, history_item_ids, context=context)
-        if known_failed:
-            self._failed_response_ids.discard(response_id)
 
     async def update_response(
         self,
@@ -562,7 +564,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         # Let the base host resolve its hosted/local default and validate any
         # explicitly supplied store before wrapping the resolved provider.
-        self._failed_sync_response_ids: set[str] = set()
+        self._failed_sync_response_id: ContextVar[str | None] = ContextVar(
+            f"failed_sync_response_id_{id(self)}",
+            default=None,
+        )
         if uses_agent_server_history and not is_workflow_agent:
             # Agent-owned history does not replay this transcript. Preserve its
             # protocol-level response storage without filtering failed inputs.
@@ -572,7 +577,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             history_store = orchestrator._provider
             wrapped_history_store = _OmitFailedConversationInputProvider(
                 history_store,
-                self._failed_sync_response_ids,
+                self._failed_sync_response_id,
             )
             wrapped_provider = cast(ResponseProviderProtocol, wrapped_history_store)
             orchestrator._provider = wrapped_provider
@@ -677,6 +682,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 events,
                 context.response_id,
                 store=request.get("store") is not False,
+                belongs_to_history=context.conversation_id is not None
+                or request.get("previous_response_id") is not None,
             )
         async with aclosing(events):
             async for event in events:
@@ -688,6 +695,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         response_id: str,
         *,
         store: bool,
+        belongs_to_history: bool,
     ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Know a synchronous turn's terminal status before its initial store write."""
         buffered: list[ResponseStreamEvent | ResponseCheckpointEvent] = []
@@ -701,12 +709,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             isinstance(event, Mapping) and cast(Mapping[str, object], event).get("type") == "response.failed"
             for event in buffered
         )
-        if store and failed:
-            self._failed_sync_response_ids.add(response_id)
-        for event in buffered:
-            yield event
-        if handler_error is not None:
-            raise handler_error
+        token = self._failed_sync_response_id.set(response_id) if store and belongs_to_history and failed else None
+        try:
+            for event in buffered:
+                yield event
+            if handler_error is not None:
+                raise handler_error
+        finally:
+            if token is not None:
+                self._failed_sync_response_id.reset(token)
 
     async def _handle_response_events(
         self,

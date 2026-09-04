@@ -15,6 +15,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast, overload
@@ -60,7 +61,7 @@ from azure.ai.agentserver.responses import (
     ResponsesServerOptions,
 )
 from azure.ai.agentserver.responses.aio import ResponseEventStream
-from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem
+from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem, ResponseStreamEvent
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
 from mcp.types import ErrorData
@@ -1384,7 +1385,7 @@ class TestAgentSessionPersistence:
 
     async def test_omit_failed_conversation_input_provider_drops_terminal_failed_input(self) -> None:
         inner = InMemoryResponseProvider()
-        store = _OmitFailedConversationInputProvider(inner, set())
+        store = _OmitFailedConversationInputProvider(inner, ContextVar("failed_response_id", default=None))
         poison_item = cast(
             OutputItem,
             {
@@ -1416,16 +1417,22 @@ class TestAgentSessionPersistence:
             [ok_item],
             None,
         )
+        await store.create_response(
+            cast(ResponseObject, {"id": "resp_standalone", "status": "failed", "output": []}),
+            [poison_item],
+            None,
+        )
 
         history_ids = await store.get_history_item_ids(None, "conv-1", 100)
         assert "item_poison" not in history_ids
         assert "item_ok" in history_ids
+        assert [item["id"] for item in await store.get_input_items("resp_standalone")] == ["item_poison"]
         assert _is_failed_stored_response(cast(ResponseObject, {"id": "resp_failed", "status": "failed"}))
         assert not _is_failed_stored_response(cast(ResponseObject, {"id": "resp_ok", "status": "completed"}))
 
     async def test_omit_failed_conversation_input_provider_updates_existing_response_in_place(self) -> None:
         inner = InMemoryResponseProvider()
-        store = _OmitFailedConversationInputProvider(inner, set())
+        store = _OmitFailedConversationInputProvider(inner, ContextVar("failed_response_id", default=None))
         poison_item = cast(
             OutputItem,
             {
@@ -1456,8 +1463,8 @@ class TestAgentSessionPersistence:
 
     async def test_omit_failed_conversation_input_provider_drops_known_failed_initial_input(self) -> None:
         inner = InMemoryResponseProvider()
-        failed_response_ids = {"resp_failed"}
-        store = _OmitFailedConversationInputProvider(inner, failed_response_ids)
+        failed_response_id = ContextVar[str | None]("failed_response_id", default=None)
+        store = _OmitFailedConversationInputProvider(inner, failed_response_id)
         poison_item = cast(
             OutputItem,
             {
@@ -1469,17 +1476,40 @@ class TestAgentSessionPersistence:
             },
         )
 
-        await store.create_response(
-            cast(
-                ResponseObject,
-                {"id": "resp_failed", "status": "in_progress", "conversation": "conv-1", "output": []},
-            ),
-            [poison_item],
-            None,
-        )
+        token = failed_response_id.set("resp_failed")
+        try:
+            await store.create_response(
+                cast(
+                    ResponseObject,
+                    {"id": "resp_failed", "status": "in_progress", "conversation": "conv-1", "output": []},
+                ),
+                [poison_item],
+                None,
+            )
+        finally:
+            failed_response_id.reset(token)
 
         assert await inner.get_input_items("resp_failed") == []
-        assert failed_response_ids == set()
+        assert failed_response_id.get() is None
+
+    async def test_failed_response_marker_is_cleared_when_persistence_stops_consumption(self) -> None:
+        server = _make_server(_make_agent())
+
+        async def failed_events() -> AsyncIterator[ResponseStreamEvent]:
+            yield cast(ResponseStreamEvent, {"type": "response.failed"})
+
+        buffered = server._buffer_sync_response_events(  # pyright: ignore[reportPrivateUsage]
+            failed_events(),
+            "resp_failed",
+            store=True,
+            belongs_to_history=True,
+        )
+
+        await anext(buffered)
+        assert server._failed_sync_response_id.get() == "resp_failed"  # pyright: ignore[reportPrivateUsage]
+
+        await buffered.aclose()
+        assert server._failed_sync_response_id.get() is None  # pyright: ignore[reportPrivateUsage]
 
     def test_default_response_store_is_resolved_before_wrapping(
         self,
