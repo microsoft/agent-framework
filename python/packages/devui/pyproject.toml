@@ -26,7 +26,7 @@ classifiers = [
      "agent-framework-core>=1.17.0,<2",
      "openai>=2.45.0,<4",
      "opentelemetry-sdk>=1.39.0,<2",
-     "fastapi>=0.115.0,<0.138.1",
+     "fastapi>=0.115.0,<0.142.0",
      "uvicorn[standard]>=0.30.0,<1"
  ]
 
