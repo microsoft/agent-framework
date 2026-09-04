@@ -938,6 +938,78 @@ class TestAgentExecutorsCoverage:
         input_text = await executor._build_input_text(state, {}, None)
         assert input_text == "workflow input"
 
+    async def test_agent_executor_build_input_text_includes_arguments_only(self, mock_context, mock_state):
+        """Regression for #7902: input.arguments must reach the agent when messages are omitted."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            InvokeAzureAgentExecutor,
+        )
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        action_def = {"kind": "InvokeAzureAgent", "agent": "Test"}
+        executor = InvokeAzureAgentExecutor(action_def)
+
+        input_text = await executor._build_input_text(
+            state,
+            {
+                "IssueDescription": "The printer on the 3rd floor is jammed.",
+                "AttemptedResolutionSteps": "Restarted the printer twice.",
+            },
+            None,
+        )
+
+        assert "IssueDescription: The printer on the 3rd floor is jammed." in input_text
+        assert "AttemptedResolutionSteps: Restarted the printer twice." in input_text
+
+    @_requires_powerfx
+    async def test_agent_executor_build_input_text_combines_arguments_and_messages(
+        self, mock_context, mock_state
+    ):
+        """input.arguments are kept alongside explicit messages (#7902)."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            InvokeAzureAgentExecutor,
+        )
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        state.set("Local.userInput", "Please help with this ticket.")
+
+        action_def = {"kind": "InvokeAzureAgent", "agent": "Test"}
+        executor = InvokeAzureAgentExecutor(action_def)
+
+        input_text = await executor._build_input_text(
+            state,
+            {"IssueDescription": "Printer jammed"},
+            "=Local.userInput",
+        )
+
+        assert input_text == "IssueDescription: Printer jammed\nPlease help with this ticket."
+
+    @_requires_powerfx
+    async def test_agent_executor_build_input_text_evaluates_argument_expressions(
+        self, mock_context, mock_state
+    ):
+        """Argument values that are expressions are evaluated before formatting (#7902)."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            InvokeAzureAgentExecutor,
+        )
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        state.set("Local.issue", "Network outage")
+
+        action_def = {"kind": "InvokeAzureAgent", "agent": "Test"}
+        executor = InvokeAzureAgentExecutor(action_def)
+
+        input_text = await executor._build_input_text(
+            state,
+            {"IssueDescription": "=Local.issue"},
+            None,
+        )
+
+        assert input_text == "IssueDescription: Network outage"
+
     async def test_agent_executor_build_input_text_from_system_last_message(self, mock_context, mock_state):
         """Test _build_input_text falls back to system.LastMessage.Text."""
         from agent_framework_declarative._workflows._executors_agents import (
