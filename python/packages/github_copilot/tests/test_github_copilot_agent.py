@@ -1226,6 +1226,7 @@ class TestGitHubCopilotAgentSessionManagement:
             streaming=unittest.mock.ANY,
             model=unittest.mock.ANY,
             on_permission_request=unittest.mock.ANY,
+            enable_file_hooks=unittest.mock.ANY,
             hooks=unittest.mock.ANY,
         )
 
@@ -2023,6 +2024,55 @@ class TestGitHubCopilotAgentOptionsPassthrough:
             assert leaked not in config
         # on_pre_tool_use is still honored via the hooks parameter.
         assert config["hooks"]["on_pre_tool_use"] is runtime_hook
+
+    async def test_workspace_config_options_default_to_off(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Workspace-driven options are disabled unless the caller opts in."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["enable_file_hooks"] is False
+        # Options that only shape prompt context are left untouched.
+        assert "enable_host_git_operations" not in config
+
+    async def test_workspace_config_options_honor_default_options(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """A caller opting in through default_options is not overridden."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"enable_file_hooks": True}),
+        )
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["enable_file_hooks"] is True
+
+    async def test_workspace_config_options_honor_runtime_options(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Per-run options override the agent-level value for workspace-driven options."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"enable_file_hooks": True}),
+        )
+        await agent.run("hello", options=cast(Any, {"enable_file_hooks": False}))
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["enable_file_hooks"] is False
 
 
 class TestGitHubCopilotAgentToolConversion:

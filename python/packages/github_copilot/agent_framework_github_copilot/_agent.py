@@ -481,6 +481,14 @@ class GitHubCopilotOptions(TypedDict, total=False):
     base_directory: str
     """Directory where the CLI stores session state, configuration, and other persistent data."""
 
+    enable_file_hooks: bool
+    """Whether the CLI loads file hooks from the working directory's ``.github/hooks/``.
+
+    Defaults to ``False``: hook definitions checked into the working directory are ignored
+    unless you opt in, so a session behaves the same way regardless of which checkout it
+    runs in. Unrelated to the SDK callback hooks configured through ``on_pre_tool_use``.
+    """
+
     telemetry: TelemetryConfig
     """OpenTelemetry configuration for the Copilot CLI process."""
 
@@ -1452,8 +1460,9 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         ``runtime_options`` which override them. Every key is forwarded verbatim to
         the Copilot SDK, so any ``create_session`` parameter is supported without a
         dedicated mapping here (an unknown name surfaces as a ``TypeError`` from the
-        SDK). A few keys are handled specially because they need a secure default
-        (``on_permission_request`` defaults to denying all requests, and is wrapped so
+        SDK). A few keys are handled specially because they need a specific default
+        (``on_permission_request`` defaults to denying all requests and
+        ``enable_file_hooks`` defaults to off, and is wrapped so
         under-specified ``approve-for-session`` decisions are scoped to the request that
         triggered them) or transforming: ``tools`` are merged with the agent's tools and
         converted to SDK tools, and approval callbacks are turned into ``hooks``.
@@ -1486,6 +1495,11 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions,
             )
         )
+        # File hooks let the working directory's checked-in configuration influence what the
+        # CLI does on the host, so the agent leaves them off for a consistent session in every
+        # checkout. Callers opt in through ``default_options`` or per-run options.
+        if kwargs.get("enable_file_hooks") is None:
+            kwargs["enable_file_hooks"] = False
         kwargs["hooks"] = self._build_session_hooks(all_tools, kwargs)
 
         # Strip agent-internal and client-level keys that are consumed here or in the

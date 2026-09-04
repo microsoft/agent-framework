@@ -87,3 +87,26 @@ model described above. When `on_function_approval` is set, it gates `always_requ
 the default ask-hook is not installed. It is **mutually exclusive** with `on_pre_tool_use` —
 setting both (whether at construction or per run) raises `ValueError`.
 
+## Workspace-driven session options
+
+`on_permission_request` and `on_pre_tool_use` gate **tool calls**. They do not cover
+configuration the CLI picks up from the working directory it runs in, which is a separate
+mechanism with its own switches.
+
+So that a session behaves the same way in every checkout, `GitHubCopilotAgent` leaves the
+following off by default:
+
+| Option | Default | Effect when enabled |
+| --- | --- | --- |
+| `enable_file_hooks` | `False` | The CLI loads file hooks from the working directory's `.github/hooks/` and runs the commands they define, independently of the tool-approval path. |
+
+Opt in per agent or per run when your workflow needs the checkout to drive the session:
+
+```python
+agent = GitHubCopilotAgent(
+    default_options=GitHubCopilotOptions(enable_file_hooks=True),
+)
+```
+
+Only enable these for a working directory whose contents you trust to act on the host.
+
