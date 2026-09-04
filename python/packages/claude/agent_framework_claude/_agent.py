@@ -741,7 +741,9 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         """
         if not messages:
             return ""
-        return "\n".join([msg.text or "" for msg in messages])
+        if len(messages) == 1:
+            return messages[0].text
+        return "\n".join(f"[{m.author_name or m.role}]: {m.text or ''}" for m in messages)
 
     @property
     def default_options(self) -> dict[str, Any]:

@@ -1011,6 +1011,7 @@ class TestFormatPrompt:
             contents=[Content.from_text(text="Hello")],
         )
         result = agent._format_prompt([msg])  # type: ignore[reportPrivateUsage]
+        assert "[user]:" not in result
         assert "Hello" in result
 
     def test_format_multiple_messages(self) -> None:
@@ -1025,6 +1026,30 @@ class TestFormatPrompt:
         assert "Hi" in result
         assert "Hello!" in result
         assert "How are you?" in result
+        assert "[assistant]:" in result
+        assert result.count("[user]:") == 2
+
+    def test_format_messages_from_other_agent(self) -> None:
+        """Test formatting messages from two agents in sequence."""
+        # SequenceBuilder, will pass on different roles, semantically speaking the
+        # only useful information we can maintain is the `author_name` of the message
+        # which is attributed to the source agent. Failing that we include the role
+        agent = ClaudeAgent()
+        messages = [
+            Message(
+                role="assistant",
+                author_name="previous_agent",
+                contents=[Content.from_text(text="Hello from previous agent")],
+            ),
+            Message(role="assistant", contents=[Content.from_text(text="Hello from a nameless author")]),
+        ]
+        result = agent._format_prompt(messages)  # type: ignore[reportPrivateUsage]
+
+        assert "user" not in result  # claudeSDKClient.query is a hardcoded `user` message
+        assert "[previous_agent]:" in result
+        assert "Hello from previous agent" in result
+        assert "[assistant]:" in result
+        assert "Hello from a nameless author" in result
 
 
 # region Test Build Options
