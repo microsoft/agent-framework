@@ -1089,6 +1089,37 @@ def _matches_json_schema_type(value: Any, schema_type: str) -> bool:
             return True
 
 
+_MAX_VALIDATION_ERROR_DETAILS = 5
+
+
+class _ToolArgumentValidationError(TypeError):
+    """A schema-validation failure with a value-free default message.
+
+    ``str(exception)`` (used when ``include_detailed_errors`` is set) may include the
+    submitted value for debugging; ``safe_message`` is what a caller shows by default
+    and never echoes it - see the enum-mismatch case below, the only one of these
+    checks whose full message names a submitted value rather than only field/tool
+    names and the schema's own declared constraints.
+    """
+
+    def __init__(self, safe_message: str, detailed_message: str | None = None) -> None:
+        super().__init__(detailed_message or safe_message)
+        self.safe_message = safe_message
+
+
+def _format_field_list(fields: Sequence[str], *, limit: int = _MAX_VALIDATION_ERROR_DETAILS) -> str:
+    """Join field names for a default error message, capped against a model submitting arbitrarily many.
+
+    Field/key *names* are safe to list in full (they are structural, not the value being validated), but
+    their *count* is attacker/model-controlled: a submitted object with thousands of unexpected keys must
+    not turn the error result itself into an unbounded addition to the next request's context.
+    """
+    shown = fields[:limit]
+    text = ", ".join(shown)
+    omitted = len(fields) - len(shown)
+    return f"{text} (+{omitted} more)" if omitted > 0 else text
+
+
 def _validate_arguments_against_schema(
     *,
     arguments: Mapping[str, Any],
@@ -1101,13 +1132,17 @@ def _validate_arguments_against_schema(
     required_fields = [field for field in schema.get("required", []) if isinstance(field, str)]
     missing_fields = [field for field in required_fields if field not in parsed_arguments]
     if missing_fields:
-        raise TypeError(f"Missing required argument(s) for '{tool_name}': {', '.join(sorted(missing_fields))}")
+        raise _ToolArgumentValidationError(
+            f"Missing required argument(s) for '{tool_name}': {_format_field_list(sorted(missing_fields))}"
+        )
 
     properties: Mapping[str, Any] = schema.get("properties", {})
     if schema.get("additionalProperties") is False:
         unexpected_fields = sorted(field for field in parsed_arguments if field not in properties)
         if unexpected_fields:
-            raise TypeError(f"Unexpected argument(s) for '{tool_name}': {', '.join(unexpected_fields)}")
+            raise _ToolArgumentValidationError(
+                f"Unexpected argument(s) for '{tool_name}': {_format_field_list(unexpected_fields)}"
+            )
 
     for field_name, field_value in parsed_arguments.items():
         if not isinstance(properties.get(field_name), dict):
@@ -1115,14 +1150,15 @@ def _validate_arguments_against_schema(
 
         enum_values = properties.get(field_name, {}).get("enum")
         if isinstance(enum_values, list) and enum_values and field_value not in enum_values:
-            raise TypeError(
-                f"Invalid value for '{field_name}' in '{tool_name}': {field_value!r} is not in {enum_values!r}"
+            raise _ToolArgumentValidationError(
+                f"Invalid value for '{field_name}' in '{tool_name}': not one of {enum_values!r}",
+                f"Invalid value for '{field_name}' in '{tool_name}': {field_value!r} is not in {enum_values!r}",
             )
 
         schema_type = properties.get(field_name, {}).get("type")
         if isinstance(schema_type, str):
             if not _matches_json_schema_type(field_value, schema_type):
-                raise TypeError(
+                raise _ToolArgumentValidationError(
                     f"Invalid type for '{field_name}' in '{tool_name}': "
                     f"expected {schema_type}, got {type(field_value).__name__}"
                 )
@@ -1131,7 +1167,7 @@ def _validate_arguments_against_schema(
         if isinstance(schema_type, list):
             allowed_types: list[str] = [item for item in schema_type if isinstance(item, str)]  # type: ignore[reportUnknownVariableType]
             if allowed_types and not any(_matches_json_schema_type(field_value, item) for item in allowed_types):
-                raise TypeError(
+                raise _ToolArgumentValidationError(
                     f"Invalid type for '{field_name}' in '{tool_name}': expected one of "
                     f"{allowed_types}, got {type(field_value).__name__}"
                 )
@@ -1416,6 +1452,88 @@ def normalize_function_invocation_configuration(
     return normalized
 
 
+def _redact_dynamic_loc_segments(loc: tuple[int | str, ...], schema: Mapping[str, Any]) -> str:
+    """Render a pydantic error ``loc`` as a path, without echoing a caller-chosen dict key.
+
+    A ``loc`` segment is safe to show only when the tool's own schema names it: a declared
+    ``properties`` key, or a list index (positional, not data). A segment that instead indexes into a
+    dict-typed field (``additionalProperties``) is a key the caller supplied - the exact kind of value
+    this default message exists to never echo (see #7222 and the review on #7953) - so it is replaced
+    with a fixed placeholder instead of the submitted string. ``$ref``/``$defs`` are resolved so a
+    nested model's own declared field names are still recognized and shown, not just top-level ones.
+    """
+    defs: dict[str, Any] = schema.get("$defs", {}) if isinstance(schema, dict) else {}
+
+    def resolve(node: Any) -> dict[str, Any]:
+        if not isinstance(node, dict):
+            # A schema fragment can legitimately be a non-dict, e.g. `additionalProperties: False`;
+            # treat anything not shaped like a schema object as having no further declared fields.
+            return {}
+        typed_node = cast(dict[str, Any], node)
+        ref = typed_node.get("$ref")
+        return resolve(defs.get(ref.rsplit("/", 1)[-1], {})) if isinstance(ref, str) else typed_node
+
+    node: dict[str, Any] = resolve(schema)
+    parts: list[str] = []
+    for segment in loc:
+        if isinstance(segment, int):
+            parts.append(f"[{segment}]")
+            node = resolve(node.get("items"))
+            continue
+        properties: dict[str, Any] = node.get("properties", {}) if isinstance(node.get("properties"), dict) else {}
+        if segment in properties:
+            parts.append(f".{segment}" if parts else str(segment))
+            node = resolve(properties[segment])
+        else:
+            parts.append(".<key>" if parts else "<key>")
+            node = resolve(node.get("additionalProperties"))
+    return "".join(parts) if parts else "value"
+
+
+def _format_argument_validation_error(
+    exception: TypeError | ValidationError, tool_name: str, schema: Mapping[str, Any]
+) -> str:
+    """Build a model-oriented summary of an argument-validation failure.
+
+    Unlike a tool-execution exception, the failing data here is the model's own
+    output and the schema is already in its context as the tool declaration, so the
+    offending/missing parameter names are safe to surface by default (see #7222):
+    naming them gives a model that made a systematic shape error something to
+    correct against, instead of a livelock of identical retries. This intentionally
+    stays short and structured - no raw exception repr, and no echo of the submitted
+    argument values - so it stays distinct from ``include_detailed_errors``, which is
+    about developer-oriented detail (including, e.g., the offending value for an
+    enum mismatch) for arbitrary tool-execution exceptions.
+
+    A ``ValidationError`` can carry one entry per invalid item in a large submitted
+    container, so the per-field detail is capped to keep this message from itself
+    becoming an unbounded addition to the next request's context. Each entry's
+    location is rendered through :func:`_redact_dynamic_loc_segments`, which shows a
+    field name only when the schema itself declares it - a dict-typed field's key is
+    the caller's own data, not part of the tool's declared shape, and is redacted.
+
+    Only ``_ToolArgumentValidationError`` has a message vetted to be value-free; a
+    plain ``TypeError`` reaching this point is not one this function recognizes; its
+    text is not known to be safe, so the default falls back to a generic, tool-named
+    summary and the raw text stays behind ``include_detailed_errors`` like any other
+    unvetted exception.
+    """
+    if isinstance(exception, ValidationError):
+        raw_errors = exception.errors(include_url=False, include_context=False, include_input=False)
+        offenses = [
+            f"{_redact_dynamic_loc_segments(error['loc'], schema) or tool_name} ({error['msg']})"
+            for error in raw_errors[:_MAX_VALIDATION_ERROR_DETAILS]
+        ]
+        detail = "; ".join(offenses) if offenses else str(exception)
+        omitted = len(raw_errors) - len(offenses)
+        if omitted > 0:
+            detail = f"{detail}; ({omitted} more error{'s' if omitted != 1 else ''} omitted)"
+        return f"Error: invalid arguments for tool '{tool_name}': {detail}."
+    if isinstance(exception, _ToolArgumentValidationError):
+        return f"Error: {exception.safe_message}"
+    return f"Error: invalid arguments for tool '{tool_name}'."
+
+
 def _function_execution_error_result(
     function_call: Content,
     tool_name: str,
@@ -1539,7 +1657,7 @@ async def _auto_invoke_function(
             tool_name=tool.name,
         )
     except (TypeError, ValidationError) as exc:
-        message = "Error: Argument parsing failed."
+        message = _format_argument_validation_error(exc, tool.name, tool.parameters())
         if config.get("include_detailed_errors", False):
             message = f"{message} Exception: {exc}"
         return Content.from_function_result(

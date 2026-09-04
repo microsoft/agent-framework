@@ -1,12 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import json
 import logging
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, Literal
 
 import pytest
+from pydantic import BaseModel
 
 from agent_framework import (
     Agent,
@@ -3030,12 +3032,13 @@ async def test_argument_validation_error_with_detailed_errors(chat_client_base: 
     )
     assert error_result.result is not None
     assert error_result.exception is not None
-    assert "Argument parsing failed" in error_result.result
+    assert "invalid arguments for tool 'typed_function'" in error_result.result
+    assert "arg1" in error_result.result  # Offending key named
     assert "Exception:" in error_result.result  # Detailed error included
 
 
 async def test_argument_validation_error_without_detailed_errors(chat_client_base: SupportsChatGetResponse):
-    """Test that argument validation errors are generic when include_detailed_errors=False."""
+    """Test that argument validation errors name the offending key by default, without raw exception text."""
 
     @tool(name="typed_function", approval_mode="never_require")
     def typed_func(arg1: int) -> str:  # Expects int, not str
@@ -3060,14 +3063,325 @@ async def test_argument_validation_error_without_detailed_errors(chat_client_bas
         [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [typed_func]}
     )
 
-    # Should have generic validation error
+    # Should name the offending key without leaking raw exception text
     error_result = next(
         content for msg in response.messages for content in msg.contents if content.type == "function_result"
     )
     assert error_result.result is not None
     assert error_result.exception is not None
-    assert "Argument parsing failed" in error_result.result
+    assert "invalid arguments for tool 'typed_function'" in error_result.result
+    assert "arg1" in error_result.result  # Offending key named even without detailed errors
     assert "Exception:" not in error_result.result  # No detailed error
+
+
+async def test_schema_supplied_tool_unexpected_key_names_the_key(chat_client_base: SupportsChatGetResponse):
+    """Regression for #7222: a model that mimics the wrong shape gets a key name to correct against.
+
+    A schema-supplied tool with a missing required field fails argument validation with a ``TypeError``
+    (not a pydantic ``ValidationError``), a distinct code path from the coercion-failure tests above. The
+    default result must still name the tool and the missing key, without requiring
+    ``include_detailed_errors``, matching the live trace in the issue where the model sent
+    ``{"items": [...]}`` for a tool declaring ``{"todos": [...]}`` and retried the identical call four
+    times against the previous generic ``Error: Argument parsing failed.`` message.
+    """
+
+    json_schema = {
+        "type": "object",
+        "properties": {"todos": {"type": "array"}},
+        "required": ["todos"],
+        "additionalProperties": False,
+    }
+
+    @tool(name="todos_add", description="Add todos", schema=json_schema, approval_mode="never_require")
+    def todos_add(todos: list[Any]) -> str:
+        return f"added {len(todos)}"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="1", name="todos_add", arguments='{"items": [{"id": 4}]}')
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    # Default configuration: include_detailed_errors is False.
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [todos_add]}
+    )
+
+    error_result = next(
+        content for msg in response.messages for content in msg.contents if content.type == "function_result"
+    )
+    assert error_result.result is not None
+    assert error_result.exception is not None
+    assert "todos_add" in error_result.result
+    assert "todos" in error_result.result  # missing key named, not just "parsing failed"
+    assert "Exception:" not in error_result.result  # no raw exception text by default
+
+
+async def test_schema_supplied_tool_enum_mismatch_does_not_echo_value_by_default(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """An enum-mismatch is the one schema-validation failure whose full message names the submitted
+    value (to say what it wasn't) rather than only field/tool names and the tool's own declared
+    constraints. That value must stay behind include_detailed_errors, not appear in the default message.
+    """
+
+    json_schema = {
+        "type": "object",
+        "properties": {"priority": {"type": "string", "enum": ["low", "medium", "high"]}},
+        "required": ["priority"],
+    }
+
+    @tool(name="set_priority", description="Set priority", schema=json_schema, approval_mode="never_require")
+    def set_priority(priority: str) -> str:
+        return priority
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="1", name="set_priority", arguments='{"priority": "super-secret-value"}'
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [set_priority]}
+    )
+
+    error_result = next(
+        content for msg in response.messages for content in msg.contents if content.type == "function_result"
+    )
+    assert error_result.result is not None
+    assert "set_priority" in error_result.result
+    assert "priority" in error_result.result
+    assert "super-secret-value" not in error_result.result  # submitted value not echoed by default
+
+    # With include_detailed_errors=True, the full message (including the submitted value) is available.
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="1", name="set_priority", arguments='{"priority": "super-secret-value"}'
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    detailed_response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [set_priority]}
+    )
+    detailed_error_result = next(
+        content for msg in detailed_response.messages for content in msg.contents if content.type == "function_result"
+    )
+    assert detailed_error_result.result is not None
+    assert "super-secret-value" in detailed_error_result.result
+
+
+async def test_pydantic_validation_error_caps_reported_field_count(chat_client_base: SupportsChatGetResponse):
+    """Regression: a large invalid container must not turn the error result into an unbounded message.
+
+    A pydantic ``ValidationError`` can carry one entry per invalid item, so an oversized submitted list
+    must not be echoed back to the model error-by-error - the summary is capped and reports an omitted
+    count instead of growing without bound.
+    """
+
+    class Item(BaseModel):
+        title: str
+
+    @tool(name="typed_list_tool", approval_mode="never_require")
+    def typed_list_tool(items: list[Item]) -> str:
+        return f"got {len(items)}"
+
+    # More invalid items than the cap, each missing the required 'title' field.
+    bad_items = [{"wrong_key": i} for i in range(20)]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="1", name="typed_list_tool", arguments=json.dumps({"items": bad_items})
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [typed_list_tool]}
+    )
+
+    error_result = next(
+        content for msg in response.messages for content in msg.contents if content.type == "function_result"
+    )
+    assert error_result.result is not None
+    assert "typed_list_tool" in error_result.result
+    assert "more error" in error_result.result  # omitted-count marker present
+    # The message should not grow one entry per invalid item; it stays well under a per-item accounting
+    # of 20 items.
+    assert error_result.result.count("title") < 10
+
+
+async def test_schema_supplied_tool_caps_unexpected_key_count(chat_client_base: SupportsChatGetResponse):
+    """Regression: a model submitting thousands of unexpected keys must not produce an unbounded result.
+
+    Unlike the pydantic-error cap above, this exercises the schema-supplied TypeError path
+    (`additionalProperties: False`), reported by @moonbox3 on PR #7953: `_validate_arguments_against_schema`
+    joined every unexpected key into the default message with no cap, so a large hallucinated object could
+    exceed the next request's context budget instead of giving the model a short summary to correct against.
+    """
+
+    json_schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+        "additionalProperties": False,
+    }
+
+    @tool(name="search", description="Search tool", schema=json_schema, approval_mode="never_require")
+    def search(query: str) -> str:
+        return query
+
+    bad_arguments = {"query": "hello", **{f"extra_key_{i}": i for i in range(50)}}
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="1", name="search", arguments=json.dumps(bad_arguments))],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [search]}
+    )
+
+    error_result = next(
+        content for msg in response.messages for content in msg.contents if content.type == "function_result"
+    )
+    assert error_result.result is not None
+    assert "search" in error_result.result
+    assert "extra_key_0" in error_result.result
+    assert "more" in error_result.result  # omitted-count marker present
+    # The message should not grow one entry per unexpected key; it stays well under a per-key accounting
+    # of 50 keys.
+    assert error_result.result.count("extra_key_") < 10
+
+
+async def test_pydantic_validation_error_does_not_echo_a_dict_key(chat_client_base: SupportsChatGetResponse):
+    """Regression for the review on #7953: a dict-typed field's key is caller data, not a field name.
+
+    Copilot flagged that `include_input=False` only strips pydantic's `input` field - it does not stop
+    a dict-typed field's own key from appearing in `loc`, since pydantic reports the key as part of the
+    error's location rather than its input. A model submitting `{"mapping": {"<secret>": "bad"}}` would
+    put `<secret>` straight into the default (non-detailed) message. This was dismissed in review as
+    "the same category as the unexpected/missing field names this PR already surfaces by design" -
+    that reasoning was wrong: a dict key is data the caller chose, not a field name the tool declared.
+    """
+
+    class MappingInput(BaseModel):
+        mapping: dict[str, int]
+
+    @tool(name="store_tool", schema=MappingInput, approval_mode="never_require")
+    def store_tool(mapping: dict[str, int]) -> str:
+        return str(mapping)
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="1",
+                        name="store_tool",
+                        arguments=json.dumps({"mapping": {"super-secret-api-key-abc123": "not-an-int"}}),
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [store_tool]}
+    )
+
+    error_result = next(
+        content for msg in response.messages for content in msg.contents if content.type == "function_result"
+    )
+    assert error_result.result is not None
+    assert "super-secret-api-key-abc123" not in error_result.result  # the caller-chosen key is not echoed
+    assert "store_tool" in error_result.result
+    assert "mapping" in error_result.result  # the declared field name is still named
+
+
+async def test_pydantic_validation_error_still_names_nested_and_list_field_paths(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Companion to the dict-key redaction above: declared field names, at any depth, must still show.
+
+    Redacting a caller-chosen dict key must not turn into over-redaction of the tool's own declared
+    shape - a nested model's field name and a list index are static structure from the schema, not
+    caller data, and are exactly what makes the default message actionable in the first place.
+    """
+
+    class Item(BaseModel):
+        title: str
+
+    class NestedInput(BaseModel):
+        item: Item
+        items: list[Item]
+
+    @tool(name="nested_tool", schema=NestedInput, approval_mode="never_require")
+    def nested_tool(item: Item, items: list[Item]) -> str:
+        return "ok"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="1",
+                        name="nested_tool",
+                        arguments=json.dumps({"item": {"title": 123}, "items": [{"title": 456}]}),
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [nested_tool]}
+    )
+
+    error_result = next(
+        content for msg in response.messages for content in msg.contents if content.type == "function_result"
+    )
+    assert error_result.result is not None
+    # Both the nested field's own path and the list-indexed field's path are declared shape, not
+    # caller-chosen data, and must still be named rather than redacted to "<key>".
+    assert "item.title" in error_result.result
+    assert "items[0].title" in error_result.result
 
 
 async def test_hosted_tool_approval_response(chat_client_base: SupportsChatGetResponse):
@@ -3991,7 +4305,8 @@ async def test_approved_function_call_with_validation_error(chat_client_base: Su
     )
     assert error_result is not None
     assert error_result.result is not None
-    assert "Argument parsing failed" in error_result.result
+    assert "invalid arguments for tool 'typed_func'" in error_result.result
+    assert "arg1" in error_result.result  # Offending key named
 
 
 async def test_approved_function_call_successful_execution(chat_client_base: SupportsChatGetResponse):
@@ -5291,12 +5606,13 @@ async def test_streaming_argument_validation_error_with_detailed_errors(chat_cli
     )
     assert error_result.result is not None
     assert error_result.exception is not None
-    assert "Argument parsing failed" in error_result.result
+    assert "invalid arguments for tool 'typed_function'" in error_result.result
+    assert "arg1" in error_result.result  # Offending key named
     assert "Exception:" in error_result.result  # Detailed error included
 
 
 async def test_streaming_argument_validation_error_without_detailed_errors(chat_client_base: SupportsChatGetResponse):
-    """Test that argument validation errors are generic when include_detailed_errors=False in streaming mode."""
+    """Test that argument validation errors name the offending key by default in streaming mode too."""
 
     @tool(name="typed_function", approval_mode="never_require")
     def typed_func(arg1: int) -> str:  # Expects int, not str
@@ -5325,13 +5641,14 @@ async def test_streaming_argument_validation_error_without_detailed_errors(chat_
     ):
         updates.append(update)
 
-    # Should have generic validation error
+    # Should name the offending key without leaking raw exception text
     error_result = next(
         content for update in updates for content in update.contents if content.type == "function_result"
     )
     assert error_result.result is not None
     assert error_result.exception is not None
-    assert "Argument parsing failed" in error_result.result
+    assert "invalid arguments for tool 'typed_function'" in error_result.result
+    assert "arg1" in error_result.result  # Offending key named even without detailed errors
     assert "Exception:" not in error_result.result  # No detailed error
 
 
