@@ -6479,6 +6479,70 @@ async def test_mcp_streamable_http_tool_removes_header_hook_on_close():
         await user_client.aclose()
 
 
+async def test_mcp_streamable_http_tool_removes_hook_without_mutating_active_hook_list():
+    """Closing one tool must not disrupt an in-progress iteration over shared hooks."""
+    import httpx
+
+    from agent_framework._mcp import _MCP_INJECTED_HEADER_KEYS_EXTENSION
+
+    captured_headers: list[httpx.Headers] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured_headers.append(request.headers)
+        return httpx.Response(200)
+
+    user_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    tool_a = MCPStreamableHTTPTool(
+        name="a",
+        url="http://example.com/mcp",
+        http_client=user_client,
+        header_provider=lambda _kw: {"Authorization": "Bearer token-a"},
+    )
+    tool_b = MCPStreamableHTTPTool(
+        name="b",
+        url="http://example.com/mcp",
+        http_client=user_client,
+        header_provider=lambda _kw: {"X-API-Key": "current"},
+    )
+    hook_started = asyncio.Event()
+    allow_hook = asyncio.Event()
+
+    async def delayed_hook(_request: httpx.Request) -> None:
+        hook_started.set()
+        await allow_hook.wait()
+
+    send_task: asyncio.Task[httpx.Response] | None = None
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool_a.get_mcp_client()
+            tool_b.get_mcp_client()
+        user_client.event_hooks["request"].insert(1, delayed_hook)
+
+        request = httpx.Request(
+            "POST",
+            "http://other.example/redirected",
+            headers={"X-API-Key": "previous"},
+            extensions={
+                _MCP_HEADER_OWNER_EXTENSION: tool_b._header_request_owner,
+                _MCP_INJECTED_HEADER_KEYS_EXTENSION: ("X-API-Key",),
+            },
+        )
+        send_task = asyncio.create_task(user_client.send(request))
+        await hook_started.wait()
+
+        await tool_a.close()
+        allow_hook.set()
+        await send_task
+
+        assert len(captured_headers) == 1
+        assert "X-API-Key" not in captured_headers[0]
+    finally:
+        allow_hook.set()
+        if send_task is not None:
+            await send_task
+        await user_client.aclose()
+
+
 async def test_mcp_streamable_http_tool_keeps_header_hook_until_cancelled_close_finishes():
     """Caller cancellation must not remove the hook while lifecycle teardown continues."""
     import httpx

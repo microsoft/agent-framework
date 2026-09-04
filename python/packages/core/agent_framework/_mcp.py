@@ -3276,7 +3276,9 @@ class MCPStreamableHTTPTool(MCPTool):
             return
         request_hooks = self._header_hook_client.event_hooks["request"]
         if self._inject_headers_hook in request_hooks:
-            request_hooks.remove(self._inject_headers_hook)
+            self._header_hook_client.event_hooks["request"] = [
+                hook for hook in request_hooks if hook is not self._inject_headers_hook
+            ]
         self._header_hook_client = None
 
     async def _close_on_owner(self) -> None:
