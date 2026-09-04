@@ -270,6 +270,150 @@ public class ApprovalResponseBindingChatClientTests
         Assert.Contains(capture.Messages!.SelectMany(m => m.Contents), c => c is ToolApprovalResponseContent);
     }
 
+    [Fact]
+    public async Task GetResponseAsync_UnrelatedUserMessage_DoesNotConsumePendingEntryAsync()
+    {
+        // Arrange — an approval was surfaced, then the host sends a normal user message with the same session.
+        var session = new ChatClientAgentSession();
+        await RecordRequestAsync(session, new ToolApprovalRequestContent(RequestId, new FunctionCallContent("call1", "toolA")));
+        Assert.True(session.TryGetPendingToolApprovalRequests(out _));
+
+        var capture = new Capture();
+        var decorator = new ApprovalResponseBindingChatClient(CreateCapturingChatClient(capture));
+
+        // Act
+        await RunAsync(decorator, session, [new ChatMessage(ChatRole.User, "unrelated follow-up")]);
+
+        // Assert — pending approval authority must survive (#7872); only matching responses consume it.
+        Assert.True(session.TryGetPendingToolApprovalRequests(out var pending));
+        Assert.Equal(RequestId, Assert.Single(pending!).RequestId);
+        Assert.DoesNotContain(capture.Messages!.SelectMany(m => m.Contents), c => c is ToolApprovalResponseContent);
+    }
+
+    [Fact]
+    public async Task TryGetPendingToolApprovalRequests_SurvivesSessionStateRoundTripAsync()
+    {
+        // Arrange — a run stops on an approval request, then the session is persisted and reloaded.
+        var session = new ChatClientAgentSession();
+        var call = new FunctionCallContent("call1", "get_weather", new Dictionary<string, object?> { ["location"] = "Beijing" });
+        await RecordRequestAsync(session, new ToolApprovalRequestContent(RequestId, call));
+
+        var restored = new ChatClientAgentSession(
+            stateBag: AgentSessionStateBag.Deserialize(session.StateBag.Serialize()));
+
+        // Act
+        var found = restored.TryGetPendingToolApprovalRequests(out var pending);
+
+        // Assert — the host can discover the pending approval without reading private state bag keys.
+        Assert.True(found);
+        var request = Assert.Single(pending!);
+        Assert.Equal(RequestId, request.RequestId);
+        var pendingCall = Assert.IsType<FunctionCallContent>(request.ToolCall);
+        Assert.Equal("get_weather", pendingCall.Name);
+        Assert.Equal("call1", pendingCall.CallId);
+    }
+
+    [Fact]
+    public async Task TryGetPendingToolApprovalRequests_AfterResponseIsConsumed_ReturnsFalseAsync()
+    {
+        // Arrange — record a request, then answer it.
+        var session = new ChatClientAgentSession();
+        await RecordRequestAsync(session, new ToolApprovalRequestContent(RequestId, new FunctionCallContent("call1", "toolA")));
+        Assert.True(session.TryGetPendingToolApprovalRequests(out _));
+
+        var decorator = new ApprovalResponseBindingChatClient(CreateCapturingChatClient(new Capture()));
+        var approval = new ToolApprovalResponseContent(RequestId, approved: true, new FunctionCallContent("call1", "toolA"));
+
+        // Act
+        await RunAsync(decorator, session, [new ChatMessage(ChatRole.User, [approval])]);
+
+        // Assert — the answered request is no longer pending.
+        Assert.False(session.TryGetPendingToolApprovalRequests(out var pending));
+        Assert.Null(pending);
+    }
+
+    [Fact]
+    public void TryGetPendingToolApprovalRequests_NoApprovalState_ReturnsFalse()
+    {
+        Assert.False(new ChatClientAgentSession().TryGetPendingToolApprovalRequests(out var pending));
+        Assert.Null(pending);
+    }
+
+    [Fact]
+    public async Task TryGetPendingToolApprovalRequests_ReturnsDeepSnapshot_HostMutationDoesNotAffectBagAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        await RecordRequestAsync(
+            session,
+            new ToolApprovalRequestContent(
+                RequestId,
+                new FunctionCallContent("call1", "toolA", new Dictionary<string, object?> { ["amount"] = 1 })));
+
+        Assert.True(session.TryGetPendingToolApprovalRequests(out var pending));
+        var enumeratedCall = Assert.IsType<FunctionCallContent>(Assert.Single(pending!).ToolCall);
+
+        // Act — mutate the publicly enumerated instance.
+        enumeratedCall.Arguments!["amount"] = 9999999;
+
+        // Assert — bag snapshot used for binding is unchanged.
+        var capture = new Capture();
+        var decorator = new ApprovalResponseBindingChatClient(CreateCapturingChatClient(capture));
+        var response = new ToolApprovalResponseContent(
+            RequestId,
+            approved: true,
+            new FunctionCallContent("call1", "toolA", new Dictionary<string, object?> { ["amount"] = 9999999 }));
+        await RunAsync(decorator, session, [new ChatMessage(ChatRole.User, [response])]);
+
+        var forwarded = capture.Messages!.SelectMany(m => m.Contents).OfType<ToolApprovalResponseContent>().Single();
+        Assert.Equal(1, Assert.IsType<FunctionCallContent>(forwarded.ToolCall).Arguments!["amount"]);
+    }
+
+    [Fact]
+    public async Task CreatePendingApprovalRejections_KeepsPendingUntilResponsesAreConsumedAsync()
+    {
+        // Arrange — restore-style session: pending in the bag, no approval request in inbound history.
+        var session = new ChatClientAgentSession();
+        await RecordRequestAsync(
+            session,
+            new ToolApprovalRequestContent(RequestId, new FunctionCallContent("call1", "toolA")));
+
+        // Act — host drains by creating rejections (bag must remain for binding on the next run).
+        var responses = session.CreatePendingApprovalRejections(reason: "host drain");
+
+        // Assert — rejections are ready, but binding authority is still present.
+        var rejection = Assert.Single(responses);
+        Assert.Equal(RequestId, rejection.RequestId);
+        Assert.False(rejection.Approved);
+        Assert.Equal("host drain", rejection.Reason);
+        Assert.True(session.TryGetPendingToolApprovalRequests(out _));
+
+        // Submitting the rejections consumes the bag so FICC can emit terminal results (#7872).
+        var capture = new Capture();
+        var decorator = new ApprovalResponseBindingChatClient(CreateCapturingChatClient(capture));
+        await RunAsync(decorator, session, [new ChatMessage(ChatRole.User, [.. responses])]);
+
+        Assert.Contains(capture.Messages!.SelectMany(m => m.Contents), c => c is ToolApprovalResponseContent { Approved: false });
+        Assert.False(session.TryGetPendingToolApprovalRequests(out _));
+    }
+
+    [Fact]
+    public void ClearPendingToolApprovalRequests_RemovesBagEntry()
+    {
+        var session = new ChatClientAgentSession();
+        session.StateBag.SetValue(
+            ApprovalResponseBindingChatClient.StateBagKey,
+            new List<ToolApprovalRequestContent>
+            {
+                new(RequestId, new FunctionCallContent("call1", "toolA")),
+            },
+            AgentJsonUtilities.DefaultOptions);
+
+        Assert.True(session.ClearPendingToolApprovalRequests());
+        Assert.False(session.TryGetPendingToolApprovalRequests(out _));
+        Assert.False(session.ClearPendingToolApprovalRequests());
+    }
+
     private static async Task RecordRequestAsync(ChatClientAgentSession session, ToolApprovalRequestContent request)
     {
         var inner = CreateMockChatClient((_, _, _) =>
