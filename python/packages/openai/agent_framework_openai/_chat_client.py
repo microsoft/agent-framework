@@ -76,6 +76,7 @@ from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
 from openai.types.responses import (
     FunctionShellToolParam,
     ResponseCustomToolCall,
+    ResponseFunctionToolCallOutputItem,
     ResponseToolSearchCall,
     response_create_params,
 )
@@ -342,6 +343,63 @@ async def _open_event_stream(raw_response: Any) -> AsyncGenerator[Any]:
 
     # Already an event stream (or an unrecognized wrapper): iterate it directly.
     yield raw_response
+
+
+def _plain_function_call_output(output: Any) -> Any:
+    """Render provider content parts as plain data before stringifying a tool result.
+
+    ``function_call_output.output`` is either a string or a list of input-content parts
+    (text/image/file). Passing those provider models straight to
+    :meth:`_stringify_mcp_output` would fall through to ``json.dumps(..., default=str)`` and embed
+    a Python repr in the tool result. Dumping each part first keeps text extraction working and
+    turns non-text parts into readable JSON.
+    """
+    if output is None or isinstance(output, str):
+        return output
+    if isinstance(output, Sequence) and not isinstance(output, (str, bytes, bytearray)):
+        entries = cast(Sequence[Any], output)
+        plain: list[Any] = []
+        for entry in entries:
+            model_dump = getattr(entry, "model_dump", None)
+            plain.append(model_dump(exclude_none=True) if callable(model_dump) else entry)
+        return plain
+    return output
+
+
+def _function_call_output_has_result(item: Any) -> bool:
+    """True when a ``function_call_output`` item carries a result that can be paired.
+
+    ``.added`` can precede a populated ``output``, so an in-progress skeleton must not synthesize
+    an empty result. A blank ``call_id`` is rejected as well: these items are synthesized by the
+    hosting layer, and a result that cannot be paired to its call is dropped by transports and,
+    worse, re-sent as an unpairable ``function_call_output`` input item on the next turn.
+    """
+    if getattr(item, "output", None) is None:
+        return False
+    if not getattr(item, "call_id", None):
+        logger.debug("Skipping function_call_output with no call_id: item_id=%s", getattr(item, "id", None))
+        return False
+    return True
+
+
+def _claim_function_call_output(seen_item_ids: set[str] | None, item: Any) -> bool:
+    """Claim a ``function_call_output`` item for emission; return ``False`` if already claimed.
+
+    The Responses stream can surface the same output item on both ``response.output_item.added``
+    and ``response.output_item.done``. Whichever event first carries a populated ``output`` emits
+    the result, and this test-and-set keeps the other from producing a duplicate one. Keyed on the
+    item id rather than ``call_id``, which is not guaranteed to be unique forever. When no set is
+    supplied the item is always claimable, so a single event parsed on its own still yields output.
+    """
+    if seen_item_ids is None:
+        return True
+    item_id = getattr(item, "id", None)
+    if not isinstance(item_id, str) or not item_id:
+        return True
+    if item_id in seen_item_ids:
+        return False
+    seen_item_ids.add(item_id)
+    return True
 
 
 def _annotations_to_output_text(annotations: Sequence[Annotation] | None) -> list[dict[str, Any]]:
@@ -712,6 +770,7 @@ class RawOpenAIChatClient(
         if stream:
             function_call_ids: dict[int, tuple[str, str]] = {}
             seen_reasoning_delta_item_ids: set[str] = set()
+            seen_function_call_output_ids: set[str] = set()
             validated_options: dict[str, Any] | None = None
             # Captured once request options are validated/prepared so the streaming finalizer can
             # still parse the aggregated response into structured output after the stream completes.
@@ -750,6 +809,7 @@ class RawOpenAIChatClient(
                                     options=validated_options,
                                     function_call_ids=function_call_ids,
                                     seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
+                                    seen_function_call_output_ids=seen_function_call_output_ids,
                                 )
                                 if served_model is not None:
                                     update.model = served_model
@@ -780,6 +840,7 @@ class RawOpenAIChatClient(
                                         options=validated_options,
                                         function_call_ids=function_call_ids,
                                         seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
+                                        seen_function_call_output_ids=seen_function_call_output_ids,
                                     )
                         else:
                             raw_create_response = await client.responses.with_raw_response.create(
@@ -794,6 +855,7 @@ class RawOpenAIChatClient(
                                         options=validated_options,
                                         function_call_ids=function_call_ids,
                                         seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
+                                        seen_function_call_output_ids=seen_function_call_output_ids,
                                     )
                                     if served_model is not None:
                                         update.model = served_model
@@ -2628,6 +2690,32 @@ class RawOpenAIChatClient(
             raw_representation=item,
         )
 
+    def _parse_function_call_output_content(self, item: ResponseFunctionToolCallOutputItem) -> Content:
+        """Create function result content for a Responses ``function_call_output`` item.
+
+        A hosted tool that executes server-side -- for example a Foundry Toolbox dispatching
+        through its generic ``call_tool`` wrapper -- returns its result as a standalone
+        ``function_call_output`` item rather than on the originating call item. Parsing it keeps
+        the call/result pair intact for transports such as AG-UI, which otherwise sees a tool call
+        with no result and falls back to treating it as declaration-only (issue #8068).
+
+        ``output`` is either a string or a list of input-content parts, so it is normalized through
+        :meth:`_stringify_mcp_output` rather than JSON-encoding provider models.
+        """
+        additional_properties: dict[str, Any] = {"item_type": item.type, "status": item.status}
+        if item.id:
+            additional_properties["item_id"] = item.id
+        # `name` (and the other caller-attribution fields) only exist on newer openai SDKs; the
+        # declared floor of 2.25.0 ships only call_id/id/output/status/type.
+        if tool_name := getattr(item, "name", None):
+            additional_properties["name"] = tool_name
+        return Content.from_function_result(
+            call_id=item.call_id,
+            result=self._stringify_mcp_output(_plain_function_call_output(item.output)),
+            additional_properties=additional_properties,
+            raw_representation=item,
+        )
+
     # region Parse methods
     def _get_finish_reason_from_openai_response(self, response: Any) -> FinishReason | None:
         """Get the framework finish reason from a terminal Responses API response."""
@@ -2855,6 +2943,9 @@ class RawOpenAIChatClient(
                             raw_representation=item,
                         )
                     )
+                case "function_call_output":  # ResponseFunctionToolCallOutputItem
+                    if _function_call_output_has_result(item):
+                        contents.append(self._parse_function_call_output_content(item))
                 case "custom_tool_call":
                     contents.append(
                         self._parse_hosted_function_call_content(item, name=item.name, arguments=item.input)
@@ -2966,6 +3057,7 @@ class RawOpenAIChatClient(
         options: dict[str, Any],
         function_call_ids: dict[int, tuple[str, str]],
         seen_reasoning_delta_item_ids: set[str] | None = None,
+        seen_function_call_output_ids: set[str] | None = None,
     ) -> ChatResponseUpdate:
         """Parse an OpenAI Responses API streaming event into a ChatResponseUpdate."""
         metadata: dict[str, Any] = {}
@@ -3330,6 +3422,14 @@ class RawOpenAIChatClient(
                             )
                     case "web_search_call" | "file_search_call":
                         contents.append(self._parse_search_tool_call_content(event_item))
+                    case "function_call_output":  # ResponseFunctionToolCallOutputItem
+                        # Emitted from whichever of `.added` / `.done` first carries a populated
+                        # `output`; the item id is recorded so the other event cannot emit a second
+                        # result for the same item (issue #8068).
+                        if _function_call_output_has_result(event_item) and _claim_function_call_output(
+                            seen_function_call_output_ids, event_item
+                        ):
+                            contents.append(self._parse_function_call_output_content(event_item))
                     case _:
                         if getattr(event_item, "type", None) != _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
                             logger.debug("Unparsed event of type: %s: %s", event.type, event)
@@ -3534,6 +3634,18 @@ class RawOpenAIChatClient(
                             arguments=tool_search_call.arguments,
                         )
                     )
+                elif getattr(done_item, "type", None) == "function_call_output":
+                    # Counterpart to the `response.output_item.added` branch: whichever event first
+                    # carries a populated `output` emits the result, and the shared seen-id set
+                    # keeps the other from duplicating it (issue #8068).
+                    if _function_call_output_has_result(done_item) and _claim_function_call_output(
+                        seen_function_call_output_ids, done_item
+                    ):
+                        contents.append(
+                            self._parse_function_call_output_content(
+                                cast(ResponseFunctionToolCallOutputItem, done_item)
+                            )
+                        )
                 elif getattr(done_item, "type", None) == _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE:
                     pass
             case _:
