@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from ._workflow import Workflow
 
 from ._const import (
+    GLOBAL_KWARGS_KEY,
     RAW_CLIENT_KWARGS_KEY,
     RAW_FUNCTION_INVOCATION_KWARGS_KEY,
     WORKFLOW_RUN_KWARGS_KEY,
@@ -388,10 +389,16 @@ class WorkflowExecutor(Executor):
             raw_key = (
                 RAW_FUNCTION_INVOCATION_KWARGS_KEY if key == "function_invocation_kwargs" else RAW_CLIENT_KWARGS_KEY
             )
-            resolved = cast(
-                WorkflowInvocationKwargs | Mapping[str, Any] | None,
-                parent_kwargs.get(raw_key, parent_kwargs.get(key)),
-            )
+            raw_value = parent_kwargs.get(raw_key)
+            if raw_value is not None:
+                resolved = cast(WorkflowInvocationKwargs | Mapping[str, Any], raw_value)
+            else:
+                normalized: Any = parent_kwargs.get(key)
+                if isinstance(normalized, dict):
+                    normalized_dict = cast(dict[str, Any], normalized)
+                    if len(normalized_dict) == 1 and GLOBAL_KWARGS_KEY in normalized_dict:
+                        normalized = normalized_dict[GLOBAL_KWARGS_KEY]
+                resolved = cast(WorkflowInvocationKwargs | Mapping[str, Any] | None, normalized)
             if resolved is not None:
                 if key == "function_invocation_kwargs":
                     fi_kwargs = resolved
@@ -401,6 +408,7 @@ class WorkflowExecutor(Executor):
         # Run the sub-workflow and collect all events, passing parent kwargs
         result = await self.workflow.run(
             input_data,
+            tools=ctx.get_runtime_tools(),
             function_invocation_kwargs=fi_kwargs,
             client_kwargs=ci_kwargs,
         )
