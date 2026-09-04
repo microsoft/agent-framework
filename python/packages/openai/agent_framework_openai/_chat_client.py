@@ -345,6 +345,27 @@ async def _open_event_stream(raw_response: Any) -> AsyncGenerator[Any]:
     yield raw_response
 
 
+def _plain_function_call_output(output: Any) -> Any:
+    """Render provider content parts as plain data before stringifying a tool result.
+
+    ``function_call_output.output`` is either a string or a list of input-content parts
+    (text/image/file). Passing those provider models straight to
+    :meth:`_stringify_mcp_output` would fall through to ``json.dumps(..., default=str)`` and embed
+    a Python repr in the tool result. Dumping each part first keeps text extraction working and
+    turns non-text parts into readable JSON.
+    """
+    if output is None or isinstance(output, str):
+        return output
+    if isinstance(output, Sequence) and not isinstance(output, (str, bytes, bytearray)):
+        entries = cast(Sequence[Any], output)
+        plain: list[Any] = []
+        for entry in entries:
+            model_dump = getattr(entry, "model_dump", None)
+            plain.append(model_dump(exclude_none=True) if callable(model_dump) else entry)
+        return plain
+    return output
+
+
 def _function_call_output_has_result(item: Any) -> bool:
     """True when a ``function_call_output`` item carries a result that can be paired.
 
@@ -2684,11 +2705,13 @@ class RawOpenAIChatClient(
         additional_properties: dict[str, Any] = {"item_type": item.type, "status": item.status}
         if item.id:
             additional_properties["item_id"] = item.id
-        if item.name:
-            additional_properties["name"] = item.name
+        # `name` (and the other caller-attribution fields) only exist on newer openai SDKs; the
+        # declared floor of 2.25.0 ships only call_id/id/output/status/type.
+        if tool_name := getattr(item, "name", None):
+            additional_properties["name"] = tool_name
         return Content.from_function_result(
             call_id=item.call_id,
-            result=self._stringify_mcp_output(item.output),
+            result=self._stringify_mcp_output(_plain_function_call_output(item.output)),
             additional_properties=additional_properties,
             raw_representation=item,
         )

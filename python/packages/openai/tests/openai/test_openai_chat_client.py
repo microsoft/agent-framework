@@ -3647,6 +3647,61 @@ def test_parse_chunk_from_openai_function_call_output_without_call_id_is_skipped
     assert update.contents == []
 
 
+def test_parse_chunk_from_openai_function_call_output_on_sdk_floor_without_name_field() -> None:
+    """Parsing must not require `name`, absent from the item on the openai>=2.25.0 floor.
+
+    On SDK 2.25.0 `ResponseFunctionToolCallOutputItem` carries only call_id/id/output/status/type.
+    Touching `.name` directly would raise AttributeError out of the parse and fail the whole
+    response rather than merely dropping the result.
+    """
+
+    class FloorItem:
+        """Stand-in for the 2.25.0 item shape -- no `name` attribute at all."""
+
+        type = "function_call_output"
+        id = "fco_floor"
+        call_id = "call_floor"
+        output = "floor result"
+        status = "completed"
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = FloorItem()
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    assert len(update.contents) == 1
+    assert update.contents[0].result == "floor result"
+    assert update.contents[0].additional_properties is not None
+    assert "name" not in update.contents[0].additional_properties
+
+
+def test_parse_chunk_from_openai_function_call_output_serializes_non_text_parts_as_json() -> None:
+    """Non-text output parts serialize as JSON rather than an embedded Python repr."""
+    from openai.types.responses.response_input_image import ResponseInputImage
+    from openai.types.responses.response_input_text import ResponseInputText
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = _make_function_call_output_item([
+        ResponseInputText(type="input_text", text="see chart: "),
+        ResponseInputImage(type="input_image", detail="auto", image_url="https://example.com/c.png"),
+    ])
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    result = update.contents[0].result
+    assert result is not None
+    assert result.startswith("see chart: ")
+    # The image part is readable JSON, not `ResponseInputImage(...)`.
+    assert "ResponseInputImage(" not in result
+    assert "https://example.com/c.png" in result
+
+
 def test_parse_response_from_openai_with_function_call_output() -> None:
     """Non-streaming parsing agrees with streaming: the hosted tool result is not dropped."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
