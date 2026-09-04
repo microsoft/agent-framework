@@ -1579,74 +1579,8 @@ def test_skip_parsing_is_singleton() -> None:
 # endregion
 
 
-def test_tool_decorator_accepts_concurrency_group():
-    """Test that the @tool decorator accepts and stores the concurrency_group parameter."""
-
-    @tool(name="grouped_tool", concurrency_group="file_system")
-    def grouped_tool(x: int) -> int:
-        return x
-
-    assert isinstance(grouped_tool, FunctionTool)
-    assert grouped_tool.concurrency_group == "file_system"
-
-
-def test_function_invocation_configuration_accepts_execution_order():
-    """Test that execution_order is accepted and defaults to 'parallel'."""
-    config_seq = normalize_function_invocation_configuration({"tool_execution_order": "sequential"})
-    assert config_seq["tool_execution_order"] == "sequential"
-
-    config_default = normalize_function_invocation_configuration(None)
-    assert config_default["tool_execution_order"] == "parallel"
-
-
-async def test_try_execute_function_call_groups_concurrency_group():
-    """Tools in the same concurrency_group execute sequentially; ungrouped tools run concurrently."""
-    execution_order: list[str] = []
-
-    @tool(concurrency_group="files")
-    async def write_file(name: str):
-        execution_order.append("write_start")
-        await asyncio.sleep(0.05)
-        execution_order.append("write_end")
-        return f"wrote {name}"
-
-    @tool(concurrency_group="files")
-    async def read_file(name: str):
-        execution_order.append("read_start")
-        await asyncio.sleep(0.01)
-        execution_order.append("read_end")
-        return f"read {name}"
-
-    @tool()
-    async def ungrouped_tool():
-        execution_order.append("ungrouped_start")
-        await asyncio.sleep(0.02)
-        execution_order.append("ungrouped_end")
-        return "ungrouped"
-
-    # Create function call contents simulating a batch from the LLM
-    call_write = Content.from_function_call(call_id="1", name="write_file", arguments='{"name": "test"}')
-    call_read = Content.from_function_call(call_id="2", name="read_file", arguments='{"name": "test"}')
-    call_ungrouped = Content.from_function_call(call_id="3", name="ungrouped_tool", arguments="{}")
-
-    config = normalize_function_invocation_configuration(None)
-
-    results, should_terminate = await _try_execute_function_call_groups(
-        custom_args={},
-        function_calls=[call_write, call_read, call_ungrouped],
-        tools=[write_file, read_file, ungrouped_tool],
-        config=config,
-    )
-
-    assert not should_terminate
-    assert len(results) == 3
-
-    assert execution_order.index("write_end") < execution_order.index("read_start")
-    assert execution_order.index("ungrouped_start") < execution_order.index("write_end")
-
-
 async def test_try_execute_function_call_groups_sequential_config():
-    """When execution_order is 'sequential', ALL tools run one-by-one regardless of groups."""
+    """When allow_concurrent_invocation is False, ALL tools run one-by-one."""
     execution_order: list[str] = []
 
     @tool()
@@ -1665,16 +1599,13 @@ async def test_try_execute_function_call_groups_sequential_config():
 
     call_a = Content.from_function_call(call_id="1", name="tool_a", arguments="{}")
     call_b = Content.from_function_call(call_id="2", name="tool_b", arguments="{}")
-
-    config = normalize_function_invocation_configuration({"tool_execution_order": "sequential"})
-
+    config = normalize_function_invocation_configuration({"allow_concurrent_invocation": False})
     results, should_terminate = await _try_execute_function_call_groups(
         custom_args={},
         function_calls=[call_a, call_b],
         tools=[tool_a, tool_b],
         config=config,
     )
-
     assert not should_terminate
     assert execution_order == ["a_start", "a_end", "b_start", "b_end"]
 
