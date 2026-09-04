@@ -1,0 +1,50 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: telegram-foundry-hosted-agent
+services:
+  telegram-agent:
+    project: .
+    host: azure.ai.agent
+    language: python
+    uses:
+      - ai-project
+    codeConfiguration:
+      dependencyResolution: remote_build
+      entryPoint: main.py
+      runtime: python_3_13
+    container:
+      resources:
+        cpu: "0.5"
+        memory: 1Gi
+    description: >
+      Telegram bot routed through API Management to an Agent Framework agent
+      using the Foundry Invocations 2.0 protocol.
+    environmentVariables:
+      - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+        value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+      - name: AZURE_COSMOS_ENDPOINT
+        value: ${AZURE_COSMOS_ENDPOINT}
+      - name: AZURE_COSMOS_DATABASE_NAME
+        value: ${AZURE_COSMOS_DATABASE_NAME}
+      - name: AZURE_COSMOS_CONTAINER_NAME
+        value: ${AZURE_COSMOS_CONTAINER_NAME}
+      - name: KEY_VAULT_URL
+        value: ${KEY_VAULT_URL}
+      - name: ENABLE_SENSITIVE_DATA
+        value: ${ENABLE_SENSITIVE_DATA}
+    kind: hosted
+    metadata:
+      tags:
+        - Agent Framework
+        - Foundry Hosted Agent
+        - Invocations
+        - Telegram
+    name: telegram-agent
+    protocols:
+      - protocol: invocations
+        version: 2.0.0
+  ai-project:
+    host: azure.ai.project
+    endpoint: ${AZURE_AI_PROJECT_ENDPOINT}
+infra:
+  provider: microsoft.foundry

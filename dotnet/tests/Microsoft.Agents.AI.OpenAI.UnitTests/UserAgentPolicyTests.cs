@@ -9,10 +9,11 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.AI.OpenAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Chat;
 using OpenAI.Responses;
+using OpenAIClient = OpenAI.OpenAIClient;
+using OpenAIClientOptions = OpenAI.OpenAIClientOptions;
 
 namespace Microsoft.Agents.AI.OpenAI.UnitTests;
 
@@ -58,7 +59,7 @@ public sealed class UserAgentPolicyTests : IDisposable
     {
         // Arrange
         using var handler = new RecordingHandler();
-        AzureOpenAIClient client = CreateAzureOpenAIClient(handler);
+        OpenAIClient client = CreateAzureOpenAIClient(handler);
         ChatClientAgent agent = client.GetChatClient("deployment").AsAIAgent();
         FeatureUsageAssert.Reset();
 
@@ -74,7 +75,7 @@ public sealed class UserAgentPolicyTests : IDisposable
     {
         // Arrange
         using var handler = new RecordingHandler();
-        AzureOpenAIClient client = CreateAzureOpenAIClient(handler);
+        OpenAIClient client = CreateAzureOpenAIClient(handler);
         ChatClientAgent agent = client.GetResponsesClient().AsAIAgent(model: "deployment");
         FeatureUsageAssert.Reset();
 
@@ -95,7 +96,7 @@ public sealed class UserAgentPolicyTests : IDisposable
             Environment.SetEnvironmentVariable(FeatureMaskDisabledEnvironmentVariable, "true");
             FeatureUsageAssert.Reset();
             using var handler = new RecordingHandler();
-            AzureOpenAIClient client = CreateAzureOpenAIClient(handler);
+            OpenAIClient client = CreateAzureOpenAIClient(handler);
             ChatClientAgent agent = client.GetChatClient("deployment").AsAIAgent();
 
             // Act
@@ -126,12 +127,12 @@ public sealed class UserAgentPolicyTests : IDisposable
 #pragma warning disable CA5399
         var httpClient = new HttpClient(handler, disposeHandler: false);
 #pragma warning restore CA5399
-        var options = new global::OpenAI.OpenAIClientOptions
+        var options = new OpenAIClientOptions
         {
             Endpoint = new Uri(endpoint),
             Transport = new HttpClientPipelineTransport(httpClient),
         };
-        var client = new global::OpenAI.OpenAIClient(new ApiKeyCredential("test-key"), options);
+        var client = new OpenAIClient(new ApiKeyCredential("test-key"), options);
         ChatClientAgent agent = client.GetChatClient("model").AsAIAgent();
         FeatureUsageAssert.Reset();
 
@@ -146,16 +147,16 @@ public sealed class UserAgentPolicyTests : IDisposable
 
     public void Dispose() => FeatureUsageAssert.Reset();
 
-    private static AzureOpenAIClient CreateAzureOpenAIClient(HttpMessageHandler handler)
+    private static OpenAIClient CreateAzureOpenAIClient(HttpMessageHandler handler)
     {
 #pragma warning disable CA5399
         var httpClient = new HttpClient(handler, disposeHandler: false);
 #pragma warning restore CA5399
-        return new AzureOpenAIClient(
-            new Uri("https://resource.openai.azure.com/"),
+        return new OpenAIClient(
             new ApiKeyCredential("test-key"),
-            new AzureOpenAIClientOptions
+            new OpenAIClientOptions
             {
+                Endpoint = new Uri("https://resource.openai.azure.com/openai/v1/"),
                 Transport = new HttpClientPipelineTransport(httpClient),
             });
     }
