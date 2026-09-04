@@ -4,6 +4,7 @@
 
 import asyncio
 import json
+import logging
 import subprocess
 import sys
 from collections import Counter
@@ -31,7 +32,9 @@ from agent_framework import (
     SupportsAgentRun,
     ToolApprovalMiddleware,
     WorkflowBuilder,
+    WorkflowCheckpoint,
     WorkflowContext,
+    WorkflowExecutor,
     executor,
     handler,
     response_handler,
@@ -53,7 +56,11 @@ from agent_framework_ag_ui import (
 from agent_framework_ag_ui._agent import AgentFrameworkAgent
 from agent_framework_ag_ui._approval_lifecycle import ApprovalExecutionOwner, ApprovalLifecycle, ApprovalStatus
 from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore, approval_state_thread_id
-from agent_framework_ag_ui._workflow import AgentFrameworkWorkflow
+from agent_framework_ag_ui._workflow import (
+    _CHECKPOINT_REQUEST_OWNER_KEY,
+    AgentFrameworkWorkflow,
+    _OwnedWorkflowCheckpointStorage,
+)
 
 
 def _decode_sse_events(response: Any) -> list[dict[str, Any]]:
@@ -451,6 +458,480 @@ async def test_workflow_endpoint_accepts_canonical_tool_approval_resume() -> Non
     assert not [event for event in events if event.get("type") == "RUN_ERROR"]
     assert "Refund approved." == "".join(
         str(event.get("delta", "")) for event in events if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    )
+
+
+async def test_endpoint_workflow_as_agent_resumes_with_client_tools() -> None:
+    """A workflow exposed through AgentFrameworkAgent accepts client tools across approval resume."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, Any]) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345", "amount": 89.99},
+            )
+            await ctx.request_info(
+                Content.from_function_approval_request(id="approval-1", function_call=function_call),
+                Content,
+                request_id="approval-1",
+            )
+
+        @response_handler
+        async def approve(
+            self,
+            original_request: Content,
+            response: Content,
+            ctx: WorkflowContext[Any, Any],
+        ) -> None:
+            del original_request
+            arguments = response.function_call.parse_arguments() if response.function_call is not None else None
+            await ctx.yield_output(json.dumps(arguments, sort_keys=True))  # type: ignore[arg-type]
+
+    client_tool = {
+        "name": "submit_refund",
+        "description": "Submit a refund",
+        "parameters": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string"}, "amount": {"type": "number"}},
+        },
+    }
+    app = FastAPI()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    wrapped_agent = AgentFrameworkAgent(agent=workflow.as_agent())
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/workflow-as-agent")
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow-as-agent",
+            json={
+                "runId": "run-pause",
+                "threadId": "thread-client-tools",
+                "messages": [{"role": "user", "content": "Refund the order"}],
+                "tools": [client_tool],
+            },
+        )
+        pause_events = _decode_sse_events(pause_response)
+        assert not [event for event in pause_events if event.get("type") == "RUN_ERROR"]
+        pause_finished = [event for event in pause_events if event.get("type") == "RUN_FINISHED"]
+        assert _run_finished_interrupts(pause_finished[-1])[0]["id"] == "refund-call"
+
+        resume_response = client.post(
+            "/workflow-as-agent",
+            json={
+                "runId": "run-resume",
+                "threadId": "thread-client-tools",
+                "messages": [],
+                "tools": [client_tool],
+                "resume": [
+                    {
+                        "interruptId": "refund-call",
+                        "status": "resolved",
+                        "payload": {"accepted": True, "amount": 49.5},
+                    }
+                ],
+            },
+        )
+        resume_events = _decode_sse_events(resume_response)
+
+    assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
+    assert '{"amount": 49.5, "order_id": "12345"}' == "".join(
+        str(event.get("delta", "")) for event in resume_events if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    )
+
+
+async def test_endpoint_workflow_as_agent_cancellation_allows_next_turn() -> None:
+    """Cancelling a wrapped workflow approval consumes its pending request correlation."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval")
+            self.run_count = 0
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, Any]) -> None:
+            del message
+            self.run_count += 1
+            if self.run_count > 1:
+                await ctx.yield_output("Follow-up completed.")  # type: ignore[arg-type]
+                return
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345"},
+            )
+            await ctx.request_info(
+                Content.from_function_approval_request(id="approval-1", function_call=function_call),
+                Content,
+                request_id="approval-1",
+            )
+
+        @response_handler
+        async def approve(
+            self,
+            original_request: Content,
+            response: Content,
+            ctx: WorkflowContext[Any, Any],
+        ) -> None:
+            del original_request, response
+            await ctx.yield_output("Approval resolved.")  # type: ignore[arg-type]
+
+    client_tool = {
+        "name": "submit_refund",
+        "description": "Submit a refund",
+        "parameters": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string"}},
+        },
+    }
+    app = FastAPI()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    add_agent_framework_fastapi_endpoint(app, AgentFrameworkAgent(agent=workflow.as_agent()), path="/workflow-agent")
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow-agent",
+            json={
+                "runId": "run-pause",
+                "threadId": "thread-cancel",
+                "messages": [{"role": "user", "content": "Refund the order"}],
+                "tools": [client_tool],
+            },
+        )
+        pause_events = _decode_sse_events(pause_response)
+        assert not [event for event in pause_events if event.get("type") == "RUN_ERROR"]
+
+        cancel_response = client.post(
+            "/workflow-agent",
+            json={
+                "runId": "run-cancel",
+                "threadId": "thread-cancel",
+                "messages": [],
+                "tools": [client_tool],
+                "resume": [{"interruptId": "refund-call", "status": "cancelled"}],
+            },
+        )
+        cancel_events = _decode_sse_events(cancel_response)
+        assert not [event for event in cancel_events if event.get("type") == "RUN_ERROR"]
+
+        follow_up_response = client.post(
+            "/workflow-agent",
+            json={
+                "runId": "run-follow-up",
+                "threadId": "thread-cancel",
+                "messages": [{"role": "user", "content": "Continue without the refund"}],
+                "tools": [client_tool],
+            },
+        )
+        follow_up_events = _decode_sse_events(follow_up_response)
+
+    assert not [event for event in follow_up_events if event.get("type") == "RUN_ERROR"]
+    assert "Follow-up completed." == "".join(
+        str(event.get("delta", "")) for event in follow_up_events if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    )
+
+
+async def test_workflow_endpoint_nested_mixed_approval_resume(streaming_chat_client_stub) -> None:
+    """Cancelling one nested approval does not block its approved sibling."""
+
+    def function_call(order_id: str, call_id: str) -> Content:
+        return Content.from_function_call(
+            call_id=call_id,
+            name="submit_refund",
+            arguments={"order_id": order_id},
+        )
+
+    call_count = 0
+    executed_orders: list[str] = []
+
+    def submit_refund(order_id: str) -> str:
+        executed_orders.append(order_id)
+        return f"Refunded {order_id}"
+
+    async def stream_fn(messages: Any, options: Any, **kwargs: Any) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal call_count
+        del messages, options, kwargs
+        call_count += 1
+        if call_count == 1:
+            yield ChatResponseUpdate(
+                contents=[
+                    function_call("order-1", "refund-call-1"),
+                    function_call("order-2", "refund-call-2"),
+                ]
+            )
+            return
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Approved sibling completed.")])
+
+    child_agent = Agent(
+        name="nested-agent",
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                name="submit_refund",
+                description="Submit a refund",
+                func=submit_refund,
+                approval_mode="always_require",
+            )
+        ],
+    )
+    child_workflow = WorkflowBuilder(start_executor=child_agent).build()
+    parent_workflow = WorkflowBuilder(
+        start_executor=WorkflowExecutor(
+            child_workflow,
+            id="nested-workflow",
+            propagate_request=True,
+            allow_direct_output=True,
+        )
+    ).build()
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        parent_workflow,
+        path="/nested-workflow",
+    )
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/nested-workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "thread-nested-mixed",
+                "messages": [{"role": "user", "content": "Refund both orders"}],
+            },
+        )
+        pause_events = _decode_sse_events(pause_response)
+        pause_finished = [event for event in pause_events if event.get("type") == "RUN_FINISHED"]
+        pause_interrupts = _run_finished_interrupts(pause_finished[-1])
+        interrupt_ids_by_call_id = {interrupt["toolCallId"]: interrupt["id"] for interrupt in pause_interrupts}
+        assert set(interrupt_ids_by_call_id) == {
+            "refund-call-1",
+            "refund-call-2",
+        }, pause_events
+
+        resume_response = client.post(
+            "/nested-workflow",
+            json={
+                "runId": "run-resume",
+                "threadId": "thread-nested-mixed",
+                "messages": [],
+                "resume": [
+                    {"interruptId": interrupt_ids_by_call_id["refund-call-1"], "status": "cancelled"},
+                    {
+                        "interruptId": interrupt_ids_by_call_id["refund-call-2"],
+                        "status": "resolved",
+                        "payload": {"approved": True},
+                    },
+                ],
+            },
+        )
+
+    resume_events = _decode_sse_events(resume_response)
+    assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
+    assert "Approved sibling completed." == "".join(
+        str(event.get("delta", "")) for event in resume_events if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    )
+    assert call_count == 2
+    assert executed_orders == ["order-2"]
+
+
+async def test_endpoint_workflow_as_agent_rejection_reaches_response_handler() -> None:
+    """A rejected deferred approval remains typed until the wrapped workflow consumes it."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, Any]) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345"},
+            )
+            await ctx.request_info(
+                Content.from_function_approval_request(id="approval-1", function_call=function_call),
+                Content,
+                request_id="approval-1",
+            )
+
+        @response_handler
+        async def approve(
+            self,
+            original_request: Content,
+            response: Content,
+            ctx: WorkflowContext[Any, Any],
+        ) -> None:
+            del original_request
+            await ctx.yield_output(f"{response.type}:{response.approved}")  # type: ignore[arg-type]
+
+    client_tool = {
+        "name": "submit_refund",
+        "description": "Submit a refund",
+        "parameters": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string"}},
+        },
+    }
+    app = FastAPI()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    add_agent_framework_fastapi_endpoint(app, AgentFrameworkAgent(agent=workflow.as_agent()), path="/workflow-agent")
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow-agent",
+            json={
+                "runId": "run-pause",
+                "threadId": "thread-reject",
+                "messages": [{"role": "user", "content": "Refund the order"}],
+                "tools": [client_tool],
+            },
+        )
+        assert not [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_ERROR"]
+
+        reject_response = client.post(
+            "/workflow-agent",
+            json={
+                "runId": "run-reject",
+                "threadId": "thread-reject",
+                "messages": [],
+                "tools": [client_tool],
+                "resume": [
+                    {
+                        "interruptId": "refund-call",
+                        "status": "resolved",
+                        "payload": {"accepted": False},
+                    }
+                ],
+            },
+        )
+        reject_events = _decode_sse_events(reject_response)
+
+    assert not [event for event in reject_events if event.get("type") == "RUN_ERROR"]
+    assert "function_approval_response:False" == "".join(
+        str(event.get("delta", "")) for event in reject_events if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    )
+
+
+async def test_endpoint_workflow_as_agent_rejection_retries_after_transient_failure() -> None:
+    """A deferred rejection remains retryable until the wrapped workflow consumes it."""
+
+    class FailFirstResumeProvider(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__("fail-first-resume")
+            self.call_count = 0
+
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            del agent, session, context, state
+            self.call_count += 1
+            if self.call_count == 2:
+                raise RuntimeError("transient workflow failure")
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, Any]) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345"},
+            )
+            await ctx.request_info(
+                Content.from_function_approval_request(id="approval-1", function_call=function_call),
+                Content,
+                request_id="approval-1",
+            )
+
+        @response_handler
+        async def approve(
+            self,
+            original_request: Content,
+            response: Content,
+            ctx: WorkflowContext[Any, Any],
+        ) -> None:
+            del original_request
+            await ctx.yield_output(f"{response.type}:{response.approved}")  # type: ignore[arg-type]
+
+    provider = FailFirstResumeProvider()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    workflow_agent = workflow.as_agent(context_providers=[provider])
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        AgentFrameworkAgent(agent=workflow_agent),
+        path="/workflow-agent-retry",
+    )
+    resume = [
+        {
+            "interruptId": "refund-call",
+            "status": "resolved",
+            "payload": {"accepted": False},
+        }
+    ]
+    client_tool = {
+        "name": "submit_refund",
+        "description": "Submit a refund",
+        "parameters": {
+            "type": "object",
+            "properties": {"order_id": {"type": "string"}},
+        },
+    }
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow-agent-retry",
+            json={
+                "runId": "run-pause",
+                "threadId": "thread-reject-retry",
+                "messages": [{"role": "user", "content": "Refund the order"}],
+                "tools": [client_tool],
+            },
+        )
+        assert not [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_ERROR"]
+
+        failed_response = client.post(
+            "/workflow-agent-retry",
+            json={
+                "runId": "run-failed",
+                "threadId": "thread-reject-retry",
+                "messages": [],
+                "tools": [client_tool],
+                "resume": resume,
+            },
+        )
+        failed_errors = [event for event in _decode_sse_events(failed_response) if event.get("type") == "RUN_ERROR"]
+        assert len(failed_errors) == 1
+
+        retry_response = client.post(
+            "/workflow-agent-retry",
+            json={
+                "runId": "run-retry",
+                "threadId": "thread-reject-retry",
+                "messages": [],
+                "tools": [client_tool],
+                "resume": resume,
+            },
+        )
+
+    retry_events = _decode_sse_events(retry_response)
+    assert not [event for event in retry_events if event.get("type") == "RUN_ERROR"]
+    assert "function_approval_response:False" == "".join(
+        str(event.get("delta", "")) for event in retry_events if event.get("type") == "TEXT_MESSAGE_CONTENT"
     )
 
 
@@ -2379,6 +2860,392 @@ async def test_endpoint_agent_approval_resume_entry_executes_approved_tool():
     assert "outcome" not in [event for event in events if event.get("type") == "RUN_FINISHED"][-1]
 
 
+async def test_endpoint_agent_legacy_tool_message_uses_unique_pending_call_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Legacy tool messages remain usable only while their provider call id is unambiguous."""
+    executed: list[str] = []
+
+    def get_weather(city: str) -> str:
+        executed.append(city)
+        return f"Sunny in {city}"
+
+    weather_tool = FunctionTool(
+        name="get_weather",
+        description="Get the weather for a city",
+        func=get_weather,
+        approval_mode="always_require",
+    )
+    function_call = Content.from_function_call(
+        call_id="provider-weather",
+        name="get_weather",
+        arguments={"city": "Seattle"},
+        id="af-call-weather",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="af-call-weather",
+        function_call=function_call,
+    )
+    agent = StubAgent(
+        updates=[AgentResponseUpdate(contents=[approval_request], role="assistant")],
+        default_options={"tools": [weather_tool]},
+    )
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/approval")
+    client = TestClient(app)
+    pause = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": "thread-legacy-message",
+            "messages": [{"role": "user", "content": "Weather?"}],
+        },
+    )
+    assert pause.status_code == 200
+    agent.updates = [AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")]
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        response = client.post(
+            "/approval",
+            json={
+                "runId": "run-resume",
+                "threadId": "thread-legacy-message",
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "toolCalls": [
+                            {
+                                "id": "provider-weather",
+                                "type": "function",
+                                "function": {
+                                    "name": "get_weather",
+                                    "arguments": '{"city":"Seattle"}',
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "toolCallId": "provider-weather",
+                        "content": '{"accepted":true}',
+                    },
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert executed == ["Seattle"], events
+    assert "Translated a legacy AG-UI tool-message approval" in caplog.text
+
+
+async def test_endpoint_agent_legacy_tool_message_reuses_historical_confirm_changes_call_id() -> None:
+    """A sole pending local call may reuse an older synthetic confirmation call id."""
+    executed: list[str] = []
+
+    def guarded_tool(value: str) -> str:
+        executed.append(value)
+        return value
+
+    tool = FunctionTool(name="guarded_tool", description="Guarded", func=guarded_tool)
+    agent = StubAgent(
+        updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")],
+        default_options={"tools": [tool]},
+    )
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    wrapped_agent._approval_state_store.lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-reused-confirm-id",
+        interrupt_id="af-call-current",
+        call_id="provider-reused",
+        name="guarded_tool",
+        arguments='{"value":"current"}',
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/approval")
+
+    response = TestClient(app).post(
+        "/approval",
+        json={
+            "runId": "run-reused-confirm-id",
+            "threadId": "thread-reused-confirm-id",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "toolCalls": [
+                        {
+                            "id": "provider-reused",
+                            "type": "function",
+                            "function": {"name": "confirm_changes", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "toolCallId": "provider-reused", "content": '{"accepted":true}'},
+                {
+                    "role": "assistant",
+                    "toolCalls": [
+                        {
+                            "id": "provider-reused",
+                            "type": "function",
+                            "function": {"name": "guarded_tool", "arguments": '{"value":"current"}'},
+                        }
+                    ],
+                },
+                {"role": "tool", "toolCallId": "provider-reused", "content": '{"accepted":true}'},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert executed == ["current"], events
+    assert not [event for event in events if event.get("type") == "RUN_ERROR"]
+
+
+async def test_endpoint_agent_legacy_tool_message_rejects_reused_call_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A provider call id shared by retained occurrences cannot authorize either one."""
+    executed: list[str] = []
+
+    def first_tool() -> str:
+        executed.append("first")
+        return "first"
+
+    def second_tool() -> str:
+        executed.append("second")
+        return "second"
+
+    tools = [
+        FunctionTool(name="first_tool", description="First", func=first_tool),
+        FunctionTool(name="second_tool", description="Second", func=second_tool),
+    ]
+    agent = StubAgent(
+        updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")],
+        default_options={"tools": tools},
+    )
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    lifecycle = wrapped_agent._approval_state_store.lifecycle
+    lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-legacy-reused",
+        interrupt_id="approval-first",
+        call_id="provider-reused",
+        name="first_tool",
+        arguments="{}",
+    )
+    lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-legacy-reused",
+        interrupt_id="approval-second",
+        call_id="provider-reused",
+        name="second_tool",
+        arguments="{}",
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/approval")
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        response = TestClient(app).post(
+            "/approval",
+            json={
+                "runId": "run-legacy-reused",
+                "threadId": "thread-legacy-reused",
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "toolCalls": [
+                            {
+                                "id": "provider-reused",
+                                "type": "function",
+                                "function": {"name": "first_tool", "arguments": "{}"},
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "toolCallId": "provider-reused",
+                        "content": '{"accepted":true}',
+                    },
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert executed == []
+    assert [event for event in events if event.get("type") == "RUN_ERROR"]
+    assert "does not identify exactly one retained pending local occurrence" in events[-1]["message"]
+
+
+async def test_endpoint_agent_legacy_tool_message_cannot_collide_with_interrupt_id() -> None:
+    """An unknown provider call id cannot be reinterpreted as a canonical interrupt id."""
+    executed: list[str] = []
+
+    def guarded_tool() -> str:
+        executed.append("ran")
+        return "done"
+
+    tool = FunctionTool(name="guarded_tool", description="Guarded", func=guarded_tool)
+    agent = StubAgent(
+        updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")],
+        default_options={"tools": [tool]},
+    )
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    wrapped_agent._approval_state_store.lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-legacy-collision",
+        interrupt_id="af-call-secret",
+        call_id="provider-real",
+        name="guarded_tool",
+        arguments="{}",
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/approval")
+
+    response = TestClient(app).post(
+        "/approval",
+        json={
+            "runId": "run-legacy-collision",
+            "threadId": "thread-legacy-collision",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "toolCalls": [
+                        {
+                            "id": "af-call-secret",
+                            "type": "function",
+                            "function": {"name": "guarded_tool", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "actionExecutionId": "af-call-secret",
+                    "content": None,
+                    "result": {"accepted": True},
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert executed == []
+    events = _decode_sse_events(response)
+    assert events[-1]["code"] == "APPROVAL_RESUME_REQUIRED"
+
+
+async def test_endpoint_agent_legacy_tool_message_rejects_duplicate_decisions() -> None:
+    """Conflicting legacy decisions cannot select an earlier approval."""
+    executed: list[str] = []
+
+    def guarded_tool() -> str:
+        executed.append("ran")
+        return "done"
+
+    tool = FunctionTool(name="guarded_tool", description="Guarded", func=guarded_tool)
+    agent = StubAgent(
+        updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")],
+        default_options={"tools": [tool]},
+    )
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    wrapped_agent._approval_state_store.lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-legacy-duplicate",
+        interrupt_id="af-call-current",
+        call_id="provider-call",
+        name="guarded_tool",
+        arguments="{}",
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/approval")
+
+    response = TestClient(app).post(
+        "/approval",
+        json={
+            "runId": "run-legacy-duplicate",
+            "threadId": "thread-legacy-duplicate",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "toolCalls": [
+                        {
+                            "id": "provider-call",
+                            "type": "function",
+                            "function": {"name": "guarded_tool", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "toolCallId": "provider-call", "content": '{"accepted":true}'},
+                {"role": "tool", "toolCallId": "provider-call", "content": '{"accepted":false}'},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert executed == []
+    assert events[-1]["code"] == "APPROVAL_RESUME_INVALID"
+    assert "repeats call_id" in events[-1]["message"]
+
+
+async def test_endpoint_agent_historical_legacy_approval_cannot_authorize_newer_reused_call() -> None:
+    """A historical approval outside the submitted turn suffix remains inert."""
+    executed: list[str] = []
+
+    def dangerous_tool(value: str) -> str:
+        executed.append(value)
+        return value
+
+    tool = FunctionTool(name="dangerous_tool", description="Dangerous", func=dangerous_tool)
+    agent = StubAgent(
+        updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")],
+        default_options={"tools": [tool]},
+    )
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    wrapped_agent._approval_state_store.lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-historical-legacy",
+        interrupt_id="af-call-current",
+        call_id="provider-reused",
+        name="dangerous_tool",
+        arguments='{"value":"new"}',
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/approval")
+
+    response = TestClient(app).post(
+        "/approval",
+        json={
+            "runId": "run-historical-legacy",
+            "threadId": "thread-historical-legacy",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "toolCalls": [
+                        {
+                            "id": "provider-reused",
+                            "type": "function",
+                            "function": {
+                                "name": "old_tool",
+                                "arguments": '{"value":"old"}',
+                            },
+                        }
+                    ],
+                },
+                {"role": "tool", "toolCallId": "provider-reused", "content": '{"accepted":true}'},
+                {"role": "user", "content": "Continue without approving anything."},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert executed == []
+    assert events[-1]["code"] == "APPROVAL_RESUME_REQUIRED"
+
+
 async def test_endpoint_agent_approval_resume_remains_retryable_when_local_tool_is_temporarily_unavailable():
     """A local approval can be retried after its executor disappears before resume."""
     client, agent, executed_cities = _build_weather_approval_endpoint(snapshot_store=InMemoryAGUIThreadSnapshotStore())
@@ -2440,7 +3307,10 @@ async def test_endpoint_agent_approval_resume_releases_already_approved_sibling(
     pause_events = _decode_sse_events(pause_response)
     pause_finished = [event for event in pause_events if event.get("type") == "RUN_FINISHED"]
     interrupts = _run_finished_interrupts(pause_finished[-1])
-    assert [interrupt["id"] for interrupt in interrupts] == ["call_sensitive"]
+    assert len(interrupts) == 1
+    approval_id = interrupts[0]["id"]
+    assert approval_id.startswith("af-call-")
+    assert interrupts[0]["toolCallId"] == "call_sensitive"
     assert not [event for event in pause_events if event.get("type") == "TOOL_CALL_RESULT"]
 
     state["phase"] = "resume"
@@ -2450,7 +3320,7 @@ async def test_endpoint_agent_approval_resume_releases_already_approved_sibling(
             "runId": "run-resume",
             "threadId": "thread-mixed-batch",
             "messages": [],
-            "resume": [{"interruptId": "call_sensitive", "status": "resolved", "payload": {"accepted": True}}],
+            "resume": [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}],
         },
     )
 
@@ -2474,6 +3344,137 @@ async def test_endpoint_agent_approval_resume_releases_already_approved_sibling(
     assert sorted(replayed_call_ids) == ["call_sensitive", "call_weather"]
 
 
+async def test_endpoint_agent_approval_resume_distinguishes_hidden_siblings_with_reused_call_id(
+    streaming_chat_client_stub,
+) -> None:
+    """Distinct hidden occurrences sharing a provider call ID resume and execute once."""
+    executed: list[str] = []
+    state = {"phase": "pause"}
+
+    def guarded_tool() -> str:
+        executed.append("guarded")
+        return "guarded result"
+
+    def first_safe_tool() -> str:
+        executed.append("first-safe")
+        return "first safe result"
+
+    def second_safe_tool() -> str:
+        executed.append("second-safe")
+        return "second safe result"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        if state["phase"] == "pause":
+            yield ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        id="guarded-occurrence",
+                        call_id="provider-shared",
+                        name="guarded_tool",
+                        arguments="{}",
+                    ),
+                    Content.from_function_call(
+                        id="first-safe-occurrence",
+                        call_id="provider-shared",
+                        name="first_safe_tool",
+                        arguments="{}",
+                    ),
+                    Content.from_function_call(
+                        id="second-safe-occurrence",
+                        call_id="provider-shared",
+                        name="second_safe_tool",
+                        arguments="{}",
+                    ),
+                ],
+                role="assistant",
+            )
+            return
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")
+
+    agent = Agent(
+        name="test_agent",
+        instructions="Test",
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                name="guarded_tool",
+                description="Guarded tool",
+                func=guarded_tool,
+                approval_mode="always_require",
+            ),
+            FunctionTool(name="first_safe_tool", description="First safe tool", func=first_safe_tool),
+            FunctionTool(name="second_safe_tool", description="Second safe tool", func=second_safe_tool),
+        ],
+    )
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/approval")
+    client = TestClient(app)
+    thread_id = "thread-shared-provider-call"
+
+    pause_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": thread_id,
+            "messages": [{"role": "user", "content": "Run all three tools"}],
+        },
+    )
+
+    assert pause_response.status_code == 200
+    pause_events = _decode_sse_events(pause_response)
+    pause_finished = [event for event in pause_events if event.get("type") == "RUN_FINISHED"]
+    interrupts = _run_finished_interrupts(pause_finished[-1])
+    assert [(interrupt["id"], interrupt["toolCallId"]) for interrupt in interrupts] == [
+        ("guarded-occurrence", "provider-shared")
+    ]
+    assert executed == []
+
+    state["phase"] = "resume"
+    resume_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-resume",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": [
+                {
+                    "interruptId": "guarded-occurrence",
+                    "status": "resolved",
+                    "payload": {"accepted": True},
+                }
+            ],
+        },
+    )
+
+    assert resume_response.status_code == 200
+    resume_events = _decode_sse_events(resume_response)
+    assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
+    assert Counter(executed) == {"guarded": 1, "first-safe": 1, "second-safe": 1}
+    tool_results = [event for event in resume_events if event.get("type") == "TOOL_CALL_RESULT"]
+    assert Counter(event["content"] for event in tool_results) == {
+        "guarded result": 1,
+        "first safe result": 1,
+        "second safe result": 1,
+    }
+    assert {event["toolCallId"] for event in tool_results} == {"provider-shared"}
+
+    occurrences = wrapped_agent._approval_state_store.lifecycle.occurrences_for_thread(thread_id=thread_id)
+    assert {occurrence.identity.interrupt_id for occurrence in occurrences} == {
+        "guarded-occurrence",
+        "first-safe-occurrence",
+        "second-safe-occurrence",
+    }
+    assert {occurrence.identity.call_id for occurrence in occurrences} == {"provider-shared"}
+    assert len({occurrence.identity.occurrence_id for occurrence in occurrences}) == 3
+    assert {occurrence.status for occurrence in occurrences} == {ApprovalStatus.SETTLED}
+
+
 async def test_endpoint_agent_approval_resume_persists_replayable_tool_results(streaming_chat_client_stub):
     """Approved batches should hydrate with real results under original tool call ids."""
     client, executed, messages_received, state = _build_mixed_approval_batch_endpoint(
@@ -2491,7 +3492,11 @@ async def test_endpoint_agent_approval_resume_persists_replayable_tool_results(s
     )
     assert pause_response.status_code == 200
     pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
-    assert [interrupt["id"] for interrupt in _run_finished_interrupts(pause_finished[-1])] == ["call_sensitive"]
+    interrupts = _run_finished_interrupts(pause_finished[-1])
+    assert len(interrupts) == 1
+    approval_id = interrupts[0]["id"]
+    assert approval_id.startswith("af-call-")
+    assert interrupts[0]["toolCallId"] == "call_sensitive"
 
     state["phase"] = "resume"
     resume_response = client.post(
@@ -2500,7 +3505,7 @@ async def test_endpoint_agent_approval_resume_persists_replayable_tool_results(s
             "runId": "run-resume",
             "threadId": "thread-mixed-replay",
             "messages": [],
-            "resume": [{"interruptId": "call_sensitive", "status": "resolved", "payload": {"accepted": True}}],
+            "resume": [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}],
         },
     )
 
@@ -2570,7 +3575,11 @@ async def test_endpoint_agent_approval_resume_surfaces_queued_tool_approval(stre
     )
     assert pause_response.status_code == 200
     pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
-    assert [interrupt["id"] for interrupt in _run_finished_interrupts(pause_finished[-1])] == ["call_first"]
+    first_interrupts = _run_finished_interrupts(pause_finished[-1])
+    assert len(first_interrupts) == 1
+    first_approval_id = first_interrupts[0]["id"]
+    assert first_approval_id.startswith("af-call-")
+    assert first_interrupts[0]["toolCallId"] == "call_first"
     assert executed == []
 
     state["phase"] = "resume"
@@ -2580,7 +3589,7 @@ async def test_endpoint_agent_approval_resume_surfaces_queued_tool_approval(stre
             "runId": "run-resume-first",
             "threadId": "thread-queued-approval",
             "messages": [],
-            "resume": [{"interruptId": "call_first", "status": "resolved", "payload": {"accepted": True}}],
+            "resume": [{"interruptId": first_approval_id, "status": "resolved", "payload": {"accepted": True}}],
         },
     )
 
@@ -2589,7 +3598,11 @@ async def test_endpoint_agent_approval_resume_surfaces_queued_tool_approval(stre
     tool_results = [event for event in first_resume_events if event.get("type") == "TOOL_CALL_RESULT"]
     assert [(event["toolCallId"], event["content"]) for event in tool_results] == [("call_first", "first result")]
     first_resume_finished = [event for event in first_resume_events if event.get("type") == "RUN_FINISHED"]
-    assert [interrupt["id"] for interrupt in _run_finished_interrupts(first_resume_finished[-1])] == ["call_second"]
+    second_interrupts = _run_finished_interrupts(first_resume_finished[-1])
+    assert len(second_interrupts) == 1
+    second_approval_id = second_interrupts[0]["id"]
+    assert second_approval_id.startswith("af-call-")
+    assert second_interrupts[0]["toolCallId"] == "call_second"
     assert not [
         event
         for event in first_resume_events
@@ -2604,7 +3617,7 @@ async def test_endpoint_agent_approval_resume_surfaces_queued_tool_approval(stre
             "runId": "run-resume-second",
             "threadId": "thread-queued-approval",
             "messages": [],
-            "resume": [{"interruptId": "call_second", "status": "resolved", "payload": {"accepted": True}}],
+            "resume": [{"interruptId": second_approval_id, "status": "resolved", "payload": {"accepted": True}}],
         },
     )
 
@@ -2634,7 +3647,11 @@ async def test_endpoint_agent_approval_cancel_discards_queued_tool_approval(stre
     )
     assert pause_response.status_code == 200
     pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
-    assert [interrupt["id"] for interrupt in _run_finished_interrupts(pause_finished[-1])] == ["call_first"]
+    interrupts = _run_finished_interrupts(pause_finished[-1])
+    assert len(interrupts) == 1
+    approval_id = interrupts[0]["id"]
+    assert approval_id.startswith("af-call-")
+    assert interrupts[0]["toolCallId"] == "call_first"
     assert executed == []
 
     state["phase"] = "resume"
@@ -2644,7 +3661,7 @@ async def test_endpoint_agent_approval_cancel_discards_queued_tool_approval(stre
             "runId": "run-cancel",
             "threadId": "thread-queued-cancel",
             "messages": [],
-            "resume": [{"interruptId": "call_first", "status": "cancelled"}],
+            "resume": [{"interruptId": approval_id, "status": "cancelled"}],
         },
     )
 
@@ -2693,7 +3710,11 @@ async def test_endpoint_agent_approval_cancel_clears_queued_state_when_visible_e
     )
     assert pause_response.status_code == 200
     pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
-    assert [interrupt["id"] for interrupt in _run_finished_interrupts(pause_finished[-1])] == ["call_first"]
+    interrupts = _run_finished_interrupts(pause_finished[-1])
+    assert len(interrupts) == 1
+    approval_id = interrupts[0]["id"]
+    assert approval_id.startswith("af-call-")
+    assert interrupts[0]["toolCallId"] == "call_first"
     stored_state = wrapped_agent._approval_state_store.get_tool_approval_state("thread-queued-cancel-evicted")
     assert stored_state is not None
     assert "call_second" in json.dumps(stored_state)
@@ -2706,7 +3727,7 @@ async def test_endpoint_agent_approval_cancel_clears_queued_state_when_visible_e
             "runId": "run-cancel",
             "threadId": "thread-queued-cancel-evicted",
             "messages": [],
-            "resume": [{"interruptId": "call_first", "status": "cancelled"}],
+            "resume": [{"interruptId": approval_id, "status": "cancelled"}],
         },
     )
 
@@ -2753,7 +3774,11 @@ async def test_endpoint_agent_approval_resume_processes_collected_auto_approved_
     )
     assert pause_response.status_code == 200
     pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
-    assert [interrupt["id"] for interrupt in _run_finished_interrupts(pause_finished[-1])] == ["call_manual"]
+    interrupts = _run_finished_interrupts(pause_finished[-1])
+    assert len(interrupts) == 1
+    approval_id = interrupts[0]["id"]
+    assert approval_id.startswith("af-call-")
+    assert interrupts[0]["toolCallId"] == "call_manual"
     assert executed == []
 
     state["phase"] = "resume"
@@ -2763,7 +3788,7 @@ async def test_endpoint_agent_approval_resume_processes_collected_auto_approved_
             "runId": "run-resume",
             "threadId": "thread-auto-approval",
             "messages": [],
-            "resume": [{"interruptId": "call_manual", "status": "resolved", "payload": {"accepted": True}}],
+            "resume": [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}],
         },
     )
 
@@ -2794,7 +3819,11 @@ async def test_endpoint_agent_approval_rejection_releases_already_approved_sibli
     )
     assert pause_response.status_code == 200
     pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
-    assert [interrupt["id"] for interrupt in _run_finished_interrupts(pause_finished[-1])] == ["call_sensitive"]
+    interrupts = _run_finished_interrupts(pause_finished[-1])
+    assert len(interrupts) == 1
+    approval_id = interrupts[0]["id"]
+    assert approval_id.startswith("af-call-")
+    assert interrupts[0]["toolCallId"] == "call_sensitive"
 
     state["phase"] = "resume"
     resume_response = client.post(
@@ -2803,7 +3832,7 @@ async def test_endpoint_agent_approval_rejection_releases_already_approved_sibli
             "runId": "run-resume",
             "threadId": "thread-mixed-reject",
             "messages": [],
-            "resume": [{"interruptId": "call_sensitive", "status": "resolved", "payload": {"accepted": False}}],
+            "resume": [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": False}}],
         },
     )
 
@@ -2838,7 +3867,11 @@ async def test_endpoint_agent_approval_cancellation_does_not_release_already_app
     )
     assert pause_response.status_code == 200
     pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
-    assert [interrupt["id"] for interrupt in _run_finished_interrupts(pause_finished[-1])] == ["call_sensitive"]
+    interrupts = _run_finished_interrupts(pause_finished[-1])
+    assert len(interrupts) == 1
+    approval_id = interrupts[0]["id"]
+    assert approval_id.startswith("af-call-")
+    assert interrupts[0]["toolCallId"] == "call_sensitive"
 
     state["phase"] = "resume"
     cancel_response = client.post(
@@ -2847,7 +3880,7 @@ async def test_endpoint_agent_approval_cancellation_does_not_release_already_app
             "runId": "run-cancel",
             "threadId": "thread-mixed-cancel",
             "messages": [],
-            "resume": [{"interruptId": "call_sensitive", "status": "cancelled"}],
+            "resume": [{"interruptId": approval_id, "status": "cancelled"}],
         },
     )
 
@@ -4255,6 +5288,76 @@ async def test_endpoint_workflow_request_info_rejects_unowned_pending_interrupt(
         assert attacker_errors[0]["code"] == "WORKFLOW_RESUME_NOT_FOUND"
 
 
+async def test_owned_checkpoint_storage_stamps_owner_without_pending_events() -> None:
+    """The request owner is stamped on every save, not only when pending request events exist."""
+    storage = InMemoryCheckpointStorage()
+    owned_storage = _OwnedWorkflowCheckpointStorage(storage, ("scope-1", "thread-1"))
+    checkpoint = WorkflowCheckpoint(workflow_name="owned-workflow", graph_signature_hash="signature")
+    assert not checkpoint.pending_request_info_events
+
+    checkpoint_id = await owned_storage.save(checkpoint)
+
+    expected_owner = {"snapshot_scope": "scope-1", "thread_id": "thread-1"}
+    assert checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] == expected_owner
+    stored = await storage.load(checkpoint_id)
+    assert stored.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] == expected_owner
+
+
+async def test_endpoint_workflow_checkpoint_resume_rejects_foreign_clean_checkpoint():
+    """A checkpoint with no pending request events is still owned and cannot be resumed by another thread."""
+    storage = InMemoryCheckpointStorage()
+    first_app = FastAPI()
+    first_workflow = _build_flight_choice_workflow()
+    add_agent_framework_fastapi_endpoint(
+        first_app,
+        first_workflow,
+        path="/workflow",
+        checkpoint_storage=storage,
+    )
+
+    with TestClient(first_app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "victim-thread",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+    checkpoints = await storage.list_checkpoints(workflow_name=first_workflow.name)
+    clean_checkpoints = [checkpoint for checkpoint in checkpoints if not checkpoint.pending_request_info_events]
+    assert clean_checkpoints, "expected at least one checkpoint without pending request events"
+    checkpoint = min(clean_checkpoints, key=lambda checkpoint: checkpoint.timestamp)
+    assert checkpoint.metadata.get(_CHECKPOINT_REQUEST_OWNER_KEY) is not None
+
+    second_app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        second_app,
+        _build_flight_choice_workflow(),
+        path="/workflow",
+        checkpoint_storage=storage,
+    )
+
+    with TestClient(second_app) as client:
+        attacker_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-attacker",
+                "threadId": "attacker-thread",
+                "messages": [],
+                "forwardedProps": {"checkpointId": checkpoint.checkpoint_id},
+            },
+        )
+
+        attacker_events = _decode_sse_events(attacker_response)
+        attacker_errors = [event for event in attacker_events if event.get("type") == "RUN_ERROR"]
+        assert len(attacker_errors) == 1
+        assert attacker_errors[0]["code"] == "WORKFLOW_RESUME_NOT_FOUND"
+        assert not [event for event in attacker_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+
+
 async def test_endpoint_workflow_checkpoint_resume_rejects_threaded_resume_after_restart():
     """An explicitly threaded cold checkpoint resume fails closed when ownership is unavailable."""
     storage = InMemoryCheckpointStorage()
@@ -4374,6 +5477,97 @@ async def test_endpoint_workflow_checkpoint_resume_same_owner_after_restart():
         assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
         text_deltas = [event["delta"] for event in resume_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
         assert "Booked KLM" in text_deltas
+
+
+async def test_endpoint_workflow_checkpoint_cancellation_survives_cold_restore() -> None:
+    """Cold restore applies cancellation before resolving the remaining sibling."""
+
+    class BatchApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="batch-approval")
+
+        @handler
+        async def start(self, messages: list[Message], ctx: WorkflowContext[Any, Any]) -> None:
+            del messages
+            await ctx.request_info({"order_id": "order-1"}, dict, request_id="approval-1")
+            await ctx.request_info({"order_id": "order-2"}, dict, request_id="approval-2")
+
+        @response_handler
+        async def approve(
+            self,
+            original_request: dict[str, Any],
+            response: dict[str, Any],
+            ctx: WorkflowContext[Any, Any],
+        ) -> None:
+            assert response == {"approved": True}
+            await ctx.yield_output(f"Approved {original_request['order_id']}")  # type: ignore[arg-type]
+
+    def build_workflow() -> Any:
+        return WorkflowBuilder(
+            name="cold-checkpoint-cancellation",
+            start_executor=BatchApprovalExecutor(),
+        ).build()
+
+    storage = InMemoryCheckpointStorage()
+    first_app = FastAPI()
+    first_workflow = build_workflow()
+    add_agent_framework_fastapi_endpoint(
+        first_app,
+        first_workflow,
+        path="/workflow",
+        checkpoint_storage=storage,
+    )
+
+    with TestClient(first_app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "owner-thread",
+                "messages": [{"role": "user", "content": "Approve both orders"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+    checkpoints = await storage.list_checkpoints(workflow_name=first_workflow.name)
+    pending_checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint.pending_request_info_events]
+    assert pending_checkpoints
+    checkpoint_id = max(pending_checkpoints, key=lambda checkpoint: checkpoint.timestamp).checkpoint_id
+
+    second_app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        second_app,
+        build_workflow(),
+        path="/workflow",
+        checkpoint_storage=storage,
+    )
+
+    with TestClient(second_app) as client:
+        cancel_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-cancel",
+                "threadId": "owner-thread",
+                "messages": [],
+                "forwardedProps": {"checkpointId": checkpoint_id},
+                "resume": [
+                    {"interruptId": "approval-1", "status": "cancelled"},
+                    {
+                        "interruptId": "approval-2",
+                        "status": "resolved",
+                        "payload": {"approved": True},
+                    },
+                ],
+            },
+        )
+
+    cancel_events = _decode_sse_events(cancel_response)
+    assert not [event for event in cancel_events if event.get("type") == "RUN_ERROR"]
+    finished = [event for event in cancel_events if event.get("type") == "RUN_FINISHED"]
+    assert finished[-1].get("outcome") is None
+    assert "Approved order-2" == "".join(
+        str(event.get("delta", "")) for event in cancel_events if event.get("type") == "TEXT_MESSAGE_CONTENT"
+    )
 
 
 async def test_endpoint_workflow_checkpoint_resume_uses_checkpoint_owner_not_live_reused_id():
@@ -7329,7 +8523,11 @@ async def test_endpoint_agent_approval_deferred_provider_tool_executes(streaming
     )
     assert pause_response.status_code == 200
     pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
-    assert [interrupt["id"] for interrupt in _run_finished_interrupts(pause_finished[-1])] == ["call_provider"]
+    interrupts = _run_finished_interrupts(pause_finished[-1])
+    assert len(interrupts) == 1
+    approval_id = interrupts[0]["id"]
+    assert approval_id.startswith("af-call-")
+    assert interrupts[0]["toolCallId"] == "call_provider"
     assert side_effects == []
 
     # Resume with approval: the deferred provider tool runs during agent.run.
@@ -7340,7 +8538,7 @@ async def test_endpoint_agent_approval_deferred_provider_tool_executes(streaming
             "runId": "run-resume",
             "threadId": "thread-provider",
             "messages": [],
-            "resume": [{"interruptId": "call_provider", "status": "resolved", "payload": {"accepted": True}}],
+            "resume": [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}],
         },
     )
     assert resume_response.status_code == 200

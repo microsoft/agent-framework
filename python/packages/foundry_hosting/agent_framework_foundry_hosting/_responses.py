@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ipaddress
 import json
 import logging
 import os
+import re
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import Generic, Literal, TypeVar, cast
+from typing import Generic, Literal, TypeGuard, TypeVar, cast
+from urllib.parse import urlparse
 
 from agent_framework import (
     AgentResponseUpdate,
@@ -63,6 +66,7 @@ from azure.ai.agentserver.responses.streaming._builders import (
     OutputItemMcpCallBuilder,
     OutputItemMessageBuilder,
     ReasoningSummaryPartBuilder,
+    RefusalContentBuilder,
     TextContentBuilder,
 )
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
@@ -81,7 +85,13 @@ from ._state_store import (
 
 logger = logging.getLogger(__name__)
 
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
+
+
+def _is_refusal_text_content(content: Content) -> bool:
+    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
 
 
 def _validate_checkpoint_context_id(context_id: str) -> None:
@@ -251,11 +261,51 @@ _LATEST_CHECKPOINT_ID_KEY = "_last_checkpoint_id"
 # Consent-URL error code returned by the Foundry MCP gateway when calling `/list`
 CONSENT_ERROR_CODE = -32006
 
+_OAUTH_HOST_PATTERN = re.compile(r"^[A-Za-z0-9._~-]+$")
+
 
 @dataclass
 class ConsentError:
     name: str
     consent_url: str
+
+
+def _is_safe_oauth_consent_link(consent_link: object) -> TypeGuard[str]:
+    """Return whether a consent link is an absolute HTTPS URL safe to expose as an action."""
+    if not isinstance(consent_link, str) or not consent_link:
+        return False
+    if any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in consent_link):
+        return False
+
+    try:
+        parsed = urlparse(consent_link)
+        hostname = parsed.hostname
+        _ = parsed.port
+    except ValueError:
+        return False
+
+    if parsed.scheme.lower() != "https" or not hostname or parsed.username is not None or parsed.password is not None:
+        return False
+
+    if "%" in hostname:
+        return False
+    authority = parsed.netloc
+    if authority.startswith("["):
+        closing_bracket = authority.find("]")
+        if closing_bracket == -1:
+            return False
+        ipv6_literal = authority[1:closing_bracket]
+        suffix = authority[closing_bracket + 1 :]
+        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
+            return False
+        try:
+            ipaddress.IPv6Address(ipv6_literal)
+        except ValueError:
+            return False
+        return True
+    if "[" in authority or "]" in authority or ":" in hostname:
+        return False
+    return _OAUTH_HOST_PATTERN.fullmatch(hostname) is not None
 
 
 def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
@@ -336,6 +386,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
         checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
         function_approval_store_provider: StoreProvider[FunctionApprovalStore] | None = None,
+        history_source: Literal["agent_server", "agent"] = "agent_server",
         **kwargs: Any,
     ) -> None:
         """Initialize a ResponsesHostServer.
@@ -351,21 +402,31 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 If not provided, a default `CheckpointStoreProvider` will be used.
             function_approval_store_provider: Optional provider for function approval storage.
                 If not provided, a default `FunctionApprovalStoreProvider` will be used.
+            history_source: Source of conversation history supplied to the model for regular agents.
+                `"agent_server"` (default) uses the transcript from the configured response store,
+                requires a `RawAgent` whose client declares `STORES_BY_DEFAULT`, rejects load-enabled
+                agent history providers, and disables downstream service storage.
+                `"agent"` passes only the current request input and preserves the agent's normal
+                history-provider or service-storage behavior. AgentServer still manages Responses
+                API persistence through `store` in both modes.
             **kwargs: Additional keyword arguments.
 
         Note:
-            1. The agent must not have a history provider with `load_messages=True`,
-               because history is managed by the hosting infrastructure.
-            2. The agent must not have any context providers that maintain context
-               in memory, because the hosting environment may get deactivated between
-               requests, and any in-memory context would be lost.
-            3. Resiliency (resilient_background=True) is ONLY supported for workflows; constructing this
+            1. When `history_source="agent_server"`, the agent must not have a history provider
+               with `load_messages=True`, because history is managed by the hosting infrastructure.
+            2. Context providers must not keep required state only on their Python instances,
+               because the hosting environment may get deactivated between requests. Provider
+               state carried by `AgentSession`, including `InMemoryHistoryProvider` messages in
+               `history_source="agent"` mode, is persisted by the configured session store.
+            3. The server owns the supplied agent instance and may add hosting-specific providers.
+               Do not reuse the same agent with another host or invoke it directly after construction.
+            4. Resiliency (resilient_background=True) is ONLY supported for workflows; constructing this
                server with a non-workflow agent and `resilient_background=True` raises `RuntimeError`.
                When resiliency is enabled, and the server crashes mid-response:
                - Background responses are automatically re-invoked on server restart (client won't see the crash).
                - Stream events are preserved for client reconnection.
                - State is maintained across crashes.
-            4. Steering (steerable_conversations=True) is ONLY supported for non-workflow agents; constructing
+            5. Steering (steerable_conversations=True) is ONLY supported for non-workflow agents; constructing
                this server with a workflow agent and `steerable_conversations=True` raises `RuntimeError`.
                Steering a workflow is conceptually undefined -- a workflow's graph may have loops or parallel
                branches with no single well-defined "current point" to cancel and resume from, unlike an
@@ -374,32 +435,83 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                collected, and that isn't guaranteed to have happened in time.
 
         Raises:
-            RuntimeError: If `resilient_background=True` is requested for a non-workflow agent, or if
+            ValueError: If `history_source` is not supported.
+            RuntimeError: If the agent configuration conflicts with the selected history source,
+                `resilient_background=True` is requested for a non-workflow agent, or
                 `steerable_conversations=True` is requested for a workflow agent.
         """
+        if history_source not in ("agent_server", "agent"):
+            raise ValueError("history_source must be either 'agent_server' or 'agent'.")
+
+        is_workflow_agent = isinstance(agent, WorkflowAgent)
+        if is_workflow_agent and agent.workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
+            raise RuntimeError(
+                "There should not be a checkpoint storage already present in the workflow agent. "
+                "The hosting infrastructure will manage checkpoints instead."
+            )
+
+        resilient_background = bool(options and options.resilient_background)
+        if resilient_background and not is_workflow_agent:
+            raise RuntimeError(
+                "resilient_background=True is only supported for workflow agents. "
+                "Crash recovery cannot be provided for non-workflow agents."
+            )
+        if options and options.steerable_conversations and is_workflow_agent:
+            raise RuntimeError(
+                "steerable_conversations=True is only supported for non-workflow agents. "
+                "Steering cannot be provided reliably for workflow agents."
+            )
+
+        uses_agent_server_history = history_source == "agent_server"
+        client_stores_by_default = False
+        if uses_agent_server_history and not is_workflow_agent:
+            if not isinstance(agent, RawAgent):
+                raise RuntimeError(
+                    "history_source='agent_server' requires a RawAgent so hosting can enforce downstream "
+                    "storage options. Construct ResponsesHostServer with history_source='agent' for a custom "
+                    "SupportsAgentRun implementation."
+                )
+            for provider in agent.context_providers:
+                if isinstance(provider, HistoryProvider) and provider.load_messages:
+                    if _is_hosted_responses_history_sentinel(provider):
+                        continue
+                    raise RuntimeError(
+                        "AgentServer response history is enabled, but the agent has a HistoryProvider "
+                        "with load_messages=True. Remove that provider or construct ResponsesHostServer "
+                        "with history_source='agent' to use the agent's regular history setup."
+                    )
+            service_continuation_options = [
+                name
+                for name in ("conversation_id", "previous_response_id", "conversation")
+                if agent.default_options.get(name) is not None
+            ]
+            if service_continuation_options:
+                raise RuntimeError(
+                    "AgentServer response history is enabled, but the agent has downstream service continuation "
+                    f"option(s): {', '.join(service_continuation_options)}. Remove them or construct "
+                    "ResponsesHostServer with history_source='agent' to resume the downstream service conversation."
+                )
+            stores_by_default = getattr(cast(Any, agent).client, "STORES_BY_DEFAULT", None)
+            if not isinstance(stores_by_default, bool):
+                raise RuntimeError(
+                    "history_source='agent_server' requires the agent's chat client to declare "
+                    "STORES_BY_DEFAULT so hosting can enforce downstream storage behavior."
+                )
+            client_stores_by_default = stores_by_default
+
+        # No caller-owned agent state is mutated until all validation and base-host construction succeed.
         super().__init__(prefix=prefix, options=options, store=store, **kwargs)
 
-        for provider in getattr(agent, "context_providers", []):
-            if isinstance(provider, HistoryProvider) and provider.load_messages:
-                if _is_hosted_responses_history_sentinel(provider):
-                    continue
-                raise RuntimeError(
-                    "There shouldn't be a history provider with `load_messages=True` already present. "
-                    "History is managed by the hosting infrastructure."
-                )
-
-        self._is_workflow_agent = False
-        if isinstance(agent, WorkflowAgent):
-            if agent.workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
-                raise RuntimeError(
-                    "There should not be a checkpoint storage already present in the workflow agent. "
-                    "The hosting infrastructure will manage checkpoints instead."
-                )
-            self._is_workflow_agent = True
+        self._uses_agent_server_history = uses_agent_server_history
+        self._client_stores_by_default = client_stores_by_default
+        self._is_workflow_agent = is_workflow_agent
+        self._resilient_background = resilient_background
 
         self._uses_hosted_responses_history = False
-        if not self._is_workflow_agent and isinstance(agent, RawAgent):
+        if self._uses_agent_server_history and not self._is_workflow_agent and isinstance(agent, RawAgent):
             self._uses_hosted_responses_history = True
+            if not self._client_stores_by_default:
+                agent.default_options.pop("store", None)
             if not any(
                 _is_hosted_responses_history_sentinel(provider)
                 for provider in cast(Sequence[ContextProvider], agent.context_providers)
@@ -429,21 +541,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if function_approval_store_provider is None
             else function_approval_store_provider
         )
-
-        # Resiliency check: fail loud rather than silently downgrading to a non-recoverable row.
-        self._resilient_background = bool(options and options.resilient_background)
-        if self._resilient_background and not self._is_workflow_agent:
-            raise RuntimeError(
-                "resilient_background=True is only supported for workflow agents. "
-                "Crash recovery cannot be provided for non-workflow agents."
-            )
-
-        # Steering check: steering a workflow is conceptually undefined and also impractical today.
-        if options and options.steerable_conversations and self._is_workflow_agent:
-            raise RuntimeError(
-                "steerable_conversations=True is only supported for non-workflow agents. "
-                "Steering cannot be provided reliably for workflow agents."
-            )
 
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
         # the first request rather than at server startup, so that authentication
@@ -520,6 +617,49 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     yield event
                 return
 
+            invalid_consent = next(
+                (
+                    consent_error
+                    for consent_error in consent_errors_to_emit
+                    if not _is_safe_oauth_consent_link(consent_error.consent_url)
+                ),
+                None,
+            )
+            if invalid_consent is not None:
+                validation_error = ValueError(
+                    f"OAuth consent request for tool '{invalid_consent.name}' must include a safe HTTPS consent link."
+                )
+                logger.error("%s", validation_error)
+                for event in self._emit_failure(response_event_stream, None, validation_error):
+                    yield event
+                return
+
+            if not self._is_workflow_agent:
+                try:
+                    request_context = get_request_context()
+                    session_storage = self._session_storage_provider.get_store(
+                        config=self.config, platform_context=request_context
+                    )
+                    previous_response_id = request.get("previous_response_id")
+                    session_load_id = context.conversation_id or previous_response_id
+                    session = await session_storage.get(session_load_id) if session_load_id is not None else None
+                    if session is None:
+                        if previous_response_id is not None and context.conversation_id is None:
+                            raise RuntimeError(
+                                "Cannot find an existing agent session for "
+                                f"previous_response_id={previous_response_id}."
+                            )
+                        session = self._agent.create_session()
+                    await session_storage.set(context.conversation_id or context.response_id, session)
+                except Exception as save_error:
+                    logger.error(
+                        "Failed to persist the Agent Framework session for OAuth consent",
+                        exc_info=(type(save_error), save_error, save_error.__traceback__),
+                    )
+                    for event in self._emit_failure(response_event_stream, None, save_error):
+                        yield event
+                    return
+
             for consent_error in consent_errors_to_emit:
                 logger.warning("Consent URL for tool '%s': %s", consent_error.name, consent_error.consent_url)
                 oauth_item = OAuthConsentRequestOutputItem(
@@ -533,9 +673,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 yield builder.emit_added(oauth_item)
                 yield builder.emit_done(oauth_item)
 
-            yield response_event_stream.emit_incomplete(
-                reason=f"OAuth consent required for {len(consent_errors_to_emit)} tool(s)."
-            )
+            yield response_event_stream.emit_incomplete()
             return
 
         tracker = _OutputItemTracker(response_event_stream)
@@ -557,7 +695,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             for event in tracker.close():
                 yield event
 
-            yield response_event_stream.emit_completed(usage=tracker.usage)
+            if tracker.oauth_consent_requested:
+                yield response_event_stream.emit_incomplete(usage=tracker.usage)
+            else:
+                yield response_event_stream.emit_completed(usage=tracker.usage)
         except Exception as ex:
             logger.error("Failed to produce response for agent", exc_info=(type(ex), ex, ex.__traceback__))
             for event in tracker.close():
@@ -615,26 +756,38 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         request_interrupted = False
 
         try:
-            if self._uses_hosted_responses_history:
+            if self._uses_agent_server_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
+                # A restored service ID belongs to the downstream model service. Replaying the
+                # AgentServer transcript while resuming that service history would duplicate every
+                # prior turn, so AgentServer-history mode always starts the model call statelessly.
+                session.service_session_id = None
 
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
 
-            history = await context.get_history()
+            history_messages: list[Message] = []
+            if self._uses_agent_server_history:
+                history = await context.get_history()
+                history_messages = await _output_items_to_messages(history, approval_storage=approval_storage)
             run_kwargs: dict[str, Any] = {
-                "messages": [
-                    *(await _output_items_to_messages(history, approval_storage=approval_storage)),
-                    *input_messages,
-                ],
+                "messages": [*history_messages, *input_messages],
                 "session": session,
             }
             chat_options, are_options_set = _to_chat_options(request)
+            if self._uses_agent_server_history:
+                if self._client_stores_by_default:
+                    # The response provider already owns the transcript used for this run. Keep a
+                    # storing downstream service stateless so it cannot become a second history source.
+                    chat_options["store"] = False
+                else:
+                    # Do not pass a storage option to clients that do not advertise support for it.
+                    chat_options.pop("store", None)
 
-            if are_options_set and not isinstance(self._agent, RawAgent):
-                logger.warning("Agent doesn't support runtime options. They will be ignored.")
-            else:
+            if isinstance(self._agent, RawAgent):
                 run_kwargs["options"] = chat_options
+            elif are_options_set:
+                logger.warning("Agent doesn't support runtime options. They will be ignored.")
 
             # Non-workflow agents can't be resilient, so there is no exit_for_recovery path here:
             # both shutdown and steering/cancel just wind the turn down once observed.
@@ -662,8 +815,22 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         finally:
             if self._uses_hosted_responses_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
+
+            # A service ID here means the client stored the turn despite the forced `store=False`.
+            # Do not persist a session that could resume that unreconciled history on a later turn.
+            stored_output_violation = self._uses_agent_server_history and session.service_session_id is not None
+            if stored_output_violation:
+                misconfigured = RuntimeError(
+                    "The agent's chat client stored this turn server-side while AgentServer response history "
+                    "is supplying the conversation. Configure the client to honor store=False, or construct "
+                    "ResponsesHostServer with history_source='agent' to use the agent's regular history setup."
+                )
+                logger.error("%s", misconfigured)
+                if request_failure is None and not request_interrupted:
+                    request_failure = misconfigured
             try:
-                await session_storage.set(session_save_id, session)
+                if not stored_output_violation:
+                    await session_storage.set(session_save_id, session)
             except Exception as save_error:
                 save_failure = save_error
                 if request_interrupted:
@@ -951,12 +1118,24 @@ class _OutputItemTracker:
         # Builder state — only one is active at a time
         self._message_item: OutputItemMessageBuilder | None = None
         self._text_content: TextContentBuilder | None = None
+        self._refusal_content: RefusalContentBuilder | None = None
         self._reasoning_item: OutputItemBuilder | None = None
         self._summary_part: ReasoningSummaryPartBuilder | None = None
         self._reasoning_encrypted_content: str | None = None
         self._fc_builder: OutputItemFunctionCallBuilder | None = None
         self._mcp_builder: OutputItemMcpCallBuilder | None = None
         self._outstanding_function_calls: dict[str, str | None] = {}
+        self._oauth_consent_requests: set[tuple[str, str]] = set()
+        for item in stream.response.get("output", []):
+            if not isinstance(item, Mapping):
+                continue
+            persisted_item = cast(Mapping[str, Any], item)
+            if persisted_item.get("type") != "oauth_consent_request":
+                continue
+            consent_link = persisted_item.get("consent_link")
+            server_label = persisted_item.get("server_label")
+            if isinstance(consent_link, str) and isinstance(server_label, str):
+                self._oauth_consent_requests.add((consent_link, server_label))
 
     @property
     def usage(self) -> ResponseUsage | None:
@@ -980,6 +1159,11 @@ class _OutputItemTracker:
             total_tokens=int(total_tokens) if total_tokens is not None else input_tokens + output_tokens,
         )
 
+    @property
+    def oauth_consent_requested(self) -> bool:
+        """Return whether this response emitted an OAuth consent request."""
+        return bool(self._oauth_consent_requests)
+
     async def handle(
         self,
         content: Content,
@@ -998,14 +1182,17 @@ class _OutputItemTracker:
             approval_storage: Used for content types that fall back to one-shot emission
                 (anything not recognized as a streaming delta type) to save/load approval requests.
         """
-        if content.type == "text" and content.text is not None:
-            if self._active_type != "text" or (
-                message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
-            ):
-                for event in self._close():
-                    yield event
-                for event in self._open_message():
-                    yield event
+        if _is_refusal_text_content(content) and content.text is not None:
+            for event in self._ensure_message_content("refusal", message_id):
+                yield event
+            self._active_message_id = message_id
+            self._accumulated.append(content.text)
+            if self._refusal_content is not None:
+                yield self._refusal_content.emit_delta(content.text)
+
+        elif content.type == "text" and content.text is not None:
+            for event in self._ensure_message_content("text", message_id):
+                yield event
             self._active_message_id = message_id
             self._accumulated.append(content.text)
             if self._text_content is not None:
@@ -1039,7 +1226,7 @@ class _OutputItemTracker:
                     yield event
                 for event in self._open_function_call(content):
                     yield event
-            args_str = _arguments_to_str(content.arguments)
+            args_str = _json_safe_to_str(content.arguments)
             self._accumulated.append(args_str)
             if self._fc_builder is not None:
                 yield self._fc_builder.emit_arguments_delta(args_str)
@@ -1049,7 +1236,7 @@ class _OutputItemTracker:
                 yield event
             async for event in self._stream.output_item_function_call_output(
                 content.call_id,  # type: ignore[arg-type]
-                str(content.result or ""),
+                _json_safe_to_str(content.result),
             ):
                 yield event
             if content.call_id is not None:
@@ -1062,7 +1249,7 @@ class _OutputItemTracker:
                     yield event
                 for event in self._open_mcp_call(content):
                     yield event
-            args_str = _arguments_to_str(content.arguments)
+            args_str = _json_safe_to_str(content.arguments)
             self._accumulated.append(args_str)
             if self._mcp_builder is not None:
                 yield self._mcp_builder.emit_arguments_delta(args_str)
@@ -1084,15 +1271,6 @@ class _OutputItemTracker:
             self._accumulated.clear()
             return
 
-        elif content.type == "function_result":
-            for event in self._close():
-                yield event
-            async for event in self._stream.output_item_function_call_output(
-                content.call_id,  # type: ignore[arg-type]
-                str(content.result or ""),
-            ):
-                yield event
-
         elif content.type == "image_generation_tool_result" and content.outputs is not None:
             for event in self._close():
                 yield event
@@ -1109,7 +1287,7 @@ class _OutputItemTracker:
                 item_id=content.call_id,
             )
             yield mcp_call.emit_added()
-            async for event in mcp_call.arguments(_arguments_to_str(content.arguments)):
+            async for event in mcp_call.arguments(_json_safe_to_str(content.arguments)):
                 yield event
             yield mcp_call.emit_completed()
             yield mcp_call.emit_done()
@@ -1118,20 +1296,18 @@ class _OutputItemTracker:
             # Reached when there's no correlated in-progress mcp_server_tool_call to close against.
             for event in self._close():
                 yield event
-            output = (
-                content.output
-                if isinstance(content.output, str)
-                else str(content.output)
-                if content.output is not None
-                else ""
-            )
+            output = _stringify_mcp_output(content.output)
             async for event in self._stream.output_item_custom_tool_call_output(content.call_id or "", output):
                 yield event
 
         elif content.type == "shell_tool_call":
             for event in self._close():
                 yield event
-            action = FunctionShellAction(commands=content.commands or [], timeout_ms=0, max_output_length=0)
+            action = FunctionShellAction(
+                commands=content.commands or [],
+                timeout_ms=content.timeout_ms,
+                max_output_length=content.max_output_length,
+            )
             async for event in self._stream.output_item_function_shell_call(
                 content.call_id or "",
                 action,
@@ -1174,7 +1350,7 @@ class _OutputItemTracker:
             async for event in self._stream.output_item_mcp_approval_request(
                 server_label,
                 function_call.name,  # type: ignore
-                _arguments_to_str(function_call.arguments),
+                _json_safe_to_str(function_call.arguments),
             ):
                 if approval_storage is not None and not request_saved:
                     # Extract the approval request ID generated by the infrastructure when the
@@ -1196,6 +1372,36 @@ class _OutputItemTracker:
                     "could not be extracted from the stream event."
                 )
 
+        elif content.type == "oauth_consent_request":
+            for event in self._close():
+                yield event
+
+            consent_link = content.consent_link
+            if not _is_safe_oauth_consent_link(consent_link):
+                raise ValueError("OAuth consent request content must include a safe HTTPS consent link.")
+
+            server_label = content.additional_properties.get("server_label")
+            if not isinstance(server_label, str) or not server_label:
+                server_label = getattr(content.raw_representation, "server_label", None)
+            if not isinstance(server_label, str) or not server_label:
+                server_label = "agent_framework"
+
+            consent_key = (consent_link, server_label)
+            if consent_key in self._oauth_consent_requests:
+                return
+            self._oauth_consent_requests.add(consent_key)
+
+            oauth_item = OAuthConsentRequestOutputItem(
+                id=IdGenerator.new_id("oacr"),
+                response_id=str(self._stream.response["id"]),
+                type="oauth_consent_request",
+                consent_link=consent_link,
+                server_label=server_label,
+            )
+            builder = self._stream.add_output_item(oauth_item["id"])
+            yield builder.emit_added(oauth_item)
+            yield builder.emit_done(oauth_item)
+
         elif content.type == "usage":
             self._usage_details = add_usage_details(self._usage_details, content.usage_details)
 
@@ -1213,13 +1419,42 @@ class _OutputItemTracker:
 
     # -- Private open/close helpers --
 
-    def _open_message(self) -> Generator[ResponseStreamEvent]:
+    def _ensure_message_content(
+        self,
+        content_type: Literal["text", "refusal"],
+        message_id: str | None,
+    ) -> Generator[ResponseStreamEvent]:
+        message_changed = (
+            message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
+        )
+        if self._active_type == content_type and not message_changed:
+            return
+        if self._message_item is not None and self._active_type in {"text", "refusal"} and not message_changed:
+            yield from self._close_message_content()
+            yield from self._open_message_content(content_type)
+            return
+        yield from self._close()
+        yield from self._open_message(content_type)
+
+    def _open_message(self, content_type: Literal["text", "refusal"]) -> Generator[ResponseStreamEvent]:
         self._message_item = self._stream.add_output_item_message()
-        self._text_content = self._message_item.add_text_content()
-        self._active_type = "text"
-        self._active_id = None
         yield self._message_item.emit_added()
-        yield self._text_content.emit_added()
+        yield from self._open_message_content(content_type)
+
+    def _open_message_content(
+        self,
+        content_type: Literal["text", "refusal"],
+    ) -> Generator[ResponseStreamEvent]:
+        if self._message_item is None:
+            raise RuntimeError("Cannot open message content without an active message")
+        self._active_type = content_type
+        self._active_id = None
+        if content_type == "refusal":
+            self._refusal_content = self._message_item.add_refusal_content()
+            yield self._refusal_content.emit_added()
+        else:
+            self._text_content = self._message_item.add_text_content()
+            yield self._text_content.emit_added()
 
     def _open_reasoning(self, content: Content) -> Generator[ResponseStreamEvent]:
         item_id = content.id
@@ -1266,16 +1501,14 @@ class _OutputItemTracker:
         yield self._mcp_builder.emit_added()
 
     def _close(self) -> Generator[ResponseStreamEvent]:
-        accumulated = "".join(self._accumulated)
-
-        if self._active_type == "text" and self._text_content and self._message_item:
-            yield self._text_content.emit_text_done(accumulated)
-            yield self._text_content.emit_done()
-            yield self._message_item.emit_done()
-            self._text_content = None
+        if self._active_type in {"text", "refusal"}:
+            yield from self._close_message_content()
+            if self._message_item is not None:
+                yield self._message_item.emit_done()
             self._message_item = None
 
         elif self._active_type == "text_reasoning" and self._summary_part and self._reasoning_item:
+            accumulated = "".join(self._accumulated)
             yield self._summary_part.emit_text_done(accumulated)
             yield self._summary_part.emit_done()
             yield self._reasoning_item.emit_done(
@@ -1291,11 +1524,13 @@ class _OutputItemTracker:
             self._reasoning_encrypted_content = None
 
         elif self._active_type == "function_call" and self._fc_builder:
+            accumulated = "".join(self._accumulated)
             yield self._fc_builder.emit_arguments_done(accumulated)
             yield self._fc_builder.emit_done()
             self._fc_builder = None
 
         elif self._active_type == "mcp_server_tool_call" and self._mcp_builder:
+            accumulated = "".join(self._accumulated)
             yield self._mcp_builder.emit_arguments_done(accumulated)
             yield self._mcp_builder.emit_completed()
             yield self._mcp_builder.emit_done()
@@ -1304,6 +1539,20 @@ class _OutputItemTracker:
         self._active_type = None
         self._active_id = None
         self._active_message_id = None
+        self._accumulated.clear()
+
+    def _close_message_content(self) -> Generator[ResponseStreamEvent]:
+        accumulated = "".join(self._accumulated)
+        if self._active_type == "text" and self._text_content is not None:
+            yield self._text_content.emit_text_done(accumulated)
+            yield self._text_content.emit_done()
+            self._text_content = None
+        elif self._active_type == "refusal" and self._refusal_content is not None:
+            yield self._refusal_content.emit_refusal_done(accumulated)
+            yield self._refusal_content.emit_done()
+            self._refusal_content = None
+        self._active_type = None
+        self._active_id = None
         self._accumulated.clear()
 
 
@@ -1383,13 +1632,19 @@ def _reasoning_item_to_contents(reasoning: ItemReasoningItem | OutputItemReasoni
     return [Content.from_text_reasoning(id=reasoning["id"], protected_data=encrypted_content)]
 
 
-async def _item_to_message(item: Item, *, approval_storage: FunctionApprovalStore | None = None) -> Message:
+async def _item_to_message(
+    item: Item,
+    *,
+    approval_storage: FunctionApprovalStore | None = None,
+    _item_type_name: Literal["Item", "OutputItem"] = "Item",
+) -> Message:
     """Converts an Item to a Message.
 
     Args:
         item: The Item to convert.
         approval_storage: An optional ApprovalStorage instance used to look up
             approval requests when converting MCP approval response items.
+        _item_type_name: The item type name to include in unsupported-type errors.
 
     Returns:
         The converted Message.
@@ -1418,13 +1673,12 @@ async def _item_to_message(item: Item, *, approval_storage: FunctionApprovalStor
         )
 
     if item["type"] == "function_call_output":
-        output = item["output"] if isinstance(item["output"], str) else str(item["output"])
         call_id = item.get("call_id")
         if call_id is None:
             raise ValueError("Function call output item is missing a call_id.")
         return Message(
             role="tool",
-            contents=[Content.from_function_result(call_id, result=output)],
+            contents=[Content.from_function_result(call_id, result=_json_safe_to_str(item["output"]))],
         )
 
     if item["type"] == "reasoning":
@@ -1487,6 +1741,8 @@ async def _item_to_message(item: Item, *, approval_storage: FunctionApprovalStor
                 Content.from_shell_tool_call(
                     call_id=item["call_id"],
                     commands=item["action"]["commands"],
+                    timeout_ms=item["action"].get("timeout_ms"),
+                    max_output_length=item["action"].get("max_output_length"),
                     status=str(item.get("status")),
                 )
             ],
@@ -1520,6 +1776,7 @@ async def _item_to_message(item: Item, *, approval_storage: FunctionApprovalStor
                 Content.from_shell_tool_call(
                     call_id=item["call_id"],
                     commands=commands,
+                    timeout_ms=item["action"].get("timeout_ms"),
                     status=str(item["status"]),
                 )
             ],
@@ -1543,7 +1800,7 @@ async def _item_to_message(item: Item, *, approval_storage: FunctionApprovalStor
                 Content.from_function_call(
                     item["id"],
                     "file_search",
-                    arguments=json.dumps({"queries": item["queries"]}),
+                    arguments=_json_safe_to_str({"queries": item["queries"]}),
                     informational_only=True,
                 )
             ],
@@ -1562,7 +1819,7 @@ async def _item_to_message(item: Item, *, approval_storage: FunctionApprovalStor
                 Content.from_function_call(
                     item["call_id"],
                     "computer_use",
-                    arguments=str(item.get("action")),
+                    arguments=_json_safe_to_str(item.get("action")),
                     informational_only=True,
                 )
             ],
@@ -1571,7 +1828,7 @@ async def _item_to_message(item: Item, *, approval_storage: FunctionApprovalStor
     if item["type"] == "computer_call_output":
         return Message(
             role="tool",
-            contents=[Content.from_function_result(item["call_id"], result=str(item["output"]))],
+            contents=[Content.from_function_result(item["call_id"], result=_json_safe_to_str(item["output"]))],
         )
 
     if item["type"] == "custom_tool_call":
@@ -1588,7 +1845,7 @@ async def _item_to_message(item: Item, *, approval_storage: FunctionApprovalStor
         )
 
     if item["type"] == "custom_tool_call_output":
-        output = item["output"] if isinstance(item["output"], str) else str(item["output"])
+        output = _json_safe_to_str(item["output"])
         # Hosted-MCP results land here because the host writes them via
         # `aoutput_item_custom_tool_call_output` (see `_OutputItemTracker.handle` for
         # `mcp_server_tool_result`). The persisted `call_id` keeps its
@@ -1613,7 +1870,7 @@ async def _item_to_message(item: Item, *, approval_storage: FunctionApprovalStor
                 Content.from_function_call(
                     item["call_id"],
                     "apply_patch",
-                    arguments=str(item["operation"]),
+                    arguments=_json_safe_to_str(item["operation"]),
                     informational_only=True,
                 )
             ],
@@ -1622,10 +1879,10 @@ async def _item_to_message(item: Item, *, approval_storage: FunctionApprovalStor
     if item["type"] == "apply_patch_call_output":
         return Message(
             role="tool",
-            contents=[Content.from_function_result(item["call_id"], result=item.get("output") or "")],
+            contents=[Content.from_function_result(item["call_id"], result=_json_safe_to_str(item.get("output")))],
         )
 
-    raise ValueError(f"Unsupported Item type: {item['type']}")
+    raise ValueError(f"Unsupported {_item_type_name} type: {item['type']}")
 
 
 async def _output_items_to_messages(
@@ -1665,231 +1922,6 @@ async def _output_item_to_message(
     Raises:
         ValueError: If the OutputItem type is not supported.
     """
-    if item["type"] == "output_message":
-        return Message(role=item["role"], contents=[_convert_output_message_content(part) for part in item["content"]])
-
-    if item["type"] == "message":
-        return Message(role=item["role"], contents=[_convert_message_content(part) for part in item["content"]])
-
-    if item["type"] == "function_call":
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_function_call(
-                    item["call_id"],
-                    item["name"],
-                    arguments=item["arguments"],
-                )
-            ],
-        )
-
-    if item["type"] == "function_call_output":
-        output = item["output"] if isinstance(item["output"], str) else str(item["output"])
-        call_id = item.get("call_id")
-        if call_id is None:
-            raise ValueError("Function call output item is missing a call_id.")
-        return Message(
-            role="tool",
-            contents=[Content.from_function_result(call_id, result=output)],
-        )
-
-    if item["type"] == "reasoning":
-        return Message(role="assistant", contents=_reasoning_item_to_contents(item))
-
-    if item["type"] == "mcp_call":
-        contents = [
-            Content.from_mcp_server_tool_call(
-                item["id"],
-                item["name"],
-                server_name=item["server_label"],
-                arguments=item["arguments"],
-            )
-        ]
-        if (output := item.get("output")) is not None:
-            contents.append(Content.from_mcp_server_tool_result(call_id=item["id"], output=output))
-        return Message(
-            role="assistant",
-            contents=contents,
-        )
-
-    if item["type"] == "mcp_approval_request":
-        if approval_storage is not None:
-            function_approval_request_content = await approval_storage.load_approval_request(item["id"])
-        else:
-            raise ValueError("ApprovalStorage is required to load approval request.")
-        return Message(
-            role="assistant",
-            contents=[function_approval_request_content],
-        )
-
-    if item["type"] == "mcp_approval_response":
-        if approval_storage is not None:
-            function_approval_request_content = await approval_storage.load_approval_request(
-                item["approval_request_id"]
-            )
-        else:
-            raise ValueError("ApprovalStorage is required to load approval request.")
-
-        return Message(
-            role="user",
-            contents=[function_approval_request_content.to_function_approval_response(item["approve"])],
-        )
-
-    if item["type"] == "code_interpreter_call":
-        return Message(
-            role="assistant",
-            contents=[Content.from_code_interpreter_tool_call(call_id=item["id"])],
-        )
-
-    if item["type"] == "image_generation_call":
-        return Message(
-            role="assistant",
-            contents=[Content.from_image_generation_tool_call(image_id=item["id"])],
-        )
-
-    if item["type"] == "shell_call":
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_shell_tool_call(
-                    call_id=item["call_id"],
-                    commands=item["action"]["commands"],
-                    status=str(item.get("status")),
-                )
-            ],
-        )
-
-    if item["type"] == "shell_call_output":
-        outputs = [
-            Content.from_shell_command_output(
-                stdout=out["stdout"] or "",
-                stderr=out["stderr"] or "",
-                exit_code=out["outcome"].get("exit_code"),
-            )
-            for out in (item.get("output") or [])
-        ]
-        return Message(
-            role="tool",
-            contents=[
-                Content.from_shell_tool_result(
-                    call_id=item["call_id"],
-                    outputs=outputs,
-                    max_output_length=item.get("max_output_length"),
-                )
-            ],
-        )
-
-    if item["type"] == "local_shell_call":
-        commands = item["action"].get("command") or []
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_shell_tool_call(
-                    call_id=item["call_id"],
-                    commands=commands,
-                    status=str(item["status"]),
-                )
-            ],
-        )
-
-    if item["type"] == "local_shell_call_output":
-        return Message(
-            role="tool",
-            contents=[
-                Content.from_shell_tool_result(
-                    call_id=item["id"],
-                    outputs=[Content.from_shell_command_output(stdout=item["output"])],
-                )
-            ],
-        )
-
-    if item["type"] == "file_search_call":
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_function_call(
-                    item["id"],
-                    "file_search",
-                    arguments=json.dumps({"queries": item["queries"]}),
-                    informational_only=True,
-                )
-            ],
-        )
-
-    if item["type"] == "web_search_call":
-        return Message(
-            role="assistant",
-            contents=[Content.from_function_call(item["id"], "web_search", informational_only=True)],
-        )
-
-    if item["type"] == "computer_call":
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_function_call(
-                    item["call_id"],
-                    "computer_use",
-                    arguments=str(item.get("action")),
-                    informational_only=True,
-                )
-            ],
-        )
-
-    if item["type"] == "computer_call_output":
-        return Message(
-            role="tool",
-            contents=[Content.from_function_result(item["call_id"], result=str(item["output"]))],
-        )
-
-    if item["type"] == "custom_tool_call":
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_function_call(
-                    item["call_id"],
-                    item["name"],
-                    arguments=item["input"],
-                    informational_only=True,
-                )
-            ],
-        )
-
-    if item["type"] == "custom_tool_call_output":
-        output = item["output"] if isinstance(item["output"], str) else str(item["output"])
-        # Hosted-MCP results land here because the host writes them via
-        # `aoutput_item_custom_tool_call_output`. Route `mcp_*` call_ids
-        # back to a hosted-MCP result Content so the chat-client serialize
-        # layer can coalesce onto the matching `mcp_call` input item.
-        # Issue #5546.
-        if item["call_id"] and item["call_id"].startswith("mcp_"):
-            return Message(
-                role="tool",
-                contents=[Content.from_mcp_server_tool_result(call_id=item["call_id"], output=output)],
-            )
-        return Message(
-            role="tool",
-            contents=[Content.from_function_result(item["call_id"], result=output)],
-        )
-
-    if item["type"] == "apply_patch_call":
-        return Message(
-            role="assistant",
-            contents=[
-                Content.from_function_call(
-                    item["call_id"],
-                    "apply_patch",
-                    arguments=str(item["operation"]),
-                    informational_only=True,
-                )
-            ],
-        )
-
-    if item["type"] == "apply_patch_call_output":
-        return Message(
-            role="tool",
-            contents=[Content.from_function_result(item["call_id"], result=item.get("output") or "")],
-        )
-
     if item["type"] == "oauth_consent_request":
         return Message(
             role="assistant",
@@ -1897,10 +1929,13 @@ async def _output_item_to_message(
         )
 
     if item["type"] == "structured_outputs":
-        text = json.dumps(item["output"]) if not isinstance(item["output"], str) else item["output"]
-        return Message(role="assistant", contents=[Content.from_text(text)])
+        return Message(role="assistant", contents=[Content.from_text(_json_safe_to_str(item["output"]))])
 
-    raise ValueError(f"Unsupported OutputItem type: {item['type']}")
+    return await _item_to_message(
+        cast(Item, item),
+        approval_storage=approval_storage,
+        _item_type_name="OutputItem",
+    )
 
 
 def _convert_output_message_content(content: OutputMessageContent) -> Content:
@@ -1918,7 +1953,10 @@ def _convert_output_message_content(content: OutputMessageContent) -> Content:
     if content["type"] == "output_text":
         return Content.from_text(content["text"])
     if content["type"] == "refusal":
-        return Content.from_text(content["refusal"])
+        return Content.from_text(
+            content["refusal"],
+            additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+        )
 
     # Defensive: `OutputMessageContent` currently only supports `output_text` and `refusal`,
     # but if new types are added in the future, this will catch them.
@@ -1971,7 +2009,10 @@ def _convert_message_content(content: MessageContent) -> Content:
     if content["type"] == "summary_text":
         return Content.from_text(content["text"])
     if content["type"] == "refusal":
-        return Content.from_text(content["refusal"])
+        return Content.from_text(
+            content["refusal"],
+            additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+        )
     if content["type"] == "reasoning_text":
         return Content.from_text_reasoning(text=content["text"])
     if content["type"] == "input_image":
@@ -2002,29 +2043,32 @@ def _convert_message_content(content: MessageContent) -> Content:
 # region Output Item Conversion
 
 
-def _argument_json_default(value: Any) -> Any:
+def _json_default(value: Any) -> Any:
     if is_dataclass(value) and not isinstance(value, type):
         return asdict(value)
     to_dict = getattr(value, "to_dict", None)
     if callable(to_dict):
         return to_dict()
-    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+    return str(value)
 
 
-def _arguments_to_str(arguments: Any | None) -> str:
-    """Convert arguments to a JSON string.
+def _json_safe_to_str(value: Any | None) -> str:
+    """Convert an argument or result value to a JSON-safe string.
 
     Args:
-        arguments: The arguments to convert, can be a string, JSON-like object, or None.
+        value: The value to convert, which can be a string, JSON-like object, or None.
 
     Returns:
-        The arguments as a JSON string.
+        The value as a JSON string.
     """
-    if arguments is None:
+    if value is None:
         return ""
-    if isinstance(arguments, str):
-        return arguments
-    return json.dumps(arguments, default=_argument_json_default)
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, default=_json_default)
+    except (TypeError, ValueError):
+        return json.dumps(str(value))
 
 
 def _reasoning_encrypted_content(content: Content) -> str | None:
@@ -2050,6 +2094,16 @@ def _reasoning_output_item(
     })
 
 
+def _mcp_mapping_text(output: Mapping[Any, Any]) -> str | None:
+    """Extract text only from a recognized MCP text-content mapping."""
+    text = output.get("text")
+    if not isinstance(text, str):
+        return None
+    if output.get("type") == "text" or set(output) == {"text"}:
+        return text
+    return None
+
+
 def _stringify_mcp_output(output: Any) -> str:
     """Convert hosted MCP output payloads into the string shape expected by mcp_call.output."""
     if output is None:
@@ -2057,20 +2111,26 @@ def _stringify_mcp_output(output: Any) -> str:
     if isinstance(output, str):
         return output
     if isinstance(output, Mapping):
-        text = cast(Any, output).get("text")
-        if isinstance(text, str):
+        mapping = cast(Mapping[Any, Any], output)
+        if (text := _mcp_mapping_text(mapping)) is not None:
             return text
-        return json.dumps(output, default=str)
+        return _json_safe_to_str(mapping)
     if isinstance(output, Sequence) and not isinstance(output, (str, bytes, bytearray)):
         parts: list[str] = []
-        entries = cast(Sequence[object], output)
+        entries = cast(Sequence[Any], output)
         for entry in entries:
+            if isinstance(entry, str):
+                parts.append(entry)
+                continue
             if isinstance(entry, Content) and entry.type == "text":
                 parts.append(entry.text or "")
                 continue
-            parts.append(_stringify_mcp_output(entry))
+            if isinstance(entry, Mapping) and (text := _mcp_mapping_text(cast(Mapping[Any, Any], entry))) is not None:
+                parts.append(text)
+                continue
+            return _json_safe_to_str(entries)
         return "".join(parts)
-    return str(output)
+    return _json_safe_to_str(output)
 
 
 # endregion

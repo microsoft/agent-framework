@@ -1,12 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- Preview while we depend on Azure.AI.Projects 2.1.0-beta.1 for hosted-agent routing
+    <!-- Preview while we depend on Azure.AI.Projects 3.0.0-beta.1 for hosted-agent routing
          (ProjectOpenAIClientOptions.AgentName, the (AuthenticationPolicy, options) ctor, and
          related per-agent endpoint surface). Flip back to IsReleased=true once Azure.AI.Projects
-         ships a stable 2.1.0. -->
+         ships a stable 3.0.0. -->
     <InjectSharedFeatureUsageUserAgent>true</InjectSharedFeatureUsageUserAgent>
     <InjectSharedThrow>true</InjectSharedThrow>
+    <NoWarn>$(NoWarn);AAIP001;OPENAI001;SCME0001</NoWarn>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
