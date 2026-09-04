@@ -629,7 +629,7 @@ class Content:
             ]
         return state
 
-    def __setstate__(self, state: dict[str, Any]) -> None:
+    def __setstate__(self, state: dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]) -> None:
         """Restore pickle state and reset runtime-only shallow-copy fields."""
         restore_pickle_state(self, state, self._PICKLE_OMIT_FIELDS)
 
