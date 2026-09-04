@@ -3479,6 +3479,177 @@ def test_parse_chunk_from_openai_with_mcp_output_item_done() -> None:
     assert result_content.raw_representation is mock_item
 
 
+def _make_function_call_output_item(output: object, item_id: str = "fco_1") -> MagicMock:
+    """Build a Responses `function_call_output` item stub (hosted-toolbox tool result)."""
+    item = MagicMock()
+    item.type = "function_call_output"
+    item.id = item_id
+    item.call_id = "call_XXXX"
+    item.output = output
+    item.status = "completed"
+    # `.name` must be assigned after construction; MagicMock(name=...) sets the mock's own name.
+    item.name = None
+    return item
+
+
+def test_parse_chunk_from_openai_with_function_call_output_added() -> None:
+    """A hosted-toolbox tool result on `.added` becomes function_result content (issue #8068)."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_item = _make_function_call_output_item("Seattle KB says it is 72F.")
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    assert len(update.contents) == 1
+    result_content = update.contents[0]
+    assert result_content.type == "function_result"
+    assert result_content.call_id == "call_XXXX"
+    assert result_content.result == "Seattle KB says it is 72F."
+    assert result_content.raw_representation is mock_item
+    assert result_content.additional_properties is not None
+    assert result_content.additional_properties["item_id"] == "fco_1"
+    assert result_content.additional_properties["status"] == "completed"
+
+
+def test_parse_chunk_from_openai_function_call_output_added_extracts_list_output_text() -> None:
+    """A list-shaped `output` is text-extracted rather than JSON-encoded."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = _make_function_call_output_item([
+        {"type": "input_text", "text": "part one "},
+        {"type": "input_text", "text": "part two"},
+    ])
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    assert len(update.contents) == 1
+    assert update.contents[0].result == "part one part two"
+
+
+def test_parse_chunk_from_openai_function_call_output_added_ignores_missing_output() -> None:
+    """An in-progress skeleton with no output must not synthesize an empty result."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = _make_function_call_output_item(None)
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    assert update.contents == []
+
+
+def test_parse_chunk_from_openai_function_call_output_done_emits_when_added_did_not() -> None:
+    """`.done` carries the result when `.added` was an empty skeleton, so order does not matter."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    seen: set[str] = set()
+
+    added = MagicMock()
+    added.type = "response.output_item.added"
+    added.item = _make_function_call_output_item(None)
+
+    done = MagicMock()
+    done.type = "response.output_item.done"
+    done.item = _make_function_call_output_item("late result")
+
+    added_update = client._parse_chunk_from_openai(
+        added, options={}, function_call_ids={}, seen_function_call_output_ids=seen
+    )
+    done_update = client._parse_chunk_from_openai(
+        done, options={}, function_call_ids={}, seen_function_call_output_ids=seen
+    )
+
+    assert added_update.contents == []
+    assert len(done_update.contents) == 1
+    assert done_update.contents[0].result == "late result"
+
+
+def test_parse_chunk_from_openai_function_call_output_is_not_emitted_twice() -> None:
+    """The same output item on both `.added` and `.done` yields exactly one result."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    seen: set[str] = set()
+
+    added = MagicMock()
+    added.type = "response.output_item.added"
+    added.item = _make_function_call_output_item("only once")
+
+    done = MagicMock()
+    done.type = "response.output_item.done"
+    done.item = _make_function_call_output_item("only once")
+
+    added_update = client._parse_chunk_from_openai(
+        added, options={}, function_call_ids={}, seen_function_call_output_ids=seen
+    )
+    done_update = client._parse_chunk_from_openai(
+        done, options={}, function_call_ids={}, seen_function_call_output_ids=seen
+    )
+
+    assert len(added_update.contents) == 1
+    assert done_update.contents == []
+
+
+def test_parse_chunk_from_openai_function_call_output_without_item_id_still_emits() -> None:
+    """A result carrying no usable item id is still emitted rather than silently swallowed."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    seen: set[str] = set()
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_event.item = _make_function_call_output_item("no id here", item_id="")
+
+    update = client._parse_chunk_from_openai(
+        mock_event, options={}, function_call_ids={}, seen_function_call_output_ids=seen
+    )
+
+    assert len(update.contents) == 1
+    assert update.contents[0].result == "no id here"
+    assert update.contents[0].additional_properties is not None
+    assert "item_id" not in update.contents[0].additional_properties
+
+
+def test_parse_chunk_from_openai_function_call_output_keeps_tool_name() -> None:
+    """The inner tool name, when the host supplies one, survives onto the result content."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_item = _make_function_call_output_item("kb answer")
+    mock_item.name = "search_knowledge_base"
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    assert update.contents[0].additional_properties is not None
+    assert update.contents[0].additional_properties["name"] == "search_knowledge_base"
+
+
+def test_parse_response_from_openai_with_function_call_output() -> None:
+    """Non-streaming parsing agrees with streaming: the hosted tool result is not dropped."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.output = [_make_function_call_output_item("non-streaming KB result")]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    contents = response.messages[0].contents
+    assert len(contents) == 1
+    assert contents[0].type == "function_result"
+    assert contents[0].call_id == "call_XXXX"
+    assert contents[0].result == "non-streaming KB result"
+
+
 def test_parse_chunk_from_openai_with_mcp_output_item_done_no_output() -> None:
     """Test that response.output_item.done for mcp_call with no output emits result with None output."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
