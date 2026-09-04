@@ -565,6 +565,8 @@ Microsoft.Extensions.AI.ChatClientExtensions
 [MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.BackgroundAgentsProviderOptions() -> void
 [MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.Instructions.get -> string?
 [MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.Instructions.set -> void
+[MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.WaitTimeout.get -> System.TimeSpan
+[MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.WaitTimeout.set -> void
 [MAAI001]Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluator
 [MAAI001]Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluator.BackgroundTaskCompletionLoopEvaluator(Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluatorOptions? options = null) -> void
 [MAAI001]Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluatorOptions
