@@ -280,8 +280,13 @@ def _split_lines_keepends(content: str) -> list[str]:
 
 
 def _strip_line_terminator(line: str) -> str:
-    r"""Return ``line`` without its trailing ``\r\n``, ``\n`` or ``\r``."""
-    return line.removesuffix("\n").removesuffix("\r")
+    r"""Return ``line`` without its trailing ``\r\n`` or ``\n``.
+
+    A lone ``\r`` is content under the ``\n``-only split :func:`_split_lines_keepends`
+    publishes, so it stays: removing it would let ``expected_line`` authorize an edit to a
+    line it does not actually equal, and would hide the character from a pattern matching it.
+    """
+    return line[:-2] if line.endswith("\r\n") else line.removesuffix("\n")
 
 
 def _apply_replace_lines(content: str, edits: list[tuple[int, str, str | None]]) -> str:
@@ -589,7 +594,9 @@ def _search_file_content(file_name: str, content: str, regex: re.Pattern[str]) -
     for line_number, line in enumerate(lines, start=1):
         # Inlined rather than calling _strip_line_terminator: this runs once per line of
         # every searched file, and the extra call is measurable on a large corpus.
-        scanned = line.removesuffix("\n").removesuffix("\r")
+        # Same rule as _strip_line_terminator: a lone \r is content, so only a whole
+        # \r\n comes off.
+        scanned = line[:-2] if line.endswith("\r\n") else line.removesuffix("\n")
         match = regex.search(scanned)
         if match is not None:
             matching_lines.append(FileSearchMatch(line_number=line_number, line=line))
@@ -1903,8 +1910,9 @@ class FileAccessProvider(ContextProvider):
             Leave empty or omit to search all files.
             Returns matching results whose file_name values are paths relative to the store root
             (directly usable with file_access_read), along with snippets and matching lines with line numbers.
-            Each matching line is reported verbatim, including its own line terminator, so it can be
-            reused as a file_access_replace_lines new_line.
+            Stores are expected to report each matching line verbatim, including its own line
+            terminator, so it can normally be reused as a file_access_replace_lines new_line; a
+            custom store may not, so prefer file_access_read_lines when the exact text matters.
             Line numbers count lines split on \n only, with a final empty line when content ends in a
             newline.
             The regex_pattern must be 256 characters or fewer.

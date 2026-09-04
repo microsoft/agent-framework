@@ -1768,3 +1768,42 @@ async def test_base_search_batches_its_scans_without_changing_results(
         for result in split
         for match in result.matching_lines
     )
+
+
+async def test_expected_line_does_not_ignore_a_lone_carriage_return(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A lone ``\r`` is content, so it must not be stripped away when checking ``expected_line``."""
+    store = InMemoryAgentFileStore()
+    await store.write("f.txt", "first\nvalue\r")
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    replace = _tool_by_name(tools, FileAccessProvider.REPLACE_LINES_TOOL_NAME)
+
+    # Line 2 is "value\r" with no \n after it, so that \r is content, not a terminator.
+    text = _text(
+        (
+            await replace.invoke(
+                arguments={
+                    "file_name": "f.txt",
+                    "edits": [{"line_number": 2, "new_line": "REPLACED\n", "expected_line": "value"}],
+                }
+            )
+        )[0]
+    )
+
+    assert "does not match the expected text" in text
+    assert await store.read("f.txt") == "first\nvalue\r"
+
+
+async def test_grep_matches_a_lone_carriage_return_as_content(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A pattern anchored after a lone ``\r`` must still match, since the ``\r`` is not a terminator."""
+    store = InMemoryAgentFileStore()
+    await store.write("f.txt", "alpha\r")
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
+
+    payload = json.loads(_text((await grep.invoke(arguments={"regex_pattern": r"alpha\r$"}))[0]))
+
+    assert payload[0]["matching_lines"][0]["line_number"] == 1
