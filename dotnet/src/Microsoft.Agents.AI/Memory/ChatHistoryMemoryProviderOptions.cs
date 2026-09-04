@@ -27,7 +27,7 @@ public sealed class ChatHistoryMemoryProviderOptions
     /// <summary>
     /// Gets or sets the description of the exposed search tool when operating in on-demand mode.
     /// </summary>
-    /// <value>Defaults to "Allows searching through previous chat history to help answer the user question.".</value>
+    /// <value>Defaults to "Allows searching for related previous chat history to help answer the user question.".</value>
     public string? FunctionToolDescription { get; set; }
 
     /// <summary>
