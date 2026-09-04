@@ -172,6 +172,60 @@ async def test_list_checkpoints_restricts_checkpoint_deserialization() -> None:
         await FoundryCheckpointStore("context-1", _platform_context()).list_checkpoints(workflow_name="workflow")
 
 
+async def test_provider_forwards_allowed_checkpoint_types() -> None:
+    """A hosted app reaches the option through the provider it actually gets.
+
+    `ResponsesHostServer` builds a `CheckpointStoreProvider` itself on the default
+    path, so an option only settable on the store would be out of reach there.
+    """
+    store = _store()
+    checkpoint = _checkpoint("checkpoint-1")
+    value = checkpoint.to_dict()
+    value["state"] = encode_checkpoint_value({"payload": _NotAllowed(7)})
+    store.get_item = AsyncMock(return_value=SimpleNamespace(value=value))
+
+    provider = CheckpointStoreProvider(
+        allowed_checkpoint_types=[f"{_NotAllowed.__module__}:{_NotAllowed.__qualname__}"]
+    )
+    storage = provider.get_store(
+        config=MagicMock(),
+        context_id="context-1",
+        platform_context=_platform_context(),
+    )
+
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(return_value=store),
+    ):
+        result = await storage.load("checkpoint-1")
+
+    assert result.state["payload"].value == 7
+
+
+async def test_provider_restricts_by_default() -> None:
+    """Without the option the provider's stores restrict, as before."""
+    store = _store()
+    checkpoint = _checkpoint("checkpoint-1")
+    value = checkpoint.to_dict()
+    value["state"] = encode_checkpoint_value({"payload": _NotAllowed(7)})
+    store.get_item = AsyncMock(return_value=SimpleNamespace(value=value))
+
+    storage = CheckpointStoreProvider().get_store(
+        config=MagicMock(),
+        context_id="context-1",
+        platform_context=_platform_context(),
+    )
+
+    with (
+        patch(
+            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+            new=AsyncMock(return_value=store),
+        ),
+        pytest.raises(WorkflowCheckpointException),
+    ):
+        await storage.load("checkpoint-1")
+
+
 async def test_load_raises_for_missing_checkpoint() -> None:
     store = _store()
     store.get_item = AsyncMock(return_value=None)

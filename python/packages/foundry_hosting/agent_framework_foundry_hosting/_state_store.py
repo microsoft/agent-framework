@@ -195,6 +195,18 @@ class CheckpointStoreProvider(ContextScopedStoreProvider[CheckpointStorage]):
     This defaults to using the `FoundryCheckpointStore` in all environments.
     """
 
+    def __init__(self, *, allowed_checkpoint_types: list[str] | None = None) -> None:
+        """Initialize the provider.
+
+        Args:
+            allowed_checkpoint_types: Additional types (beyond the built-in safe set
+                and framework types) that are permitted during checkpoint
+                deserialization, forwarded to every store this provider creates.
+                Each entry should be a ``"module:qualname"`` string
+                (e.g., ``"my_app.models:MyState"``).
+        """
+        self._allowed_checkpoint_types = allowed_checkpoint_types
+
     def get_store(
         self,
         *,
@@ -206,7 +218,11 @@ class CheckpointStoreProvider(ContextScopedStoreProvider[CheckpointStorage]):
         if not context_id:
             raise ValueError("context_id must be provided to get a checkpoint store.")
 
-        return FoundryCheckpointStore(context_id, platform_context)
+        return FoundryCheckpointStore(
+            context_id,
+            platform_context,
+            allowed_checkpoint_types=self._allowed_checkpoint_types,
+        )
 
 
 # endregion Checkpoint persistence
