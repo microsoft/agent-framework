@@ -445,7 +445,13 @@ internal sealed class HandoffAgentExecutor :
             bool CollectHandoffRequestsFilter(FunctionCallContent candidateHandoffRequest)
             {
                 bool isHandoffRequest = this._handoffFunctionNames.Contains(candidateHandoffRequest.Name);
-                if (isHandoffRequest)
+
+                // A stream that re-emits one handoff call must not read as two competing handoffs. The name is
+                // compared alongside the ID so that two different targets sharing an ID stay visible below.
+                if (isHandoffRequest
+                    && !candidateRequests.Any(candidate =>
+                        string.Equals(candidate.Request.CallId, candidateHandoffRequest.CallId, StringComparison.Ordinal)
+                        && string.Equals(candidate.Request.Name, candidateHandoffRequest.Name, StringComparison.Ordinal)))
                 {
                     candidateRequests.Add((candidateHandoffRequest, update.ResponseId));
                 }
@@ -454,6 +460,13 @@ internal sealed class HandoffAgentExecutor :
             }
         }
 
+        // Deliberately still last-wins, unlike the first-wins coalescing above and in the unserviced
+        // request collector. Those answer "is this the same request seen twice", where the first copy
+        // is the real one and the rest are re-emissions. This answers "which of several genuinely
+        // different targets did the agent mean", which is a real ambiguity in the agent's output
+        // rather than a duplicate. The (CallId, Name) filter above removes the re-emissions from this
+        // list, so what reaches here is only ever competing targets, and how those are resolved is
+        // pre-existing behavior a caller may rely on.
         if (candidateRequests.Count > 1)
         {
             string message = $"Duplicate handoff requests in single turn ([{string.Join(", ", candidateRequests.Select(candidate => candidate.Request.Name))}]). Using last ({candidateRequests.Last().Request.Name})";

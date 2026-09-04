@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
@@ -173,6 +174,101 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
         object? result = await executor.ExecuteCoreAsync(delivery.Envelope.Message,
                                                          delivery.Envelope.MessageType,
                                                          testContext.BindWorkflowContext(executor.Id));
+    }
+
+    /// <summary>
+    /// An agent that emits the workflow's handoff call once per update, modelling a stream that spreads one call
+    /// over several updates.
+    /// </summary>
+    private sealed class RepeatingHandoffAgent(int emissionCount, bool varyTarget = false) : AIAgent
+    {
+        private sealed class Session : AgentSession
+        {
+            public Session() { }
+        }
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+            => new(new Session());
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => new(new Session());
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => default;
+
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+            => this.RunStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
+
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            List<string> handoffFunctionNames =
+                [.. (options as ChatClientAgentRunOptions)?.ChatOptions?.Tools?
+                    .Where(tool => tool.Name.StartsWith("handoff_to_", StringComparison.Ordinal))
+                    .Select(tool => tool.Name) ?? []];
+
+            if (handoffFunctionNames.Count == 0)
+            {
+                throw new InvalidOperationException("No handoff tool was offered to the agent.");
+            }
+
+            for (int emission = 0; emission < emissionCount; emission++)
+            {
+                // Every emission reuses one call ID; only the target varies, and only when asked.
+                string handoffFunctionName = handoffFunctionNames[varyTarget ? emission % handoffFunctionNames.Count : 0];
+                yield return new AgentResponseUpdate(ChatRole.Assistant, [new FunctionCallContent("handoff-call", handoffFunctionName)]);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Test_HandoffAgentExecutor_RepeatedHandoffCallIsNotTreatedAsDuplicateAsync()
+    {
+        // Arrange
+        AIAgent handoffAgent = new RepeatingHandoffAgent(emissionCount: 2);
+        HandoffTarget handoff = new(new TestEchoAgent());
+
+        HandoffAgentExecutorOptions options = new(handoffInstructions: null,
+                                                  emitAgentResponseEvents: false,
+                                                  emitAgentResponseUpdateEvents: true,
+                                                  HandoffToolCallFilteringBehavior.None);
+        HandoffAgentExecutor executor = new(handoffAgent, [handoff], options);
+
+        TestRunContext runContext = await PrepareHandoffSharedStateAsync();
+        runContext.ConfigureExecutor(executor);
+        IWorkflowContext testContext = runContext.BindWorkflowContext(executor.Id);
+
+        // Act
+        await executor.HandleAsync(new HandoffState(new(true), null), testContext);
+
+        // Assert
+        // One handoff call re-emitted across updates is a single handoff request.
+        Assert.Empty(runContext.Events.OfType<WorkflowWarningEvent>());
+    }
+
+    [Fact]
+    public async Task Test_HandoffAgentExecutor_DifferentTargetsSharingACallIdStillWarnAsync()
+    {
+        // Arrange
+        AIAgent handoffAgent = new RepeatingHandoffAgent(emissionCount: 2, varyTarget: true);
+        HandoffTarget firstHandoff = new(new TestEchoAgent("firstTarget"));
+        HandoffTarget secondHandoff = new(new TestEchoAgent("secondTarget"));
+
+        HandoffAgentExecutorOptions options = new(handoffInstructions: null,
+                                                  emitAgentResponseEvents: false,
+                                                  emitAgentResponseUpdateEvents: true,
+                                                  HandoffToolCallFilteringBehavior.None);
+        HandoffAgentExecutor executor = new(handoffAgent, [firstHandoff, secondHandoff], options);
+
+        TestRunContext runContext = await PrepareHandoffSharedStateAsync();
+        runContext.ConfigureExecutor(executor);
+        IWorkflowContext testContext = runContext.BindWorkflowContext(executor.Id);
+
+        // Act
+        await executor.HandleAsync(new HandoffState(new(true), null), testContext);
+
+        // Assert
+        // Two different handoff targets remain two competing handoffs even under one call ID.
+        Assert.Single(runContext.Events.OfType<WorkflowWarningEvent>());
     }
 
     [Fact]
