@@ -141,42 +141,12 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
                 continue;
             }
 
-            // Search each line for regex matches, tracking line numbers and building a snippet.
-            string fileContent = kvp.Value;
-            string[] lines = fileContent.Split('\n');
-            var matchingLines = new List<FileSearchMatch>();
-            string? firstSnippet = null;
-            int lineStartOffset = 0;
-
-            for (int i = 0; i < lines.Length; i++)
+            // Number the lines through the base class's published primitive, so this store
+            // and the line editor cannot drift apart.
+            FileSearchResult? result = ScanContent(relativeName, kvp.Value, regex);
+            if (result is not null)
             {
-                Match match = regex.Match(lines[i]);
-                if (match.Success)
-                {
-                    matchingLines.Add(new FileSearchMatch { LineNumber = i + 1, Line = lines[i].TrimEnd('\r') });
-
-                    // Build a context snippet around the first match (±50 chars).
-                    if (firstSnippet is null)
-                    {
-                        int charIndex = lineStartOffset + match.Index;
-                        int snippetStart = Math.Max(0, charIndex - 50);
-                        int snippetEnd = Math.Min(fileContent.Length, charIndex + match.Value.Length + 50);
-                        firstSnippet = fileContent.Substring(snippetStart, snippetEnd - snippetStart);
-                    }
-                }
-
-                // Advance the offset past this line (including the '\n' separator).
-                lineStartOffset += lines[i].Length + 1;
-            }
-
-            if (matchingLines.Count > 0)
-            {
-                results.Add(new FileSearchResult
-                {
-                    FileName = relativeName,
-                    Snippet = firstSnippet!,
-                    MatchingLines = matchingLines,
-                });
+                results.Add(result);
             }
         }
 

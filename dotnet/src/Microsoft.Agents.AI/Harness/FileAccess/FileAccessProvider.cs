@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -37,6 +38,7 @@ namespace Microsoft.Agents.AI;
 /// <list type="bullet">
 /// <item><description><c>file_access_write</c> — Write a file with the given name and content.</description></item>
 /// <item><description><c>file_access_read</c> — Read the content of a file by name.</description></item>
+/// <item><description><c>file_access_read_lines</c> — Read a range of lines from a file by line number.</description></item>
 /// <item><description><c>file_access_delete</c> — Delete a file by name.</description></item>
 /// <item><description><c>file_access_ls</c> — List the direct child files and subdirectories of a directory.</description></item>
 /// <item><description><c>file_access_grep</c> — Recursively search file contents using a regular expression pattern.</description></item>
@@ -44,12 +46,13 @@ namespace Microsoft.Agents.AI;
 /// <item><description><c>file_access_replace_lines</c> — Replace whole lines within a file.</description></item>
 /// </list>
 /// When <see cref="FileAccessProviderOptions.DisableWriteTools"/> is set, only the read-only tools
-/// (<c>file_access_read</c>, <c>file_access_ls</c>, and <c>file_access_grep</c>) are exposed.
+/// (<c>file_access_read</c>, <c>file_access_read_lines</c>, <c>file_access_ls</c>, and
+/// <c>file_access_grep</c>) are exposed.
 /// </para>
 /// <para>
 /// By default, all of these tools require approval: each is exposed as an <see cref="ApprovalRequiredAIFunction"/>.
 /// Approval can be disabled per group via <see cref="FileAccessProviderOptions.DisableReadOnlyToolApproval"/>
-/// (read, ls, and grep) and <see cref="FileAccessProviderOptions.DisableWriteToolApproval"/>
+/// (read, read_lines, ls, and grep) and <see cref="FileAccessProviderOptions.DisableWriteToolApproval"/>
 /// (write, delete, replace, and replace_lines).
 /// </para>
 /// <para>
@@ -57,8 +60,8 @@ namespace Microsoft.Agents.AI;
 /// <see cref="ToolApprovalAgentOptions.AutoApprovalRules"/>:
 /// <list type="bullet">
 /// <item><description>
-/// <see cref="ReadOnlyToolsAutoApprovalRule"/> — auto-approves only the read-only tools (read, ls,
-/// and grep), while still prompting for the tools that modify the store (write, delete, replace, and replace_lines).
+/// <see cref="ReadOnlyToolsAutoApprovalRule"/> — auto-approves only the read-only tools (read, read_lines,
+/// ls, and grep), while still prompting for the tools that modify the store (write, delete, replace, and replace_lines).
 /// </description></item>
 /// <item><description>
 /// <see cref="AllToolsAutoApprovalRule"/> — auto-approves every file access tool, including the tools that modify the store.
@@ -82,6 +85,9 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// <summary>The name of the tool that reads a file.</summary>
     public const string ReadFileToolName = "file_access_read";
 
+    /// <summary>The name of the tool that reads a range of lines from a file.</summary>
+    public const string ReadLinesToolName = "file_access_read_lines";
+
     /// <summary>The name of the tool that deletes a file.</summary>
     public const string DeleteFileToolName = "file_access_delete";
 
@@ -101,6 +107,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     private static readonly HashSet<string> s_readOnlyToolNames = new(StringComparer.Ordinal)
     {
         ReadFileToolName,
+        ReadLinesToolName,
         LsToolName,
         GrepToolName,
     };
@@ -110,6 +117,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     {
         WriteToolName,
         ReadFileToolName,
+        ReadLinesToolName,
         DeleteFileToolName,
         LsToolName,
         GrepToolName,
@@ -129,6 +137,9 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
           or `file_access_grep` to search file contents recursively across the whole store.
         - To make small edits to an existing file, prefer `file_access_replace` (substring replacement) or
           `file_access_replace_lines` (whole-line replacement) over rewriting the whole file.
+        - To change part of a file, find the line numbers with `file_access_grep`, read the range around them
+          with `file_access_read_lines`, then edit with `file_access_replace_lines`. Reading the whole file
+          first is rarely necessary.
         """;
 
     private readonly AgentFileStore _fileStore;
@@ -161,7 +172,8 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
 
     /// <summary>
     /// Gets an auto-approval rule that approves the read-only file access tools
-    /// (<see cref="ReadFileToolName"/>, <see cref="LsToolName"/>, and <see cref="GrepToolName"/>).
+    /// (<see cref="ReadFileToolName"/>, <see cref="ReadLinesToolName"/>, <see cref="LsToolName"/>,
+    /// and <see cref="GrepToolName"/>).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -179,6 +191,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// This rule approves calls to exactly the following tool names:
     /// <list type="bullet">
     /// <item><description><see cref="ReadFileToolName"/> (<c>file_access_read</c>)</description></item>
+    /// <item><description><see cref="ReadLinesToolName"/> (<c>file_access_read_lines</c>)</description></item>
     /// <item><description><see cref="LsToolName"/> (<c>file_access_ls</c>)</description></item>
     /// <item><description><see cref="GrepToolName"/> (<c>file_access_grep</c>)</description></item>
     /// </list>
@@ -213,6 +226,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// <list type="bullet">
     /// <item><description><see cref="WriteToolName"/> (<c>file_access_write</c>)</description></item>
     /// <item><description><see cref="ReadFileToolName"/> (<c>file_access_read</c>)</description></item>
+    /// <item><description><see cref="ReadLinesToolName"/> (<c>file_access_read_lines</c>)</description></item>
     /// <item><description><see cref="DeleteFileToolName"/> (<c>file_access_delete</c>)</description></item>
     /// <item><description><see cref="LsToolName"/> (<c>file_access_ls</c>)</description></item>
     /// <item><description><see cref="GrepToolName"/> (<c>file_access_grep</c>)</description></item>
@@ -292,12 +306,52 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// <param name="fileName">The name of the file to read.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>The file content or a not-found message.</returns>
-    [Description("Read the content of a file by name. Returns the file content or a message indicating the file was not found.")]
+    [Description("Read the content of a file by name. Returns the file content or a message indicating the file was not found. To edit by 1-based line number afterwards, count lines terminated by \\n, \\r\\n, or a lone \\r; each line keeps its own terminator, and content ending in a terminator has no extra empty line after it.")]
     private async Task<string> ReadAsync(string fileName, CancellationToken cancellationToken = default)
     {
         string path = StorePaths.NormalizeRelativePath(fileName);
         string? content = await this._fileStore.ReadAsync(path, cancellationToken).ConfigureAwait(false);
         return content ?? $"File '{fileName}' not found.";
+    }
+
+    /// <summary>
+    /// Read a range of lines from a file, each prefixed with its 1-based line number and a tab.
+    /// </summary>
+    /// <param name="fileName">The name of the file to read.</param>
+    /// <param name="startLine">The 1-based line number to read from.</param>
+    /// <param name="endLine">The 1-based line number to read through, inclusive. When <see langword="null"/>, reads to the end of the file.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>The numbered lines, or a not-found message.</returns>
+    /// <remarks>
+    /// The line numbers agree with the ones <c>file_access_grep</c> reports, because
+    /// <see cref="AgentFileStore.SearchAsync"/> must number by <see cref="AgentFileStore.SplitLines"/> —
+    /// the split this method and <c>file_access_replace_lines</c> use. A store overriding it owns that
+    /// numbering; getting it wrong makes an edit land on a line the caller never saw.
+    /// </remarks>
+    /// <exception cref="ArgumentException">
+    /// Thrown when either bound is not positive, when <paramref name="endLine"/> precedes
+    /// <paramref name="startLine"/>, or when <paramref name="startLine"/> is past the last line.
+    /// </exception>
+    [Description("Read part of a file by 1-based inclusive line number; omit endLine to read to the end of the file, and an endLine past the last line is clamped. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a file_access_replace_lines new_line. Line numbers are 1-based and count lines terminated by \\n, \\r\\n, or a lone \\r, and content ending in a terminator has no extra empty line after it.")]
+    private async Task<string> ReadLinesAsync(string fileName, int startLine, int? endLine = null, CancellationToken cancellationToken = default)
+    {
+        string path = StorePaths.NormalizeRelativePath(fileName);
+        string? content = await this._fileStore.ReadAsync(path, cancellationToken).ConfigureAwait(false);
+        if (content is null)
+        {
+            return $"File '{fileName}' not found.";
+        }
+
+        List<string> lines = FileEditor.SliceLines(content, startLine, endLine);
+
+        // Each line keeps its terminator, so it doubles as the row separator.
+        var builder = new StringBuilder();
+        for (int i = 0; i < lines.Count; i++)
+        {
+            builder.Append(startLine + i).Append('\t').Append(lines[i]);
+        }
+
+        return builder.ToString();
     }
 
     /// <summary>
@@ -381,7 +435,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// <param name="edits">The list of 1-based line numbers and their literal replacement text.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A confirmation message including the number of lines replaced, or a failure message.</returns>
-    [Description("Replace lines in a file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers.")]
+    [Description("Replace lines in a file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers. Line numbers are 1-based and count lines terminated by \\n, \\r\\n, or a lone \\r; each line keeps its own terminator, and content ending in a terminator has no extra empty line after it.")]
     private async Task<string> ReplaceLinesAsync(string fileName, List<FileLineEdit> edits, CancellationToken cancellationToken = default)
     {
         await this._writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -421,6 +475,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
         - '**' matches across subdirectories, so use \"**/*.md\" to match markdown files at any depth, or \"reports/**\" to restrict the search to the 'reports' subtree.
 
         Returns matching results whose file names are paths relative to the store root (usable with file_access_read), along with snippets and matching lines with line numbers.
+        Line numbers are 1-based and count lines terminated by \n, \r\n, or a lone \r, and content ending in a terminator has no extra empty line after it.
         """)]
     private async Task<List<FileSearchResult>> GrepAsync(string regexPattern, string? globPattern = null, string? directory = null, CancellationToken cancellationToken = default)
     {
@@ -464,6 +519,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
         var tools = new List<AITool>
         {
             WrapWithApprovalIfRequired(AIFunctionFactory.Create(this.ReadAsync, new AIFunctionFactoryOptions { Name = ReadFileToolName, SerializerOptions = serializerOptions }), readOnlyRequiresApproval),
+            WrapWithApprovalIfRequired(AIFunctionFactory.Create(this.ReadLinesAsync, new AIFunctionFactoryOptions { Name = ReadLinesToolName, SerializerOptions = serializerOptions }), readOnlyRequiresApproval),
             WrapWithApprovalIfRequired(AIFunctionFactory.Create(this.LsAsync, new AIFunctionFactoryOptions { Name = LsToolName, SerializerOptions = serializerOptions }), readOnlyRequiresApproval),
             WrapWithApprovalIfRequired(AIFunctionFactory.Create(this.GrepAsync, new AIFunctionFactoryOptions { Name = GrepToolName, SerializerOptions = serializerOptions }), readOnlyRequiresApproval),
         };
