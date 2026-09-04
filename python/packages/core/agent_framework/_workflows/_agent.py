@@ -772,7 +772,18 @@ class WorkflowAgent(BaseAgent):
                     request_id = content.call_id
                     if request_id is None:
                         raise AgentInvalidResponseException("Function result is missing its call ID.")
-                    pending_request = pending_requests.get(request_id)
+                    response_request_id = request_id
+                    pending_request = pending_requests.get(response_request_id)
+                    if pending_request is None:
+                        matching_requests = [
+                            (pending_id, pending_event)
+                            for pending_id, pending_event in pending_requests.items()
+                            if isinstance(pending_event.data, Content)
+                            and pending_event.data.type == "function_call"
+                            and pending_event.data.call_id == request_id
+                        ]
+                        if len(matching_requests) == 1:
+                            response_request_id, pending_request = matching_requests[0]
                     response_data = (
                         content
                         if pending_request is not None
@@ -781,7 +792,7 @@ class WorkflowAgent(BaseAgent):
                         and pending_request.data.type == "function_call"
                         else content.result
                     )
-                    function_responses[request_id] = response_data
+                    function_responses[response_request_id] = response_data
                 else:
                     raise AgentInvalidResponseException(
                         "Unexpected content type while awaiting request info responses."

@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.16.0"
+version = "1.17.0"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,14 +23,14 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.16.0",
+    "agent-framework-core[all]==1.17.0",
 ]
 
 [dependency-groups]
 dev = [
-    "uv==0.12.5",
+    "uv==0.12.6",
     "flit==4.0.2",
-    "ruff==0.16.3",
+    "ruff==0.16.4",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",

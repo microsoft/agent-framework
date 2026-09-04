@@ -157,9 +157,9 @@ public abstract class HostedAgentFixture : IAsyncLifetime
     public async Task<List<(string Role, string Text)>> ReadConversationMessagesAsync(string conversationId)
     {
         List<(string Role, string Text)> messages = [];
-        await foreach (AgentResponseItem item in this.AgentOpenAIClient.GetProjectConversationsClient().GetProjectConversationItemsAsync(conversationId, order: "asc").ConfigureAwait(false))
+        await foreach (ResponseItem item in this.AgentOpenAIClient.GetProjectConversationsClient().GetProjectConversationItemsAsync(conversationId, order: "asc").ConfigureAwait(false))
         {
-            if (item.AsResponseResultItem() is MessageResponseItem message)
+            if (item is MessageResponseItem message)
             {
                 var text = string.Concat(message.Content
                     .Where(c => c.Kind is ResponseContentPartKind.OutputText or ResponseContentPartKind.InputText)

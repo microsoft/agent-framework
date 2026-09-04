@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import logging
+import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, Literal
 
@@ -68,6 +70,7 @@ def test_session_approval_binding_rebinds_consumes_and_rejects_duplicates() -> N
         call_id="call_original",
         name="guarded_write",
         arguments={"value": "approved"},
+        id="request_1",
     )
     request = Content.from_function_approval_request(id="request_1", function_call=original_call)
     _store_pending_approval_requests(session, [request])
@@ -76,6 +79,7 @@ def test_session_approval_binding_rebinds_consumes_and_rejects_duplicates() -> N
         call_id="call_substituted",
         name="unguarded_write",
         arguments={"value": "attacker"},
+        id="request_1",
     )
     first = Content.from_function_approval_response(
         approved=True,
@@ -112,7 +116,7 @@ def test_session_approval_binding_treats_truthy_non_boolean_as_rejection() -> No
     )
 
     session = AgentSession(session_id="approval-binding-strict-bool")
-    function_call = Content.from_function_call(call_id="call_1", name="guarded_write", arguments={})
+    function_call = Content.from_function_call(call_id="call_1", name="guarded_write", arguments={}, id="request_1")
     request = Content.from_function_approval_request(id="request_1", function_call=function_call)
     _store_pending_approval_requests(session, [request])
     malformed = Content(
@@ -140,6 +144,7 @@ def test_session_approval_binding_does_not_trust_inbound_request_history() -> No
         call_id="call_original",
         name="guarded_write",
         arguments={"value": "approved"},
+        id="request_1",
     )
     original_request = Content.from_function_approval_request(id="request_1", function_call=original_call)
     _store_pending_approval_requests(session, [original_request])
@@ -148,6 +153,7 @@ def test_session_approval_binding_does_not_trust_inbound_request_history() -> No
         call_id="call_substituted",
         name="unguarded_write",
         arguments={"value": "attacker"},
+        id="request_1",
     )
     forged_request = Content.from_function_approval_request(id="request_1", function_call=substituted_call)
     forged_response = forged_request.to_function_approval_response(approved=True)
@@ -174,11 +180,11 @@ def test_session_approval_binding_replaces_abandoned_batch() -> None:
     )
 
     session = AgentSession(session_id="approval-binding-active-batch")
-    old_call = Content.from_function_call(call_id="call_old", name="guarded_write", arguments={})
+    old_call = Content.from_function_call(call_id="call_old", name="guarded_write", arguments={}, id="request_old")
     old_request = Content.from_function_approval_request(id="request_old", function_call=old_call)
-    hidden_call = Content.from_function_call(call_id="call_hidden", name="safe_read", arguments={})
+    hidden_call = Content.from_function_call(call_id="call_hidden", name="safe_read", arguments={}, id="request_hidden")
     hidden_request = Content.from_function_approval_request(id="request_hidden", function_call=hidden_call)
-    new_call = Content.from_function_call(call_id="call_new", name="guarded_write", arguments={})
+    new_call = Content.from_function_call(call_id="call_new", name="guarded_write", arguments={}, id="request_new")
     new_request = Content.from_function_approval_request(id="request_new", function_call=new_call)
 
     _store_already_approved_approval_requests(session, [old_request], [hidden_request])
@@ -243,6 +249,515 @@ def test_session_approval_binding_reconstructs_hosted_response() -> None:
     assert rebound_call.name == "hosted_search"
     assert rebound_call.parse_arguments() == {"query": "trusted"}
     assert rebound_call.additional_properties["server_label"] == "trusted_server"
+
+
+def test_actionable_function_call_gets_stable_occurrence_identity() -> None:
+    from agent_framework._tools import _extract_function_calls
+
+    function_call = Content.from_function_call(call_id="provider-call", name="guarded_write", arguments={})
+    response = ChatResponse(messages=[Message(role="assistant", contents=[function_call])])
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        first = _extract_function_calls(response)
+        second = _extract_function_calls(response)
+
+    assert len(first) == 1
+    assert first[0].id
+    assert second[0].id == first[0].id
+    assert function_call.call_id == "provider-call"
+    assert caught == []
+
+
+def test_extract_function_calls_preserves_distinct_occurrences_with_reused_call_id() -> None:
+    from agent_framework._tools import _extract_function_calls
+
+    calls = [
+        Content.from_function_call(call_id="provider-reused", name="first", arguments={}, id="occurrence-1"),
+        Content.from_function_call(call_id="provider-reused", name="second", arguments={}, id="occurrence-2"),
+    ]
+    response = ChatResponse(messages=[Message(role="assistant", contents=calls)])
+
+    assert _extract_function_calls(response) == calls
+
+
+def test_extract_function_calls_keeps_later_occurrence_after_reused_call_id_result() -> None:
+    from agent_framework._tools import _extract_function_calls
+
+    completed_call = Content.from_function_call(
+        call_id="provider-reused",
+        name="first",
+        arguments={},
+        id="occurrence-1",
+    )
+    later_call = Content.from_function_call(
+        call_id="provider-reused",
+        name="second",
+        arguments={},
+        id="occurrence-2",
+    )
+    response = ChatResponse(
+        messages=[
+            Message(role="assistant", contents=[completed_call]),
+            Message(role="tool", contents=[Content.from_function_result(call_id="provider-reused", result="done")]),
+            Message(role="assistant", contents=[later_call]),
+        ]
+    )
+
+    assert _extract_function_calls(response) == [later_call]
+
+
+def test_actionable_function_call_uses_occurrence_identity_for_empty_call_id() -> None:
+    from agent_framework._tools import _extract_function_calls
+
+    function_call = Content.from_function_call(call_id="", name="guarded_write", arguments={})
+    response = ChatResponse(messages=[Message(role="assistant", contents=[function_call])])
+
+    with pytest.warns(FutureWarning, match="empty.*call_id.*Content.id"):
+        extracted = _extract_function_calls(response)
+
+    assert extracted == [function_call]
+    assert function_call.id
+    assert function_call.call_id == function_call.id
+
+
+async def test_streaming_empty_call_id_keeps_occurrence_identity_through_approval(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    @tool(name="guarded_write", approval_mode="always_require")
+    def guarded_write() -> str:
+        return "done"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="", name="guarded_write", arguments={})],
+                role="assistant",
+            )
+        ]
+    ]
+    streamed_calls: list[tuple[str | None, str | None]] = []
+    approval_requests: list[Content] = []
+
+    with pytest.warns(FutureWarning, match="empty.*call_id.*Content.id"):
+        async for update in chat_client_base.get_response(
+            [Message(role="user", contents=["hello"])],
+            options={"tool_choice": "auto", "tools": [guarded_write]},
+            stream=True,
+        ):
+            for content in update.contents:
+                if content.type == "function_call":
+                    streamed_calls.append((content.id, content.call_id))
+                elif content.type == "function_approval_request":
+                    approval_requests.append(content)
+
+    assert len(streamed_calls) == 1
+    occurrence_id, streamed_call_id = streamed_calls[0]
+    assert occurrence_id
+    assert streamed_call_id == occurrence_id
+    assert len(approval_requests) == 1
+    assert approval_requests[0].id == occurrence_id
+    assert approval_requests[0].function_call is not None
+    assert approval_requests[0].function_call.id == occurrence_id
+    assert approval_requests[0].function_call.call_id == occurrence_id
+
+
+async def test_streaming_empty_call_id_delta_reuses_opening_call_identity(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    @tool(name="guarded_write", approval_mode="always_require")
+    def guarded_write(value: str) -> str:
+        return value
+
+    opening = Content.from_function_call(
+        call_id="provider-call",
+        name="guarded_write",
+        arguments='{"value":',
+        additional_properties={"tool_call_index": 0},
+    )
+    continuation = Content.from_function_call(
+        call_id="",
+        name="",
+        arguments='"done"}',
+        additional_properties={"tool_call_index": 0},
+    )
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(contents=[opening], role="assistant"),
+            ChatResponseUpdate(contents=[continuation], role="assistant"),
+        ]
+    ]
+    streamed_calls: list[tuple[str | None, str | None]] = []
+    approval_requests: list[Content] = []
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        async for update in chat_client_base.get_response(
+            [Message(role="user", contents=["hello"])],
+            options={"tool_choice": "auto", "tools": [guarded_write]},
+            stream=True,
+        ):
+            for content in update.contents:
+                if content.type == "function_call":
+                    streamed_calls.append((content.id, content.call_id))
+                elif content.type == "function_approval_request":
+                    approval_requests.append(content)
+
+    assert len(streamed_calls) == 2
+    assert streamed_calls[0][0]
+    assert streamed_calls[0] == streamed_calls[1]
+    assert streamed_calls[0][1] == "provider-call"
+    assert len(approval_requests) == 1
+    assert approval_requests[0].id == streamed_calls[0][0]
+    assert approval_requests[0].function_call is not None
+    assert approval_requests[0].function_call.call_id == "provider-call"
+    assert caught == []
+
+
+async def test_streaming_named_calls_with_reused_call_id_get_distinct_occurrences(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    @tool(name="first_write", approval_mode="always_require")
+    def first_write() -> str:
+        return "first"
+
+    @tool(name="second_write", approval_mode="always_require")
+    def second_write() -> str:
+        return "second"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="provider-reused", name="first_write", arguments={})],
+                role="assistant",
+            ),
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="provider-reused", name="second_write", arguments={})],
+                role="assistant",
+            ),
+        ]
+    ]
+
+    stream = chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [first_write, second_write]},
+        stream=True,
+    )
+    streamed_calls = [
+        content async for update in stream for content in update.contents if content.type == "function_call"
+    ]
+    final_response = await stream.get_final_response()
+    final_calls = [
+        content
+        for message in final_response.messages
+        for content in message.contents
+        if content.type == "function_call"
+    ]
+
+    assert [call.name for call in streamed_calls] == ["first_write", "second_write"]
+    assert all(call.call_id == "provider-reused" for call in streamed_calls)
+    assert all(call.id for call in streamed_calls)
+    assert streamed_calls[0].id != streamed_calls[1].id
+    assert [(call.id, call.name) for call in final_calls] == [
+        (streamed_calls[0].id, "first_write"),
+        (streamed_calls[1].id, "second_write"),
+    ]
+
+
+async def test_streaming_interleaved_indexed_call_fragments_coalesce_by_occurrence(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    @tool(name="first_write", approval_mode="always_require")
+    def first_write(value: str) -> str:
+        return value
+
+    @tool(name="second_write", approval_mode="always_require")
+    def second_write(value: str) -> str:
+        return value
+
+    def fragment(call_id: str, name: str, arguments: str, index: int) -> Content:
+        return Content.from_function_call(
+            call_id=call_id,
+            name=name,
+            arguments=arguments,
+            id=f"occurrence-{index}",
+        )
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(contents=[fragment("provider-a", "first_write", '{"value":', 0)], role="assistant"),
+            ChatResponseUpdate(contents=[fragment("provider-b", "second_write", '{"value":', 1)], role="assistant"),
+            ChatResponseUpdate(contents=[fragment("provider-a", "", '"first"}', 0)], role="assistant"),
+            ChatResponseUpdate(contents=[fragment("provider-b", "", '"second"}', 1)], role="assistant"),
+        ]
+    ]
+    streamed_by_index: dict[int, list[tuple[str | None, str | None]]] = {0: [], 1: []}
+    approval_requests: list[Content] = []
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        stream = chat_client_base.get_response(
+            [Message(role="user", contents=["hello"])],
+            options={"tool_choice": "auto", "tools": [first_write, second_write]},
+            stream=True,
+        )
+        async for update in stream:
+            for content in update.contents:
+                if content.type == "function_call":
+                    assert content.id is not None
+                    index = int(content.id.removeprefix("occurrence-"))
+                    streamed_by_index[index].append((content.id, content.call_id))
+                elif content.type == "function_approval_request":
+                    approval_requests.append(content)
+
+    final_response = await stream.get_final_response()
+    final_calls = [
+        content
+        for message in final_response.messages
+        for content in message.contents
+        if content.type == "function_call"
+    ]
+    assert [(call.id, call.call_id, call.parse_arguments()) for call in final_calls] == [
+        ("occurrence-0", "provider-a", {"value": "first"}),
+        ("occurrence-1", "provider-b", {"value": "second"}),
+    ]
+
+    assert len(approval_requests) == 2
+    requests_by_call_id = {
+        request.function_call.call_id: request for request in approval_requests if request.function_call is not None
+    }
+    assert set(requests_by_call_id) == {"provider-a", "provider-b"}
+    assert requests_by_call_id["provider-a"].function_call is not None
+    assert requests_by_call_id["provider-a"].function_call.parse_arguments() == {"value": "first"}
+    assert requests_by_call_id["provider-b"].function_call is not None
+    assert requests_by_call_id["provider-b"].function_call.parse_arguments() == {"value": "second"}
+    for index, provider_call_id in ((0, "provider-a"), (1, "provider-b")):
+        assert len(streamed_by_index[index]) == 2
+        assert streamed_by_index[index][0] == streamed_by_index[index][1]
+        assert streamed_by_index[index][0][1] == provider_call_id
+    assert caught == []
+
+
+def test_occurrence_aware_approval_rejects_stale_reused_call_id_response(caplog: pytest.LogCaptureFixture) -> None:
+    from agent_framework._tools import (
+        _bind_approval_responses_to_pending_requests,
+        _load_pending_approval_requests,
+        _store_pending_approval_requests,
+    )
+
+    session = AgentSession(session_id="approval-binding-reused-provider-id")
+    first_call = Content(
+        "function_call", id="af-call-first", call_id="provider-reused", name="guarded_write", arguments={"value": 1}
+    )
+    second_call = Content(
+        "function_call", id="af-call-second", call_id="provider-reused", name="guarded_write", arguments={"value": 2}
+    )
+    first_request = Content.from_function_approval_request(id="af-call-first", function_call=first_call)
+    second_request = Content.from_function_approval_request(id="af-call-second", function_call=second_call)
+    _store_pending_approval_requests(session, [first_request])
+    _store_pending_approval_requests(session, [second_request])
+    stale_response = Content.from_function_approval_response(
+        approved=True, id="af-call-first", function_call=first_call
+    )
+    messages = [Message(role="user", contents=[stale_response])]
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        _bind_approval_responses_to_pending_requests(messages, session)
+
+    assert messages == []
+    assert list(_load_pending_approval_requests(session)) == ["af-call-second"]
+    assert "occurrence identity" in caplog.text
+
+
+@pytest.mark.parametrize("response_id", [None, "provider-reused", "af-call-other"])
+def test_occurrence_aware_approval_mismatched_identity_does_not_consume_pending(response_id: str | None) -> None:
+    from agent_framework._tools import (
+        _bind_approval_responses_to_pending_requests,
+        _load_pending_approval_requests,
+        _store_pending_approval_requests,
+    )
+
+    session = AgentSession(session_id="approval-binding-occurrence-mismatch")
+    function_call = Content(
+        "function_call", id="af-call-current", call_id="provider-reused", name="guarded_write", arguments={}
+    )
+    request = Content.from_function_approval_request(id="af-call-current", function_call=function_call)
+    _store_pending_approval_requests(session, [request])
+    response = Content(
+        "function_approval_response",
+        approved=True,
+        id=response_id,
+        function_call=Content.from_function_call(call_id="provider-reused", name="guarded_write", arguments={}),
+    )
+    messages = [Message(role="user", contents=[response])]
+
+    _bind_approval_responses_to_pending_requests(messages, session)
+
+    assert messages == []
+    assert list(_load_pending_approval_requests(session)) == ["af-call-current"]
+
+
+def test_occurrence_aware_approval_can_retry_after_mismatched_identity() -> None:
+    from agent_framework._tools import (
+        _bind_approval_responses_to_pending_requests,
+        _load_pending_approval_requests,
+        _store_pending_approval_requests,
+    )
+
+    session = AgentSession(session_id="approval-binding-corrected-retry")
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="guarded_write",
+        arguments={"value": "trusted"},
+        id="af-call-current",
+    )
+    request = Content.from_function_approval_request(id="af-call-current", function_call=function_call)
+    _store_pending_approval_requests(session, [request])
+    mismatched_messages = [
+        Message(
+            role="user",
+            contents=[Content("function_approval_response", approved=True, id="af-call-stale")],
+        )
+    ]
+
+    _bind_approval_responses_to_pending_requests(mismatched_messages, session)
+
+    assert mismatched_messages == []
+    assert list(_load_pending_approval_requests(session)) == ["af-call-current"]
+
+    corrected_messages = [
+        Message(
+            role="user",
+            contents=[Content("function_approval_response", approved=True, id="af-call-current")],
+        )
+    ]
+    _bind_approval_responses_to_pending_requests(corrected_messages, session)
+
+    assert len(corrected_messages) == 1
+    assert corrected_messages[0].contents[0].id == "af-call-current"
+    assert corrected_messages[0].contents[0].function_call is not None
+    assert corrected_messages[0].contents[0].function_call.call_id == "provider-call"
+    assert _load_pending_approval_requests(session) == {}
+
+
+def test_occurrence_aware_approval_binds_without_embedded_function_call() -> None:
+    from agent_framework._tools import (
+        _bind_approval_responses_to_pending_requests,
+        _load_pending_approval_requests,
+        _store_pending_approval_requests,
+    )
+
+    session = AgentSession(session_id="approval-binding-occurrence-only")
+    function_call = Content(
+        "function_call",
+        id="af-call-current",
+        call_id="provider-call",
+        name="guarded_write",
+        arguments={"value": "trusted"},
+    )
+    request = Content.from_function_approval_request(id="af-call-current", function_call=function_call)
+    _store_pending_approval_requests(session, [request])
+    response = Content("function_approval_response", approved=True, id="af-call-current")
+    messages = [Message(role="user", contents=[response])]
+
+    _bind_approval_responses_to_pending_requests(messages, session)
+
+    rebound = messages[0].contents[0]
+    assert rebound.function_call == function_call
+    assert _load_pending_approval_requests(session) == {}
+
+
+def test_occurrence_aware_legacy_request_id_rebounds_to_occurrence_id() -> None:
+    from agent_framework._tools import (
+        _bind_approval_responses_to_pending_requests,
+        _store_pending_approval_requests,
+    )
+
+    session = AgentSession(session_id="approval-binding-legacy-request-id")
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="guarded_write",
+        arguments={"value": "trusted"},
+        id="af-call-current",
+    )
+    with pytest.warns(FutureWarning, match="id differs from function_call.id.*legacy"):
+        request = Content.from_function_approval_request(id="provider-call", function_call=function_call)
+    _store_pending_approval_requests(session, [request])
+    response = Content.from_function_approval_response(
+        approved=True,
+        id="provider-call",
+        function_call=Content.from_dict(function_call.to_dict()),
+    )
+    messages = [Message(role="user", contents=[response])]
+
+    with pytest.warns(FutureWarning, match="legacy provider call_id request binding"):
+        _bind_approval_responses_to_pending_requests(messages, session)
+
+    assert len(messages) == 1
+    assert len(messages[0].contents) == 1
+    assert messages[0].contents[0].id == "af-call-current"
+    assert messages[0].contents[0].function_call is not None
+    assert messages[0].contents[0].function_call.call_id == "provider-call"
+
+
+def test_legacy_serialized_pending_approval_resumes_once_with_migration_warning() -> None:
+    from agent_framework._tools import _bind_approval_responses_to_pending_requests, _load_pending_approval_requests
+
+    session = AgentSession(session_id="approval-binding-legacy")
+    session.state["tool_approval"] = {
+        "pending_approval_requests": [
+            {
+                "type": "function_approval_request",
+                "id": "legacy-call",
+                "function_call": {
+                    "type": "function_call",
+                    "call_id": "legacy-call",
+                    "name": "guarded_write",
+                    "arguments": {"value": "stored"},
+                },
+                "user_input_request": True,
+            }
+        ]
+    }
+    response = Content.from_function_approval_response(
+        approved=True,
+        id="legacy-call",
+        function_call=Content.from_function_call(
+            call_id="legacy-call", name="guarded_write", arguments={"value": "client"}
+        ),
+    )
+    messages = [Message(role="user", contents=[response])]
+
+    with pytest.warns(FutureWarning, match="legacy stored approval.*Content.id"):
+        _bind_approval_responses_to_pending_requests(messages, session)
+
+    rebound = messages[0].contents[0]
+    assert rebound.function_call is not None
+    assert rebound.function_call.id is None
+    assert rebound.function_call.parse_arguments() == {"value": "stored"}
+    assert _load_pending_approval_requests(session) == {}
+
+
+def test_hosted_approval_keeps_provider_issued_request_id() -> None:
+    from agent_framework._tools import _bind_approval_responses_to_pending_requests, _store_pending_approval_requests
+
+    session = AgentSession(session_id="approval-binding-hosted-id")
+    hosted_call = Content(
+        "function_call",
+        id="af-call-local-occurrence",
+        call_id="hosted-call",
+        name="hosted_search",
+        arguments={},
+        additional_properties={"server_label": "hosted"},
+    )
+    request = Content.from_function_approval_request(id="provider-approval-id", function_call=hosted_call)
+    _store_pending_approval_requests(session, [request])
+    response = Content("function_approval_response", approved=True, id="provider-approval-id")
+    messages = [Message(role="user", contents=[response])]
+
+    _bind_approval_responses_to_pending_requests(messages, session)
+
+    assert messages[0].contents[0].id == "provider-approval-id"
 
 
 def test_session_approval_batch_rejects_duplicate_request_ids() -> None:
@@ -636,7 +1151,7 @@ async def test_base_client_with_streaming_function_calling(chat_client_base: Sup
                 role="assistant",
             ),
             ChatResponseUpdate(
-                contents=[Content.from_function_call(call_id="1", name="test_function", arguments='"value1"}')],
+                contents=[Content.from_function_call(call_id="1", name="", arguments='"value1"}')],
                 role="assistant",
             ),
         ],
@@ -933,7 +1448,7 @@ async def test_function_invocation_scenarios(
                     role="assistant",
                 ),
                 ChatResponseUpdate(
-                    contents=[Content.from_function_call(call_id="1", name=function_name, arguments='"value1"}')],
+                    contents=[Content.from_function_call(call_id="1", name="", arguments='"value1"}')],
                     role="assistant",
                 ),
             ]
@@ -1150,7 +1665,7 @@ async def test_streaming_informational_only_function_call_is_not_invoked(chat_cl
         return f"Processed {arg1}"
 
     informational_call = Content.from_function_call(
-        call_id="1",
+        call_id="",
         name="no_approval_func",
         arguments='{"arg1": "value1"}',
         informational_only=True,
@@ -1159,18 +1674,23 @@ async def test_streaming_informational_only_function_call_is_not_invoked(chat_cl
         [ChatResponseUpdate(contents=[informational_call], role="assistant")]
     ]
 
-    updates = [
-        update
-        async for update in chat_client_base.get_response(
-            [Message(role="user", contents=["hello"])],
-            options={"tool_choice": "auto", "tools": [func_no_approval]},
-            stream=True,
-        )
-    ]
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        updates = [
+            update
+            async for update in chat_client_base.get_response(
+                [Message(role="user", contents=["hello"])],
+                options={"tool_choice": "auto", "tools": [func_no_approval]},
+                stream=True,
+            )
+        ]
 
     assert exec_counter == 0
     assert len(updates) == 1
     assert updates[0].contents == [informational_call]
+    assert informational_call.id is None
+    assert informational_call.call_id == ""
+    assert caught == []
 
 
 async def test_rejected_approval(chat_client_base: SupportsChatGetResponse):
@@ -3612,13 +4132,13 @@ async def test_streaming_declaration_only_tool_preserves_metadata_without_duplic
                 contents=[
                     Content.from_function_call(
                         call_id="call_weather",
-                        name="get_weather",
+                        name="get_weather" if index == 0 else "",
                         arguments=arguments,
                     )
                 ],
                 role="assistant",
             )
-            for arguments in argument_chunks
+            for index, arguments in enumerate(argument_chunks)
         ]
     ]
 
@@ -3627,10 +4147,14 @@ async def test_streaming_declaration_only_tool_preserves_metadata_without_duplic
         options={"tool_choice": "auto", "tools": [declaration_tool]},
         stream=True,
     )
+    streamed_occurrence_ids: list[str | None] = []
     metadata_updates: list[tuple[Any, str | None]] = []
     async for update in stream:
         for content in update.contents:
-            if content.type == "function_call" and content.call_id == "call_weather" and content.user_input_request:
+            if content.type != "function_call" or content.call_id != "call_weather":
+                continue
+            streamed_occurrence_ids.append(content.id)
+            if content.user_input_request:
                 metadata_updates.append((content.arguments, content.id))
     final_response = await stream.get_final_response()
     function_calls = [
@@ -3640,11 +4164,15 @@ async def test_streaming_declaration_only_tool_preserves_metadata_without_duplic
         if content.type == "function_call" and content.call_id == "call_weather"
     ]
 
-    assert metadata_updates == [(None, "call_weather")]
+    assert len(metadata_updates) == 1
+    assert metadata_updates[0][0] is None
+    assert metadata_updates[0][1]
+    assert streamed_occurrence_ids
+    assert set(streamed_occurrence_ids) == {metadata_updates[0][1]}
     assert len(function_calls) == 1
     assert function_calls[0].arguments == '{"location":"Seattle"}'
     assert function_calls[0].user_input_request is True
-    assert function_calls[0].id == "call_weather"
+    assert function_calls[0].id == metadata_updates[0][1]
 
 
 async def test_multiple_function_calls_parallel_execution(chat_client_base: SupportsChatGetResponse):
@@ -3911,7 +4439,7 @@ async def test_streaming_max_iterations_limit(chat_client_base: SupportsChatGetR
                 role="assistant",
             ),
             ChatResponseUpdate(
-                contents=[Content.from_function_call(call_id="1", name="test_function", arguments='"value1"}')],
+                contents=[Content.from_function_call(call_id="1", name="", arguments='"value1"}')],
                 role="assistant",
             ),
         ],
@@ -3921,7 +4449,7 @@ async def test_streaming_max_iterations_limit(chat_client_base: SupportsChatGetR
                 role="assistant",
             ),
             ChatResponseUpdate(
-                contents=[Content.from_function_call(call_id="2", name="test_function", arguments='"value2"}')],
+                contents=[Content.from_function_call(call_id="2", name="", arguments='"value2"}')],
                 role="assistant",
             ),
         ],
@@ -3967,7 +4495,7 @@ async def test_streaming_max_iterations_blank_final_fallback_synthesizes_update(
                 role="assistant",
             ),
             ChatResponseUpdate(
-                contents=[Content.from_function_call(call_id="call_1", name="test_function", arguments='"v1"}')],
+                contents=[Content.from_function_call(call_id="call_1", name="", arguments='"v1"}')],
                 role="assistant",
             ),
         ],
