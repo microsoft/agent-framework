@@ -35,6 +35,14 @@ updates:
       interval: "weekly"
       day: "thursday"
     groups:
+      basics:
+        patterns:
+          - "uv"
+          - "ruff"
+          - "prek"
+          - "poethepoet"
+          - "tomli"
+          - "rich"
       pytest:
         patterns:
           - "pytest*"
@@ -60,6 +68,14 @@ updates:
       interval: "weekly"
       day: "thursday"
     groups:
+      basics:
+        patterns:
+          - "uv"
+          - "ruff"
+          - "prek"
+          - "poethepoet"
+          - "tomli"
+          - "rich"
       pytest:
         patterns:
           - "pytest*"
