@@ -2,9 +2,11 @@
 
 import asyncio
 import contextlib
+from collections.abc import MutableMapping
 from enum import IntEnum
+from typing import Protocol
+from urllib.parse import urlsplit
 
-import httpx
 from agent_framework._telemetry import USER_AGENT_KEY, apply_feature_token, remove_feature_token
 from openai import DefaultAsyncHttpxClient
 
@@ -22,6 +24,14 @@ _AZURE_OPENAI_ORIGIN_SUFFIXES = (
 )
 
 
+class _HttpRequest(Protocol):
+    @property
+    def headers(self) -> MutableMapping[str, str]: ...
+
+    @property
+    def url(self) -> object: ...
+
+
 class _FeatureUsageAsyncHttpxClient(DefaultAsyncHttpxClient):
     """OpenAI-default HTTP client that preserves the SDK's GC cleanup behavior."""
 
@@ -32,11 +42,10 @@ class _FeatureUsageAsyncHttpxClient(DefaultAsyncHttpxClient):
             asyncio.get_running_loop().create_task(self.aclose())
 
 
-def _is_approved_origin(url: httpx.URL | str, suffixes: tuple[str, ...]) -> bool:
-    if isinstance(url, str):
-        url = httpx.URL(url)
-    host = (url.host or "").rstrip(".").lower()
-    return url.scheme == "https" and any(host == suffix or host.endswith(f".{suffix}") for suffix in suffixes)
+def _is_approved_origin(url: str, suffixes: tuple[str, ...]) -> bool:
+    parsed_url = urlsplit(url)
+    host = (parsed_url.hostname or "").rstrip(".").lower()
+    return parsed_url.scheme == "https" and any(host == suffix or host.endswith(f".{suffix}") for suffix in suffixes)
 
 
 def create_feature_usage_http_client(
@@ -45,11 +54,11 @@ def create_feature_usage_http_client(
 ) -> DefaultAsyncHttpxClient:
     """Create the OpenAI SDK default client with destination-aware feature stamping."""
 
-    async def stamp_feature_usage(request: httpx.Request) -> None:  # ruff:ignore[unused-async]
+    async def stamp_feature_usage(request: _HttpRequest) -> None:  # ruff:ignore[unused-async]
         user_agent = request.headers.get(USER_AGENT_KEY, "")
         request.headers[USER_AGENT_KEY] = (
             apply_feature_token(user_agent)
-            if _is_approved_origin(request.url, approved_origin_suffixes)
+            if _is_approved_origin(str(request.url), approved_origin_suffixes)
             else remove_feature_token(user_agent)
         )
 

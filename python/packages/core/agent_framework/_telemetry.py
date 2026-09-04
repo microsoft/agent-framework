@@ -55,6 +55,7 @@ class FeatureIndex(IntEnum):
     CORE_MCP_SKILLS_SOURCE = 16
     CORE_SESSION_STORE = 17
     CORE_AGENT_HOOKS = 18
+    CORE_VECTOR_STORES = 19
 
 
 # This environment variable is reserved by the Foundry hosting environment to

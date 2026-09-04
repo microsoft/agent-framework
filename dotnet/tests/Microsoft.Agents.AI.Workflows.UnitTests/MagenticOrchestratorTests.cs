@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Specialized.Magentic;
 using Microsoft.Extensions.AI;
 
@@ -18,9 +17,9 @@ public class MagenticOrchestratorTests
 
         ProtocolDescriptor protocol = orchestrator.DescribeProtocol();
 
-        protocol.Sends.Should().Contain(typeof(List<ChatMessage>));
-        protocol.Sends.Should().Contain(typeof(ChatMessage));
-        protocol.Sends.Should().Contain(typeof(TurnToken));
-        protocol.Sends.Should().Contain(typeof(ResetChatSignal));
+        Assert.Contains(typeof(List<ChatMessage>), protocol.Sends);
+        Assert.Contains(typeof(ChatMessage), protocol.Sends);
+        Assert.Contains(typeof(TurnToken), protocol.Sends);
+        Assert.Contains(typeof(ResetChatSignal), protocol.Sends);
     }
 }

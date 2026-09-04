@@ -44,9 +44,9 @@ What the route demonstrates (identical to `local_responses/`):
   the session. OpenAI's `previous_response_id` rotates every turn *by design* —
   it lets a caller continue from any earlier response, not just the latest one
   — so every response id needs to stay independently resolvable.
-- Treats an unknown `conversation_id` as a request to create a new local
+- Treats an unknown id supplied through `conversation` as a request to create a new local
   session. Your app can choose a stricter policy.
-- Explicitly advances a supplied `conversation_id` after each completed run. A
+- Explicitly advances a conversation supplied through `conversation` after each completed run. A
   conversation id is a mutable head, so production apps should serialize
   writers or use optimistic concurrency; the sample stores the updated session
   only under that stable conversation id.
@@ -64,7 +64,7 @@ to callers, add authentication and authorization at the infrastructure layer,
 the FastAPI app layer, or inside the route body.
 
 Session continuation deserves particular care: treat `previous_response_id` and
-`conversation_id` as untrusted request values, authorize the caller before
+`conversation` as untrusted request values, authorize the caller before
 loading or storing a session for those ids, and partition any durable session
 store by tenant/user as appropriate for your application.
 
