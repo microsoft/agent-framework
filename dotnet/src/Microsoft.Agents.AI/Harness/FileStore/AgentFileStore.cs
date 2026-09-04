@@ -194,6 +194,10 @@ public abstract class AgentFileStore
 
         while (pending.Count > 0)
         {
+            // Checked here as well as passed down: a store whose ListChildrenAsync ignores the token
+            // would otherwise let a cancelled walk enumerate the whole hierarchy one listing at a time.
+            cancellationToken.ThrowIfCancellationRequested();
+
             string relativeDir = pending.Pop();
             string target = string.IsNullOrEmpty(relativeDir)
                 ? directory
@@ -201,6 +205,8 @@ public abstract class AgentFileStore
 
             foreach (FileStoreEntry entry in await this.ListChildrenAsync(target, cancellationToken).ConfigureAwait(false))
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 string child = string.IsNullOrEmpty(relativeDir) ? entry.Name : $"{relativeDir}/{entry.Name}";
                 if (entry.Type == FileStoreEntry.Directory)
                 {

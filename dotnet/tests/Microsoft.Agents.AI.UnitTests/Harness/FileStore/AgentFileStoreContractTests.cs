@@ -209,4 +209,39 @@ public class AgentFileStoreContractTests
         // Assert
         Assert.Equal("ONE\ntwo\n", result);
     }
+
+    /// <summary>Lists children without observing the token, and counts how often it is asked.</summary>
+    private sealed class CountingListStore : ContentOnlyStore
+    {
+        public int Listings { get; private set; }
+
+        public override Task<IReadOnlyList<FileStoreEntry>> ListChildrenAsync(string directory, CancellationToken cancellationToken = default)
+        {
+            this.Listings++;
+            return base.ListChildrenAsync(directory, CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task BaseSearch_StopsWalkingWhenCancelledEvenIfTheStoreIgnoresTheTokenAsync()
+    {
+        // Arrange — twenty directories to walk, and a store that takes the token and never reads it,
+        // which is the shape that leaves a cancelled walk enumerating the whole hierarchy.
+        var store = new CountingListStore();
+        for (int index = 0; index < 20; index++)
+        {
+            await store.WriteAsync($"dir{index}/f.txt", Needle);
+        }
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // Act
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => store.SearchAsync(string.Empty, Needle, recursive: true, cancellationToken: cts.Token));
+
+        // Assert — the walk must stop at once. Throwing alone proves nothing here, because
+        // SearchAsync checks the token itself once FindMatchingFilesAsync has already returned.
+        Assert.Equal(0, store.Listings);
+    }
 }
