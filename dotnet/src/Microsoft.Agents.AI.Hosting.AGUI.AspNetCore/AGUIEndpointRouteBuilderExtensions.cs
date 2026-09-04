@@ -146,10 +146,11 @@ public static class AGUIEndpointRouteBuilderExtensions
             ctx.Input.ThreadId = threadId;
 
             var session = await hostAgent.GetOrCreateSessionAsync(threadId, cancellationToken).ConfigureAwait(false);
+            var messages = GetMessagesForRun(aiAgent, session, ctx.Messages);
 
             var events = hostAgent
                 .RunStreamingAsync(
-                    ctx.Messages,
+                    messages,
                     session: session,
                     options: new ChatClientAgentRunOptions { ChatOptions = ctx.ChatOptions },
                     cancellationToken: cancellationToken)
@@ -173,6 +174,71 @@ public static class AGUIEndpointRouteBuilderExtensions
 
         MarkFeatureUsed();
         return endpoint;
+    }
+
+    internal static IReadOnlyList<ChatMessage> GetMessagesForRun(
+        AIAgent agent,
+        AgentSession session,
+        List<ChatMessage> incomingMessages)
+    {
+        var chatClientAgent = agent.GetService<ChatClientAgent>();
+        var chatClientSession = session.GetService<ChatClientAgentSession>();
+        if (chatClientAgent is null || chatClientSession is null)
+        {
+            return incomingMessages;
+        }
+
+        if (chatClientAgent.ChatHistoryProvider is InMemoryChatHistoryProvider historyProvider &&
+            session.TryGetInMemoryChatHistory(out List<ChatMessage>? storedMessages, historyProvider.StateKeys[0]) &&
+            storedMessages.Count > 0)
+        {
+            return RemoveStoredHistory(incomingMessages, storedMessages);
+        }
+
+        if (!string.IsNullOrWhiteSpace(chatClientSession.ConversationId))
+        {
+            return GetCurrentTurnMessages(incomingMessages);
+        }
+
+        return incomingMessages;
+    }
+
+    private static List<ChatMessage> RemoveStoredHistory(
+        List<ChatMessage> incomingMessages,
+        List<ChatMessage> storedMessages)
+    {
+        if (incomingMessages.Count <= storedMessages.Count)
+        {
+            return incomingMessages;
+        }
+
+        // AG-UI sends the complete conversation in chronological order. Only remove
+        // stored history when it is an exact prefix of the incoming transcript.
+        for (int i = storedMessages.Count - 1; i >= 0; i--)
+        {
+            string? storedMessageId = storedMessages[i].MessageId;
+            if (string.IsNullOrEmpty(storedMessageId) ||
+                !string.Equals(storedMessageId, incomingMessages[i].MessageId, StringComparison.Ordinal))
+            {
+                return incomingMessages;
+            }
+        }
+
+        return incomingMessages.GetRange(storedMessages.Count, incomingMessages.Count - storedMessages.Count);
+    }
+
+    private static List<ChatMessage> GetCurrentTurnMessages(List<ChatMessage> incomingMessages)
+    {
+        for (int i = incomingMessages.Count - 1; i >= 0; i--)
+        {
+            if (incomingMessages[i].Role == ChatRole.Assistant)
+            {
+                int newMessagesStart = i + 1;
+                return incomingMessages.GetRange(newMessagesStart, incomingMessages.Count - newMessagesStart);
+            }
+        }
+
+        return incomingMessages;
     }
 
     private static void MarkFeatureUsed()
