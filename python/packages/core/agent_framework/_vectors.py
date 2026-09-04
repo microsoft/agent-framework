@@ -813,7 +813,8 @@ class _VectorStoreRecordHandler(Generic[KeyT, ModelT]):
 
         Args:
             records: One application record or a sequence of records.
-            generate_vectors: Whether to generate vector values. When ``False``, supplied values are preserved.
+            generate_vectors: Whether to generate vector values, overwriting any supplied values. When ``False``,
+                supplied values are preserved.
             context: Connector-specific serialization context.
 
         Raises:
@@ -1058,7 +1059,8 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
 
         Args:
             records: A sequence of models.
-            generate_vectors: Whether to generate vector values. When ``False``, supplied values are preserved.
+            generate_vectors: Whether to generate vector values, overwriting any supplied values. When ``False``,
+                supplied values are preserved.
             operation_options: Store-specific operation options.
 
         Returns:
