@@ -1777,41 +1777,38 @@ async def _try_execute_function_call_groups(
     )
     declaration_only_tool_names = {tool_name for tool_name, tool in tool_map.items() if tool.declaration_only}
     additional_tool_names = {tool.name for tool in config.get("additional_tools") or []}
-    actionable_calls = [
-        function_call for function_call in function_calls if _is_actionable_function_call(function_call)
-    ]
-
     # Classify the entire batch first: any required user interaction pauses the batch before execution.
     # Scan every call before deciding so classification travels with each call, not with its position in
     # the batch. Priority (highest first): approval pause > declaration-only user-input > unknown-call
     # termination. A user-input pause therefore takes precedence over unknown-call termination in mixed batches.
     requires_approval = False
     has_declaration_only_call = False
+    unknown_call_found = False
     unknown_call_name: str | None = None
-    for function_call in actionable_calls:
-        function_name = function_call.name
+    for function_call in function_calls:
+        source_function_call = _underlying_function_call(function_call)
+        function_name = source_function_call.name
         logger.debug(
             "Checking function call: type=%s, name=%s, in approval_tools=%s",
             function_call.type,
             function_name,
             function_name in approval_tool_names,
         )
-        if function_name in approval_tool_names:
+        if _is_actionable_function_call(function_call) and function_name in approval_tool_names:
             logger.debug("Approval needed for function: %s", function_name)
             requires_approval = True
             continue
-        if function_name in declaration_only_tool_names or function_name in additional_tool_names:
+        if _is_actionable_function_call(function_call) and (
+            function_name in declaration_only_tool_names or function_name in additional_tool_names
+        ):
             has_declaration_only_call = True
             continue
-        if (
-            unknown_call_name is None
-            and config.get("terminate_on_unknown_calls", False)
-            and function_name not in tool_map
-        ):
+        if not unknown_call_found and config.get("terminate_on_unknown_calls", False) and function_name not in tool_map:
+            unknown_call_found = True
             unknown_call_name = function_name
     # Defer unknown-call termination until the whole batch is classified so a higher-priority approval or
     # declaration-only pause anywhere in the batch is not skipped by an earlier unknown call.
-    if not requires_approval and not has_declaration_only_call and unknown_call_name is not None:
+    if not requires_approval and not has_declaration_only_call and unknown_call_found:
         raise KeyError(f'Error: Requested function "{unknown_call_name}" not found.')
     if requires_approval:
         # Surface only the approvals the host must decide; session-backed safe siblings wait for that resume.

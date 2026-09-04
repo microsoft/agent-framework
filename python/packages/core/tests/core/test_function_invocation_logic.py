@@ -2895,6 +2895,26 @@ async def test_mixed_batch_approval_takes_precedence_over_unknown_call_terminati
     ]
     assert len(approval_requests) >= 1, "approval pause must take precedence over unknown-call termination"
 
+    approval_responses = [request.to_function_approval_response(approved=True) for request in approval_requests]
+    with pytest.raises(KeyError, match='Requested function "unknown_function" not found'):
+        await chat_client_base.get_response(
+            [Message(role="user", contents=approval_responses)],
+            options={"tool_choice": "auto", "tools": [approval_func]},
+        )
+
+
+async def test_nameless_call_honors_unknown_call_termination():
+    """A nameless call is still unknown and must terminate when configured to do so."""
+    from agent_framework._tools import _try_execute_function_call_groups
+
+    with pytest.raises(KeyError, match='Requested function "None" not found'):
+        await _try_execute_function_call_groups(
+            custom_args={},
+            function_calls=[Content("function_call", call_id="nameless-call", arguments="{}")],
+            tools=[],
+            config={"terminate_on_unknown_calls": True},
+        )
+
 
 async def test_function_invocation_config_additional_tools(chat_client_base: SupportsChatGetResponse):
     """Test that additional_tools are available but treated as declaration_only."""
