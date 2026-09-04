@@ -1285,10 +1285,34 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             return update
 
         def _finalizer(updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
-            return self._finalize_response_updates(
+            agent_response = self._finalize_response_updates(
                 updates,
                 response_format=context["chat_options"].get("response_format"),
             )
+            # Propagate _agent_framework_stop_reason from the inner ChatResponse to the outer
+            # AgentResponse. _finalize_with_stop_reason sets it on the inner ChatResponse
+            # (a ResponseStream finalizer), but AgentResponse.from_updates only sees the
+            # AgentResponseUpdate sequence — none of which carries this key. The non-streaming
+            # path copies additional_properties directly via _build_agent_response_from_chat_response;
+            # for streaming we recover it here from the inner ChatResponse stored in the closure.
+            if inner_chat_responses:
+                inner = inner_chat_responses[0]
+                stop_reason = inner.additional_properties.get("_agent_framework_stop_reason")
+                if (
+                    stop_reason is not None
+                    and "_agent_framework_stop_reason" not in agent_response.additional_properties
+                ):
+                    agent_response.additional_properties["_agent_framework_stop_reason"] = stop_reason
+            return agent_response
+
+        # Mutable container for the inner ChatResponse; populated by the result hook below before
+        # _finalizer is called (inner finalizer runs before outer finalizer per ResponseStream.map contract).
+        inner_chat_responses: list[ChatResponse[Any]] = []
+
+        def capture_inner_chat_response(inner: ChatResponse[Any]) -> None:
+            inner_chat_responses.append(inner)
+
+        stream_response = stream_response.with_result_hook(capture_inner_chat_response)
 
         stream = stream_response.map(
             transform=partial(

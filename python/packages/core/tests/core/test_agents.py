@@ -1345,7 +1345,7 @@ async def test_context_provider_receives_full_agent_response_non_streaming(
     assert response.usage_details == {"input_token_count": 3, "output_token_count": 2, "total_token_count": 5}
     assert response.value == {"answer": "ok"}
     assert response.continuation_token == {"token": "next"}
-    assert response.additional_properties == {"provider": "test"}
+    assert response.additional_properties == {"provider": "test", "_agent_framework_stop_reason": "completed"}
     assert response.raw_representation is raw_response
 
 
@@ -1434,7 +1434,7 @@ async def test_context_provider_receives_full_agent_response_streaming(
     assert response.usage_details == {"input_token_count": 4, "output_token_count": 3, "total_token_count": 7}
     assert response.value == {"answer": "ok"}
     assert response.continuation_token == {"token": "stream-next"}
-    assert response.additional_properties == {"provider": "stream-test"}
+    assert response.additional_properties == {"provider": "stream-test", "_agent_framework_stop_reason": "completed"}
     assert response.raw_representation == [raw_update]
 
 
