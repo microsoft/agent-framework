@@ -318,6 +318,31 @@ async def test_filesystem_store_rejects_symlinks_into_root(tmp_path: Path) -> No
     assert await _list_files(store) == []
 
 
+async def test_filesystem_search_does_not_read_through_a_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A candidate that became a link after enumeration must be skipped, not read."""
+    root = tmp_path / "root"
+    root.mkdir()
+    swapped = root / "notes.txt"
+    swapped.write_text("needle\n", encoding="utf-8")
+
+    # Enumeration screens links itself, so both halves of the race are staged: the candidate is
+    # handed over as if it had passed that screen, and reports as a link by the time it is read.
+    # Staged rather than created, because a real symlink needs privileges this suite cannot rely on.
+    monkeypatch.setattr(
+        FileSystemAgentFileStore,
+        "_enumerate_search_files",
+        staticmethod(lambda full_dir, recursive: [("notes.txt", swapped)]),
+    )
+    monkeypatch.setattr(_file_access_module, "is_link_or_reparse_point", lambda candidate: candidate == swapped)
+
+    store = FileSystemAgentFileStore(root)
+    results = await store.search("", "needle", recursive=True)
+
+    assert results == []
+
+
 async def test_filesystem_store_rejects_in_root_symlinks(tmp_path: Path) -> None:
     """Symlinks whose target lives under the root must still be rejected.
 
@@ -955,8 +980,8 @@ async def test_filesystem_store_search_logs_skipped_non_utf8_files(
         results = await store.search("", "error")
 
     assert [r.file_name for r in results] == ["notes.md"]
-    assert any("Skipping non-UTF-8 file during search" in rec.message for rec in caplog.records)
-    assert any("skipped 1 non-UTF-8 file" in rec.message for rec in caplog.records)
+    assert any("Skipping unreadable file during search" in rec.message for rec in caplog.records)
+    assert any("skipped 1 unreadable file" in rec.message for rec in caplog.records)
 
 
 async def test_file_access_tool_wrappers_surface_value_error_as_message(
@@ -1511,30 +1536,6 @@ class _ContentOnlyStore(AgentFileStore):
 
     async def create_directory(self, path: str) -> None:
         return None
-
-
-class _SkewedStore(_ContentOnlyStore):
-    """Overrides ``search`` and numbers lines with ``splitlines``, which disagrees."""
-
-    async def search(
-        self,
-        directory: str,
-        regex_pattern: str,
-        glob_pattern: str | None = None,
-        *,
-        recursive: bool = False,
-    ) -> list[FileSearchResult]:
-        regex = re.compile(regex_pattern, re.IGNORECASE)
-        results: list[FileSearchResult] = []
-        for name, content in self.files.items():
-            matches = [
-                FileSearchMatch(line_number=number, line=line)
-                for number, line in enumerate(content.splitlines(keepends=True), start=1)
-                if regex.search(line.rstrip("\r\n"))
-            ]
-            if matches:
-                results.append(FileSearchResult(file_name=name, snippet="", matching_lines=matches))
-        return results
 
 
 class _AlignedOverrideStore(_ContentOnlyStore):

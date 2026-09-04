@@ -1363,15 +1363,25 @@ class FileSystemAgentFileStore(AgentFileStore):
             if not _matches_glob(relative_name, glob_pattern):
                 continue
             try:
-                # Decode the bytes rather than using read_text: text mode applies universal
-                # newlines, which would rewrite "\r\n" and a lone "\r" to "\n" and leave grep
-                # describing content that read() -- and therefore replace_lines -- never sees.
-                file_content = entry.read_bytes().decode("utf-8")
-            except UnicodeDecodeError:
-                # Skip binary or otherwise non-UTF-8 files so a single
-                # un-decodable entry doesn't abort the whole directory search.
-                # Log per file so operators can audit which files were skipped.
-                logger.warning("Skipping non-UTF-8 file during search: %s", entry)
+                # Re-checked here, not only during enumeration: a candidate can be swapped for a
+                # link in between. O_NOFOLLOW makes the read itself atomic where the platform has
+                # it, and this narrows the window on Windows, where it does not exist.
+                if is_link_or_reparse_point(entry):
+                    logger.warning("Skipping symlinked file during search: %s", entry)
+                    skipped.append(relative_name)
+                    continue
+                # Read through the same no-follow reader the store's own read() uses; reopening
+                # by path would follow a link and return content from outside the root.
+                content_or_none = FileSystemAgentFileStore._read_file_sync(entry)
+                if content_or_none is None:
+                    continue
+                file_content = content_or_none
+            except (OSError, ValueError):
+                # _read_file_sync raises ValueError for non-UTF-8 content and for a path that
+                # became a symlink since enumeration, and OSError if it vanished. Skip the file
+                # either way, so one bad entry cannot abort the whole directory search, and log
+                # per file so operators can audit what was left out.
+                logger.warning("Skipping unreadable file during search: %s", entry)
                 skipped.append(relative_name)
                 continue
             result = AgentFileStore.scan_content(relative_name, file_content, regex)
@@ -1379,7 +1389,7 @@ class FileSystemAgentFileStore(AgentFileStore):
                 results.append(result)
         if skipped:
             logger.info(
-                "Search under %s skipped %d non-UTF-8 file(s) (matched %d).",
+                "Search under %s skipped %d unreadable file(s) (matched %d).",
                 full_dir,
                 len(skipped),
                 len(results),

@@ -12,8 +12,6 @@ from agent_framework import (
     AgentSession,
     Content,
     FileMemoryProvider,
-    FileSearchMatch,
-    FileSearchResult,
     FunctionTool,
     InMemoryAgentFileStore,
 )
@@ -493,27 +491,6 @@ async def _memory_tools(store: AgentFileStore, **kwargs: object) -> list[object]
     context = SessionContext(input_messages=[])
     await provider.before_run(agent=None, session=session, context=context, state={})
     return list(context.tools)
-
-
-class _MemorySkewedStore(InMemoryAgentFileStore):
-    """Reports a line number one past the truth, the way a mis-splitting store would."""
-
-    async def search(
-        self,
-        directory: str,
-        regex_pattern: str,
-        glob_pattern: str | None = None,
-        *,
-        recursive: bool = False,
-    ) -> list[FileSearchResult]:
-        del directory, glob_pattern, recursive
-        return [
-            FileSearchResult(
-                file_name="notes.md",
-                snippet="",
-                matching_lines=[FileSearchMatch(line_number=1, line=regex_pattern)],
-            )
-        ]
 
 
 async def test_file_memory_replace_lines_honours_expected_line() -> None:
