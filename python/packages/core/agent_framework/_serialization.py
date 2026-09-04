@@ -151,6 +151,43 @@ def _is_serialization_protocol(value: Any) -> TypeGuard[SerializationProtocol]:
     return callable(getattr(value, "to_dict", None)) and callable(getattr(value, "from_dict", None))
 
 
+def _iter_instance_fields(instance: Any) -> dict[str, Any]:
+    """Return attributes stored in ``__dict__`` or slots."""
+    fields = dict(getattr(instance, "__dict__", {}))
+    for cls in type(instance).__mro__:
+        slots = cls.__dict__.get("__slots__", ())
+        if isinstance(slots, str):
+            slots = (slots,)
+        for field_name in slots:
+            if field_name not in {"__dict__", "__weakref__"} and hasattr(instance, field_name):
+                fields[field_name] = getattr(instance, field_name)
+    return fields
+
+
+def get_pickle_state(instance: Any, omitted_fields: set[str]) -> dict[str, Any]:
+    """Build pickle state while omitting runtime-only fields."""
+    state = _iter_instance_fields(instance)
+    for field_name in omitted_fields:
+        state.pop(field_name, None)
+    return state
+
+
+def restore_pickle_state(
+    instance: Any,
+    state: dict[str, Any] | tuple[dict[str, Any], dict[str, Any]],
+    omitted_fields: set[str],
+) -> None:
+    """Restore dict- and slot-backed pickle state."""
+    if isinstance(state, tuple):
+        dict_state, slot_state = state
+        state = {**dict_state, **slot_state}
+    for field_name, value in state.items():
+        object.__setattr__(instance, field_name, value)
+    for field_name in omitted_fields:
+        if field_name in _iter_instance_fields(instance) or hasattr(instance, "__dict__"):
+            object.__setattr__(instance, field_name, None)
+
+
 class SerializationMixin:
     """Mixin class providing comprehensive serialization and deserialization capabilities.
 
@@ -284,6 +321,15 @@ class SerializationMixin:
     DEFAULT_EXCLUDE: ClassVar[set[str]] = set()
     INJECTABLE: ClassVar[set[str]] = set()
     _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
+    _PICKLE_OMIT_FIELDS: ClassVar[set[str]] = {"raw_representation"}
+
+    def __copy__(self) -> SerializationMixin:
+        """Create a shallow copy without invoking pickle state hooks."""
+        cls = type(self)
+        result = cls.__new__(cls)
+        for field_name, value in _iter_instance_fields(self).items():
+            object.__setattr__(result, field_name, value)
+        return result
 
     def __deepcopy__(self, memo: dict[int, Any]) -> SerializationMixin:
         """Create a deep copy, preserving ``_SHALLOW_COPY_FIELDS`` by reference.
@@ -296,12 +342,20 @@ class SerializationMixin:
         cls = type(self)
         result = cls.__new__(cls)
         memo[id(self)] = result
-        for k, v in self.__dict__.items():
+        for k, v in _iter_instance_fields(self).items():
             if k in cls._SHALLOW_COPY_FIELDS:
                 object.__setattr__(result, k, v)
             else:
                 object.__setattr__(result, k, copy.deepcopy(v, memo))
         return result
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Return pickle state without runtime-only shallow-copy fields."""
+        return get_pickle_state(self, self._PICKLE_OMIT_FIELDS)
+
+    def __setstate__(self, state: dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]) -> None:
+        """Restore pickle state and reset runtime-only shallow-copy fields."""
+        restore_pickle_state(self, state, self._PICKLE_OMIT_FIELDS)
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance and any nested objects to a dictionary.

@@ -217,6 +217,17 @@ agent_framework/
   hosts remain responsible for authorizing and tenant-scoping access to any shared checkpoint adapter.
 - **Orchestrators**: `SequentialOrchestrator`, `ConcurrentOrchestrator`, `GroupChatOrchestrator`, `MagenticOrchestrator`, `HandoffOrchestrator`
 
+## Evaluation (`_evaluation.py`)
+
+- Core owns provider-neutral evaluation types, local evaluators and checks, `EvalItem` construction, and the
+  `evaluate_agent` / `evaluate_workflow` orchestration functions.
+- Provider packages own their service-specific evaluator implementations and wire serialization. Core evaluation
+  code must not emit a provider's request schema. The deprecated `AgentEvalConverter` remains as a temporary
+  compatibility shim for released Foundry packages whose declared core range still imports it; new code must not use
+  the shim.
+- Core orchestration builds `EvalItem` instances through private helpers; callers needing manual control construct
+  the public `EvalItem` directly.
+
 ## Built-in Providers
 
 ### OpenAI (`openai/`)
