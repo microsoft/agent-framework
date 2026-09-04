@@ -24,6 +24,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -173,12 +174,47 @@ class DefaultHttpRequestHandler:
                 # callers (not just the YAML executor) get sensible defaults.
                 headers["Content-Type"] = info.body_content_type or "text/plain"
 
-        params: Mapping[str, str] | None = info.query_parameters or None
+        # Merge all three query sources into one ``params=`` list. Passing only
+        # ``query_parameters`` into ``params=`` (the pre-#7765 bug) drops URL-embedded
+        # params, and passing nothing (#7765 first iteration) lets the *client*'
+        # ``AsyncClient.params`` (via ``Client._merge_queryparams``) drop the URL's
+        # query. Collecting client params + URL params + query_parameters into one
+        # explicit list preserves every source. Precedence is client (lowest) < URL
+        # query < ``query_parameters`` (highest): on a duplicate key the later source'
+        # value replaces the earlier one (dict-of-lists assignment), matching the old
+        # ``_merge_queryparams.merge(params)`` per-request-wins behavior. urlsplit/
+        # urlunsplit keeps the final query before any ``#fragment``.
+        url = info.url
+        raw = urlsplit(url)
+        merged: dict[str, list[str]] = {}
+        overridden: set[str] = set()
+
+        def _merge_layer(pairs: list[tuple[str, str]]) -> None:
+            seen: set[str] = set()
+            for key, value in pairs:
+                if key in overridden and key not in seen:
+                    # First occurrence in this layer overrides the lower-precedence value.
+                    merged[key] = [value]
+                else:
+                    merged.setdefault(key, []).append(value)
+                seen.add(key)
+
+        _merge_layer(list(client.params.multi_items()))
+        overridden.update(merged)
+        _merge_layer(list(httpx.URL(url).params.multi_items()))
+        overridden.update(merged)
+        _merge_layer([(key, value) for key, value in info.query_parameters.items() if key])
+
+        params: list[tuple[str, Any]] = [(k, v) for k, values in merged.items() for v in values]
+        if params:
+            # urlunsplit with an empty query part strips the raw query so it is not
+            # double-applied; ``params=`` now carries all three sources.
+            url = urlunsplit((raw.scheme, raw.netloc, raw.path, "", raw.fragment))
 
         response = await client.request(
             method=info.method,
-            url=info.url,
-            params=params,
+            url=url,
+            params=params or None,
             headers=headers or None,
             content=content,
             timeout=timeout,

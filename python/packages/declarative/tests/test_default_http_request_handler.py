@@ -69,6 +69,199 @@ class TestRequestComposition:
         assert req.url.params.get("limit") == "5"
 
     @pytest.mark.asyncio
+    async def test_query_parameters_preserve_url_query_string(self) -> None:
+        """query_parameters must be appended, not replace the URL's existing query string.
+
+        Regression for https://github.com/microsoft/agent-framework/issues/7749:
+        passing ``params=`` to httpx replaces the URL's existing query string, and the
+        handler used to do exactly that — URL parameters (api-version, tenant, ...) were
+        silently dropped. The .NET DefaultHttpRequestHandler.ResolveRequestUri preserves
+        them; Python now matches that behavior.
+        """
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        handler = _make_handler(httpx.MockTransport(respond))
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/items?api-version=2025-01-01&tenant=alpha",
+                    query_parameters={"page": "2"},
+                )
+            )
+        finally:
+            await handler.aclose()
+
+        req = captured["req"]
+        # URL-supplied params are preserved and query_parameters are appended on top
+        assert req.url.params.get("api-version") == "2025-01-01"
+        assert req.url.params.get("tenant") == "alpha"
+        assert req.url.params.get("page") == "2"
+
+    @pytest.mark.asyncio
+    async def test_query_parameters_append_before_fragment(self) -> None:
+        """query_parameters must be inserted before any fragment, not appended after.
+
+        Plain string concatenation would produce ``url#frag?key=val`` (an invalid URL
+        — the query string must come before the fragment). The fix uses urlsplit so
+        reassembly keeps the fragment last.
+        """
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        handler = _make_handler(httpx.MockTransport(respond))
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/items?api-version=2025-01-01#section",
+                    query_parameters={"page": "2"},
+                )
+            )
+        finally:
+            await handler.aclose()
+
+        req = captured["req"]
+        assert req.url.params.get("api-version") == "2025-01-01"
+        assert req.url.params.get("page") == "2"
+        # The fragment is preserved and stays last
+        assert str(req.url).endswith("#section")
+        assert req.url.fragment == "section"
+
+    @pytest.mark.asyncio
+    async def test_query_parameters_when_url_ends_with_question_mark(self) -> None:
+        """query_parameters must append cleanly when the URL already ends with ``?``.
+
+        urlsplit parses the trailing ``?`` as an empty query part, so the result is
+        a clean ``?key=val`` rather than a malformed ``?&key=val`` that plain string
+        concatenation would produce.
+        """
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        handler = _make_handler(httpx.MockTransport(respond))
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/items?",
+                    query_parameters={"page": "2"},
+                )
+            )
+        finally:
+            await handler.aclose()
+
+        req = captured["req"]
+        assert req.url.params.get("page") == "2"
+        # Result is a clean query string, not && or && at the start
+        assert str(req.url) == "https://api.example.test/items?page=2"
+
+    @pytest.mark.asyncio
+    async def test_query_parameters_preserve_client_level_params(self) -> None:
+        """Client-level ``AsyncClient.params`` must survive alongside URL-embedded and
+        ``query_parameters`` params.
+
+        moonbox3 review on #7765: when a caller-supplied ``AsyncClient`` is built with
+        ``params=``, passing ``params=`` (or nothing) into ``client.request``
+        re-merges and lets the client's params *replace* the URL's query. The handler
+        must collect all three sources into one explicit ``params=`` list.
+        """
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        client = httpx.AsyncClient(
+            params={"client-default": "v"},
+            transport=httpx.MockTransport(respond),
+        )
+        handler = DefaultHttpRequestHandler(client=client)
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/items?tenant=alpha&page=2",
+                    query_parameters={"limit": "5"},
+                )
+            )
+        finally:
+            await handler.aclose()
+            await client.aclose()
+
+        req_url = str(captured["req"].url)
+        for needle in ("client-default=v", "tenant=alpha", "page=2", "limit=5"):
+            assert needle in req_url, f"missing {needle!r} in {req_url!r}"
+        # Lower-precedence source's duplicate key is overridden (query_parameters win).
+        assert "tenant=alpha" in req_url  # smoke: distinct keys all survive
+
+    @pytest.mark.asyncio
+    async def test_query_parameters_higher_precedence_than_client_params(self) -> None:
+        """On duplicate keys, ``query_parameters`` and URL params override client-defaults."""
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        client = httpx.AsyncClient(
+            params={"key": "clientval"},
+            transport=httpx.MockTransport(respond),
+        )
+        handler = DefaultHttpRequestHandler(client=client)
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/items?key=urlval",
+                    query_parameters={"key": "qpval"},
+                )
+            )
+        finally:
+            await handler.aclose()
+            await client.aclose()
+
+        req_url = str(captured["req"].url)
+        assert "key=qpval" in req_url
+        assert "key=urlval" not in req_url
+        assert "key=clientval" not in req_url
+
+    @pytest.mark.asyncio
+    async def test_query_parameters_empty_key_skipped(self) -> None:
+        """Empty query-parameter keys are dropped (matches .NET ResolveRequestUri)."""
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        handler = _make_handler(httpx.MockTransport(respond))
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/items",
+                    query_parameters={"": "shouldbedropped", "page": "2"},
+                )
+            )
+        finally:
+            await handler.aclose()
+
+        req_url = str(captured["req"].url)
+        assert "shouldbedropped" not in req_url
+        assert "page=2" in req_url
+
+    @pytest.mark.asyncio
     async def test_body_content_type_forwarded(self) -> None:
         captured: dict[str, httpx.Request] = {}
 
