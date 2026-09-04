@@ -34,6 +34,19 @@ updates:
     schedule:
       interval: "weekly"
       day: "thursday"
+    groups:
+      pytest:
+        patterns:
+          - "pytest*"
+      flit:
+        patterns:
+          - "flit*"
+      python-type-checkers:
+        patterns:
+          - "mypy"
+          - "pyrefly"
+          - "ty"
+          - "zuban"
     labels:
       - "python"
       - "dependencies"
@@ -45,6 +58,19 @@ updates:
     schedule:
       interval: "weekly"
       day: "thursday"
+    groups:
+      pytest:
+        patterns:
+          - "pytest*"
+      flit:
+        patterns:
+          - "flit*"
+      python-type-checkers:
+        patterns:
+          - "mypy"
+          - "pyrefly"
+          - "ty"
+          - "zuban"
     labels:
       - "python"
       - "dependencies"
