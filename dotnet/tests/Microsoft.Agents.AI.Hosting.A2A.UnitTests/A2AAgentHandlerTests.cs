@@ -24,11 +24,10 @@ public sealed class A2AAgentHandlerTests
     private const string ConfigurationPropertyKey = "a2a.configuration";
 
     /// <summary>
-    /// Verifies that when metadata is null, the options passed to RunAsync have
-    /// AllowBackgroundResponses disabled and no AdditionalProperties.
+    /// Verifies that when there is no request data to forward, null options are passed to RunStreamingAsync.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_WhenMetadataIsNull_PassesOptionsWithNoAdditionalPropertiesToRunAsync()
+    public async Task ExecuteAsync_WhenMetadataIsNull_PassesNullOptionsToRunStreamingAsync()
     {
         // Arrange
         AgentRunOptions? capturedOptions = null;
@@ -41,14 +40,12 @@ public sealed class A2AAgentHandlerTests
         });
 
         // Assert
-        Assert.NotNull(capturedOptions);
-        Assert.False(capturedOptions.AllowBackgroundResponses);
-        Assert.Null(capturedOptions.AdditionalProperties);
+        Assert.Null(capturedOptions);
     }
 
     /// <summary>
-    /// Verifies that when metadata is non-empty, the options passed to RunAsync have
-    /// AdditionalProperties populated with the converted metadata values.
+    /// Verifies that when metadata is non-empty, the options passed to RunStreamingAsync have
+    /// AllowBackgroundResponses unset and AdditionalProperties populated with the converted metadata values.
     /// </summary>
     [Fact]
     public async Task ExecuteAsync_WhenMetadataIsNonEmpty_PassesOptionsWithAdditionalPropertiesToRunAsync()
@@ -71,7 +68,7 @@ public sealed class A2AAgentHandlerTests
 
         // Assert
         Assert.NotNull(capturedOptions);
-        Assert.False(capturedOptions.AllowBackgroundResponses);
+        Assert.Null(capturedOptions.AllowBackgroundResponses);
         Assert.NotNull(capturedOptions.AdditionalProperties);
         Assert.Equal(2, capturedOptions.AdditionalProperties.Count);
         Assert.Equal("value1", capturedOptions.AdditionalProperties["key1"]?.ToString());
@@ -140,10 +137,10 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
-    /// Verifies that the caller supplied configuration does not override the run mode configured on the server.
+    /// Verifies that the caller supplied configuration does not set AllowBackgroundResponses for a streaming run.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_WhenConfigurationRequestsImmediateReturn_DoesNotOverrideRunModeAsync()
+    public async Task ExecuteAsync_WhenConfigurationRequestsImmediateReturn_DoesNotSetAllowBackgroundResponsesAsync()
     {
         // Arrange
         AgentRunOptions? capturedOptions = null;
@@ -161,7 +158,7 @@ public sealed class A2AAgentHandlerTests
 
         // Assert
         Assert.NotNull(capturedOptions);
-        Assert.False(capturedOptions.AllowBackgroundResponses);
+        Assert.Null(capturedOptions.AllowBackgroundResponses);
     }
 
     /// <summary>
@@ -245,111 +242,71 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
-    /// Verifies that when runMode is DisallowBackground, AllowBackgroundResponses is false.
+    /// Verifies that a custom run-mode delegate returning false produces a message.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_DisallowBackgroundMode_SetsAllowBackgroundResponsesFalseAsync()
+    public async Task ExecuteAsync_DynamicMode_WithFalseCallback_ReturnsMessageAsync()
     {
         // Arrange
-        AgentRunOptions? capturedOptions = null;
         A2AAgentHandler handler = CreateHandler(
-            CreateAgentMock(options => capturedOptions = options),
-            runMode: AgentRunMode.DisallowBackground);
-
-        // Act
-        await InvokeExecuteAsync(handler, new RequestContext
-        {
-            TaskId = "", ContextId = "ctx", StreamingResponse = false, Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
-        });
-
-        // Assert
-        Assert.NotNull(capturedOptions);
-        Assert.False(capturedOptions.AllowBackgroundResponses);
-    }
-
-    /// <summary>
-    /// Verifies that in AllowBackgroundIfSupported mode, AllowBackgroundResponses is true.
-    /// </summary>
-    [Fact]
-    public async Task ExecuteAsync_AllowBackgroundIfSupportedMode_SetsAllowBackgroundResponsesTrueAsync()
-    {
-        // Arrange
-        AgentRunOptions? capturedOptions = null;
-        A2AAgentHandler handler = CreateHandler(
-            CreateAgentMock(options => capturedOptions = options),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
-
-        // Act
-        await InvokeExecuteAsync(handler, new RequestContext
-        {
-            TaskId = "", ContextId = "ctx", StreamingResponse = false, Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
-        });
-
-        // Assert
-        Assert.NotNull(capturedOptions);
-        Assert.True(capturedOptions.AllowBackgroundResponses);
-    }
-
-    /// <summary>
-    /// Verifies that a custom Dynamic delegate returning false sets AllowBackgroundResponses to false.
-    /// </summary>
-    [Fact]
-    public async Task ExecuteAsync_DynamicMode_WithFalseCallback_SetsAllowBackgroundResponsesFalseAsync()
-    {
-        // Arrange
-        AgentRunOptions? capturedOptions = null;
-        A2AAgentHandler handler = CreateHandler(
-            CreateAgentMock(options => capturedOptions = options),
+            CreateAgentMock(_ => { }),
             runMode: AgentRunMode.AllowBackgroundWhen((_, _) => ValueTask.FromResult(false)));
 
         // Act
-        await InvokeExecuteAsync(handler, new RequestContext
+        var events = await CollectEventsAsync(handler, new RequestContext
         {
             TaskId = "", ContextId = "ctx", StreamingResponse = false, Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
         });
 
         // Assert
-        Assert.NotNull(capturedOptions);
-        Assert.False(capturedOptions.AllowBackgroundResponses);
+        Assert.Single(events.Messages);
+        Assert.Empty(events.Tasks);
     }
 
     /// <summary>
-    /// Verifies that a custom Dynamic delegate returning true sets AllowBackgroundResponses to true.
+    /// Verifies that a custom run-mode delegate returning true produces a task.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_DynamicMode_WithTrueCallback_SetsAllowBackgroundResponsesTrueAsync()
+    public async Task ExecuteAsync_DynamicMode_WithTrueCallback_ReturnsTaskAsync()
     {
         // Arrange
-        AgentRunOptions? capturedOptions = null;
         A2AAgentHandler handler = CreateHandler(
-            CreateAgentMock(options => capturedOptions = options),
+            CreateAgentMock(_ => { }),
             runMode: AgentRunMode.AllowBackgroundWhen((_, _) => ValueTask.FromResult(true)));
 
         // Act
-        await InvokeExecuteAsync(handler, new RequestContext
+        var events = await CollectEventsAsync(handler, new RequestContext
         {
             TaskId = "", ContextId = "ctx", StreamingResponse = false, Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
         });
 
         // Assert
-        Assert.NotNull(capturedOptions);
-        Assert.True(capturedOptions.AllowBackgroundResponses);
+        Assert.Empty(events.Messages);
+        Assert.Single(events.Tasks);
     }
 
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
     /// <summary>
-    /// Verifies that when the agent returns a ContinuationToken, task status events are emitted.
+    /// Verifies that an immediate request emits the initial task and streams subsequent updates when background responses are allowed.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_WhenResponseHasContinuationToken_EmitsTaskStatusEventsAsync()
+    public async Task ExecuteAsync_WhenBackgroundResponsesAllowedAndReturnImmediatelyTrue_StreamsTaskUpdatesAsync()
     {
         // Arrange
-        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Starting work...")])
-        {
-            ContinuationToken = CreateTestContinuationToken()
-        };
-        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response));
+        AgentResponseUpdate[] updates =
+        [
+            new AgentResponseUpdate(ChatRole.Assistant, "chunk 1") { ResponseId = "r1", MessageId = "m1" },
+            new AgentResponseUpdate(ChatRole.Assistant, "chunk 2")
+            {
+                ResponseId = "r1",
+                MessageId = "m1",
+                ContinuationToken = CreateTestContinuationToken()
+            },
+        ];
+        A2AAgentHandler handler = CreateHandler(
+            CreateStreamingAgentMock(updates),
+            runMode: AgentRunMode.AllowBackgroundIfSupported);
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -357,12 +314,31 @@ public sealed class A2AAgentHandlerTests
             StreamingResponse = false,
             TaskId = "task-1",
             ContextId = "ctx-1",
+            Configuration = new SendMessageConfiguration { ReturnImmediately = true },
             Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
         });
 
-        // Assert - should have emitted status update events (Submitted + Working)
-        Assert.True(events.StatusUpdates.Count >= 1);
+        // Assert
         Assert.Empty(events.Messages);
+        Assert.Equal(TaskState.Submitted, Assert.Single(events.Tasks).Status.State);
+        Assert.Collection(
+            events.StatusUpdates,
+            update => Assert.Equal(TaskState.Working, update.Status.State),
+            update => Assert.Equal(TaskState.Completed, update.Status.State));
+        Assert.Collection(
+            events.ArtifactUpdates,
+            update =>
+            {
+                Assert.Equal("chunk 1", Assert.Single(update.Artifact.Parts!).Text);
+                Assert.False(update.Append);
+                Assert.False(update.LastChunk);
+            },
+            update =>
+            {
+                Assert.Equal("chunk 2", Assert.Single(update.Artifact.Parts!).Text);
+                Assert.True(update.Append);
+                Assert.True(update.LastChunk);
+            });
     }
 
     /// <summary>
@@ -800,6 +776,233 @@ public sealed class A2AAgentHandlerTests
                 Assert.False(update.Append);
                 Assert.True(update.LastChunk);
             });
+    }
+
+    /// <summary>
+    /// Verifies that a non-immediate request aggregates all updates into a completed task.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenBackgroundResponsesAllowedAndReturnImmediatelyFalse_ReturnsCompletedTaskAsync()
+    {
+        // Arrange
+        AgentResponseUpdate[] updates =
+        [
+            new AgentResponseUpdate(ChatRole.Assistant, "chunk 1") { ResponseId = "r1", MessageId = "m1" },
+            new AgentResponseUpdate(ChatRole.Assistant, "chunk 2") { ResponseId = "r1", MessageId = "m1" }
+        ];
+        A2AAgentHandler handler = CreateHandler(
+            CreateStreamingAgentMock(updates),
+            runMode: AgentRunMode.AllowBackgroundIfSupported);
+
+        // Act
+        var events = await CollectEventsAsync(handler, new RequestContext
+        {
+            StreamingResponse = false,
+            TaskId = "task-1",
+            ContextId = "ctx",
+            Configuration = new SendMessageConfiguration { ReturnImmediately = false },
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+        });
+
+        // Assert
+        Assert.Empty(events.Messages);
+        Assert.Equal(TaskState.Submitted, Assert.Single(events.Tasks).Status.State);
+        Assert.Equal(TaskState.Completed, Assert.Single(events.StatusUpdates).Status.State);
+        Assert.Equal("chunk 1chunk 2", Assert.Single(Assert.Single(events.ArtifactUpdates).Artifact.Parts!).Text);
+    }
+
+    /// <summary>
+    /// Verifies that an aggregated task artifact preserves response metadata.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenAggregatingTaskUpdates_PreservesArtifactMetadataAsync()
+    {
+        // Arrange
+        AgentResponseUpdate[] updates =
+        [
+            new AgentResponseUpdate(ChatRole.Assistant, "result")
+            {
+                ResponseId = "r1",
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    ["responseKey"] = "responseValue"
+                }
+            }
+        ];
+        A2AAgentHandler handler = CreateHandler(
+            CreateStreamingAgentMock(updates),
+            runMode: AgentRunMode.AllowBackgroundIfSupported);
+
+        // Act
+        var events = await CollectEventsAsync(handler, new RequestContext
+        {
+            StreamingResponse = false,
+            TaskId = "task-1",
+            ContextId = "ctx",
+            Configuration = new SendMessageConfiguration { ReturnImmediately = false },
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+        });
+
+        // Assert
+        Artifact artifact = Assert.Single(events.ArtifactUpdates).Artifact;
+        Assert.Equal("responseValue", artifact.Metadata!["responseKey"].GetString());
+    }
+
+    /// <summary>
+    /// Verifies that cancellation while emitting an aggregated task transitions the submitted task to Canceled.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenAggregatedTaskEmissionIsCanceled_CancelsTaskAsync()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        AgentResponseUpdate[] updates =
+        [
+            new AgentResponseUpdate(ChatRole.Assistant, "result")
+            {
+                ResponseId = "r1",
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    ["responseKey"] = new CallbackMetadataValue(cts.Cancel)
+                }
+            }
+        ];
+        A2AAgentHandler handler = CreateHandler(
+            CreateStreamingAgentMock(updates),
+            runMode: AgentRunMode.AllowBackgroundIfSupported);
+        var events = new EventCollector();
+        var eventQueue = new AgentEventQueue();
+        var readerTask = ReadEventsAsync(eventQueue, events);
+
+        // Act
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            handler.ExecuteAsync(
+                new RequestContext
+                {
+                    StreamingResponse = false,
+                    TaskId = "task-1",
+                    ContextId = "ctx",
+                    Configuration = new SendMessageConfiguration { ReturnImmediately = false },
+                    Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+                },
+                eventQueue,
+                cts.Token));
+        eventQueue.Complete(null);
+        await readerTask;
+
+        // Assert
+        Assert.Equal(TaskState.Submitted, Assert.Single(events.Tasks).Status.State);
+        Assert.Equal(TaskState.Canceled, Assert.Single(events.StatusUpdates).Status.State);
+        Assert.Empty(events.ArtifactUpdates);
+    }
+
+    /// <summary>
+    /// Verifies that a failure while emitting an aggregated task transitions the submitted task to Failed.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenAggregatedTaskEmissionFails_FailsTaskAsync()
+    {
+        // Arrange
+        AgentResponseUpdate[] updates =
+        [
+            new AgentResponseUpdate(ChatRole.Assistant, "result")
+            {
+                ResponseId = "r1",
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    ["responseKey"] = new CallbackMetadataValue(
+                        () => throw new InvalidOperationException("Metadata serialization failed"))
+                }
+            }
+        ];
+        A2AAgentHandler handler = CreateHandler(
+            CreateStreamingAgentMock(updates),
+            runMode: AgentRunMode.AllowBackgroundIfSupported);
+
+        // Act
+        var events = await CollectEventsForThrowingExecuteAsync<InvalidOperationException>(handler, new RequestContext
+        {
+            StreamingResponse = false,
+            TaskId = "task-1",
+            ContextId = "ctx",
+            Configuration = new SendMessageConfiguration { ReturnImmediately = false },
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+        });
+
+        // Assert
+        Assert.Equal(TaskState.Submitted, Assert.Single(events.Tasks).Status.State);
+        TaskStatusUpdateEvent statusUpdate = Assert.Single(events.StatusUpdates);
+        Assert.Equal(TaskState.Failed, statusUpdate.Status.State);
+        Assert.Equal(
+            "The agent encountered an unexpected error and could not complete the request.",
+            Assert.Single(statusUpdate.Status.Message!.Parts!).Text);
+        Assert.Empty(events.ArtifactUpdates);
+    }
+
+    /// <summary>
+    /// Verifies that an immediate request returns one aggregated message when background responses are disabled.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenBackgroundResponsesDisallowedAndReturnImmediatelyTrue_ReturnsMessageAsync()
+    {
+        // Arrange
+        AgentResponseUpdate[] updates =
+        [
+            new AgentResponseUpdate(ChatRole.Assistant, "chunk 1") { ResponseId = "r1", MessageId = "m1" },
+            new AgentResponseUpdate(ChatRole.Assistant, "chunk 2") { ResponseId = "r1", MessageId = "m1" }
+        ];
+        A2AAgentHandler handler = CreateHandler(
+            CreateStreamingAgentMock(updates),
+            runMode: AgentRunMode.DisallowBackground);
+
+        // Act
+        var events = await CollectEventsAsync(handler, new RequestContext
+        {
+            StreamingResponse = false,
+            TaskId = "task-1",
+            ContextId = "ctx",
+            Configuration = new SendMessageConfiguration { ReturnImmediately = true },
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+        });
+
+        // Assert
+        Assert.Empty(events.Tasks);
+        Assert.Empty(events.StatusUpdates);
+        Assert.Empty(events.ArtifactUpdates);
+        Assert.Equal("chunk 1chunk 2", Assert.Single(Assert.Single(events.Messages).Parts!).Text);
+    }
+
+    /// <summary>
+    /// Verifies that a non-immediate request aggregates all updates into one message when background responses are disabled.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenBackgroundResponsesDisallowedAndReturnImmediatelyFalse_ReturnsMessageAsync()
+    {
+        // Arrange
+        AgentResponseUpdate[] updates =
+        [
+            new AgentResponseUpdate(ChatRole.Assistant, "chunk 1") { ResponseId = "r1", MessageId = "m1" },
+            new AgentResponseUpdate(ChatRole.Assistant, "chunk 2") { ResponseId = "r1", MessageId = "m1" }
+        ];
+        A2AAgentHandler handler = CreateHandler(
+            CreateStreamingAgentMock(updates),
+            runMode: AgentRunMode.DisallowBackground);
+
+        // Act
+        var events = await CollectEventsAsync(handler, new RequestContext
+        {
+            StreamingResponse = false,
+            TaskId = "task-1",
+            ContextId = "ctx",
+            Configuration = new SendMessageConfiguration { ReturnImmediately = false },
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+        });
+
+        // Assert
+        Assert.Empty(events.Tasks);
+        Assert.Empty(events.StatusUpdates);
+        Assert.Empty(events.ArtifactUpdates);
+        Assert.Equal("chunk 1chunk 2", Assert.Single(Assert.Single(events.Messages).Parts!).Text);
     }
 
     /// <summary>
@@ -1627,10 +1830,10 @@ public sealed class A2AAgentHandlerTests
 
     /// <summary>
     /// Verifies that in streaming mode, when RunStreamingAsync yields no updates,
-    /// no messages are enqueued and the session is still saved.
+    /// an empty message is enqueued and the session is still saved.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_Streaming_WhenNoUpdates_EnqueuesNoMessagesAndSavesSessionAsync()
+    public async Task ExecuteAsync_Streaming_WhenNoUpdates_EnqueuesEmptyMessageAndSavesSessionAsync()
     {
         // Arrange
         var mockSessionStore = new Mock<AgentSessionStore>();
@@ -1660,7 +1863,7 @@ public sealed class A2AAgentHandlerTests
         });
 
         // Assert
-        Assert.Empty(events.Messages);
+        Assert.Empty(Assert.Single(events.Messages).Parts!);
         mockSessionStore.Verify(
             x => x.SaveSessionAsync(
                 It.IsAny<AIAgent>(),
@@ -1837,12 +2040,13 @@ public sealed class A2AAgentHandlerTests
             .ReturnsAsync(sessionInstance);
         agentMock
             .Protected()
-            .Setup<Task<AgentResponse>>("RunCoreAsync",
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
                 ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new AgentResponse([new ChatMessage(ChatRole.Assistant, "Reply")]));
+            .Returns(() => ToAsyncEnumerableAsync(
+                new AgentResponse([new ChatMessage(ChatRole.Assistant, "Reply")]).ToAgentResponseUpdates()));
 
         A2AAgentHandler handler = CreateHandler(agentMock, agentSessionStore: null);
 
@@ -1953,11 +2157,11 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
-    /// Verifies that in the non-streaming path, SaveSessionAsync is called with
-    /// CancellationToken.None even when RunAsync throws an exception.
+    /// Verifies that in the non-streaming endpoint path, SaveSessionAsync is called with
+    /// CancellationToken.None even when RunStreamingAsync throws an exception.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_NonStreaming_WhenRunAsyncThrows_SavesSessionWithUncancelledTokenAsync()
+    public async Task ExecuteAsync_NonStreaming_WhenRunStreamingAsyncThrows_SavesSessionWithUncancelledTokenAsync()
     {
         // Arrange
         var mockSessionStore = new Mock<AgentSessionStore>();
@@ -1974,12 +2178,12 @@ public sealed class A2AAgentHandlerTests
             .Setup<ValueTask<AgentSession>>("CreateSessionCoreAsync", ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new TestAgentSession());
         agentMock.Protected()
-            .Setup<Task<AgentResponse>>("RunCoreAsync",
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
                 ItExpr.IsAny<IEnumerable<ChatMessage>>(),
                 ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
-            .ThrowsAsync(new InvalidOperationException("Agent failed"));
+            .Returns(() => ToThrowingAsyncEnumerableAsync(new InvalidOperationException("Agent failed")));
 
         using var cts = new CancellationTokenSource();
         A2AAgentHandler handler = CreateHandler(agentMock, agentSessionStore: mockSessionStore.Object);
@@ -2286,6 +2490,17 @@ public sealed class A2AAgentHandlerTests
             .Callback<IEnumerable<ChatMessage>, AgentSession?, AgentRunOptions?, CancellationToken>(
                 (_, _, options, _) => optionsCallback(options))
             .ReturnsAsync(new AgentResponse([new ChatMessage(ChatRole.Assistant, "Test response")]));
+        agentMock
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<IEnumerable<ChatMessage>, AgentSession?, AgentRunOptions?, CancellationToken>(
+                (_, _, options, _) => optionsCallback(options))
+            .Returns(() => ToAsyncEnumerableAsync(
+                new AgentResponse([new ChatMessage(ChatRole.Assistant, "Test response")]).ToAgentResponseUpdates()));
 
         return agentMock;
     }
@@ -2306,6 +2521,14 @@ public sealed class A2AAgentHandlerTests
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(response);
+        agentMock
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(() => ToAsyncEnumerableAsync(response.ToAgentResponseUpdates()));
 
         return agentMock;
     }
@@ -2509,6 +2732,18 @@ public sealed class A2AAgentHandlerTests
         public List<AgentTask> Tasks { get; } = [];
         public List<TaskStatusUpdateEvent> StatusUpdates { get; } = [];
         public List<TaskArtifactUpdateEvent> ArtifactUpdates { get; } = [];
+    }
+
+    private sealed class CallbackMetadataValue(Action callback)
+    {
+        public string Value
+        {
+            get
+            {
+                callback();
+                return "value";
+            }
+        }
     }
 
     private sealed class TestAgentSession : AgentSession;

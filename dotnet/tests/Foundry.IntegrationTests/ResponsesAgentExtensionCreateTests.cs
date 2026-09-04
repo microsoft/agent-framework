@@ -7,6 +7,7 @@ using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using OpenAI.Conversations;
 using Shared.IntegrationTests;
 
 namespace Foundry.IntegrationTests;
@@ -130,7 +131,7 @@ public class ResponsesAgentExtensionCreateTests
         }
     }
 
-    private static async Task<ProjectConversation> CreateConversationAsync(AIProjectClient client)
+    private static async Task<ConversationResource> CreateConversationAsync(AIProjectClient client)
     {
         ProjectConversationsClient conversationsClient = client.GetProjectOpenAIClient().GetProjectConversationsClient();
         return (await conversationsClient.CreateProjectConversationAsync()).Value!;
