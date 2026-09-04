@@ -7,6 +7,8 @@ import copy
 import json
 import logging
 import os
+import threading
+import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
@@ -247,6 +249,33 @@ class InMemoryCheckpointStorage:
         return [cp.checkpoint_id for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
 
 
+# Process-wide serialization of os.replace() per destination file.
+#
+# asyncio.Lock is loop-bound, so a per-(loop, checkpoint-id) registry (the previous
+# design) could not serialize two FileCheckpointStorage instances pointed at the
+# same directory, nor one instance driven from two event loops. A threading.Lock
+# keyed by the canonical destination path *does* span coroutines, loops, and
+# instances because asyncio.to_thread runs the actual file write on a worker
+# thread, and threading primitives serialize across those.
+#
+# Locks are created lazily on first save and never removed. The registry grows
+# by at most one entry per *distinct* checkpoint file ever written; that is
+# bounded by the number of files actually present under any FileCheckpointStorage
+# directory the process touches — a working-set bound, not unbounded.
+_file_locks: dict[Path, threading.Lock] = {}
+_file_locks_guard = threading.Lock()
+
+
+def _get_file_lock(file_path: Path) -> threading.Lock:
+    """Return the process-wide lock guarding *file_path*, creating it on first use."""
+    with _file_locks_guard:
+        lock = _file_locks.get(file_path)
+        if lock is None:
+            lock = threading.Lock()
+            _file_locks[file_path] = lock
+        return lock
+
+
 class FileCheckpointStorage:
     """File-based checkpoint storage for persistence.
 
@@ -326,13 +355,71 @@ class FileCheckpointStorage:
         checkpoint_dict = checkpoint.to_dict()
         encoded_checkpoint = encode_checkpoint_value(checkpoint_dict)
 
-        def _write_atomic() -> None:
-            tmp_path = file_path.with_suffix(".json.tmp")
-            with open(tmp_path, "w") as f:
-                json.dump(encoded_checkpoint, f, indent=2, ensure_ascii=False)
-            os.replace(tmp_path, file_path)
+        def _replace_with_retry(tmp_path: Path) -> None:
+            # On Windows, os.replace can transiently fail with PermissionError when a
+            # background indexer or AV scan briefly holds a handle to the destination
+            # file. The process-wide per-path lock serializes concurrent save() calls
+            # to the same destination, but the OS callback is still external to the
+            # process and can trip a transient error even when only one replace is in
+            # flight. Retry briefly to absorb it.
+            for attempt in range(5):
+                try:
+                    os.replace(tmp_path, file_path)
+                    return
+                except PermissionError:
+                    if attempt == 4:
+                        raise
+                    time.sleep(0.001 * (2**attempt))
 
-        await asyncio.to_thread(_write_atomic)
+        def _write_atomic() -> None:
+            # The threading lock here is the heartbeat of cross-instance/cross-loop
+            # safety: a same-directory save racing through a different
+            # FileCheckpointStorage instance — or from another event loop in the
+            # same process — contends on the same canonical destination path and
+            # therefore on the same lock. Holding it across the entire open + write
+            # + replace keeps no window where a second writer can briefly see a
+            # half-published temp file or reach os.replace concurrently.
+            with _get_file_lock(file_path):
+                # Use a unique temp file per save in the destination directory so
+                # concurrent saves of distinct checkpoint IDs never contend on a
+                # shared temporary path, and os.replace remains atomic (same
+                # filesystem). A short, ID-independent name keeps every destination
+                # name accepted by _validate_file_path saveable regardless of
+                # checkpoint-ID length or filesystem limits.
+                tmp_path: Path | None = None
+                try:
+                    # O_CREAT | O_EXCL | O_WRONLY with an explicit 0o666 mode, so the
+                    # file is created with the process umask exactly like the previous
+                    # open(..., "w") path was (NamedTemporaryFile would hard-code 0o600
+                    # and downgrade modes on POSIX after an os.replace over an existing
+                    # checkpoint).
+                    tmp_name = f".maf-ckpt-{uuid.uuid4().hex}.tmp"
+                    tmp_path = file_path.parent / tmp_name
+                    fd = os.open(tmp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
+                    with os.fdopen(fd, "w") as f:
+                        json.dump(encoded_checkpoint, f, indent=2, ensure_ascii=False)
+                    _replace_with_retry(tmp_path)
+                    tmp_path = None
+                finally:
+                    if tmp_path is not None and tmp_path.exists():
+                        try:
+                            tmp_path.unlink()
+                        except OSError:
+                            # Best-effort cleanup only; leaking a temp file is harmless
+                            # compared to masking the original exception.
+                            logger.debug(f"Failed to remove checkpoint temp file {tmp_path}", exc_info=True)
+
+        # Shield the worker from caller-side cancellation: without the shield, a
+        # cancellation delivered while the coroutine is suspended inside
+        # asyncio.to_thread exits the await but leaves the OS thread running, so
+        # its os.replace can still come in *after* the caller has been cancelled
+        # and a subsequent save for the same checkpoint ID has started — on
+        # Windows that reintroduces the PermissionError race this path exists to
+        # avoid, and it can also overwrite a newer checkpoint with stale data.
+        # Shielding guarantees the in-flight write completes (or fails) before
+        # the caller observes a result, so the order seen on disk matches the
+        # order callers observed.
+        await asyncio.shield(asyncio.to_thread(_write_atomic))
 
         logger.info(f"Saved checkpoint {checkpoint.checkpoint_id} to {file_path}")
         return checkpoint.checkpoint_id

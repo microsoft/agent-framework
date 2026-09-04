@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import json
+import os
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -1113,6 +1115,193 @@ async def test_file_checkpoint_storage_save_and_load():
         assert loaded_checkpoint.messages == checkpoint.messages
         assert loaded_checkpoint.state == checkpoint.state
         assert loaded_checkpoint.pending_request_info_events == checkpoint.pending_request_info_events
+
+
+async def test_file_checkpoint_storage_concurrent_saves_same_id():
+    """Concurrent saves of the same checkpoint ID must not fail on a shared temp path.
+
+    Regression for https://github.com/microsoft/agent-framework/issues/7748:
+    FileCheckpointStorage.save() used a fixed `<id>.json.tmp` temp path, so concurrent
+    saves raced on it (one rename removed it before another's rename). Uses enough
+    concurrent saves to reliably trip the race on the unfixed code.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="test-workflow",
+            graph_signature_hash="test-hash",
+            checkpoint_id="shared-id",
+        )
+
+        results = await asyncio.gather(*(storage.save(checkpoint) for _ in range(50)), return_exceptions=True)
+
+        errors = [r for r in results if isinstance(r, BaseException)]
+        assert not errors, f"concurrent saves raised internal filesystem errors: {errors[:1]!r}"
+        assert all(r == "shared-id" for r in results)
+        # One of the saves won; the destination is intact and parseable, not corrupted or truncated.
+        assert (Path(temp_dir) / "shared-id.json").exists()
+        loaded = await storage.load("shared-id")
+        assert loaded.checkpoint_id == checkpoint.checkpoint_id
+        assert loaded.workflow_name == checkpoint.workflow_name
+        assert loaded.graph_signature_hash == checkpoint.graph_signature_hash
+
+
+async def test_file_checkpoint_storage_save_lock_registry_bounded():
+    """Process-wide file-lock registry must not grow with sequential saves of the same ID.
+
+    Regression guard for the post-#7748 design: `FileCheckpointStorage` uses a
+    module-level `_file_locks` dict keyed by canonical destination path, with one
+    lazy `threading.Lock` created on first save. Saving the same checkpoint ID
+    repeatedly must reuse that one lock, never append new entries.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        canonical = (Path(temp_dir) / "shared-id.json").resolve()
+
+        from agent_framework._workflows import _checkpoint as checkpoint_module
+
+        initial_size = len(checkpoint_module._file_locks)  # pyright: ignore[reportPrivateUsage]
+
+        for _ in range(50):
+            checkpoint = WorkflowCheckpoint(
+                workflow_name="test-workflow",
+                graph_signature_hash="test-hash",
+                checkpoint_id="shared-id",
+            )
+            await storage.save(checkpoint)
+
+        # Saving the same ID repeatedly creates at most one lock registry entry.
+        assert len(checkpoint_module._file_locks) <= initial_size + 1  # pyright: ignore[reportPrivateUsage]
+        assert canonical in checkpoint_module._file_locks  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_file_checkpoint_storage_concurrent_saves_across_instances():
+    """Two FileCheckpointStorage instances to the same directory must serialize same-ID saves.
+
+    Companion regression for a reviewer concern raised while fixing #7748: the
+    previous per-instance, per-event-loop lock registry did not span a second
+    FileCheckpointStorage instance pointed at the same directory, so concurrent
+    saves could still reach os.replace together and trip the Windows PermissionError
+    race. The fix switched to a process-wide, per-destination threading.Lock
+    keyed by canonical path. Both instances must complete all saves without
+    surfacing filesystem errors.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage_a = FileCheckpointStorage(temp_dir)
+        storage_b = FileCheckpointStorage(temp_dir)
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="test-workflow",
+            graph_signature_hash="test-hash",
+            checkpoint_id="shared-id",
+        )
+
+        results = await asyncio.gather(
+            *[storage_a.save(checkpoint) for _ in range(25)],
+            *[storage_b.save(checkpoint) for _ in range(25)],
+            return_exceptions=True,
+        )
+
+        errors = [r for r in results if isinstance(r, BaseException)]
+        assert not errors, f"cross-instance concurrent saves raised: {errors[:1]!r}"
+        assert all(r == "shared-id" for r in results)
+        assert (Path(temp_dir) / "shared-id.json").exists()
+
+        loaded = await storage_a.load("shared-id")
+        assert loaded.checkpoint_id == checkpoint.checkpoint_id
+        assert loaded.workflow_name == checkpoint.workflow_name
+
+
+async def test_file_checkpoint_storage_cancel_does_not_expose_race(monkeypatch):
+    """Cancelling save() mid-write must not let a later save race the in-flight worker.
+
+    Addressing a reviewer concern raised while fixing #7748: the fix holds the
+    destination file's threading lock *inside* the worker thread (around the
+    open + write + os.replace) and shields the worker, so a caller-side
+    cancellation cannot release the lock early or interrupt the write. The
+    regression gate monkeypatches ``os.replace`` inside the checkpoint module to
+    make save A's worker deterministically block at the publish step; save B is
+    then issued after A's caller was cancelled. Correct behavior requires that
+    B's worker cannot reach os.replace until A's worker completes: otherwise the
+    two replaces run concurrently on Windows (PermissionError race) or A's stale
+    data lands after B.
+    """
+    import threading
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        real_replace = checkpoint_module.os.replace
+        replace_started = threading.Event()
+        release_first_replace = threading.Event()
+        replace_calls: list[tuple[str, str]] = []
+        calls_guard = threading.Lock()
+        first_call_blocked = threading.Event()
+
+        def gated_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+            with calls_guard:
+                ordinal = len(replace_calls) + 1
+                replace_calls.append((os.path.basename(str(src)), os.path.basename(str(dst))))
+            if ordinal == 1 and not first_call_blocked.is_set():
+                first_call_blocked.set()
+                replace_started.set()
+                assert release_first_replace.wait(timeout=10)
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(checkpoint_module.os, "replace", gated_replace)
+
+        checkpoint_a = WorkflowCheckpoint(
+            workflow_name="workflow-a",
+            graph_signature_hash="test-hash",
+            checkpoint_id="shared-id",
+        )
+        checkpoint_b = WorkflowCheckpoint(
+            workflow_name="workflow-b",
+            graph_signature_hash="test-hash",
+            checkpoint_id="shared-id",
+        )
+
+        task_a = asyncio.create_task(storage.save(checkpoint_a))
+        # Wait until A's worker is parked inside os.replace (write in flight).
+        started = await asyncio.to_thread(replace_started.wait, 10)
+        assert started, "save A's worker never reached os.replace"
+
+        # Cancel A's caller while its worker is mid-publish. Shielding keeps the
+        # worker alive; the caller observes CancelledError.
+        task_a.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task_a
+
+        # Issue save B and give its worker a real chance to reach os.replace.
+        # If cancellation had freed the write lock, B's replace would start
+        # while A is still parked and replace_calls would grow to 2.
+        task_b_started = asyncio.Event()
+        task_b_done = asyncio.Event()
+
+        async def run_b() -> None:
+            task_b_started.set()
+            await storage.save(checkpoint_b)
+            task_b_done.set()
+
+        task_b = asyncio.create_task(run_b())
+        await task_b_started.wait()
+        # Brief, bounded: B must remain blocked on the destination lock. A short
+        # poll window is sufficient because lock handoff is synchronous.
+        for _ in range(50):
+            if len(replace_calls) >= 2:
+                pytest.fail("save B reached os.replace while save A's worker was still mid-write")
+            await asyncio.sleep(0.01)
+        assert not task_b_done.is_set()
+
+        # Let A's worker finish; B follows, serialized. Final state is B's data.
+        release_first_replace.set()
+        await asyncio.wait_for(task_b, timeout=10)
+        assert task_b_done.is_set()
+        assert len(replace_calls) == 2
+
+        result = await storage.load("shared-id")
+        assert result.workflow_name == "workflow-b"
 
 
 async def test_file_checkpoint_storage_load_nonexistent():
