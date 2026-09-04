@@ -11,6 +11,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit.Sdk;
 
@@ -246,6 +247,36 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Assert.True(visitor.HasUnsupportedActions);
     }
 
+    [Fact]
+    public void UnsupportedActionLogsWarning()
+    {
+        SearchKnowledgeSources.Builder unsupportedAction = new() { Id = "action_bad" };
+        AdaptiveDialog.Builder dialogBuilder =
+            new()
+            {
+                BeginDialog =
+                    new OnActivity.Builder()
+                    {
+                        Id = "anything",
+                        Actions = [unsupportedAction]
+                    }
+            };
+        AdaptiveDialog dialog = dialogBuilder.Build();
+
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        Mock<ResponseAgentProvider> mockAgentProvider = CreateMockProvider("1");
+        CapturingLoggerFactory loggerFactory = new();
+        DeclarativeWorkflowOptions options = new(mockAgentProvider.Object) { LoggerFactory = loggerFactory };
+        WorkflowActionVisitor visitor = new(new DeclarativeWorkflowExecutor<string>(WorkflowActionVisitor.Steps.Root("anything"), options, state, (message) => DeclarativeWorkflowBuilder.DefaultTransform(message)), state, options);
+        WorkflowElementWalker walker = new(visitor);
+        walker.Visit(dialog);
+
+        Assert.True(visitor.HasUnsupportedActions);
+        (LogLevel Level, string Message) warning = Assert.Single(loggerFactory.Entries, entry => entry.Level == LogLevel.Warning);
+        Assert.Contains(nameof(SearchKnowledgeSources), warning.Message, StringComparison.Ordinal);
+        Assert.Contains("action_bad", warning.Message, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("CaseInsensitive.yaml", "end_when_match")]
     [InlineData("ClearAllVariables.yaml", "clear_all")]
@@ -404,5 +435,30 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
                 Body = "{\"ok\":true}",
             }));
         return mockHandler;
+    }
+
+    private sealed class CapturingLoggerFactory : ILoggerFactory
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public void AddProvider(ILoggerProvider provider)
+        {
+        }
+
+        public ILogger CreateLogger(string categoryName) => new CapturingLogger(this.Entries);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class CapturingLogger(List<(LogLevel Level, string Message)> entries) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+                => entries.Add((logLevel, formatter(state, exception)));
+        }
     }
 }

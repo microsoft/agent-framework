@@ -9,6 +9,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 
@@ -27,6 +28,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         public static string Restart(string actionId) => $"{actionId}_{nameof(Restart)}";
     }
 
+    private readonly ILogger _logger;
     private readonly Executor _rootAction;
     private readonly WorkflowModel<Func<object?, bool>> _workflowModel;
     private readonly DeclarativeWorkflowOptions _workflowOptions;
@@ -37,6 +39,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         WorkflowFormulaState state,
         DeclarativeWorkflowOptions options)
     {
+        this._logger = options.LoggerFactory.CreateLogger<WorkflowActionVisitor>();
         this._rootAction = rootAction;
         this._workflowModel = new WorkflowModel<Func<object?, bool>>((IModeledAction)rootAction);
         this._workflowOptions = options;
@@ -645,6 +648,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     private void NotSupported(DialogAction item)
     {
         Debug.WriteLine($"> UNKNOWN: {new string('\t', this._workflowModel.GetDepth(item.GetParentId()))}{FormatItem(item)} => {FormatParent(item)}");
+        this._logger.LogWarning("Unsupported action skipped: {ActionType} ({ActionId}).", item.GetType().Name, item.GetId());
         this.HasUnsupportedActions = true;
     }
 
