@@ -16,6 +16,22 @@ updates:
         patterns:
           - "AgentMemory"
           - "AgentMemory.AgentFramework"
+      aspire:
+        patterns:
+          - "Aspire.*"
+          - "CommunityToolkit.Aspire.*"
+      azure-ai-agentserver:
+        patterns:
+          - "Azure.AI.AgentServer.*"
+      agui:
+        patterns:
+          - "AGUI.*"
+      communitytoolkit-vectordata:
+        patterns:
+          - "CommunityToolkit.VectorData.*"
+      anthropic:
+        patterns:
+          - "Anthropic*"
     ignore:
       # For all System.* and Microsoft.Extensions/Bcl.* packages, ignore all major version updates
       - dependency-name: "System.*"
