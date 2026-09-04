@@ -77,6 +77,7 @@ try:
         Attachment,
         BlobAttachment,
         MCPServerConfig,
+        PermissionInvocation,
         PermissionRequestResult,
         PreToolUseHandler,
         PreToolUseHookOutput,
@@ -110,13 +111,23 @@ except ImportError as _copilot_import_error:
 DEFAULT_TIMEOUT_SECONDS: float = 60.0
 """Default timeout in seconds for Copilot requests."""
 
+_PermissionHandlerContext = Any
+"""Compatibility context accepted by permission handlers across SDK versions."""
+
 PermissionHandlerType = Callable[
-    [PermissionRequest, dict[str, str]], "PermissionRequestResult | Awaitable[PermissionRequestResult]"
+    [PermissionRequest, _PermissionHandlerContext],
+    "PermissionRequestResult | Awaitable[PermissionRequestResult]",
 ]
 """Type for permission request handlers. Supports both sync and async callbacks."""
 
-AsyncPermissionHandlerType = Callable[[PermissionRequest, dict[str, str]], "Awaitable[PermissionRequestResult]"]
+AsyncPermissionHandlerType = Callable[
+    [PermissionRequest, _PermissionHandlerContext], "Awaitable[PermissionRequestResult]"
+]
 """Type for permission request handlers that are always asynchronous."""
+
+_SdkAsyncPermissionHandlerType = Callable[
+    [PermissionRequest, PermissionInvocation], "Awaitable[PermissionRequestResult]"
+]
 
 
 FunctionApprovalCallback = Callable[[Content], "bool | Awaitable[bool]"]
@@ -171,7 +182,7 @@ logger = logging.getLogger("agent_framework.github_copilot")
 
 def _deny_all_permissions(
     _request: PermissionRequest,
-    _invocation: dict[str, str],
+    _invocation: _PermissionHandlerContext,
 ) -> PermissionRequestResult:
     """Default permission handler that denies all requests."""
     return PermissionDecisionUserNotAvailable()
@@ -322,7 +333,7 @@ def _normalize_permission_decision(
     return PermissionDecisionApproveForSession(approval=approval)
 
 
-def _with_normalized_permission_decisions(handler: PermissionHandlerType) -> AsyncPermissionHandlerType:
+def _with_normalized_permission_decisions(handler: PermissionHandlerType) -> _SdkAsyncPermissionHandlerType:
     """Wrap a permission handler so its decisions are normalized before reaching the SDK.
 
     Exceptions raised by ``handler`` deliberately propagate: the SDK already catches them
@@ -335,8 +346,10 @@ def _with_normalized_permission_decisions(handler: PermissionHandlerType) -> Asy
         An async handler delegating to ``handler`` and normalizing its result.
     """
 
-    async def normalized_handler(request: PermissionRequest, invocation: dict[str, str]) -> PermissionRequestResult:
-        result = handler(request, invocation)
+    async def normalized_handler(
+        request: PermissionRequest, invocation: PermissionInvocation
+    ) -> PermissionRequestResult:
+        result = handler(request, cast(PermissionInvocation, dict(invocation)))
         if inspect.isawaitable(result):
             result = await result
         return _normalize_permission_decision(result, request)
@@ -1468,7 +1481,10 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         if not kwargs.get("model"):
             kwargs["model"] = self._settings.get("model") or None
         kwargs["on_permission_request"] = _with_normalized_permission_decisions(
-            opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions
+            cast(
+                PermissionHandlerType,
+                opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions,
+            )
         )
         kwargs["hooks"] = self._build_session_hooks(all_tools, kwargs)
 

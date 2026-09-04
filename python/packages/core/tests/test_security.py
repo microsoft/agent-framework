@@ -748,6 +748,7 @@ class TestPolicyEnforcementMiddleware:
             call_id="call-policy-violation",
             name=mock_function.name,
             arguments='{"arg": "test"}',
+            id="af-call-policy-violation",
         )
 
         with pytest.raises(MiddlewareTermination) as exc_info:
@@ -766,7 +767,9 @@ class TestPolicyEnforcementMiddleware:
             "MiddlewareTermination handler must not wrap approval requests in function_result"
         )
         assert result.function_call is not None
+        assert result.id == "af-call-policy-violation"
         assert result.function_call.call_id == "call-policy-violation"
+        assert result.function_call.id == "af-call-policy-violation"
         assert result.additional_properties["policy_violation"] is True
         assert result.additional_properties["violation_type"] == "untrusted_context"
 

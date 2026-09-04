@@ -9,9 +9,11 @@ import logging
 import re
 from collections.abc import Mapping, MutableMapping
 from dataclasses import asdict, is_dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 from functools import lru_cache
-from typing import Any, ClassVar, Protocol, TypeGuard, TypeVar, cast, runtime_checkable
+from typing import Any, ClassVar, Final, Protocol, TypeGuard, TypeVar, cast, runtime_checkable
+
+from typing_extensions import Sentinel
 
 logger = logging.getLogger("agent_framework")
 
@@ -19,6 +21,7 @@ ClassT = TypeVar("ClassT", bound="SerializationMixin")
 ProtocolT = TypeVar("ProtocolT", bound="SerializationProtocol")
 _JSON_SCALAR_TYPES = (str, int, float, bool, type(None))
 _DIRECT_JSON_TYPES = (*_JSON_SCALAR_TYPES, list, dict)
+_SKIP_SERIALIZATION: Final = Sentinel("SKIP_SERIALIZATION")
 
 # Regex pattern for converting CamelCase to snake_case
 _CAMEL_TO_SNAKE_PATTERN = re.compile(r"(?<!^)(?=[A-Z])")
@@ -149,6 +152,118 @@ def _is_serialization_protocol(value: Any) -> TypeGuard[SerializationProtocol]:
     if _implements_serialization_protocol(cast(type[Any], type(value))):
         return True
     return callable(getattr(value, "to_dict", None)) and callable(getattr(value, "from_dict", None))
+
+
+def _serialize_value(
+    value: Any,
+    *,
+    exclude: set[str] | None,
+    exclude_none: bool,
+    attribute_name: str,
+    active_container_ids: set[int] | None = None,
+    stringify_dict_keys: bool = False,
+) -> Any:
+    """Recursively serialize a value while preserving skip semantics."""
+    if active_container_ids is None:
+        active_container_ids = set()
+    if type(value) in _JSON_SCALAR_TYPES:
+        return value
+    if _is_serialization_protocol(value):
+        serialized = value.to_dict(exclude=exclude, exclude_none=exclude_none)
+        return _serialize_value(
+            serialized,
+            exclude=exclude,
+            exclude_none=exclude_none,
+            attribute_name=attribute_name,
+            active_container_ids=active_container_ids,
+        )
+    if isinstance(value, list):
+        value_as_list = cast(list[Any], value)
+        container_id = id(value_as_list)
+        if container_id in active_container_ids:
+            raise ValueError("Circular reference detected")
+        active_container_ids.add(container_id)
+        try:
+            serialized_list: list[Any] = []
+            for item in value_as_list:
+                serialized = _serialize_value(
+                    item,
+                    exclude=exclude,
+                    exclude_none=exclude_none,
+                    attribute_name=attribute_name,
+                    active_container_ids=active_container_ids,
+                )
+                if serialized is not _SKIP_SERIALIZATION:
+                    serialized_list.append(serialized)
+            return serialized_list
+        finally:
+            active_container_ids.remove(container_id)
+    if isinstance(value, dict):
+        value_as_dict = cast(dict[Any, Any], value)
+        container_id = id(value_as_dict)
+        if container_id in active_container_ids:
+            raise ValueError("Circular reference detected")
+        active_container_ids.add(container_id)
+        try:
+            serialized_dict: dict[Any, Any] = {}
+            for raw_key, item in value_as_dict.items():
+                dict_key = str(raw_key) if stringify_dict_keys else raw_key
+                if isinstance(item, (datetime, date, time)):
+                    serialized_dict[dict_key] = str(item)
+                    continue
+                serialized = _serialize_value(
+                    item,
+                    exclude=exclude,
+                    exclude_none=exclude_none,
+                    attribute_name=attribute_name,
+                    active_container_ids=active_container_ids,
+                )
+                if serialized is not _SKIP_SERIALIZATION:
+                    serialized_dict[dict_key] = serialized
+            return serialized_dict
+        finally:
+            active_container_ids.remove(container_id)
+    if is_serializable(value):
+        return value
+    logger.debug(f"Skipping non-serializable value in attribute '{attribute_name}' of type {type(value).__name__}")
+    return _SKIP_SERIALIZATION
+
+
+def _iter_instance_fields(instance: Any) -> dict[str, Any]:
+    """Return attributes stored in ``__dict__`` or slots."""
+    fields = dict(getattr(instance, "__dict__", {}))
+    for cls in type(instance).__mro__:
+        slots = cls.__dict__.get("__slots__", ())
+        if isinstance(slots, str):
+            slots = (slots,)
+        for field_name in slots:
+            if field_name not in {"__dict__", "__weakref__"} and hasattr(instance, field_name):
+                fields[field_name] = getattr(instance, field_name)
+    return fields
+
+
+def get_pickle_state(instance: Any, omitted_fields: set[str]) -> dict[str, Any]:
+    """Build pickle state while omitting runtime-only fields."""
+    state = _iter_instance_fields(instance)
+    for field_name in omitted_fields:
+        state.pop(field_name, None)
+    return state
+
+
+def restore_pickle_state(
+    instance: Any,
+    state: dict[str, Any] | tuple[dict[str, Any], dict[str, Any]],
+    omitted_fields: set[str],
+) -> None:
+    """Restore dict- and slot-backed pickle state."""
+    if isinstance(state, tuple):
+        dict_state, slot_state = state
+        state = {**dict_state, **slot_state}
+    for field_name, value in state.items():
+        object.__setattr__(instance, field_name, value)
+    for field_name in omitted_fields:
+        if field_name in _iter_instance_fields(instance) or hasattr(instance, "__dict__"):
+            object.__setattr__(instance, field_name, None)
 
 
 class SerializationMixin:
@@ -284,6 +399,15 @@ class SerializationMixin:
     DEFAULT_EXCLUDE: ClassVar[set[str]] = set()
     INJECTABLE: ClassVar[set[str]] = set()
     _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
+    _PICKLE_OMIT_FIELDS: ClassVar[set[str]] = {"raw_representation"}
+
+    def __copy__(self) -> SerializationMixin:
+        """Create a shallow copy without invoking pickle state hooks."""
+        cls = type(self)
+        result = cls.__new__(cls)
+        for field_name, value in _iter_instance_fields(self).items():
+            object.__setattr__(result, field_name, value)
+        return result
 
     def __deepcopy__(self, memo: dict[int, Any]) -> SerializationMixin:
         """Create a deep copy, preserving ``_SHALLOW_COPY_FIELDS`` by reference.
@@ -296,12 +420,20 @@ class SerializationMixin:
         cls = type(self)
         result = cls.__new__(cls)
         memo[id(self)] = result
-        for k, v in self.__dict__.items():
+        for k, v in _iter_instance_fields(self).items():
             if k in cls._SHALLOW_COPY_FIELDS:
                 object.__setattr__(result, k, v)
             else:
                 object.__setattr__(result, k, copy.deepcopy(v, memo))
         return result
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Return pickle state without runtime-only shallow-copy fields."""
+        return get_pickle_state(self, self._PICKLE_OMIT_FIELDS)
+
+    def __setstate__(self, state: dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]) -> None:
+        """Restore pickle state and reset runtime-only shallow-copy fields."""
+        restore_pickle_state(self, state, self._PICKLE_OMIT_FIELDS)
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         """Convert the instance and any nested objects to a dictionary.
@@ -335,63 +467,15 @@ class SerializationMixin:
             if key not in combined_exclude and not key.startswith("_"):
                 if exclude_none and value is None:
                     continue
-                if type(value) in _JSON_SCALAR_TYPES:
-                    result[key] = value
-                    continue
-                # Recursively serialize SerializationProtocol objects
-                if _is_serialization_protocol(value):
-                    result[key] = value.to_dict(exclude=exclude, exclude_none=exclude_none)
-                    continue
-                # Handle lists containing SerializationProtocol objects
-                if isinstance(value, list):
-                    value_as_list: list[Any] = []
-                    for item in cast(list[Any], value):
-                        if type(item) in _JSON_SCALAR_TYPES:
-                            value_as_list.append(item)
-                            continue
-                        if _is_serialization_protocol(item):
-                            value_as_list.append(item.to_dict(exclude=exclude, exclude_none=exclude_none))
-                            continue
-                        if is_serializable(item):
-                            value_as_list.append(item)
-                            continue
-                        logger.debug(
-                            f"Skipping non-serializable item in list attribute '{key}' of type {type(item).__name__}"
-                        )
-                    result[key] = value_as_list
-                    continue
-                # Handle dicts containing SerializationProtocol values
-                if isinstance(value, dict):
-                    from datetime import date, datetime, time
-
-                    serialized_dict: dict[str, Any] = {}
-                    for raw_key, v in cast(dict[Any, Any], value).items():
-                        dict_key = str(raw_key)
-                        # Convert datetime objects to strings
-                        if isinstance(v, (datetime, date, time)):
-                            serialized_dict[dict_key] = str(v)
-                            continue
-                        if type(v) in _JSON_SCALAR_TYPES:
-                            serialized_dict[dict_key] = v
-                            continue
-                        if _is_serialization_protocol(v):
-                            serialized_dict[dict_key] = v.to_dict(exclude=exclude, exclude_none=exclude_none)
-                            continue
-                        # Check if the value is JSON serializable
-                        if is_serializable(v):
-                            serialized_dict[dict_key] = v
-                            continue
-                        logger.debug(
-                            f"Skipping non-serializable value for key '{dict_key}' in dict attribute '{key}' "
-                            f"of type {type(v).__name__}"
-                        )
-                    result[key] = serialized_dict
-                    continue
-                # Directly include JSON serializable values
-                if is_serializable(value):
-                    result[key] = value
-                    continue
-                logger.debug(f"Skipping non-serializable attribute '{key}' of type {type(value).__name__}")
+                serialized = _serialize_value(
+                    value,
+                    exclude=exclude,
+                    exclude_none=exclude_none,
+                    attribute_name=key,
+                    stringify_dict_keys=isinstance(value, dict),
+                )
+                if serialized is not _SKIP_SERIALIZATION:
+                    result[key] = serialized
 
         return result
 
@@ -569,7 +653,7 @@ class SerializationMixin:
                             and param_name in kwargs
                             and isinstance(kwargs[param_name], dict)
                         ):
-                            kwargs[param_name].update(param_value)
+                            kwargs[param_name] = {**kwargs[param_name], **param_value}
                         else:
                             kwargs[param_name] = param_value
             else:
@@ -581,7 +665,7 @@ class SerializationMixin:
                     )
                 # Handle dict parameters - merge if both are dicts
                 if isinstance(dep_value, dict) and dep_key in kwargs and isinstance(kwargs[dep_key], dict):
-                    kwargs[dep_key].update(dep_value)
+                    kwargs[dep_key] = {**kwargs[dep_key], **dep_value}
                 else:
                     kwargs[dep_key] = dep_value
 

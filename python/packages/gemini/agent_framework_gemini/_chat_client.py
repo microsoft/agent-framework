@@ -19,6 +19,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReason,
     FinishReasonLiteral,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -32,11 +33,18 @@ from agent_framework import (
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework._types import _get_data_bytes  # type: ignore[reportPrivateUsage]
-from agent_framework.exceptions import ContentError
+from agent_framework.exceptions import (
+    AgentFrameworkException,
+    ChatClientException,
+    ChatClientInvalidAuthException,
+    ChatClientInvalidRequestException,
+    ContentError,
+)
 from agent_framework.observability import ChatTelemetryLayer
 from google import genai
 from google.auth.credentials import Credentials
 from google.genai import types
+from google.genai.errors import APIError as GenAIAPIError
 from pydantic import BaseModel
 
 from ._feature_usage import FeatureIndex
@@ -68,6 +76,24 @@ __all__ = [
 ]
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
+
+
+def _wrap_gemini_error(ex: Exception) -> ChatClientException:
+    """Translate a raw google-genai failure into the framework's ChatClientException hierarchy.
+
+    google-genai ``APIError`` instances are classified by HTTP status (401/403 -> auth, other
+    4xx -> invalid request), matching the Mistral client. Anything else - transport errors,
+    Vertex credential-refresh failures, unexpected SDK exceptions - is still wrapped as a
+    generic ``ChatClientException`` so callers catching that base type never see a raw
+    provider exception leak through.
+    """
+    if isinstance(ex, GenAIAPIError):
+        code = getattr(ex, "code", None)
+        if code in (401, 403):
+            return ChatClientInvalidAuthException(f"Gemini authentication failed: {ex}", inner_exception=ex)
+        if isinstance(code, int) and 400 <= code < 500:
+            return ChatClientInvalidRequestException(f"Invalid Gemini request: {ex}", inner_exception=ex)
+    return ChatClientException(f"Gemini chat request failed: {ex}", inner_exception=ex)
 
 
 # region Options & Settings
@@ -558,12 +584,17 @@ class RawGeminiChatClient(
                     Callable[..., Awaitable[AsyncIterable[types.GenerateContentResponse]]],
                     cast(Any, self._genai_client.aio.models).generate_content_stream,
                 )
-                async for chunk in await generate_content_stream(
-                    model=model,
-                    contents=contents,
-                    config=config,
-                ):
-                    yield self._process_chunk(chunk)
+                try:
+                    async for chunk in await generate_content_stream(
+                        model=model,
+                        contents=contents,
+                        config=config,
+                    ):
+                        yield self._process_chunk(chunk)
+                except AgentFrameworkException:
+                    raise
+                except Exception as ex:
+                    raise _wrap_gemini_error(ex) from ex
 
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
@@ -571,7 +602,16 @@ class RawGeminiChatClient(
             validated = await self._validate_options(options)
             model, contents, config = self._prepare_request(messages, validated)
             mark_feature_used(FeatureIndex.GEMINI)
-            raw = await self._genai_client.aio.models.generate_content(model=model, contents=contents, config=config)  # type: ignore[arg-type]
+            generate_content = cast(
+                Callable[..., Awaitable[types.GenerateContentResponse]],
+                cast(Any, self._genai_client.aio.models).generate_content,
+            )
+            try:
+                raw = await generate_content(model=model, contents=contents, config=config)
+            except AgentFrameworkException:
+                raise
+            except Exception as ex:
+                raise _wrap_gemini_error(ex) from ex
             return self._process_generate_response(raw, response_format=validated.get("response_format"))
 
         return _get_response()
@@ -936,7 +976,15 @@ class RawGeminiChatClient(
 
     @staticmethod
     def _extract_response_schema(response_format: Any) -> dict[str, Any] | None:
-        """Extract a Gemini response schema from supported mapping response_format shapes."""
+        """Extract a Gemini response schema from supported response_format shapes.
+
+        Handles a Pydantic model class and, for mappings, a ``format`` envelope
+        (unwrapped recursively), a ``json_schema`` envelope, a bare ``schema``
+        envelope, and a raw JSON schema mapping. Anything else returns ``None``.
+        """
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            return response_format.model_json_schema()
+
         if not isinstance(response_format, Mapping):
             return None
         mapping = cast("Mapping[str, Any]", response_format)
@@ -1260,18 +1308,20 @@ class RawGeminiChatClient(
             details["reasoning_output_token_count"] = v
         return details or None
 
-    def _map_finish_reason(self, reason: str | None) -> FinishReasonLiteral | None:
+    def _map_finish_reason(self, reason: str | None) -> FinishReasonLiteral | FinishReason | None:
         """Map a Gemini finish reason string to the framework's FinishReasonLiteral.
 
         Args:
             reason: The finish reason name from the Gemini API (e.g. ``"STOP"``), or None.
 
         Returns:
-            The corresponding ``FinishReasonLiteral``, or None if the reason is absent or unmapped.
+            The corresponding ``FinishReasonLiteral`` for known reasons, the raw reason string for
+            values not yet mapped (so callers still see that the response terminated abnormally
+            instead of losing it), or None if the reason is absent or ``FINISH_REASON_UNSPECIFIED``.
         """
-        if not reason:
+        if not reason or reason == "FINISH_REASON_UNSPECIFIED":
             return None
-        return _FINISH_REASON_MAP.get(reason)
+        return _FINISH_REASON_MAP.get(reason, FinishReason(reason))
 
     # endregion
 

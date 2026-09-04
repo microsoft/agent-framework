@@ -6,7 +6,7 @@
 using System.Text.Json;
 using Azure.AI.Projects;
 using Azure.Identity;
-using CommunityToolkit.VectorData.CosmosNoSql;
+using CommunityToolkit.VectorData.AzureCosmosDB;
 using Microsoft.Agents.AI;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI;
@@ -40,9 +40,9 @@ using CosmosClient cosmosClient = new(
 
 DatabaseResponse databaseResponse = await cosmosClient.CreateDatabaseIfNotExistsAsync(cosmosDatabaseName);
 
-VectorStore vectorStore = new CosmosNoSqlVectorStore(
+VectorStore vectorStore = new CosmosVectorStore(
     databaseResponse.Database,
-    new CosmosNoSqlVectorStoreOptions
+    new CosmosVectorStoreOptions
     {
         JsonSerializerOptions = JsonSerializerOptions.Default,
         EmbeddingGenerator = aiProjectClient

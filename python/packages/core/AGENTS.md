@@ -13,6 +13,7 @@ agent_framework/
 ├── _clients.py          # Chat client base classes and protocols
 ├── _types.py            # Core types (Message, ChatResponse, Content, etc.)
 ├── _tools.py            # Tool definitions and function invocation
+├── _vectors.py          # Vector store models, CRUD/search abstractions, and protocols
 ├── _middleware.py       # Middleware system for request/response interception
 ├── _sessions.py         # AgentSession and context provider abstractions
 ├── _skills.py           # Agent Skills system (models, executors, provider)
@@ -63,6 +64,19 @@ agent_framework/
 - **`FunctionTool`** - Wraps Python functions as tools with JSON schema generation
 - **`@tool`** decorator - Converts functions to tools
 - **`use_function_invocation()`** - Decorator to add automatic function calling to chat clients
+
+### Vector stores (`_vectors.py`)
+
+The vector store API is experimental under the shared `VECTOR_STORES` feature ID.
+
+- **`@vectorstoremodel`** - Declares key, data, and vector fields on dataclasses, Pydantic models, and plain classes
+- **`register_vectorstoremodel`** - Registers one definition and msgspec-backed codec pair per model type
+- **`BaseVectorCollection`** - Base class for collection lifecycle and msgspec-backed record CRUD operations;
+  upserts generate embeddings by default and retrieval excludes vectors by default
+- **`BaseVectorStore`** - Base class for stores that create collection clients
+- **`BaseVectorSearch`** - Base class for vector and keyword-hybrid search
+- **`create_vector_search_tool`** - Creates an agent tool from any `SupportsVectorSearch` implementation
+- **`SupportsVectorUpsert`** / **`SupportsVectorSearch`** - Structural protocols for vector store capabilities
 
 ### Middleware (`_middleware.py`)
 
@@ -156,10 +170,13 @@ agent_framework/
   caller messages, returns approved and rejected terminal results in the resumed response (and stream) before any
   final assistant message, and does not mutate the caller's approval `Message` or the earlier approval-request
   response.
-- Approval/result correlation is occurrence-aware. A `call_id` may be reused after a completed round, so approval
-  normalization matches ordered call occurrences and consumes approved results per occurrence rather than using one
-  global result per `call_id`. All contents produced by one execution remain one result group and are consumed
-  together, including multiple user-input requests.
+- Approval/result correlation is occurrence-aware. Provider/service correlation stays in `function_call.call_id`,
+  while new locally actionable calls carry one stable Agent Framework occurrence identity in `function_call.id`.
+  New local approval request ids use that occurrence id; hosted provider-issued approval ids remain unchanged. Legacy
+  stored pending calls without `function_call.id` retain exact request-id binding for one warned compatibility resume.
+  A `call_id` may be reused after a completed round, so approval normalization matches ordered call occurrences and
+  consumes approved results per occurrence rather than using one global result per `call_id`. All contents produced by
+  one execution remain one result group and are consumed together, including multiple user-input requests.
 - Approval resume keeps terminal `function_result` contents in tool-role messages and follow-up user-input requests
   in assistant-role messages, including mixed sibling batches.
 - Function-call budget accounting counts one unit per executed result group, not per emitted `function_result`, so
@@ -193,7 +210,11 @@ agent_framework/
 
 ### Workflows (`_workflows/`)
 
-- **`Workflow`** - Graph-based workflow definition
+- **`Workflow`** - Graph-based workflow definition. `cancel_pending_requests(request_ids)` cancels selected external
+  requests without synthesizing responses, recursively releases nested executor correlation, resumes executors whose
+  remaining requests were already answered, accepts the same request-scoped tools and invocation/client kwargs needed
+  by that continuation, can atomically restore a supplied checkpoint before cancellation, and returns the resulting
+  `WorkflowRunResult`.
 - **`WorkflowBuilder`** - Fluent API for building workflows, including explicit
   `output_from` / `intermediate_output_from` selection for caller-facing emissions. `output_from`
   is an allow-list for **Workflow Output**; unselected executor payloads are hidden unless
@@ -209,6 +230,17 @@ agent_framework/
   to that caller/session. Pass a caller-scoped checkpoint storage to `build(checkpoint_storage=...)` when needed;
   hosts remain responsible for authorizing and tenant-scoping access to any shared checkpoint adapter.
 - **Orchestrators**: `SequentialOrchestrator`, `ConcurrentOrchestrator`, `GroupChatOrchestrator`, `MagenticOrchestrator`, `HandoffOrchestrator`
+
+## Evaluation (`_evaluation.py`)
+
+- Core owns provider-neutral evaluation types, local evaluators and checks, `EvalItem` construction, and the
+  `evaluate_agent` / `evaluate_workflow` orchestration functions.
+- Provider packages own their service-specific evaluator implementations and wire serialization. Core evaluation
+  code must not emit a provider's request schema. The deprecated `AgentEvalConverter` remains as a temporary
+  compatibility shim for released Foundry packages whose declared core range still imports it; new code must not use
+  the shim.
+- Core orchestration builds `EvalItem` instances through private helpers; callers needing manual control construct
+  the public `EvalItem` directly.
 
 ## Built-in Providers
 

@@ -28,14 +28,15 @@ Add Purview when you need to:
 ## Quick Start
 
 ``` csharp
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Core;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Purview;
 using Microsoft.Extensions.AI;
+using OpenAI;
 
-Uri endpoint = new Uri("..."); // The endpoint of Azure OpenAI instance.
+Uri endpoint = new Uri("https://your-resource.openai.azure.com/openai/v1/");
 string deploymentName = "..."; // The deployment name of your Azure OpenAI instance ex: gpt-4o-mini
 string purviewClientAppId = "..."; // The client id of your entra app registration. 
 
@@ -47,11 +48,11 @@ TokenCredential browserCredential = new InteractiveBrowserCredential(
         ClientId = purviewClientAppId
     });
 
-IChatClient client = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
-    .GetResponsesClient(deploymentName)
-    .AsIChatClient()
+IChatClient client = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions { Endpoint = endpoint })
+    .GetResponsesClient()
+    .AsIChatClient(deploymentName)
     .AsBuilder()
     .WithPurview(browserCredential, new PurviewSettings("My Sample App"))
     .Build();
@@ -81,6 +82,17 @@ The plugin requires the following Graph permissions:
 - ProtectionScopes.Compute.All : [userProtectionScopeContainer](https://learn.microsoft.com/en-us/graph/api/userprotectionscopecontainer-compute)
 - Content.Process.All : [processContent](https://learn.microsoft.com/en-us/graph/api/userdatasecurityandgovernance-processcontent)
 - ContentActivity.Write : [contentActivity](https://learn.microsoft.com/en-us/graph/api/activitiescontainer-post-contentactivities)
+
+The Entra app must be configured as a public client application with a localhost redirect URI so
+`InteractiveBrowserCredential` can complete the delegated user sign-in. These permissions require tenant
+administrator consent.
+
+The client ID alone is not enough for a live Purview policy test. The tenant must also:
+
+1. Have Microsoft Purview entitlement and consumptive billing enabled.
+2. Register the Entra app as an integrated AI app in **Purview > Settings > AI app and agent locations**.
+3. Configure a DLP or data collection policy that applies to the signed-in user and the app.
+4. Turn the policy on. A policy in test mode does not produce an enforced block.
 
 Authentication with user tokens is preferred. When the configured credential resolves to a user token, that token's user id is used for Purview policy evaluation. If authenticating with app tokens, the token does not contain an end-user principal, so the agent-framework caller will need to provide an entra user id for each `ChatMessage` sent to the agent/client. This user id can be set using the `SetUserId` extension method, or by setting the `"userId"` field of the `AdditionalProperties` dictionary.
 
@@ -182,9 +194,9 @@ var settings = new PurviewSettings("My Sample App")
 Use the agent middleware when you already have / want the full agent pipeline:
 
 ``` csharp
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
+AIAgent agent = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions { Endpoint = endpoint })
     .GetChatClient(deploymentName)
     .AsAIAgent("You are a helpful assistant.")
     .AsBuilder()
@@ -195,11 +207,11 @@ AIAgent agent = new AzureOpenAIClient(
 Use the chat middleware when you attach directly to a chat client (e.g. minimal agent shell or custom orchestration):
 
 ``` csharp
-IChatClient client = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new AzureCliCredential())
-    .GetResponsesClient(deploymentName)
-    .AsIChatClient()
+IChatClient client = new OpenAIClient(
+    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+    new OpenAIClientOptions { Endpoint = endpoint })
+    .GetResponsesClient()
+    .AsIChatClient(deploymentName)
     .AsBuilder()
     .WithPurview(browserCredential, new PurviewSettings("Agent Framework Test App"))
     .Build();
