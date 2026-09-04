@@ -249,7 +249,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         services.AddA2AServer(AgentName, options =>
         {
             callbackInvoked = true;
-            options.AgentRunMode = AgentRunMode.AllowBackgroundIfSupported;
+            options.AgentRunMode = AgentRunMode.ReturnTask;
         });
 
         // Assert - callback is invoked during resolution
@@ -510,7 +510,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         services.AddKeyedSingleton(AgentName, (_, _) => agentMock.Object);
         services.AddA2AServer(
             AgentName,
-            options => options.AgentRunMode = AgentRunMode.AllowBackgroundIfSupported);
+            options => options.AgentRunMode = AgentRunMode.ReturnTask);
         await using var provider = services.BuildServiceProvider();
         var server = provider.GetRequiredKeyedService<A2AServer>(AgentName);
         SendMessageRequest request = CreateTestSendMessageRequest();

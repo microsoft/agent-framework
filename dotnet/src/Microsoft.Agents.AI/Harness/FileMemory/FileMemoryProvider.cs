@@ -219,7 +219,7 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
     /// <param name="fileName">The name of the file to read.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>The file content or a not-found message.</returns>
-    [Description("Read the content of a memory file by name. Returns the file content or a message indicating the file was not found.")]
+    [Description("Read the content of a memory file by name. Returns the file content or a message indicating the file was not found. To edit by 1-based line number afterwards, count lines terminated by \\n, \\r\\n, or a lone \\r; each line keeps its own terminator, and content ending in a terminator has no extra empty line after it.")]
     private async Task<string> ReadAsync(string fileName, CancellationToken cancellationToken = default)
     {
         string normalized = StorePaths.NormalizeRelativePath(fileName);
@@ -360,7 +360,7 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
     /// <param name="edits">The list of 1-based line numbers and their literal replacement text.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A confirmation message including the number of lines replaced, or a failure message.</returns>
-    [Description("Replace lines in a memory file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers.")]
+    [Description("Replace lines in a memory file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers. Line numbers are 1-based and count lines terminated by \\n, \\r\\n, or a lone \\r; each line keeps its own terminator, and content ending in a terminator has no extra empty line after it.")]
     private async Task<string> ReplaceLinesAsync(string fileName, List<FileLineEdit> edits, CancellationToken cancellationToken = default)
     {
         string normalized = StorePaths.NormalizeRelativePath(fileName);

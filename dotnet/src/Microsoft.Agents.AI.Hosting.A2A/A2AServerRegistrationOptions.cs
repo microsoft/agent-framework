@@ -16,7 +16,7 @@ public sealed class A2AServerRegistrationOptions
     /// Gets or sets the agent run mode that controls how the agent responds to A2A requests.
     /// </summary>
     /// <remarks>
-    /// When <see langword="null"/>, defaults to <see cref="AgentRunMode.DisallowBackground"/>.
+    /// When <see langword="null"/>, defaults to <see cref="AgentRunMode.ReturnMessage"/>.
     /// </remarks>
     public AgentRunMode? AgentRunMode { get; set; }
 
