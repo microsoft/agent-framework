@@ -270,6 +270,56 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         Assert.NotEmpty(events);
     }
 
+    [Fact]
+    public async Task InvokeFunctionToolUsesLocalVariablesForArgumentsAndOutputAsync()
+    {
+        // Arrange
+        const string FunctionName = "GetUserData";
+        const string UserId = "user-123";
+        const string UserData = "user-data-result";
+
+        this.State.Set("userId", FormulaValue.New(UserId), VariableScopeNames.Local);
+        this.State.InitializeSystem();
+        this.State.Bind();
+
+        InvokeFunctionTool model = this.CreateModelWithLocalVariableArgumentAndOutput(
+            displayName: nameof(InvokeFunctionToolUsesLocalVariablesForArgumentsAndOutputAsync),
+            functionName: FunctionName);
+
+        AIFunctionArguments? capturedArguments = null;
+        TestFunctionAgentProvider testAgentProvider = new(
+            [AIFunctionFactory.Create((string userId) => UserData, name: FunctionName)],
+            onInvokeArguments: args => capturedArguments = args);
+        InvokeFunctionToolExecutor action = new(model, testAgentProvider, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+
+        // Act
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+        await action.CaptureResponseAsync(mockContext.Object, CreateApprovalResponseFor(emittedRequests, approved: true), CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(capturedArguments);
+        Assert.Equal(UserId, capturedArguments["userId"]?.ToString());
+        Assert.Contains(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 3
+            && i.Arguments[0] is string key
+            && key == "UserData"
+            && i.Arguments[1] is StringValue value
+            && value.Value == UserData
+            && i.Arguments[2] is string scope
+            && scope == VariableScopeNames.Local);
+        Assert.Contains(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 3
+            && i.Arguments[0] is string key
+            && key == "FunctionMessages"
+            && i.Arguments[2] is string scope
+            && scope == VariableScopeNames.Local);
+    }
+
     #endregion
 
     #region Approval Snapshot Security Tests
@@ -1411,6 +1461,25 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         };
         builder.Arguments.Add(argumentKey,
             ValueExpression.Variable(PropertyPath.TopicVariable(variableName)));
+        return AssignParent<InvokeFunctionTool>(builder);
+    }
+
+    private InvokeFunctionTool CreateModelWithLocalVariableArgumentAndOutput(string displayName, string functionName)
+    {
+        InvokeFunctionTool.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(displayName),
+            FunctionName = new StringExpression.Builder(StringExpression.Literal(functionName)),
+            RequireApproval = new BoolExpression.Builder(BoolExpression.Literal(true)),
+            Output = new InvokeToolOutput.Builder
+            {
+                AutoSend = new BoolExpression.Builder(BoolExpression.Literal(true)),
+                Result = new InitializablePropertyPath(PropertyPath.Create("Local.UserData"), isInitializer: false),
+                Messages = new InitializablePropertyPath(PropertyPath.Create("Local.FunctionMessages"), isInitializer: false),
+            },
+        };
+        builder.Arguments.Add("userId", ValueExpression.Variable(PropertyPath.Create("Local.userId")));
         return AssignParent<InvokeFunctionTool>(builder);
     }
 
