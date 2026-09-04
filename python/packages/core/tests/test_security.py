@@ -1809,6 +1809,87 @@ class TestPolicyEnforcementMiddleware:
         assert len(middleware._pending_policy_approvals) <= limit
         assert len(middleware._pending_policy_approvals) == limit
 
+    async def test_occurrence_aware_approval_id_lifecycle(self, mock_function):
+        """Occurrence-aware approval IDs must store, match, consume, and execute exactly once.
+
+        Regression test: when function_call_occurrence_id is present (occurrence-aware
+        function calls), the approval lifecycle must use it as the canonical key for
+        _pending_policy_approvals. This test verifies the full flow: request with
+        occurrence_id -> stored under occurrence_id -> matched on replay -> consumed
+        on execution -> cannot replay again.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        occurrence_id = "occ-12345"
+        call_id = "call-shared"
+
+        # Request approval with occurrence-aware metadata
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = call_id
+        request_context.metadata["function_call_occurrence_id"] = occurrence_id
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+        assert approval_request.type == "function_approval_request"
+        # The approval request id should be the occurrence_id
+        assert approval_request.id == occurrence_id
+
+        # Verify it was stored under occurrence_id (not call_id)
+        assert occurrence_id in middleware._pending_policy_approvals
+        assert call_id not in middleware._pending_policy_approvals
+
+        # Replay with valid approval response
+        replay_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        replay_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        replay_context.metadata["call_id"] = call_id
+        replay_context.metadata["function_call_occurrence_id"] = occurrence_id
+        replay_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        await middleware.process(replay_context, execute)
+        assert executed is True
+        # Verify it was consumed (removed from pending)
+        assert occurrence_id not in middleware._pending_policy_approvals
+
+        # Try to replay again - should fail (consume-once)
+        second_replay = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        second_replay.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        second_replay.metadata["call_id"] = call_id
+        second_replay.metadata["function_call_occurrence_id"] = occurrence_id
+        second_replay.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        executed2 = False
+
+        async def execute2() -> None:
+            nonlocal executed2
+            executed2 = True
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(second_replay, execute2)
+        assert executed2 is False
+        assert isinstance(second_replay.result, Content)
+        assert second_replay.result.type == "function_approval_request"
+
 
 class TestAutomaticHiding:
     """Tests for automatic variable hiding functionality."""

@@ -1874,9 +1874,9 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         # unbounded growth when call_ids are reused across sessions.
         current_session_key = self._session_key(context)
         if pending.session_key != current_session_key:
-            del self._pending_policy_approvals[call_id]
+            del self._pending_policy_approvals[approval_id]
             logger.debug(
-                f"Removed stale pending approval '{call_id}' from session '{pending.session_key}' "
+                f"Removed stale pending approval '{approval_id}' from session '{pending.session_key}' "
                 f"(current session: '{current_session_key}')"
             )
             return False
@@ -1937,21 +1937,22 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
             f"due to policy violation(s): {disclosed}."
         )
         call_id = self._get_call_id(context)
-        if call_id:
-            # If bounded, evict oldest entry when adding a new unique call_id would exceed limit.
-            # Do not evict when updating an existing call_id (re-request scenario).
+        approval_id = self._get_approval_id(context)
+        if approval_id:
+            # If bounded, evict oldest entry when adding a new unique approval_id would exceed limit.
+            # Do not evict when updating an existing approval_id (re-request scenario).
             if (
                 self._max_pending_approvals is not None
-                and call_id not in self._pending_policy_approvals
+                and approval_id not in self._pending_policy_approvals
                 and len(self._pending_policy_approvals) >= self._max_pending_approvals
             ):
                 # Evict oldest (first) entry
-                oldest_call_id = next(iter(self._pending_policy_approvals))
-                del self._pending_policy_approvals[oldest_call_id]
+                oldest_approval_id = next(iter(self._pending_policy_approvals))
+                del self._pending_policy_approvals[oldest_approval_id]
                 logger.debug(
-                    f"Evicted oldest pending approval '{oldest_call_id}' to maintain limit of {self._max_pending_approvals}"
+                    f"Evicted oldest pending approval '{oldest_approval_id}' to maintain limit of {self._max_pending_approvals}"
                 )
-            self._pending_policy_approvals[call_id] = self._pending_record(context, violations)
+            self._pending_policy_approvals[approval_id] = self._pending_record(context, violations)
         additional_properties: dict[str, Any] = {
             "policy_violation": True,
             "violation_type": primary["violation_type"],
