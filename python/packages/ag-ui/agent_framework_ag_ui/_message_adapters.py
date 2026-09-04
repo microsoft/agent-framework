@@ -815,6 +815,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                             name=matching_func_call.name,  # type: ignore[arg-type]
                             arguments=json.dumps(filtered_args),
                         )
+                        func_call_for_approval.id = matching_func_call.id or str(approval_call_id)
                         logger.info(f"Using modified arguments from approval: {filtered_args}")
                     else:
                         # No modified arguments - use the original function call
@@ -823,7 +824,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                     # Create function_approval_response content for the agent framework
                     approval_response = Content.from_function_approval_response(
                         approved=accepted,
-                        id=str(approval_call_id),
+                        id=func_call_for_approval.id or str(approval_call_id),
                         function_call=func_call_for_approval,
                         additional_properties={"ag_ui_state_args": state_args} if state_args else None,
                     )
@@ -930,6 +931,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                     name=approval.get("name", ""),
                     arguments=approval.get("arguments", {}),
                 )
+                func_call.id = approval.get("id") or None
 
                 # Create the approval response
                 approval_response = Content.from_function_approval_response(

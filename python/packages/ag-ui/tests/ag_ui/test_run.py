@@ -990,6 +990,71 @@ def test_emit_approval_request_populates_interrupt_metadata():
     }
 
 
+def test_emit_local_approval_request_prefers_function_call_occurrence_id() -> None:
+    """Local approval interrupts use occurrence identity without rewriting tool correlation."""
+    flow = FlowState(message_id="msg-1")
+    function_call = Content.from_function_call(
+        call_id="call_123",
+        name="write_doc",
+        arguments={"content": "x"},
+        id="af-call-occurrence",
+    )
+    with pytest.warns(FutureWarning, match="id differs from function_call.id.*legacy"):
+        approval_content = Content.from_function_approval_request(id="call_123", function_call=function_call)
+
+    events = _emit_approval_request(approval_content, flow)
+
+    custom_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert custom_event.value["id"] == "af-call-occurrence"
+    assert flow.interrupts[0]["id"] == "af-call-occurrence"
+    assert flow.interrupts[0]["toolCallId"] == "call_123"
+
+
+def test_emit_approval_request_normalizes_empty_server_label_for_identity() -> None:
+    """Client events and lifecycle registration treat an empty server label as local."""
+    flow = FlowState(message_id="msg-1")
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="write_doc",
+        arguments={"content": "x"},
+        id="af-call-occurrence",
+        additional_properties={"server_label": ""},
+    )
+    approval_content = Content.from_function_approval_request(
+        id="provider-approval-request",
+        function_call=function_call,
+    )
+
+    events = _emit_approval_request(approval_content, flow)
+
+    custom_event = next(event for event in events if getattr(event, "name", None) == "function_approval_request")
+    assert custom_event.value["id"] == "af-call-occurrence"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert flow.interrupts[0]["id"] == "af-call-occurrence"
+
+
+def test_emit_hosted_approval_request_preserves_provider_request_id() -> None:
+    """Hosted approval interrupts retain the provider protocol request identity."""
+    flow = FlowState(message_id="msg-1")
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="hosted_search",
+        arguments={"query": "x"},
+        id="af-call-occurrence",
+        additional_properties={"server_label": "provider"},
+    )
+    approval_content = Content.from_function_approval_request(
+        id="provider-approval-request",
+        function_call=function_call,
+    )
+
+    events = _emit_approval_request(approval_content, flow)
+
+    custom_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert custom_event.value["id"] == "provider-approval-request"
+    assert flow.interrupts[0]["id"] == "provider-approval-request"
+    assert flow.interrupts[0]["toolCallId"] == "provider-call"
+
+
 def test_emit_approval_request_reuses_confirmation_message_id_in_snapshot():
     """Confirmation tool events and snapshots share the same message ID."""
     flow = FlowState()
