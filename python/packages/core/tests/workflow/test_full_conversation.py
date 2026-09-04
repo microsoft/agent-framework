@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Awaitable
+from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import Any, Literal, overload
 
 import pytest
@@ -411,12 +411,14 @@ class _SessionIdCapturingAgent(BaseAgent):
 
 
 class _FullHistoryReplayCoordinator(Executor):
-    """Coordinator that pre-sets service_session_id on a target executor then replays the full
-    conversation (including function calls) back to it via AgentExecutorRequest."""
+    """Coordinator that pre-sets service_session_id on a target executor then sends it
+    an AgentExecutorRequest carrying either the full conversation (including function
+    calls) or just a new user turn."""
 
-    def __init__(self, *, target_exec: AgentExecutor, **kwargs: Any) -> None:
+    def __init__(self, *, target_exec: AgentExecutor, include_history: bool = True, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._target_exec = target_exec
+        self._include_history = include_history
 
     @handler
     async def handle(
@@ -424,7 +426,10 @@ class _FullHistoryReplayCoordinator(Executor):
         response: AgentExecutorResponse,
         ctx: WorkflowContext[AgentExecutorRequest, Any],
     ) -> None:
-        full_conv = list(response.full_conversation or response.agent_response.messages)
+        if self._include_history:
+            full_conv = list(response.full_conversation or response.agent_response.messages)
+        else:
+            full_conv = []
         full_conv.append(Message(role="user", contents=["follow-up"]))
         # Simulate a prior run: the target executor has a stored previous_response_id.
         self._target_exec._session.service_session_id = "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
@@ -434,15 +439,32 @@ class _FullHistoryReplayCoordinator(Executor):
         )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Tracks the executor-layer half of #3295: AgentExecutor should clear service_session_id "
-        "when handed a full prior conversation. The wire-level 'Duplicate item' API error is "
-        "already closed by the chat-client strip in #3295; this xfail covers the defense-in-depth "
-        "follow-up that makes the executor wiring reflect intent."
-    ),
-    strict=True,
-)
+class _PayloadReplayCoordinator(Executor):
+    """Coordinator that pre-sets service_session_id on a target executor and sends it
+    a payload derived from the upstream response. The payload type selects the
+    executor's input handler (from_messages, from_message, from_str, or run)."""
+
+    def __init__(
+        self,
+        *,
+        target_exec: AgentExecutor,
+        payload_factory: Callable[[AgentExecutorResponse], Any],
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._target_exec = target_exec
+        self._payload_factory = payload_factory
+
+    @handler
+    async def handle(
+        self,
+        response: AgentExecutorResponse,
+        ctx: WorkflowContext[str | Message | list[Message], Any],
+    ) -> None:
+        self._target_exec._session.service_session_id = "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
+        await ctx.send_message(self._payload_factory(response), target_id=self._target_exec.id)
+
+
 async def test_run_request_with_full_history_clears_service_session_id() -> None:
     """Replaying a full conversation (including function calls) via AgentExecutorRequest must
     clear service_session_id so the API does not receive both previous_response_id and the
@@ -470,6 +492,135 @@ async def test_run_request_with_full_history_clears_service_session_id() -> None
     # "Duplicate item found" because the same function-call IDs appear in both
     # previous_response_id (server-stored) and the explicit input messages.
     assert spy_agent._captured_service_session_id is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_run_request_with_new_turn_preserves_service_session_id() -> None:
+    """A new user turn (no replayed history) must keep service_session_id so the provider
+    can continue the conversation via previous_response_id."""
+    tool_agent = _ToolHistoryAgent(id="tool_agent_new_turn", name="ToolAgent", summary_text="Done.")
+    tool_exec = AgentExecutor(tool_agent, id="tool_agent_new_turn")
+
+    spy_agent = _SessionIdCapturingAgent(id="spy_agent_new_turn", name="SpyAgent")
+    spy_exec = AgentExecutor(spy_agent, id="spy_agent_new_turn")
+
+    coordinator = _FullHistoryReplayCoordinator(id="coord_new_turn", target_exec=spy_exec, include_history=False)
+
+    wf = (
+        WorkflowBuilder(start_executor=tool_exec, output_from=[coordinator])
+        .add_edge(tool_exec, coordinator)
+        .add_edge(coordinator, spy_exec)
+        .build()
+    )
+
+    result = await wf.run("initial prompt")
+    assert result.get_outputs() is not None
+
+    # The spy agent must still see the stored pointer: only a full-history replay clears it.
+    assert spy_agent._captured_service_session_id == "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_from_messages_with_full_history_clears_service_session_id() -> None:
+    """from_messages with a full-history list must clear service_session_id."""
+    tool_agent = _ToolHistoryAgent(id="tool_agent_fm", name="ToolAgent", summary_text="Done.")
+    tool_exec = AgentExecutor(tool_agent, id="tool_agent_fm")
+
+    spy_agent = _SessionIdCapturingAgent(id="spy_agent_fm", name="SpyAgent")
+    spy_exec = AgentExecutor(spy_agent, id="spy_agent_fm")
+
+    coordinator = _PayloadReplayCoordinator(
+        id="coord_fm",
+        target_exec=spy_exec,
+        payload_factory=lambda response: list(response.full_conversation or response.agent_response.messages),
+    )
+
+    wf = (
+        WorkflowBuilder(start_executor=tool_exec, output_from=[coordinator])
+        .add_edge(tool_exec, coordinator)
+        .add_edge(coordinator, spy_exec)
+        .build()
+    )
+
+    result = await wf.run("initial prompt")
+    assert result.get_outputs() is not None
+    assert spy_agent._captured_service_session_id is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_from_messages_with_new_turn_preserves_service_session_id() -> None:
+    """from_messages with only a user turn must keep service_session_id."""
+    tool_agent = _ToolHistoryAgent(id="tool_agent_fm2", name="ToolAgent", summary_text="Done.")
+    tool_exec = AgentExecutor(tool_agent, id="tool_agent_fm2")
+
+    spy_agent = _SessionIdCapturingAgent(id="spy_agent_fm2", name="SpyAgent")
+    spy_exec = AgentExecutor(spy_agent, id="spy_agent_fm2")
+
+    coordinator = _PayloadReplayCoordinator(
+        id="coord_fm2",
+        target_exec=spy_exec,
+        payload_factory=lambda _: [Message(role="user", contents=["follow-up"])],
+    )
+
+    wf = (
+        WorkflowBuilder(start_executor=tool_exec, output_from=[coordinator])
+        .add_edge(tool_exec, coordinator)
+        .add_edge(coordinator, spy_exec)
+        .build()
+    )
+
+    result = await wf.run("initial prompt")
+    assert result.get_outputs() is not None
+    assert spy_agent._captured_service_session_id == "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_from_message_replays_prior_turn_clears_service_session_id() -> None:
+    """A single replayed assistant message via from_message must clear service_session_id."""
+    tool_agent = _ToolHistoryAgent(id="tool_agent_msg", name="ToolAgent", summary_text="Done.")
+    tool_exec = AgentExecutor(tool_agent, id="tool_agent_msg")
+
+    spy_agent = _SessionIdCapturingAgent(id="spy_agent_msg", name="SpyAgent")
+    spy_exec = AgentExecutor(spy_agent, id="spy_agent_msg")
+
+    coordinator = _PayloadReplayCoordinator(
+        id="coord_msg",
+        target_exec=spy_exec,
+        payload_factory=lambda response: list(response.full_conversation or response.agent_response.messages)[-1],
+    )
+
+    wf = (
+        WorkflowBuilder(start_executor=tool_exec, output_from=[coordinator])
+        .add_edge(tool_exec, coordinator)
+        .add_edge(coordinator, spy_exec)
+        .build()
+    )
+
+    result = await wf.run("initial prompt")
+    assert result.get_outputs() is not None
+    assert spy_agent._captured_service_session_id is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_from_str_with_user_prompt_preserves_service_session_id() -> None:
+    """from_str (a plain user prompt) must keep service_session_id."""
+    tool_agent = _ToolHistoryAgent(id="tool_agent_str", name="ToolAgent", summary_text="Done.")
+    tool_exec = AgentExecutor(tool_agent, id="tool_agent_str")
+
+    spy_agent = _SessionIdCapturingAgent(id="spy_agent_str", name="SpyAgent")
+    spy_exec = AgentExecutor(spy_agent, id="spy_agent_str")
+
+    coordinator = _PayloadReplayCoordinator(
+        id="coord_str",
+        target_exec=spy_exec,
+        payload_factory=lambda _: "follow-up",
+    )
+
+    wf = (
+        WorkflowBuilder(start_executor=tool_exec, output_from=[coordinator])
+        .add_edge(tool_exec, coordinator)
+        .add_edge(coordinator, spy_exec)
+        .build()
+    )
+
+    result = await wf.run("initial prompt")
+    assert result.get_outputs() is not None
+    assert spy_agent._captured_service_session_id == "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_from_response_preserves_service_session_id() -> None:
