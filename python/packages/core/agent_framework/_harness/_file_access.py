@@ -317,8 +317,7 @@ def _apply_replace_lines(content: str, edits: list[tuple[int, str, str | None]])
             actual = _strip_line_terminator(lines[line_number - 1])
             if actual != _strip_line_terminator(expected_line):
                 raise ValueError(
-                    f"line_number {line_number} does not match the expected text "
-                    f"(expected {_strip_line_terminator(expected_line)!r}, found {actual!r}). "
+                    f"line_number {line_number} does not match the expected text. "
                     "Re-read the file to get current line numbers."
                 )
     for line_number, new_line, _ in edits:
