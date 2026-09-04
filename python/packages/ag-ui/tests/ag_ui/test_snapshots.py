@@ -185,6 +185,169 @@ def test_workflow_snapshot_builder_splits_tool_call_groups() -> None:
     ]
 
 
+def test_workflow_snapshot_builder_folds_reasoning_into_snapshot() -> None:
+    """Streamed reasoning deltas accumulate into a replayable reasoning message."""
+    from ag_ui.core import (
+        ReasoningMessageContentEvent,
+        ReasoningMessageEndEvent,
+        ReasoningMessageStartEvent,
+    )
+
+    from agent_framework_ag_ui._workflow import _WorkflowSnapshotBuilder
+
+    builder = _WorkflowSnapshotBuilder([])
+    builder.observe(ReasoningMessageStartEvent(message_id="reason-1", role="reasoning"))
+    builder.observe(ReasoningMessageContentEvent(message_id="reason-1", delta="step one "))
+    builder.observe(ReasoningMessageContentEvent(message_id="reason-1", delta="step two"))
+    builder.observe(ReasoningMessageEndEvent(message_id="reason-1"))
+
+    assert builder.build().messages == [{"id": "reason-1", "role": "reasoning", "content": "step one step two"}]
+
+
+def test_workflow_snapshot_builder_keeps_reasoning_in_emission_order() -> None:
+    """Reasoning is replayed where it streamed, not appended after the visible output."""
+    from ag_ui.core import (
+        ReasoningMessageContentEvent,
+        ReasoningMessageEndEvent,
+        ReasoningMessageStartEvent,
+        TextMessageContentEvent,
+        TextMessageEndEvent,
+        TextMessageStartEvent,
+        ToolCallResultEvent,
+        ToolCallStartEvent,
+    )
+
+    from agent_framework_ag_ui._workflow import _WorkflowSnapshotBuilder
+
+    builder = _WorkflowSnapshotBuilder([])
+    builder.observe(ReasoningMessageStartEvent(message_id="reason-1", role="reasoning"))
+    builder.observe(ReasoningMessageContentEvent(message_id="reason-1", delta="planning"))
+    builder.observe(ReasoningMessageEndEvent(message_id="reason-1"))
+    builder.observe(ToolCallStartEvent(tool_call_id="call-a", tool_call_name="toolA"))
+    builder.observe(ToolCallResultEvent(message_id="result-a", tool_call_id="call-a", content="resA"))
+    builder.observe(TextMessageStartEvent(message_id="text-1", role="assistant"))
+    builder.observe(TextMessageContentEvent(message_id="text-1", delta="done"))
+    builder.observe(TextMessageEndEvent(message_id="text-1"))
+
+    messages = builder.build().messages
+    assert [
+        (
+            message.get("role"),
+            [tool_call["id"] for tool_call in message.get("tool_calls", [])]
+            or message.get("toolCallId")
+            or message.get("content"),
+        )
+        for message in messages
+    ] == [
+        ("reasoning", "planning"),
+        ("assistant", ["call-a"]),
+        ("tool", "call-a"),
+        ("assistant", "done"),
+    ]
+
+
+def test_workflow_snapshot_builder_captures_reasoning_encrypted_value() -> None:
+    """Encrypted reasoning payloads survive hydration under the protocol's camelCase key."""
+    from ag_ui.core import (
+        ReasoningEncryptedValueEvent,
+        ReasoningMessageContentEvent,
+        ReasoningMessageEndEvent,
+        ReasoningMessageStartEvent,
+    )
+
+    from agent_framework_ag_ui._workflow import _WorkflowSnapshotBuilder
+
+    builder = _WorkflowSnapshotBuilder([])
+    builder.observe(ReasoningMessageStartEvent(message_id="reason-1", role="reasoning"))
+    builder.observe(ReasoningMessageContentEvent(message_id="reason-1", delta="hidden"))
+    builder.observe(ReasoningEncryptedValueEvent(subtype="message", entity_id="reason-1", encrypted_value="cipher"))
+    builder.observe(ReasoningMessageEndEvent(message_id="reason-1"))
+
+    assert builder.build().messages == [
+        {"id": "reason-1", "role": "reasoning", "content": "hidden", "encryptedValue": "cipher"}
+    ]
+
+
+def test_workflow_snapshot_builder_flushes_reasoning_left_open_at_build() -> None:
+    """A run that ends without REASONING_MESSAGE_END still snapshots what streamed."""
+    from ag_ui.core import ReasoningMessageContentEvent, ReasoningMessageStartEvent
+
+    from agent_framework_ag_ui._workflow import _WorkflowSnapshotBuilder
+
+    builder = _WorkflowSnapshotBuilder([])
+    builder.observe(ReasoningMessageStartEvent(message_id="reason-1", role="reasoning"))
+    builder.observe(ReasoningMessageContentEvent(message_id="reason-1", delta="unterminated"))
+
+    assert builder.build().messages == [{"id": "reason-1", "role": "reasoning", "content": "unterminated"}]
+
+
+def test_workflow_snapshot_builder_separates_consecutive_reasoning_blocks() -> None:
+    """A new reasoning message id closes the previous block instead of merging into it."""
+    from ag_ui.core import ReasoningMessageContentEvent, ReasoningMessageStartEvent
+
+    from agent_framework_ag_ui._workflow import _WorkflowSnapshotBuilder
+
+    builder = _WorkflowSnapshotBuilder([])
+    builder.observe(ReasoningMessageStartEvent(message_id="reason-1", role="reasoning"))
+    builder.observe(ReasoningMessageContentEvent(message_id="reason-1", delta="first"))
+    # Second block opens without the first ever being closed.
+    builder.observe(ReasoningMessageStartEvent(message_id="reason-2", role="reasoning"))
+    builder.observe(ReasoningMessageContentEvent(message_id="reason-2", delta="second"))
+
+    assert builder.build().messages == [
+        {"id": "reason-1", "role": "reasoning", "content": "first"},
+        {"id": "reason-2", "role": "reasoning", "content": "second"},
+    ]
+
+
+def test_workflow_snapshot_builder_folds_reasoning_content_without_a_start_event() -> None:
+    """Reasoning deltas are kept even if the opening REASONING_MESSAGE_START was missed."""
+    from ag_ui.core import ReasoningMessageContentEvent
+
+    from agent_framework_ag_ui._workflow import _WorkflowSnapshotBuilder
+
+    builder = _WorkflowSnapshotBuilder([])
+    builder.observe(ReasoningMessageContentEvent(message_id="reason-1", delta="orphaned"))
+
+    assert builder.build().messages == [{"id": "reason-1", "role": "reasoning", "content": "orphaned"}]
+
+
+def test_workflow_snapshot_builder_attaches_encrypted_value_after_block_closed() -> None:
+    """An encrypted value trailing REASONING_MESSAGE_END still lands on its message."""
+    from ag_ui.core import (
+        ReasoningEncryptedValueEvent,
+        ReasoningMessageContentEvent,
+        ReasoningMessageEndEvent,
+        ReasoningMessageStartEvent,
+    )
+
+    from agent_framework_ag_ui._workflow import _WorkflowSnapshotBuilder
+
+    builder = _WorkflowSnapshotBuilder([])
+    builder.observe(ReasoningMessageStartEvent(message_id="reason-1", role="reasoning"))
+    builder.observe(ReasoningMessageContentEvent(message_id="reason-1", delta="hidden"))
+    builder.observe(ReasoningMessageEndEvent(message_id="reason-1"))
+    builder.observe(
+        ReasoningEncryptedValueEvent(subtype="message", entity_id="reason-1", encrypted_value="late-cipher")
+    )
+
+    assert builder.build().messages == [
+        {"id": "reason-1", "role": "reasoning", "content": "hidden", "encryptedValue": "late-cipher"}
+    ]
+
+
+def test_workflow_snapshot_builder_ignores_tool_call_encrypted_values() -> None:
+    """A tool-call-scoped encrypted value must not be folded in as reasoning content."""
+    from ag_ui.core import ReasoningEncryptedValueEvent
+
+    from agent_framework_ag_ui._workflow import _WorkflowSnapshotBuilder
+
+    builder = _WorkflowSnapshotBuilder([])
+    builder.observe(ReasoningEncryptedValueEvent(subtype="tool-call", entity_id="call-a", encrypted_value="cipher"))
+
+    assert builder.build().messages == []
+
+
 async def test_in_memory_snapshot_store_rejects_invalid_keys() -> None:
     """Key parts must be non-empty strings for every store operation."""
     import pytest
