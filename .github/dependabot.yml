@@ -55,6 +55,28 @@ updates:
     schedule:
       interval: "weekly"
       day: "thursday"
+    groups:
+      basics:
+        patterns:
+          - "uv"
+          - "ruff"
+          - "prek"
+          - "poethepoet"
+          - "tomli"
+          - "rich"
+      pytest:
+        patterns:
+          - "pytest*"
+      flit:
+        patterns:
+          - "flit*"
+      python-type-checkers:
+        patterns:
+          - "mypy"
+          - "pyright"
+          - "pyrefly"
+          - "ty"
+          - "zuban"
     labels:
       - "python"
       - "dependencies"
@@ -66,6 +88,28 @@ updates:
     schedule:
       interval: "weekly"
       day: "thursday"
+    groups:
+      basics:
+        patterns:
+          - "uv"
+          - "ruff"
+          - "prek"
+          - "poethepoet"
+          - "tomli"
+          - "rich"
+      pytest:
+        patterns:
+          - "pytest*"
+      flit:
+        patterns:
+          - "flit*"
+      python-type-checkers:
+        patterns:
+          - "mypy"
+          - "pyright"
+          - "pyrefly"
+          - "ty"
+          - "zuban"
     labels:
       - "python"
       - "dependencies"
