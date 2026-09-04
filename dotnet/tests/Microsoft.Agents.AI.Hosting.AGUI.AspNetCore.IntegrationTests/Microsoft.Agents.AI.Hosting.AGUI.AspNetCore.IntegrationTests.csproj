@@ -25,6 +25,24 @@
     <PackageReference Include="AGUI.Abstractions" />
     <PackageReference Include="AGUI.Server" />
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.OpenAI\Microsoft.Agents.AI.OpenAI.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Workflows.Generators\Microsoft.Agents.AI.Workflows.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="true"
+                      GlobalPropertiesToRemove="TargetFramework" />
+    <Compile Include="..\..\samples\02-agents\AGUI\Step06_WorkflowSequential\Server\SequentialWorkflow.cs"
+             Link="Workflows\Samples\SequentialWorkflow.cs" />
+    <Compile Include="..\..\samples\02-agents\AGUI\Step07_WorkflowConcurrent\Server\ConcurrentWorkflow.cs"
+             Link="Workflows\Samples\ConcurrentWorkflow.cs" />
+    <Compile Include="..\..\samples\02-agents\AGUI\Step08_WorkflowFailure\Server\FailingWorkflow.cs"
+             Link="Workflows\Samples\FailingWorkflow.cs" />
+    <Compile Include="..\..\samples\02-agents\AGUI\Step09_WorkflowTools\Server\ToolWorkflow.cs"
+             Link="Workflows\Samples\ToolWorkflow.cs" />
+    <Compile Include="..\..\samples\02-agents\AGUI\Step10_WorkflowNested\Server\NestedWorkflow.cs"
+             Link="Workflows\Samples\NestedWorkflow.cs" />
+    <Compile Include="..\..\samples\02-agents\AGUI\Step11_WorkflowApproval\Server\ApprovalWorkflow.cs"
+             Link="Workflows\Samples\ApprovalWorkflow.cs" />
+    <Compile Include="..\..\samples\02-agents\AGUI\Step12_WorkflowMultipleInputs\Server\MultipleInputsWorkflow.cs"
+             Link="Workflows\Samples\MultipleInputsWorkflow.cs" />
   </ItemGroup>
 
 </Project>
