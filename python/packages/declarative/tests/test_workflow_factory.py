@@ -2,10 +2,12 @@
 
 """Unit tests for WorkflowFactory."""
 
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
+from agent_framework import Message
 
 from agent_framework_declarative._feature_usage import FeatureIndex
 from agent_framework_declarative._workflows._errors import DeclarativeWorkflowError
@@ -85,6 +87,50 @@ actions:
             })
 
         mark_feature_used.assert_called_once_with(FeatureIndex.DECLARATIVE_WORKFLOW)
+
+
+class TestWorkflowFactoryMessageInput:
+    """Tests for declarative workflows started with a single Message."""
+
+    async def test_entry_join_executor_initializes_workflow_inputs_message(self):
+        """Regression test for #7285: Entry JoinExecutor must accept a single Message input."""
+        from agent_framework_declarative._workflows._declarative_base import DECLARATIVE_STATE_KEY
+
+        factory = WorkflowFactory()
+        workflow = factory.create_workflow_from_yaml("""
+name: entry-message-inputs-test
+actions:
+  - kind: SendActivity
+    activity:
+      text: received
+""")
+
+        result = await workflow.run(Message(role="user", contents=["25"], message_id="message-25"))
+        outputs = result.get_outputs()
+        assert any("received" in str(output) for output in outputs)
+
+        state_data = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
+        assert isinstance(state_data, dict)
+        assert state_data["Inputs"]["input"] == "25"
+        assert state_data["System"]["LastMessage"] == {"Text": "25", "Id": "message-25"}
+        assert state_data["System"]["LastMessageText"] == "25"
+
+    @pytest.mark.parametrize(
+        ("age", "category"),
+        [(8, "child"), (16, "teenager"), (25, "adult"), (70, "senior")],
+    )
+    @_requires_powerfx
+    async def test_devui_declarative_workflow_categorizes_message_input(self, age: int, category: str):
+        """Regression test for #7285: The DevUI sample must categorize chat message input by age."""
+        workflow_path = (
+            Path(__file__).parents[3] / "samples" / "02-agents" / "devui" / "workflow_declarative" / "workflow.yaml"
+        )
+        workflow = WorkflowFactory().create_workflow_from_yaml_path(workflow_path)
+
+        result = await workflow.run(Message(role="user", contents=[str(age)]))
+        outputs = result.get_outputs()
+
+        assert any(f"categorized as: {category}" in str(output) for output in outputs)
 
 
 @_requires_powerfx
