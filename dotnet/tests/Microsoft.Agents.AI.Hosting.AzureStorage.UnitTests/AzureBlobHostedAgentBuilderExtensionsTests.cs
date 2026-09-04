@@ -33,7 +33,6 @@ public sealed class AzureBlobHostedAgentBuilderExtensionsTests
                 service.ServiceKey as string == "assistant");
         Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
         Assert.IsType<IsolationKeyScopedAgentSessionStore>(store);
-        Assert.NotNull(store.GetService<AzureBlobAgentSessionStore>());
     }
 
     [Fact]

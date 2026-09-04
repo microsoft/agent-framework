@@ -34,7 +34,7 @@ namespace Microsoft.Agents.AI.Hosting;
 /// </para>
 /// <para>
 /// If the <see cref="HttpContext"/> is unavailable, the user is not authenticated, or the specified claim
-/// is missing, the provider returns <see langword="null"/>. Consuming stores then enforce strict or
+/// is missing or blank, the provider returns <see langword="null"/>. Consuming stores then enforce strict or
 /// pass-through behavior based on their configuration.
 /// </para>
 /// <para>
@@ -73,7 +73,7 @@ public class ClaimsIdentityAgentIsolationKeyProvider : AgentIsolationKeyProvider
     /// <returns>
     /// A task that represents the asynchronous operation. The task result contains the value of the
     /// configured claim type from the current user's identity, or <see langword="null"/> if the HTTP
-    /// context is unavailable, the user is not authenticated, or the claim is not present.
+    /// context is unavailable, the user is not authenticated, or the claim is missing or blank.
     /// </returns>
     /// <remarks>
     /// This method only reads claims from an authenticated principal: if the current request has no
@@ -89,8 +89,7 @@ public class ClaimsIdentityAgentIsolationKeyProvider : AgentIsolationKeyProvider
             return new ValueTask<string?>((string?)null);
         }
 
-        Claim? claim = user?.Claims.FirstOrDefault(c => c.Type == this._claimType);
-
-        return new ValueTask<string?>(claim?.Value);
+        string? value = user.Claims.FirstOrDefault(c => c.Type == this._claimType)?.Value;
+        return new ValueTask<string?>(string.IsNullOrWhiteSpace(value) ? null : value);
     }
 }

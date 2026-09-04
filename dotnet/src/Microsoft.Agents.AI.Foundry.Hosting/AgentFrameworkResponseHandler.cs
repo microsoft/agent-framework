@@ -36,6 +36,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 public class AgentFrameworkResponseHandler : ResponseHandler
 {
     private const string LatestWorkflowCheckpointIdMetadataKey = "_last_checkpoint_id";
+    private const string UserPartitionName = "user";
 
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<AgentFrameworkResponseHandler> _logger;
@@ -130,8 +131,8 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         // When resolvedHostedContext is null here the container is NOT hosted by Foundry (local
         // development: docker run / dotnet run outside the platform, so no x-agent-user-id header).
-        // Per-user isolation simply does not apply in that case: the request proceeds with a null user
-        // id (the session store treats null as "no user partition") and no hosted context is stamped or
+        // Per-user isolation simply does not apply in that case: no user partition is added to the
+        // session key and no hosted context is stamped or
         // validated. This lets contributors run the image locally without registering a fallback
         // provider, while production stays strict because FoundryEnvironment.IsHosted is true there.
         var resolvedUserId = resolvedHostedContext?.UserId;
@@ -140,13 +141,20 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // Map the request to a stable MAF AgentSession key: conversation_id when present, else the
         // partition embedded in previous_response_id (chains converge), else the minted response id
         // (cold start). Container session id is intentionally not used — it spans many conversations.
-        // The session store partitions persisted state per user via resolvedUserId so one user can
+        // The session key partitions persisted state per user via resolvedUserId so one user can
         // never observe another user's session, even with a forged conversation id. Locally
         // (resolvedUserId is null) there is no user to partition on, so the session is unscoped/shared
         // by design — per-user isolation applies only when a user identity was resolved (hosted).
         var conversationId = request.GetConversationId();
         var agentSessionId = HostedConversationKey.Resolve(
             conversationId, request.PreviousResponseId, context.ResponseId);
+        AgentSessionStoreKey? agentSessionKey = string.IsNullOrWhiteSpace(agentSessionId)
+            ? null
+            : new AgentSessionStoreKey(agentSessionId);
+        if (agentSessionKey is not null && resolvedUserId is not null)
+        {
+            agentSessionKey = agentSessionKey.WithPartition(UserPartitionName, resolvedUserId);
+        }
 
         var agentOptions = agent.GetService<ChatClientAgentOptions>();
         var hostingOptions = this._serviceProvider.GetService<IOptions<FoundryResponsesOptions>>()?.Value;
@@ -157,7 +165,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // a session to run against.
         AgentSession? session;
         bool sessionRestoredFromStore = false;
-        if (string.IsNullOrWhiteSpace(agentSessionId))
+        if (agentSessionKey is null)
         {
             session = await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -165,8 +173,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         {
             session = await sessionStore.GetSessionAsync(
                 agent,
-                agentSessionId,
-                resolvedUserId,
+                agentSessionKey,
                 cancellationToken).ConfigureAwait(false);
 
             sessionRestoredFromStore = session is not null;
@@ -469,7 +476,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             if (!isResilientTurn
                 || workflowCheckpointRecovery is null
                 || session is null
-                || string.IsNullOrWhiteSpace(agentSessionId)
+                || agentSessionKey is null
                 || (stream.InternalMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? lastCheckpointId)
                     && string.Equals(lastCheckpointId, checkpoint.CheckpointId, StringComparison.Ordinal)))
             {
@@ -480,9 +487,8 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             {
                 await sessionStore.SaveSessionAsync(
                     agent,
-                    agentSessionId,
+                    agentSessionKey,
                     session,
-                    resolvedUserId,
                     checkpointCancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -667,12 +673,12 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     && evt is ResponseOutputItemDoneEvent
                     && workflowCheckpointRecovery is null
                     && session is not null
-                    && !string.IsNullOrWhiteSpace(agentSessionId)
+                    && agentSessionKey is not null
                     && !turnFailed)
                 {
                     try
                     {
-                        await sessionStore.SaveSessionAsync(agent, agentSessionId!, session, resolvedUserId, cancellationToken).ConfigureAwait(false);
+                        await sessionStore.SaveSessionAsync(agent, agentSessionKey, session, cancellationToken).ConfigureAwait(false);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -709,9 +715,8 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             {
                 await sessionStore.SaveSessionAsync(
                     agent,
-                    agentSessionId!,
+                    agentSessionKey!,
                     session,
-                    resolvedUserId,
                     steeringDetected ? CancellationToken.None : cancellationToken).ConfigureAwait(false);
             }
         }

@@ -20,7 +20,7 @@ public static class AzureBlobHostedAgentBuilderExtensions
     /// <param name="containerClient">The Blob container client used to store sessions.</param>
     /// <param name="options">Optional session store configuration.</param>
     /// <param name="withIsolation">
-    /// Whether to scope session IDs with the configured <see cref="AgentIsolationKeyProvider"/>.
+    /// Whether to add an isolation partition from the configured <see cref="AgentIsolationKeyProvider"/>.
     /// </param>
     /// <returns>The supplied <paramref name="builder"/>.</returns>
     public static IHostedAgentBuilder WithAzureBlobSessionStore(
@@ -49,7 +49,7 @@ public static class AzureBlobHostedAgentBuilderExtensions
     /// <param name="options">Optional session store configuration.</param>
     /// <param name="lifetime">The dependency injection lifetime of the registered session store.</param>
     /// <param name="withIsolation">
-    /// Whether to scope session IDs with the configured <see cref="AgentIsolationKeyProvider"/>.
+    /// Whether to add an isolation partition from the configured <see cref="AgentIsolationKeyProvider"/>.
     /// </param>
     /// <returns>The supplied <paramref name="builder"/>.</returns>
     public static IHostedAgentBuilder WithAzureBlobSessionStore(

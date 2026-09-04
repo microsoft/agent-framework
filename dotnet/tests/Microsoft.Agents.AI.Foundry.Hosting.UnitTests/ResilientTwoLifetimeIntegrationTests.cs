@@ -561,9 +561,8 @@ public sealed class ResilientTwoLifetimeIntegrationTests
     {
         public override async ValueTask SaveSessionAsync(
             AIAgent agent,
-            string conversationId,
+            AgentSessionStoreKey key,
             AgentSession session,
-            string? userId,
             CancellationToken cancellationToken = default)
         {
             JsonElement state = await agent.SerializeSessionAsync(
@@ -572,9 +571,8 @@ public sealed class ResilientTwoLifetimeIntegrationTests
             coordinator.SerializedStates.Add(state.GetRawText());
             await inner.SaveSessionAsync(
                 agent,
-                conversationId,
+                key,
                 session,
-                userId,
                 cancellationToken);
 
             JsonProperty? phaseProperty = state
@@ -592,13 +590,11 @@ public sealed class ResilientTwoLifetimeIntegrationTests
 
         public override ValueTask<AgentSession?> GetSessionAsync(
             AIAgent agent,
-            string conversationId,
-            string? userId,
+            AgentSessionStoreKey key,
             CancellationToken cancellationToken = default) =>
             inner.GetSessionAsync(
                 agent,
-                conversationId,
-                userId,
+                key,
                 cancellationToken);
     }
 

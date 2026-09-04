@@ -1,1 +1,14 @@
 ﻿#nullable enable
+[MAAI001]Microsoft.Agents.AI.AgentSessionStore
+[MAAI001]Microsoft.Agents.AI.AgentSessionStore.AgentSessionStore() -> void
+[MAAI001]abstract Microsoft.Agents.AI.AgentSessionStore.GetSessionAsync(Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.AgentSessionStoreKey! key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSession?>
+[MAAI001]abstract Microsoft.Agents.AI.AgentSessionStore.SaveSessionAsync(Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.AgentSessionStoreKey! key, Microsoft.Agents.AI.AgentSession! session, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+[MAAI001]virtual Microsoft.Agents.AI.AgentSessionStore.GetOrCreateSessionAsync(Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.AgentSessionStoreKey! key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSession!>
+[MAAI001]Microsoft.Agents.AI.AgentSessionStoreKey
+[MAAI001]Microsoft.Agents.AI.AgentSessionStoreKey.AgentSessionStoreKey(string! sessionId, System.Collections.Generic.IReadOnlyDictionary<string!, string!>? partitions = null) -> void
+[MAAI001]Microsoft.Agents.AI.AgentSessionStoreKey.Equals(Microsoft.Agents.AI.AgentSessionStoreKey? other) -> bool
+[MAAI001]Microsoft.Agents.AI.AgentSessionStoreKey.Partitions.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>!
+[MAAI001]Microsoft.Agents.AI.AgentSessionStoreKey.SessionId.get -> string!
+[MAAI001]Microsoft.Agents.AI.AgentSessionStoreKey.WithPartition(string! name, string! value) -> Microsoft.Agents.AI.AgentSessionStoreKey!
+[MAAI001]override Microsoft.Agents.AI.AgentSessionStoreKey.Equals(object? obj) -> bool
+[MAAI001]override Microsoft.Agents.AI.AgentSessionStoreKey.GetHashCode() -> int

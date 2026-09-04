@@ -2,76 +2,30 @@
 
 using System;
 using System.Collections.Generic;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
-using Moq.Protected;
 
 namespace Microsoft.Agents.AI.Hosting.UnitTests;
 
 /// <summary>
-/// Unit tests for <see cref="AgentSessionStore.DeleteSessionAsync"/> across the in-box stores.
+/// Unit tests for the in-box session stores.
 /// </summary>
 public class InMemoryAgentSessionStoreTests
 {
     [Fact]
-    public async Task DeleteSessionAsync_RemovesStoredSession_SoNextGetCreatesAsync()
+    public async Task GetSessionAsync_MissingSession_ReturnsNullAsync()
     {
         // Arrange
-        var stored = JsonSerializer.SerializeToElement(new { marker = "stored" });
-        var restoredSession = new TestAgentSession();
-        var createdSession = new TestAgentSession();
+        var store = new InMemoryAgentSessionStore();
         var agent = new Mock<AIAgent>();
-        agent.Protected()
-            .Setup<ValueTask<JsonElement>>("SerializeSessionCoreAsync", ItExpr.IsAny<AgentSession>(), ItExpr.IsAny<JsonSerializerOptions>(), ItExpr.IsAny<CancellationToken>())
-            .Returns(new ValueTask<JsonElement>(stored));
-        agent.Protected()
-            .Setup<ValueTask<AgentSession>>("DeserializeSessionCoreAsync", ItExpr.IsAny<JsonElement>(), ItExpr.IsAny<JsonSerializerOptions>(), ItExpr.IsAny<CancellationToken>())
-            .Returns(new ValueTask<AgentSession>(restoredSession));
-        agent.Protected()
-            .Setup<ValueTask<AgentSession>>("CreateSessionCoreAsync", ItExpr.IsAny<CancellationToken>())
-            .Returns(new ValueTask<AgentSession>(createdSession));
 
-        var store = new InMemoryAgentSessionStore();
+        // Act
+        AgentSession? session = await store.GetSessionAsync(agent.Object, new AgentSessionStoreKey("missing"));
 
-        // Act & Assert
-        await store.SaveSessionAsync(agent.Object, "s1", new TestAgentSession());
-        Assert.Same(restoredSession, await store.GetSessionAsync(agent.Object, "s1"));
-
-        await store.DeleteSessionAsync(agent.Object, "s1");
-        Assert.Same(createdSession, await store.GetSessionAsync(agent.Object, "s1"));
-    }
-
-    [Fact]
-    public async Task DeleteSessionAsync_UnknownId_DoesNotThrowAsync()
-    {
-        // Arrange
-        var store = new InMemoryAgentSessionStore();
-
-        // Act & Assert (no exception)
-        await store.DeleteSessionAsync(new Mock<AIAgent>().Object, "missing");
-    }
-
-    [Fact]
-    public async Task DeleteSessionAsync_NoopStore_CompletesAsync()
-    {
-        // Arrange
-        var store = new NoopAgentSessionStore();
-
-        // Act & Assert (no exception)
-        await store.DeleteSessionAsync(new Mock<AIAgent>().Object, "any");
-    }
-
-    [Fact]
-    public async Task DeleteSessionAsync_StoreOptsOut_ThrowsNotSupportedAsync()
-    {
-        // Arrange: a store that chooses not to support deletion throws NotSupportedException itself.
-        AgentSessionStore store = new ConcreteAgentSessionStore();
-
-        // Act & Assert
-        await Assert.ThrowsAsync<NotSupportedException>(() => store.DeleteSessionAsync(new Mock<AIAgent>().Object, "any").AsTask());
+        // Assert
+        Assert.Null(session);
     }
 
     [Fact]
@@ -81,16 +35,19 @@ public class InMemoryAgentSessionStoreTests
         // and a stored session that carries some state to copy.
         AIAgent agent = new ChatClientAgent(new NotInvokedChatClient(), name: "assistant");
         var store = new InMemoryAgentSessionStore();
+        var key = new AgentSessionStoreKey("s1").WithPartition("user", "user-1");
 
         AgentSession original = await agent.CreateSessionAsync();
         original.StateBag.SetValue("marker", "v1");
-        await store.SaveSessionAsync(agent, "s1", original);
+        await store.SaveSessionAsync(agent, key, original);
 
         // Act: two concurrent branches read the same stored id.
-        AgentSession branchA = await store.GetSessionAsync(agent, "s1");
-        AgentSession branchB = await store.GetSessionAsync(agent, "s1");
+        AgentSession? branchA = await store.GetSessionAsync(agent, key);
+        AgentSession? branchB = await store.GetSessionAsync(agent, key);
 
         // Assert: each branch is an independent instance carrying the same content.
+        Assert.NotNull(branchA);
+        Assert.NotNull(branchB);
         Assert.NotSame(branchA, branchB);
         Assert.Equal("v1", branchA.StateBag.GetValue<string>("marker"));
         Assert.Equal("v1", branchB.StateBag.GetValue<string>("marker"));
@@ -99,22 +56,31 @@ public class InMemoryAgentSessionStoreTests
         branchA.StateBag.SetValue("marker", "mutated");
         Assert.Equal("v1", branchB.StateBag.GetValue<string>("marker"));
 
-        AgentSession branchC = await store.GetSessionAsync(agent, "s1");
+        AgentSession? branchC = await store.GetSessionAsync(agent, key);
+        Assert.NotNull(branchC);
         Assert.Equal("v1", branchC.StateBag.GetValue<string>("marker"));
     }
 
-    private sealed class TestAgentSession : AgentSession;
-
-    private sealed class ConcreteAgentSessionStore : AgentSessionStore
+    [Fact]
+    public async Task GetSessionAsync_DifferentUsers_AreIsolatedAsync()
     {
-        public override ValueTask SaveSessionAsync(AIAgent agent, string sessionStoreId, AgentSession session, CancellationToken cancellationToken = default)
-            => default;
+        // Arrange
+        AIAgent agent = new ChatClientAgent(new NotInvokedChatClient(), name: "assistant");
+        var store = new InMemoryAgentSessionStore();
+        var user1Key = new AgentSessionStoreKey("s1").WithPartition("user", "user-1");
+        var user2Key = new AgentSessionStoreKey("s1").WithPartition("user", "user-2");
+        AgentSession session = await agent.CreateSessionAsync();
+        session.StateBag.SetValue("marker", "user-1");
+        await store.SaveSessionAsync(agent, user1Key, session);
 
-        public override ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string sessionStoreId, CancellationToken cancellationToken = default)
-            => new(new TestAgentSession());
+        // Act
+        AgentSession? matchingUser = await store.GetSessionAsync(agent, user1Key);
+        AgentSession? differentUser = await store.GetSessionAsync(agent, user2Key);
 
-        public override ValueTask DeleteSessionAsync(AIAgent agent, string sessionStoreId, CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
+        // Assert
+        Assert.NotNull(matchingUser);
+        Assert.Equal("user-1", matchingUser.StateBag.GetValue<string>("marker"));
+        Assert.Null(differentUser);
     }
 
     // A chat client that is never invoked: these tests only create, serialize, and deserialize sessions.

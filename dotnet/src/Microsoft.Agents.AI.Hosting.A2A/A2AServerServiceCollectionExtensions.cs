@@ -32,12 +32,10 @@ public static class A2AServerServiceCollectionExtensions
     /// <para>
     /// <strong>Trust model.</strong> The A2A <c>contextId</c> and <c>taskId</c> arrive
     /// from the wire and are treated as chain-resume identifiers — <em>not</em> as
-    /// authorization tokens. Both the <see cref="AgentSessionStore"/> and
-    /// <see cref="ITaskStore"/> contracts carry no principal/owner dimension by default,
-    /// so when a persistent store is registered any caller who knows or guesses another
-    /// caller's <c>contextId</c> or <c>taskId</c> can access that other caller's data.
-    /// Hosts that serve more than one user must compose a principal dimension into the
-    /// lookup key — typically by calling <c>UseClaimsBasedAgentIsolation(...)</c> from
+    /// authorization tokens. <see cref="AgentSessionStore"/> accepts an explicit user partition,
+    /// while <see cref="ITaskStore"/> has no principal or owner dimension.
+    /// Hosts that serve more than one user must supply both dimensions from a trusted identity,
+    /// typically by calling <c>UseClaimsBasedAgentIsolation(...)</c> from
     /// <c>Microsoft.Agents.AI.Hosting.AspNetCore</c> (or by registering a custom
     /// <see cref="AgentIsolationKeyProvider"/>). When an <see cref="AgentIsolationKeyProvider"/>
     /// is registered, both the session store and the task store are automatically wrapped
@@ -68,7 +66,7 @@ public static class A2AServerServiceCollectionExtensions
     /// See the trust-model remarks on <see cref="AddA2AServer(IHostedAgentBuilder, Action{A2AServerRegistrationOptions}?)"/>
     /// for guidance on multi-user hosts (the wire <c>contextId</c> and <c>taskId</c>
     /// are chain-resume identifiers, not authorization tokens; multi-user hosts must
-    /// compose a principal dimension via <c>UseClaimsBasedAgentIsolation(...)</c> or
+    /// supply a trusted user partition via <c>UseClaimsBasedAgentIsolation(...)</c> or
     /// a custom <see cref="AgentIsolationKeyProvider"/>).
     /// </remarks>
     public static IHostApplicationBuilder AddA2AServer(this IHostApplicationBuilder builder, string agentName, Action<A2AServerRegistrationOptions>? configureOptions = null)
@@ -94,7 +92,7 @@ public static class A2AServerServiceCollectionExtensions
     /// See the trust-model remarks on <see cref="AddA2AServer(IHostedAgentBuilder, Action{A2AServerRegistrationOptions}?)"/>
     /// for guidance on multi-user hosts (the wire <c>contextId</c> and <c>taskId</c>
     /// are chain-resume identifiers, not authorization tokens; multi-user hosts must
-    /// compose a principal dimension via <c>UseClaimsBasedAgentIsolation(...)</c> or
+    /// supply a trusted user partition via <c>UseClaimsBasedAgentIsolation(...)</c> or
     /// a custom <see cref="AgentIsolationKeyProvider"/>).
     /// </remarks>
     public static IHostApplicationBuilder AddA2AServer(this IHostApplicationBuilder builder, AIAgent agent, Action<A2AServerRegistrationOptions>? configureOptions = null)
@@ -119,7 +117,7 @@ public static class A2AServerServiceCollectionExtensions
     /// See the trust-model remarks on <see cref="AddA2AServer(IHostedAgentBuilder, Action{A2AServerRegistrationOptions}?)"/>
     /// for guidance on multi-user hosts (the wire <c>contextId</c> and <c>taskId</c>
     /// are chain-resume identifiers, not authorization tokens; multi-user hosts must
-    /// compose a principal dimension via <c>UseClaimsBasedAgentIsolation(...)</c> or
+    /// supply a trusted user partition via <c>UseClaimsBasedAgentIsolation(...)</c> or
     /// a custom <see cref="AgentIsolationKeyProvider"/>).
     /// </remarks>
     public static IServiceCollection AddA2AServer(this IServiceCollection services, string agentName, Action<A2AServerRegistrationOptions>? configureOptions = null)
@@ -157,7 +155,7 @@ public static class A2AServerServiceCollectionExtensions
     /// See the trust-model remarks on <see cref="AddA2AServer(IHostedAgentBuilder, Action{A2AServerRegistrationOptions}?)"/>
     /// for guidance on multi-user hosts (the wire <c>contextId</c> and <c>taskId</c>
     /// are chain-resume identifiers, not authorization tokens; multi-user hosts must
-    /// compose a principal dimension via <c>UseClaimsBasedAgentIsolation(...)</c> or
+    /// supply a trusted user partition via <c>UseClaimsBasedAgentIsolation(...)</c> or
     /// a custom <see cref="AgentIsolationKeyProvider"/>).
     /// </remarks>
     public static IServiceCollection AddA2AServer(this IServiceCollection services, AIAgent agent, Action<A2AServerRegistrationOptions>? configureOptions = null)
@@ -189,7 +187,7 @@ public static class A2AServerServiceCollectionExtensions
             var runMode = options?.AgentRunMode ?? AgentRunMode.DisallowBackground;
 
             // Ensure that we have an IsolationKeyScopedAgentSessionStore registered.
-            if (agentSessionStore?.GetService<IsolationKeyScopedAgentSessionStore>() is null)
+            if (agentSessionStore is not IsolationKeyScopedAgentSessionStore)
             {
                 agentSessionStore ??= new NoopAgentSessionStore();
                 agentSessionStore = new IsolationKeyScopedAgentSessionStore(agentSessionStore, isolationKeyProvider, new() { Strict = isolationKeyProvider != null });

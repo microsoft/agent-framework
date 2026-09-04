@@ -3,6 +3,9 @@
   <PropertyGroup>
     <VersionSuffix>preview</VersionSuffix>
     <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
+    <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
+    <NoWarn>$(NoWarn);MAAI001</NoWarn>
 
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework Azure Blob Storage integration</Title>
@@ -18,4 +21,5 @@
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.AI.Hosting\Microsoft.Agents.AI.Hosting.csproj" />
   </ItemGroup>
+
 </Project>

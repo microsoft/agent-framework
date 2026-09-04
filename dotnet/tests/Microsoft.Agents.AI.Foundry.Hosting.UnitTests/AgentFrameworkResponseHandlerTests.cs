@@ -1391,7 +1391,12 @@ public class AgentFrameworkResponseHandlerTests
     private static async Task<string> SerializedSessionOfAsync(AIAgent agent, InMemoryAgentSessionStore store, string responseId)
     {
         var sessionKey = HostedConversationKey.Resolve(conversationId: null, previousResponseId: null, responseId);
-        var session = await store.GetSessionAsync(agent, sessionKey!, FakeHostedSessionIsolationKeyProvider.DefaultUserId, CancellationToken.None);
+        AIAgent storageAgent = new FoundryHostingAgent(
+            agent,
+            FoundryHostingAgent.ResolveSessionStorageIdentity(agent, registrationKey: null, defaultAgent: agent));
+        var storageKey = new AgentSessionStoreKey(sessionKey!)
+            .WithPartition("user", FakeHostedSessionIsolationKeyProvider.DefaultUserId);
+        var session = await store.GetSessionAsync(storageAgent, storageKey, CancellationToken.None);
 
         // The handler persists the session at the end of every turn, so a missing one means the turn did
         // not get that far and the assertions below would otherwise pass without proving anything.
@@ -1792,11 +1797,10 @@ public class AgentFrameworkResponseHandlerTests
     // These drive the hosted-agent handler (the in-process "hosted instance") against a REAL
     // FileSystemAgentSessionStore and the REAL PlatformHostedSessionIsolationKeyProvider (no fake), so the
     // user id is genuinely captured from the request's x-agent-user-id (ResponseContext.PlatformContext).
-    // They assert the on-disk layout {root}/a-{agent}/u-{userId}/c-{conv}.json for combinations of agent
-    // name and user.
+    // They assert distinct stable-key files for combinations of agent name and user.
 
     [Fact]
-    public async Task CreateAsync_MultipleUsersSameAgent_WritePerUserDirectoriesAsync()
+    public async Task CreateAsync_MultipleUsersSameAgent_WriteDistinctPartitionedFilesAsync()
     {
         var root = NewIsolationTempRoot();
         try
@@ -1811,10 +1815,11 @@ public class AgentFrameworkResponseHandlerTests
             var (bobReq, bobCtx) = BuildUserRequest("concierge", "trip", userId: "bob");
             await DrainEventsAsync(handler.CreateAsync(bobReq, bobCtx.Object, CancellationToken.None));
 
-            // Assert: each user's session is persisted under its own u-{userId} directory beneath the
-            // shared a-{agent} directory; neither can reach the other's path.
-            Assert.True(File.Exists(Path.Combine(store.RootDirectory, "a-concierge", "u-alice", "c-trip.json")));
-            Assert.True(File.Exists(Path.Combine(store.RootDirectory, "a-concierge", "u-bob", "c-trip.json")));
+            // Assert
+            Assert.Equal(2, Directory.GetFiles(
+                store.RootDirectory,
+                "*.json",
+                SearchOption.AllDirectories).Length);
         }
         finally
         {
@@ -1840,8 +1845,11 @@ public class AgentFrameworkResponseHandlerTests
 
             // Assert: each agent buckets the user's session under its own a-{agent} directory, so two
             // agents in the same container cannot collide on a shared conversation id.
-            Assert.True(File.Exists(Path.Combine(store.RootDirectory, "a-concierge", "u-alice", "c-trip.json")));
-            Assert.True(File.Exists(Path.Combine(store.RootDirectory, "a-scheduler", "u-alice", "c-trip.json")));
+            Assert.Equal(2, Directory.GetDirectories(store.RootDirectory).Length);
+            Assert.Equal(2, Directory.GetFiles(
+                store.RootDirectory,
+                "*.json",
+                SearchOption.AllDirectories).Length);
         }
         finally
         {
@@ -1873,9 +1881,11 @@ public class AgentFrameworkResponseHandlerTests
             // (Alice turn 1, Bob turn 1) and one restore (Alice turn 2).
             Assert.Equal(2, agent.CreateCount);
             Assert.Equal(1, agent.DeserializeCount);
-            // And the files live in distinct per-user directories.
-            Assert.True(File.Exists(Path.Combine(store.RootDirectory, "a-concierge", "u-alice", "c-trip.json")));
-            Assert.True(File.Exists(Path.Combine(store.RootDirectory, "a-concierge", "u-bob", "c-trip.json")));
+            // And the users produce distinct partitioned keys.
+            Assert.Equal(2, Directory.GetFiles(
+                store.RootDirectory,
+                "*.json",
+                SearchOption.AllDirectories).Length);
         }
         finally
         {
@@ -1892,7 +1902,7 @@ public class AgentFrameworkResponseHandlerTests
             // Arrange: a non-hosted (local) request whose x-agent-user-id was not captured (PlatformContext
             // is null). Under unit tests FoundryEnvironment.IsHosted is false, so the container is treated as
             // local: per-user isolation is simply not triggered and the request succeeds instead of 500ing.
-            // The session is persisted without a u-{userId} segment (unscoped). The hosted-but-missing-user
+            // The session key contains no user partition. The hosted-but-missing-user
             // branch (which still rejects) cannot be unit-tested because FoundryEnvironment.IsHosted is a
             // process-cached static; it is exercised by the investigation repro app's "hosted" scenario.
             var store = new FileSystemAgentSessionStore(root);
@@ -1902,10 +1912,11 @@ public class AgentFrameworkResponseHandlerTests
             // Act: the request drains without throwing.
             await DrainEventsAsync(handler.CreateAsync(req, ctx.Object, CancellationToken.None));
 
-            // Assert: the session is written under the agent bucket with NO per-user (u-*) segment.
-            Assert.True(File.Exists(Path.Combine(store.RootDirectory, "a-concierge", "c-trip.json")));
-            var agentDir = Path.Combine(store.RootDirectory, "a-concierge");
-            Assert.Empty(Directory.GetDirectories(agentDir, "u-*"));
+            // Assert: the session is written under the agent bucket using an unpartitioned key.
+            Assert.Single(Directory.GetFiles(
+                store.RootDirectory,
+                "*.json",
+                SearchOption.AllDirectories));
         }
         finally
         {

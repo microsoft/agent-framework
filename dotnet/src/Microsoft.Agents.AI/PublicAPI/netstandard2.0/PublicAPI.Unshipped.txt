@@ -1,3 +1,8 @@
 ﻿#nullable enable
+[MAAI001]Microsoft.Agents.AI.DelegatingAgentSessionStore
+[MAAI001]Microsoft.Agents.AI.DelegatingAgentSessionStore.DelegatingAgentSessionStore(Microsoft.Agents.AI.AgentSessionStore! innerStore) -> void
+[MAAI001]Microsoft.Agents.AI.DelegatingAgentSessionStore.InnerStore.get -> Microsoft.Agents.AI.AgentSessionStore!
+[MAAI001]override Microsoft.Agents.AI.DelegatingAgentSessionStore.GetSessionAsync(Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.AgentSessionStoreKey! key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSession?>
+[MAAI001]override Microsoft.Agents.AI.DelegatingAgentSessionStore.SaveSessionAsync(Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.AgentSessionStoreKey! key, Microsoft.Agents.AI.AgentSession! session, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 [MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.WaitTimeout.get -> System.TimeSpan
 [MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.WaitTimeout.set -> void

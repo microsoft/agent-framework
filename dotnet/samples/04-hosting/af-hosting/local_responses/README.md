@@ -54,4 +54,4 @@ The client defaults to `http://localhost:5000`; override with `RESPONSES_SERVER_
 `OpenAIResponses.GetSessionStoreId(...)` returns an untrusted candidate key. The server's `Authorize(...)` is a
 placeholder; a real application must authenticate the caller and authorize/bind the id to the authenticated
 principal before using it as a session key. For multi-user hosts, scope the store with
-`IsolationKeyScopedAgentSessionStore`.
+`IsolationKeyScopedAgentSessionStore`, or add trusted partition values to `AgentSessionStoreKey`.

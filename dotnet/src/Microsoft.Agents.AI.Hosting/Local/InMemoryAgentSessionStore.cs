@@ -1,9 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Hosting;
 
@@ -25,50 +28,47 @@ namespace Microsoft.Agents.AI.Hosting;
 /// such as Redis, SQL Server, or Azure Cosmos DB.
 /// </para>
 /// <para>
-/// <strong>Multi-user warning.</strong> This store keys threads by
-/// <c>(agent.Id, sessionStoreId)</c> only — it has no principal/owner dimension. When
-/// the session store id originates from the wire (for example, an AG-UI
-/// <c>RunAgentInput.ThreadId</c> or an A2A <c>contextId</c>), any caller who knows
-/// or guesses another caller's identifier can resume that other caller's persisted
-/// thread. Multi-user hosts must wrap this store in
+/// <strong>Multi-user warning.</strong> This store partitions sessions by the <c>userId</c> supplied
+/// to <see cref="AgentSessionStore.GetSessionAsync"/> and <see cref="AgentSessionStore.SaveSessionAsync"/>.
+/// Multi-user hosts must supply a trusted user identifier, either directly or by wrapping this store in
 /// <see cref="IsolationKeyScopedAgentSessionStore"/> (typically by calling
 /// <c>UseClaimsBasedAgentIsolation(...)</c> from
 /// <c>Microsoft.Agents.AI.Hosting.AspNetCore</c> or by registering a custom
-/// <see cref="AgentIsolationKeyProvider"/>) so that the conversation namespace is
-/// scoped per principal. See the trust-model remarks on
-/// <see cref="AgentSessionStore"/> for the full background.
+/// <see cref="AgentIsolationKeyProvider"/>). Passing <see langword="null"/> uses a shared, unscoped
+/// partition that is only appropriate for single-user applications and local development.
 /// </para>
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class InMemoryAgentSessionStore : AgentSessionStore
 {
-    private readonly ConcurrentDictionary<string, JsonElement> _threads = new();
+    private readonly ConcurrentDictionary<(string AgentId, AgentSessionStoreKey Key), JsonElement> _sessions = new();
 
     /// <inheritdoc/>
-    public override async ValueTask SaveSessionAsync(AIAgent agent, string sessionStoreId, AgentSession session, CancellationToken cancellationToken = default)
+    public override async ValueTask SaveSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        AgentSession session,
+        CancellationToken cancellationToken = default)
     {
-        var key = GetKey(sessionStoreId, agent.Id);
-        this._threads[key] = await agent.SerializeSessionAsync(session, cancellationToken: cancellationToken).ConfigureAwait(false);
+        _ = Throw.IfNull(agent);
+        _ = Throw.IfNull(key);
+        _ = Throw.IfNull(session);
+
+        var storageKey = (agent.Id, key);
+        this._sessions[storageKey] = await agent.SerializeSessionAsync(session, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
-    public override async ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string sessionStoreId, CancellationToken cancellationToken = default)
+    public override async ValueTask<AgentSession?> GetSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
     {
-        var key = GetKey(sessionStoreId, agent.Id);
-        JsonElement? sessionContent = this._threads.TryGetValue(key, out var existingSession) ? existingSession : null;
+        _ = Throw.IfNull(agent);
+        _ = Throw.IfNull(key);
 
-        return sessionContent switch
-        {
-            null => await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false),
-            _ => await agent.DeserializeSessionAsync(sessionContent.Value, cancellationToken: cancellationToken).ConfigureAwait(false),
-        };
+        return this._sessions.TryGetValue((agent.Id, key), out JsonElement existingSession)
+            ? await agent.DeserializeSessionAsync(existingSession, cancellationToken: cancellationToken).ConfigureAwait(false)
+            : null;
     }
-
-    /// <inheritdoc/>
-    public override ValueTask DeleteSessionAsync(AIAgent agent, string sessionStoreId, CancellationToken cancellationToken = default)
-    {
-        this._threads.TryRemove(GetKey(sessionStoreId, agent.Id), out _);
-        return default;
-    }
-
-    private static string GetKey(string sessionStoreId, string agentId) => $"{agentId}:{sessionStoreId}";
 }

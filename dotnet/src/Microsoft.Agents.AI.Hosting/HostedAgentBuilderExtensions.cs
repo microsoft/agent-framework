@@ -18,7 +18,7 @@ public static class HostedAgentBuilderExtensions
     /// </summary>
     /// <param name="builder">The host agent builder to configure with the in-memory session store.</param>
     /// <param name="withIsolation">When <see langword="true"/>, wraps the session store with an <see cref="IsolationKeyScopedAgentSessionStore"/>
-    /// to provide isolation-key-based scoping for sessions. Defaults to <see langword="true"/>.</param>
+    /// that adds a partition from <see cref="AgentIsolationKeyProvider"/>. Defaults to <see langword="true"/>.</param>
     /// <returns>The same <paramref name="builder"/> instance, configured to use an in-memory session store.</returns>
     public static IHostedAgentBuilder WithInMemorySessionStore(this IHostedAgentBuilder builder, bool withIsolation = true)
         => builder.WithSessionStore(new InMemoryAgentSessionStore(), withIsolation);
@@ -30,7 +30,7 @@ public static class HostedAgentBuilderExtensions
     /// <param name="builder">The host agent builder to configure with the session store. Cannot be null.</param>
     /// <param name="store">The agent session store instance to register. Cannot be null.</param>
     /// <param name="withIsolation">When <see langword="true"/>, wraps the session store with an <see cref="IsolationKeyScopedAgentSessionStore"/>
-    /// to provide isolation-key-based scoping for sessions. Defaults to <see langword="true"/>.</param>
+    /// that adds a partition from <see cref="AgentIsolationKeyProvider"/>. Defaults to <see langword="true"/>.</param>
     /// <returns>The same host agent builder instance, allowing for method chaining.</returns>
     public static IHostedAgentBuilder WithSessionStore(this IHostedAgentBuilder builder, AgentSessionStore store, bool withIsolation = true)
         => builder.WithSessionStore((sp, key) => store, ServiceLifetime.Singleton, withIsolation);
@@ -44,7 +44,7 @@ public static class HostedAgentBuilderExtensions
     /// <param name="lifetime">The DI service lifetime for the session store registration. Defaults to <see cref="ServiceLifetime.Singleton"/>
     /// because session stores persist conversation state across requests and are consumed independently of the agent's lifetime.</param>
     /// <param name="withIsolation">When <see langword="true"/>, wraps the session store with an <see cref="IsolationKeyScopedAgentSessionStore"/>
-    /// to provide isolation-key-based scoping for sessions. Defaults to <see langword="true"/>.</param>
+    /// that adds a partition from <see cref="AgentIsolationKeyProvider"/>. Defaults to <see langword="true"/>.</param>
     /// <returns>The same host agent builder instance, enabling further configuration.</returns>
     public static IHostedAgentBuilder WithSessionStore(this IHostedAgentBuilder builder, Func<IServiceProvider, string, AgentSessionStore> createAgentSessionStore, ServiceLifetime lifetime = ServiceLifetime.Singleton, bool withIsolation = true)
     {
@@ -57,7 +57,7 @@ public static class HostedAgentBuilderExtensions
             AgentSessionStore store = createAgentSessionStore(sp, keyString) ??
                 throw new InvalidOperationException($"The agent session store factory did not return a valid {nameof(AgentSessionStore)} instance for key '{keyString}'.");
 
-            if (withIsolation && store.GetService<IsolationKeyScopedAgentSessionStore>() is null)
+            if (withIsolation && store is not IsolationKeyScopedAgentSessionStore)
             {
                 var isolationKeyProvider = sp.GetService<AgentIsolationKeyProvider>();
 
