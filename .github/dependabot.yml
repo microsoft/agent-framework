@@ -87,6 +87,10 @@ updates:
       codeql-actions:
         patterns:
           - "github/codeql-action/*"
+      artifact-actions:
+        patterns:
+          - "actions/upload-artifact"
+          - "actions/download-artifact"
     schedule:
       interval: "weekly"
       day: "sunday"
