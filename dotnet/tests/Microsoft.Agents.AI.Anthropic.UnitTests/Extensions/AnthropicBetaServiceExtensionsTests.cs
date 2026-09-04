@@ -511,6 +511,8 @@ public sealed class AnthropicBetaServiceExtensionsTests
 
             public global::Anthropic.Services.Beta.ITunnelService Tunnels => throw new NotImplementedException();
 
+            public global::Anthropic.Services.Beta.IOrganizationService Organization => throw new NotImplementedException();
+
             public IBetaService WithOptions(Func<ClientOptions, ClientOptions> modifier)
             {
                 throw new NotImplementedException();

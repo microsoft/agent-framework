@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-09-03
+
+### Added
+- **samples**: Add an end-to-end Foundry-hosted Telegram agent sample ([#7883](https://github.com/microsoft/agent-framework/pull/7883))
+- **agent-framework-foundry-hosting**: Add explicit Agent Server or agent-owned model history selection while preventing duplicated conversation replay ([#7997](https://github.com/microsoft/agent-framework/pull/7997))
+
+### Changed
+- **agent-framework-core**, **agent-framework-foundry**: [BREAKING] Restore sequence-only agent middleware inputs and remove the experimental `agent-hooks` core extra ([#7918](https://github.com/microsoft/agent-framework/pull/7918))
+- **agent-framework-core**, **agent-framework-foundry**, **agent-framework-openai**: Document the same-event-loop concurrency contract for shared chat clients ([#7680](https://github.com/microsoft/agent-framework/pull/7680))
+- **agent-framework-devui**, **agent-framework-hosting-responses**, **agent-framework-openai**: Support OpenAI SDK 3.x while retaining the existing supported floors ([#7967](https://github.com/microsoft/agent-framework/pull/7967))
+- **agent-framework-mistral**: Migrate chat and embedding clients to the official Mistral SDK ([#7960](https://github.com/microsoft/agent-framework/pull/7960))
+
+### Fixed
+- **agent-framework-core**, **agent-framework-devui**, **agent-framework-foundry-hosting**, **agent-framework-hosting-responses**, **agent-framework-openai**: Preserve provider refusals as marked text across history, replay, hosting, and UI conversion ([#7992](https://github.com/microsoft/agent-framework/pull/7992))
+- **agent-framework-ag-ui**, **agent-framework-core**, **agent-framework-devui**, **agent-framework-openai**: Bind approvals to stable function-call occurrences while preserving legacy approval compatibility ([#7988](https://github.com/microsoft/agent-framework/pull/7988))
+- **agent-framework-foundry-hosting**: Persist valid OAuth consent responses and restore consent state during recovery ([#8006](https://github.com/microsoft/agent-framework/pull/8006))
+- **agent-framework-core**: Surface the underlying MCP initialization error when cancellation masks a connection failure ([#7704](https://github.com/microsoft/agent-framework/pull/7704))
+- **agent-framework-ag-ui**, **agent-framework-core**: Preserve client tools and request correlation when resuming workflow-as-agent approvals ([#7776](https://github.com/microsoft/agent-framework/pull/7776))
+- **agent-framework-core**: Project each model call's effective tool set to agent-hooks `pre_model_call` events ([#7747](https://github.com/microsoft/agent-framework/pull/7747))
+- **agent-framework-ag-ui**: Preserve every parallel function result during AG-UI message conversion ([#7980](https://github.com/microsoft/agent-framework/pull/7980))
+- **agent-framework-devui**, **agent-framework-openai**: Preserve Responses message boundaries, multimodal content, measured usage, and streamed response IDs in DevUI ([#7968](https://github.com/microsoft/agent-framework/pull/7968))
+- **agent-framework-hosting-responses**: Align continuation, input, output, and media parsing with the OpenAI Responses schemas ([#7966](https://github.com/microsoft/agent-framework/pull/7966))
+- **agent-framework-foundry**: Declare the HTTPX runtime dependency required by Azure AI Projects 2.3
+- **agent-framework-openai**: Preserve falsey provider values, valid request content, usage details, and embedding order ([#7964](https://github.com/microsoft/agent-framework/pull/7964))
+- **agent-framework-foundry-hosting**: Preserve JSON-safe arguments, falsey results, MCP output consistency, and shell limits in response conversion ([#7965](https://github.com/microsoft/agent-framework/pull/7965))
+- **agent-framework-ag-ui**, **agent-framework-foundry**, **agent-framework-openai**: Preserve Responses replay metadata across stateless and provider-managed AG-UI continuations ([#7906](https://github.com/microsoft/agent-framework/pull/7906))
+- **agent-framework-core**: Preserve compaction mutations across tool-loop calls and align thresholds and observability ([#7912](https://github.com/microsoft/agent-framework/pull/7912))
+- **agent-framework-gemini**: Send Pydantic response formats to Gemini as response schemas ([#7879](https://github.com/microsoft/agent-framework/pull/7879))
+- **agent-framework-redis**: Keep history-provider typing compatible across the supported Redis range ([#7604](https://github.com/microsoft/agent-framework/pull/7604))
+
 ## [1.16.0] - 2026-08-27
 
 ### Added
@@ -1576,7 +1606,8 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.16.0...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.17.0...HEAD
+[1.17.0]: https://github.com/microsoft/agent-framework/compare/python-1.16.0...python-1.17.0
 [1.16.0]: https://github.com/microsoft/agent-framework/compare/python-1.15.0...python-1.16.0
 [1.15.0]: https://github.com/microsoft/agent-framework/compare/python-1.14.0...python-1.15.0
 [1.14.0]: https://github.com/microsoft/agent-framework/compare/python-1.13.0...python-1.14.0

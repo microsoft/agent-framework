@@ -10,7 +10,6 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using AGUI.Client;
-using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
@@ -56,18 +55,18 @@ public sealed class ToolCallingTests : IAsyncDisposable
         }
 
         // Assert
-        callCount.Should().Be(1, "server function should be called once");
-        updates.Should().Contain(u => u.Contents.Any(c => c is FunctionCallContent), "should contain function call");
-        updates.Should().Contain(u => u.Contents.Any(c => c is FunctionResultContent), "should contain function result");
+        Assert.Equal(1, callCount);
+        Assert.Contains(updates, u => u.Contents.Any(c => c is FunctionCallContent));
+        Assert.Contains(updates, u => u.Contents.Any(c => c is FunctionResultContent));
 
         var functionCallUpdates = updates.Where(u => u.Contents.Any(c => c is FunctionCallContent)).ToList();
-        functionCallUpdates.Should().HaveCount(1);
+        Assert.Single(functionCallUpdates ?? []);
 
         var functionResultUpdates = updates.Where(u => u.Contents.Any(c => c is FunctionResultContent)).ToList();
-        functionResultUpdates.Should().HaveCount(1);
+        Assert.Single(functionResultUpdates ?? []);
 
-        var resultContent = functionResultUpdates[0].Contents.OfType<FunctionResultContent>().First();
-        resultContent.Result.Should().NotBeNull();
+        FunctionResultContent resultContent = Assert.Single(updates.SelectMany(u => u.Contents.OfType<FunctionResultContent>()));
+        Assert.NotNull(resultContent.Result);
     }
 
     [Fact]
@@ -104,19 +103,19 @@ public sealed class ToolCallingTests : IAsyncDisposable
         }
 
         // Assert
-        getWeatherCallCount.Should().Be(1, "GetWeather should be called once");
-        getTimeCallCount.Should().Be(1, "GetTime should be called once");
+        Assert.Equal(1, getWeatherCallCount);
+        Assert.Equal(1, getTimeCallCount);
 
         var functionCallUpdates = updates.Where(u => u.Contents.Any(c => c is FunctionCallContent)).ToList();
-        functionCallUpdates.Should().NotBeEmpty("should contain function calls");
+        Assert.NotEmpty(functionCallUpdates);
 
         var functionCalls = updates.SelectMany(u => u.Contents.OfType<FunctionCallContent>()).ToList();
-        functionCalls.Should().HaveCount(2, "should have 2 function calls");
-        functionCalls.Should().Contain(fc => fc.Name == "GetWeather");
-        functionCalls.Should().Contain(fc => fc.Name == "GetTime");
+        Assert.Equal(2, functionCalls.Count);
+        Assert.Contains(functionCalls, fc => fc.Name == "GetWeather");
+        Assert.Contains(functionCalls, fc => fc.Name == "GetTime");
 
         var functionResults = updates.SelectMany(u => u.Contents.OfType<FunctionResultContent>()).ToList();
-        functionResults.Should().HaveCount(2, "should have 2 function results");
+        Assert.Equal(2, functionResults.Count);
     }
 
     [Fact]
@@ -145,18 +144,18 @@ public sealed class ToolCallingTests : IAsyncDisposable
         }
 
         // Assert
-        callCount.Should().Be(1, "client function should be called once");
-        updates.Should().Contain(u => u.Contents.Any(c => c is FunctionCallContent), "should contain function call");
-        updates.Should().Contain(u => u.Contents.Any(c => c is FunctionResultContent), "should contain function result");
+        Assert.Equal(1, callCount);
+        Assert.Contains(updates, u => u.Contents.Any(c => c is FunctionCallContent));
+        Assert.Contains(updates, u => u.Contents.Any(c => c is FunctionResultContent));
 
         var functionCallUpdates = updates.Where(u => u.Contents.Any(c => c is FunctionCallContent)).ToList();
-        functionCallUpdates.Should().HaveCount(1);
+        Assert.Single(functionCallUpdates ?? []);
 
         var functionResultUpdates = updates.Where(u => u.Contents.Any(c => c is FunctionResultContent)).ToList();
-        functionResultUpdates.Should().HaveCount(1);
+        Assert.Single(functionResultUpdates ?? []);
 
-        var resultContent = functionResultUpdates[0].Contents.OfType<FunctionResultContent>().First();
-        resultContent.Result.Should().NotBeNull();
+        FunctionResultContent resultContent = Assert.Single(updates.SelectMany(u => u.Contents.OfType<FunctionResultContent>()));
+        Assert.NotNull(resultContent.Result);
     }
 
     [Fact]
@@ -193,19 +192,19 @@ public sealed class ToolCallingTests : IAsyncDisposable
         }
 
         // Assert
-        calculateCallCount.Should().Be(1, "Calculate should be called once");
-        formatCallCount.Should().Be(1, "FormatText should be called once");
+        Assert.Equal(1, calculateCallCount);
+        Assert.Equal(1, formatCallCount);
 
         var functionCallUpdates = updates.Where(u => u.Contents.Any(c => c is FunctionCallContent)).ToList();
-        functionCallUpdates.Should().NotBeEmpty("should contain function calls");
+        Assert.NotEmpty(functionCallUpdates);
 
         var functionCalls = updates.SelectMany(u => u.Contents.OfType<FunctionCallContent>()).ToList();
-        functionCalls.Should().HaveCount(2, "should have 2 function calls");
-        functionCalls.Should().Contain(fc => fc.Name == "Calculate");
-        functionCalls.Should().Contain(fc => fc.Name == "FormatText");
+        Assert.Equal(2, functionCalls.Count);
+        Assert.Contains(functionCalls, fc => fc.Name == "Calculate");
+        Assert.Contains(functionCalls, fc => fc.Name == "FormatText");
 
         var functionResults = updates.SelectMany(u => u.Contents.OfType<FunctionResultContent>()).ToList();
-        functionResults.Should().HaveCount(2, "should have 2 function results");
+        Assert.Equal(2, functionResults.Count);
     }
 
     [Fact]
@@ -263,29 +262,29 @@ public sealed class ToolCallingTests : IAsyncDisposable
         // the streaming pipeline. This is now correct behavior thanks to
         // ConfigureForMixedInvocation in the AGUI.Hosting.AspNetCore package.
 
-        serverCallCount.Should().Be(1, "server function should execute on server");
-        clientCallCount.Should().Be(1, "client function should execute on client");
+        Assert.Equal(1, serverCallCount);
+        Assert.Equal(1, clientCallCount);
 
         var functionCallUpdates = updates.Where(u => u.Contents.Any(c => c is FunctionCallContent)).ToList();
-        functionCallUpdates.Should().NotBeEmpty("should contain function calls");
+        Assert.NotEmpty(functionCallUpdates);
 
         var functionCalls = updates.SelectMany(u => u.Contents.OfType<FunctionCallContent>()).ToList();
-        functionCalls.Should().HaveCount(2, "should have 2 function calls");
-        functionCalls.Should().Contain(fc => fc.Name == "GetServerData");
-        functionCalls.Should().Contain(fc => fc.Name == "GetClientData");
+        Assert.Equal(2, functionCalls.Count);
+        Assert.Contains(functionCalls, fc => fc.Name == "GetServerData");
+        Assert.Contains(functionCalls, fc => fc.Name == "GetClientData");
 
         var functionResults = updates.SelectMany(u => u.Contents.OfType<FunctionResultContent>()).ToList();
-        functionResults.Should().HaveCount(2, "both server and client function results should be present");
+        Assert.Equal(2, functionResults.Count);
 
-        var serverResult = functionResults.FirstOrDefault(fr =>
+        FunctionResultContent? serverResult = functionResults.FirstOrDefault(fr =>
             functionCalls.Any(fc => fc.Name == "GetServerData" && fc.CallId == fr.CallId));
-        serverResult.Should().NotBeNull("server function call should have a result");
-        serverResult!.Result?.ToString().Should().Contain("Server data");
+        Assert.NotNull(serverResult);
+        Assert.Contains("Server data", serverResult!.Result?.ToString() ?? string.Empty);
 
-        var clientResult = functionResults.FirstOrDefault(fr =>
+        FunctionResultContent? clientResult = functionResults.FirstOrDefault(fr =>
             functionCalls.Any(fc => fc.Name == "GetClientData" && fc.CallId == fr.CallId));
-        clientResult.Should().NotBeNull("client function call should have a result");
-        clientResult!.Result?.ToString().Should().Contain("Client data");
+        Assert.NotNull(clientResult);
+        Assert.Contains("Client data", clientResult!.Result?.ToString() ?? string.Empty);
     }
 
     [Fact]
@@ -310,13 +309,13 @@ public sealed class ToolCallingTests : IAsyncDisposable
 
         // Assert
         var functionCallContent = updates.SelectMany(u => u.Contents.OfType<FunctionCallContent>()).FirstOrDefault();
-        functionCallContent.Should().NotBeNull();
-        functionCallContent!.CallId.Should().NotBeNullOrEmpty();
-        functionCallContent.Name.Should().Be("TestFunction");
+        Assert.NotNull(functionCallContent);
+        Assert.False(string.IsNullOrEmpty(functionCallContent!.CallId));
+        Assert.Equal("TestFunction", functionCallContent.Name);
 
         var functionResultContent = updates.SelectMany(u => u.Contents.OfType<FunctionResultContent>()).FirstOrDefault();
-        functionResultContent.Should().NotBeNull();
-        functionResultContent!.CallId.Should().Be(functionCallContent.CallId, "result should have same call ID as the call");
+        Assert.NotNull(functionResultContent);
+        Assert.Equal(functionCallContent.CallId, functionResultContent!.CallId);
     }
 
     [Fact]
@@ -353,20 +352,21 @@ public sealed class ToolCallingTests : IAsyncDisposable
         }
 
         // Assert
-        func1CallCount.Should().Be(1, "Function1 should be called once");
-        func2CallCount.Should().Be(1, "Function2 should be called once");
+        Assert.Equal(1, func1CallCount);
+        Assert.Equal(1, func2CallCount);
 
         var functionCalls = updates.SelectMany(u => u.Contents.OfType<FunctionCallContent>()).ToList();
-        functionCalls.Should().HaveCount(2);
-        functionCalls.Select(fc => fc.Name).Should().Contain(s_expectedFunctionNames);
+        Assert.Equal(2, functionCalls.Count);
+        string[] functionNames = [.. functionCalls.Select(fc => fc.Name)];
+        Assert.All(s_expectedFunctionNames, expectedName => Assert.Contains(expectedName, functionNames));
 
         var functionResults = updates.SelectMany(u => u.Contents.OfType<FunctionResultContent>()).ToList();
-        functionResults.Should().HaveCount(2);
+        Assert.Equal(2, functionResults.Count);
 
         // Each result should match its corresponding call ID
         foreach (var call in functionCalls)
         {
-            functionResults.Should().Contain(r => r.CallId == call.CallId);
+            Assert.Contains(functionResults, r => r.CallId == call.CallId);
         }
     }
 
@@ -396,9 +396,9 @@ public sealed class ToolCallingTests : IAsyncDisposable
 
         // Assert
         var jsonElement = JsonElement.Parse(json);
-        jsonElement.GetProperty("MaxTemp").GetInt32().Should().Be(75);
-        jsonElement.GetProperty("MinTemp").GetInt32().Should().Be(60);
-        jsonElement.GetProperty("Outlook").GetString().Should().Be("Rainy");
+        Assert.Equal(75, jsonElement.GetProperty("MaxTemp").GetInt32());
+        Assert.Equal(60, jsonElement.GetProperty("MinTemp").GetInt32());
+        Assert.Equal("Rainy", jsonElement.GetProperty("Outlook").GetString());
 
         this._output.WriteLine("Successfully serialized custom type: " + json);
 
@@ -439,17 +439,17 @@ public sealed class ToolCallingTests : IAsyncDisposable
         }
 
         // Assert
-        callCount.Should().Be(1, "server function with custom arguments should be called once");
-        updates.Should().Contain(u => u.Contents.Any(c => c is FunctionCallContent), "should contain function call");
-        updates.Should().Contain(u => u.Contents.Any(c => c is FunctionResultContent), "should contain function result");
+        Assert.Equal(1, callCount);
+        Assert.Contains(updates, u => u.Contents.Any(c => c is FunctionCallContent));
+        Assert.Contains(updates, u => u.Contents.Any(c => c is FunctionResultContent));
 
         var functionCallContent = updates.SelectMany(u => u.Contents.OfType<FunctionCallContent>()).FirstOrDefault();
-        functionCallContent.Should().NotBeNull();
-        functionCallContent!.Name.Should().Be("GetServerForecast");
+        Assert.NotNull(functionCallContent);
+        Assert.Equal("GetServerForecast", functionCallContent!.Name);
 
         var functionResultContent = updates.SelectMany(u => u.Contents.OfType<FunctionResultContent>()).FirstOrDefault();
-        functionResultContent.Should().NotBeNull();
-        functionResultContent!.Result.Should().NotBeNull();
+        Assert.NotNull(functionResultContent);
+        Assert.NotNull(functionResultContent!.Result);
     }
 
     [Fact]
@@ -485,17 +485,17 @@ public sealed class ToolCallingTests : IAsyncDisposable
         }
 
         // Assert
-        callCount.Should().Be(1, "client function with custom arguments should be called once");
-        updates.Should().Contain(u => u.Contents.Any(c => c is FunctionCallContent), "should contain function call");
-        updates.Should().Contain(u => u.Contents.Any(c => c is FunctionResultContent), "should contain function result");
+        Assert.Equal(1, callCount);
+        Assert.Contains(updates, u => u.Contents.Any(c => c is FunctionCallContent));
+        Assert.Contains(updates, u => u.Contents.Any(c => c is FunctionResultContent));
 
         var functionCallContent = updates.SelectMany(u => u.Contents.OfType<FunctionCallContent>()).FirstOrDefault();
-        functionCallContent.Should().NotBeNull();
-        functionCallContent!.Name.Should().Be("GetClientForecast");
+        Assert.NotNull(functionCallContent);
+        Assert.Equal("GetClientForecast", functionCallContent!.Name);
 
         var functionResultContent = updates.SelectMany(u => u.Contents.OfType<FunctionResultContent>()).FirstOrDefault();
-        functionResultContent.Should().NotBeNull();
-        functionResultContent!.Result.Should().NotBeNull();
+        Assert.NotNull(functionResultContent);
+        Assert.NotNull(functionResultContent!.Result);
     }
 
     private async Task SetupTestServerAsync(
