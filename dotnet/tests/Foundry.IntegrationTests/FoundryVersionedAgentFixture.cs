@@ -6,7 +6,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
-using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Microsoft.Agents.AI;
@@ -97,10 +96,9 @@ public class FoundryVersionedAgentFixture : IChatClientAgentFixture
     private async Task<List<ChatMessage>> GetChatHistoryFromConversationAsync(string conversationId)
     {
         List<ChatMessage> messages = [];
-        await foreach (AgentResponseItem item in this._client.GetProjectOpenAIClient().GetProjectConversationsClient().GetProjectConversationItemsAsync(conversationId, order: "asc"))
+        await foreach (ResponseItem item in this._client.GetProjectOpenAIClient().GetProjectConversationsClient().GetProjectConversationItemsAsync(conversationId, order: "asc"))
         {
-            var openAIItem = item.AsResponseResultItem();
-            if (openAIItem is MessageResponseItem messageItem)
+            if (item is MessageResponseItem messageItem)
             {
                 messages.Add(new ChatMessage
                 {

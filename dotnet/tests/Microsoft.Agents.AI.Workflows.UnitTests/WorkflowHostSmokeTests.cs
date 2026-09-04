@@ -7,7 +7,6 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -317,14 +316,13 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             if (update.Contents.Any())
             {
                 // We should expect a single update which contains the error content.
-                update.Contents.Should().ContainSingle()
-                                        .Which.Should().BeOfType<ErrorContent>()
-                                        .Which.Message.Should().Be(expectedMessage);
+                ErrorContent errorContent = Assert.IsType<ErrorContent>(Assert.Single(update.Contents));
+                Assert.Equal(expectedMessage, errorContent.Message);
                 hadErrorContent = true;
             }
         }
 
-        hadErrorContent.Should().BeTrue();
+        Assert.True(hadErrorContent);
     }
 
     /// <summary>
@@ -352,15 +350,13 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         AgentResponseUpdate? updateWithFunctionCall = updates.FirstOrDefault(u =>
             u.RawRepresentation is RequestInfoEvent && u.Contents.Any(c => c is FunctionCallContent));
 
-        updateWithFunctionCall.Should().NotBeNull("a FunctionCallContent should be present in the response updates");
-        FunctionCallContent retrievedContent = updateWithFunctionCall!.Contents
-            .OfType<FunctionCallContent>()
-            .Should().ContainSingle()
-            .Which;
+        Assert.NotNull(updateWithFunctionCall);
+        FunctionCallContent retrievedContent = Assert.Single(updateWithFunctionCall!.Contents
+            .OfType<FunctionCallContent>());
 
-        retrievedContent.CallId.Should().NotBe(CallId);
-        retrievedContent.CallId.Should().EndWith($":{CallId}");
-        retrievedContent.Name.Should().Be(FunctionName);
+        Assert.NotEqual(CallId, retrievedContent.CallId);
+        Assert.EndsWith($":{CallId}", retrievedContent.CallId);
+        Assert.Equal(FunctionName, retrievedContent.Name);
     }
 
     /// <summary>
@@ -388,15 +384,13 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         AgentResponseUpdate? updateWithUserInput = updates.FirstOrDefault(u =>
             u.RawRepresentation is RequestInfoEvent && u.Contents.Any(c => c is ToolApprovalRequestContent));
 
-        updateWithUserInput.Should().NotBeNull("a ToolApprovalRequestContent should be present in the response updates");
-        ToolApprovalRequestContent retrievedContent = updateWithUserInput!.Contents
-            .OfType<ToolApprovalRequestContent>()
-            .Should().ContainSingle()
-            .Which;
+        Assert.NotNull(updateWithUserInput);
+        ToolApprovalRequestContent retrievedContent = Assert.Single(updateWithUserInput!.Contents
+            .OfType<ToolApprovalRequestContent>());
 
-        retrievedContent.Should().NotBeNull();
-        retrievedContent.RequestId.Should().NotBe(RequestId);
-        retrievedContent.RequestId.Should().EndWith($":{RequestId}");
+        Assert.NotNull(retrievedContent);
+        Assert.NotEqual(RequestId, retrievedContent.RequestId);
+        Assert.EndsWith($":{RequestId}", retrievedContent.RequestId);
     }
 
     /// <summary>
@@ -500,12 +494,12 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         // Assert 1: We should have received a FunctionCallContent
         AgentResponseUpdate? updateWithRequest = firstCallUpdates.FirstOrDefault(u =>
             u.RawRepresentation is RequestInfoEvent && u.Contents.Any(c => c is FunctionCallContent));
-        updateWithRequest.Should().NotBeNull("a FunctionCallContent should be present in the response updates");
+        Assert.NotNull(updateWithRequest);
 
         FunctionCallContent receivedRequest = updateWithRequest!.Contents
             .OfType<FunctionCallContent>()
             .First();
-        receivedRequest.CallId.Should().EndWith($":{CallId}");
+        Assert.EndsWith($":{CallId}", receivedRequest.CallId);
 
         // Act 2: Send the response back
         FunctionResultContent responseContent = new(receivedRequest.CallId, "test result");
@@ -516,13 +510,11 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
 
         // Assert 2: The response should be processed and the original request should no longer be pending.
         // Concretely, the workflow should not re-emit a FunctionCallContent with the same CallId.
-        secondCallUpdates.Should().NotBeNull("processing the response should produce updates");
-        secondCallUpdates.Should().NotBeEmpty("processing the response should progress the workflow");
-        secondCallUpdates
+        Assert.NotNull(secondCallUpdates);
+        Assert.NotEmpty(secondCallUpdates);
+        Assert.DoesNotContain(secondCallUpdates
             .Where(u => u.RawRepresentation is RequestInfoEvent)
-            .SelectMany(u => u.Contents.OfType<FunctionCallContent>())
-            .Should()
-            .NotContain(c => c.CallId == receivedRequest.CallId, "the external FunctionCallContent request should be cleared after processing the response");
+            .SelectMany(u => u.Contents.OfType<FunctionCallContent>()), c => c.CallId == receivedRequest.CallId);
     }
 
     /// <summary>
@@ -551,12 +543,12 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         // Assert 1: We should have received a ToolApprovalRequestContent
         AgentResponseUpdate? updateWithRequest = firstCallUpdates.FirstOrDefault(u =>
             u.RawRepresentation is RequestInfoEvent && u.Contents.Any(c => c is ToolApprovalRequestContent));
-        updateWithRequest.Should().NotBeNull("a ToolApprovalRequestContent should be present in the response updates");
+        Assert.NotNull(updateWithRequest);
 
         ToolApprovalRequestContent receivedRequest = updateWithRequest!.Contents
             .OfType<ToolApprovalRequestContent>()
             .First();
-        receivedRequest.RequestId.Should().EndWith($":{RequestId}");
+        Assert.EndsWith($":{RequestId}", receivedRequest.RequestId);
 
         // Act 2: Send the response back - use CreateResponse to get the right response type
         ToolApprovalResponseContent responseContent = receivedRequest.CreateResponse(approved: true);
@@ -566,11 +558,11 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         List<AgentResponseUpdate> secondCallUpdates = await agent.RunStreamingAsync(responseMessage, session).ToListAsync();
 
         // Assert 2: The response should be applied so that the original request is no longer pending
-        secondCallUpdates.Should().NotBeEmpty("handling the user input response should produce follow-up updates");
+        Assert.NotEmpty(secondCallUpdates);
         bool requestStillPresent = secondCallUpdates.Any(u =>
             u.RawRepresentation is RequestInfoEvent
             && u.Contents.OfType<ToolApprovalRequestContent>().Any(r => r.RequestId == receivedRequest.RequestId));
-        requestStillPresent.Should().BeFalse("the original ToolApprovalRequestContent should not be re-emitted after its response is processed");
+        Assert.False(requestStillPresent);
     }
 
     /// <summary>
@@ -605,8 +597,7 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             u.RawRepresentation is RequestInfoEvent && u.Contents.Any(c => c is FunctionCallContent));
         FunctionCallContent emittedRequest = requestUpdate.Contents.OfType<FunctionCallContent>().Single();
 
-        firstCallUpdates.Should().Contain(u => u.Contents.Any(c => c is FunctionCallContent),
-            "the first call should emit a FunctionCallContent request");
+        Assert.Contains(firstCallUpdates, u => u.Contents.Any(c => c is FunctionCallContent));
 
         // Act 2: Send a mixed message containing both the function result AND regular non-response content
         FunctionResultContent responseContent = new(emittedRequest.CallId, "tool output");
@@ -615,16 +606,12 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         List<AgentResponseUpdate> secondCallUpdates = await agent.RunStreamingAsync(mixedMessage, session).ToListAsync();
 
         // Assert 2: The workflow should have processed both parts without errors
-        secondCallUpdates.Should().NotBeEmpty("the mixed message should produce follow-up updates");
-        secondCallUpdates
+        Assert.NotEmpty(secondCallUpdates);
+        Assert.DoesNotContain(secondCallUpdates
             .Where(u => u.RawRepresentation is RequestInfoEvent)
-            .SelectMany(u => u.Contents.OfType<FunctionCallContent>())
-            .Should()
-            .NotContain(c => c.CallId == emittedRequest.CallId, "the external FunctionCallContent should be cleared after the response is processed");
-        secondCallUpdates
-            .SelectMany(u => u.Contents.OfType<ErrorContent>())
-            .Should()
-            .BeEmpty("no workflow errors should occur when processing a mixed response-and-regular message");
+            .SelectMany(u => u.Contents.OfType<FunctionCallContent>()), c => c.CallId == emittedRequest.CallId);
+        Assert.Empty(secondCallUpdates
+            .SelectMany(u => u.Contents.OfType<ErrorContent>()) ?? []);
     }
 
     [Fact]
@@ -654,16 +641,12 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
 
         List<AgentResponseUpdate> secondCallUpdates = await agent.RunStreamingAsync(resumeMessages, session).ToListAsync();
 
-        secondCallUpdates.Should().NotBeEmpty();
-        secondCallUpdates
+        Assert.NotEmpty(secondCallUpdates);
+        Assert.DoesNotContain(secondCallUpdates
             .Where(u => u.RawRepresentation is RequestInfoEvent)
-            .SelectMany(u => u.Contents.OfType<FunctionCallContent>())
-            .Should()
-            .NotContain(c => c.CallId == emittedRequest.CallId, "response+regular content split across messages should not re-emit the handled external request");
-        secondCallUpdates
-            .SelectMany(u => u.Contents.OfType<ErrorContent>())
-            .Should()
-            .BeEmpty();
+            .SelectMany(u => u.Contents.OfType<FunctionCallContent>()), c => c.CallId == emittedRequest.CallId);
+        Assert.Empty(secondCallUpdates
+            .SelectMany(u => u.Contents.OfType<ErrorContent>()) ?? []);
     }
 
     [Fact]
@@ -694,7 +677,7 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             .SelectMany(u => u.Contents.OfType<FunctionCallContent>())
             .Count(c => c.CallId == emittedRequest.CallId);
 
-        functionCallCount.Should().Be(1, "a matching external response should not trigger an extra TurnToken-driven turn");
+        Assert.Equal(1, functionCallCount);
     }
 
     [Fact]
@@ -746,14 +729,12 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         List<AgentResponseUpdate> secondCallUpdates = await agent.RunStreamingAsync(resumeMessages, session).ToListAsync();
         List<string> textContents = [.. secondCallUpdates.SelectMany(update => update.Contents.OfType<TextContent>()).Select(content => content.Text)];
 
-        textContents.Should().Contain(ResumeProcessedText, "the start executor should receive an explicit TurnToken when the matched response wakes a different executor");
-        textContents.Should().Contain("Request processed", "the matched external response should still be delivered to the downstream request owner");
-        secondCallUpdates
+        Assert.Contains(ResumeProcessedText, textContents);
+        Assert.Contains("Request processed", textContents);
+        Assert.DoesNotContain(secondCallUpdates
             .Where(u => u.RawRepresentation is RequestInfoEvent)
-            .SelectMany(u => u.Contents.OfType<FunctionCallContent>())
-            .Should()
-            .NotContain(c => c.CallId == emittedRequest.CallId, "the handled external request should not be re-emitted while waking the start executor");
-        secondCallUpdates.SelectMany(u => u.Contents.OfType<ErrorContent>()).Should().BeEmpty();
+            .SelectMany(u => u.Contents.OfType<FunctionCallContent>()), c => c.CallId == emittedRequest.CallId);
+        Assert.Empty(secondCallUpdates.SelectMany(u => u.Contents.OfType<ErrorContent>()) ?? []);
     }
 
     [Fact]
@@ -770,7 +751,7 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
 
         AgentSession session = await agent.CreateSessionAsync();
         List<AgentResponseUpdate> firstCallUpdates = await agent.RunStreamingAsync(new ChatMessage(ChatRole.User, "Start"), session).ToListAsync();
-        firstCallUpdates.Should().Contain(u => u.Contents.Any(c => c is FunctionCallContent));
+        Assert.Contains(firstCallUpdates, u => u.Contents.Any(c => c is FunctionCallContent));
 
         List<AgentResponseUpdate> secondCallUpdates = await agent.RunStreamingAsync(
             new ChatMessage(ChatRole.Tool, [new FunctionResultContent("different-call-id", "tool output")]),
@@ -780,8 +761,8 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             .SelectMany(u => u.Contents.OfType<FunctionCallContent>())
             .Count(c => c.CallId == CallId);
 
-        functionCallCount.Should().Be(1, "an unmatched response should be treated as regular input and still drive a TurnToken continuation without workflow errors");
-        secondCallUpdates.SelectMany(u => u.Contents.OfType<ErrorContent>()).Should().BeEmpty();
+        Assert.Equal(1, functionCallCount);
+        Assert.Empty(secondCallUpdates.SelectMany(u => u.Contents.OfType<ErrorContent>()) ?? []);
     }
 
     /// <summary>
@@ -834,14 +815,10 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             .SelectMany(u => u.Contents.OfType<TextContent>())
             .Select(c => c.Text)];
 
-        textContents.Should().Contain("Request processed",
-            "the downstream executor should process the external response");
-        textContents.Should().Contain(ActivatedMarker,
-            "the start executor should receive a TurnToken and be activated even when resume contains only an external response");
-        secondCallUpdates
-            .SelectMany(u => u.Contents.OfType<ErrorContent>())
-            .Should()
-            .BeEmpty();
+        Assert.Contains("Request processed", textContents);
+        Assert.Contains(ActivatedMarker, textContents);
+        Assert.Empty(secondCallUpdates
+            .SelectMany(u => u.Contents.OfType<ErrorContent>()) ?? []);
     }
 
     [Theory]
@@ -851,7 +828,7 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
     {
         // Arrange
         NonChatProtocolExecutor executor = new();
-        executor.DescribeProtocol().IsChatProtocol().Should().BeFalse();
+        Assert.False(executor.DescribeProtocol().IsChatProtocol());
 
         Workflow workflow = new WorkflowBuilder(executor).Build();
         AIAgent workflowAsAgent = workflow.AsAIAgent();
@@ -860,7 +837,7 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
                           ? () => workflowAsAgent.RunStreamingAsync().ToAgentResponseAsync()
                           : () => workflowAsAgent.RunAsync();
 
-        await action.Should().ThrowAsync<InvalidOperationException>();
+        await Assert.ThrowsAsync<InvalidOperationException>(action);
     }
 
     private async Task Run_AsAgent_OutgoingMessagesInHistoryAsync(Workflow workflow, bool runAsync)
@@ -894,7 +871,7 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         }
 
         // Assert
-        WorkflowSession workflowSession = session.Should().BeOfType<WorkflowSession>().Subject;
+        WorkflowSession workflowSession = Assert.IsType<WorkflowSession>(session);
 
         ChatMessage[] responseMessages = response.Messages.Where(message => message.Contents.Any())
                                                           .ToArray();
@@ -904,7 +881,7 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
 
         // Since we never sent an incoming message, the expectation is that there should be nothing in the session
         // except the response
-        responseMessages.Should().BeEquivalentTo(sessionMessages, options => options.WithStrictOrdering());
+        Assert.Equivalent(sessionMessages, responseMessages);
     }
 
     [Theory]
@@ -948,9 +925,8 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             .AsAIAgent("WorkflowAgent")
             .RunAsync(new ChatMessage(ChatRole.User, "hello"));
 
-        response.Text.Should().Be("SECOND ANSWER");
-        response.Messages.Should().ContainSingle()
-            .Which.Text.Should().Be("SECOND ANSWER");
+        Assert.Equal("SECOND ANSWER", response.Text);
+        Assert.Equal("SECOND ANSWER", Assert.Single(response.Messages).Text);
     }
 
     // ----- Phase 5: Workflow-as-Agent intermediate forwarding -----------------
@@ -986,9 +962,8 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             // the surfaced event for consumers that care to distinguish.
             List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: false);
 
-            updates.Count(u => u.Text == InterText).Should().Be(1);
-            updates.Any(u => u.RawRepresentation is AgentResponseEvent are && are.IsIntermediate() && u.Contents.Count == 0)
-                .Should().BeTrue("the completion event remains observable without duplicating streamed text");
+            Assert.Equal(1, updates.Count(u => u.Text == InterText));
+            Assert.Contains(updates, u => u.RawRepresentation is AgentResponseEvent are && are.IsIntermediate() && u.Contents.Count == 0);
         }
 
         [Fact]
@@ -1005,9 +980,8 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             // asymmetry between AgentResponse and AgentResponseUpdate is gone under Futures-on.
             List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: false);
 
-            updates.Count(u => u.Text == FinalText).Should().Be(1);
-            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Contents.Count == 0)
-                .Should().BeTrue("the completion event remains observable without duplicating streamed text");
+            Assert.Equal(1, updates.Count(u => u.Text == FinalText));
+            Assert.Contains(updates, u => u.RawRepresentation is AgentResponseEvent && u.Contents.Count == 0);
         }
 
         [Fact]
@@ -1022,8 +996,7 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
 
             List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: false);
 
-            updates.Any(u => u.RawRepresentation is AgentResponseEvent)
-                .Should().BeFalse("an empty response did not previously produce an observable completion update");
+            Assert.DoesNotContain(updates, u => u.RawRepresentation is AgentResponseEvent);
         }
 
         [Fact]
@@ -1041,13 +1014,11 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             // Legacy semantics: AgentResponseEvent stays behind the include flag when Futures
             // is off. Two fresh workflows because in-process runs aren't reentrant.
             List<AgentResponseUpdate> gated = await RunStreamingAsync(Build(), includeWorkflowOutputsInResponse: false);
-            gated.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
-                .Should().BeFalse("terminal AgentResponseEvent stays gated under Futures-off");
+            Assert.DoesNotContain(gated, u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText);
 
             List<AgentResponseUpdate> included = await RunStreamingAsync(Build(), includeWorkflowOutputsInResponse: true);
-            included.Count(u => u.Text == FinalText).Should().Be(1);
-            included.Any(u => u.RawRepresentation is AgentResponseEvent && u.Contents.Count == 0)
-                .Should().BeTrue("opting in preserves the completion event without duplicating streamed text");
+            Assert.Equal(1, included.Count(u => u.Text == FinalText));
+            Assert.Contains(included, u => u.RawRepresentation is AgentResponseEvent && u.Contents.Count == 0);
         }
 
         [Fact]
@@ -1061,8 +1032,7 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
 
             List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
 
-            updates.Any(u => u.RawRepresentation is AgentResponseEvent)
-                .Should().BeFalse("an undesignated AIAgent executor produces no AgentResponseEvent under Futures-on");
+            Assert.DoesNotContain(updates, u => u.RawRepresentation is AgentResponseEvent);
         }
 
         [Fact]
@@ -1075,9 +1045,8 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
 
             List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
 
-            updates.Count(u => u.Text == InterText).Should().Be(1);
-            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Contents.Count == 0)
-                .Should().BeTrue("legacy bypass preserves the completion event without duplicating streamed text");
+            Assert.Equal(1, updates.Count(u => u.Text == InterText));
+            Assert.Contains(updates, u => u.RawRepresentation is AgentResponseEvent && u.Contents.Count == 0);
         }
 
         [Fact]
@@ -1094,8 +1063,8 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
 
             AgentResponseUpdate progress = updates.First(u => u.RawRepresentation is AgentResponseEvent);
             AgentResponseEvent raw = (AgentResponseEvent)progress.RawRepresentation!;
-            raw.IsIntermediate().Should().BeTrue();
-            raw.Tags.Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+            Assert.True(raw.IsIntermediate());
+            Assert.Equivalent(new[] { OutputTag.Intermediate }, raw.Tags);
         }
 
         [Fact]
@@ -1107,10 +1076,9 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             List<AgentResponseUpdate> updates =
                 await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
 
-            updates.Count(u => u.Text == InterText).Should().Be(1);
-            updates.Count(u => u.Text == FinalText).Should().Be(1);
-            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
-                .Should().BeTrue("a different response from the same executor must not be suppressed");
+            Assert.Equal(1, updates.Count(u => u.Text == InterText));
+            Assert.Equal(1, updates.Count(u => u.Text == FinalText));
+            Assert.Contains(updates, u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText);
         }
 
         [Fact]
@@ -1122,10 +1090,9 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             List<AgentResponseUpdate> updates =
                 await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
 
-            updates.Count(u => u.Text == InterText).Should().Be(1);
-            updates.Count(u => u.Text == FinalText).Should().Be(1);
-            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
-                .Should().BeTrue("a response ID alone must not suppress a distinct completed message");
+            Assert.Equal(1, updates.Count(u => u.Text == InterText));
+            Assert.Equal(1, updates.Count(u => u.Text == FinalText));
+            Assert.Contains(updates, u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText);
         }
 
         [Fact]
@@ -1143,10 +1110,9 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             List<AgentResponseUpdate> updates =
                 await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
 
-            updates.Count(u => u.Text == InterText).Should().Be(1);
-            updates.Count(u => u.Text == FinalText).Should().Be(1);
-            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
-                .Should().BeTrue("whitespace-only message IDs cannot reliably correlate streamed and completed messages");
+            Assert.Equal(1, updates.Count(u => u.Text == InterText));
+            Assert.Equal(1, updates.Count(u => u.Text == FinalText));
+            Assert.Contains(updates, u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText);
         }
 
         [Fact]
@@ -1158,10 +1124,9 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             List<AgentResponseUpdate> updates =
                 await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
 
-            updates.Count(u => u.Text == InterText).Should().Be(1);
-            updates.Count(u => u.Text == FinalText).Should().Be(1);
-            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
-                .Should().BeTrue("only the correlated message in a multi-message response should be suppressed");
+            Assert.Equal(1, updates.Count(u => u.Text == InterText));
+            Assert.Equal(1, updates.Count(u => u.Text == FinalText));
+            Assert.Contains(updates, u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText);
         }
 
         private sealed class StreamThenCompleteExecutor(
