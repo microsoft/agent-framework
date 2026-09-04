@@ -44,6 +44,7 @@ should receive a JSON representation of a typed input:
 ```csharp
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Declarative;
 using Microsoft.Extensions.AI;
 
