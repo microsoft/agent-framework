@@ -30,7 +30,25 @@ You may want to articulate the problem in form of a question and add links to co
 - {title of option 3}
 - … <!-- numbers of options can vary -->
 
+## Pros and Cons of the Options
+
+### {title of option 1}
+
+{short explanation. Point to an appendix if this option needs longer examples or details.}
+
+- Good, because {argument a}
+- Neutral, because {argument b}
+- Bad, because {argument c}
+
+### {title of other option}
+
+{short explanation. Point to an appendix if this option needs longer examples or details.}
+
+- Good, because {argument a}
+- Neutral, because {argument b}
+- Bad, because {argument c}
+
 ## Decision Outcome
 
 Chosen option: "{title of option 1}", because
-{justification. e.g., only option, which meets k.o. criterion decision driver | which resolves force {force} | … | comes out best (see below)}.
+{justification. e.g., only option, which meets k.o. criterion decision driver | which resolves force {force} | … | comes out best (see above)}.
