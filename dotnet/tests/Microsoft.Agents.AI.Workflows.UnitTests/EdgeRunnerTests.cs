@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Execution;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -48,12 +47,12 @@ public class EdgeRunnerTests
 
         if (expectMessage)
         {
-            mapping.Should().NotBeNull();
+            Assert.NotNull(mapping);
             mapping.CheckDeliveries(["executor2"], [MessageVariant1]);
         }
         else
         {
-            mapping.Should().BeNull();
+            Assert.Null(mapping);
         }
     }
 
@@ -122,11 +121,11 @@ public class EdgeRunnerTests
 
         if (!expectForwardFrom2 && !expectForwardFrom3)
         {
-            mapping.Should().BeNull();
+            Assert.Null(mapping);
         }
         else
         {
-            mapping.Should().NotBeNull();
+            Assert.NotNull(mapping);
             mapping.CheckDeliveries(expectedReceivers, ["test"]);
         }
     }
@@ -181,22 +180,22 @@ public class EdgeRunnerTests
             //await runner.ChaseAsync("executor1", new("part1"), state, tracer: null);
             //MessageDeliveryValidation.CheckForwarded(runContext.QueuedMessages);
             DeliveryMapping? mapping = await runner.ChaseEdgeAsync(new("part1", "executor1"), stepTracer: null, CancellationToken.None);
-            mapping.Should().BeNull();
+            Assert.Null(mapping);
 
             //await runner.ChaseAsync("executor2", new("part-for-1", targetId: "executor1"), state, tracer: null);
             //MessageDeliveryValidation.CheckForwarded(runContext.QueuedMessages);
             mapping = await runner.ChaseEdgeAsync(new("part-for-1", "executor2", targetId: "executor1"), stepTracer: null, CancellationToken.None);
-            mapping.Should().BeNull();
+            Assert.Null(mapping);
 
             //await runner.ChaseAsync("executor1", new("part2", targetId: "executor3"), state, tracer: null);
             //MessageDeliveryValidation.CheckForwarded(runContext.QueuedMessages);
             mapping = await runner.ChaseEdgeAsync(new("part2", "executor1", targetId: "executor3"), stepTracer: null, CancellationToken.None);
-            mapping.Should().BeNull();
+            Assert.Null(mapping);
 
             //await runner.ChaseAsync("executor2", new("final part"), state, tracer: null);
             //MessageDeliveryValidation.CheckForwarded(runContext.QueuedMessages, ("executor3", ["part1", "part2", "final part"]));
             mapping = await runner.ChaseEdgeAsync(new("final part", "executor2"), stepTracer: null, CancellationToken.None);
-            mapping.Should().NotBeNull();
+            Assert.NotNull(mapping);
             mapping.CheckDeliveries(["executor3"], ["part1", "part2", "final part"]);
         }
     }
@@ -232,7 +231,7 @@ public class EdgeRunnerTests
 
             // Assert: exactly one task should return a non-null mapping with all messages
             DeliveryMapping?[] nonNullResults = results.Where(r => r is not null).ToArray();
-            nonNullResults.Should().HaveCount(1, $"iteration {iteration}: exactly one thread should release the batch");
+            Assert.Single(nonNullResults);
 
             DeliveryMapping mapping = nonNullResults[0]!;
             HashSet<object> expectedMessages = [.. sourceIds.Select(id => (object)$"msg-from-{id}")];

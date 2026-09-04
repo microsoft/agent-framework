@@ -9,6 +9,8 @@ multimodal content (images, files) from the DevUI frontend.
 import json
 from unittest.mock import MagicMock
 
+import pytest
+
 from agent_framework_devui._discovery import EntityDiscovery
 from agent_framework_devui._executor import AgentFrameworkExecutor
 from agent_framework_devui._mapper import MessageMapper
@@ -30,11 +32,10 @@ class TestMultimodalWorkflowInput:
         # Valid OpenAI multimodal format
         valid_format = [
             {
-                "type": "message",
                 "role": "user",
                 "content": [
                     {"type": "input_text", "text": "Describe this image"},
-                    {"type": "input_image", "image_url": TEST_IMAGE_DATA_URI},
+                    {"type": "input_image", "image_url": TEST_IMAGE_DATA_URI, "detail": "high"},
                 ],
             }
         ]
@@ -62,7 +63,7 @@ class TestMultimodalWorkflowInput:
                 "role": "user",
                 "content": [
                     {"type": "input_text", "text": "Describe this image"},
-                    {"type": "input_image", "image_url": TEST_IMAGE_DATA_URI},
+                    {"type": "input_image", "image_url": TEST_IMAGE_DATA_URI, "detail": "high"},
                 ],
             }
         ]
@@ -85,6 +86,124 @@ class TestMultimodalWorkflowInput:
         assert result.contents[1].type == "data"
         assert result.contents[1].media_type == "image/png"
         assert result.contents[1].uri == TEST_IMAGE_DATA_URI
+        assert result.contents[1].additional_properties["detail"] == "high"
+
+    def test_convert_openai_input_preserves_message_roles_and_boundaries(self):
+        """Official input message roles remain distinct Agent Framework messages."""
+        from agent_framework import Message
+
+        executor = AgentFrameworkExecutor(MagicMock(spec=EntityDiscovery), MagicMock(spec=MessageMapper))
+        openai_input = [
+            {"role": "system", "content": "System guidance"},
+            {
+                "type": "message",
+                "role": "developer",
+                "content": [{"type": "input_text", "text": "Developer guidance"}],
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "First part"},
+                    {"type": "input_text", "text": "Second part"},
+                ],
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Assistant output"},
+                    {"type": "text", "text": "Generic assistant text"},
+                ],
+            },
+        ]
+
+        result = executor._convert_input_to_chat_message(openai_input)
+
+        assert isinstance(result, list)
+        assert all(isinstance(message, Message) for message in result)
+        assert [message.role for message in result] == ["system", "developer", "user", "assistant"]
+        assert [[content.text for content in message.contents] for message in result] == [
+            ["System guidance"],
+            ["Developer guidance"],
+            ["First part", "Second part"],
+            ["Assistant output", "Generic assistant text"],
+        ]
+
+    def test_convert_openai_input_preserves_file_ids_and_canonical_media_types(self):
+        """Hosted files and straightforward MIME types survive input conversion."""
+        executor = AgentFrameworkExecutor(MagicMock(spec=EntityDiscovery), MagicMock(spec=MessageMapper))
+        openai_input = [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_image",
+                        "image_url": "https://example.com/photo.jpg?download=1",
+                        "detail": "low",
+                    },
+                    {"type": "input_image", "file_id": "file_image", "detail": "high"},
+                    {"type": "input_file", "file_id": "file_audio", "filename": "recording.mp3"},
+                    {"type": "input_file", "file_url": "https://example.com/recording.m4a"},
+                ],
+            }
+        ]
+
+        result = executor._convert_input_to_chat_message(openai_input)
+
+        assert result.contents[0].media_type == "image/jpeg"
+        assert result.contents[0].additional_properties["detail"] == "low"
+        assert result.contents[1].type == "hosted_file"
+        assert result.contents[1].file_id == "file_image"
+        assert result.contents[1].additional_properties["openai_content_type"] == "input_image"
+        assert result.contents[1].additional_properties["detail"] == "high"
+        assert result.contents[2].type == "hosted_file"
+        assert result.contents[2].file_id == "file_audio"
+        assert result.contents[2].media_type == "audio/mpeg"
+        assert result.contents[3].media_type == "audio/mp4"
+
+    def test_convert_openai_input_rejects_unsupported_only_content(self):
+        """Unsupported input must not become a fabricated empty user message."""
+        executor = AgentFrameworkExecutor(MagicMock(spec=EntityDiscovery), MagicMock(spec=MessageMapper))
+        openai_input = [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "unsupported_content", "value": "ignored"}],
+            }
+        ]
+
+        with pytest.raises(ValueError, match="did not contain any supported message content"):
+            executor._convert_input_to_chat_message(openai_input)
+
+    def test_convert_openai_input_rejects_each_unsupported_only_message(self):
+        """A valid message must not hide another message with no supported content."""
+        executor = AgentFrameworkExecutor(MagicMock(spec=EntityDiscovery), MagicMock(spec=MessageMapper))
+        openai_input = [
+            {"type": "message", "role": "user", "content": "Valid message"},
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "unsupported_content", "value": "ignored"}],
+            },
+        ]
+
+        with pytest.raises(ValueError, match="did not contain any supported message content"):
+            executor._convert_input_to_chat_message(openai_input)
+
+    async def test_parse_workflow_input_rejects_unsupported_only_content(self):
+        """Workflow parsing must not fall back to the raw unsupported payload."""
+        executor = AgentFrameworkExecutor(MagicMock(spec=EntityDiscovery), MagicMock(spec=MessageMapper))
+        openai_input = [
+            {
+                "role": "user",
+                "content": [{"type": "unsupported_content", "value": "ignored"}],
+            }
+        ]
+
+        with pytest.raises(ValueError, match="did not contain any supported message content"):
+            await executor._parse_workflow_input(MagicMock(), openai_input)
 
     async def test_parse_workflow_input_handles_json_string_with_multimodal(self):
         """Test that _parse_workflow_input correctly handles JSON string with multimodal content."""

@@ -3,8 +3,7 @@
 """Microsoft Foundry Evals integration for Microsoft Agent Framework.
 
 Provides ``FoundryEvals``, an ``Evaluator`` implementation backed by Azure AI
-Foundry's built-in evaluators. See docs/decisions/0018-foundry-evals-integration.md
-for the design rationale.
+Foundry's built-in evaluators.
 
 Example:
 
@@ -27,13 +26,14 @@ Example:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import logging
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from agent_framework._evaluation import (
-    AgentEvalConverter,
     ConversationSplit,
     ConversationSplitter,
     EvalItem,
@@ -44,6 +44,7 @@ from agent_framework._evaluation import (
 )
 from agent_framework._feature_stage import ExperimentalFeature, experimental
 from agent_framework._telemetry import mark_feature_used
+from agent_framework._types import Message
 from openai import AsyncOpenAI
 
 from ._chat_client import FoundryChatClient
@@ -215,6 +216,69 @@ def _resolve_evaluator(name: str) -> str:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _convert_message(message: Message) -> list[dict[str, Any]]:
+    """Convert one Agent Framework message to the Foundry Evals wire format."""
+    content_items: list[dict[str, Any]] = []
+    tool_results: list[dict[str, Any]] = []
+
+    for content in message.contents or []:
+        if content.type == "text" and content.text:
+            content_items.append({"type": "text", "text": content.text})
+        elif content.type in ("data", "uri") and content.uri:
+            image: dict[str, Any] = {
+                "type": "input_image",
+                "image_url": content.uri,
+            }
+            if content.media_type:
+                image["detail"] = "auto"
+            content_items.append(image)
+        elif content.type == "function_call":
+            arguments = content.arguments
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except (json.JSONDecodeError, TypeError):
+                    arguments = {"_raw_arguments": "[unparseable]"}
+            content_items.append({
+                "type": "tool_call",
+                "tool_call_id": content.call_id or "",
+                "name": content.name or "",
+                "arguments": arguments if arguments is not None else {},
+            })
+        elif content.type == "function_result":
+            result = content.result
+            if isinstance(result, str):
+                with contextlib.suppress(json.JSONDecodeError, TypeError):
+                    result = json.loads(result)
+            tool_results.append({
+                "call_id": content.call_id or "",
+                "result": result,
+            })
+
+    if tool_results:
+        return [
+            {
+                "role": "tool",
+                "tool_call_id": tool_result["call_id"],
+                "content": [{"type": "tool_result", "tool_result": tool_result["result"]}],
+            }
+            for tool_result in tool_results
+        ]
+    if content_items:
+        return [{"role": message.role, "content": content_items}]
+    return [
+        {
+            "role": message.role,
+            "content": [{"type": "text", "text": ""}],
+        }
+    ]
+
+
+def _convert_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
+    """Convert Agent Framework messages to the Foundry Evals wire format."""
+    return [converted for message in messages for converted in _convert_message(message)]
 
 
 def _build_testing_criteria(
@@ -882,7 +946,7 @@ class FoundryEvals:
         evaluators and filters tool evaluators for items without tool definitions.
 
         Args:
-            items: Eval data items from ``AgentEvalConverter.to_eval_item()``.
+            items: Provider-neutral evaluation data items.
             eval_name: Display name for the evaluation run.
 
         Returns:
@@ -919,8 +983,8 @@ class FoundryEvals:
             d: dict[str, Any] = {
                 "query": query_text,
                 "response": response_text,
-                "query_messages": AgentEvalConverter.convert_messages(query_msgs),
-                "response_messages": AgentEvalConverter.convert_messages(response_msgs),
+                "query_messages": _convert_messages(query_msgs),
+                "response_messages": _convert_messages(response_msgs),
             }
             if item.tools:
                 d["tool_definitions"] = [

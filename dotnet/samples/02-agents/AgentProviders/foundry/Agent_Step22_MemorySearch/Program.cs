@@ -6,7 +6,6 @@
 
 using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
-using Azure.AI.Projects.Agents;
 using Azure.AI.Projects.Memory;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -29,7 +28,7 @@ const string AgentName = "MemorySearchAgent";
 
 string userScope = $"user_{Environment.MachineName}";
 
-MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, userScope) { UpdateDelayInSecs = 0 };
+MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, userScope) { UpdateDelayInSeconds = 0 };
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
@@ -66,7 +65,7 @@ try
                 Console.WriteLine($"  - Memory ID: {memoryItem.MemoryId}");
                 Console.WriteLine($"    Scope: {memoryItem.Scope}");
                 Console.WriteLine($"    Content: {memoryItem.Content}");
-                Console.WriteLine($"    Updated: {memoryItem.UpdatedAt}");
+                Console.WriteLine($"    Updated: {memoryItem.UpdatedOn}");
             }
         }
     }
