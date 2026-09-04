@@ -167,7 +167,14 @@ internal sealed class AIAgentUnservicedRequestsCollector(AIContentExternalHandle
             if (content is ToolApprovalRequestContent approvalRequest
                 && answeredHere?.Contains(approvalRequest.RequestId) != true)
             {
-                this._withheldApprovals[approvalRequest.RequestId] = CloneWithContents(update, [approvalRequest]);
+                // First-wins, to match the request the collector records and would go on to raise. A
+                // repeated request ID keeps its first occurrence there, so overwriting here would
+                // re-emit the later, displaced copy and show the caller the request that was
+                // discarded. Dictionary.TryAdd does not exist on netstandard2.0 or net472.
+                if (!this._withheldApprovals.ContainsKey(approvalRequest.RequestId))
+                {
+                    this._withheldApprovals.Add(approvalRequest.RequestId, CloneWithContents(update, [approvalRequest]));
+                }
             }
             else
             {

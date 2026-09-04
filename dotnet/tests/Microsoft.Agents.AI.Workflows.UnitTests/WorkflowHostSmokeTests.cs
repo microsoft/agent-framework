@@ -438,15 +438,16 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
                                                            .ToListAsync();
 
         // Assert
-        AgentResponseUpdate approvalUpdate = updates
-            .Should().ContainSingle(update => update.Contents.Any(content => content is ToolApprovalRequestContent))
-            .Which;
+        AgentResponseUpdate approvalUpdate = Assert.Single(
+            updates,
+            update => update.Contents.Any(content => content is ToolApprovalRequestContent));
 
-        approvalUpdate.RawRepresentation.Should().BeOfType<RequestInfoEvent>(
-            "the workflow-facing request carries the only request ID the caller can answer with");
-        approvalUpdate.Contents.OfType<ToolApprovalRequestContent>()
-                      .Should().ContainSingle()
-                      .Which.RequestId.Should().EndWith($":{RequestId}");
+        // The workflow-facing request carries the only request ID the caller can answer with.
+        Assert.IsType<RequestInfoEvent>(approvalUpdate.RawRepresentation);
+
+        ToolApprovalRequestContent approvalRequest =
+            Assert.Single(approvalUpdate.Contents.OfType<ToolApprovalRequestContent>());
+        Assert.EndsWith($":{RequestId}", approvalRequest.RequestId, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -470,9 +471,9 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
                                                            .ToListAsync();
 
         // Assert
-        updates.SelectMany(update => update.Contents.OfType<ToolApprovalRequestContent>())
-               .Should().ContainSingle()
-               .Which.RequestId.Should().Be(RequestId);
+        ToolApprovalRequestContent internalRequest =
+            Assert.Single(updates.SelectMany(update => update.Contents.OfType<ToolApprovalRequestContent>()));
+        Assert.Equal(RequestId, internalRequest.RequestId);
     }
 
     /// <summary>
@@ -499,16 +500,16 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
                                                            .ToListAsync();
 
         // Assert
-        AgentResponseUpdate textUpdate = updates
-            .Should().ContainSingle(update => update.Contents.OfType<TextContent>().Any(text => text.Text == AccompanyingText))
-            .Which;
+        AgentResponseUpdate textUpdate = Assert.Single(
+            updates,
+            update => update.Contents.OfType<TextContent>().Any(text => text.Text == AccompanyingText));
 
-        textUpdate.Contents.OfType<ToolApprovalRequestContent>().Should().BeEmpty();
-        textUpdate.Role.Should().Be(ChatRole.Assistant);
+        Assert.Empty(textUpdate.Contents.OfType<ToolApprovalRequestContent>());
+        Assert.Equal(ChatRole.Assistant, textUpdate.Role);
 
-        updates.SelectMany(update => update.Contents.OfType<ToolApprovalRequestContent>())
-               .Should().ContainSingle()
-               .Which.RequestId.Should().EndWith($":{RequestId}");
+        ToolApprovalRequestContent accompaniedRequest =
+            Assert.Single(updates.SelectMany(update => update.Contents.OfType<ToolApprovalRequestContent>()));
+        Assert.EndsWith($":{RequestId}", accompaniedRequest.RequestId, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -537,9 +538,9 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
                                                            .ToListAsync();
 
         // Assert
-        updates.SelectMany(update => update.Contents.OfType<ToolApprovalRequestContent>())
-               .Should().ContainSingle()
-               .Which.RequestId.Should().EndWith($":{RequestId}");
+        ToolApprovalRequestContent raisedRequest =
+            Assert.Single(updates.SelectMany(update => update.Contents.OfType<ToolApprovalRequestContent>()));
+        Assert.EndsWith($":{RequestId}", raisedRequest.RequestId, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -570,18 +571,18 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
                                                            .ToListAsync();
 
         // Assert
-        updates.SelectMany(update => update.Contents.OfType<ToolApprovalRequestContent>())
-               .Should().ContainSingle()
-               .Which.RequestId.Should().Be(RequestId);
+        ToolApprovalRequestContent selfAnsweredRequest =
+            Assert.Single(updates.SelectMany(update => update.Contents.OfType<ToolApprovalRequestContent>()));
+        Assert.Equal(RequestId, selfAnsweredRequest.RequestId);
 
         // The approval has to keep its place ahead of the answer to it.
         List<AIContent> approvalContents =
             [.. updates.SelectMany(update => update.Contents)
                        .Where(content => content is ToolApprovalRequestContent or ToolApprovalResponseContent)];
 
-        approvalContents.Should().HaveCount(2);
-        approvalContents[0].Should().BeOfType<ToolApprovalRequestContent>();
-        approvalContents[1].Should().BeOfType<ToolApprovalResponseContent>();
+        Assert.Equal(2, approvalContents.Count);
+        Assert.IsType<ToolApprovalRequestContent>(approvalContents[0]);
+        Assert.IsType<ToolApprovalResponseContent>(approvalContents[1]);
     }
 
     /// <summary>

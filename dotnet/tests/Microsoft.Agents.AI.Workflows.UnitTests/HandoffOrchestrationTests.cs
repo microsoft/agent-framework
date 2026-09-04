@@ -769,15 +769,16 @@ public class HandoffOrchestrationTests
                                                           .ToListAsync();
 
         // Assert
-        AgentResponseUpdate approvalUpdate = updates
-            .Should().ContainSingle(update => update.Contents.Any(content => content is ToolApprovalRequestContent))
-            .Which;
+        AgentResponseUpdate approvalUpdate = Assert.Single(
+            updates,
+            update => update.Contents.Any(content => content is ToolApprovalRequestContent));
 
-        approvalUpdate.RawRepresentation.Should().BeOfType<RequestInfoEvent>(
-            "the workflow-facing request carries the only request ID the caller can answer with");
-        approvalUpdate.Contents.OfType<ToolApprovalRequestContent>()
-                      .Should().ContainSingle()
-                      .Which.ToolCall.CallId.Should().Be(ApprovalFunctionCallId);
+        // The workflow-facing request carries the only request ID the caller can answer with.
+        Assert.IsType<RequestInfoEvent>(approvalUpdate.RawRepresentation);
+
+        ToolApprovalRequestContent approvalRequest =
+            Assert.Single(approvalUpdate.Contents.OfType<ToolApprovalRequestContent>());
+        Assert.Equal(ApprovalFunctionCallId, approvalRequest.ToolCall.CallId);
 
         static bool ProtectedFunction() => true;
     }
