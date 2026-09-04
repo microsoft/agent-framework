@@ -133,6 +133,7 @@ internal static class OpenAIHostingJsonUtilities
 [JsonSerializable(typeof(MCPListToolsItemParam))]
 [JsonSerializable(typeof(MCPApprovalRequestItemParam))]
 [JsonSerializable(typeof(MCPApprovalResponseItemParam))]
+[JsonSerializable(typeof(FunctionApprovalResponseItemParam))]
 [JsonSerializable(typeof(MCPCallItemParam))]
 [JsonSerializable(typeof(List<ItemParam>))]
 // ItemContent types
