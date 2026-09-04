@@ -3,7 +3,6 @@
 # ruff:file-ignore[unnecessary-assign-before-yield]
 from __future__ import annotations
 
-import asyncio
 import functools
 import hashlib
 import json
@@ -27,6 +26,7 @@ from ._edge import (
     EdgeGroup,
     FanOutEdgeGroup,
 )
+from ._edge_runner import gather_cancelling_siblings_on_error
 from ._events import (
     WorkflowErrorDetails,
     WorkflowEvent,
@@ -1043,10 +1043,20 @@ class Workflow(DictConvertible):
                 )
             coerced_responses[request_id] = response
 
-        await asyncio.gather(*[
-            self._runner.context.send_request_info_response(request_id, response)
-            for request_id, response in coerced_responses.items()
-        ])
+        # Cancelling siblings on error, like every other concurrent write into runner state. Each
+        # coroutine pops its own request id, so a sibling of a failing one still finds its own event
+        # pending and would go on to write a RESPONSE message into the queue after the caller had
+        # already raised out of this method and skipped the entry checkpoint below. Under
+        # InProcRunnerContext that cannot happen today only because send_request_info_response never
+        # suspends -- its one await, send_message, has no awaits of its own -- so the siblings are
+        # always already finished. That is a property of this one context implementation, not of the
+        # RunnerContext protocol, so it is not what this is relying on.
+        await gather_cancelling_siblings_on_error(
+            *(
+                self._runner.context.send_request_info_response(request_id, response)
+                for request_id, response in coerced_responses.items()
+            )
+        )
 
         # Record a response-entry checkpoint capturing the delivered responses in-flight, before the
         # runner processes them in the next superstep. This mirrors the initial-message entry

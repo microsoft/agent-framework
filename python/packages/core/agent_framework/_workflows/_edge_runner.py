@@ -93,7 +93,9 @@ class EdgeRunner(ABC):
         same workflow definition and cannot key state that has to survive a rebuild. Checkpoint
         compatibility is decided by graph topology, so the key is derived from topology too.
         Builder validation rejects two edges that share a ``source -> target`` pair anywhere in
-        the workflow, so no two edge groups can produce the same key. Executor ids are only
+        the workflow, so no two edge groups can produce the same key. That validation runs on the
+        ``WorkflowBuilder`` path; a ``Workflow`` constructed directly bypasses it, and two colliding
+        groups would then share one buffer snapshot. Executor ids are only
         required to be non-empty, so the pairs are JSON-encoded rather than joined with
         separators an id could itself contain.
         """
