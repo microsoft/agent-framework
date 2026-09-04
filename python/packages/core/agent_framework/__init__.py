@@ -85,6 +85,7 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "included_token_count",
     ),
     "._evaluation": (
+        "AgentEvalConverter",
         "CheckResult",
         "ConversationSplit",
         "ConversationSplitter",
@@ -388,6 +389,7 @@ __all__ = [
     "USER_AGENT_TELEMETRY_DISABLED_ENV_VAR",
     "Agent",
     "AgentContext",
+    "AgentEvalConverter",
     "AgentExecutor",
     "AgentExecutorRequest",
     "AgentExecutorResponse",

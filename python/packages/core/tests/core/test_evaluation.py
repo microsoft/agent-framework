@@ -7,9 +7,53 @@ from __future__ import annotations
 from typing import Any, cast
 from unittest.mock import MagicMock
 
-from agent_framework._evaluation import ConversationSplit, EvalItem, _to_eval_item
+import pytest
+
+from agent_framework import AgentEvalConverter as ExportedAgentEvalConverter
+from agent_framework._evaluation import AgentEvalConverter, ConversationSplit, EvalItem, _to_eval_item
 from agent_framework._tools import FunctionTool
 from agent_framework._types import AgentResponse, Content, Message
+
+
+class TestAgentEvalConverterCompatibility:
+    def test_root_export_is_legacy_converter(self) -> None:
+        assert ExportedAgentEvalConverter is AgentEvalConverter
+
+    def test_convert_messages_preserves_legacy_foundry_wire_format(self) -> None:
+        messages = [
+            Message("user", ["What's the weather?"]),
+            Message(
+                "assistant",
+                [Content.from_function_call(call_id="call_1", name="get_weather", arguments={"city": "Seattle"})],
+            ),
+        ]
+
+        with pytest.warns(DeprecationWarning, match="AgentEvalConverter"):
+            converted = AgentEvalConverter.convert_messages(messages)
+
+        assert converted == [
+            {"role": "user", "content": [{"type": "text", "text": "What's the weather?"}]},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_call",
+                        "tool_call_id": "call_1",
+                        "name": "get_weather",
+                        "arguments": {"city": "Seattle"},
+                    }
+                ],
+            },
+        ]
+
+    def test_to_eval_item_delegates_to_provider_neutral_builder(self) -> None:
+        response = AgentResponse(messages=[Message("assistant", ["Sunny."])])
+
+        with pytest.warns(DeprecationWarning, match="AgentEvalConverter"):
+            item = AgentEvalConverter.to_eval_item(query="Weather?", response=response)
+
+        assert item.query == "Weather?"
+        assert item.response == "Sunny."
 
 
 class TestToEvalItem:

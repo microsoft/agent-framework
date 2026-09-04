@@ -48,6 +48,7 @@ from ._compaction import (
     included_token_count,
 )
 from ._evaluation import (
+    AgentEvalConverter,
     CheckResult,
     ConversationSplit,
     ConversationSplitter,
@@ -352,6 +353,7 @@ __all__ = [
     "USER_AGENT_TELEMETRY_DISABLED_ENV_VAR",
     "Agent",
     "AgentContext",
+    "AgentEvalConverter",
     "AgentExecutor",
     "AgentExecutorRequest",
     "AgentExecutorResponse",

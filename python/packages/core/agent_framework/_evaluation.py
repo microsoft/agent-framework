@@ -35,9 +35,11 @@ Local evaluator example:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
 import logging
+import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -724,6 +726,136 @@ class Evaluator(Protocol):
 
 
 # endregion
+
+
+def _warn_agent_eval_converter_deprecated() -> None:
+    """Warn when the legacy evaluation converter compatibility surface is used."""
+    warnings.warn(
+        "`AgentEvalConverter` is deprecated and will be removed in a future version. "
+        "Construct `EvalItem` directly or use `evaluate_agent()` / `evaluate_workflow()`; "
+        "Foundry wire conversion is internal to `agent-framework-foundry`.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
+
+def _convert_legacy_foundry_message(message: Message) -> list[dict[str, Any]]:
+    """Preserve the legacy Foundry wire conversion for package compatibility."""
+    content_items: list[dict[str, Any]] = []
+    tool_results: list[dict[str, Any]] = []
+
+    for content in message.contents or []:
+        if content.type == "text" and content.text:
+            content_items.append({"type": "text", "text": content.text})
+        elif content.type in ("data", "uri") and content.uri:
+            image: dict[str, Any] = {
+                "type": "input_image",
+                "image_url": content.uri,
+            }
+            if content.media_type:
+                image["detail"] = "auto"
+            content_items.append(image)
+        elif content.type == "function_call":
+            arguments = content.arguments
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except (json.JSONDecodeError, TypeError):
+                    arguments = {"_raw_arguments": "[unparseable]"}
+            content_items.append({
+                "type": "tool_call",
+                "tool_call_id": content.call_id or "",
+                "name": content.name or "",
+                "arguments": arguments if arguments is not None else {},
+            })
+        elif content.type == "function_result":
+            result = content.result
+            if isinstance(result, str):
+                with contextlib.suppress(json.JSONDecodeError, TypeError):
+                    result = json.loads(result)
+            tool_results.append({
+                "call_id": content.call_id or "",
+                "result": result,
+            })
+
+    if tool_results:
+        return [
+            {
+                "role": "tool",
+                "tool_call_id": tool_result["call_id"],
+                "content": [{"type": "tool_result", "tool_result": tool_result["result"]}],
+            }
+            for tool_result in tool_results
+        ]
+    if content_items:
+        return [{"role": message.role, "content": content_items}]
+    return [
+        {
+            "role": message.role,
+            "content": [{"type": "text", "text": ""}],
+        }
+    ]
+
+
+@experimental(feature_id=ExperimentalFeature.EVALS)
+class AgentEvalConverter:
+    """Deprecated compatibility surface for earlier Agent Framework releases.
+
+    New code should construct :class:`EvalItem` directly or use
+    :func:`evaluate_agent` / :func:`evaluate_workflow`. Foundry-specific wire
+    serialization is owned by ``agent-framework-foundry``.
+    """
+
+    @staticmethod
+    def convert_message(message: Message) -> list[dict[str, Any]]:
+        """Convert one message using the legacy Foundry evaluator wire format."""
+        _warn_agent_eval_converter_deprecated()
+        return _convert_legacy_foundry_message(message)
+
+    @staticmethod
+    def convert_messages(messages: Sequence[Message]) -> list[dict[str, Any]]:
+        """Convert messages using the legacy Foundry evaluator wire format."""
+        _warn_agent_eval_converter_deprecated()
+        return [converted for message in messages for converted in _convert_legacy_foundry_message(message)]
+
+    @staticmethod
+    def extract_tools(agent: Any) -> list[dict[str, Any]]:
+        """Extract legacy evaluator tool-definition dictionaries from an agent."""
+        _warn_agent_eval_converter_deprecated()
+        tools: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        raw_tools = getattr(agent, "default_options", {}).get("tools", [])
+        for tool in raw_tools:
+            if isinstance(tool, FunctionTool) and tool.name not in seen:
+                tools.append({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters(),
+                })
+                seen.add(tool.name)
+        for mcp in getattr(agent, "mcp_tools", []):
+            for tool in getattr(mcp, "functions", []):
+                if isinstance(tool, FunctionTool) and tool.name not in seen:
+                    tools.append({
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters(),
+                    })
+                    seen.add(tool.name)
+        return tools
+
+    @staticmethod
+    def to_eval_item(
+        *,
+        query: str | Sequence[Message],
+        response: AgentResponse[Any],
+        agent: Any | None = None,
+        tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
+        context: str | None = None,
+    ) -> EvalItem:
+        """Build an ``EvalItem`` through the provider-neutral compatibility path."""
+        _warn_agent_eval_converter_deprecated()
+        return _to_eval_item(query=query, response=response, agent=agent, tools=tools, context=context)
 
 
 @experimental(feature_id=ExperimentalFeature.EVALS)
