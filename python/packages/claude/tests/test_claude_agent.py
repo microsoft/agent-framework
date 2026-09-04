@@ -1026,6 +1026,29 @@ class TestFormatPrompt:
         assert "Hello!" in result
         assert "How are you?" in result
 
+    def test_format_multiple_messages_preserves_roles(self) -> None:
+        """Multi-message input (e.g. multi-agent orchestration history) must keep
+        each message's role visible in the text, since the Claude Agent SDK's
+        streaming-input protocol only accepts user-role turns and can't carry
+        per-message roles on the wire."""
+        agent = ClaudeAgent()
+        messages = [
+            Message(role="assistant", contents=[Content.from_text(text="Researcher: Paris is the capital.")]),
+            Message(role="user", contents=[Content.from_text(text="Critic: verify that.")]),
+            Message(role="assistant", contents=[Content.from_text(text="Researcher: confirmed.")]),
+        ]
+        result = agent._format_prompt(messages)  # type: ignore[reportPrivateUsage]
+        assert "[assistant]: Researcher: Paris is the capital." in result
+        assert "[user]: Critic: verify that." in result
+        assert "[assistant]: Researcher: confirmed." in result
+
+    def test_format_single_user_message_has_no_role_label(self) -> None:
+        """The common single-turn case is left unlabeled for backward compatibility."""
+        agent = ClaudeAgent()
+        msg = Message(role="user", contents=[Content.from_text(text="Hello")])
+        result = agent._format_prompt([msg])  # type: ignore[reportPrivateUsage]
+        assert result == "Hello"
+
 
 # region Test Build Options
 

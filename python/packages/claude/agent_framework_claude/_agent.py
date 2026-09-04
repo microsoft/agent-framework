@@ -733,6 +733,14 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
     def _format_prompt(self, messages: list[Message] | None) -> str:
         """Format messages into a prompt string.
 
+        The Claude Agent SDK's streaming-input protocol only accepts ``user``-role
+        turns (it generates its own ``assistant`` turns), so a multi-message,
+        multi-role ``messages`` list can't be forwarded with real per-message
+        roles. Instead, when more than a single plain user turn is given (e.g. an
+        agent receiving prior turns from other agents and the user in a
+        multi-agent orchestration), each message is prefixed with its role so
+        Claude can still tell the turns apart from the text itself.
+
         Args:
             messages: List of chat messages.
 
@@ -741,7 +749,9 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         """
         if not messages:
             return ""
-        return "\n".join([msg.text or "" for msg in messages])
+        if len(messages) == 1 and messages[0].role == "user":
+            return messages[0].text or ""
+        return "\n".join(f"[{msg.role}]: {msg.text or ''}" for msg in messages)
 
     @property
     def default_options(self) -> dict[str, Any]:
