@@ -491,8 +491,9 @@ class FileMemoryProvider(ContextProvider):
             glob_filter = glob_pattern if glob_pattern and glob_pattern.strip() else None
             try:
                 results = await self.store.search(working_folder, regex_pattern, glob_filter, recursive=False)
-                # Drop the internal files first: the index and the description sidecars are never
-                # shown to the agent, so a match inside one must not refuse the whole grep.
+                # The index and the description sidecars are the provider's own bookkeeping and
+                # are never shown to the agent, so a match inside one is dropped rather than
+                # reported.
                 visible = [result for result in results if not _is_internal_file(result.file_name)]
             except ValueError as exc:
                 return f"Could not search memory files: {exc}"

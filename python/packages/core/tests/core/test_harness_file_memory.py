@@ -27,10 +27,10 @@ from agent_framework._harness._file_memory import (
 from agent_framework._sessions import SessionContext
 
 
-def _tool_by_name(tools: list[object], name: str) -> object:
+def _tool_by_name(tools: list[object], name: str) -> FunctionTool:
     """Return the tool with the requested name from a prepared tool list."""
     for tool in tools:
-        if getattr(tool, "name", None) == name:
+        if isinstance(tool, FunctionTool) and tool.name == name:
             return tool
     raise AssertionError(f"Tool {name!r} was not found.")
 
@@ -484,9 +484,9 @@ async def test_memory_replace_lines() -> None:
 # region file-memory guards
 
 
-async def _memory_tools(store: AgentFileStore, **kwargs: object) -> list[object]:
+async def _memory_tools(store: AgentFileStore) -> list[object]:
     """Prepare a FileMemoryProvider and return its registered tools."""
-    provider = FileMemoryProvider(store=store, scope="scope-1", **kwargs)  # type: ignore[arg-type]
+    provider = FileMemoryProvider(store=store, scope="scope-1")
     session = AgentSession(session_id="session-1")
     context = SessionContext(input_messages=[])
     await provider.before_run(agent=None, session=session, context=context, state={})
