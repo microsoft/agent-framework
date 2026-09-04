@@ -5,6 +5,7 @@
 import base64
 import json
 import logging
+from itertools import permutations
 from typing import Any
 
 import pytest
@@ -1147,6 +1148,159 @@ def test_agent_framework_to_agui_interleaved_batch_round_trips_without_dropping(
         if content.type == "function_result"
     }
     assert surviving_result_ids == {"call_a", "call_b", "call_c"}
+
+
+def test_agent_framework_to_agui_pending_call_carries_across_messages():
+    """A call opened by an earlier message stays open across the conversion.
+
+    Regression: the unresolved-call set used to be rebuilt per mixed message, so a prior
+    ``assistant(call A)`` followed by ``[call C, result A, result C]`` emitted
+    ``assistant(A), assistant(C), tool(A), tool(C)``; the intervening ``assistant(C)``
+    cleared pending call A and ``_sanitize_tool_history`` dropped A's real result.
+    """
+    framework_messages = [
+        Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="call_a", name="fa", arguments="{}")],
+            message_id="m1",
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="call_c", name="fc", arguments="{}"),
+                Content.from_function_result(call_id="call_a", result="ra"),
+                Content.from_function_result(call_id="call_c", result="rc"),
+            ],
+            message_id="m2",
+        ),
+    ]
+
+    agui_messages = agent_framework_messages_to_agui(framework_messages)
+
+    # assistant(A) -> tool(A) -> assistant(C) -> tool(C): the new call C is deferred until
+    # the earlier call A has received its result.
+    assert [m["role"] for m in agui_messages] == ["assistant", "tool", "assistant", "tool"]
+    assert [tc["id"] for tc in agui_messages[0]["tool_calls"]] == ["call_a"]
+    assert agui_messages[1]["toolCallId"] == "call_a"
+    assert [tc["id"] for tc in agui_messages[2]["tool_calls"]] == ["call_c"]
+    assert agui_messages[3]["toolCallId"] == "call_c"
+
+    provider_messages, _ = normalize_agui_input_messages(agui_messages, sanitize_tool_history=True)
+    surviving_result_ids = {
+        content.call_id
+        for message in provider_messages
+        for content in (message.contents or [])
+        if content.type == "function_result"
+    }
+    assert surviving_result_ids == {"call_a", "call_c"}
+
+
+def test_agent_framework_to_agui_result_for_buffered_call_waits_for_its_call():
+    """A result whose own call is still buffered is held until that call is emitted.
+
+    Regression: for ``[call A, call B, result A, call C, result C, result B]`` the split
+    correctly deferred ``assistant(C)`` but still emitted ``tool(C)`` immediately, leaving
+    C's result ahead of its call so ``_sanitize_tool_history`` dropped it.
+    """
+    msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="call_a", name="fa", arguments="{}"),
+            Content.from_function_call(call_id="call_b", name="fb", arguments="{}"),
+            Content.from_function_result(call_id="call_a", result="ra"),
+            Content.from_function_call(call_id="call_c", name="fc", arguments="{}"),
+            Content.from_function_result(call_id="call_c", result="rc"),
+            Content.from_function_result(call_id="call_b", result="rb"),
+        ],
+        message_id="out-of-order-1",
+    )
+
+    agui_messages = agent_framework_messages_to_agui([msg])
+
+    # Every tool message must come after an assistant message that declared its call.
+    declared: set[str] = set()
+    for agui_msg in agui_messages:
+        if agui_msg["role"] == "assistant":
+            declared.update(tc["id"] for tc in agui_msg.get("tool_calls") or [])
+        else:
+            assert agui_msg["toolCallId"] in declared, f"{agui_msg['toolCallId']} emitted before its call"
+
+    provider_messages, _ = normalize_agui_input_messages(agui_messages, sanitize_tool_history=True)
+    surviving_result_ids = {
+        content.call_id
+        for message in provider_messages
+        for content in (message.contents or [])
+        if content.type == "function_result"
+    }
+    assert surviving_result_ids == {"call_a", "call_b", "call_c"}
+
+
+def _call_result_interleavings(call_ids: list[str]) -> list[tuple[tuple[str, str], ...]]:
+    """Every ordering of the given calls and their results where each call precedes its result."""
+    events = [("call", call_id) for call_id in call_ids] + [("result", call_id) for call_id in call_ids]
+    orderings: list[tuple[tuple[str, str], ...]] = []
+    for ordering in dict.fromkeys(permutations(events)):
+        emitted: set[str] = set()
+        for kind, call_id in ordering:
+            if kind == "call":
+                emitted.add(call_id)
+            elif call_id not in emitted:
+                break
+        else:
+            orderings.append(ordering)
+    return orderings
+
+
+def _contents_for(ordering: tuple[tuple[str, str], ...]) -> list[Content]:
+    return [
+        Content.from_function_call(call_id=call_id, name="f", arguments="{}")
+        if kind == "call"
+        else Content.from_function_result(call_id=call_id, result=f"r-{call_id}")
+        for kind, call_id in ordering
+    ]
+
+
+def _assert_no_result_is_orphaned(agui_messages: list[dict[str, Any]], call_ids: list[str]) -> None:
+    """Every tool message follows an assistant message declaring its call, and no result is lost."""
+    declared: set[str] = set()
+    for agui_msg in agui_messages:
+        if agui_msg["role"] == "assistant":
+            declared.update(tool_call["id"] for tool_call in agui_msg.get("tool_calls") or [])
+        elif agui_msg["role"] == "tool":
+            assert agui_msg["toolCallId"] in declared, f"{agui_msg['toolCallId']} emitted before its call"
+
+    provider_messages, _ = normalize_agui_input_messages(agui_messages, sanitize_tool_history=True)
+    surviving = {
+        content.call_id
+        for message in provider_messages
+        for content in (message.contents or [])
+        if content.type == "function_result"
+    }
+    assert surviving == set(call_ids)
+
+
+@pytest.mark.parametrize("call_ids", [["call_a", "call_b"], ["call_a", "call_b", "call_c"]])
+def test_agent_framework_to_agui_no_interleaving_drops_a_result(call_ids: list[str]):
+    """Exhaustive: no ordering of calls/results may lose a result or emit one ahead of its call.
+
+    ``_sanitize_tool_history`` resets its pending-call set on every non-tool message, so any
+    assistant message emitted between a call and that call's result causes the result to be
+    dropped. This sweeps every valid interleaving -- in a single mixed message and split across
+    two messages -- because that whole class of ordering bug has recurred here repeatedly.
+    """
+    for ordering in _call_result_interleavings(call_ids):
+        contents = _contents_for(ordering)
+
+        single = [Message(role="assistant", contents=contents, message_id="m1")]
+        _assert_no_result_is_orphaned(agent_framework_messages_to_agui(single), call_ids)
+
+        # Splitting the leading content into its own message exercises the cross-message
+        # pending-call state that a per-message set would lose.
+        split = [
+            Message(role="assistant", contents=contents[:1], message_id="m1"),
+            Message(role="assistant", contents=contents[1:], message_id="m2"),
+        ]
+        _assert_no_result_is_orphaned(agent_framework_messages_to_agui(split), call_ids)
 
 
 # Additional tests for better coverage
