@@ -15,6 +15,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast, overload
@@ -56,10 +57,11 @@ from azure.ai.agentserver.responses import (
     InMemoryResponseProvider,
     ResponseContext,
     ResponseExitForRecovery,
+    ResponseObject,
     ResponsesServerOptions,
 )
 from azure.ai.agentserver.responses.aio import ResponseEventStream
-from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem
+from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem, ResponseStreamEvent
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
 from mcp.types import ErrorData
@@ -70,8 +72,10 @@ from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (
     CONSENT_ERROR_CODE,
     ConsentError,
+    _is_failed_stored_response,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _json_safe_to_str,  # pyright: ignore[reportPrivateUsage]
+    _OmitFailedConversationInputProvider,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     _stringify_mcp_output,  # pyright: ignore[reportPrivateUsage]
@@ -1292,6 +1296,286 @@ class TestAgentSessionPersistence:
         assert body["status"] == "failed"
         assert stored is not None
         assert stored.state["before_failure"] == "saved"
+
+    @pytest.mark.parametrize("history_source", ["agent_server", "agent"])
+    async def test_failed_conversation_input_is_not_in_subsequent_history(
+        self, history_source: Literal["agent_server", "agent"]
+    ) -> None:
+        """Failed conversation input must not be replayed on the next turn.
+
+        The agentserver store, not the MAF session, is what #7630 poisons:
+        a failed request still persisted input items onto the conversation.
+        """
+        recorded_messages: list[Sequence[Message]] = []
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Hello!")])])
+        )
+        original_run = agent.run.side_effect
+
+        def run_dispatch(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            recorded_messages.append(cast(Sequence[Message], kwargs.get("messages") or []))
+            if len(recorded_messages) == 1:
+                return ResponseStream(
+                    _raising_updates("No tool call found for function call output with call_id call_12345abc."),
+                    finalizer=AgentResponse.from_updates,
+                )
+            return original_run(*args, **kwargs)
+
+        agent.run = MagicMock(side_effect=run_dispatch)
+        response_store = InMemoryResponseProvider()
+        server = _make_server(agent, response_store=response_store, history_source=history_source)
+
+        failed = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "conversation": "conv-failed",
+                "input": [
+                    {"role": "user", "content": "Hello, how are you?"},
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call_12345abc",
+                        "output": "example function call output",
+                    },
+                ],
+            },
+        )
+        recovered = await _post(server, input_text="Hello, how are you?", conversation_id="conv-failed")
+
+        assert failed.json()["status"] == "failed"
+        assert recovered.json()["status"] == "completed"
+        assert len(recorded_messages) == 2
+        recovered_blob = json.dumps([
+            {
+                "role": str(message.role),
+                "contents": [getattr(content, "type", None) for content in message.contents],
+                "text": [
+                    getattr(content, "text", None) for content in message.contents if getattr(content, "text", None)
+                ],
+                "call_ids": [
+                    getattr(content, "call_id", None)
+                    for content in message.contents
+                    if getattr(content, "call_id", None)
+                ],
+            }
+            for message in recorded_messages[1]
+        ])
+        assert "call_12345abc" not in recovered_blob
+        assert "example function call output" not in recovered_blob
+        history_ids = await response_store.get_history_item_ids(None, "conv-failed", 100)
+        history_items = await response_store.get_items(history_ids)
+        history_blob = json.dumps(history_items)
+        if history_source == "agent_server":
+            assert "call_12345abc" not in history_blob
+        else:
+            # AgentServer still retains the protocol transcript in agent-history
+            # mode, but hosting does not replay it into the model.
+            assert "call_12345abc" in history_blob
+
+    async def test_agent_history_does_not_buffer_or_wrap_response_storage(self) -> None:
+        agent = _make_agent(response=AgentResponse(messages=[Message("assistant", ["done"])]))
+        response_store = InMemoryResponseProvider()
+        server = _make_server(agent, response_store=response_store, history_source="agent")
+
+        assert server._endpoint._provider is response_store  # pyright: ignore[reportPrivateUsage]
+        with patch.object(server, "_buffer_sync_response_events", side_effect=AssertionError("must not buffer")):
+            response = await _post(server, input_text="first", stream=False)
+
+        assert response.json()["status"] == "completed"
+
+    async def test_omit_failed_conversation_input_provider_drops_terminal_failed_input(self) -> None:
+        inner = InMemoryResponseProvider()
+        store = _OmitFailedConversationInputProvider(inner, ContextVar("failed_response_id", default=None))
+        poison_item = cast(
+            OutputItem,
+            {
+                "id": "item_poison",
+                "type": "function_call_output",
+                "call_id": "call_12345abc",
+                "output": "example function call output",
+                "status": "completed",
+            },
+        )
+        ok_item = cast(
+            OutputItem,
+            {
+                "id": "item_ok",
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Hello, how are you?"}],
+                "status": "completed",
+            },
+        )
+
+        await store.create_response(
+            cast(ResponseObject, {"id": "resp_failed", "status": "failed", "conversation": "conv-1", "output": []}),
+            [poison_item],
+            None,
+        )
+        await store.create_response(
+            cast(ResponseObject, {"id": "resp_ok", "status": "completed", "conversation": "conv-1", "output": []}),
+            [ok_item],
+            None,
+        )
+        await store.create_response(
+            cast(ResponseObject, {"id": "resp_standalone", "status": "failed", "output": []}),
+            [poison_item],
+            None,
+        )
+
+        history_ids = await store.get_history_item_ids(None, "conv-1", 100)
+        assert "item_poison" not in history_ids
+        assert "item_ok" in history_ids
+        assert [item["id"] for item in await store.get_input_items("resp_standalone")] == ["item_poison"]
+        previous_history_ids = await store.get_history_item_ids("resp_standalone", None, 100)
+        assert "item_poison" not in previous_history_ids
+        assert _is_failed_stored_response(cast(ResponseObject, {"id": "resp_failed", "status": "failed"}))
+        assert not _is_failed_stored_response(cast(ResponseObject, {"id": "resp_ok", "status": "completed"}))
+
+    async def test_failed_standalone_input_is_not_replayed_by_previous_response_id(self) -> None:
+        recorded_messages: list[Sequence[Message]] = []
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("recovered")])])
+        )
+        original_run = agent.run.side_effect
+
+        def run_dispatch(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            recorded_messages.append(cast(Sequence[Message], kwargs.get("messages") or []))
+            if len(recorded_messages) == 1:
+                return ResponseStream(
+                    _raising_updates("No tool call found for function call output with call_id call_standalone."),
+                    finalizer=AgentResponse.from_updates,
+                )
+            return original_run(*args, **kwargs)
+
+        agent.run = MagicMock(side_effect=run_dispatch)
+        response_store = InMemoryResponseProvider()
+        server = _make_server(agent, response_store=response_store)
+        failed = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {"role": "user", "content": "first"},
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call_standalone",
+                        "output": "poison output",
+                    },
+                ],
+            },
+        )
+
+        recovered = await _post(server, input_text="second", previous_response_id=failed.json()["id"])
+
+        assert failed.json()["status"] == "failed"
+        assert recovered.json()["status"] == "completed"
+        recovered_blob = json.dumps([message.to_dict() for message in recorded_messages[1]])
+        assert "call_standalone" not in recovered_blob
+        assert "poison output" not in recovered_blob
+        stored_input_blob = json.dumps(await response_store.get_input_items(failed.json()["id"], ascending=True))
+        assert "call_standalone" in stored_input_blob
+        assert "poison output" in stored_input_blob
+
+    async def test_omit_failed_conversation_input_provider_updates_existing_response_in_place(self) -> None:
+        inner = InMemoryResponseProvider()
+        store = _OmitFailedConversationInputProvider(inner, ContextVar("failed_response_id", default=None))
+        poison_item = cast(
+            OutputItem,
+            {
+                "id": "item_poison",
+                "type": "function_call_output",
+                "call_id": "call_12345abc",
+                "output": "example function call output",
+                "status": "completed",
+            },
+        )
+        in_progress = cast(
+            ResponseObject,
+            {
+                "id": "resp_stream_fail",
+                "status": "in_progress",
+                "conversation": "conv-1",
+                "output": [],
+            },
+        )
+
+        await store.create_response(in_progress, [poison_item], None)
+        await store.update_response(cast(ResponseObject, {**in_progress, "status": "failed"}))
+
+        persisted = await inner.get_response("resp_stream_fail")
+        input_items = await inner.get_input_items("resp_stream_fail", ascending=True)
+        assert persisted["status"] == "failed"
+        assert [item["id"] for item in input_items] == ["item_poison"]
+
+    async def test_omit_failed_conversation_input_provider_drops_known_failed_initial_input(self) -> None:
+        inner = InMemoryResponseProvider()
+        failed_response_id = ContextVar[str | None]("failed_response_id", default=None)
+        store = _OmitFailedConversationInputProvider(inner, failed_response_id)
+        poison_item = cast(
+            OutputItem,
+            {
+                "id": "item_poison",
+                "type": "function_call_output",
+                "call_id": "call_12345abc",
+                "output": "example function call output",
+                "status": "completed",
+            },
+        )
+
+        token = failed_response_id.set("resp_failed")
+        try:
+            await store.create_response(
+                cast(
+                    ResponseObject,
+                    {"id": "resp_failed", "status": "in_progress", "conversation": "conv-1", "output": []},
+                ),
+                [poison_item],
+                None,
+            )
+        finally:
+            failed_response_id.reset(token)
+
+        assert await inner.get_input_items("resp_failed") == []
+        assert failed_response_id.get() is None
+
+    async def test_failed_response_marker_is_cleared_when_persistence_stops_consumption(self) -> None:
+        server = _make_server(_make_agent())
+
+        async def failed_events() -> AsyncIterator[ResponseStreamEvent]:
+            yield cast(ResponseStreamEvent, {"type": "response.failed"})
+
+        buffered = server._buffer_sync_response_events(  # pyright: ignore[reportPrivateUsage]
+            failed_events(),
+            "resp_failed",
+            store=True,
+            belongs_to_history=True,
+        )
+
+        await anext(buffered)
+        assert server._failed_sync_response_id.get() == "resp_failed"  # pyright: ignore[reportPrivateUsage]
+
+        await buffered.aclose()
+        assert server._failed_sync_response_id.get() is None  # pyright: ignore[reportPrivateUsage]
+
+    def test_default_response_store_is_resolved_before_wrapping(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("AGENTSERVER_STATE_ROOT", str(tmp_path))
+
+        server = ResponsesHostServer(_make_agent())
+        wrapped = server._endpoint._provider  # pyright: ignore[reportPrivateUsage]
+
+        assert isinstance(wrapped, _OmitFailedConversationInputProvider)
+        assert type(wrapped._inner).__name__ == "FileResponseStore"  # pyright: ignore[reportPrivateUsage]
+
+    def test_explicit_volatile_store_still_fails_resilient_background_guard(self) -> None:
+        options = ResponsesServerOptions(resilient_background=True)
+
+        with pytest.raises(ValueError, match="resilient_background=True"):
+            ResponsesHostServer(_build_text_workflow_agent("done"), store=InMemoryResponseProvider(), options=options)
 
     async def test_run_save_failure_emits_failed_response(self) -> None:
         store = _FailingSessionStore()
