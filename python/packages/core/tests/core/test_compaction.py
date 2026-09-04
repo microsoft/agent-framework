@@ -102,10 +102,11 @@ def _assistant_reasoning_and_function_calls(*call_ids: str) -> Message:
     return Message(role="assistant", contents=contents)
 
 
-def _tool_result(call_id: str, result: str) -> Message:
+def _tool_result(call_id: str, result: str, message_id: str | None = None) -> Message:
     return Message(
         role="tool",
         contents=[Content.from_function_result(call_id=call_id, result=result)],
+        message_id=message_id,
     )
 
 
@@ -2010,3 +2011,351 @@ def test_serialize_message_preserves_non_ascii_for_token_count() -> None:
     assert text in serialized
     assert "\\u3053" not in serialized
     assert tokenizer.count_tokens(serialized) < tokenizer.count_tokens(escaped)
+
+
+async def test_compaction_provider_before_run_preserves_synthetic_summary_messages() -> None:
+    """Test that before_run preserves synthetic summary messages created by compaction strategies.
+    
+    This is a regression test for a bug where ToolResultCompactionStrategy and SummarizationStrategy
+    create new synthetic Message objects during compaction, but CompactionProvider.before_run only
+    filtered existing messages by id(), causing the new summary messages to be silently dropped.
+    """
+    from agent_framework._sessions import SessionContext
+    
+    # Create a session context with some messages from a history provider
+    messages = [
+        Message(role="user", contents=["hello"]),
+        _assistant_function_call("c1"),
+        _tool_result("c1", "sunny, 18C"),
+        Message(role="assistant", contents=["final response"]),
+    ]
+    
+    ctx = SessionContext(input_messages=[])
+    ctx.extend_messages("history", messages)
+    
+    # Verify initial state - 4 messages from history provider
+    assert len(ctx.context_messages["history"]) == 4
+    assert len(ctx.get_messages()) == 4
+    
+    # Apply ToolResultCompactionStrategy via CompactionProvider.before_run
+    provider = CompactionProvider(
+        before_strategy=ToolResultCompactionStrategy(keep_last_tool_call_groups=0)
+    )
+    
+    await provider.before_run(agent=None, session=None, context=ctx, state={})
+    
+    # After compaction, we should have 3 messages:
+    # - user message
+    # - synthetic summary message "[Tool results: tool: sunny, 18C]"
+    # - final assistant response
+    final_messages = ctx.get_messages()
+    assert len(final_messages) == 3, f"Expected 3 messages after compaction, got {len(final_messages)}"
+    
+    # Verify the summary message is present - it should be an assistant message with tool results summary
+    summary_messages = [
+        m for m in final_messages 
+        if m.role == "assistant" and any(hasattr(c, 'text') and "Tool results" in c.text for c in m.contents)
+    ]
+    assert len(summary_messages) == 1, "Summary message should be present in final messages"
+    
+    # Verify the context_messages dict was also updated correctly
+    assert len(ctx.context_messages["history"]) == 3, "History provider should have 3 messages after compaction"
+    
+    # Verify the summary is in the history provider's list
+    history_summary_messages = [
+        m for m in ctx.context_messages["history"]
+        if m.role == "assistant" and any(hasattr(c, 'text') and "Tool results" in c.text for c in m.contents)
+    ]
+    assert len(history_summary_messages) == 1, "Summary message should be in history provider's message list"
+
+
+async def test_compaction_provider_before_run_preserves_summarization_strategy_messages() -> None:
+    """Test that before_run preserves synthetic summary messages created by SummarizationStrategy.
+    
+    This is a regression test for the same bug affecting SummarizationStrategy, which creates
+    new synthetic Message objects during compaction.
+    """
+    from agent_framework._sessions import SessionContext
+    from unittest.mock import AsyncMock, MagicMock
+    
+    # Create a mock chat client for summarization
+    mock_client = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.text = "Summary of conversation"
+    mock_client.get_response.return_value = mock_response
+    
+    # Create messages that will trigger summarization
+    messages = [
+        Message(role="user", contents=["first message"]),
+        Message(role="assistant", contents=["first response"]),
+        Message(role="user", contents=["second message"]),
+        Message(role="assistant", contents=["second response"]),
+        Message(role="user", contents=["third message"]),
+        Message(role="assistant", contents=["third response"]),
+    ]
+    
+    ctx = SessionContext(input_messages=[])
+    ctx.extend_messages("history", messages)
+    
+    # Verify initial state - 6 messages from history provider
+    assert len(ctx.context_messages["history"]) == 6
+    assert len(ctx.get_messages()) == 6
+    
+    # Apply SummarizationStrategy via CompactionProvider.before_run
+    # Set target_count=2 to trigger summarization since we have 6 non-system messages
+    provider = CompactionProvider(
+        before_strategy=SummarizationStrategy(
+            client=mock_client,
+            target_count=2,
+            threshold=0,
+        )
+    )
+    
+    await provider.before_run(agent=None, session=None, context=ctx, state={})
+    
+    # After compaction, we should have messages including the synthetic summary
+    final_messages = ctx.get_messages()
+    assert len(final_messages) >= 3, f"Expected at least 3 messages after compaction (summary + retained), got {len(final_messages)}"
+    
+    # Verify the summary message is present
+    summary_messages = [
+        m for m in final_messages 
+        if m.role == "assistant" and any(hasattr(c, 'text') and "Summary of conversation" in c.text for c in m.contents)
+    ]
+    assert len(summary_messages) == 1, "Summary message should be present in final messages"
+    
+    # Verify the context_messages dict was also updated correctly
+    assert len(ctx.context_messages["history"]) >= 3, "History provider should have at least 3 messages after compaction"
+    
+    # Verify the summary is in the history provider's list
+    history_summary_messages = [
+        m for m in ctx.context_messages["history"]
+        if m.role == "assistant" and any(hasattr(c, 'text') and "Summary of conversation" in c.text for c in m.contents)
+    ]
+    assert len(history_summary_messages) == 1, "Summary message should be in history provider's message list"
+
+
+async def test_compaction_provider_preserves_attribution_on_synthetic_summaries() -> None:
+    """Test that synthetic summary messages preserve origin_session_ids from summarized messages.
+    
+    This is a regression test for a security/governance issue where cross-session attribution
+    was lost when messages were summarized, potentially bypassing CrossSessionObserver governance.
+    """
+    from agent_framework._sessions import SessionContext
+    from unittest.mock import AsyncMock, MagicMock
+    
+    # Create a mock chat client for summarization
+    mock_client = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.text = "Summary of conversation"
+    mock_client.get_response.return_value = mock_response
+    
+    # Create messages with cross-session attribution
+    messages = [
+        Message(role="user", contents=["first message"], message_id="msg1"),
+        Message(role="assistant", contents=["first response"], message_id="msg2"),
+        Message(role="user", contents=["second message"], message_id="msg3"),
+        Message(role="assistant", contents=["second response"], message_id="msg4"),
+    ]
+    
+    # Add attribution to some messages to simulate cross-session content
+    messages[0].additional_properties["_attribution"] = {
+        "source_id": "history",
+        "source_type": "HistoryProvider",
+        "origin_session_ids": ["session-prior-1"],
+    }
+    messages[1].additional_properties["_attribution"] = {
+        "source_id": "history",
+        "source_type": "HistoryProvider",
+        "origin_session_ids": ["session-prior-2"],
+    }
+    
+    ctx = SessionContext(input_messages=[])
+    ctx.extend_messages("history", messages)
+    
+    # Apply SummarizationStrategy via CompactionProvider.before_run
+    provider = CompactionProvider(
+        before_strategy=SummarizationStrategy(
+            client=mock_client,
+            target_count=1,
+            threshold=0,
+        )
+    )
+    
+    await provider.before_run(agent=None, session=None, context=ctx, state={})
+    
+    # Find the synthetic summary message
+    final_messages = ctx.get_messages()
+    summary_messages = [
+        m for m in final_messages 
+        if m.role == "assistant" and any(hasattr(c, 'text') and "Summary of conversation" in c.text for c in m.contents)
+    ]
+    assert len(summary_messages) == 1, "Summary message should be present"
+    
+    summary = summary_messages[0]
+    
+    # Verify the summary preserves the aggregated origin_session_ids
+    summary_attribution = summary.additional_properties.get("_attribution")
+    assert summary_attribution is not None, "Summary should have attribution"
+    assert isinstance(summary_attribution, dict), "Attribution should be a dict"
+    
+    origin_session_ids = summary_attribution.get("origin_session_ids")
+    assert origin_session_ids is not None, "Summary should have origin_session_ids"
+    assert isinstance(origin_session_ids, list), "origin_session_ids should be a list"
+    
+    # Should contain both session IDs, deduplicated
+    assert set(origin_session_ids) == {"session-prior-1", "session-prior-2"}, \
+        f"Expected both session IDs, got {origin_session_ids}"
+
+
+async def test_compaction_provider_preserves_attribution_on_tool_result_summaries() -> None:
+    """Test that ToolResultCompactionStrategy summaries preserve origin_session_ids."""
+    from agent_framework._sessions import SessionContext
+    
+    # Create messages with cross-session attribution
+    messages = [
+        Message(role="user", contents=["hello"], message_id="msg1"),
+        _assistant_function_call("c1"),
+        _tool_result("c1", "sunny, 18C", message_id="msg2"),
+        Message(role="assistant", contents=["final response"], message_id="msg4"),
+    ]
+    
+    # Add attribution to the tool result to simulate cross-session content
+    messages[2].additional_properties["_attribution"] = {
+        "source_id": "history",
+        "source_type": "HistoryProvider",
+        "origin_session_ids": ["session-prior"],
+    }
+    
+    ctx = SessionContext(input_messages=[])
+    ctx.extend_messages("history", messages)
+    
+    # Apply ToolResultCompactionStrategy via CompactionProvider.before_run
+    provider = CompactionProvider(
+        before_strategy=ToolResultCompactionStrategy(keep_last_tool_call_groups=0)
+    )
+    
+    await provider.before_run(agent=None, session=None, context=ctx, state={})
+    
+    # Find the synthetic summary message
+    final_messages = ctx.get_messages()
+    summary_messages = [
+        m for m in final_messages 
+        if m.role == "assistant" and any(hasattr(c, 'text') and "Tool results" in c.text for c in m.contents)
+    ]
+    assert len(summary_messages) == 1, "Tool result summary should be present"
+    
+    summary = summary_messages[0]
+    
+    # Verify the summary preserves the origin_session_ids
+    summary_attribution = summary.additional_properties.get("_attribution")
+    assert summary_attribution is not None, "Summary should have attribution"
+    assert isinstance(summary_attribution, dict), "Attribution should be a dict"
+    
+    origin_session_ids = summary_attribution.get("origin_session_ids")
+    assert origin_session_ids is not None, "Summary should have origin_session_ids"
+    assert isinstance(origin_session_ids, list), "origin_session_ids should be a list"
+    assert origin_session_ids == ["session-prior"], \
+        f"Expected session-prior, got {origin_session_ids}"
+
+
+async def test_compaction_provider_deduplicates_origin_session_ids() -> None:
+    """Test that duplicate origin_session_ids are deduplicated in synthetic summaries."""
+    from agent_framework._sessions import SessionContext
+    from unittest.mock import AsyncMock, MagicMock
+    
+    # Create a mock chat client for summarization
+    mock_client = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.text = "Summary"
+    mock_client.get_response.return_value = mock_response
+    
+    # Create messages where multiple messages have the same origin
+    messages = [
+        Message(role="user", contents=["msg1"], message_id="msg1"),
+        Message(role="assistant", contents=["resp1"], message_id="msg2"),
+        Message(role="user", contents=["msg2"], message_id="msg3"),
+        Message(role="assistant", contents=["resp2"], message_id="msg4"),
+    ]
+    
+    # All messages have the same origin_session_id
+    for msg in messages:
+        msg.additional_properties["_attribution"] = {
+            "source_id": "history",
+            "source_type": "HistoryProvider",
+            "origin_session_ids": ["session-prior"],
+        }
+    
+    ctx = SessionContext(input_messages=[])
+    ctx.extend_messages("history", messages)
+    
+    provider = CompactionProvider(
+        before_strategy=SummarizationStrategy(
+            client=mock_client,
+            target_count=1,
+            threshold=0,
+        )
+    )
+    
+    await provider.before_run(agent=None, session=None, context=ctx, state={})
+    
+    # Find the summary
+    final_messages = ctx.get_messages()
+    summary_messages = [
+        m for m in final_messages 
+        if m.role == "assistant" and any(hasattr(c, 'text') and "Summary" in c.text for c in m.contents)
+    ]
+    assert len(summary_messages) == 1
+    
+    summary = summary_messages[0]
+    origin_session_ids = summary.additional_properties.get("_attribution", {}).get("origin_session_ids")
+    
+    # Should be deduplicated - only one instance of session-prior
+    assert origin_session_ids == ["session-prior"], \
+        f"Expected single deduplicated session ID, got {origin_session_ids}"
+
+
+async def test_compaction_provider_no_attribution_when_sources_have_none() -> None:
+    """Test that summaries of messages without attribution don't get attribution added."""
+    from agent_framework._sessions import SessionContext
+    from unittest.mock import AsyncMock, MagicMock
+    
+    # Create a mock chat client for summarization
+    mock_client = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.text = "Summary"
+    mock_client.get_response.return_value = mock_response
+    
+    # Create messages without any attribution
+    messages = [
+        Message(role="user", contents=["msg1"], message_id="msg1"),
+        Message(role="assistant", contents=["resp1"], message_id="msg2"),
+    ]
+    
+    ctx = SessionContext(input_messages=[])
+    ctx.extend_messages("history", messages)
+    
+    provider = CompactionProvider(
+        before_strategy=SummarizationStrategy(
+            client=mock_client,
+            target_count=1,
+            threshold=0,
+        )
+    )
+    
+    await provider.before_run(agent=None, session=None, context=ctx, state={})
+    
+    # Find the summary
+    final_messages = ctx.get_messages()
+    summary_messages = [
+        m for m in final_messages 
+        if m.role == "assistant" and any(hasattr(c, 'text') and "Summary" in c.text for c in m.contents)
+    ]
+    assert len(summary_messages) == 1
+    
+    summary = summary_messages[0]
+    summary_attribution = summary.additional_properties.get("_attribution")
+    
+    # Should not have attribution since sources had none
+    assert summary_attribution is None or "origin_session_ids" not in summary_attribution, \
+        "Summary should not have origin_session_ids when sources have none"

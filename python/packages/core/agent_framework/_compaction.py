@@ -48,6 +48,17 @@ _TOOL_CALL_CONTENT_TYPES: Final[set[str]] = {
 }
 
 
+def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[str]:
+    """Return origin session IDs in first-seen order without duplicates."""
+    unique_origin_session_ids: list[str] = []
+    seen_origin_session_ids: set[str] = set()
+    for origin_session_id in origin_session_ids:
+        if origin_session_id not in seen_origin_session_ids:
+            seen_origin_session_ids.add(origin_session_id)
+            unique_origin_session_ids.append(origin_session_id)
+    return unique_origin_session_ids
+
+
 @runtime_checkable
 class TokenizerProtocol(Protocol):
     """Protocol for token counters used by token-aware compaction strategies."""
@@ -1706,6 +1717,16 @@ class CompactionProvider(ContextProvider):
         if not all_messages:
             return
 
+        # Track each original message's source before compaction
+        source_by_id: dict[int, str] = {
+            id(message): sid for sid, msgs in context.context_messages.items() for message in msgs
+        }
+
+        # Track original messages by message_id for attribution preservation
+        message_by_message_id: dict[str, Message] = {
+            message.message_id: message for message in all_messages if message.message_id
+        }
+
         await _run_compaction_strategy(
             all_messages,
             strategy=self.before_strategy,
@@ -1714,9 +1735,64 @@ class CompactionProvider(ContextProvider):
         )
 
         projected = project_included_messages(all_messages)
-        projected_set = {id(m) for m in projected}
-        for sid in list(context.context_messages):
-            context.context_messages[sid] = [m for m in context.context_messages[sid] if id(m) in projected_set]
+        
+        # Rebuild provider message lists from the projected list, preserving source attribution
+        # and including new synthetic messages created by compaction strategies
+        rebuilt: dict[str, list[Message]] = {sid: [] for sid in context.context_messages}
+        fallback_sid = next(iter(rebuilt), self.source_id)
+        last_sid = fallback_sid
+        for message in projected:
+            # For new synthetic messages, use the last known source; for original messages, use their tracked source
+            sid = source_by_id.get(id(message), last_sid)
+            if sid not in rebuilt:
+                # If the source was somehow removed during compaction, fall back to the last known source
+                sid = last_sid
+            rebuilt[sid].append(message)
+            last_sid = sid
+        
+        context.context_messages.clear()
+        context.context_messages.update(rebuilt)
+
+        # Preserve attribution metadata on synthetic summary messages
+        # This ensures cross-session governance signals are not lost when content is summarized
+        for message in projected:
+            # Check if this is a synthetic summary message
+            annotation = _read_group_annotation_raw(message)
+            if annotation is None:
+                continue
+            
+            summarized_message_ids: Any = annotation.get(SUMMARY_OF_MESSAGE_IDS_KEY)
+            if not isinstance(summarized_message_ids, list) or not summarized_message_ids:
+                continue
+            
+            # Collect origin_session_ids from all summarized messages
+            origin_session_ids: list[str] = []
+            for msg_id in cast("list[Any]", summarized_message_ids):
+                if not isinstance(msg_id, str):
+                    continue
+                original_message = message_by_message_id.get(msg_id)
+                if original_message is None:
+                    continue
+                original_attribution = original_message.additional_properties.get("_attribution")
+                if isinstance(original_attribution, Mapping):
+                    original_origins = original_attribution.get("origin_session_ids")
+                    if isinstance(original_origins, Sequence) and not isinstance(original_origins, str):
+                        for origin in cast("Sequence[Any]", original_origins):
+                            if isinstance(origin, str):
+                                origin_session_ids.append(origin)
+            
+            if origin_session_ids:
+                # Deduplicate and attach to the synthetic summary
+                deduplicated_ids = _deduplicate_origin_session_ids(origin_session_ids)
+                summary_attribution = message.additional_properties.get("_attribution")
+                if isinstance(summary_attribution, Mapping):
+                    # Merge with existing attribution if present
+                    merged_attribution = dict(cast("Mapping[str, Any]", summary_attribution))
+                    merged_attribution["origin_session_ids"] = deduplicated_ids
+                    message.additional_properties["_attribution"] = merged_attribution
+                else:
+                    # Create new attribution dict
+                    message.additional_properties["_attribution"] = {"origin_session_ids": deduplicated_ids}
 
     async def after_run(
         self,
