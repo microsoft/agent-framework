@@ -6,6 +6,9 @@ DEFAULT_MAX_ITERATIONS = 100
 # Key used to store executor state in state.
 EXECUTOR_STATE_KEY = "_executor_state"
 
+# Key used to store edge runner delivery state (for example, fan-in buffers) in state.
+EDGE_STATE_KEY = "_edge_state"
+
 # Source identifier for internal workflow messages.
 INTERNAL_SOURCE_PREFIX = "internal"
 
