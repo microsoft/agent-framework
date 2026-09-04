@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
@@ -15,12 +17,12 @@ namespace Demo.Workflows.Declarative.AotCheckpointing;
 
 /// <summary>
 /// Demonstrates JSON checkpointing of a declarative workflow under reflection-disabled
-/// <see cref="System.Text.Json.JsonSerializer"/> (the AOT / trim-aggressive constraint set
+/// <see cref="JsonSerializer"/> (the AOT / trim-aggressive constraint set
 /// via <c>JsonSerializerIsReflectionEnabledByDefault=false</c> in the csproj).
 /// </summary>
 /// <remarks>
-/// The key call is <see cref="CheckpointManager.CreateJson(ICheckpointStore{System.Text.Json.JsonElement}, System.Text.Json.JsonSerializerOptions?)"/>
-/// with <see cref="DeclarativeWorkflowJsonOptions.Default"/>. Drop the options argument to observe the AOT failure. See README.
+/// The key call is <see cref="CheckpointManager.CreateJson"/> with
+/// <see cref="DeclarativeWorkflowJsonOptions.Default"/>. Drop the options argument to observe the AOT failure. See README.
 /// </remarks>
 internal sealed class Program
 {
@@ -31,14 +33,14 @@ internal sealed class Program
 
         await CreateGreeterAgentAsync(foundryEndpoint, configuration);
 
-        string workflowInput = Application.GetInput(args);
+        WorkflowInput workflowInput = new(Application.GetInput(args));
 
         Workflow CreateWorkflow()
         {
             AzureAgentProvider agentProvider = new(foundryEndpoint, new AzureCliCredential());
             DeclarativeWorkflowOptions options = new(agentProvider) { Configuration = configuration };
             string workflowPath = Path.Combine(AppContext.BaseDirectory, "AotCheckpointing.yaml");
-            return DeclarativeWorkflowBuilder.Build<string>(workflowPath, options);
+            return DeclarativeWorkflowBuilder.Build<WorkflowInput>(workflowPath, options, TransformInput);
         }
 
         DirectoryInfo checkpointFolder = Directory.CreateDirectory(Path.Combine(".", $"chk-{DateTime.Now:yyMMdd-HHmmss-ff}"));
@@ -74,7 +76,10 @@ internal sealed class Program
         }
     }
 
-    private static async Task<List<CheckpointInfo>> RunAndStreamAsync(Workflow workflow, string input, CheckpointManager checkpointManager)
+    private static ChatMessage TransformInput(WorkflowInput input) =>
+        new(ChatRole.User, JsonSerializer.Serialize(input, AotCheckpointingJsonContext.Default.WorkflowInput));
+
+    private static async Task<List<CheckpointInfo>> RunAndStreamAsync(Workflow workflow, WorkflowInput input, CheckpointManager checkpointManager)
     {
         StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input, checkpointManager).ConfigureAwait(false);
         return await DrainAsync(run).ConfigureAwait(false);
@@ -172,3 +177,8 @@ internal sealed class Program
         }
     }
 }
+
+internal sealed record WorkflowInput(string Message);
+
+[JsonSerializable(typeof(WorkflowInput))]
+internal sealed partial class AotCheckpointingJsonContext : JsonSerializerContext;
