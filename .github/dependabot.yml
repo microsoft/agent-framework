@@ -12,6 +12,10 @@ updates:
       interval: "cron"
       cronjob: "0 8 * * 4,0" # Every Thursday(4) and Sunday(0) at 8:00 UTC
     groups:
+      agent-memory:
+        patterns:
+          - "AgentMemory"
+          - "AgentMemory.AgentFramework"
       aspire:
         patterns:
           - "Aspire.*"
