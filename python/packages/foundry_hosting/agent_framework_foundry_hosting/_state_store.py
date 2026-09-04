@@ -72,19 +72,30 @@ class FoundryCheckpointStore:
 
     DEFAULT_ROOT_SCOPE = "checkpoints"
 
-    def __init__(self, context_id: str, platform_context: FoundryAgentRequestContext) -> None:
+    def __init__(
+        self,
+        context_id: str,
+        platform_context: FoundryAgentRequestContext,
+        *,
+        allowed_checkpoint_types: list[str] | None = None,
+    ) -> None:
         """Initialize a Foundry-scoped checkpoint store for the given context ID.
 
         Args:
             context_id: A string that uniquely identifies the context for which the checkpoint store is scoped.
                         This can be used to isolate checkpoints for different workflow runs.
             platform_context: The request-scoped platform context for the current request.
+            allowed_checkpoint_types: Additional types (beyond the built-in safe set
+                and framework types) that are permitted during checkpoint
+                deserialization.  Each entry should be a ``"module:qualname"``
+                string (e.g., ``"my_app.models:MyState"``).
         """
         if not context_id:
             raise ValueError("context_id must be provided to initialize a FoundryCheckpointStore.")
 
         self.context_id = context_id
         self.platform_context = platform_context
+        self._allowed_types: frozenset[str] = frozenset(allowed_checkpoint_types or [])
 
     async def _get_store(self) -> FoundryStateStore:
         return await FoundryStateStore.get_or_create(
@@ -131,7 +142,7 @@ class FoundryCheckpointStore:
             item = await store.get_item(checkpoint_id, call_id=self.platform_context.call_id)
         if item is None:
             raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
-        return WorkflowCheckpoint.from_dict(decode_checkpoint_value(item.value))
+        return WorkflowCheckpoint.from_dict(decode_checkpoint_value(item.value, allowed_types=self._allowed_types))
 
     async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
         """List all workflow checkpoints for a given workflow name."""
@@ -147,7 +158,9 @@ class FoundryCheckpointStore:
                     item = await store.get_item(item_key.key, call_id=self.platform_context.call_id)
                     if item is None:
                         continue
-                    checkpoint = WorkflowCheckpoint.from_dict(decode_checkpoint_value(item.value))
+                    checkpoint = WorkflowCheckpoint.from_dict(
+                        decode_checkpoint_value(item.value, allowed_types=self._allowed_types)
+                    )
                     if checkpoint.workflow_name == workflow_name:
                         checkpoints.append(checkpoint)
                 if not page.has_more or page.last_id is None:
@@ -182,6 +195,18 @@ class CheckpointStoreProvider(ContextScopedStoreProvider[CheckpointStorage]):
     This defaults to using the `FoundryCheckpointStore` in all environments.
     """
 
+    def __init__(self, *, allowed_checkpoint_types: list[str] | None = None) -> None:
+        """Initialize the provider.
+
+        Args:
+            allowed_checkpoint_types: Additional types (beyond the built-in safe set
+                and framework types) that are permitted during checkpoint
+                deserialization, forwarded to every store this provider creates.
+                Each entry should be a ``"module:qualname"`` string
+                (e.g., ``"my_app.models:MyState"``).
+        """
+        self._allowed_checkpoint_types = allowed_checkpoint_types
+
     def get_store(
         self,
         *,
@@ -193,7 +218,11 @@ class CheckpointStoreProvider(ContextScopedStoreProvider[CheckpointStorage]):
         if not context_id:
             raise ValueError("context_id must be provided to get a checkpoint store.")
 
-        return FoundryCheckpointStore(context_id, platform_context)
+        return FoundryCheckpointStore(
+            context_id,
+            platform_context,
+            allowed_checkpoint_types=self._allowed_checkpoint_types,
+        )
 
 
 # endregion Checkpoint persistence
