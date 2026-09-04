@@ -7,7 +7,6 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests;
 
@@ -29,7 +28,7 @@ public sealed class DefaultHttpRequestHandlerTests
         await using DefaultHttpRequestHandler handler = new();
 
         // Assert
-        handler.Should().NotBeNull();
+        Assert.NotNull(handler);
     }
 
     [Fact]
@@ -39,17 +38,17 @@ public sealed class DefaultHttpRequestHandlerTests
         await using DefaultHttpRequestHandler handler = new(httpClientProvider: null);
 
         // Assert
-        handler.Should().NotBeNull();
+        Assert.NotNull(handler);
     }
 
     [Fact]
     public void ConstructorWithNullHttpClientThrows()
     {
         // Act
-        Action act = () => _ = new DefaultHttpRequestHandler((HttpClient)null!);
+        static void act() => _ = new DefaultHttpRequestHandler((HttpClient)null!);
 
         // Assert
-        act.Should().Throw<ArgumentNullException>();
+        Assert.Throws<ArgumentNullException>(act);
     }
 
     [Fact]
@@ -69,9 +68,9 @@ public sealed class DefaultHttpRequestHandlerTests
         HttpRequestResult result = await handler.SendAsync(request);
 
         // Assert - the supplied HttpClient's underlying handler saw the request
-        messageHandler.LastRequest.Should().NotBeNull();
-        messageHandler.LastRequest!.RequestUri!.ToString().Should().Be(TestUrl);
-        result.Body.Should().Be("ok");
+        Assert.NotNull(messageHandler.LastRequest);
+        Assert.Equal(TestUrl, messageHandler.LastRequest!.RequestUri!.ToString());
+        Assert.Equal("ok", result.Body);
     }
 
     [Fact]
@@ -87,8 +86,8 @@ public sealed class DefaultHttpRequestHandlerTests
         await handler.DisposeAsync();
 
         // Assert - supplied client remains usable (not disposed)
-        Func<Task> act = async () => await suppliedClient.GetAsync(new Uri(TestUrl));
-        await act.Should().NotThrowAsync<ObjectDisposedException>();
+        async Task actAsync() => await suppliedClient.GetAsync(new Uri(TestUrl));
+        Assert.IsNotType<ObjectDisposedException>(await Record.ExceptionAsync(actAsync));
     }
 
     #endregion
@@ -102,10 +101,10 @@ public sealed class DefaultHttpRequestHandlerTests
         await using DefaultHttpRequestHandler handler = new();
 
         // Act
-        Func<Task> act = async () => await handler.SendAsync(null!);
+        async Task actAsync() => await handler.SendAsync(null!);
 
         // Assert
-        await act.Should().ThrowAsync<ArgumentNullException>();
+        await Assert.ThrowsAsync<ArgumentNullException>(actAsync);
     }
 
     [Fact]
@@ -116,10 +115,10 @@ public sealed class DefaultHttpRequestHandlerTests
         HttpRequestInfo request = new() { Method = "GET", Url = "" };
 
         // Act
-        Func<Task> act = async () => await handler.SendAsync(request);
+        async Task actAsync() => await handler.SendAsync(request);
 
         // Assert
-        await act.Should().ThrowAsync<ArgumentException>();
+        await Assert.ThrowsAsync<ArgumentException>(actAsync);
     }
 
     [Fact]
@@ -130,10 +129,10 @@ public sealed class DefaultHttpRequestHandlerTests
         HttpRequestInfo request = new() { Method = "", Url = TestUrl };
 
         // Act
-        Func<Task> act = async () => await handler.SendAsync(request);
+        async Task actAsync() => await handler.SendAsync(request);
 
         // Assert
-        await act.Should().ThrowAsync<ArgumentException>();
+        await Assert.ThrowsAsync<ArgumentException>(actAsync);
     }
 
     #endregion
@@ -158,12 +157,12 @@ public sealed class DefaultHttpRequestHandlerTests
         HttpRequestResult result = await handler.SendAsync(request);
 
         // Assert
-        messageHandler.LastRequest.Should().NotBeNull();
-        messageHandler.LastRequest!.Method.Should().Be(HttpMethod.Get);
-        messageHandler.LastRequest.RequestUri!.ToString().Should().Be(TestUrl);
-        result.StatusCode.Should().Be(200);
-        result.IsSuccessStatusCode.Should().BeTrue();
-        result.Body.Should().Be("hello");
+        Assert.NotNull(messageHandler.LastRequest);
+        Assert.Equal(HttpMethod.Get, messageHandler.LastRequest!.Method);
+        Assert.Equal(TestUrl, messageHandler.LastRequest.RequestUri!.ToString());
+        Assert.Equal(200, result.StatusCode);
+        Assert.True(result.IsSuccessStatusCode);
+        Assert.Equal("hello", result.Body);
     }
 
     [Fact]
@@ -183,7 +182,7 @@ public sealed class DefaultHttpRequestHandlerTests
             await handler.SendAsync(request);
 
             // Assert
-            messageHandler.LastRequest!.Method.Method.Should().Be(method);
+            Assert.Equal(method, messageHandler.LastRequest!.Method.Method);
         }
     }
 
@@ -200,7 +199,7 @@ public sealed class DefaultHttpRequestHandlerTests
         await handler.SendAsync(request);
 
         // Assert - fallback path should apply the same Trim/ToUpperInvariant normalization.
-        messageHandler.LastRequest!.Method.Method.Should().Be("CUSTOM");
+        Assert.Equal("CUSTOM", messageHandler.LastRequest!.Method.Method);
     }
 
     [Fact]
@@ -224,8 +223,8 @@ public sealed class DefaultHttpRequestHandlerTests
         await handler.SendAsync(request);
 
         // Assert
-        messageHandler.LastRequestBody.Should().Be("{\"hello\":\"world\"}");
-        messageHandler.LastRequestContentType.Should().Be("application/json");
+        Assert.Equal("{\"hello\":\"world\"}", messageHandler.LastRequestBody);
+        Assert.Equal("application/json", messageHandler.LastRequestContentType);
     }
 
     [Fact]
@@ -252,8 +251,8 @@ public sealed class DefaultHttpRequestHandlerTests
         await handler.SendAsync(request);
 
         // Assert
-        messageHandler.LastRequest!.Headers.Authorization!.ToString().Should().Be("Bearer secret");
-        messageHandler.LastRequest.Headers.Accept.Should().Contain(mediaType => mediaType.MediaType == "application/json");
+        Assert.Equal("Bearer secret", messageHandler.LastRequest!.Headers.Authorization!.ToString());
+        Assert.Contains(messageHandler.LastRequest.Headers.Accept, mediaType => mediaType.MediaType == "application/json");
     }
 
     [Fact]
@@ -281,7 +280,7 @@ public sealed class DefaultHttpRequestHandlerTests
         await handler.SendAsync(request);
 
         // Assert
-        messageHandler.LastRequest!.Content!.Headers.ContentLanguage.Should().Contain("en-US");
+        Assert.Contains("en-US", messageHandler.LastRequest!.Content!.Headers.ContentLanguage);
     }
 
     [Fact]
@@ -309,11 +308,11 @@ public sealed class DefaultHttpRequestHandlerTests
         HttpRequestResult result = await handler.SendAsync(request);
 
         // Assert
-        result.Headers.Should().NotBeNull();
-        result.Headers!.Should().ContainKey("X-Request-Id");
-        result.Headers!["Set-Cookie"].Should().BeEquivalentTo(s_setCookieValues);
+        Assert.NotNull(result.Headers);
+        Assert.Contains("X-Request-Id", result.Headers!);
+        Assert.Equivalent(s_setCookieValues, result.Headers!["Set-Cookie"]);
         // Content headers also flattened in.
-        result.Headers!.Should().ContainKey("Content-Type");
+        Assert.Contains("Content-Type", result.Headers!);
     }
 
     [Fact]
@@ -334,9 +333,9 @@ public sealed class DefaultHttpRequestHandlerTests
         HttpRequestResult result = await handler.SendAsync(request);
 
         // Assert
-        result.IsSuccessStatusCode.Should().BeFalse();
-        result.StatusCode.Should().Be(400);
-        result.Body.Should().Be("bad request");
+        Assert.False(result.IsSuccessStatusCode);
+        Assert.Equal(400, result.StatusCode);
+        Assert.Equal("bad request", result.Body);
     }
 
     [Fact]
@@ -359,10 +358,10 @@ public sealed class DefaultHttpRequestHandlerTests
         };
 
         // Act
-        Func<Task> act = async () => await handler.SendAsync(request);
+        async Task actAsync() => await handler.SendAsync(request);
 
         // Assert
-        await act.Should().ThrowAsync<OperationCanceledException>();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(actAsync);
     }
 
     [Fact]
@@ -379,11 +378,11 @@ public sealed class DefaultHttpRequestHandlerTests
         HttpRequestInfo request = new() { Method = "GET", Url = "http://127.0.0.1:1/" };
 
         // Act - owned client will attempt real network and fail, but provider path should have been consulted first.
-        Func<Task> act = async () => await handler.SendAsync(request);
+        async Task actAsync() => await handler.SendAsync(request);
 
         // Assert
-        await act.Should().ThrowAsync<Exception>();
-        providerCallCount.Should().Be(1);
+        await Assert.ThrowsAnyAsync<Exception>(actAsync);
+        Assert.Equal(1, providerCallCount);
     }
 
     #endregion
@@ -397,10 +396,10 @@ public sealed class DefaultHttpRequestHandlerTests
         DefaultHttpRequestHandler handler = new();
 
         // Act
-        Func<Task> act = async () => await handler.DisposeAsync();
+        async Task actAsync() => await handler.DisposeAsync();
 
         // Assert
-        await act.Should().NotThrowAsync();
+        Assert.Null(await Record.ExceptionAsync(actAsync));
     }
 
     [Fact]
@@ -411,10 +410,10 @@ public sealed class DefaultHttpRequestHandlerTests
 
         // Act
         await handler.DisposeAsync();
-        Func<Task> second = async () => await handler.DisposeAsync();
+        async Task secondAsync() => await handler.DisposeAsync();
 
         // Assert
-        await second.Should().NotThrowAsync();
+        Assert.Null(await Record.ExceptionAsync(secondAsync));
     }
 
     #endregion
@@ -444,10 +443,10 @@ public sealed class DefaultHttpRequestHandlerTests
         await handler.SendAsync(info);
 
         // Assert
-        fake.LastRequest.Should().NotBeNull();
+        Assert.NotNull(fake.LastRequest);
         string? query = fake.LastRequest!.RequestUri!.Query;
-        query.Should().Contain("filter=active%20items");
-        query.Should().Contain("ids=1%2C2%2C3");
+        Assert.Contains("filter=active%20items", query);
+        Assert.Contains("ids=1%2C2%2C3", query);
     }
 
     [Fact]
@@ -472,7 +471,7 @@ public sealed class DefaultHttpRequestHandlerTests
         await handler.SendAsync(info);
 
         // Assert
-        fake.LastRequest!.RequestUri!.Query.Should().Be("?existing=yes&added=true");
+        Assert.Equal("?existing=yes&added=true", fake.LastRequest!.RequestUri!.Query);
     }
 
     #endregion

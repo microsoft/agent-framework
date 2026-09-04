@@ -1,0 +1,58 @@
+<policies>
+  <inbound>
+    <base />
+    <check-header
+      name="X-Telegram-Bot-Api-Secret-Token"
+      failed-check-httpcode="401"
+      failed-check-error-message="Invalid Telegram webhook secret"
+      ignore-case="false">
+      <value>{{TelegramWebhookSecret}}</value>
+    </check-header>
+    <set-header name="X-Telegram-Bot-Api-Secret-Token" exists-action="delete" />
+    <set-header name="X-Agent-Framework-Ingress-Secret" exists-action="override">
+      <value>{{TelegramWebhookSecret}}</value>
+    </set-header>
+    <set-variable
+      name="telegramBody"
+      value="@(context.Request.Body.As&lt;JObject&gt;(preserveContent: true))" />
+    <set-variable name="telegramChatId" value="@{
+      var body = context.Variables.GetValueOrDefault&lt;JObject&gt;(&quot;telegramBody&quot;);
+      var message = body?[&quot;message&quot;] as JObject
+        ?? body?[&quot;edited_message&quot;] as JObject
+        ?? body?[&quot;callback_query&quot;]?[&quot;message&quot;] as JObject;
+      return message?[&quot;chat&quot;]?[&quot;id&quot;]?.ToString() ?? string.Empty;
+    }" />
+    <choose>
+      <when condition="@(string.IsNullOrEmpty(context.Variables.GetValueOrDefault&lt;string&gt;(&quot;telegramChatId&quot;)))">
+        <return-response>
+          <set-status code="400" reason="Unsupported Telegram update" />
+        </return-response>
+      </when>
+    </choose>
+    <set-body>@{
+      var body = context.Variables.GetValueOrDefault&lt;JObject&gt;(&quot;telegramBody&quot;);
+      body[&quot;channel&quot;] = &quot;telegram&quot;;
+      return body.ToString(Newtonsoft.Json.Formatting.None);
+    }</set-body>
+    <set-header name="Content-Encoding" exists-action="delete" />
+    <set-query-parameter name="agent_session_id" exists-action="override">
+      <value>@((string)context.Variables["telegramChatId"])</value>
+    </set-query-parameter>
+    <set-query-parameter name="api-version" exists-action="override">
+      <value>v1</value>
+    </set-query-parameter>
+    <set-method>POST</set-method>
+    <authentication-managed-identity resource="https://ai.azure.com/" />
+    <set-backend-service base-url="__FOUNDRY_SERVICE_ENDPOINT__" />
+    <rewrite-uri template="__FOUNDRY_INVOCATIONS_PATH__" copy-unmatched-params="true" />
+  </inbound>
+  <backend>
+    <base />
+  </backend>
+  <outbound>
+    <base />
+  </outbound>
+  <on-error>
+    <base />
+  </on-error>
+</policies>

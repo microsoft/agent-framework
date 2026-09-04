@@ -8,7 +8,6 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import agent_framework._telemetry as telemetry
-import httpx
 import pytest
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT
 from agent_framework._telemetry import FeatureIndex as CoreFeatureIndex
@@ -84,12 +83,12 @@ async def test_feature_usage_hook_stamps_approved_origin_and_strips_custom_origi
     mark_feature_used(CoreFeatureIndex.CORE_AGENT)
     client = create_feature_usage_http_client()
     hook = client.event_hooks["request"][0]
-    approved = httpx.Request(
+    approved = client.build_request(
         "POST",
         "https://resource.openai.azure.com/openai/v1/responses",
         headers={"User-Agent": f"{AGENT_FRAMEWORK_USER_AGENT} sdk/1.0"},
     )
-    custom = httpx.Request(
+    custom = client.build_request(
         "POST",
         "https://customer-gateway.example.com/v1/responses",
         headers={"User-Agent": f"{AGENT_FRAMEWORK_USER_AGENT} (feat=v1.1)"},

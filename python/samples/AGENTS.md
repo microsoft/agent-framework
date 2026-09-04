@@ -10,7 +10,8 @@ python/samples/
 ├── 01-get-started/          # Progressive tutorial (steps 01–07)
 ├── 02-agents/               # Deep-dive concept samples
 │   ├── tools/               # Tool patterns (function, approval, schema, etc.)
-│   ├── middleware/           # One file per middleware concept
+│   ├── vector_stores/       # Vector model schemas and registration
+│   ├── middleware/          # One file per middleware concept
 │   ├── conversations/       # Thread, storage, suspend/resume
 │   ├── providers/           # One sub-folder per provider (azure_ai/, openai/, etc.)
 │   ├── context_providers/   # Memory & context injection

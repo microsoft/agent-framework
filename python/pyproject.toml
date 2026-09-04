@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.16.0"
+version = "1.17.0"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,14 +23,14 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.16.0",
+    "agent-framework-core[all]==1.17.0",
 ]
 
 [dependency-groups]
 dev = [
-    "uv==0.12.5",
+    "uv==0.12.6",
     "flit==4.0.2",
-    "ruff==0.16.3",
+    "ruff==0.16.4",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
@@ -41,7 +41,7 @@ dev = [
     "pyright==1.1.411",
     "pyrefly==1.2.0",
     "ty==0.0.72",
-    "zuban==0.9.1",
+    "zuban==0.9.2",
     "opentelemetry-sdk",
     #tasks
     "poethepoet==0.48.0",
@@ -52,8 +52,7 @@ dev = [
 test = [
     "azure-monitor-opentelemetry",
     "mcp[ws]",
-    # Optional SDK behind core's `agent-hooks` extra; declared here (like mcp[ws]) so
-    # isolated source checks (dependency-pyright) can resolve its API.
+    # Optional SDK used by the agent-hooks tests and isolated source checks.
     "agent-hooks-sdk>=0.1.0a4,<0.2",
 ]
 

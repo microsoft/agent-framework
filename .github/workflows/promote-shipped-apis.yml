@@ -1,0 +1,123 @@
+name: Promote Shipped APIs
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  promote-apis:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.GHA_TOKEN_PROVIDER_APP_ID }}
+          private-key: ${{ secrets.GHA_TOKEN_PROVIDER_PEM }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Get GitHub App user ID
+        id: get-user-id
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: echo "user-id=$(gh api "/users/${{ steps.app-token.outputs.app-slug }}[bot]" --jq .id)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Configure git
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
+          git config user.email "${{ steps.get-user-id.outputs.user-id }}+${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
+          git config --global url."https://$($env:GH_TOKEN)@github.com/".insteadOf "https://github.com/"
+
+      - name: Check for existing PR
+        id: check_pr
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          $branch = "${{ github.ref_name }}"
+          $prBranch = "promote-shipped-apis-$branch"
+          $prNumber = gh pr list --state open --head $prBranch --base $branch --json number --jq '.[0].number'
+
+          if ($prNumber) {
+            "pr_exists=true" >> $env:GITHUB_OUTPUT
+            "pr_number=$prNumber" >> $env:GITHUB_OUTPUT
+            Write-Host "Found existing PR: $prNumber"
+          } else {
+            "pr_exists=false" >> $env:GITHUB_OUTPUT
+            Write-Host "No existing PR found."
+          }
+
+      - name: Checkout existing PR branch
+        if: steps.check_pr.outputs.pr_exists == 'true'
+        shell: pwsh
+        run: |
+          $branch = "${{ github.ref_name }}"
+          $prBranch = "promote-shipped-apis-$branch"
+
+          git fetch origin $prBranch
+          git checkout $prBranch
+          git merge origin/$branch -m "Merge $branch into promote-shipped-apis branch"
+
+      - name: Run public API promotion script
+        shell: pwsh
+        run: ./dotnet/eng/scripts/promote-shipped-apis.ps1
+
+      - name: Check for changes
+        id: check_changes
+        shell: pwsh
+        run: |
+          $changes = git diff --name-only -- "dotnet/src/**/PublicAPI.*.txt"
+          if ($changes) {
+            "has_changes=true" >> $env:GITHUB_OUTPUT
+            Write-Host "Changed files:"
+            Write-Host $changes
+          } else {
+            "has_changes=false" >> $env:GITHUB_OUTPUT
+            Write-Host "No public API promotion changes detected."
+          }
+
+      - name: Commit and push changes
+        if: steps.check_changes.outputs.has_changes == 'true'
+        shell: pwsh
+        run: |
+          $branch = "${{ github.ref_name }}"
+          $prBranch = "promote-shipped-apis-$branch"
+
+          git checkout -B $prBranch
+          git add dotnet/src/**/PublicAPI.*.txt
+          git commit -m "chore: promote shipped .NET APIs"
+          git push --force-with-lease --set-upstream origin $prBranch
+
+      - name: Create new PR
+        if: steps.check_pr.outputs.pr_exists == 'false' && steps.check_changes.outputs.has_changes == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          $branch = "${{ github.ref_name }}"
+          $prBranch = "promote-shipped-apis-$branch"
+          $title = "chore: promote shipped .NET APIs for $branch"
+          $body = "Automatically promotes entries from PublicAPI.Unshipped.txt to PublicAPI.Shipped.txt for released .NET packages."
+
+          gh pr create --title $title --base $branch --head $prBranch --body $body
