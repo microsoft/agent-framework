@@ -1727,6 +1727,31 @@ async def test_replace_lines_without_expected_line_is_unchanged(
 # endregion
 
 
+async def test_base_search_flushes_on_candidate_count_when_files_are_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty files add nothing to the character budget, so the count cap must flush instead."""
+    store = _ContentOnlyStore()
+    for index in range(6):
+        await store.write(f"f{index}.txt", "")
+
+    offloads: list[str] = []
+    original_to_thread = asyncio.to_thread
+
+    async def counting_to_thread(func, /, *args, **kwargs):  # type: ignore[no-untyped-def]
+        offloads.append(getattr(func, "__name__", repr(func)))
+        return await original_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", counting_to_thread)
+    # Two per batch: without the count cap the character budget never advances on empty
+    # content, so every candidate would be retained and offloaded in a single final batch.
+    monkeypatch.setattr(_file_access_module, "_SCAN_BATCH_FILES", 2)
+
+    await store.search("", "needle", recursive=True)
+
+    assert len(offloads) == 3
+
+
 async def test_base_search_batches_its_scans_without_changing_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -84,6 +84,12 @@ _SEARCH_TIMEOUT_SECONDS = 10.0
 # peak memory stays bounded no matter how many candidates a store returns.
 _SCAN_BATCH_CHARS = 4_000_000
 
+# Second flush condition, because content length alone does not bound the batch: empty files
+# add nothing to the character count, so a store returning many of them would retain a tuple
+# per candidate and never flush. Capping the count keeps the per-candidate overhead in the same
+# order as the character budget without costing a thread hop per file.
+_SCAN_BATCH_FILES = 10_000
+
 # Errno raised by POSIX ``open`` when ``O_NOFOLLOW`` was requested and the
 # leaf path component is a symbolic link. Used to translate the kernel-level
 # refusal into the same :class:`ValueError` the static probe raises so the
@@ -301,8 +307,14 @@ def _apply_replace_lines(content: str, edits: list[tuple[int, str, str | None]])
     When an edit carries an ``expected_line``, the current text of the target
     line must match it once both sides have their terminator stripped. That
     turns a stale or mis-numbered edit into a refusal instead of a silent
-    overwrite of the wrong line, and it is the one check that also covers the
-    file changing between the read and the write.
+    overwrite of the wrong line.
+
+    The comparison is against the snapshot this call was given, and the write
+    that follows is unconditional, so it does not make the edit atomic. A writer
+    that changes the file after the provider's read still has its change
+    overwritten: the provider's lock serializes its own tools within one process,
+    not other processes or other providers sharing the store. Closing that would
+    need a conditional or versioned write on :class:`AgentFileStore` itself.
 
     Raises :class:`ValueError` when no edits are provided, when any line number
     is out of range, when a line number is targeted more than once, or when an
@@ -892,8 +904,9 @@ class AgentFileStore(ABC):
             # a pathological regex off the event loop, and one hop per file costs more
             # than the scan itself once per-file work is sub-millisecond. Bounding the
             # batch by size rather than count keeps peak memory independent of how many
-            # candidates the store returned.
-            if batch_chars >= _SCAN_BATCH_CHARS:
+            # candidates the store returned, and the count cap covers the case where the
+            # content itself is empty.
+            if batch_chars >= _SCAN_BATCH_CHARS or len(batch) >= _SCAN_BATCH_FILES:
                 results.extend(await asyncio.to_thread(scan_batch, batch))
                 batch = []
                 batch_chars = 0
