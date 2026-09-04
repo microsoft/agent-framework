@@ -8,6 +8,8 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - **`AgentFrameworkWorkflow`** - Wraps native `Workflow` objects, or accepts `workflow_factory(thread_id)` for thread-scoped workflow instances without subclassing
 - **`AGUIChatClient`** - Chat client that speaks AG-UI protocol
 - **`AGUIHttpService`** - HTTP service for AG-UI endpoints
+- **`agent_framework_messages_to_agui_host_history()`** - Converts persisted Agent Framework messages to bounded
+  AG-UI Host history while retaining MCP widget payloads and model replay metadata
 - **`AGUIEventConverter`** - Converts between Agent Framework and AG-UI events
 - **`add_agent_framework_fastapi_endpoint()`** - Add AG-UI endpoint to FastAPI app (`SupportsAgentRun` or `Workflow`)
 - **`InMemoryAGUIThreadSnapshotStore`** - Memory-only latest AG-UI Thread Snapshot store for local development, demos, and tests

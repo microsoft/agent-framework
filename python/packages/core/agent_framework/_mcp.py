@@ -14,8 +14,9 @@ import warnings
 from abc import abstractmethod
 from collections.abc import Callable, Collection, Coroutine, Mapping, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
+from copy import copy
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from functools import partial
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypedDict, cast
@@ -29,6 +30,7 @@ from ._feature_stage import (
     _warn_on_feature_use,  # pyright: ignore[reportPrivateUsage]
     experimental,
 )
+from ._serialization import make_json_safe
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._tools import FunctionTool
 from ._types import (
@@ -90,6 +92,7 @@ class MCPSpecificApproval(TypedDict, total=False):
 
 _MCP_REMOTE_NAME_KEY = "_mcp_remote_name"
 _MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
+_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY = "_mcp_tool_result_host_payload"
 _MCP_PROGRESSIVE_LIST_TOOL_NAME = "list_mcp_tools"
 _MCP_PROGRESSIVE_LOAD_TOOL_NAME = "load_tool"
 _MCP_PROGRESSIVE_UNLOAD_TOOL_NAME = "unload_tool"
@@ -124,8 +127,192 @@ _MCP_FRAMEWORK_DENYLIST: frozenset[str] = frozenset({
     "_meta",
 })
 _mcp_call_headers: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar("_mcp_call_headers")
+_preserve_mcp_host_payload: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "_preserve_mcp_host_payload",
+    default=False,
+)
 MCP_DEFAULT_TIMEOUT = 30
 MCP_DEFAULT_SSE_READ_TIMEOUT = 60 * 5
+_DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES = 1024 * 1024
+
+
+class _EncodedSizeBudget:
+    """Track JSON bytes and abort as soon as an untrusted value exceeds its budget."""
+
+    def __init__(self, limit: int) -> None:
+        self.remaining = limit
+
+    def consume(self, size: int) -> None:
+        self.remaining -= size
+        if self.remaining < 0:
+            raise OverflowError
+
+
+def _consume_json_string(value: str, budget: _EncodedSizeBudget) -> None:
+    budget.consume(2)
+    for char in value:
+        codepoint = ord(char)
+        if char in {'"', "\\"} or char in {"\b", "\f", "\n", "\r", "\t"}:
+            budget.consume(2)
+        elif codepoint < 0x20 or codepoint > 0xFFFF:
+            budget.consume(6 if codepoint <= 0xFFFF else 12)
+        elif codepoint > 0x7F:
+            budget.consume(6)
+        else:
+            budget.consume(1)
+
+
+def _consume_json_size(value: Any, budget: _EncodedSizeBudget) -> None:
+    if value is None:
+        budget.consume(4)
+        return
+    if value is True:
+        budget.consume(4)
+        return
+    if value is False:
+        budget.consume(5)
+        return
+    if isinstance(value, str):
+        _consume_json_string(value, budget)
+        return
+    if isinstance(value, (bytes, bytearray)):
+        budget.consume(2 + 4 * ((len(value) + 2) // 3))
+        return
+    if isinstance(value, (int, float)):
+        budget.consume(len(json.dumps(value)))
+        return
+    if isinstance(value, (datetime, date)):
+        _consume_json_string(value.isoformat(), budget)
+        return
+    if isinstance(value, Mapping):
+        budget.consume(2)
+        value_mapping = cast(Mapping[Any, Any], value)
+        for index, (key, item) in enumerate(value_mapping.items()):
+            if index:
+                budget.consume(2)
+            _consume_json_string(str(key), budget)
+            budget.consume(2)
+            _consume_json_size(item, budget)
+        return
+    if isinstance(value, Sequence):
+        budget.consume(2)
+        value_sequence = cast(Sequence[Any], value)
+        for index, item in enumerate(value_sequence):
+            if index:
+                budget.consume(2)
+            _consume_json_size(item, budget)
+        return
+
+    model_fields_raw = getattr(value.__class__, "model_fields", None)
+    if isinstance(model_fields_raw, Mapping):
+        model_fields = cast(Mapping[str, Any], model_fields_raw)
+        budget.consume(2)
+        field_count = 0
+        for name, field_info in model_fields.items():
+            item = getattr(value, name, None)
+            if item is None or getattr(field_info, "exclude", False):
+                continue
+            if field_count:
+                budget.consume(2)
+            alias = getattr(field_info, "serialization_alias", None) or getattr(field_info, "alias", None) or name
+            _consume_json_string(str(alias), budget)
+            budget.consume(2)
+            _consume_json_size(item, budget)
+            field_count += 1
+        model_extra_raw = getattr(value, "model_extra", None)
+        if isinstance(model_extra_raw, Mapping):
+            model_extra = cast(Mapping[Any, Any], model_extra_raw)
+            for key, item in model_extra.items():
+                if item is None:
+                    continue
+                if field_count:
+                    budget.consume(2)
+                _consume_json_string(str(key), budget)
+                budget.consume(2)
+                _consume_json_size(item, budget)
+                field_count += 1
+        return
+
+    _consume_json_string(str(value), budget)
+
+
+def _json_size_exceeds(value: Any, limit: int) -> bool:
+    try:
+        _consume_json_size(value, _EncodedSizeBudget(limit))
+    except OverflowError:
+        return True
+    return False
+
+
+def _mcp_tool_result_host_payload(
+    mcp_type: Any,
+    *,
+    max_size_bytes: int | None,
+) -> dict[str, Any] | None:
+    """Return a JSON-safe complete MCP result when the value supports model serialization."""
+    model_dump = getattr(mcp_type, "model_dump", None)
+    if not callable(model_dump):
+        return None
+    if max_size_bytes is not None and _json_size_exceeds(mcp_type, max_size_bytes):
+        logger.warning(
+            "Omitting MCP Host payload because its encoded size exceeds max_host_payload_size_bytes=%d.",
+            max_size_bytes,
+        )
+        return None
+    try:
+        dumped = model_dump(by_alias=True, exclude_none=True, mode="json", fallback=str)
+    except ValueError:
+        dumped = model_dump(by_alias=True, exclude_none=True)
+    if not isinstance(dumped, Mapping):
+        return None
+    host_payload = cast(dict[str, Any], make_json_safe(dict(cast(Mapping[str, Any], dumped))))
+    if max_size_bytes is not None and len(json.dumps(host_payload).encode("utf-8")) > max_size_bytes:
+        logger.warning(
+            "Omitting MCP Host payload because its encoded size exceeds max_host_payload_size_bytes=%d.",
+            max_size_bytes,
+        )
+        return None
+    return host_payload
+
+
+def _with_mcp_tool_result_host_payload(
+    parsed: str | list[Content],
+    mcp_type: Any,
+    *,
+    max_size_bytes: int | None,
+) -> list[Content]:
+    """Attach the complete MCP result once without changing the parser's model projection."""
+    items = [Content.from_text(parsed)] if isinstance(parsed, str) else list(parsed)
+    if not items:
+        items = [Content.from_text("[]")]
+
+    host_payload = _mcp_tool_result_host_payload(mcp_type, max_size_bytes=max_size_bytes)
+    raw_meta = getattr(mcp_type, "meta", None)
+    meta = dict(cast(Mapping[str, Any], raw_meta)) if isinstance(raw_meta, Mapping) else None
+    for index, item in enumerate(items):
+        if not (isinstance(meta, Mapping) or (index == 0 and host_payload is not None)):
+            continue
+        updated_item = copy(item)
+        updated_item.additional_properties = dict(updated_item.additional_properties)
+        if isinstance(meta, Mapping):
+            updated_item.additional_properties["_meta"] = dict(cast(Mapping[str, Any], meta))
+        if index == 0 and host_payload is not None:
+            updated_item.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY] = host_payload
+        items[index] = updated_item
+    return items
+
+
+class _MCPToolResultException(ToolExecutionException):
+    """Carry an MCP Host payload through generic function error conversion."""
+
+    def __init__(self, message: str, host_payload: dict[str, Any] | None) -> None:
+        super().__init__(message)
+        self._function_result_additional_properties: dict[str, Any] = {}
+        if host_payload is not None:
+            self._function_result_additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY] = host_payload
+            if isinstance(meta := host_payload.get("_meta"), Mapping):
+                self._function_result_additional_properties["_meta"] = dict(cast(Mapping[str, Any], meta))
+
 
 # Default safety limits applied to server-initiated MCP sampling requests
 # (``sampling/createMessage``). MCP servers are untrusted third parties, so the
@@ -263,7 +450,11 @@ def _make_mcp_tool_caller(
             call_kwargs["_meta"] = trusted_meta
         else:
             call_kwargs.pop("_meta", None)
-        return await mcp_tool.call_tool(remote_tool_name, **call_kwargs)
+        token = _preserve_mcp_host_payload.set(True)
+        try:
+            return await mcp_tool.call_tool(remote_tool_name, **call_kwargs)
+        finally:
+            _preserve_mcp_host_payload.reset(token)
 
     return _call_tool_with_runtime_kwargs
 
@@ -502,6 +693,7 @@ class MCPTool:
         sampling_approval_callback: SamplingApprovalCallback | None = None,
         sampling_max_tokens: int | None = _DEFAULT_SAMPLING_MAX_TOKENS,
         sampling_max_requests: int | None = _DEFAULT_SAMPLING_MAX_REQUESTS,
+        max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         additional_properties: dict[str, Any] | None = None,
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
@@ -559,6 +751,9 @@ class MCPTool:
             sampling_max_requests: Maximum number of sampling requests allowed per session
                 connection; further requests are rejected. The counter resets on reconnect. Set
                 to ``None`` to disable the limit. Defaults to ``_DEFAULT_SAMPLING_MAX_REQUESTS``.
+            max_host_payload_size_bytes: Maximum encoded size of the complete MCP result retained
+                for Host transports. Oversized payloads are omitted from the Host channel while
+                the parsed model result is preserved. Set to ``None`` to disable the limit.
             additional_properties: Additional properties for the tool.
             task_options: Options controlling how long-running MCP tasks are driven for
                 tools that advertise ``execution.taskSupport == "required"``. When ``None``,
@@ -582,6 +777,8 @@ class MCPTool:
                 object_name="MCP progressive disclosure",
                 category=ExperimentalWarning,
             )
+        if max_host_payload_size_bytes is not None and max_host_payload_size_bytes <= 0:
+            raise ValueError("max_host_payload_size_bytes must be positive or None.")
         self.name = name
         self.description = description or ""
         self.approval_mode = approval_mode
@@ -592,6 +789,7 @@ class MCPTool:
         self.parse_tool_results = parse_tool_results
         self.load_prompts_flag = load_prompts
         self.parse_prompt_results = parse_prompt_results
+        self.max_host_payload_size_bytes = max_host_payload_size_bytes
         # Defer constructing the default MCPTaskOptions so the experimental warning
         # only fires when LRO is actually engaged (lazy-resolved by _effective_task_options).
         self._task_options_explicit: MCPTaskOptions | None = task_options
@@ -712,13 +910,15 @@ class MCPTool:
         to derive per-item security labels.
         The sentinel is intentionally generic so any MCP server's ``_meta``
         keys (current or future) can be interpreted by higher-level code.
+
+        The complete MCP result is also preserved under a core-owned
+        ``additional_properties`` marker. Host transports can use that payload
+        without changing the content selected for the model.
         """
         from mcp import types
 
         raw_meta = mcp_type.meta
         meta: dict[str, Any] | None = dict(raw_meta) if isinstance(raw_meta, Mapping) else None
-        # Stamp the server ``_meta`` payload directly via additional_properties on
-        # each newly constructed Content; empty when the server provided no meta.
         additional_kwargs: dict[str, Any] = {"additional_properties": {"_meta": meta}} if meta else {}
 
         result: list[Content] = []
@@ -763,7 +963,7 @@ class MCPTool:
                     result.append(Content.from_text(str(item), **additional_kwargs))
 
         if mcp_type.structuredContent is not None:
-            result.append(Content.from_text(json.dumps(mcp_type.structuredContent, default=str)))
+            result.append(Content.from_text(json.dumps(mcp_type.structuredContent, default=str), **additional_kwargs))
 
         if not result:
             result.append(Content.from_text("null", **additional_kwargs))
@@ -2132,6 +2332,19 @@ class MCPTool:
             ToolExecutionException: If the MCP server is not connected, tools are not loaded,
                 or the tool call fails.
         """
+        return await self._call_tool(
+            tool_name,
+            kwargs,
+            preserve_host_payload=_preserve_mcp_host_payload.get(),
+        )
+
+    async def _call_tool(
+        self,
+        tool_name: str,
+        kwargs: dict[str, Any],
+        *,
+        preserve_host_payload: bool,
+    ) -> str | list[Content]:
         if not self.load_tools_flag:
             raise ToolExecutionException(
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
@@ -2140,7 +2353,7 @@ class MCPTool:
         # Tools advertising taskSupport == "required" cannot complete via plain tools/call;
         # route through the long-running task lifecycle transparently.
         if self._tool_task_support_by_name.get(tool_name) == "required":
-            return await self.call_tool_as_task(tool_name, **kwargs)
+            return await self._call_tool_as_task(tool_name, kwargs, preserve_host_payload=preserve_host_payload)
 
         filtered_kwargs, meta = self._prepare_call_kwargs(tool_name, kwargs)
 
@@ -2153,7 +2366,14 @@ class MCPTool:
             OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
         })
         with create_mcp_client_span("tools/call", target=tool_name, attributes=mcp_span_attrs) as span:
-            return await self._call_tool_with_retries(tool_name, filtered_kwargs, meta, parser, span)
+            return await self._call_tool_with_retries(
+                tool_name,
+                filtered_kwargs,
+                meta,
+                parser,
+                span,
+                preserve_host_payload=preserve_host_payload,
+            )
 
     async def _call_tool_with_retries(
         self,
@@ -2162,6 +2382,8 @@ class MCPTool:
         meta: dict[str, Any] | None,
         parser: Callable[..., str | list[Content]],
         span: otel_trace.Span,
+        *,
+        preserve_host_payload: bool,
     ) -> str | list[Content]:
         """Execute the MCP tools/call RPC with retry logic."""
         from anyio import ClosedResourceError
@@ -2180,8 +2402,23 @@ class MCPTool:
                     # Per OTel MCP semconv: set error.type="tool_error" for isError results
                     if span.is_recording():
                         set_mcp_span_error(span, "tool_error", text or str(parsed))
-                    raise ToolExecutionException(text or str(parsed))
-                return parser(result)
+                    raise _MCPToolResultException(
+                        text or str(parsed),
+                        _mcp_tool_result_host_payload(
+                            result,
+                            max_size_bytes=self.max_host_payload_size_bytes,
+                        ),
+                    )
+                parsed = parser(result)
+                return (
+                    _with_mcp_tool_result_host_payload(
+                        parsed,
+                        result,
+                        max_size_bytes=self.max_host_payload_size_bytes,
+                    )
+                    if preserve_host_payload
+                    else parsed
+                )
             except ToolExecutionException:
                 raise
             except (ClosedResourceError, McpError) as call_ex:
@@ -2291,6 +2528,15 @@ class MCPTool:
             A list of Content items (or a string when a custom ``parse_tool_results``
             callback is configured).
         """
+        return await self._call_tool_as_task(tool_name, kwargs, preserve_host_payload=False)
+
+    async def _call_tool_as_task(
+        self,
+        tool_name: str,
+        kwargs: dict[str, Any],
+        *,
+        preserve_host_payload: bool,
+    ) -> str | list[Content]:
         from anyio import ClosedResourceError
         from mcp.shared.exceptions import McpError
 
@@ -2330,8 +2576,23 @@ class MCPTool:
                     if isinstance(parsed, list)
                     else str(parsed)
                 )
-                raise ToolExecutionException(text or str(parsed))
-            return parser(fallback_result)
+                raise _MCPToolResultException(
+                    text or str(parsed),
+                    _mcp_tool_result_host_payload(
+                        fallback_result,
+                        max_size_bytes=self.max_host_payload_size_bytes,
+                    ),
+                )
+            parsed = parser(fallback_result)
+            return (
+                _with_mcp_tool_result_host_payload(
+                    parsed,
+                    fallback_result,
+                    max_size_bytes=self.max_host_payload_size_bytes,
+                )
+                if preserve_host_payload
+                else parsed
+            )
 
         if task_id is None:
             raise ToolExecutionException(f"MCP server did not return a task_id or fallback result for '{tool_name}'.")
@@ -2343,7 +2604,13 @@ class MCPTool:
 
         async def _await_task_completion() -> str | list[Content]:
             terminal = await self._poll_task_until_terminal(task_id)
-            return await self._handle_terminal_task(tool_name, task_id, terminal, parser)
+            return await self._handle_terminal_task(
+                tool_name,
+                task_id,
+                terminal,
+                parser,
+                preserve_host_payload=preserve_host_payload,
+            )
 
         try:
             if max_wait_s is not None:
@@ -2423,7 +2690,6 @@ class MCPTool:
         # Inspect the raw payload: a CreateTaskResult carries `task.taskId`;
         # a legacy CallToolResult carries `content` and/or `isError`.
         raw: dict[str, Any] = lenient.model_dump(by_alias=True, exclude_none=True)
-        raw.pop("_meta", None)
 
         task_field = raw.get("task")
         if isinstance(task_field, dict):
@@ -2513,6 +2779,8 @@ class MCPTool:
         task_id: str,
         snapshot: types.GetTaskResult,
         parser: Callable[[types.CallToolResult], str | list[Content]],
+        *,
+        preserve_host_payload: bool,
     ) -> str | list[Content]:
         """Map a terminal task snapshot to either a parsed result or an exception."""
         status = snapshot.status
@@ -2525,8 +2793,23 @@ class MCPTool:
                     if isinstance(parsed, list)
                     else str(parsed)
                 )
-                raise ToolExecutionException(text or str(parsed))
-            return parser(payload)
+                raise _MCPToolResultException(
+                    text or str(parsed),
+                    _mcp_tool_result_host_payload(
+                        payload,
+                        max_size_bytes=self.max_host_payload_size_bytes,
+                    ),
+                )
+            parsed = parser(payload)
+            return (
+                _with_mcp_tool_result_host_payload(
+                    parsed,
+                    payload,
+                    max_size_bytes=self.max_host_payload_size_bytes,
+                )
+                if preserve_host_payload
+                else parsed
+            )
 
         # Non-completed terminal statuses surface as ToolExecutionException so the
         # function-calling loop sees a normal failure for tool_name.
@@ -2558,7 +2841,6 @@ class MCPTool:
 
         # GetTaskPayloadResult carries the tool result via extra fields; reinterpret as CallToolResult.
         payload_dict = payload.model_dump(by_alias=True, exclude_none=True)
-        payload_dict.pop("_meta", None)
         try:
             return types.CallToolResult.model_validate(payload_dict)
         except ValidationError as ex:
@@ -2836,6 +3118,7 @@ class MCPStdioTool(MCPTool):
         sampling_approval_callback: SamplingApprovalCallback | None = None,
         sampling_max_tokens: int | None = _DEFAULT_SAMPLING_MAX_TOKENS,
         sampling_max_requests: int | None = _DEFAULT_SAMPLING_MAX_REQUESTS,
+        max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         additional_properties: dict[str, Any] | None = None,
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
@@ -2904,6 +3187,8 @@ class MCPStdioTool(MCPTool):
                 (``min(requested, cap)``); ``None`` disables it.
             sampling_max_requests: Per-session cap on the number of sampling requests; further
                 requests are rejected. Resets on reconnect. ``None`` disables it.
+            max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
+                transports. ``None`` disables the limit.
             task_options: Options for tools that advertise
                 ``execution.taskSupport == "required"``. See :class:`MCPTaskOptions`.
             additional_tool_argument_names: Extra argument names to forward to the MCP server in
@@ -2951,6 +3236,7 @@ class MCPStdioTool(MCPTool):
             sampling_approval_callback=sampling_approval_callback,
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
+            max_host_payload_size_bytes=max_host_payload_size_bytes,
         )
         self.command = command
         self.args = args or []
@@ -3031,6 +3317,7 @@ class MCPStreamableHTTPTool(MCPTool):
         sampling_approval_callback: SamplingApprovalCallback | None = None,
         sampling_max_tokens: int | None = _DEFAULT_SAMPLING_MAX_TOKENS,
         sampling_max_requests: int | None = _DEFAULT_SAMPLING_MAX_REQUESTS,
+        max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         additional_properties: dict[str, Any] | None = None,
         http_client: AsyncClient | None = None,
         header_provider: Callable[[dict[str, Any]], dict[str, str]] | None = None,
@@ -3100,6 +3387,8 @@ class MCPStreamableHTTPTool(MCPTool):
                 (``min(requested, cap)``); ``None`` disables it.
             sampling_max_requests: Per-session cap on the number of sampling requests; further
                 requests are rejected. Resets on reconnect. ``None`` disables it.
+            max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
+                transports. ``None`` disables the limit.
             http_client: Optional asyncClient to use. If not provided, the
                 ``streamable_http_client`` API will create and manage a default client.
                 To configure headers, timeouts, or other HTTP client settings, create
@@ -3177,6 +3466,7 @@ class MCPStreamableHTTPTool(MCPTool):
             sampling_approval_callback=sampling_approval_callback,
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
+            max_host_payload_size_bytes=max_host_payload_size_bytes,
         )
         self.url = url
         self.terminate_on_close = terminate_on_close
@@ -3351,6 +3641,7 @@ class MCPWebsocketTool(MCPTool):
         sampling_approval_callback: SamplingApprovalCallback | None = None,
         sampling_max_tokens: int | None = _DEFAULT_SAMPLING_MAX_TOKENS,
         sampling_max_requests: int | None = _DEFAULT_SAMPLING_MAX_REQUESTS,
+        max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
         additional_properties: dict[str, Any] | None = None,
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
@@ -3417,6 +3708,8 @@ class MCPWebsocketTool(MCPTool):
                 (``min(requested, cap)``); ``None`` disables it.
             sampling_max_requests: Per-session cap on the number of sampling requests; further
                 requests are rejected. Resets on reconnect. ``None`` disables it.
+            max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
+                transports. ``None`` disables the limit.
             task_options: Options for tools that advertise
                 ``execution.taskSupport == "required"``. See :class:`MCPTaskOptions`.
             additional_tool_argument_names: Extra argument names to forward to the MCP server in
@@ -3464,6 +3757,7 @@ class MCPWebsocketTool(MCPTool):
             sampling_approval_callback=sampling_approval_callback,
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
+            max_host_payload_size_bytes=max_host_payload_size_bytes,
         )
         self.url = url
         self._client_kwargs = kwargs

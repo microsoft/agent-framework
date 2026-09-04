@@ -2,6 +2,7 @@
 
 """Tests for _run_common.py edge cases."""
 
+import json
 import logging
 
 import pytest
@@ -11,9 +12,16 @@ from ag_ui.core.events import (
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
 )
-from agent_framework import Content
+from agent_framework import Content, Message
+from agent_framework._mcp import _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY
 
 from agent_framework_ag_ui import state_update
+from agent_framework_ag_ui._agent_run import (
+    _build_messages_snapshot,
+    _make_approval_tool_result_events,
+    _resolved_tool_result_snapshot_messages,
+)
+from agent_framework_ag_ui._message_adapters import normalize_agui_input_messages
 from agent_framework_ag_ui._predictive_state import PredictiveStateHandler
 from agent_framework_ag_ui._run_common import (
     FlowState,
@@ -453,6 +461,117 @@ class TestEmitToolResultWithState:
         assert len(result_events) == 1
         assert result_events[0].content == "plain result"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert flow.tool_results[-1]["content"] == "plain result"
+
+    def test_plain_tool_result_does_not_serialize_replay_items(self):
+        """Ordinary results bypass MCP replay serialization, including cyclic provider metadata."""
+        cyclic_properties: dict[str, object] = {}
+        cyclic_properties["self"] = cyclic_properties
+        tool_return = Content.from_text("plain result", additional_properties=cyclic_properties)
+        content = Content.from_function_result(call_id="plain-1", result=[tool_return])
+        flow = FlowState()
+
+        events = _emit_tool_result(content, flow)
+
+        result_event = next(event for event in events if event.type == EventType.TOOL_CALL_RESULT)
+        assert result_event.content == "plain result"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert flow.tool_results[-1]["content"] == "plain result"
+        assert "_agentFrameworkModelContent" not in flow.tool_results[-1]
+
+    def test_mcp_host_payload_routes_to_live_event_and_snapshot(self):
+        """MCP Host data replaces neither the model result nor either AG-UI Host surface."""
+        host_payload = {
+            "content": [{"type": "text", "text": "Summary"}],
+            "structuredContent": {"image_url": "https://example.test/widget.png"},
+            "isError": False,
+        }
+        tool_return = Content.from_text(
+            "Summary",
+            additional_properties={_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY: host_payload},
+        )
+        content = Content.from_function_result(call_id="mcp-1", result=[tool_return])
+        flow = FlowState()
+
+        events = _emit_tool_result(content, flow)
+        result_event = next(event for event in events if event.type == EventType.TOOL_CALL_RESULT)
+        snapshot = _build_messages_snapshot(flow, [])
+
+        assert content.result == "Summary"
+        assert json.loads(result_event.content) == host_payload  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert json.loads(flow.tool_results[-1]["content"]) == host_payload
+        snapshot_content = snapshot.messages[-1].content
+        assert isinstance(snapshot_content, str)
+        assert json.loads(snapshot_content) == host_payload
+
+        snapshot_messages = [message.model_dump(by_alias=True, exclude_none=True) for message in snapshot.messages]
+        provider_messages, _ = normalize_agui_input_messages(snapshot_messages, sanitize_tool_history=False)
+        assert provider_messages[-1].contents[0].result == "Summary"
+
+        approval_event = _make_approval_tool_result_events([content])[0]
+        assert json.loads(approval_event.content) == host_payload
+        approval_snapshot = _resolved_tool_result_snapshot_messages(
+            [Message(role="tool", contents=[content], message_id="approval-result")]
+        )
+        assert json.loads(approval_snapshot["mcp-1"]["content"]) == host_payload
+        assert approval_snapshot["mcp-1"]["_agentFrameworkModelContent"] == [{"type": "text", "text": "Summary"}]
+
+    def test_mcp_snapshot_replays_rich_model_items_without_host_payload_duplication(self):
+        """The replay sidecar retains model media and omits the separate Host payload."""
+        host_payload = {
+            "content": [{"type": "image", "data": "aW1hZ2U=", "mimeType": "image/png"}],
+            "structuredContent": {"widget": "image"},
+            "isError": False,
+        }
+        model_items = [
+            Content.from_text(
+                "Image ready",
+                additional_properties={_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY: host_payload},
+            ),
+            Content.from_data(b"image", media_type="image/png"),
+        ]
+        content = Content.from_function_result(call_id="mcp-rich", result=model_items)
+        flow = FlowState()
+
+        _emit_tool_result(content, flow)
+
+        sidecar = flow.tool_results[-1]["_agentFrameworkModelContent"]
+        assert [item["type"] for item in sidecar] == ["text", "data"]
+        assert _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY not in sidecar[0].get("additional_properties", {})
+        provider_messages, _ = normalize_agui_input_messages(flow.tool_results, sanitize_tool_history=False)
+        restored_items = provider_messages[0].contents[0].items
+        assert restored_items is not None
+        assert [item.type for item in restored_items] == ["text", "data"]
+        assert restored_items[1].media_type == "image/png"
+
+    def test_messages_snapshot_bounds_cumulative_mcp_host_payloads(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Complete thread snapshots retain only the newest Host payloads within the aggregate budget."""
+        host_contents = [json.dumps({"structuredContent": {"index": index, "data": "x" * 64}}) for index in range(2)]
+        flow = FlowState(
+            tool_results=[
+                {
+                    "id": f"result-{index}",
+                    "role": "tool",
+                    "toolCallId": f"mcp-{index}",
+                    "content": host_content,
+                    "_agentFrameworkMcpResult": True,
+                    "_agentFrameworkModelContent": [{"type": "text", "text": f"Summary {index}"}],
+                }
+                for index, host_content in enumerate(host_contents)
+            ]
+        )
+        monkeypatch.setattr(
+            "agent_framework_ag_ui._agent_run.DEFAULT_MAX_HOST_PAYLOAD_HISTORY_SIZE_BYTES",
+            len(host_contents[1].encode("utf-8")),
+        )
+
+        snapshot = _build_messages_snapshot(flow, [])
+        messages = [message.model_dump(by_alias=True, exclude_none=True) for message in snapshot.messages]
+
+        assert messages[0]["content"] == "Summary 0"
+        assert messages[0]["_agentFrameworkHostPayloadOmitted"] is True
+        assert messages[1]["content"] == host_contents[1]
 
     def test_display_only_payload_falls_back_to_llm_content(self):
         """When text is empty, both channels receive the serialized display payload."""
