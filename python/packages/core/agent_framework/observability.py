@@ -2064,6 +2064,12 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     )
             except Exception as exception:
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
+                _capture_operation_error(
+                    attributes=attributes,
+                    exception=exception,
+                    operation_duration_histogram=getattr(self, "duration_histogram", None),
+                    duration=perf_counter() - start_time,
+                )
                 _close_span()
                 raise
 
@@ -2079,6 +2085,12 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                             span=span,
                             exception=result_stream._stream_error,  # type: ignore
                             timestamp=time_ns(),
+                        )
+                        _capture_operation_error(
+                            attributes=attributes,
+                            exception=result_stream._stream_error,  # type: ignore[arg-type]
+                            operation_duration_histogram=getattr(self, "duration_histogram", None),
+                            duration=duration_state.get("duration"),
                         )
                         return
                     response: ChatResponse[Any] = await result_stream.get_final_response()
@@ -2171,6 +2183,12 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     )
                 except Exception as exception:
                     capture_exception(span=span, exception=exception, timestamp=time_ns())
+                    _capture_operation_error(
+                        attributes=attributes,
+                        exception=exception,
+                        operation_duration_histogram=getattr(self, "duration_histogram", None),
+                        duration=perf_counter() - start_time_stamp,
+                    )
                     raise
                 duration = perf_counter() - start_time_stamp
                 response_attributes = _get_response_attributes(attributes, response)
@@ -2256,6 +2274,12 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
                 )
             except Exception as exception:
                 capture_exception(span=span, exception=exception, timestamp=time_ns())
+                _capture_operation_error(
+                    attributes=attributes,
+                    exception=exception,
+                    operation_duration_histogram=getattr(self, "duration_histogram", None),
+                    duration=perf_counter() - start_time_stamp,
+                )
                 raise
             duration = perf_counter() - start_time_stamp
             response_attributes: dict[str, Any] = {**attributes}
@@ -3515,6 +3539,25 @@ GEN_AI_METRIC_ATTRIBUTES = (
     OtelAttr.ADDRESS,
     OtelAttr.PORT,
 )
+
+
+def _capture_operation_error(
+    attributes: dict[str, Any],
+    exception: BaseException,
+    operation_duration_histogram: metrics.Histogram | None = None,
+    duration: float | None = None,
+) -> None:
+    """Record the operation duration metric for a call that failed.
+
+    The GenAI semantic conventions define ``gen_ai.client.operation.duration`` for failed
+    operations as well as successful ones, with ``error.type`` set to the class of the error.
+    Recording only successes leaves error latency out of the metric and gives no error rate.
+    """
+    if operation_duration_histogram is None or duration is None:
+        return
+    attrs: dict[str, Any] = {k: v for k, v in attributes.items() if k in GEN_AI_METRIC_ATTRIBUTES}
+    attrs[OtelAttr.ERROR_TYPE] = type(exception).__name__
+    operation_duration_histogram.record(duration, attributes=attrs)
 
 
 def _capture_response(
