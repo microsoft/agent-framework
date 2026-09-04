@@ -305,7 +305,14 @@ internal static class AgentResponseUpdateExtensions
         if (JsonSerializer.IsReflectionEnabledByDefault)
         {
             JsonElement? dataElement = null;
-            if (workflowEvent.Data is not null)
+            if (workflowEvent.Data is Exception exception)
+            {
+                // Exceptions cannot go through System.Text.Json: Exception.TargetSite is a MethodBase,
+                // which throws NotSupportedException and would surface as a serialization error instead
+                // of the actual failure. Report the message only; the stack trace is not for clients.
+                dataElement = JsonSerializer.SerializeToElement(exception.Message, OpenAIHostingJsonContext.Default.String);
+            }
+            else if (workflowEvent.Data is not null)
             {
                 dataElement = JsonSerializer.SerializeToElement(workflowEvent.Data, OpenAIHostingJsonUtilities.DefaultOptions.GetTypeInfo(typeof(object)));
             }
