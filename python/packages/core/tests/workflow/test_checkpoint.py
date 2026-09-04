@@ -1765,4 +1765,62 @@ async def test_file_checkpoint_storage_roundtrip_empty_collections():
         assert loaded.pending_request_info_events == {}
 
 
+@dataclass
+class _UnlistedState:
+    """A state type outside the deserialization allow list."""
+
+    stage: str
+
+
+def _stamped_checkpoint(state: dict[str, Any], timestamp: str) -> WorkflowCheckpoint:
+    return WorkflowCheckpoint(
+        workflow_name="recovery-workflow",
+        graph_signature_hash="test-hash",
+        state=state,
+        timestamp=timestamp,
+    )
+
+
+async def test_file_checkpoint_storage_get_latest_returns_the_newest():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        await storage.save(_stamped_checkpoint({"stage": "first"}, "2026-01-01T10:00:00+00:00"))
+        newest_id = await storage.save(_stamped_checkpoint({"stage": "second"}, "2026-01-01T11:00:00+00:00"))
+
+        latest = await storage.get_latest(workflow_name="recovery-workflow")
+
+        assert latest is not None
+        assert latest.checkpoint_id == newest_id
+
+
+async def test_file_checkpoint_storage_get_latest_does_not_silently_return_stale_state():
+    """A newest checkpoint that cannot be decoded must raise, not fall back to an older one."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        await storage.save(_stamped_checkpoint({"stage": "first"}, "2026-01-01T10:00:00+00:00"))
+        await storage.save(_stamped_checkpoint({"app": _UnlistedState(stage="second")}, "2026-01-01T11:00:00+00:00"))
+
+        with pytest.raises(WorkflowCheckpointException):
+            await storage.get_latest(workflow_name="recovery-workflow")
+
+
+async def test_file_checkpoint_storage_get_latest_without_checkpoints_is_none():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        assert await storage.get_latest(workflow_name="recovery-workflow") is None
+
+
+async def test_file_checkpoint_storage_list_checkpoints_still_skips_undecodable_entries():
+    """list_checkpoints keeps returning what it can read, so one bad file cannot break listing."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        readable_id = await storage.save(_stamped_checkpoint({"stage": "first"}, "2026-01-01T10:00:00+00:00"))
+        await storage.save(_stamped_checkpoint({"app": _UnlistedState(stage="second")}, "2026-01-01T11:00:00+00:00"))
+
+        listed = await storage.list_checkpoints(workflow_name="recovery-workflow")
+
+        assert [cp.checkpoint_id for cp in listed] == [readable_id]
+
+
 # endregion

@@ -424,18 +424,44 @@ class FileCheckpointStorage:
     async def get_latest(self, *, workflow_name: str) -> WorkflowCheckpoint | None:
         """Get the latest checkpoint for a given workflow name.
 
+        The latest checkpoint is identified from stored metadata, which does not require
+        decoding any checkpoint payload, and only that checkpoint is then loaded. A checkpoint
+        that cannot be decoded therefore surfaces as an error rather than being skipped in
+        favour of an older one: silently resuming from earlier state is worse than failing.
+
         Args:
             workflow_name: The name of the workflow to get the latest checkpoint for.
 
         Returns:
             The latest WorkflowCheckpoint object for the specified workflow name, or None if no checkpoints exist.
+
+        Raises:
+            WorkflowCheckpointException: If the latest checkpoint exists but cannot be loaded.
         """
-        checkpoints = await self.list_checkpoints(workflow_name=workflow_name)
-        if not checkpoints:
+
+        def _latest_checkpoint_id() -> CheckpointID | None:
+            latest: tuple[datetime, CheckpointID] | None = None
+            for file_path in self.storage_path.glob("*.json"):
+                try:
+                    with open(file_path) as f:
+                        stored = json.load(f)
+                    if stored.get("workflow_name") != workflow_name:
+                        continue
+                    timestamp = datetime.fromisoformat(stored["timestamp"])
+                    checkpoint_id = stored["checkpoint_id"]
+                except Exception as e:
+                    logger.warning(f"Failed to read checkpoint metadata from {file_path}: {e}")
+                    continue
+                if latest is None or timestamp > latest[0]:
+                    latest = (timestamp, checkpoint_id)
+            return latest[1] if latest else None
+
+        latest_checkpoint_id = await asyncio.to_thread(_latest_checkpoint_id)
+        if latest_checkpoint_id is None:
             return None
-        latest_checkpoint = max(checkpoints, key=lambda cp: datetime.fromisoformat(cp.timestamp))
-        logger.debug(f"Latest checkpoint for workflow {workflow_name} is {latest_checkpoint.checkpoint_id}")
-        return latest_checkpoint
+
+        logger.debug(f"Latest checkpoint for workflow {workflow_name} is {latest_checkpoint_id}")
+        return await self.load(latest_checkpoint_id)
 
     async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
         """List checkpoint IDs for a given workflow name.
