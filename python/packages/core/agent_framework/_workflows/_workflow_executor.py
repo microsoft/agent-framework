@@ -4,13 +4,19 @@ import asyncio
 import logging
 import sys
 import types
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
 
-from ._const import GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
+from ._const import (
+    GLOBAL_KWARGS_KEY,
+    RAW_CLIENT_KWARGS_KEY,
+    RAW_FUNCTION_INVOCATION_KWARGS_KEY,
+    WORKFLOW_RUN_KWARGS_KEY,
+)
 from ._events import (
     WorkflowEvent,
     WorkflowRunState,
@@ -20,7 +26,7 @@ from ._executor import Executor, handler
 from ._request_info_mixin import response_handler
 from ._runner_context import WorkflowMessage
 from ._typing_utils import is_instance_of
-from ._workflow import WorkflowRunResult
+from ._workflow import WorkflowInvocationKwargs, WorkflowRunResult
 from ._workflow_context import WorkflowContext
 
 if sys.version_info >= (3, 12):
@@ -375,29 +381,36 @@ class WorkflowExecutor(Executor):
         # Get kwargs from parent workflow's State to propagate to subworkflow
         parent_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
 
-        # Extract invocation kwargs recognised by Workflow.run()
-        # The state stores resolved format (with __global__ wrapper for global kwargs).
-        # Unwrap __global__ before passing to the subworkflow so it gets re-resolved
-        # against the subworkflow's own executor IDs.
-        fi_kwargs: dict[str, Any] | None = None
-        ci_kwargs: dict[str, Any] | None = None
-        tools = ctx.get_runtime_tools()
+        # Use the caller's raw kwargs so legacy per-executor mappings are resolved
+        # against the child workflow's executor IDs rather than the parent's.
+        fi_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None
+        ci_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None
         for key in ("function_invocation_kwargs", "client_kwargs"):
-            resolved = parent_kwargs.get(key)
-            if isinstance(resolved, dict):
-                # Unwrap global sentinel; pass per-executor dicts as-is
-                unwrapped: dict[str, Any] = resolved.get(GLOBAL_KWARGS_KEY, resolved)  # type: ignore
+            raw_key = (
+                RAW_FUNCTION_INVOCATION_KWARGS_KEY if key == "function_invocation_kwargs" else RAW_CLIENT_KWARGS_KEY
+            )
+            raw_value = parent_kwargs.get(raw_key)
+            if raw_value is not None:
+                resolved = cast(WorkflowInvocationKwargs | Mapping[str, Any], raw_value)
+            else:
+                normalized: Any = parent_kwargs.get(key)
+                if isinstance(normalized, dict):
+                    normalized_dict = cast(dict[str, Any], normalized)
+                    if len(normalized_dict) == 1 and GLOBAL_KWARGS_KEY in normalized_dict:
+                        normalized = normalized_dict[GLOBAL_KWARGS_KEY]
+                resolved = cast(WorkflowInvocationKwargs | Mapping[str, Any] | None, normalized)
+            if resolved is not None:
                 if key == "function_invocation_kwargs":
-                    fi_kwargs = unwrapped  # type: ignore
+                    fi_kwargs = resolved
                 else:
-                    ci_kwargs = unwrapped  # type: ignore
+                    ci_kwargs = resolved
 
         # Run the sub-workflow and collect all events, passing parent kwargs
         result = await self.workflow.run(
             input_data,
-            tools=tools,
-            function_invocation_kwargs=fi_kwargs,  # type: ignore
-            client_kwargs=ci_kwargs,  # type: ignore
+            tools=ctx.get_runtime_tools(),
+            function_invocation_kwargs=fi_kwargs,
+            client_kwargs=ci_kwargs,
         )
 
         logger.debug(f"WorkflowExecutor {self.id} sub-workflow {self.workflow.id} completed with {len(result)} events")
@@ -449,15 +462,6 @@ class WorkflowExecutor(Executor):
             response=response,
             ctx=ctx,
         )
-
-    @override
-    async def _cancel_pending_request(self, request_id: str, ctx: WorkflowContext[Any, Any]) -> None:
-        """Propagate cancellation into the wrapped workflow."""
-        result = await self.workflow.cancel_pending_requests(
-            [request_id],
-            tools=ctx.get_runtime_tools(),
-        )
-        await self._process_workflow_result(result, ctx)
 
     @override
     async def on_checkpoint_save(self) -> dict[str, Any]:
@@ -617,5 +621,5 @@ class WorkflowExecutor(Executor):
 
         # Forward the response to the sub-workflow, which resumes and validates it against its own
         # pending requests, then process whatever the sub-workflow produces.
-        result = await self.workflow.run(responses={request_id: response}, tools=ctx.get_runtime_tools())
+        result = await self.workflow.run(responses={request_id: response})
         await self._process_workflow_result(result, ctx)

@@ -325,7 +325,7 @@ from ._workflows._validation import (
     validate_workflow_graph,
 )
 from ._workflows._viz import WorkflowViz
-from ._workflows._workflow import Workflow, WorkflowRunResult
+from ._workflows._workflow import Workflow, WorkflowInvocationKwargs, WorkflowRunResult
 from ._workflows._workflow_builder import WorkflowBuilder
 from ._workflows._workflow_context import WorkflowContext
 from ._workflows._workflow_executor import SubWorkflowRequestMessage, SubWorkflowResponseMessage, WorkflowExecutor
@@ -592,6 +592,7 @@ __all__ = [
     "WorkflowExecutor",
     "WorkflowMessage",
     "WorkflowRunResult",
+    "WorkflowInvocationKwargs",
     "WorkflowRunState",
     "WorkflowRunnerException",
     "WorkflowValidationError",

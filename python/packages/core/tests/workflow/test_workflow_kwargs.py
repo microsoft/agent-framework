@@ -17,6 +17,7 @@ from agent_framework import (
     FunctionTool,
     Message,
     ResponseStream,
+    WorkflowInvocationKwargs,
     WorkflowRunState,
 )
 from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
@@ -1070,6 +1071,35 @@ async def test_nested_subworkflow_kwargs_propagation() -> None:
     )
 
 
+async def test_mixed_kwargs_route_through_subworkflow() -> None:
+    """Mixed kwargs preserve global values and child executor-specific routing."""
+    from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+    inner_agent1 = _KwargsCapturingAgent(name="inner_agent1")
+    inner_agent2 = _KwargsCapturingAgent(name="inner_agent2")
+    inner_workflow = SequentialBuilder(participants=[inner_agent1, inner_agent2]).build()
+    subworkflow_executor = WorkflowExecutor(workflow=inner_workflow, id="subworkflow")
+    outer_workflow = SequentialBuilder(participants=[subworkflow_executor]).build()
+
+    fi_kwargs = WorkflowInvocationKwargs(
+        global_kwargs={"shared": "value", "overridden": "global"},
+        executor_kwargs={"inner_agent2": {"overridden": "inner_agent2"}},
+    )
+
+    async for event in outer_workflow.run("test", stream=True, function_invocation_kwargs=fi_kwargs):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    assert inner_agent1.captured_kwargs[0].get("function_invocation_kwargs") == {
+        "shared": "value",
+        "overridden": "global",
+    }
+    assert inner_agent2.captured_kwargs[0].get("function_invocation_kwargs") == {
+        "shared": "value",
+        "overridden": "inner_agent2",
+    }
+
+
 # endregion
 
 
@@ -1151,6 +1181,35 @@ async def test_per_executor_function_invocation_kwargs_routes_to_correct_agent()
     assert agent2.captured_kwargs[0].get("function_invocation_kwargs") == {"tool_param": "value_for_agent2"}
 
 
+async def test_global_and_per_executor_function_invocation_kwargs_are_merged() -> None:
+    """Global function kwargs are merged with executor-specific overrides."""
+    agent1 = _KwargsCapturingAgent(name="agent1")
+    agent2 = _KwargsCapturingAgent(name="agent2")
+    workflow = SequentialBuilder(participants=[agent1, agent2]).build()
+
+    fi_kwargs = WorkflowInvocationKwargs(
+        global_kwargs={"shared": "value", "overridden": "global"},
+        executor_kwargs={
+            "agent1": {"overridden": "agent1"},
+            "agent2": {"agent_only": True},
+        },
+    )
+
+    async for event in workflow.run("test", stream=True, function_invocation_kwargs=fi_kwargs):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    assert agent1.captured_kwargs[0].get("function_invocation_kwargs") == {
+        "shared": "value",
+        "overridden": "agent1",
+    }
+    assert agent2.captured_kwargs[0].get("function_invocation_kwargs") == {
+        "shared": "value",
+        "overridden": "global",
+        "agent_only": True,
+    }
+
+
 async def test_per_executor_kwargs_unmatched_agent_gets_none() -> None:
     """An agent not targeted in per-executor kwargs should receive None for that kwarg."""
     agent1 = _KwargsCapturingAgent(name="agent1")
@@ -1219,6 +1278,35 @@ async def test_per_executor_client_kwargs_routes_correctly() -> None:
     assert agent1.captured_kwargs[0].get("client_kwargs") == {"temperature": 0.1}
     assert len(agent2.captured_kwargs) >= 1
     assert agent2.captured_kwargs[0].get("client_kwargs") == {"temperature": 0.9}
+
+
+async def test_global_and_per_executor_client_kwargs_are_merged() -> None:
+    """Global client kwargs are merged with executor-specific overrides."""
+    agent1 = _KwargsCapturingAgent(name="agent1")
+    agent2 = _KwargsCapturingAgent(name="agent2")
+    workflow = SequentialBuilder(participants=[agent1, agent2]).build()
+
+    ci_kwargs = WorkflowInvocationKwargs(
+        global_kwargs={"shared": "value", "overridden": "global"},
+        executor_kwargs={
+            "agent1": {"overridden": "agent1"},
+            "agent2": {"agent_only": True},
+        },
+    )
+
+    async for event in workflow.run("test", stream=True, client_kwargs=ci_kwargs):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    assert agent1.captured_kwargs[0].get("client_kwargs") == {
+        "shared": "value",
+        "overridden": "agent1",
+    }
+    assert agent2.captured_kwargs[0].get("client_kwargs") == {
+        "shared": "value",
+        "overridden": "global",
+        "agent_only": True,
+    }
 
 
 async def test_resolve_invocation_kwargs_logs_per_executor(caplog: "LogCaptureFixture") -> None:

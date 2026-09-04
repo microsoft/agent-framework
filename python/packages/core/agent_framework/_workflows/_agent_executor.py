@@ -614,22 +614,26 @@ class AgentExecutor(Executor):
         """
         if not isinstance(resolved, dict):
             return None
-        # Use explicit key-presence checks so that an empty per-executor dict is
-        # honoured (e.g. to clear kwargs) instead of falling through to global.
-        if self.id in resolved:
-            executor_kwargs = resolved[self.id]
-        elif GLOBAL_KWARGS_KEY in resolved:
-            executor_kwargs = resolved[GLOBAL_KWARGS_KEY]
-        else:
+        global_kwargs: Any = resolved.get(GLOBAL_KWARGS_KEY)
+        executor_kwargs: Any = resolved.get(self.id)
+        if global_kwargs is None and executor_kwargs is None:
             return None
 
-        if not isinstance(executor_kwargs, dict):
+        if global_kwargs is not None and not isinstance(global_kwargs, dict):
+            logger.warning(
+                "Executor %s expected a dict for global kwargs, but got %s. Ignoring.",
+                self.id,
+                cast(type[Any], type(global_kwargs)),
+            )
+            return None
+
+        if executor_kwargs is not None and not isinstance(executor_kwargs, dict):
             logger.warning(
                 "Executor %s expected a dict for its kwargs, but got %s. Ignoring.",
                 self.id,
-                type(executor_kwargs),  # type: ignore
+                cast(type[Any], type(executor_kwargs)),
             )
-
             return None
 
-        return executor_kwargs  # type: ignore
+        # Specific values override global values for the same function argument.
+        return {**(global_kwargs or {}), **(executor_kwargs or {})}

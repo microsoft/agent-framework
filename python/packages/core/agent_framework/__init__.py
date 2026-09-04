@@ -362,7 +362,7 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "validate_workflow_graph",
     ),
     "._workflows._viz": ("WorkflowViz",),
-    "._workflows._workflow": ("Workflow", "WorkflowRunResult"),
+    "._workflows._workflow": ("Workflow", "WorkflowInvocationKwargs", "WorkflowRunResult"),
     "._workflows._workflow_builder": ("WorkflowBuilder",),
     "._workflows._workflow_context": ("WorkflowContext",),
     "._workflows._workflow_executor": (
@@ -626,6 +626,7 @@ __all__ = [
     "WorkflowEventType",
     "WorkflowException",
     "WorkflowExecutor",
+    "WorkflowInvocationKwargs",
     "WorkflowMessage",
     "WorkflowRunResult",
     "WorkflowRunState",
