@@ -2811,7 +2811,25 @@ def test_create_workflow_span(span_exporter):
     spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
     assert len(spans) == 1
     assert spans[0].name == "test_workflow"
-    assert spans[0].attributes["key"] == "value"
+    assert spans[0].attributes["key"] == "value"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+
+
+def test_start_workflow_span_does_not_attach_as_current(span_exporter: InMemorySpanExporter) -> None:
+    """start_workflow_span must not attach, so callers can yield without a dangling OTel token."""
+    from opentelemetry import trace
+
+    from agent_framework.observability import start_workflow_span
+
+    span_exporter.clear()  # type: ignore[attr-defined]
+    before = trace.get_current_span()
+    span = start_workflow_span("test_workflow_unattached", attributes={"key": "value"})
+    assert trace.get_current_span() is before
+    span.end()
+
+    spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
+    assert len(spans) == 1
+    assert spans[0].name == "test_workflow_unattached"
+    assert spans[0].attributes["key"] == "value"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 def test_create_workflow_span_uses_scoped_conversation_id(span_exporter: InMemorySpanExporter) -> None:
