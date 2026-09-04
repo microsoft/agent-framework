@@ -3,7 +3,7 @@
 import uuid
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, overload
+from typing import Any, Literal, cast, overload
 
 import pytest
 from typing_extensions import Never
@@ -851,6 +851,69 @@ class TestWorkflowAgent:
         texts = [u.text for u in updates if u.text]
         assert "first output" in texts
         assert "second output" in texts
+
+    async def test_workflow_as_agent_stream_preserves_response_update_metadata(self) -> None:
+        """Test that streaming forwards finish_reason, continuation_token and additional_properties.
+
+        This validates the fix for issue #7952: AgentResponseUpdate metadata should be
+        forwarded as-is when the workflow is wrapped via .as_agent().
+        """
+
+        @executor
+        async def metadata_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponseUpdate]) -> None:  # type: ignore[valid-type]
+            await ctx.yield_output(
+                AgentResponseUpdate(
+                    contents=[Content.from_text(text="payload")],
+                    role="assistant",
+                    agent_id="source-agent",
+                    response_id="source-response",
+                    message_id="source-message",
+                    finish_reason="stop",
+                    continuation_token=cast(Any, {"token": "resume-token"}),
+                    additional_properties={"provider_marker": "preserve-me"},
+                )
+            )
+
+        workflow = WorkflowBuilder(start_executor=metadata_executor).build()
+        agent = workflow.as_agent("metadata-test-agent")
+
+        updates: list[AgentResponseUpdate] = []
+        async for update in agent.run("hello", stream=True):
+            updates.append(update)
+
+        metadata_updates = [u for u in updates if u.response_id == "source-response"]
+        assert len(metadata_updates) == 1
+        update = metadata_updates[0]
+        assert update.text == "payload"
+        assert update.agent_id == "source-agent"
+        assert update.finish_reason == "stop"
+        assert update.continuation_token == {"token": "resume-token"}
+        assert update.additional_properties == {"provider_marker": "preserve-me"}
+
+    async def test_workflow_as_agent_stream_preserves_empty_additional_properties(self) -> None:
+        """Test that an explicitly empty additional_properties dict is not converted to None."""
+
+        @executor
+        async def empty_props_executor(messages: list[Message], ctx: WorkflowContext[Never, AgentResponseUpdate]) -> None:  # type: ignore[valid-type]  # noqa: E501
+            await ctx.yield_output(
+                AgentResponseUpdate(
+                    contents=[Content.from_text(text="payload")],
+                    role="assistant",
+                    response_id="empty-props-response",
+                    additional_properties={},
+                )
+            )
+
+        workflow = WorkflowBuilder(start_executor=empty_props_executor).build()
+        agent = workflow.as_agent("empty-props-test-agent")
+
+        updates: list[AgentResponseUpdate] = []
+        async for update in agent.run("hello", stream=True):
+            updates.append(update)
+
+        forwarded = [u for u in updates if u.response_id == "empty-props-response"]
+        assert len(forwarded) == 1
+        assert forwarded[0].additional_properties == {}
 
     async def test_workflow_as_agent_yield_output_with_content_types(self) -> None:
         """Test that yield_output preserves different content types (Content, Content, etc.)."""
