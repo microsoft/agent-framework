@@ -345,6 +345,22 @@ async def _open_event_stream(raw_response: Any) -> AsyncGenerator[Any]:
     yield raw_response
 
 
+def _function_call_output_has_result(item: Any) -> bool:
+    """True when a ``function_call_output`` item carries a result that can be paired.
+
+    ``.added`` can precede a populated ``output``, so an in-progress skeleton must not synthesize
+    an empty result. A blank ``call_id`` is rejected as well: these items are synthesized by the
+    hosting layer, and a result that cannot be paired to its call is dropped by transports and,
+    worse, re-sent as an unpairable ``function_call_output`` input item on the next turn.
+    """
+    if getattr(item, "output", None) is None:
+        return False
+    if not getattr(item, "call_id", None):
+        logger.debug("Skipping function_call_output with no call_id: item_id=%s", getattr(item, "id", None))
+        return False
+    return True
+
+
 def _claim_function_call_output(seen_item_ids: set[str] | None, item: Any) -> bool:
     """Claim a ``function_call_output`` item for emission; return ``False`` if already claimed.
 
@@ -2905,7 +2921,7 @@ class RawOpenAIChatClient(
                         )
                     )
                 case "function_call_output":  # ResponseFunctionToolCallOutputItem
-                    if getattr(item, "output", None) is not None:
+                    if _function_call_output_has_result(item):
                         contents.append(self._parse_function_call_output_content(item))
                 case "custom_tool_call":
                     contents.append(
@@ -3387,7 +3403,7 @@ class RawOpenAIChatClient(
                         # Emitted from whichever of `.added` / `.done` first carries a populated
                         # `output`; the item id is recorded so the other event cannot emit a second
                         # result for the same item (issue #8068).
-                        if getattr(event_item, "output", None) is not None and _claim_function_call_output(
+                        if _function_call_output_has_result(event_item) and _claim_function_call_output(
                             seen_function_call_output_ids, event_item
                         ):
                             contents.append(self._parse_function_call_output_content(event_item))
@@ -3599,7 +3615,7 @@ class RawOpenAIChatClient(
                     # Counterpart to the `response.output_item.added` branch: whichever event first
                     # carries a populated `output` emits the result, and the shared seen-id set
                     # keeps the other from duplicating it (issue #8068).
-                    if getattr(done_item, "output", None) is not None and _claim_function_call_output(
+                    if _function_call_output_has_result(done_item) and _claim_function_call_output(
                         seen_function_call_output_ids, done_item
                     ):
                         contents.append(

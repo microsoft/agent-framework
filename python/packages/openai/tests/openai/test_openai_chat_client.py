@@ -3628,6 +3628,25 @@ def test_parse_chunk_from_openai_function_call_output_keeps_tool_name() -> None:
     assert update.contents[0].additional_properties["name"] == "search_knowledge_base"
 
 
+def test_parse_chunk_from_openai_function_call_output_without_call_id_is_skipped() -> None:
+    """A result that cannot be paired to its call is not emitted at all.
+
+    A blank `call_id` would produce an orphaned function_result: transports drop it, and the
+    outbound serializer would re-send it as an unpairable `function_call_output` input item.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_item = _make_function_call_output_item("orphan result")
+    mock_item.call_id = ""
+    mock_event.item = mock_item
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
+
+    assert update.contents == []
+
+
 def test_parse_response_from_openai_with_function_call_output() -> None:
     """Non-streaming parsing agrees with streaming: the hosted tool result is not dropped."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
