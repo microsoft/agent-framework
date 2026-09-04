@@ -60,6 +60,9 @@ public sealed class CheckpointManager : ICheckpointManager
     ValueTask<IEnumerable<CheckpointInfo>> ICheckpointManager.RetrieveIndexAsync(string sessionId, CheckpointInfo? withParent)
         => this._impl.RetrieveIndexAsync(sessionId, withParent);
 
+    ValueTask<bool> ICheckpointManager.NotifyCheckpointRestoredAsync(string sessionId, CheckpointInfo checkpointInfo, CancellationToken cancellationToken)
+        => this._impl.NotifyCheckpointRestoredAsync(sessionId, checkpointInfo, cancellationToken);
+
     /// <summary>
     /// Retrieves the most recently committed checkpoint for the specified session, or <see langword="null"/>
     /// when the session has no checkpoints.
