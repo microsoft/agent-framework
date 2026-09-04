@@ -62,6 +62,10 @@ updates:
     directories:
       - "/"
       - "/.github/actions/*"
+    groups:
+      codeql-actions:
+        patterns:
+          - "github/codeql-action/*"
     schedule:
       interval: "weekly"
       day: "sunday"
