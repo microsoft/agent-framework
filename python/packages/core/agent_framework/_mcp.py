@@ -124,8 +124,42 @@ _MCP_FRAMEWORK_DENYLIST: frozenset[str] = frozenset({
     "_meta",
 })
 _mcp_call_headers: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar("_mcp_call_headers")
+_MCP_HEADER_OWNER_EXTENSION = "agent_framework.mcp_header_owner"
+_MCP_INJECTED_HEADER_KEYS_EXTENSION = "agent_framework.mcp_injected_header_keys"
 MCP_DEFAULT_TIMEOUT = 30
 MCP_DEFAULT_SSE_READ_TIMEOUT = 60 * 5
+
+
+class _MCPHeaderScopedClient:
+    """Attach private tool context to MCP transport requests."""
+
+    def __init__(self, client: AsyncClient, owner: object) -> None:
+        self._client = client
+        self._owner = owner
+
+    def __getattr__(self, name: str) -> Any:
+        # Delegate the rest of the httpx client surface so this wrapper stays a
+        # drop-in for the MCP transport. Only the request-sending methods below
+        # are wrapped; anything the transport reads (timeouts, headers, ...)
+        # comes straight from the caller's client. ``_client`` itself is always a
+        # real instance attribute, so guard against recursing on a partially
+        # initialized wrapper.
+        if name == "_client":
+            raise AttributeError(name)
+        return getattr(self._client, name)
+
+    def _tagged_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        extensions = dict(kwargs.get("extensions") or {})
+        extensions[_MCP_HEADER_OWNER_EXTENSION] = self._owner
+        kwargs["extensions"] = extensions
+        return kwargs
+
+    def stream(self, *args: Any, **kwargs: Any) -> Any:
+        return self._client.stream(*args, **self._tagged_kwargs(kwargs))
+
+    async def delete(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._client.delete(*args, **self._tagged_kwargs(kwargs))
+
 
 # Default safety limits applied to server-initiated MCP sampling requests
 # (``sampling/createMessage``). MCP servers are untrusted third parties, so the
@@ -3043,7 +3077,7 @@ class MCPStreamableHTTPTool(MCPTool):
         Note:
             The arguments are used to create a streamable HTTP client using the
             new ``mcp.client.streamable_http.streamable_http_client`` API.
-            If an asyncClient is provided via ``http_client``, it will be used directly.
+            If an asyncClient is provided via ``http_client``, it will be used as the underlying transport client.
             Otherwise, the ``streamable_http_client`` API will create and manage a default client.
 
         Args:
@@ -3120,9 +3154,12 @@ class MCPStreamableHTTPTool(MCPTool):
                 agent middleware) without creating a separate ``httpx.AsyncClient``.
                 The framework attaches these headers only to requests whose origin (scheme,
                 host, port) matches the configured ``url``, so they are not leaked to other
-                origins on cross-origin redirects. If you instead supply sensitive headers
+                origins on cross-origin redirects; headers injected this way are also removed
+                again if a redirect leaves that origin. If you instead supply sensitive headers
                 through a custom ``http_client``, you must enforce this same origin-scoped
                 policy yourself.
+                Headers returned by the provider are applied only to requests issued by this
+                tool, including when several tools share one ``http_client``.
                 Note that the provider reads these kwargs without consuming them: the same
                 values continue on to the outbound argument filter, so reading a credential
                 here does not withhold it from the server. See
@@ -3190,6 +3227,8 @@ class MCPStreamableHTTPTool(MCPTool):
         # otherwise overwrite each other's snapshot and attach the wrong per-call headers.
         self._active_call_headers: dict[str, str] | None = None
         self._call_headers_lock = asyncio.Lock()
+        self._header_request_owner = object()
+        self._header_hook_client: AsyncClient | None = None
 
     def _mcp_base_span_attributes(self) -> dict[str, Any]:
         attrs = super()._mcp_base_span_attributes()
@@ -3230,7 +3269,12 @@ class MCPStreamableHTTPTool(MCPTool):
             if not hasattr(self, "_inject_headers_hook"):
 
                 async def _inject_headers(request: Request) -> None:  # ruff:ignore[unused-async]
+                    request_owner = request.extensions.get(_MCP_HEADER_OWNER_EXTENSION)
+                    if request_owner is not self._header_request_owner:
+                        return
                     if _url_origin(request.url) != target_origin:
+                        for key in request.extensions.pop(_MCP_INJECTED_HEADER_KEYS_EXTENSION, ()):
+                            request.headers.pop(key, None)
                         return
                     # The transport may send this request from a task whose context was
                     # captured before call_tool set the ContextVar; fall back to the
@@ -3264,17 +3308,47 @@ class MCPStreamableHTTPTool(MCPTool):
                                 exc_info=True,
                             )
                             headers = {}
+                    for key in request.extensions.pop(_MCP_INJECTED_HEADER_KEYS_EXTENSION, ()):
+                        request.headers.pop(key, None)
                     for key, value in headers.items():
                         request.headers[key] = value
+                    request.extensions[_MCP_INJECTED_HEADER_KEYS_EXTENSION] = tuple(headers)
 
                 self._inject_headers_hook = _inject_headers
+
+            if self._header_hook_client is not http_client:
+                self._remove_header_hook()
+                self._header_hook_client = http_client
+            if self._inject_headers_hook not in http_client.event_hooks["request"]:
                 http_client.event_hooks["request"].append(self._inject_headers_hook)
+
+        transport_http_client = (
+            _MCPHeaderScopedClient(http_client, self._header_request_owner) if http_client is not None else None
+        )
 
         return streamable_http_client(
             url=self.url,
-            http_client=http_client,
+            http_client=transport_http_client,
             terminate_on_close=self.terminate_on_close if self.terminate_on_close is not None else True,
         )
+
+    def _remove_header_hook(self) -> None:
+        """Detach this tool's request hook from its HTTP client."""
+        if self._header_hook_client is None or not hasattr(self, "_inject_headers_hook"):
+            return
+        request_hooks = self._header_hook_client.event_hooks["request"]
+        if self._inject_headers_hook in request_hooks:
+            self._header_hook_client.event_hooks["request"] = [
+                hook for hook in request_hooks if hook is not self._inject_headers_hook
+            ]
+        self._header_hook_client = None
+
+    async def _close_on_owner(self) -> None:
+        """Disconnect on the lifecycle owner before removing the request hook."""
+        try:
+            await super()._close_on_owner()
+        finally:
+            self._remove_header_hook()
 
     async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call a tool, injecting headers from the header_provider if configured.
