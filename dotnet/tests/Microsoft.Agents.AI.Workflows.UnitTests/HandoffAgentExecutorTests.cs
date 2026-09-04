@@ -241,8 +241,8 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
         await executor.HandleAsync(new HandoffState(new(true), null), testContext);
 
         // Assert
-        runContext.Events.OfType<WorkflowWarningEvent>()
-                  .Should().BeEmpty("one handoff call re-emitted across updates is a single handoff request");
+        // One handoff call re-emitted across updates is a single handoff request.
+        Assert.Empty(runContext.Events.OfType<WorkflowWarningEvent>());
     }
 
     [Fact]
@@ -267,8 +267,8 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
         await executor.HandleAsync(new HandoffState(new(true), null), testContext);
 
         // Assert
-        runContext.Events.OfType<WorkflowWarningEvent>()
-                  .Should().ContainSingle("two different handoff targets remain two competing handoffs even under one call ID");
+        // Two different handoff targets remain two competing handoffs even under one call ID.
+        Assert.Single(runContext.Events.OfType<WorkflowWarningEvent>());
     }
 
     [Fact]

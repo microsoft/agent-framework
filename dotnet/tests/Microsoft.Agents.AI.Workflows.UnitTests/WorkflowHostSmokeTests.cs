@@ -420,18 +420,19 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
                                                            .ToListAsync();
 
         // Assert
-        updates.SelectMany(update => update.Contents.OfType<ErrorContent>())
-               .Should().BeEmpty("a repeated call ID is one pending request, not a failure");
+        // A repeated call ID is one pending request, not a failure.
+        Assert.Empty(updates.SelectMany(update => update.Contents.OfType<ErrorContent>()));
 
-        FunctionCallContent raised = updates
-            .Where(update => update.RawRepresentation is RequestInfoEvent)
-            .SelectMany(update => update.Contents.OfType<FunctionCallContent>())
-            .Should().ContainSingle()
-            .Which;
+        FunctionCallContent raised = Assert.Single(
+            updates.Where(update => update.RawRepresentation is RequestInfoEvent)
+                   .SelectMany(update => update.Contents.OfType<FunctionCallContent>()));
 
-        raised.CallId.Should().EndWith($":{CallId}");
-        raised.Arguments.Should().ContainKey("first", "the first content seen for a request ID is the one kept");
-        raised.Arguments.Should().NotContainKey("second");
+        Assert.EndsWith($":{CallId}", raised.CallId, StringComparison.Ordinal);
+
+        // The first content seen for a request ID is the one kept.
+        Assert.NotNull(raised.Arguments);
+        Assert.Contains("first", raised.Arguments!.Keys);
+        Assert.DoesNotContain("second", raised.Arguments!.Keys);
     }
 
     /// <summary>
@@ -460,13 +461,14 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
                                                            .ToListAsync();
 
         // Assert
-        updates.SelectMany(update => update.Contents.OfType<ErrorContent>())
-               .Should().BeEmpty("a repeated request ID is one pending request, not a failure");
+        // A repeated request ID is one pending request, not a failure.
+        Assert.Empty(updates.SelectMany(update => update.Contents.OfType<ErrorContent>()));
 
-        updates.Where(update => update.RawRepresentation is RequestInfoEvent)
-               .SelectMany(update => update.Contents.OfType<ToolApprovalRequestContent>())
-               .Should().ContainSingle()
-               .Which.RequestId.Should().EndWith($":{RequestId}");
+        ToolApprovalRequestContent raised = Assert.Single(
+            updates.Where(update => update.RawRepresentation is RequestInfoEvent)
+                   .SelectMany(update => update.Contents.OfType<ToolApprovalRequestContent>()));
+
+        Assert.EndsWith($":{RequestId}", raised.RequestId, StringComparison.Ordinal);
     }
 
     /// <summary>

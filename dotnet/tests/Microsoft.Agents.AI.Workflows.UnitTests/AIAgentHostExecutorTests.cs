@@ -307,13 +307,16 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
         await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
 
         // Assert
-        WorkflowWarningEvent warning = testContext.Events.OfType<WorkflowWarningEvent>().Should().ContainSingle().Which;
-        warning.Data.Should().BeOfType<string>().Which.Should().Contain(RequestId);
+        WorkflowWarningEvent warning = Assert.Single(testContext.Events.OfType<WorkflowWarningEvent>());
+        string warningText = Assert.IsType<string>(warning.Data);
+        Assert.Contains(RequestId, warningText, StringComparison.Ordinal);
 
-        ToolApprovalRequestContent raised =
-            testContext.ExternalRequests.Should().ContainSingle().Which.Data.As<ToolApprovalRequestContent>()
-                       .Should().NotBeNull().And.Subject.As<ToolApprovalRequestContent>();
-        raised.ToolCall.CallId.Should().Be("first-call", "the first request recorded for an ID is the one raised");
+        ToolApprovalRequestContent? raised =
+            Assert.Single(testContext.ExternalRequests).Data.As<ToolApprovalRequestContent>();
+        Assert.NotNull(raised);
+
+        // The first request recorded for an ID is the one raised.
+        Assert.Equal("first-call", raised!.ToolCall.CallId);
     }
 
     [Fact]
@@ -334,13 +337,16 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
         await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
 
         // Assert
-        WorkflowWarningEvent warning = testContext.Events.OfType<WorkflowWarningEvent>().Should().ContainSingle().Which;
-        warning.Data.Should().BeOfType<string>().Which.Should().Contain(CallId);
+        WorkflowWarningEvent warning = Assert.Single(testContext.Events.OfType<WorkflowWarningEvent>());
+        string warningText = Assert.IsType<string>(warning.Data);
+        Assert.Contains(CallId, warningText, StringComparison.Ordinal);
 
-        FunctionCallContent raised =
-            testContext.ExternalRequests.Should().ContainSingle().Which.Data.As<FunctionCallContent>()
-                       .Should().NotBeNull().And.Subject.As<FunctionCallContent>();
-        raised.Name.Should().Be("firstFunction", "the first request recorded for an ID is the one raised");
+        FunctionCallContent? raised =
+            Assert.Single(testContext.ExternalRequests).Data.As<FunctionCallContent>();
+        Assert.NotNull(raised);
+
+        // The first request recorded for an ID is the one raised.
+        Assert.Equal("firstFunction", raised!.Name);
     }
 
     [Fact]
@@ -361,9 +367,9 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
         await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
 
         // Assert
-        testContext.Events.OfType<WorkflowWarningEvent>()
-                   .Should().BeEmpty("the same call repeated across updates is one request, not a displaced one");
-        testContext.ExternalRequests.Should().ContainSingle();
+        // The same call repeated across updates is one request, not a displaced one.
+        Assert.Empty(testContext.Events.OfType<WorkflowWarningEvent>());
+        Assert.Single(testContext.ExternalRequests);
     }
 
     #region FilterForwardableMessages tests
