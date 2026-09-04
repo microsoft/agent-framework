@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -196,3 +197,28 @@ test = ["azure-monitor-opentelemetry", "mcp[ws]"]
         "mcp[ws]",
     ]
     assert command[-3:-1] == ["python", "-c"]
+
+
+def test_anthropic_probe_uses_its_own_dependency_pyright_task() -> None:
+    """Anthropic's Vertex client type-checks against an undeclared namespace package.
+
+    ``_vertex_client.py`` imports ``google.auth.credentials`` under ``TYPE_CHECKING`` while the
+    package only declares ``anthropic`` without the ``vertex`` extra, so isolated dependency
+    probes have no ``google-auth`` to resolve. Without the package-defined escape hatch the
+    ``lowest-direct`` probe fails on ``reportMissingImports`` and blocks the whole bounds gate.
+    """
+    workspace_root = Path(__file__).resolve().parents[3]
+
+    plans = _build_test_plans(workspace_root, "anthropic")
+
+    assert [plan.typing_task for plan in plans] == ["dependency-pyright"]
+
+
+def test_anthropic_dependency_pyright_config_excludes_the_vertex_client() -> None:
+    workspace_root = Path(__file__).resolve().parents[3]
+    config_path = workspace_root / "packages/anthropic/pyrightconfig.dependency.json"
+
+    config = json.loads(config_path.read_text())
+
+    assert config["include"] == ["agent_framework_anthropic"]
+    assert config["exclude"] == ["agent_framework_anthropic/_vertex_client.py"]

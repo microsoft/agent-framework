@@ -1,0 +1,9 @@
+{
+    "extends": "../../pyproject.toml",
+    "include": [
+        "agent_framework_anthropic"
+    ],
+    "exclude": [
+        "agent_framework_anthropic/_vertex_client.py"
+    ]
+}
