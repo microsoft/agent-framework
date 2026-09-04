@@ -359,3 +359,64 @@ async def test_workflow_checkpoint_only_resume_preserves_thread_snapshot() -> No
     assert "Earlier reply" in contents
     # ...plus the newly produced output from the resumed run.
     assert any(isinstance(content, str) and "done" in content for content in contents)
+
+
+async def test_workflow_snapshot_preserves_streamed_reasoning() -> None:
+    """Reasoning that streamed during a workflow run survives thread hydration.
+
+    Regression test for workflow reasoning rendering live and then vanishing from the
+    stored AG-UI Thread Snapshot, so a hydrated thread lost the intermediate output
+    that the agent path retains.
+    """
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY
+
+    @executor(id="thinker")
+    async def thinker(message: Any, ctx: WorkflowContext[str, str]) -> None:
+        await ctx.yield_output("Weighing the options...")
+        await ctx.send_message("go")
+
+    @executor(id="finalizer")
+    async def finalizer(message: str, ctx: WorkflowContext[None, str]) -> None:
+        await ctx.yield_output("Final answer.")
+
+    workflow = (
+        WorkflowBuilder(
+            start_executor=thinker,
+            output_from=[finalizer],
+            intermediate_output_from=[thinker],
+        )
+        .add_edge(thinker, finalizer)
+        .build()
+    )
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store)
+
+    events = await _run(
+        agent,
+        {
+            "thread_id": "thread-reasoning",
+            "run_id": "run-1",
+            "messages": [{"id": "user-1", "role": "user", "content": "Decide"}],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in events]
+
+    # The reasoning really did stream ...
+    reasoning_deltas = [
+        event.delta  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        for event in events
+        if event.type == "REASONING_MESSAGE_CONTENT"
+    ]
+    assert "Weighing the options..." in reasoning_deltas
+
+    # ... and it is still there once the thread is hydrated from the snapshot.
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-reasoning")
+    assert snapshot is not None
+    reasoning_messages = [message for message in snapshot.messages if message.get("role") == "reasoning"]
+    assert [message.get("content") for message in reasoning_messages] == ["Weighing the options..."]
+
+    # The final assistant text is still preserved alongside it.
+    assert any(message.get("content") == "Final answer." for message in snapshot.messages)

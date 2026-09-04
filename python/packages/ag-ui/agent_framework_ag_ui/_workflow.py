@@ -12,6 +12,12 @@ from typing import Any, cast
 from ag_ui.core import (
     BaseEvent,
     MessagesSnapshotEvent,
+    ReasoningEncryptedValueEvent,
+    ReasoningEndEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
@@ -122,6 +128,7 @@ class _WorkflowSnapshotBuilder:
         self._synthesized_messages = agui_messages_to_snapshot_format(raw_messages)
         self._emitted_messages: list[dict[str, Any]] | None = None
         self._open_text_message: dict[str, Any] | None = None
+        self._open_reasoning_message: dict[str, Any] | None = None
         self._tool_call_message: dict[str, Any] | None = None
         self._tool_calls_by_id: dict[str, dict[str, Any]] = {}
         self.state: dict[str, Any] | None = None
@@ -165,14 +172,27 @@ class _WorkflowSnapshotBuilder:
             self._observe_tool_call_args(event)
         elif isinstance(event, ToolCallResultEvent):
             self._observe_tool_call_result(event)
+        elif isinstance(event, ReasoningStartEvent):
+            # A new reasoning block supersedes anything still open from the last one.
+            self._flush_open_reasoning_message()
+        elif isinstance(event, ReasoningMessageStartEvent):
+            self._observe_reasoning_start(event)
+        elif isinstance(event, ReasoningMessageContentEvent):
+            self._observe_reasoning_content(event)
+        elif isinstance(event, (ReasoningMessageEndEvent, ReasoningEndEvent)):
+            self._observe_reasoning_end(event)
+        elif isinstance(event, ReasoningEncryptedValueEvent):
+            self._observe_reasoning_encrypted_value(event)
 
     def build(self) -> AGUIThreadSnapshot:
         """Return the replayable thread snapshot."""
+        self._flush_open_reasoning_message()
         self._flush_open_text_message()
         messages = self._emitted_messages if self._emitted_messages is not None else self._synthesized_messages
         return AGUIThreadSnapshot(messages=messages, state=self.state, interrupt=self.interrupt)
 
     def _observe_text_start(self, event: TextMessageStartEvent) -> None:
+        self._flush_open_reasoning_message()
         if self._open_text_message is not None and self._open_text_message.get("id") != event.message_id:
             self._flush_open_text_message()
         self._open_text_message = {"id": event.message_id, "role": event.role, "content": ""}
@@ -188,6 +208,7 @@ class _WorkflowSnapshotBuilder:
         self._flush_open_text_message()
 
     def _observe_tool_call_start(self, event: ToolCallStartEvent) -> None:
+        self._flush_open_reasoning_message()
         parent_message_id = event.parent_message_id
         if (
             self._open_text_message is not None
@@ -244,6 +265,53 @@ class _WorkflowSnapshotBuilder:
             # Text between tool calls closes the current tool-call group as well.
             self._tool_call_message = None
         self._open_text_message = None
+
+    def _observe_reasoning_start(self, event: ReasoningMessageStartEvent) -> None:
+        if self._open_reasoning_message is not None and self._open_reasoning_message.get("id") != event.message_id:
+            self._flush_open_reasoning_message()
+        self._open_reasoning_message = {"id": event.message_id, "role": "reasoning", "content": ""}
+
+    def _observe_reasoning_content(self, event: ReasoningMessageContentEvent) -> None:
+        if self._open_reasoning_message is None or self._open_reasoning_message.get("id") != event.message_id:
+            self._flush_open_reasoning_message()
+            self._open_reasoning_message = {"id": event.message_id, "role": "reasoning", "content": ""}
+        self._open_reasoning_message["content"] = f"{self._open_reasoning_message.get('content', '')}{event.delta}"
+
+    def _observe_reasoning_end(self, event: ReasoningMessageEndEvent | ReasoningEndEvent) -> None:
+        if self._open_reasoning_message is None or self._open_reasoning_message.get("id") != event.message_id:
+            return
+        if isinstance(event, ReasoningMessageEndEvent):
+            # REASONING_MESSAGE_END closes the message, not the block, and an
+            # encrypted value is block-scoped so it legitimately trails it -- that is
+            # the order `_emit_text_reasoning` produces without a flow. Keep the
+            # message open so protected-data-only reasoning still has somewhere to
+            # land; REASONING_END, the next block, or build() finalizes it.
+            return
+        self._flush_open_reasoning_message()
+
+    def _observe_reasoning_encrypted_value(self, event: ReasoningEncryptedValueEvent) -> None:
+        # Only message-scoped encrypted values belong on a reasoning message; the
+        # protocol also uses this event for other subtypes.
+        if event.subtype != "message":
+            return
+        if self._open_reasoning_message is not None and self._open_reasoning_message.get("id") == event.entity_id:
+            self._open_reasoning_message["encryptedValue"] = event.encrypted_value
+            return
+        # Intervening text or tool output can flush the message before its encrypted
+        # value arrives; attach it to the message we already synthesized.
+        for message in reversed(self._synthesized_messages):
+            if message.get("role") == "reasoning" and message.get("id") == event.entity_id:
+                message["encryptedValue"] = event.encrypted_value
+                return
+
+    def _flush_open_reasoning_message(self) -> None:
+        if self._open_reasoning_message is None:
+            return
+        # An encrypted-value-only block carries no display text but still has to
+        # survive hydration, so it counts as content worth keeping.
+        if self._open_reasoning_message.get("content") or self._open_reasoning_message.get("encryptedValue"):
+            self._synthesized_messages.append(self._open_reasoning_message)
+        self._open_reasoning_message = None
 
 
 class AgentFrameworkWorkflow:
