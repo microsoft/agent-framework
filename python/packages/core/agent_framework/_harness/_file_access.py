@@ -1148,9 +1148,22 @@ class FileSystemAgentFileStore(AgentFileStore):
         Empty and whitespace-only inputs both resolve to the root directory,
         matching the behavior of ``_normalize_relative_path(..., is_directory=True)``
         and the convention used by :class:`InMemoryAgentFileStore`.
+
+        The root is screened here rather than trusted. Every other directory reaches
+        :meth:`_resolve_safe_path`, which rejects a link on any segment; the root itself
+        never passed through that, so a planted or swapped root was walked as-is. The
+        root is created lazily, so it can be a link before first use as easily as after.
         """
         normalized = _normalize_relative_path(relative_directory, is_directory=True)
         if not normalized:
+            # ``lexists`` rather than ``exists``: the root is created lazily, so a missing one is
+            # normal and must stay cheap, but a dangling link still has to be rejected rather than
+            # read as absent.
+            if os.path.lexists(self._root_path):
+                if is_link_or_reparse_point(self._root_path):
+                    raise ValueError("Invalid path: the resolved path contains a symbolic link or reparse point.")
+                if self._root_path.resolve() != self._root_path:
+                    raise ValueError("Invalid path: the resolved path escapes the root directory.")
             return self._root_path
         return self._resolve_safe_path(normalized)
 

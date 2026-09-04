@@ -551,6 +551,48 @@ def test_filesystem_store_requires_non_empty_root() -> None:
         FileSystemAgentFileStore("   ")
 
 
+async def test_filesystem_store_rejects_a_root_that_is_a_link_before_first_use(tmp_path: Path) -> None:
+    """A root planted as a link before the store touches it must not be walked."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("needle\n", encoding="utf-8")
+    root = tmp_path / "root"
+
+    # Constructed against a path that does not exist yet, so the link is planted afterwards --
+    # the lazily created root is exactly the window this covers.
+    store = FileSystemAgentFileStore(root)
+    try:
+        root.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"{_NEEDS_SYMLINK}: {exc!r}")
+
+    with pytest.raises(ValueError, match="symbolic link"):
+        await store.search("", "needle")
+    with pytest.raises(ValueError, match="symbolic link"):
+        await _list_files(store)
+
+
+async def test_filesystem_store_rejects_a_root_replaced_by_a_junction(tmp_path: Path) -> None:
+    """A junction needs no privileges, so this is the reachable form of the same swap on Windows."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("needle\n", encoding="utf-8")
+    root = tmp_path / "root"
+    root.mkdir()
+
+    store = FileSystemAgentFileStore(root)
+    assert await store.search("", "needle") == []
+
+    # Swap the real root for a junction after construction and first use.
+    root.rmdir()
+    create_junction_or_skip(link=root, target=outside)
+
+    with pytest.raises(ValueError, match="symbolic link or reparse point"):
+        await store.search("", "needle")
+    with pytest.raises(ValueError, match="symbolic link or reparse point"):
+        await _list_files(store)
+
+
 async def test_filesystem_store_does_not_create_root_until_write(tmp_path: Path) -> None:
     """Constructing a store must not touch the filesystem; the root is created lazily on first write."""
     root = tmp_path / "does-not-exist-yet"
