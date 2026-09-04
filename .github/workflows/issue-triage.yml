@@ -96,7 +96,7 @@ jobs:
       - name: Check issue author team membership
         if: ${{ github.event_name != 'workflow_dispatch' }}
         id: check
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           TEAM_NAME: ${{ secrets.DEVELOPER_TEAM }}
           ISSUE_NUMBER: ${{ steps.issue.outputs.issue_number }}
@@ -120,7 +120,7 @@ jobs:
 
       - name: Resolve native issue type
         id: issue-type
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           ISSUE_NUMBER: ${{ steps.issue.outputs.issue_number }}
         with:
