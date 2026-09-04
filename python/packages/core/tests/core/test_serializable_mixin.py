@@ -572,6 +572,59 @@ class TestSerializationMixin:
         assert cloned.items is not obj.items
         assert cloned.items == ["a"]
 
+    def test_shallow_copy_preserves_pickle_omitted_fields(self):
+        """Shallow copies retain runtime fields that pickle omits."""
+
+        class TestClass(SerializationMixin):
+            def __init__(self, raw_representation: Any):
+                self.raw_representation = raw_representation
+
+        raw = object()
+        cloned = copy.copy(TestClass(raw))
+
+        assert cloned.raw_representation is raw
+
+    def test_pickle_restores_slot_fields(self):
+        """Pickle state should include fields declared in slots."""
+        class TestClass(SerializationMixin):
+            __slots__ = ("value",)
+
+            def __init__(self, value: str):
+                self.value = value
+
+        original = TestClass("value")
+        restored = TestClass.__new__(TestClass)
+        restored.__setstate__(original.__getstate__())
+
+        assert restored.value == "value"
+
+    def test_pickle_restores_legacy_tuple_state(self):
+        """Pickle restoration should accept the legacy dict-and-slots tuple."""
+
+        class TestClass(SerializationMixin):
+            __slots__ = ("value",)
+
+            def __init__(self):
+                self.value = "new"
+
+        restored = TestClass.__new__(TestClass)
+        restored.__setstate__(({"other": "dict"}, {"value": "legacy"}))
+
+        assert restored.value == "legacy"
+
+    def test_pickle_omission_is_separate_from_shallow_copy_policy(self):
+        """Fields shallow-copied by default remain persistent unless explicitly omitted."""
+        class TestClass(SerializationMixin):
+            _PICKLE_OMIT_FIELDS = set()
+
+            def __init__(self, raw_representation: Any):
+                self.raw_representation = raw_representation
+
+        raw = {"provider": "value"}
+        state = TestClass(raw).__getstate__()
+
+        assert state["raw_representation"] == raw
+
     def test_dependency_dict_merge_does_not_mutate_input(self):
         """Test that dict dependency merging does not mutate the caller's input dictionary."""
 
