@@ -488,6 +488,28 @@ public sealed class FoundryJsonCheckpointStoreTests
     }
 
     [Fact]
+    public async Task OnRestorationCompletedAsync_StoreCannotBeResolved_ReportsItAndDoesNotThrowAsync()
+    {
+        // Arrange: the binding itself is refused, rather than a call made through it. That is the same
+        // class of credential or network problem, so it has to be reported the same way. The binding
+        // does not keep a failed attempt, so a resume whose earlier read established it can still find
+        // it gone by the time the housekeeping runs.
+        var logs = new RecordingLoggerFactory();
+        var store = new FoundryJsonCheckpointStore(
+            _ => Task.FromException<FoundryStateStore>(new FoundryStorageException(503, "service unavailable")),
+            loggerFactory: logs);
+
+        // Act
+        await store.OnRestorationCompletedAsync("session-1", new CheckpointInfo("session-1", "checkpoint-1"));
+
+        // Assert: the resume is unaffected, and the failure is reported rather than swallowed by the
+        // runner's blanket suppression of everything this method throws.
+        var warning = Assert.Single(logs.Entries, entry => entry.Level == LogLevel.Warning);
+        Assert.Contains("session-1", warning.Message, StringComparison.Ordinal);
+        Assert.NotNull(warning.Exception);
+    }
+
+    [Fact]
     public async Task OnRestorationCompletedAsync_PruningLosesARace_DoesNotWarnAsync()
     {
         // Arrange: losing to another writer is expected under concurrency and is not a problem, so

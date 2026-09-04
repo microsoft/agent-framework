@@ -6,7 +6,6 @@ using System.IO;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -63,7 +62,7 @@ public class CheckpointRestorationObserverTests
         await ResumeAsync(workflow, checkpoint, manager);
 
         // Assert
-        store.RestorationsObserved.Should().Equal([checkpoint]);
+        Assert.Equal([checkpoint], store.RestorationsObserved);
     }
 
     [Fact]
@@ -75,11 +74,11 @@ public class CheckpointRestorationObserverTests
         Workflow otherWorkflow = BuildWorkflow(new EchoExecutor(id: "OtherEcho"));
 
         // Act
-        Func<Task> resume = () => ResumeAsync(otherWorkflow, checkpoint, manager);
+        async Task resumeAsync() => await ResumeAsync(otherWorkflow, checkpoint, manager);
 
         // Assert: the mismatch is caught after the checkpoint was read, so nothing may have been cleaned up.
-        await resume.Should().ThrowAsync<InvalidDataException>();
-        store.RestorationsObserved.Should().BeEmpty();
+        await Assert.ThrowsAsync<InvalidDataException>(resumeAsync);
+        Assert.Empty(store.RestorationsObserved);
     }
 
     [Fact]
@@ -91,11 +90,11 @@ public class CheckpointRestorationObserverTests
         store.MutateOnRetrieve = _ => JsonDocument.Parse("[]").RootElement.Clone();
 
         // Act
-        Func<Task> resume = () => ResumeAsync(workflow, checkpoint, manager);
+        async Task resumeAsync() => await ResumeAsync(workflow, checkpoint, manager);
 
         // Assert: deserializing the checkpoint fails, which happens after the store has already been read.
-        await resume.Should().ThrowAsync<JsonException>();
-        store.RestorationsObserved.Should().BeEmpty();
+        await Assert.ThrowsAsync<JsonException>(resumeAsync);
+        Assert.Empty(store.RestorationsObserved);
     }
 
     [Fact]
@@ -118,16 +117,16 @@ public class CheckpointRestorationObserverTests
         };
 
         // Act
-        Func<Task> resume = () => ResumeAsync(workflow, checkpoint, manager);
+        async Task resumeAsync() => await ResumeAsync(workflow, checkpoint, manager);
 
         // Assert: the import itself is what fails, not the compatibility check that runs before it.
-        await resume.Should().ThrowAsync<InvalidOperationException>()
-                             .WithMessage("Executor with ID 'Ghost' is not registered.");
-        store.RestorationsObserved.Should().BeEmpty();
+        InvalidOperationException importFailure = await Assert.ThrowsAsync<InvalidOperationException>(resumeAsync);
+        Assert.Equal("Executor with ID 'Ghost' is not registered.", importFailure.Message);
+        Assert.Empty(store.RestorationsObserved);
 
         // Reported rather than inferred, so that a checkpoint whose shape no longer carries this property fails
         // here instead of quietly leaving the test asserting nothing.
-        mutationApplied.Should().BeTrue("the checkpoint must still serialize the runner's instantiated executors");
+        Assert.True(mutationApplied, "the checkpoint must still serialize the runner's instantiated executors");
     }
 
     [Fact]
@@ -139,11 +138,12 @@ public class CheckpointRestorationObserverTests
         Workflow failingWorkflow = BuildWorkflow(new EchoExecutor(failOnRestore: true));
 
         // Act
-        Func<Task> resume = () => ResumeAsync(failingWorkflow, checkpoint, manager);
+        async Task resumeAsync() => await ResumeAsync(failingWorkflow, checkpoint, manager);
 
         // Assert
-        await resume.Should().ThrowAsync<InvalidOperationException>().WithMessage("executor refused to restore");
-        store.RestorationsObserved.Should().BeEmpty();
+        InvalidOperationException restoreFailure = await Assert.ThrowsAsync<InvalidOperationException>(resumeAsync);
+        Assert.Equal("executor refused to restore", restoreFailure.Message);
+        Assert.Empty(store.RestorationsObserved);
     }
 
     [Fact]
@@ -154,11 +154,11 @@ public class CheckpointRestorationObserverTests
         (Workflow workflow, CheckpointInfo checkpoint, CheckpointManager manager) = await RunAndCheckpointAsync(store);
 
         // Act
-        Func<Task> resume = () => ResumeAsync(workflow, checkpoint, manager);
+        async Task resumeAsync() => await ResumeAsync(workflow, checkpoint, manager);
 
         // Assert
-        await resume.Should().NotThrowAsync();
-        store.RestorationsObserved.Should().Equal([checkpoint]);
+        Assert.Null(await Record.ExceptionAsync(resumeAsync));
+        Assert.Equal([checkpoint], store.RestorationsObserved);
     }
 
     [Fact]
@@ -173,7 +173,7 @@ public class CheckpointRestorationObserverTests
         IReadOnlyList<CheckpointInfo> reported = await ResumeAsync(workflow, checkpoint, manager);
 
         // Assert: the run must not go on offering checkpoints the store has just deleted.
-        reported.Should().Equal([checkpoint]);
+        Assert.Equal([checkpoint], reported);
     }
 
     [Fact]
@@ -192,7 +192,7 @@ public class CheckpointRestorationObserverTests
         IReadOnlyList<CheckpointInfo> reported = await ResumeAsync(workflow, checkpoint, manager);
 
         // Assert
-        reported.Should().Equal([checkpoint]);
+        Assert.Equal([checkpoint], reported);
     }
 
     [Fact]
@@ -208,8 +208,8 @@ public class CheckpointRestorationObserverTests
         IReadOnlyList<CheckpointInfo> reported = await ResumeAsync(workflow, checkpoint, manager);
 
         // Assert: the resume survives, and Checkpoints still lists everything the store holds.
-        reported.Should().Contain(checkpoint);
-        reported.Count.Should().BeGreaterThan(1, "a failed re-read must not shrink the list the run already had");
+        Assert.Contains(checkpoint, reported);
+        Assert.True(reported.Count > 1, "a failed re-read must not shrink the list the run already had");
     }
 
     [Fact]
@@ -221,10 +221,10 @@ public class CheckpointRestorationObserverTests
         (Workflow workflow, CheckpointInfo checkpoint) = await RunAndCheckpointAsync(manager);
 
         // Act
-        Func<Task> resume = () => ResumeAsync(workflow, checkpoint, manager);
+        async Task resumeAsync() => await ResumeAsync(workflow, checkpoint, manager);
 
         // Assert
-        await resume.Should().NotThrowAsync();
+        Assert.Null(await Record.ExceptionAsync(resumeAsync));
     }
 
     /// <summary>
@@ -258,7 +258,7 @@ public class CheckpointRestorationObserverTests
 
         // More than one, so that a store pruning the ancestry has something to remove. Without that the tests
         // asserting the checkpoint index is re-read after pruning would pass whether or not the re-read happens.
-        run.Checkpoints.Count.Should().BeGreaterThan(1, "the resume needs a checkpoint to restore and an ancestor to prune");
+        Assert.True(run.Checkpoints.Count > 1, "the resume needs a checkpoint to restore and an ancestor to prune");
         return (workflow, run.Checkpoints[run.Checkpoints.Count - 1]);
     }
 

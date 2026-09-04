@@ -322,8 +322,7 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore, ICheckpoin
         _ = Throw.IfNullOrWhitespace(sessionId);
         _ = Throw.IfNull(checkpoint);
 
-        FoundryStateStore store = await this._binding.GetAsync(cancellationToken).ConfigureAwait(false);
-        await this.PruneObsoleteCheckpointsAsync(store, sessionId, checkpoint.CheckpointId, cancellationToken).ConfigureAwait(false);
+        await this.PruneObsoleteCheckpointsAsync(sessionId, checkpoint.CheckpointId, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -351,12 +350,18 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore, ICheckpoin
     /// and the session's index item grows until it can no longer be saved.
     /// </para>
     /// </remarks>
-    private async Task PruneObsoleteCheckpointsAsync(FoundryStateStore store, string sessionId, string resumedCheckpointId, CancellationToken cancellationToken)
+    private async Task PruneObsoleteCheckpointsAsync(string sessionId, string resumedCheckpointId, CancellationToken cancellationToken)
     {
         string sessionIndexKey = BuildIndexKey(sessionId);
 
         try
         {
+            // Acquired inside the try so that a store the binding cannot hand over is reported by the
+            // catch below, like any other refused prune. Outside it the exception would escape into the
+            // runner's blanket suppression instead, leaving the pile-up this method exists to prevent
+            // with nothing logged.
+            FoundryStateStore store = await this._binding.GetAsync(cancellationToken).ConfigureAwait(false);
+
             StateStoreItem? indexItem = await store.GetItemAsync(sessionIndexKey, cancellationToken).ConfigureAwait(false);
 
             List<IndexEntry> entries = ReadEntries(indexItem);
