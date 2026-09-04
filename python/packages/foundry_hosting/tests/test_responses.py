@@ -1427,8 +1427,55 @@ class TestAgentSessionPersistence:
         assert "item_poison" not in history_ids
         assert "item_ok" in history_ids
         assert [item["id"] for item in await store.get_input_items("resp_standalone")] == ["item_poison"]
+        previous_history_ids = await store.get_history_item_ids("resp_standalone", None, 100)
+        assert "item_poison" not in previous_history_ids
         assert _is_failed_stored_response(cast(ResponseObject, {"id": "resp_failed", "status": "failed"}))
         assert not _is_failed_stored_response(cast(ResponseObject, {"id": "resp_ok", "status": "completed"}))
+
+    async def test_failed_standalone_input_is_not_replayed_by_previous_response_id(self) -> None:
+        recorded_messages: list[Sequence[Message]] = []
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("recovered")])])
+        )
+        original_run = agent.run.side_effect
+
+        def run_dispatch(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            recorded_messages.append(cast(Sequence[Message], kwargs.get("messages") or []))
+            if len(recorded_messages) == 1:
+                return ResponseStream(
+                    _raising_updates("No tool call found for function call output with call_id call_standalone."),
+                    finalizer=AgentResponse.from_updates,
+                )
+            return original_run(*args, **kwargs)
+
+        agent.run = MagicMock(side_effect=run_dispatch)
+        response_store = InMemoryResponseProvider()
+        server = _make_server(agent, response_store=response_store)
+        failed = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "input": [
+                    {"role": "user", "content": "first"},
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call_standalone",
+                        "output": "poison output",
+                    },
+                ],
+            },
+        )
+
+        recovered = await _post(server, input_text="second", previous_response_id=failed.json()["id"])
+
+        assert failed.json()["status"] == "failed"
+        assert recovered.json()["status"] == "completed"
+        recovered_blob = json.dumps([message.to_dict() for message in recorded_messages[1]])
+        assert "call_standalone" not in recovered_blob
+        assert "poison output" not in recovered_blob
+        stored_input_blob = json.dumps(await response_store.get_input_items(failed.json()["id"], ascending=True))
+        assert "call_standalone" in stored_input_blob
+        assert "poison output" in stored_input_blob
 
     async def test_omit_failed_conversation_input_provider_updates_existing_response_in_place(self) -> None:
         inner = InMemoryResponseProvider()

@@ -427,6 +427,42 @@ class _OmitFailedConversationInputProvider:
         """Update ``response`` without replacing the existing store entry."""
         await self._inner.update_response(response, context=context)
 
+    async def get_history_item_ids(
+        self,
+        previous_response_id: str | None,
+        conversation_id: str | None,
+        limit: int,
+        *,
+        context: PlatformContext | None = None,
+    ) -> list[str]:
+        """Exclude a failed standalone response's inputs only when it becomes history."""
+        history_item_ids = await self._inner.get_history_item_ids(
+            previous_response_id,
+            conversation_id,
+            limit,
+            context=context,
+        )
+        if previous_response_id is None or not history_item_ids:
+            return history_item_ids
+
+        previous_response = await self._inner.get_response(previous_response_id, context=context)
+        is_failed_standalone = (
+            _is_failed_stored_response(previous_response)
+            and previous_response.get("conversation") is None
+            and previous_response.get("previous_response_id") is None
+        )
+        if not is_failed_standalone:
+            return history_item_ids
+
+        input_items = await self._inner.get_input_items(
+            previous_response_id,
+            limit=max(1, min(limit, 100)),
+            ascending=False,
+            context=context,
+        )
+        failed_input_ids = {item_id for item in input_items if isinstance((item_id := item.get("id")), str)}
+        return [item_id for item_id in history_item_ids if item_id not in failed_input_ids]
+
     def __getattr__(self, name: str) -> Any:
         """Forward remaining provider methods to the wrapped store."""
         return getattr(self._inner, name)
