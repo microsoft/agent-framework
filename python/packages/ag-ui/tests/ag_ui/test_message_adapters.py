@@ -5,6 +5,7 @@
 import base64
 import json
 import logging
+from itertools import permutations
 from typing import Any
 
 import pytest
@@ -15,6 +16,7 @@ from agent_framework_ag_ui._message_adapters import (
     agui_messages_to_agent_framework,
     agui_messages_to_snapshot_format,
     extract_text_from_contents,
+    normalize_agui_input_messages,
 )
 
 
@@ -961,6 +963,344 @@ def test_agent_framework_to_agui_function_result_with_text_preserves_both():
     assert text_msg["role"] == "assistant"
     assert text_msg["content"] == "The weather is sunny."
     assert text_msg["id"] != tool_msg["id"]
+
+
+def test_agent_framework_to_agui_function_call_precedes_its_result():
+    """A [function_call, function_result] message keeps the call before the result (no orphan)."""
+    msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="call_a", name="get_weather", arguments={"city": "Seattle"}),
+            Content.from_function_result(call_id="call_a", result="Sunny"),
+        ],
+        message_id="mixed-order-1",
+    )
+
+    messages = agent_framework_messages_to_agui([msg])
+
+    assert len(messages) == 2
+    assistant_msg, tool_msg = messages
+    # The assistant call must be emitted before its result; a result ahead of its
+    # matching call would be an orphan that providers reject.
+    assert assistant_msg["role"] == "assistant"
+    assert [tc["id"] for tc in assistant_msg["tool_calls"]] == ["call_a"]
+    assert tool_msg["role"] == "tool"
+    assert tool_msg["toolCallId"] == "call_a"
+    assert tool_msg["content"] == "Sunny"
+    # First emitted message keeps the source id; the split-off message gets its own.
+    assert assistant_msg["id"] == "mixed-order-1"
+    assert tool_msg["id"] != assistant_msg["id"]
+
+
+def test_agent_framework_to_agui_call_result_text_order_preserved():
+    """[function_call, function_result, text] round-trips in order: call, result, then summary text."""
+    msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="call_a", name="get_weather", arguments="{}"),
+            Content.from_function_result(call_id="call_a", result="Sunny"),
+            Content.from_text("It is sunny."),
+        ],
+        message_id="mixed-order-2",
+    )
+
+    messages = agent_framework_messages_to_agui([msg])
+
+    assert [m["role"] for m in messages] == ["assistant", "tool", "assistant"]
+    assert messages[0]["tool_calls"][0]["id"] == "call_a"
+    assert messages[1]["toolCallId"] == "call_a"
+    assert messages[2]["content"] == "It is sunny."
+    # Only the first emitted message reuses the source id, and all ids are distinct.
+    assert messages[0]["id"] == "mixed-order-2"
+    assert len({m["id"] for m in messages}) == 3
+
+
+def test_agent_framework_to_agui_text_before_result_deferred_after_result():
+    """Text preceding a result is emitted AFTER the result, never as an assistant-only message before it."""
+    msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_text("Here is the weather."),
+            Content.from_function_result(call_id="weather-call", result="Sunny"),
+        ],
+        message_id="mixed-text-first",
+    )
+
+    messages = agent_framework_messages_to_agui([msg])
+
+    assert len(messages) == 2
+    tool_msg, text_msg = messages
+    # The tool result comes first; the text-only assistant message follows it, so it can
+    # never separate a prior outstanding call from this result.
+    assert tool_msg["role"] == "tool"
+    assert tool_msg["toolCallId"] == "weather-call"
+    assert text_msg["role"] == "assistant"
+    assert "tool_calls" not in text_msg
+    assert text_msg["content"] == "Here is the weather."
+
+
+def test_agent_framework_to_agui_text_before_result_round_trips_without_dropping():
+    """A prior call + a [text, result] message must not drop the result through sanitize_tool_history.
+
+    Regression for the MAF review finding: emitting a text-only assistant message between an
+    outstanding call and its result made ``_sanitize_tool_history`` clear the pending call and
+    drop the real result, leaving the provider with an unanswered tool call.
+    """
+    framework_messages = [
+        Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="call_a", name="get_weather", arguments="{}")],
+            message_id="m1",
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text("Let me check the weather."),
+                Content.from_function_result(call_id="call_a", result="Sunny"),
+            ],
+            message_id="m2",
+        ),
+    ]
+
+    agui_messages = agent_framework_messages_to_agui(framework_messages)
+
+    # The call is immediately followed by its result (no assistant message in between).
+    assert [m["role"] for m in agui_messages] == ["assistant", "tool", "assistant"]
+    assert agui_messages[0]["tool_calls"][0]["id"] == "call_a"
+    assert agui_messages[1]["toolCallId"] == "call_a"
+
+    # Round-trip through provider normalization: the real result must survive.
+    provider_messages, _ = normalize_agui_input_messages(agui_messages, sanitize_tool_history=True)
+    surviving_result_ids = {
+        content.call_id
+        for message in provider_messages
+        for content in (message.contents or [])
+        if content.type == "function_result"
+    }
+    assert "call_a" in surviving_result_ids
+
+
+def test_agent_framework_to_agui_interleaved_parallel_batch_order_preserved():
+    """An interleaved parallel batch keeps every call adjacent to its results.
+
+    A new call (C) appearing before the preceding batch's results are all emitted must not
+    start a new assistant segment ahead of the still-open results (A, B). The split defers
+    ``assistant(C)`` until B's result has been emitted.
+    """
+    msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="call_a", name="fa", arguments="{}"),
+            Content.from_function_call(call_id="call_b", name="fb", arguments="{}"),
+            Content.from_function_result(call_id="call_a", result="ra"),
+            Content.from_function_call(call_id="call_c", name="fc", arguments="{}"),
+            Content.from_function_result(call_id="call_b", result="rb"),
+            Content.from_function_result(call_id="call_c", result="rc"),
+        ],
+        message_id="interleaved-1",
+    )
+
+    messages = agent_framework_messages_to_agui([msg])
+
+    # assistant(A,B) -> tool(A) -> tool(B) -> assistant(C) -> tool(C): the new call C is
+    # deferred until the open batch {A, B} is fully resolved, so no assistant message ever
+    # separates B's call from B's result.
+    assert [m["role"] for m in messages] == ["assistant", "tool", "tool", "assistant", "tool"]
+    assert [tc["id"] for tc in messages[0]["tool_calls"]] == ["call_a", "call_b"]
+    assert messages[1]["toolCallId"] == "call_a"
+    assert messages[2]["toolCallId"] == "call_b"
+    assert [tc["id"] for tc in messages[3]["tool_calls"]] == ["call_c"]
+    assert messages[4]["toolCallId"] == "call_c"
+    # First emitted message keeps the source id; every other id is independent.
+    assert messages[0]["id"] == "interleaved-1"
+    assert len({m["id"] for m in messages}) == len(messages)
+
+
+def test_agent_framework_to_agui_interleaved_batch_round_trips_without_dropping():
+    """An interleaved parallel batch must not drop any result through sanitize_tool_history.
+
+    Regression for the review finding: with the naive split, ``[call A, call B, result A,
+    call C, result B, result C]`` became ``[assistant(A,B), tool(A), assistant(C), tool(B),
+    tool(C)]``; the intervening ``assistant(C)`` cleared the pending call B, so
+    ``_sanitize_tool_history`` dropped B's real result.
+    """
+    msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="call_a", name="fa", arguments="{}"),
+            Content.from_function_call(call_id="call_b", name="fb", arguments="{}"),
+            Content.from_function_result(call_id="call_a", result="ra"),
+            Content.from_function_call(call_id="call_c", name="fc", arguments="{}"),
+            Content.from_function_result(call_id="call_b", result="rb"),
+            Content.from_function_result(call_id="call_c", result="rc"),
+        ],
+        message_id="interleaved-2",
+    )
+
+    agui_messages = agent_framework_messages_to_agui([msg])
+
+    # Round-trip through provider normalization: every result must survive.
+    provider_messages, _ = normalize_agui_input_messages(agui_messages, sanitize_tool_history=True)
+    surviving_result_ids = {
+        content.call_id
+        for message in provider_messages
+        for content in (message.contents or [])
+        if content.type == "function_result"
+    }
+    assert surviving_result_ids == {"call_a", "call_b", "call_c"}
+
+
+def test_agent_framework_to_agui_pending_call_carries_across_messages():
+    """A call opened by an earlier message stays open across the conversion.
+
+    Regression: the unresolved-call set used to be rebuilt per mixed message, so a prior
+    ``assistant(call A)`` followed by ``[call C, result A, result C]`` emitted
+    ``assistant(A), assistant(C), tool(A), tool(C)``; the intervening ``assistant(C)``
+    cleared pending call A and ``_sanitize_tool_history`` dropped A's real result.
+    """
+    framework_messages = [
+        Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="call_a", name="fa", arguments="{}")],
+            message_id="m1",
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="call_c", name="fc", arguments="{}"),
+                Content.from_function_result(call_id="call_a", result="ra"),
+                Content.from_function_result(call_id="call_c", result="rc"),
+            ],
+            message_id="m2",
+        ),
+    ]
+
+    agui_messages = agent_framework_messages_to_agui(framework_messages)
+
+    # assistant(A) -> tool(A) -> assistant(C) -> tool(C): the new call C is deferred until
+    # the earlier call A has received its result.
+    assert [m["role"] for m in agui_messages] == ["assistant", "tool", "assistant", "tool"]
+    assert [tc["id"] for tc in agui_messages[0]["tool_calls"]] == ["call_a"]
+    assert agui_messages[1]["toolCallId"] == "call_a"
+    assert [tc["id"] for tc in agui_messages[2]["tool_calls"]] == ["call_c"]
+    assert agui_messages[3]["toolCallId"] == "call_c"
+
+    provider_messages, _ = normalize_agui_input_messages(agui_messages, sanitize_tool_history=True)
+    surviving_result_ids = {
+        content.call_id
+        for message in provider_messages
+        for content in (message.contents or [])
+        if content.type == "function_result"
+    }
+    assert surviving_result_ids == {"call_a", "call_c"}
+
+
+def test_agent_framework_to_agui_result_for_buffered_call_waits_for_its_call():
+    """A result whose own call is still buffered is held until that call is emitted.
+
+    Regression: for ``[call A, call B, result A, call C, result C, result B]`` the split
+    correctly deferred ``assistant(C)`` but still emitted ``tool(C)`` immediately, leaving
+    C's result ahead of its call so ``_sanitize_tool_history`` dropped it.
+    """
+    msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="call_a", name="fa", arguments="{}"),
+            Content.from_function_call(call_id="call_b", name="fb", arguments="{}"),
+            Content.from_function_result(call_id="call_a", result="ra"),
+            Content.from_function_call(call_id="call_c", name="fc", arguments="{}"),
+            Content.from_function_result(call_id="call_c", result="rc"),
+            Content.from_function_result(call_id="call_b", result="rb"),
+        ],
+        message_id="out-of-order-1",
+    )
+
+    agui_messages = agent_framework_messages_to_agui([msg])
+
+    # Every tool message must come after an assistant message that declared its call.
+    declared: set[str] = set()
+    for agui_msg in agui_messages:
+        if agui_msg["role"] == "assistant":
+            declared.update(tc["id"] for tc in agui_msg.get("tool_calls") or [])
+        else:
+            assert agui_msg["toolCallId"] in declared, f"{agui_msg['toolCallId']} emitted before its call"
+
+    provider_messages, _ = normalize_agui_input_messages(agui_messages, sanitize_tool_history=True)
+    surviving_result_ids = {
+        content.call_id
+        for message in provider_messages
+        for content in (message.contents or [])
+        if content.type == "function_result"
+    }
+    assert surviving_result_ids == {"call_a", "call_b", "call_c"}
+
+
+def _call_result_interleavings(call_ids: list[str]) -> list[tuple[tuple[str, str], ...]]:
+    """Every ordering of the given calls and their results where each call precedes its result."""
+    events = [("call", call_id) for call_id in call_ids] + [("result", call_id) for call_id in call_ids]
+    orderings: list[tuple[tuple[str, str], ...]] = []
+    for ordering in dict.fromkeys(permutations(events)):
+        emitted: set[str] = set()
+        for kind, call_id in ordering:
+            if kind == "call":
+                emitted.add(call_id)
+            elif call_id not in emitted:
+                break
+        else:
+            orderings.append(ordering)
+    return orderings
+
+
+def _contents_for(ordering: tuple[tuple[str, str], ...]) -> list[Content]:
+    return [
+        Content.from_function_call(call_id=call_id, name="f", arguments="{}")
+        if kind == "call"
+        else Content.from_function_result(call_id=call_id, result=f"r-{call_id}")
+        for kind, call_id in ordering
+    ]
+
+
+def _assert_no_result_is_orphaned(agui_messages: list[dict[str, Any]], call_ids: list[str]) -> None:
+    """Every tool message follows an assistant message declaring its call, and no result is lost."""
+    declared: set[str] = set()
+    for agui_msg in agui_messages:
+        if agui_msg["role"] == "assistant":
+            declared.update(tool_call["id"] for tool_call in agui_msg.get("tool_calls") or [])
+        elif agui_msg["role"] == "tool":
+            assert agui_msg["toolCallId"] in declared, f"{agui_msg['toolCallId']} emitted before its call"
+
+    provider_messages, _ = normalize_agui_input_messages(agui_messages, sanitize_tool_history=True)
+    surviving = {
+        content.call_id
+        for message in provider_messages
+        for content in (message.contents or [])
+        if content.type == "function_result"
+    }
+    assert surviving == set(call_ids)
+
+
+@pytest.mark.parametrize("call_ids", [["call_a", "call_b"], ["call_a", "call_b", "call_c"]])
+def test_agent_framework_to_agui_no_interleaving_drops_a_result(call_ids: list[str]):
+    """Exhaustive: no ordering of calls/results may lose a result or emit one ahead of its call.
+
+    ``_sanitize_tool_history`` resets its pending-call set on every non-tool message, so any
+    assistant message emitted between a call and that call's result causes the result to be
+    dropped. This sweeps every valid interleaving -- in a single mixed message and split across
+    two messages -- because that whole class of ordering bug has recurred here repeatedly.
+    """
+    for ordering in _call_result_interleavings(call_ids):
+        contents = _contents_for(ordering)
+
+        single = [Message(role="assistant", contents=contents, message_id="m1")]
+        _assert_no_result_is_orphaned(agent_framework_messages_to_agui(single), call_ids)
+
+        # Splitting the leading content into its own message exercises the cross-message
+        # pending-call state that a per-message set would lose.
+        split = [
+            Message(role="assistant", contents=contents[:1], message_id="m1"),
+            Message(role="assistant", contents=contents[1:], message_id="m2"),
+        ]
+        _assert_no_result_is_orphaned(agent_framework_messages_to_agui(split), call_ids)
 
 
 # Additional tests for better coverage
