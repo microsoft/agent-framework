@@ -244,4 +244,14 @@ public class AgentFileStoreContractTests
         // SearchAsync checks the token itself once FindMatchingFilesAsync has already returned.
         Assert.Equal(0, store.Listings);
     }
+
+    [Fact]
+    public void ScanContent_NullFileName_Throws()
+    {
+        // Arrange — a pattern that matches, since a non-matching scan returns null and hides the problem.
+        var regex = new Regex(Needle, RegexOptions.IgnoreCase);
+
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() => AgentFileStore.ScanContent(null!, Needle, regex));
+    }
 }

@@ -263,6 +263,7 @@ public abstract class AgentFileStore
     /// <returns>The match metadata, or <see langword="null"/> when no line matches.</returns>
     public static FileSearchResult? ScanContent(string fileName, string content, Regex regex)
     {
+        _ = Throw.IfNull(fileName);
         _ = Throw.IfNull(content);
         _ = Throw.IfNull(regex);
 
