@@ -17,6 +17,7 @@ from ag_ui.core import (
     ReasoningMessageContentEvent,
     ReasoningMessageEndEvent,
     ReasoningMessageStartEvent,
+    ReasoningStartEvent,
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
@@ -171,6 +172,9 @@ class _WorkflowSnapshotBuilder:
             self._observe_tool_call_args(event)
         elif isinstance(event, ToolCallResultEvent):
             self._observe_tool_call_result(event)
+        elif isinstance(event, ReasoningStartEvent):
+            # A new reasoning block supersedes anything still open from the last one.
+            self._flush_open_reasoning_message()
         elif isinstance(event, ReasoningMessageStartEvent):
             self._observe_reasoning_start(event)
         elif isinstance(event, ReasoningMessageContentEvent):
@@ -276,6 +280,13 @@ class _WorkflowSnapshotBuilder:
     def _observe_reasoning_end(self, event: ReasoningMessageEndEvent | ReasoningEndEvent) -> None:
         if self._open_reasoning_message is None or self._open_reasoning_message.get("id") != event.message_id:
             return
+        if isinstance(event, ReasoningMessageEndEvent):
+            # REASONING_MESSAGE_END closes the message, not the block, and an
+            # encrypted value is block-scoped so it legitimately trails it -- that is
+            # the order `_emit_text_reasoning` produces without a flow. Keep the
+            # message open so protected-data-only reasoning still has somewhere to
+            # land; REASONING_END, the next block, or build() finalizes it.
+            return
         self._flush_open_reasoning_message()
 
     def _observe_reasoning_encrypted_value(self, event: ReasoningEncryptedValueEvent) -> None:
@@ -286,8 +297,8 @@ class _WorkflowSnapshotBuilder:
         if self._open_reasoning_message is not None and self._open_reasoning_message.get("id") == event.entity_id:
             self._open_reasoning_message["encryptedValue"] = event.encrypted_value
             return
-        # The block may already be closed (encrypted value trailing its own
-        # REASONING_MESSAGE_END); attach it to the message we already flushed.
+        # Intervening text or tool output can flush the message before its encrypted
+        # value arrives; attach it to the message we already synthesized.
         for message in reversed(self._synthesized_messages):
             if message.get("role") == "reasoning" and message.get("id") == event.entity_id:
                 message["encryptedValue"] = event.encrypted_value

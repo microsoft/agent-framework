@@ -336,6 +336,127 @@ def test_workflow_snapshot_builder_attaches_encrypted_value_after_block_closed()
     ]
 
 
+def test_workflow_snapshot_builder_keeps_encrypted_only_reasoning_ended_before_its_value() -> None:
+    """Protected-data-only reasoning survives the no-flow order, where END precedes the value.
+
+    `_emit_text_reasoning` without a flow emits REASONING_MESSAGE_END before
+    REASONING_ENCRYPTED_VALUE. The message carries no display text, so closing it at
+    REASONING_MESSAGE_END would discard it and leave the encrypted value nothing to
+    attach to.
+    """
+    from ag_ui.core import (
+        ReasoningEncryptedValueEvent,
+        ReasoningEndEvent,
+        ReasoningMessageEndEvent,
+        ReasoningMessageStartEvent,
+        ReasoningStartEvent,
+    )
+
+    from agent_framework_ag_ui._workflow import _WorkflowSnapshotBuilder
+
+    builder = _WorkflowSnapshotBuilder([])
+    builder.observe(ReasoningStartEvent(message_id="reason-1"))
+    builder.observe(ReasoningMessageStartEvent(message_id="reason-1", role="reasoning"))
+    builder.observe(ReasoningMessageEndEvent(message_id="reason-1"))
+    builder.observe(ReasoningEncryptedValueEvent(subtype="message", entity_id="reason-1", encrypted_value="cipher"))
+    builder.observe(ReasoningEndEvent(message_id="reason-1"))
+
+    assert builder.build().messages == [
+        {"id": "reason-1", "role": "reasoning", "content": "", "encryptedValue": "cipher"}
+    ]
+
+
+def test_workflow_snapshot_builder_drops_reasoning_with_neither_text_nor_encrypted_value() -> None:
+    """An empty reasoning block with nothing to replay is not synthesized into a message."""
+    from ag_ui.core import (
+        ReasoningEndEvent,
+        ReasoningMessageEndEvent,
+        ReasoningMessageStartEvent,
+        ReasoningStartEvent,
+    )
+
+    from agent_framework_ag_ui._workflow import _WorkflowSnapshotBuilder
+
+    builder = _WorkflowSnapshotBuilder([])
+    builder.observe(ReasoningStartEvent(message_id="reason-1"))
+    builder.observe(ReasoningMessageStartEvent(message_id="reason-1", role="reasoning"))
+    builder.observe(ReasoningMessageEndEvent(message_id="reason-1"))
+    builder.observe(ReasoningEndEvent(message_id="reason-1"))
+
+    assert builder.build().messages == []
+
+
+def test_workflow_snapshot_builder_closes_previous_block_on_new_reasoning_start() -> None:
+    """A new REASONING_START finalizes a message the previous block left open."""
+    from ag_ui.core import (
+        ReasoningMessageContentEvent,
+        ReasoningMessageEndEvent,
+        ReasoningMessageStartEvent,
+        ReasoningStartEvent,
+    )
+
+    from agent_framework_ag_ui._workflow import _WorkflowSnapshotBuilder
+
+    builder = _WorkflowSnapshotBuilder([])
+    builder.observe(ReasoningStartEvent(message_id="reason-1"))
+    builder.observe(ReasoningMessageStartEvent(message_id="reason-1", role="reasoning"))
+    builder.observe(ReasoningMessageContentEvent(message_id="reason-1", delta="first"))
+    # No REASONING_END: the next block's start has to close this one.
+    builder.observe(ReasoningStartEvent(message_id="reason-2"))
+    builder.observe(ReasoningMessageStartEvent(message_id="reason-2", role="reasoning"))
+    builder.observe(ReasoningMessageContentEvent(message_id="reason-2", delta="second"))
+    builder.observe(ReasoningMessageEndEvent(message_id="reason-2"))
+
+    assert builder.build().messages == [
+        {"id": "reason-1", "role": "reasoning", "content": "first"},
+        {"id": "reason-2", "role": "reasoning", "content": "second"},
+    ]
+
+
+def test_workflow_snapshot_builder_attaches_encrypted_value_after_intervening_output() -> None:
+    """Text arriving between a reasoning message and its encrypted value does not lose the value."""
+    from ag_ui.core import (
+        ReasoningEncryptedValueEvent,
+        ReasoningMessageContentEvent,
+        ReasoningMessageEndEvent,
+        ReasoningMessageStartEvent,
+        TextMessageContentEvent,
+        TextMessageStartEvent,
+    )
+
+    from agent_framework_ag_ui._workflow import _WorkflowSnapshotBuilder
+
+    builder = _WorkflowSnapshotBuilder([])
+    builder.observe(ReasoningMessageStartEvent(message_id="reason-1", role="reasoning"))
+    builder.observe(ReasoningMessageContentEvent(message_id="reason-1", delta="thinking"))
+    builder.observe(ReasoningMessageEndEvent(message_id="reason-1"))
+    # Text output flushes the reasoning message before the encrypted value shows up.
+    builder.observe(TextMessageStartEvent(message_id="text-1", role="assistant"))
+    builder.observe(TextMessageContentEvent(message_id="text-1", delta="answer"))
+    builder.observe(ReasoningEncryptedValueEvent(subtype="message", entity_id="reason-1", encrypted_value="cipher"))
+
+    assert builder.build().messages == [
+        {"id": "reason-1", "role": "reasoning", "content": "thinking", "encryptedValue": "cipher"},
+        {"id": "text-1", "role": "assistant", "content": "answer"},
+    ]
+
+
+def test_workflow_snapshot_builder_ignores_reasoning_end_for_unopened_message() -> None:
+    """A reasoning end event for a message that was never opened is a no-op."""
+    from ag_ui.core import ReasoningEndEvent, ReasoningMessageContentEvent, ReasoningMessageStartEvent
+
+    from agent_framework_ag_ui._workflow import _WorkflowSnapshotBuilder
+
+    builder = _WorkflowSnapshotBuilder([])
+    builder.observe(ReasoningEndEvent(message_id="never-opened"))
+    builder.observe(ReasoningMessageStartEvent(message_id="reason-1", role="reasoning"))
+    builder.observe(ReasoningMessageContentEvent(message_id="reason-1", delta="kept"))
+    # An end event for a different id must not close the open message.
+    builder.observe(ReasoningEndEvent(message_id="other"))
+
+    assert builder.build().messages == [{"id": "reason-1", "role": "reasoning", "content": "kept"}]
+
+
 def test_workflow_snapshot_builder_ignores_tool_call_encrypted_values() -> None:
     """A tool-call-scoped encrypted value must not be folded in as reasoning content."""
     from ag_ui.core import ReasoningEncryptedValueEvent
