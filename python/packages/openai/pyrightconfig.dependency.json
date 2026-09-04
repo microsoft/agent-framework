@@ -1,0 +1,6 @@
+{
+    "extends": "../../pyproject.toml",
+    "include": [
+        "agent_framework_openai"
+    ]
+}

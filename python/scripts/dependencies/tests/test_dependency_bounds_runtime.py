@@ -199,19 +199,26 @@ test = ["azure-monitor-opentelemetry", "mcp[ws]"]
     assert command[-3:-1] == ["python", "-c"]
 
 
-def test_anthropic_probe_uses_its_own_dependency_pyright_task() -> None:
-    """Anthropic's Vertex client type-checks against an undeclared namespace package.
+@pytest.mark.parametrize(
+    ("package", "module"),
+    [("anthropic", "agent_framework_anthropic"), ("openai", "agent_framework_openai")],
+)
+def test_optional_namespace_packages_define_their_own_dependency_pyright_task(package: str, module: str) -> None:
+    """Packages that type-check against deliberately optional namespaces need the probe escape hatch.
 
-    ``_vertex_client.py`` imports ``google.auth.credentials`` under ``TYPE_CHECKING`` while the
-    package only declares ``anthropic`` without the ``vertex`` extra, so isolated dependency
-    probes have no ``google-auth`` to resolve. Without the package-defined escape hatch the
-    ``lowest-direct`` probe fails on ``reportMissingImports`` and blocks the whole bounds gate.
+    ``agent_framework_anthropic`` references ``google.auth`` and ``agent_framework_openai`` references
+    ``azure.core``/``azure.identity``, in both cases without declaring them, because those surfaces are
+    optional. A full workspace sync resolves them transitively, so repo-wide Pyright passes; an isolated
+    dependency probe does not, and the resulting ``reportMissingImports`` aborts the whole bounds gate.
     """
     workspace_root = Path(__file__).resolve().parents[3]
 
-    plans = _build_test_plans(workspace_root, "anthropic")
+    plans = _build_test_plans(workspace_root, package)
 
     assert [plan.typing_task for plan in plans] == ["dependency-pyright"]
+
+    config = json.loads((workspace_root / f"packages/{package}/pyrightconfig.dependency.json").read_text())
+    assert config["include"] == [module]
 
 
 def test_anthropic_dependency_pyright_config_excludes_the_vertex_client() -> None:
@@ -220,5 +227,4 @@ def test_anthropic_dependency_pyright_config_excludes_the_vertex_client() -> Non
 
     config = json.loads(config_path.read_text())
 
-    assert config["include"] == ["agent_framework_anthropic"]
     assert config["exclude"] == ["agent_framework_anthropic/_vertex_client.py"]
