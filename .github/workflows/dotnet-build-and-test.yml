@@ -600,12 +600,9 @@ jobs:
         env:
           AZURE_AI_PROJECT_ENDPOINT: ${{ vars.IT_HOSTED_AGENT_PROJECT_ENDPOINT }}
           AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.IT_HOSTED_AGENT_MODEL_DEPLOYMENT_NAME }}
-          # Azure AI Search (for the azure-search-rag scenario). Reuses the integration
-          # environment secrets shared with python-sample-validation.yml. The index is
-          # provisioned out of band; see dotnet/tests/Foundry.Hosting.IntegrationTests/README.md
-          # for the required schema and seed content.
+          # Use the dedicated hosted-agent Search index for both Search scenarios.
           AZURE_SEARCH_ENDPOINT: ${{ secrets.AZURE_SEARCH_ENDPOINT }}
-          AZURE_SEARCH_INDEX_NAME: ${{ secrets.AZURE_SEARCH_INDEX_NAME }}
+          AZURE_SEARCH_INDEX_NAME: ${{ vars.FOUNDRY_HOSTED_AGENT_SEARCH_INDEX_NAME }}
           # IT_HOSTED_AGENT_IMAGE was exported into $GITHUB_ENV by the previous step.
 
   # This final job is required to satisfy the merge queue. It must only run (or succeed) if no tests failed

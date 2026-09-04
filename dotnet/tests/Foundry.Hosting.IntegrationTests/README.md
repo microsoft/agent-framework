@@ -72,7 +72,8 @@ The container scenario injects `USER-ID:<platform-user-key>` via
 | `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Foundry project | Model the agent uses. Defaults to `gpt-4o` inside the container. |
 | `IT_HOSTED_AGENT_IMAGE` | `scripts/it-build-image.ps1` | ACR image reference the agent points at. |
 | `AZURE_SEARCH_ENDPOINT` | Pre-provisioned Azure AI Search service | Endpoint for the `azure-search-rag` scenario. The index it points at must already exist with the schema and content described under **Azure AI Search index prerequisite** below. |
-| `AZURE_SEARCH_INDEX_NAME` | Pre-provisioned Azure AI Search service | Name of the pre-seeded index for the `azure-search-rag` scenario. |
+| `AZURE_SEARCH_INDEX_NAME` | Pre-provisioned Azure AI Search service | Name of the pre-seeded index used by both Search scenarios. |
+| `AZURE_SEARCH_CONNECTION_NAME` | Foundry project connection | Optional connection name used by the `azure-search-tool-annotations` scenario. Defaults to `azure-ai-search-contoso`. |
 
 ## One-time bootstrap (per Foundry project)
 
@@ -97,7 +98,13 @@ running the tests.
 The bootstrap script grants only `Azure AI User` on the Foundry project scope, which is what
 every hosted agent needs to receive inbound inference traffic. Scenarios that read from
 external data services need an additional grant on that service to the agent's managed
-identity. Today only the `azure-search-rag` scenario falls into this category.
+identity. Both Search scenarios need data-plane access, but they use different identities:
+
+- `azure-search-rag` calls `SearchClient` inside the container, so the hosted agent's managed
+  identity needs `Search Index Data Reader`.
+- `azure-search-tool-annotations` sends a Foundry Azure AI Search hosted tool through a
+  `ProjectManagedIdentity` connection, so the Foundry account's managed identity needs the roles
+  listed below.
 
 For `it-azure-search-rag`, after the first bootstrap run, grant `Search Index Data Reader`
 on the Azure AI Search service to the agent's managed identity:
@@ -120,6 +127,35 @@ az role assignment create `
 
 Wait ~3 minutes after the grant for RBAC propagation before running the tests.
 
+The `azure-search-tool-annotations` fixture resolves the pre-provisioned connection by name and
+passes its full resource ID plus the index name to the container. The container builds the Azure AI
+Search hosted tool descriptor sent with the model request. Creating this descriptor does not
+provision a project resource. The connection must use `ProjectManagedIdentity`. Grant the Foundry
+account's system-assigned managed identity the roles required by the hosted tool on the Search service:
+
+```powershell
+az role assignment create `
+    --assignee-object-id "<foundry-account-principal-id>" `
+    --assignee-principal-type ServicePrincipal `
+    --role "Search Index Data Contributor" `
+    --scope "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Search/searchServices/<search-service>"
+
+az role assignment create `
+    --assignee-object-id "<foundry-account-principal-id>" `
+    --assignee-principal-type ServicePrincipal `
+    --role "Search Service Contributor" `
+    --scope "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Search/searchServices/<search-service>"
+```
+
+The integration environment must provision these roles and the connection before running
+`AzureSearchToolAnnotationsHostedAgentTests`.
+
+Projects may also retain a dedicated `ai-search-toolbox` containing the same Azure AI Search tool,
+connection, and index for toolbox integration tests. Keep that toolbox separate from the
+`AzureSearchToolAnnotationsHostedAgentTests`: toolbox calls surface the search result as tool output,
+while these tests specifically verify provider-generated `response.output_text.annotation.added`
+events from the hosted tool descriptor.
+
 If the search service has `authOptions = apiKeyOnly` (default for older deployments), Entra
 auth will return 403 regardless of role assignments. Flip it to `aadOrApiKey` first:
 
@@ -129,8 +165,10 @@ az search service update -g <rg> -n <search-service> --auth-options aadOrApiKey 
 
 ### Azure AI Search index prerequisite (one time, out of band)
 
-The `azure-search-rag` scenario assumes the index pointed at by `AZURE_SEARCH_INDEX_NAME` already
-exists with the schema and Contoso Outdoors content the test asserts against. See
+Both Search scenarios assume the index pointed at by `AZURE_SEARCH_INDEX_NAME` already exists
+with the schema and Contoso Outdoors content the tests assert against. The index must include
+retrievable source name and source URL fields so the hosted tool can return `url_citation`
+annotations. See
 `dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-AzureSearchRag/README.md` for
 the schema and copy-pasteable provisioning snippet. Provisioning the index from your user
 identity needs `Search Index Data Contributor` on the search service scope. The search service
@@ -217,7 +255,7 @@ container, the test fixture, or their tooling changed:
 | `IT_HOSTED_AGENT_MODEL_DEPLOYMENT_NAME` | `AZURE_AI_MODEL_DEPLOYMENT_NAME` |
 | `IT_HOSTED_AGENT_REGISTRY` | (consumed by `it-build-image.ps1`; not passed to tests) |
 | `secrets.AZURE_SEARCH_ENDPOINT` | `AZURE_SEARCH_ENDPOINT` (shared with `python-sample-validation.yml`) |
-| `secrets.AZURE_SEARCH_INDEX_NAME` | `AZURE_SEARCH_INDEX_NAME` (shared with `python-sample-validation.yml`) |
+| `FOUNDRY_HOSTED_AGENT_SEARCH_INDEX_NAME` | `AZURE_SEARCH_INDEX_NAME` |
 
 Like all integration tests in this workflow, the steps run only on `push` and merge-queue
 events, never on plain `pull_request`. The path-filter list lives in the `paths-filter`
@@ -249,6 +287,8 @@ human-only operation; CI only adds and deletes versions under existing agents.
 | `CustomStorageHostedAgentFixture` | `custom-storage` | `it-custom-storage` | Round trip with custom `IResponsesStorageProvider`; multi turn reads from the custom store (placeholder). |
 | `MemoryHostedAgentFixture` | `memory` | `it-memory` | `FoundryMemoryProvider` (scoped via `HostedSessionContext`) running inside the hosted agent recalls user preferences across multiple turns; the memory store name is randomised per fixture (`IT_MEMORY_STORE_ID`). |
 | `AzureSearchRagHostedAgentFixture` | `azure-search-rag` | `it-azure-search-rag` | RAG against a real Azure AI Search index seeded with Contoso Outdoors documents; verifies the model cites the retrieved sources. |
+| `AzureSearchToolAnnotationsHostedAgentFixture` | `azure-search-tool-annotations` | `it-azure-search-tool-annotations` | Uses the Azure AI Search hosted tool with a pre-provisioned connection and verifies URL citation annotations through streaming and non-streaming Responses API calls. |
+| `WebSearchAnnotationsHostedAgentFixture` | `web-search-annotations` | `it-web-search-annotations` | Calls `HostedWebSearchTool` and verifies URL citation annotations through streaming and non-streaming Responses API calls. |
 | `SessionFilesHostedAgentFixture` | `session-files` | `it-session-files` | End-to-end: upload via `AgentSessionFiles` (alpha) into a pinned `agent_session_id`, invoke the agent, assert it reads the file via the container's `ReadFile` tool. |
 | `AgentSkillsHostedAgentFixture` | `agent-skills` | `it-agent-skills` | Agent skills via `AgentSkillsProvider`: advertises two Contoso Outdoors skills (support-style, escalation-policy) in the system prompt, loads them on demand via `load_skill`, verifies canary tokens prove the skill was loaded. |
 | `ResilientWorkflowHostedAgentFixture` | `resilient-workflow` | `it-resilient-workflow` | Stored background workflow remains active without client traffic, completes after an intentional container process crash, and replays a complete 20-item countdown without a sequence cursor. |
