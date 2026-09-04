@@ -13,6 +13,7 @@ agent_framework/
 ├── _clients.py          # Chat client base classes and protocols
 ├── _types.py            # Core types (Message, ChatResponse, Content, etc.)
 ├── _tools.py            # Tool definitions and function invocation
+├── _vectors.py          # Vector store models, CRUD/search abstractions, and protocols
 ├── _middleware.py       # Middleware system for request/response interception
 ├── _sessions.py         # AgentSession and context provider abstractions
 ├── _skills.py           # Agent Skills system (models, executors, provider)
@@ -63,6 +64,19 @@ agent_framework/
 - **`FunctionTool`** - Wraps Python functions as tools with JSON schema generation
 - **`@tool`** decorator - Converts functions to tools
 - **`use_function_invocation()`** - Decorator to add automatic function calling to chat clients
+
+### Vector stores (`_vectors.py`)
+
+The vector store API is experimental under the shared `VECTOR_STORES` feature ID.
+
+- **`@vectorstoremodel`** - Declares key, data, and vector fields on dataclasses, Pydantic models, and plain classes
+- **`register_vectorstoremodel`** - Registers one definition and msgspec-backed codec pair per model type
+- **`BaseVectorCollection`** - Base class for collection lifecycle and msgspec-backed record CRUD operations;
+  upserts generate embeddings by default and retrieval excludes vectors by default
+- **`BaseVectorStore`** - Base class for stores that create collection clients
+- **`BaseVectorSearch`** - Base class for vector and keyword-hybrid search
+- **`create_vector_search_tool`** - Creates an agent tool from any `SupportsVectorSearch` implementation
+- **`SupportsVectorUpsert`** / **`SupportsVectorSearch`** - Structural protocols for vector store capabilities
 
 ### Middleware (`_middleware.py`)
 
@@ -216,6 +230,17 @@ agent_framework/
   to that caller/session. Pass a caller-scoped checkpoint storage to `build(checkpoint_storage=...)` when needed;
   hosts remain responsible for authorizing and tenant-scoping access to any shared checkpoint adapter.
 - **Orchestrators**: `SequentialOrchestrator`, `ConcurrentOrchestrator`, `GroupChatOrchestrator`, `MagenticOrchestrator`, `HandoffOrchestrator`
+
+## Evaluation (`_evaluation.py`)
+
+- Core owns provider-neutral evaluation types, local evaluators and checks, `EvalItem` construction, and the
+  `evaluate_agent` / `evaluate_workflow` orchestration functions.
+- Provider packages own their service-specific evaluator implementations and wire serialization. Core evaluation
+  code must not emit a provider's request schema. The deprecated `AgentEvalConverter` remains as a temporary
+  compatibility shim for released Foundry packages whose declared core range still imports it; new code must not use
+  the shim.
+- Core orchestration builds `EvalItem` instances through private helpers; callers needing manual control construct
+  the public `EvalItem` directly.
 
 ## Built-in Providers
 
