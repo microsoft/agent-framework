@@ -111,13 +111,18 @@ except ImportError as _copilot_import_error:
 DEFAULT_TIMEOUT_SECONDS: float = 60.0
 """Default timeout in seconds for Copilot requests."""
 
+_PermissionHandlerContext = Any
+"""Compatibility context accepted by permission handlers across SDK versions."""
+
 PermissionHandlerType = Callable[
-    [PermissionRequest, Any],
+    [PermissionRequest, _PermissionHandlerContext],
     "PermissionRequestResult | Awaitable[PermissionRequestResult]",
 ]
 """Type for permission request handlers. Supports both sync and async callbacks."""
 
-AsyncPermissionHandlerType = Callable[[PermissionRequest, Any], "Awaitable[PermissionRequestResult]"]
+AsyncPermissionHandlerType = Callable[
+    [PermissionRequest, _PermissionHandlerContext], "Awaitable[PermissionRequestResult]"
+]
 """Type for permission request handlers that are always asynchronous."""
 
 _SdkAsyncPermissionHandlerType = Callable[
@@ -177,7 +182,7 @@ logger = logging.getLogger("agent_framework.github_copilot")
 
 def _deny_all_permissions(
     _request: PermissionRequest,
-    _invocation: Any,
+    _invocation: _PermissionHandlerContext,
 ) -> PermissionRequestResult:
     """Default permission handler that denies all requests."""
     return PermissionDecisionUserNotAvailable()
