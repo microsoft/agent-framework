@@ -71,7 +71,8 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 
 - **`@vectorstoremodel`** - Declares key, data, and vector fields on dataclasses, Pydantic models, and plain classes
 - **`register_vectorstoremodel`** - Registers one definition and msgspec-backed codec pair per model type
-- **`BaseVectorCollection`** - Base class for collection lifecycle and msgspec-backed record CRUD operations
+- **`BaseVectorCollection`** - Base class for collection lifecycle and msgspec-backed record CRUD operations;
+  upserts generate embeddings by default and retrieval excludes vectors by default
 - **`BaseVectorStore`** - Base class for stores that create collection clients
 - **`BaseVectorSearch`** - Base class for vector and keyword-hybrid search
 - **`create_vector_search_tool`** - Creates an agent tool from any `SupportsVectorSearch` implementation

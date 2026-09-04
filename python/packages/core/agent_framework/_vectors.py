@@ -8,7 +8,7 @@ import operator
 from abc import ABC, abstractmethod
 from ast import AST, Lambda, NodeVisitor, expr, parse
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
-from dataclasses import dataclass, is_dataclass
+from dataclasses import dataclass, is_dataclass, replace
 from inspect import Parameter, getsource, signature
 from types import UnionType
 from typing import (
@@ -580,17 +580,10 @@ def _parse_model_definition(
                 raise ValueError(f"Field '{name}' must use VectorStoreField metadata or declare a default value.")
             continue
 
-        parsed_field = cast(Any, VectorStoreField)(
-            field.field_type,
+        parsed_field = replace(
+            field,
             name=name,
             type_=field.type_ or _infer_type_name(annotation, vector=field.field_type == "vector"),
-            storage_name=field.storage_name,
-            is_indexed=field.is_indexed,
-            is_full_text_indexed=field.is_full_text_indexed,
-            dimensions=field.dimensions,
-            index_kind=field.index_kind,
-            distance_function=field.distance_function,
-            embedding_generator=field.embedding_generator,
         )
         fields.append(parsed_field)
     return VectorStoreCollectionDefinition(fields, collection_name=collection_name)
@@ -813,13 +806,19 @@ class _VectorStoreRecordHandler(Generic[KeyT, ModelT]):
         self,
         records: ModelT | Sequence[ModelT],
         *,
+        generate_vectors: bool = True,
         context: Mapping[str, Any] | None = None,
     ) -> Any:
         """Serialize one or more application records for the backing store.
 
+        Args:
+            records: One application record or a sequence of records.
+            generate_vectors: Whether to generate vector values. When ``False``, supplied values are preserved.
+            context: Connector-specific serialization context.
+
         Raises:
             TypeError: If a record cannot be converted to a mapping.
-            ValueError: If required record data is missing or has an invalid shape.
+            ValueError: If required record data is missing, has an invalid shape, or a vector field has no generator.
             IntegrationInvalidResponseException: If embedding generation returns an unexpected result count.
         """
         mark_feature_used(FeatureIndex.CORE_VECTOR_STORES)
@@ -827,7 +826,8 @@ class _VectorStoreRecordHandler(Generic[KeyT, ModelT]):
         input_records = list(cast(Sequence[ModelT], records)) if is_batch else [cast(ModelT, records)]
         dict_records = [self._serialize_record_to_dict(record) for record in input_records]
 
-        await self._add_vectors_to_records(dict_records)
+        if generate_vectors:
+            await self._add_vectors_to_records(dict_records)
         store_models = list(self._serialize_dicts_to_store_models(dict_records, context=context))
 
         if len(store_models) != len(dict_records):
@@ -869,10 +869,17 @@ class _VectorStoreRecordHandler(Generic[KeyT, ModelT]):
         return serialized
 
     async def _add_vectors_to_records(self, records: Sequence[dict[str, Any]]) -> None:
+        field_generators: list[tuple[VectorStoreField, EmbeddingClient]] = []
         for field in self.definition.vector_fields:
             embedding_generator = field.embedding_generator or self.embedding_generator
             if embedding_generator is None:
-                continue
+                raise ValueError(
+                    f"Vector field '{field.name}' has no embedding generator. "
+                    "Set generate_vectors=False to preserve supplied vector values."
+                )
+            field_generators.append((field, embedding_generator))
+
+        for field, embedding_generator in field_generators:
             storage_name = field.storage_name or field.name
             values = [record.get(storage_name) for record in records]
             if any(value is None for value in values):
@@ -1024,7 +1031,7 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         top: int = 10,
         skip: int = 0,
         order_by: Mapping[str, bool] | None = None,
-        include_vectors: bool = True,
+        include_vectors: bool = False,
         operation_options: Mapping[str, Any] | None = None,
     ) -> Sequence[Any] | None:
         """Retrieve store-specific records."""
@@ -1044,12 +1051,14 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         self,
         records: Sequence[ModelT],
         *,
+        generate_vectors: bool = True,
         operation_options: Mapping[str, Any] | None = None,
     ) -> Sequence[KeyT]:
         """Upsert a batch of records.
 
         Args:
             records: A sequence of models.
+            generate_vectors: Whether to generate vector values. When ``False``, supplied values are preserved.
             operation_options: Store-specific operation options.
 
         Returns:
@@ -1057,7 +1066,7 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
 
         Raises:
             TypeError: If record serialization encounters an unsupported type.
-            ValueError: If record data or returned keys have an invalid shape.
+            ValueError: If record data or returned keys have an invalid shape, or a vector field has no generator.
             IntegrationException: If the backing store operation fails.
             IntegrationInvalidResponseException: If the backing store returns an unexpected key count.
         """
@@ -1065,7 +1074,7 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         if not _is_non_string_sequence(records):
             raise TypeError("records must be a sequence.")
         try:
-            serialized = await self.serialize(records)
+            serialized = await self.serialize(records, generate_vectors=generate_vectors)
             store_records = list(serialized) if _is_non_string_sequence(serialized) else [serialized]
             keys = list(await self._inner_upsert(store_records, operation_options=operation_options))
         except (TypeError, ValueError):
@@ -1089,7 +1098,7 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         top: int = 10,
         skip: int = 0,
         order_by: Mapping[str, bool] | None = None,
-        include_vectors: bool = True,
+        include_vectors: bool = False,
         operation_options: Mapping[str, Any] | None = None,
     ) -> Sequence[ModelT]:
         """Get records by keys or list a page of records.
@@ -1604,9 +1613,10 @@ class SupportsVectorUpsert(Protocol[KeyT, ModelT]):
         self,
         records: Sequence[ModelT],
         *,
+        generate_vectors: bool = True,
         operation_options: Mapping[str, Any] | None = None,
     ) -> Sequence[KeyT]:
-        """Upsert a batch of records."""
+        """Upsert a batch of records, generating embeddings by default."""
         ...
 
     async def get(
@@ -1616,10 +1626,10 @@ class SupportsVectorUpsert(Protocol[KeyT, ModelT]):
         top: int = 10,
         skip: int = 0,
         order_by: Mapping[str, bool] | None = None,
-        include_vectors: bool = True,
+        include_vectors: bool = False,
         operation_options: Mapping[str, Any] | None = None,
     ) -> Sequence[ModelT]:
-        """Get records by keys or list a page of records."""
+        """Get records by keys or list a page of records, excluding vectors by default."""
         ...
 
     async def delete(

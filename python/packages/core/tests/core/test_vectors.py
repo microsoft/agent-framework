@@ -308,6 +308,9 @@ def test_collection_definition_exposes_fields() -> None:
     assert definition.get_names(include_vector_fields=False) == ["id", "text"]
     assert definition.get_storage_names(include_key_field=False) == ["body", "vector"]
     assert isinstance(definition.fields, tuple)
+    assert definition.vector_fields[0].dimensions == 2
+    assert definition.vector_fields[0].index_kind == "hnsw"
+    assert definition.vector_fields[0].distance_function == "cosine_similarity"
 
     frozen_field = cast(Any, definition.fields[0])
     with pytest.raises(FrozenInstanceError):
@@ -479,10 +482,13 @@ async def test_batch_serializer_preserves_cardinality() -> None:
             return records[:-1]
 
     with pytest.raises(IntegrationInvalidResponseException, match="Expected 2 serialized records"):
-        await DroppingHandler(Record).serialize([
-            Record("one", "first"),
-            Record("two", "second"),
-        ])
+        await DroppingHandler(Record).serialize(
+            [
+                Record("one", "first"),
+                Record("two", "second"),
+            ],
+            generate_vectors=False,
+        )
 
 
 async def test_record_handler_supports_msgspec_structs() -> None:
@@ -492,7 +498,7 @@ async def test_record_handler_supports_msgspec_structs() -> None:
         vector: Annotated[list[float] | None, VectorStoreField("vector", dimensions=2)] = None
 
     handler = VectorStoreRecordHandler(MsgspecRecord)
-    serialized = await handler.serialize(MsgspecRecord("one", [1.0, 0.0]))
+    serialized = await handler.serialize(MsgspecRecord("one", [1.0, 0.0]), generate_vectors=False)
     deserialized = handler.deserialize(serialized)
 
     assert serialized == {"id": "one", "vector": [1.0, 0.0]}
@@ -569,7 +575,10 @@ async def test_array_like_vectors_round_trip_without_array_dependency() -> None:
         vector: Annotated[Any, VectorStoreField("vector", dimensions=3)]
 
     handler = VectorStoreRecordHandler(ArrayRecord)
-    serialized = await handler.serialize(ArrayRecord("one", ArrayLike([0.1, 0.2, 0.3])))
+    serialized = await handler.serialize(
+        ArrayRecord("one", ArrayLike([0.1, 0.2, 0.3])),
+        generate_vectors=False,
+    )
     restored = handler.deserialize(serialized)
 
     assert serialized == {"id": "one", "vector": [0.1, 0.2, 0.3]}
@@ -601,7 +610,10 @@ async def test_custom_encoder_normalizes_array_like_vectors() -> None:
         ),
     )
 
-    serialized = await VectorStoreRecordHandler(CustomArrayRecord).serialize(CustomArrayRecord("one", ArrayLike()))
+    serialized = await VectorStoreRecordHandler(CustomArrayRecord).serialize(
+        CustomArrayRecord("one", ArrayLike()),
+        generate_vectors=False,
+    )
     assert serialized == {"id": "one", "vector": [0.1, 0.2, 0.3]}
 
 
@@ -634,6 +646,28 @@ async def test_collection_serializes_records_and_generates_vectors() -> None:
     assert embedding_client.options == {"dimensions": 2}
 
 
+async def test_upsert_controls_embedding_generation() -> None:
+    embedding_client = MockEmbeddingClient()
+    collection = MockCollection(embedding_generator=embedding_client)
+
+    await collection.upsert([Record("generated", "text", [1.0, 0.0])])
+
+    assert embedding_client.values == [[1.0, 0.0]]
+    assert collection.records["generated"]["vector"] == [10.0, 0.5]
+
+    embedding_client.values.clear()
+    await collection.upsert(
+        [Record("preserved", "text", [1.0, 0.0])],
+        generate_vectors=False,
+    )
+
+    assert embedding_client.values == []
+    assert collection.records["preserved"]["vector"] == [1.0, 0.0]
+
+    with pytest.raises(ValueError, match="has no embedding generator.*generate_vectors=False"):
+        await MockCollection().upsert([Record("missing-generator", "text", [1.0, 0.0])])
+
+
 async def test_collection_crud_preserves_single_and_batch_shapes() -> None:
     collection = MockCollection(embedding_generator=MockEmbeddingClient())
     await collection.ensure_collection_exists()
@@ -649,12 +683,12 @@ async def test_collection_crud_preserves_single_and_batch_shapes() -> None:
 
     assert first_keys == ["one"]
     assert keys == ["two", "three"]
-    assert one == [Record("one", "first", [5.0, 0.5])]
+    assert one == [Record("one", "first")]
     assert many == [
         Record("one", "first", [5.0, 0.5]),
         Record("two", "second", [6.0, 0.5]),
     ]
-    assert filtered == [Record("one", "first", [5.0, 0.5])]
+    assert filtered == [Record("one", "first")]
 
     await collection.delete(["one", "two"])
     assert await collection.get(["one", "two"]) == []
@@ -665,7 +699,7 @@ async def test_collection_wraps_connector_errors() -> None:
     collection.fail_upsert = True
 
     with pytest.raises(IntegrationException, match="store unavailable"):
-        await collection.upsert([Record("one", "hello")])
+        await collection.upsert([Record("one", "hello")], generate_vectors=False)
 
 
 async def test_collection_get_without_keys_lists_records() -> None:
@@ -1150,11 +1184,11 @@ async def test_collection_operation_error_boundaries_and_context_manager() -> No
 
     collection.upsert_error = IntegrationException("known upsert failure")
     with pytest.raises(IntegrationException, match="known upsert failure"):
-        await collection.upsert([Record("one", "hello")])
+        await collection.upsert([Record("one", "hello")], generate_vectors=False)
     collection.upsert_error = None
     collection.upsert_keys = []
     with pytest.raises(IntegrationInvalidResponseException, match="Expected 1 upserted keys"):
-        await collection.upsert([Record("one", "hello")])
+        await collection.upsert([Record("one", "hello")], generate_vectors=False)
 
     collection.get_error = RuntimeError("get failure")
     with pytest.raises(IntegrationException, match="get failure"):
@@ -1311,7 +1345,7 @@ async def test_runtime_operations_mark_vector_store_feature_usage() -> None:
     store = MockStore(collection)
 
     with patch("agent_framework._vectors.mark_feature_used") as mark_feature_used_mock:
-        await collection.serialize(Record("one", "hello"))
+        await collection.serialize(Record("one", "hello"), generate_vectors=False)
         mark_feature_used_mock.assert_called_with(FeatureIndex.CORE_VECTOR_STORES)
 
         mark_feature_used_mock.reset_mock()
@@ -1319,7 +1353,7 @@ async def test_runtime_operations_mark_vector_store_feature_usage() -> None:
         mark_feature_used_mock.assert_called_once_with(FeatureIndex.CORE_VECTOR_STORES)
 
         mark_feature_used_mock.reset_mock()
-        await collection.upsert([Record("one", "hello")])
+        await collection.upsert([Record("one", "hello")], generate_vectors=False)
         mark_feature_used_mock.assert_any_call(FeatureIndex.CORE_VECTOR_STORES)
 
         mark_feature_used_mock.reset_mock()

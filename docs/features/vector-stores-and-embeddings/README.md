@@ -221,7 +221,9 @@ This feature ports the vector store abstractions, embedding generator abstractio
   - Uses `SupportsGetEmbeddings` instead of `EmbeddingGeneratorBase`
   - Not a Pydantic model — use `__init__` with explicit params
   - Batch-oriented `upsert`, `get`, and `delete`
-  - CRUD `get()` includes vectors by default so read-edit-upsert preserves stored embeddings
+  - `upsert()` generates vector values by default and requires an embedding generator for every vector field;
+    pass `generate_vectors=False` to preserve supplied vector values
+  - CRUD `get()` excludes vectors by default; pass `include_vectors=True` when stored embeddings are needed
   - `ensure_collection_exists`, `collection_exists`, `ensure_collection_deleted`
   - Async context manager support
 - `BaseVectorStore` — base for stores
