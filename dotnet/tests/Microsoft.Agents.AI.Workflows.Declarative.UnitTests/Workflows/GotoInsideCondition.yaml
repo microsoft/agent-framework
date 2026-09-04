@@ -1,0 +1,35 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: my_workflow
+  actions:
+  
+    - kind: SetVariable
+      id: set_input
+      variable: Local.TestValue
+      value: "=Value(System.LastMessageText)"
+
+    - kind: ConditionGroup
+      id: condition_test
+      conditions:
+        - id: condition_goto_branch
+          condition: "=Local.TestValue = 1"
+          actions:
+            - kind: GotoAction
+              id: goto_end
+              actionId: end_all
+
+        - id: condition_other_branch
+          condition: "=Local.TestValue <> 1"
+          actions:
+            - kind: SendActivity
+              id: send_activity_normal
+              activity: NORMAL PATH
+
+    - kind: SendActivity
+      id: send_activity_after
+      activity: SHOULD NOT SEE THIS
+
+    - kind: EndConversation
+      id: end_all

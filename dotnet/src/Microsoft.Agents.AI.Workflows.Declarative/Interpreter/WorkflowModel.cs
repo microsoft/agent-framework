@@ -140,6 +140,43 @@ internal sealed class WorkflowModel<TCondition> where TCondition : class
         return null;
     }
 
+    public IEnumerable<TAction> LocateNonDiscreteAncestors<TAction>(string? itemId) where TAction : class, IModeledAction
+    {
+        if (string.IsNullOrEmpty(itemId))
+        {
+            yield break;
+        }
+
+        if (!this.Nodes.TryGetValue(itemId, out ModelNode? startNode))
+        {
+            yield break;
+        }
+
+        string? currentId = startNode.Parent?.Action.Id;
+
+        while (currentId is not null)
+        {
+            if (!this.Nodes.TryGetValue(currentId, out ModelNode? itemNode))
+            {
+                yield break;
+            }
+
+            if (itemNode.Action is TAction nonDiscreteAction)
+            {
+                Type actionType = nonDiscreteAction.GetType();
+                bool isNonDiscrete = actionType == typeof(Microsoft.Agents.AI.Workflows.Declarative.ObjectModel.ConditionGroupExecutor) ||
+                actionType == typeof(Microsoft.Agents.AI.Workflows.Declarative.ObjectModel.ForeachExecutor);
+
+                if (isNonDiscrete)
+                {
+                    yield return nonDiscreteAction;
+                }
+            }
+
+            currentId = itemNode.Parent?.Action.Id;
+        }
+    }
+
     private sealed class ModelNode(IModeledAction action, ModelNode? parent = null, Action? completionHandler = null)
     {
         public IModeledAction Action => action;
