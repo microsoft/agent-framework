@@ -2812,6 +2812,90 @@ async def test_function_invocation_config_terminate_on_unknown_calls_true(chat_c
     assert exec_counter == 0
 
 
+@pytest.mark.parametrize("approval_first", [True, False], ids=["approval-first", "declaration-only-first"])
+async def test_mixed_batch_approval_enforced_regardless_of_call_order(
+    chat_client_base: SupportsChatGetResponse, approval_first: bool
+):
+    """A tool with approval_mode='always_require' must pause for approval even when a declaration-only
+    call precedes it in the same batch.
+
+    Regression: batch classification used to stop at the first matching call, so a declaration-only call
+    appearing before an approval-required call caused the whole batch to be returned as user input and the
+    approval gate to be silently bypassed. Classification must travel with each call, not with its position.
+    """
+    from agent_framework import FunctionTool
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func(arg1: str) -> str:
+        return f"Approved {arg1}"
+
+    declaration_func = FunctionTool(
+        name="declaration_func",
+        func=None,
+        description="A declaration-only function for testing",
+        input_model={"type": "object", "properties": {"arg1": {"type": "string"}}, "required": ["arg1"]},
+    )
+
+    approval_call = Content.from_function_call(call_id="a1", name="approval_func", arguments='{"arg1": "x"}')
+    declaration_call = Content.from_function_call(call_id="d1", name="declaration_func", arguments='{"arg1": "y"}')
+    contents = [approval_call, declaration_call] if approval_first else [declaration_call, approval_call]
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=contents)),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [approval_func, declaration_func]},
+    )
+
+    approval_requests = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if content.type == "function_approval_request" and content.function_call.name == "approval_func"
+    ]
+    assert len(approval_requests) == 1, "approval gate must be surfaced regardless of call order"
+
+
+async def test_mixed_batch_approval_takes_precedence_over_unknown_call_termination(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """An approval-required call anywhere in the batch must pause before an unknown call terminates it.
+
+    Regression: with terminate_on_unknown_calls=True, an unknown call appearing before an approval-required
+    call raised KeyError first, so the approval pause (higher priority) was never reached.
+    """
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func(arg1: str) -> str:
+        return f"Approved {arg1}"
+
+    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="u1", name="unknown_function", arguments='{"arg1": "x"}'),
+                    Content.from_function_call(call_id="a1", name="approval_func", arguments='{"arg1": "y"}'),
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [approval_func]}
+    )
+
+    approval_requests = [
+        content for msg in response.messages for content in msg.contents if content.type == "function_approval_request"
+    ]
+    assert len(approval_requests) >= 1, "approval pause must take precedence over unknown-call termination"
+
+
 async def test_function_invocation_config_additional_tools(chat_client_base: SupportsChatGetResponse):
     """Test that additional_tools are available but treated as declaration_only."""
     exec_counter_visible = 0

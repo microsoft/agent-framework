@@ -1782,9 +1782,12 @@ async def _try_execute_function_call_groups(
     ]
 
     # Classify the entire batch first: any required user interaction pauses the batch before execution.
+    # Scan every call before deciding so classification travels with each call, not with its position in
+    # the batch. Priority (highest first): approval pause > declaration-only user-input > unknown-call
+    # termination. A user-input pause therefore takes precedence over unknown-call termination in mixed batches.
     requires_approval = False
     has_declaration_only_call = False
-    # A user-input pause takes precedence over unknown-call termination in mixed batches.
+    unknown_call_name: str | None = None
     for function_call in actionable_calls:
         function_name = function_call.name
         logger.debug(
@@ -1796,12 +1799,20 @@ async def _try_execute_function_call_groups(
         if function_name in approval_tool_names:
             logger.debug("Approval needed for function: %s", function_name)
             requires_approval = True
-            break
+            continue
         if function_name in declaration_only_tool_names or function_name in additional_tool_names:
             has_declaration_only_call = True
-            break
-        if config.get("terminate_on_unknown_calls", False) and function_name not in tool_map:
-            raise KeyError(f'Error: Requested function "{function_name}" not found.')
+            continue
+        if (
+            unknown_call_name is None
+            and config.get("terminate_on_unknown_calls", False)
+            and function_name not in tool_map
+        ):
+            unknown_call_name = function_name
+    # Defer unknown-call termination until the whole batch is classified so a higher-priority approval or
+    # declaration-only pause anywhere in the batch is not skipped by an earlier unknown call.
+    if not requires_approval and not has_declaration_only_call and unknown_call_name is not None:
+        raise KeyError(f'Error: Requested function "{unknown_call_name}" not found.')
     if requires_approval:
         # Surface only the approvals the host must decide; session-backed safe siblings wait for that resume.
         # approval can only be needed for Function Call Content, not Approval Responses.
