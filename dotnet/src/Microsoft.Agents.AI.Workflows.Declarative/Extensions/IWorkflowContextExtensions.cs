@@ -85,6 +85,9 @@ internal static class IWorkflowContextExtensions
         return workflowConversationId?.Equals(conversationId, StringComparison.Ordinal) ?? false;
     }
 
+    internal static bool IsParallelForeachBranch(this IWorkflowContext context) =>
+        context is DeclarativeWorkflowContext { ConversationMessageBuffer: not null };
+
     private static DeclarativeWorkflowContext DeclarativeContext(IWorkflowContext context)
     {
         if (context is not DeclarativeWorkflowContext declarativeContext)

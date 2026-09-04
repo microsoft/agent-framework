@@ -21,6 +21,12 @@ internal sealed class AddConversationMessageExecutor(AddConversationMessage mode
         Throw.IfNull(this.Model.ConversationId, $"{nameof(this.Model)}.{nameof(this.Model.ConversationId)}");
 
         string conversationId = this.Evaluator.GetValue(this.Model.ConversationId).Value;
+        if (context.IsParallelForeachBranch())
+        {
+            throw new DeclarativeActionException(
+                $"Parallel Foreach action '{this.Id}' cannot mutate a conversation immediately.");
+        }
+
         bool isWorkflowConversation = context.IsWorkflowConversation(conversationId, out string? _);
 
         ChatMessage newMessage = new(this.Model.Role.Value.ToChatRole(), [.. this.GetContent()]) { AdditionalProperties = this.GetMetadata() };

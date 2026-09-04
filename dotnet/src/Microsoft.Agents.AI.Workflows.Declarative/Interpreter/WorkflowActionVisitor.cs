@@ -182,7 +182,13 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.Trace(item);
 
         // Entry point for loop
-        ForeachExecutor action = new(item, this._workflowState);
+        ForeachExecutor action = new(item, this._workflowState, this._workflowOptions);
+        if (action.IsParallel)
+        {
+            this.ContinueWith(action);
+            return;
+        }
+
         string loopId = ForeachExecutor.Steps.Next(action.Id);
         this.ContinueWith(action, condition: null, CompletionHandler);
         // Transition to select the next item
