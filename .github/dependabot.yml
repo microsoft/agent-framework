@@ -11,6 +11,11 @@ updates:
     schedule:
       interval: "cron"
       cronjob: "0 8 * * 4,0" # Every Thursday(4) and Sunday(0) at 8:00 UTC
+    groups:
+      agent-memory:
+        patterns:
+          - "AgentMemory"
+          - "AgentMemory.AgentFramework"
     ignore:
       # For all System.* and Microsoft.Extensions/Bcl.* packages, ignore all major version updates
       - dependency-name: "System.*"
