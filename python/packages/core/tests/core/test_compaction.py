@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 from typing import Any
 
 import pytest
@@ -1098,6 +1099,57 @@ def test_format_summary_message_includes_approval_response() -> None:
 
     assert "approval_response" in rendered
     assert "approved=True" in rendered
+
+
+def test_format_summary_message_stringifies_non_json_mcp_result_without_crash() -> None:
+    message = Message(
+        role="tool",
+        contents=[Content("mcp_server_tool_result", call_id="mcp_1", output={"when": date(2026, 1, 1)})],
+    )
+
+    rendered = _format_summary_message(9, message)
+
+    assert "2026" in rendered
+    assert "[call_id=mcp_1]" in rendered
+
+
+def test_format_summary_message_preserves_time_order_for_mixed_contents() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            "I'll check the weather.",
+            Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"city":"Seattle"}'),
+            "Please wait.",
+        ],
+    )
+
+    rendered = _format_summary_message(10, message)
+
+    assert rendered.index("I'll check the weather.") < rendered.index("function_call")
+    assert rendered.index("function_call") < rendered.index("Please wait.")
+
+
+def test_format_summary_message_uses_tool_name_for_mcp_approval() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_approval_request(
+                id="approval_mcp_1",
+                function_call=Content.from_mcp_server_tool_call(
+                    call_id="mcp_1",
+                    tool_name="search",
+                    server_name="test_server",
+                    arguments='{"query":"x"}',
+                ),
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(11, message)
+
+    assert "approval_request" in rendered
+    assert "search" in rendered
+    assert "[id=approval_mcp_1]" in rendered
 
 
 async def test_summarization_strategy_returns_false_when_summary_generation_fails(

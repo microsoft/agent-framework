@@ -1198,7 +1198,10 @@ def _tool_result_text(value: Any) -> str:
         if text_parts:
             return "\n".join(text_parts)
     if isinstance(value, Mapping):
-        return json.dumps(cast(Mapping[str, object], value), ensure_ascii=False)
+        try:
+            return json.dumps(cast(Mapping[str, object], value), ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            return str(cast(object, value))
     return str(cast(object, value))
 
 
@@ -1237,7 +1240,7 @@ def _format_summary_content(content: Content) -> str:
         return f"mcp_tool_result: {result_text}{call_id_suffix}"
     if content.type in ("function_approval_request", "function_approval_response"):
         nested_call = content.function_call
-        name = nested_call.name if nested_call is not None else ""
+        name = "" if nested_call is None else nested_call.name or nested_call.tool_name or ""
         label = "approval_request" if content.type == "function_approval_request" else "approval_response"
         rendered = f"{label}: {name} [id={content.id}]"
         if content.type == "function_approval_response":
@@ -1247,10 +1250,20 @@ def _format_summary_content(content: Content) -> str:
 
 
 def _format_summary_message(index: int, message: Message) -> str:
-    parts = [_format_summary_content(content) for content in message.contents]
-    if message.text:
-        parts.append(message.text)
-    content_text = "; ".join(part for part in parts if part)
+    parts: list[str] = []
+    pending_text: list[str] = []
+    for content in message.contents:
+        rendered = _format_summary_content(content)
+        if rendered:
+            if pending_text:
+                parts.append(" ".join(pending_text))
+                pending_text = []
+            parts.append(rendered)
+        elif content.type == "text" and content.text:
+            pending_text.append(content.text)
+    if pending_text:
+        parts.append(" ".join(pending_text))
+    content_text = "; ".join(parts)
     if not content_text:
         content_text = ", ".join(content.type for content in message.contents)
     return f"{index}. [{message.role}] {content_text}"
