@@ -180,11 +180,13 @@ def test_session_approval_binding_replaces_abandoned_batch() -> None:
     )
 
     session = AgentSession(session_id="approval-binding-active-batch")
+
     old_call = Content.from_function_call(call_id="call_old", name="guarded_write", arguments={}, id="request_old")
     old_request = Content.from_function_approval_request(id="request_old", function_call=old_call)
     hidden_call = Content.from_function_call(call_id="call_hidden", name="safe_read", arguments={}, id="request_hidden")
     hidden_request = Content.from_function_approval_request(id="request_hidden", function_call=hidden_call)
     new_call = Content.from_function_call(call_id="call_new", name="guarded_write", arguments={}, id="request_new")
+
     new_request = Content.from_function_approval_request(id="request_new", function_call=new_call)
 
     _store_already_approved_approval_requests(session, [old_request], [hidden_request])
@@ -3239,7 +3241,7 @@ def test_pending_approval_batch_filter_keeps_resolved_sibling_pair() -> None:
     _remove_unanswered_approval_batches_from_model_input(messages)
 
     assert [(message.role, message.contents) for message in messages] == [
-        ("assistant", [local_call]),
+        ("assistant", [local_call, hosted_call, hosted_request]),
         ("tool", [local_result]),
         ("user", [unrelated_content]),
     ]
