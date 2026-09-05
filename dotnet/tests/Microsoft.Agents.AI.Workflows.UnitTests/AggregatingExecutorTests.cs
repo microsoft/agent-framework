@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading.Tasks;
-using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -19,9 +18,9 @@ public class AggregatingExecutorTests
         string? result2 = await executor.HandleAsync("b", context, default);
         string? result3 = await executor.HandleAsync("c", context, default);
 
-        result1.Should().Be("a");
-        result2.Should().Be("a+b");
-        result3.Should().Be("a+b+c");
+        Assert.Equal("a", result1);
+        Assert.Equal("a+b", result2);
+        Assert.Equal("a+b+c", result3);
     }
 
     [Fact]
@@ -38,7 +37,7 @@ public class AggregatingExecutorTests
         TestWorkflowContext context = new(executor.Id);
         await executor.HandleAsync("hello", context, default);
 
-        receivedAggregate.Should().BeNull("the first invocation should receive a null aggregate for reference types");
+        Assert.Null(receivedAggregate);
     }
 
     [Fact]
@@ -50,14 +49,14 @@ public class AggregatingExecutorTests
         TestWorkflowContext context = new(executor.Id);
 
         string? result1 = await executor.HandleAsync("a", context, default);
-        result1.Should().Be("a");
+        Assert.Equal("a", result1);
 
         string? result2 = await executor.HandleAsync("clear", context, default);
-        result2.Should().BeNull("the aggregator returned null to clear the state");
+        Assert.Null(result2);
 
         // After clearing, the next call should receive null aggregate again
         string? result3 = await executor.HandleAsync("b", context, default);
-        result3.Should().Be("b", "the aggregate should restart from null after being cleared");
+        Assert.Equal("b", result3);
     }
 
     [Fact]
@@ -71,7 +70,7 @@ public class AggregatingExecutorTests
         for (int i = 1; i <= 5; i++)
         {
             string? result = await executor.HandleAsync("tick", context, default);
-            result.Should().Be($"{i}", "the aggregate should increment with each call");
+            Assert.Equal($"{i}", result);
         }
     }
 }
