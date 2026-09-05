@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 from typing import Any
 
 import pytest
@@ -36,6 +37,7 @@ from agent_framework import (
     included_token_count,
 )
 from agent_framework._compaction import (
+    _format_summary_message,
     _select_summary_input_groups,
     _serialize_message,
     append_compaction_message,
@@ -970,6 +972,184 @@ def test_summary_input_selection_does_not_retokenize_selected_transcript() -> No
         ])
         not in tokenizer.seen_texts
     )
+
+
+def test_format_summary_message_includes_function_call_details() -> None:
+    message = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"city":"Seattle"}')],
+    )
+
+    rendered = _format_summary_message(1, message)
+
+    assert "get_weather" in rendered
+    assert '{"city":"Seattle"}' in rendered
+    assert "[call_id=call_1]" in rendered
+
+
+def test_format_summary_message_includes_function_result_and_exception() -> None:
+    message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id="call_1", result="42", exception="ValueError")],
+    )
+
+    rendered = _format_summary_message(2, message)
+
+    assert "function_result" in rendered
+    assert "42" in rendered
+    assert "error(ValueError)" in rendered
+    assert "[call_id=call_1]" in rendered
+
+
+def test_format_summary_message_renders_function_result_without_call_id() -> None:
+    message = Message(
+        role="tool",
+        contents=[Content("function_result", call_id=None, result="done")],
+    )
+
+    rendered = _format_summary_message(3, message)
+
+    assert "done" in rendered
+    assert "call_id" not in rendered
+
+
+def test_format_summary_message_combines_tool_calls_with_text() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            "I'll check the weather.",
+            Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"city":"Seattle"}'),
+        ],
+    )
+
+    rendered = _format_summary_message(4, message)
+
+    assert "I'll check the weather." in rendered
+    assert "get_weather" in rendered
+
+
+def test_format_summary_message_preserves_text_only_messages() -> None:
+    message = Message(role="user", contents=["hello world"])
+
+    rendered = _format_summary_message(5, message)
+
+    assert rendered == "5. [user] hello world"
+
+
+def test_format_summary_message_includes_mcp_tool_details() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_mcp_server_tool_call(
+                call_id="mcp_1",
+                tool_name="search",
+                server_name="test_server",
+                arguments='{"query":"x"}',
+            ),
+            Content.from_mcp_server_tool_result(
+                call_id="mcp_1",
+                output=[Content.from_text("found")],
+            ),
+        ],
+    )
+
+    rendered = _format_summary_message(6, message)
+
+    assert "search" in rendered
+    assert '{"query":"x"}' in rendered
+    assert "[call_id=mcp_1]" in rendered
+    assert "found" in rendered
+
+
+def test_format_summary_message_includes_approval_request() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_approval_request(
+                id="approval_1",
+                function_call=Content.from_function_call(
+                    call_id="call_1", name="send_email", arguments='{"to":"a@b.c"}'
+                ),
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(7, message)
+
+    assert "approval_request" in rendered
+    assert "send_email" in rendered
+    assert "[id=approval_1]" in rendered
+
+
+def test_format_summary_message_includes_approval_response() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_approval_response(
+                approved=True,
+                id="approval_1",
+                function_call=Content.from_function_call(
+                    call_id="call_1", name="send_email", arguments='{"to":"a@b.c"}'
+                ),
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(8, message)
+
+    assert "approval_response" in rendered
+    assert "approved=True" in rendered
+
+
+def test_format_summary_message_stringifies_non_json_mcp_result_without_crash() -> None:
+    message = Message(
+        role="tool",
+        contents=[Content("mcp_server_tool_result", call_id="mcp_1", output={"when": date(2026, 1, 1)})],
+    )
+
+    rendered = _format_summary_message(9, message)
+
+    assert "2026" in rendered
+    assert "[call_id=mcp_1]" in rendered
+
+
+def test_format_summary_message_preserves_time_order_for_mixed_contents() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            "I'll check the weather.",
+            Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"city":"Seattle"}'),
+            "Please wait.",
+        ],
+    )
+
+    rendered = _format_summary_message(10, message)
+
+    assert rendered.index("I'll check the weather.") < rendered.index("function_call")
+    assert rendered.index("function_call") < rendered.index("Please wait.")
+
+
+def test_format_summary_message_uses_tool_name_for_mcp_approval() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_approval_request(
+                id="approval_mcp_1",
+                function_call=Content.from_mcp_server_tool_call(
+                    call_id="mcp_1",
+                    tool_name="search",
+                    server_name="test_server",
+                    arguments='{"query":"x"}',
+                ),
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(11, message)
+
+    assert "approval_request" in rendered
+    assert "search" in rendered
+    assert "[id=approval_mcp_1]" in rendered
 
 
 async def test_summarization_strategy_returns_false_when_summary_generation_fails(
