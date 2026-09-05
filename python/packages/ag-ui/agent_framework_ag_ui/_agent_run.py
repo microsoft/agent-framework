@@ -3226,8 +3226,12 @@ async def run_agent_stream(
         # so an unrelated user tool named "generate_a2ui" keeps its snapshot.
         if a2ui_active:
             logger.info("Suppressing terminal MessagesSnapshotEvent for A2UI run to preserve streamed message order.")
-        if config.emit_messages_snapshot and not a2ui_active and not _should_suppress_intermediate_snapshot(
-            last_tool_name, predict_state_config, config.require_confirmation
+        if (
+            config.emit_messages_snapshot
+            and not a2ui_active
+            and not _should_suppress_intermediate_snapshot(
+                last_tool_name, predict_state_config, config.require_confirmation
+            )
         ):
             yield snapshot_event
 
