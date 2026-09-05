@@ -9,6 +9,7 @@ import os
 import unittest.mock
 from collections.abc import Sequence
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -24,6 +25,7 @@ from agent_framework import (
     Content,
     ContextProvider,
     HistoryProvider,
+    MCPStdioTool,
     Message,
     tool,
 )
@@ -1939,6 +1941,48 @@ class TestGitHubCopilotAgentOptionsPassthrough:
         config = mock_client.create_session.call_args.kwargs
         assert config["reasoning_effort"] == "high"
         assert config["context_tier"] == "large"
+
+    async def test_mcp_tool_is_rejected_with_the_native_configuration(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """An MCP server cannot keep its framework behavior here, so it is refused, not dropped."""
+        with pytest.raises(TypeError, match="mcp_servers"):
+            GitHubCopilotAgent(client=mock_client, tools=[MCPStdioTool(name="weather", command="python")])
+
+    async def test_mcp_tool_in_a_tuple_is_rejected(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """``tools`` takes any sequence, so a tuple must not slip past the refusal."""
+        with pytest.raises(TypeError, match="mcp_servers"):
+            GitHubCopilotAgent(client=mock_client, tools=(MCPStdioTool(name="weather", command="python"),))
+
+    async def test_mcp_tool_from_default_options_is_rejected(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Tools reach the SDK from the options too, so the refusal cannot live in the constructor alone."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"tools": [MCPStdioTool(name="weather", command="python")]}),
+        )
+        await agent.start()
+
+        with pytest.raises(AgentException, match="mcp_servers"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+    async def test_mcp_tool_inside_a_tool_collection_from_options_is_rejected(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Option-supplied tools are normalized too, so a wrapper cannot hide an MCP server."""
+        toolbox = SimpleNamespace(tools=[MCPStdioTool(name="weather", command="python")])
+        agent = GitHubCopilotAgent(client=mock_client, default_options=cast(Any, {"tools": [toolbox]}))
+        await agent.start()
+
+        with pytest.raises(AgentException, match="mcp_servers"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
 
     async def test_tools_from_default_options_are_honored(
         self,
