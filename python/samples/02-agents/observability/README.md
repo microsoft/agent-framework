@@ -155,6 +155,23 @@ os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "<opik_otlp_headers>"
 enable_sensitive_telemetry()
 ```
 
+Or with [MLflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/microsoft-agent-framework/), which ingests traces over OTLP/HTTP at `<tracking-uri>/v1/traces` and routes them to an experiment via a header. MLflow accepts traces only, so pass a span exporter rather than a base `OTEL_EXPORTER_OTLP_ENDPOINT` (which would also aim log and metric exporters at endpoints MLflow does not serve):
+
+```python
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from agent_framework.observability import configure_otel_providers, enable_sensitive_telemetry
+
+# Start a tracking server first, e.g. `mlflow server --backend-store-uri sqlite:///mlflow.db --port 5000`
+exporter = OTLPSpanExporter(
+    endpoint="http://localhost:5000/v1/traces",
+    headers={"x-mlflow-experiment-id": "<mlflow_experiment_id>"},
+)
+configure_otel_providers(exporters=[exporter])
+
+# Optional: opt in to capturing sensitive data
+enable_sensitive_telemetry()
+```
+
 **4. Manual setup**
 
 For full control, set up providers and exporters yourself. See [advanced_manual_setup_console_output.py](./advanced_manual_setup_console_output.py) for a complete example that sends traces, logs, and metrics to the console. The `create_resource()` helper in `agent_framework.observability` can build a resource with the appropriate service name and version from environment variables (or sensible defaults), although the sample does not use it.
