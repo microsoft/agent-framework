@@ -14,8 +14,12 @@
   <ItemGroup>
     <PackageReference Include="Azure.AI.Projects" />
     <PackageReference Include="Azure.Core" />
-    <PackageReference Include="OpenAI" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="System.ClientModel" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>

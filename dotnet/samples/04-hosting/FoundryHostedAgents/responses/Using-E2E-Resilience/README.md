@@ -1,103 +1,121 @@
-# Using-E2E-Resilience
+﻿# Using-E2E-Resilience
 
-A self-contained local E2E demonstration for
-[`Hosted-Workflow-Resilient-Long-Running`](../Hosted-Workflow-Resilient-Long-Running/).
-It owns both server process lifetimes, consumes their response stream, and prints every countdown
-output in one console.
+This local E2E runs
+[`Hosted-Workflow-Resilient-Long-Running`](../Hosted-Workflow-Resilient-Long-Running/)
+through two recovery scenarios:
 
-The E2E creates a MAF client agent through `AIProjectClient.AsAIAgent(model, instructions)`. It
-enables `AgentRunOptions.AllowBackgroundResponses`, consumes `AgentResponseUpdate` values, saves the
-latest non-null `ResponseContinuationToken`, and supplies that token after the replacement server
-starts. It does not implement the Responses HTTP or SSE protocol itself.
+1. `Crash`, which terminates the hosted workflow process abruptly.
+2. `Shutdown`, which follows the graceful shutdown path and defers the response for recovery.
 
-The demonstration uses one MAF client agent and one agent session for three calls:
+> **Sample only.** The E2E, HTTP client, and SQLite service demonstrate resilience and idempotency.
+> Do not use them as-is in production. The database insert is the simulated operation; no real email,
+> payment, or other external action is performed.
 
-1. Starts the hosted workflow server as a child process.
-2. Creates a stored background streaming response through the MAF agent.
-3. Prints countdown messages as MAF streaming updates arrive.
-4. Waits until the matching workflow and response checkpoint is durable.
-5. Force-kills the server process tree.
-6. Starts a replacement server over the same AgentServer state.
-7. The second call reconnects with the sequence-aware continuation token and prints only newly
-   recovered messages.
-8. The third call uses the same agent and session with the same response ID but no sequence cursor,
-   replaying the entire stream from the start.
-9. The E2E verifies that the client accumulator and cursor-free replay contain the same complete
-   countdown.
+## Three processes
+
+The E2E uses three processes while each scenario is running:
+
+| Process | Responsibility |
+| --- | --- |
+| `Using-E2E-Resilience` | Drives the scenario and consumes the recovered stream. |
+| `Hosted-Workflow-Resilient-Long-Running` | Runs the resilient countdown workflow. |
+| `Using-E2E-Resilience --idempotent-service` | Runs `IdempotentService` on Kestrel and stores operations in SQLite. |
+
+The idempotent service is a class inside this sample, not a separate project or demo. The E2E
+launches another instance of its own executable with `--idempotent-service`. That process runs only
+the service, not the Crash and Shutdown scenarios, and remains running while the hosted workflow
+process is replaced.
+
+Both the hosted workflow and the E2E use `IdempotentServiceClient` from
+`Hosted_Shared_Contributor_Setup`:
+
+1. The hosted workflow posts operations to the idempotent service.
+2. The idempotent service stores them in SQLite.
+3. The E2E queries the same service for the completed operation count.
+
+The workflow calls the service for every countdown value. The service stores each operation once
+using `(scope, operation_id)` as the SQLite primary key. If recovery repeats a workflow step, the
+service returns the existing result instead of creating another row.
+
+## Current flow
+
+`Program.cs` sets `interruptNumberMessage` to `"10"`. The hosted workflow adds ten to that numeric
+input, so the countdown starts at 20 and the E2E interrupts it when it receives `10`.
+
+1. Build the hosted server and start the idempotent service and hosted server on separate loopback ports.
+2. Start a streaming background response. Read its first update and save the continuation token.
+3. Dispose that initial stream enumerator. This closes the client stream, not the accepted background operation.
+4. Open a second stream with the token and interrupt the hosted process at the selected count.
+5. Start a replacement hosted process with the same workflow state, service endpoint, and operation scope.
+6. Open a third stream using the original token, then query the service for the completed operation count.
+
+The recovered stream is consumed independently of the second request. The client displays all text
+updates and labels repeated text within that third request. It does not execute operations or
+remove duplicates. With the current input, the expected database count is 20. The E2E prints the
+returned count; it does not assert the count or the exact stream sequence.
+
+## Why idempotency matters
+
+An operation can finish at the service before the workflow's progress is durably confirmed. If the
+hosted process stops during that interval, recovery may execute the step and call the service again.
+The service's primary key makes the repeated call return the saved result without adding another row:
+
+```text
+Operation Crash/10 executed.
+Duplicate operation Crash/10 ignored.
+```
+
+Those are service log messages. Repeated text in the client stream can come from replaying old events
+or running an unconfirmed step again, so repeated text alone does not prove a second service effect.
+The timing of interruption determines whether the step must run again.
+
+**Workflow recovery, stream replay, and service idempotency have different jobs.** Checkpoints restore
+workflow progress. Replay lets a client receive stored events again. Idempotency protects the
+service's operation from being applied twice. Neither replay nor a checkpoint undoes an email or
+payment already performed. Real downstream services must enforce that protection themselves.
+
+## Internal service mode
+
+The E2E starts service mode automatically with a random loopback address in `ASPNETCORE_URLS` and an
+isolated SQLite file in `IDEMPOTENT_SERVICE_DATABASE_PATH`. Both are preserved while the hosted
+workflow restarts. At the end, the E2E stops the service and removes temporary state on success.
+
+Crash and Shutdown use separate temporary databases. Within each scenario, the service and its
+database remain alive across both hosted process lifetimes. Failed scenarios retain their files and
+print the paths for investigation; successful cleanup is best effort.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/readiness` | Reports that the service is ready. |
+| `POST` | `/operations/{scope}/{operationId}` | Creates an operation or returns its stored result. |
+| `GET` | `/operations/{scope}/count` | Returns the number of completed operations in the scope. |
+
+## What normally triggers each path
+
+Foundry sends `SIGTERM` when it intentionally stops a hosted agent container and can provide a
+graceful shutdown window. This can happen during managed lifecycle operations such as session
+compute deprovisioning, scale-in, or redeployment.
+
+An abrupt crash provides no shutdown window. Typical examples include an application process crash,
+a forced process termination, and an out-of-memory kill.
+
+The local Shutdown scenario requests `StopAsync()` on the AgentServer task service, then stops the
+web host. It exercises the shutdown signal without sending an OS signal on Windows. It does not
+guarantee that a partially completed workflow step will never run again.
+
+See [the hosted agent runtime contract](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agent-contract)
+and [recovery guidance](https://learn.microsoft.com/azure/foundry/agents/how-to/recover-long-running-work).
 
 ## Run
 
-Run from the repository root:
+No Azure project, model deployment, credentials, or second terminal is required. The E2E builds the
+hosted workflow server and starts both server processes automatically.
+
+From the repository root:
 
 ```powershell
 dotnet run --project dotnet\samples\04-hosting\FoundryHostedAgents\responses\Using-E2E-Resilience
 ```
 
-The E2E program starts the first server, ends it abruptly, starts the replacement server with the
-same durable state, and ends the replacement when the verification completes. A separately running
-local server may remain open: the E2E uses a random port, isolated Debug binaries, and an isolated
-AgentServer state directory.
-
-No Azure project, model deployment, credentials, or second terminal is required.
-The E2E builds the server in Debug into an isolated temporary directory, so it does not reuse or
-overwrite the binaries of a separately running local server.
-
-`AIProjectClient` requires an HTTPS endpoint before its bearer-token policy will run. The shared
-`LocalHttpSchemeRewriteHandler` presents HTTPS to that pipeline, then routes the request to the
-random loopback HTTP port at transport time. The handler rejects non-loopback targets.
-
-Example:
-
-```text
-[1/7] Starting the first server process...
-[2/7] Starting the background countdown...
-      before    > 20
-      before    > 19
-      before    > 18
-...
-[4/7] Force-killing the first server process...
-[5/7] Starting a replacement server over the same durable state...
-[6/7] Reconnecting to the response stream...
-      recovered > 10
-      recovered > 9
-...
-      recovered > Countdown complete.
-
-[7/7] Replaying from the start without a sequence cursor...
-      replayed  > 20
-      replayed  > 19
-...
-      replayed  > Countdown complete.
-
-Client retained countdown updates: 20
-Replay countdown updates:          20
-
-PASS: crash recovery completed with ordered output and no missing or duplicated items.
-```
-
-## Options
-
-```powershell
-dotnet run --project dotnet\samples\04-hosting\FoundryHostedAgents\responses\Using-E2E-Resilience -- `
-    --target 30 `
-    --crash-after-count 12 `
-    --delay-seconds 1
-```
-
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `--target` | `20` | First countdown value. Must be at least 2. |
-| `--crash-after-count` | Half the target | Number of completed countdown messages before the crash. |
-| `--delay-seconds` | `1` | Delay between countdown steps. |
-
-Server output is redirected to a temporary log whose path is printed at startup. Each run uses a
-random local port and an isolated AgentServer state directory. Successful runs delete their durable
-state. Failed runs retain state and print its path for investigation.
-
-The second call's continuation token resumes after the last update consumed before the crash.
-Previously consumed countdown messages are retained in the client accumulator and are not streamed
-again. Only work after the durable checkpoint appears as `recovered`.
-
-For the third call, the E2E derives another valid `ChatClientAgent` continuation token whose inner
-Responses token contains the same response ID without a sequence number. That call prints every
-persisted stream item as `replayed`.
+To change the demonstration, edit `interruptNumberMessage` in `Program.cs`. `--idempotent-service`
+selects the internal service process instead of running the E2E scenarios.

@@ -20,6 +20,33 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 public class OutputConverterWorkflowTests
 {
     [Fact]
+    public async Task ConvertUpdatesToItemsAsync_SuperStepCheckpoint_EmitsCheckpointBoundaryAsync()
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var checkpoint = new CheckpointInfo("workflow-session", "checkpoint-1");
+        var completion = new SuperStepCompletionInfo([]) { Checkpoint = checkpoint };
+        var update = new AgentResponseUpdate
+        {
+            RawRepresentation = new SuperStepCompletedEvent(1, completion)
+        };
+
+        // Act
+        var items = new List<OutputConverterItem>();
+        await foreach (OutputConverterItem item in OutputConverter.ConvertUpdatesToItemsAsync(
+            ToAsync([update]),
+            stream))
+        {
+            items.Add(item);
+        }
+
+        // Assert
+        OutputConverterItem.WorkflowCheckpoint boundary =
+            Assert.Single(items.OfType<OutputConverterItem.WorkflowCheckpoint>());
+        Assert.Same(checkpoint, boundary.Checkpoint);
+    }
+
+    [Fact]
     public async Task SequentialWorkflowPattern_ProducesCorrectEventsAsync()
     {
         // Simulate what WorkflowSession produces for a 2-agent sequential workflow
