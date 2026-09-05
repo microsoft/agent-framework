@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
+using System.Text.Json;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Extensions.AI;
 
@@ -70,6 +72,15 @@ internal static class ItemContentConverter
             ItemContentOutputAudio outputAudio =>
                 new DataContent(outputAudio.Data, "audio/*"),
 
+            ItemContentFunctionApprovalResponse approval =>
+                new ToolApprovalResponseContent(
+                    approval.RequestId,
+                    approval.Approved,
+                    new FunctionCallContent(
+                        approval.FunctionCall.Id,
+                        approval.FunctionCall.Name,
+                        approval.FunctionCall.Arguments.Deserialize(OpenAIHostingJsonContext.Default.DictionaryStringObject))),
+
             _ => null
         };
 
@@ -134,6 +145,20 @@ internal static class ItemContentConverter
                 {
                     FileData = fileData.Uri,
                     Filename = fileData.Name
+                },
+            ToolApprovalResponseContent approval when approval.ToolCall is FunctionCallContent functionCall =>
+                new ItemContentFunctionApprovalResponse
+                {
+                    RequestId = approval.RequestId,
+                    Approved = approval.Approved,
+                    FunctionCall = new FunctionCallInfo
+                    {
+                        Id = functionCall.CallId,
+                        Name = functionCall.Name,
+                        Arguments = JsonSerializer.SerializeToElement(
+                            functionCall.Arguments,
+                            AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(IDictionary<string, object?>)))
+                    }
                 },
             // Other AIContent types (FunctionCallContent, FunctionResultContent, etc.)
             // are handled separately in the Responses API as different ItemResource types, not ItemContent

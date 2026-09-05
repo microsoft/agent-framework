@@ -12,6 +12,28 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 
 internal static class TestHelpers
 {
+    internal static List<System.Text.Json.JsonElement> ParseSseEvents(string sseContent)
+    {
+        List<System.Text.Json.JsonElement> events = [];
+        string[] lines = sseContent.Split('\n');
+
+        for (int i = 0; i < lines.Length; i++)
+        {
+            string line = lines[i].TrimEnd('\r');
+            if (line.StartsWith("event: ", StringComparison.Ordinal) && i + 1 < lines.Length)
+            {
+                string dataLine = lines[i + 1].TrimEnd('\r');
+                if (dataLine.StartsWith("data: ", StringComparison.Ordinal))
+                {
+                    using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse(dataLine.Substring("data: ".Length));
+                    events.Add(document.RootElement.Clone());
+                }
+            }
+        }
+
+        return events;
+    }
+
     /// <summary>
     /// Simple mock implementation of IChatClient for basic testing purposes.
     /// </summary>

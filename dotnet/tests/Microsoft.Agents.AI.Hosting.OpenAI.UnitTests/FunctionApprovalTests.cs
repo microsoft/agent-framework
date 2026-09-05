@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
@@ -8,6 +7,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.Tests;
 using Microsoft.Extensions.AI;
+using static Microsoft.Agents.AI.Hosting.OpenAI.UnitTests.TestHelpers;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 
@@ -332,34 +332,6 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
         Assert.Equal(2, approvalEvents.Count);
         Assert.Equal("req-multi-1", approvalEvents[0].GetProperty("request_id").GetString());
         Assert.Equal("req-multi-2", approvalEvents[1].GetProperty("request_id").GetString());
-    }
-
-    #endregion
-
-    #region Helper Methods
-
-    private static List<JsonElement> ParseSseEvents(string sseContent)
-    {
-        List<JsonElement> events = [];
-        string[] lines = sseContent.Split('\n');
-
-        for (int i = 0; i < lines.Length; i++)
-        {
-            string line = lines[i].TrimEnd('\r');
-
-            if (line.StartsWith("event: ", StringComparison.Ordinal) && i + 1 < lines.Length)
-            {
-                string dataLine = lines[i + 1].TrimEnd('\r');
-                if (dataLine.StartsWith("data: ", StringComparison.Ordinal))
-                {
-                    string jsonData = dataLine.Substring("data: ".Length);
-                    JsonDocument doc = JsonDocument.Parse(jsonData);
-                    events.Add(doc.RootElement.Clone());
-                }
-            }
-        }
-
-        return events;
     }
 
     #endregion
