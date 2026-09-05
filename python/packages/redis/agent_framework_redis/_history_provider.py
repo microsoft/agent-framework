@@ -130,8 +130,20 @@ class RedisHistoryProvider(HistoryProvider):
         else:
             self._redis_client = redis.from_url(redis_url, decode_responses=True)  # type: ignore[no-untyped-call]
 
+    # Keys length-prefix each component ("<len>:<value>") so the join stays
+    # injective no matter which bytes the source/session ids carry; any fixed
+    # separator can be smuggled inside an opaque id and collide two sessions.
+    # Sessions written before source_id scoping live under
+    # "<key_prefix>:<session_id>"; reads merge that legacy list in place and
+    # writes only ever touch the scoped key, so upgrading never moves data.
+
     def _redis_key(self, session_id: str | None) -> str:
         """Get the Redis key for a given session's messages."""
+        parts = (self.key_prefix, self.source_id, session_id or "default")
+        return "".join(f"{len(part)}:{part}" for part in parts)
+
+    def _legacy_redis_key(self, session_id: str | None) -> str:
+        """Pre-scoping key layout, read only to migrate existing sessions."""
         return f"{self.key_prefix}:{session_id or 'default'}"
 
     async def get_messages(
@@ -159,6 +171,18 @@ class RedisHistoryProvider(HistoryProvider):
         # version-independent, and the outer cast pins the element type that
         # ``decode_responses=True`` guarantees.
         redis_messages = cast("list[str]", await _redis_result(cast("Any", self._redis_client).lrange(key, 0, -1)))
+        legacy_key = self._legacy_redis_key(session_id)
+        if legacy_key != key:
+            # Sessions last written before source_id scoping stay readable in
+            # place: the merged view is the legacy list followed by the scoped
+            # one, since new writes only ever land on the scoped key. The legacy
+            # key is never renamed or deleted on this path; an upgrade cannot
+            # fork history, and removing the old key is an explicit admin call.
+            legacy_messages = cast(
+                "list[str]", await _redis_result(cast("Any", self._redis_client).lrange(legacy_key, 0, -1))
+            )
+            if legacy_messages:
+                redis_messages = [*legacy_messages, *redis_messages]
         messages: list[Message] = []
         for serialized in redis_messages:
             messages.append(Message.from_dict(self._deserialize_json(serialized)))
@@ -187,8 +211,7 @@ class RedisHistoryProvider(HistoryProvider):
         if self.max_messages == 0:
             # Retention is disabled. Trimming cannot express this - LTRIM key 0 -1 keeps
             # the whole list - so return before serializing: no payload reaches Redis, an
-            # AOF or a replica. Stored history is deliberately left alone. _redis_key omits
-            # source_id, so the list can belong to a co-located provider, and removing
+            # AOF, or a replica. Stored history is deliberately left alone; removing
             # stored history is what clear() is for.
             return
 
@@ -224,6 +247,10 @@ class RedisHistoryProvider(HistoryProvider):
 
     async def clear(self, session_id: str | None) -> None:
         """Clear all messages for a session.
+
+        Only the scoped key is deleted. A pre-scoping legacy list belongs to
+        whichever sources shared it, so it is left for an explicit admin
+        cleanup rather than being removed by one source's clear().
 
         Args:
             session_id: The session ID to clear messages for.
