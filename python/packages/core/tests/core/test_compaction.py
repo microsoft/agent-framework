@@ -1035,6 +1035,71 @@ def test_format_summary_message_preserves_text_only_messages() -> None:
     assert rendered == "5. [user] hello world"
 
 
+def test_format_summary_message_includes_mcp_tool_details() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_mcp_server_tool_call(
+                call_id="mcp_1",
+                tool_name="search",
+                server_name="test_server",
+                arguments='{"query":"x"}',
+            ),
+            Content.from_mcp_server_tool_result(
+                call_id="mcp_1",
+                output=[Content.from_text("found")],
+            ),
+        ],
+    )
+
+    rendered = _format_summary_message(6, message)
+
+    assert "search" in rendered
+    assert '{"query":"x"}' in rendered
+    assert "[call_id=mcp_1]" in rendered
+    assert "found" in rendered
+
+
+def test_format_summary_message_includes_approval_request() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_approval_request(
+                id="approval_1",
+                function_call=Content.from_function_call(
+                    call_id="call_1", name="send_email", arguments='{"to":"a@b.c"}'
+                ),
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(7, message)
+
+    assert "approval_request" in rendered
+    assert "send_email" in rendered
+    assert "[id=approval_1]" in rendered
+
+
+def test_format_summary_message_includes_approval_response() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_approval_response(
+                approved=True,
+                id="approval_1",
+                function_call=Content.from_function_call(
+                    call_id="call_1", name="send_email", arguments='{"to":"a@b.c"}'
+                ),
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(8, message)
+
+    assert "approval_response" in rendered
+    assert "approved=True" in rendered
+
+
 async def test_summarization_strategy_returns_false_when_summary_generation_fails(
     caplog: Any,
 ) -> None:

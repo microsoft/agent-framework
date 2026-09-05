@@ -1223,6 +1223,26 @@ def _format_summary_content(content: Content) -> str:
             result_text = f"error({content.exception}): {result_text}"
         call_id_suffix = f" [call_id={content.call_id}]" if content.call_id else ""
         return f"function_result: {result_text}{call_id_suffix}"
+    if content.type == "mcp_server_tool_call":
+        arguments = _tool_result_text(content.arguments) if content.arguments is not None else ""
+        call = f"mcp_tool_call {content.tool_name or ''}({arguments})"
+        if content.call_id:
+            call += f" [call_id={content.call_id}]"
+        return call
+    if content.type == "mcp_server_tool_result":
+        result_text = _tool_result_text(content.output)
+        if content.exception:
+            result_text = f"error({content.exception}): {result_text}"
+        call_id_suffix = f" [call_id={content.call_id}]" if content.call_id else ""
+        return f"mcp_tool_result: {result_text}{call_id_suffix}"
+    if content.type in ("function_approval_request", "function_approval_response"):
+        nested_call = content.function_call
+        name = nested_call.name if nested_call is not None else ""
+        label = "approval_request" if content.type == "function_approval_request" else "approval_response"
+        rendered = f"{label}: {name} [id={content.id}]"
+        if content.type == "function_approval_response":
+            rendered += f" approved={content.approved}"
+        return rendered
     return ""
 
 
