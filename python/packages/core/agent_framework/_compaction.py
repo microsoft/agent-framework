@@ -1202,8 +1202,21 @@ def _tool_result_text(value: Any) -> str:
     return str(cast(object, value))
 
 
+def _format_summary_content(content: Content) -> str:
+    """Render one content item for the summarizer input transcript.
+
+    Returns an empty string when the item has no structured rendering of its
+    own (text contents are aggregated via ``Message.text`` instead), so callers
+    can fall back to the legacy rendering.
+    """
+    return ""
+
+
 def _format_summary_message(index: int, message: Message) -> str:
-    content_text = message.text
+    parts = [_format_summary_content(content) for content in message.contents]
+    if message.text:
+        parts.append(message.text)
+    content_text = "; ".join(part for part in parts if part)
     if not content_text:
         content_text = ", ".join(content.type for content in message.contents)
     return f"{index}. [{message.role}] {content_text}"
