@@ -1806,9 +1806,12 @@ async def _try_execute_function_call_groups(
         if not unknown_call_found and config.get("terminate_on_unknown_calls", False) and function_name not in tool_map:
             unknown_call_found = True
             unknown_call_name = function_name
-    # Defer unknown-call termination until the whole batch is classified so a higher-priority approval or
-    # declaration-only pause anywhere in the batch is not skipped by an earlier unknown call.
-    if not requires_approval and not has_declaration_only_call and unknown_call_found:
+    # Fail-closed precedence: an unknown call in a batch configured to terminate aborts the whole batch
+    # before any approval is solicited or any sibling executes. unknown_call_found is only set when
+    # terminate_on_unknown_calls is enabled (see the scan above), so this never fires for tolerated unknown
+    # calls. Wrapping the unknown call as a rejectable approval request instead would let a rejection or a
+    # dropped response silently skip the abort, turning a fail-closed gate back into a running loop.
+    if unknown_call_found:
         raise KeyError(f'Error: Requested function "{unknown_call_name}" not found.')
     if requires_approval:
         # Surface only the approvals the host must decide; session-backed safe siblings wait for that resume.
@@ -1816,24 +1819,29 @@ async def _try_execute_function_call_groups(
         logger.debug("Returning visible function_approval_request contents and storing already-approved requests")
         visible_requests: list[Content] = []
         already_approved_requests: list[Content] = []
+        declaration_only_calls: list[Content] = []
         for function_call in function_calls:
             if function_call.type != "function_call":
+                continue
+            tool_name = function_call.name
+            # Declaration-only and additional tools are surfaced as user input and never executed locally
+            # (spec 004). Wrapping them as approval requests here made an "approve" decision drive them into
+            # local execution on resume, where they raise because they have no implementation. Classification
+            # must travel with each call even inside an approval-pausing batch.
+            if tool_name is not None and (
+                tool_name in declaration_only_tool_names or tool_name in additional_tool_names
+            ):
+                function_call.user_input_request = True
+                if function_call.id is None:
+                    function_call.id = function_call.call_id
+                declaration_only_calls.append(function_call)
                 continue
             approval_request = Content.from_function_approval_request(
                 id=function_call.id or function_call.call_id,  # type: ignore[arg-type]
                 function_call=function_call,
             )
-            tool_name = function_call.name
-            if tool_name is None:
-                visible_requests.append(approval_request)
-                continue
-            tool = tool_map.get(tool_name)
-            if (
-                tool_name in approval_tool_names
-                or tool is None
-                or tool_name in declaration_only_tool_names
-                or tool_name in additional_tool_names
-            ):
+            tool = tool_map.get(tool_name) if tool_name is not None else None
+            if tool_name is None or tool_name in approval_tool_names or tool is None:
                 visible_requests.append(approval_request)
                 continue
             if invocation_session is None:
@@ -1846,7 +1854,11 @@ async def _try_execute_function_call_groups(
             already_approved_requests,
         )
         _store_pending_approval_requests(invocation_session, visible_requests)
-        return [[request] for request in visible_requests], False
+        # Surface approval pauses and declaration-only user-input pauses together so a mixed batch neither
+        # bypasses approval nor executes a declaration-only call.
+        pause_groups: list[list[Content]] = [[request] for request in visible_requests]
+        pause_groups.extend([call] for call in declaration_only_calls)
+        return pause_groups, False
     if has_declaration_only_call:
         # Declaration-only calls are returned as user input rather than executed locally.
         # return the declaration only tools to the user, since we cannot execute them.
