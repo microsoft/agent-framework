@@ -986,7 +986,7 @@ async def test_handoff_clone_preserves_additional_properties() -> None:
 
 
 def test_clean_conversation_for_handoff_keeps_allowlist_history() -> None:
-    """Tool-control messages must be excluded, but text and multimodal data must be preserved."""
+    """Tool-control messages must be excluded, multimodal data preserved for user, and text-only for assistant."""
     function_call = Content.from_function_call(
         call_id="handoff-call-1",
         name="handoff_to_refund_agent",
@@ -997,17 +997,20 @@ def test_clean_conversation_for_handoff_keeps_allowlist_history() -> None:
         id="approval-1",
         function_call=function_call,
     )
-    
+
     # Simulate a user attaching an image to their message
-    multimodal_content = Content(type="uri", uri="https://example.com/image.png", media_type="image/png")
+    user_multimodal_content = Content(type="uri", uri="https://example.com/image.png", media_type="image/png")
+    # Simulate an assistant containing uri/data that should not be replayed as input-only items
+    assistant_multimodal_content = Content(type="uri", uri="https://example.com/output.png", media_type="image/png")
 
     conversation = [
-        Message(role="user", contents=["My order arrived damaged.", multimodal_content]),
+        Message(role="user", contents=["My order arrived damaged.", user_multimodal_content]),
         Message(
             role="assistant",
             contents=[
                 function_call,
                 Content.from_text(text="Triage Agent: Routing you to Refund."),
+                assistant_multimodal_content,
             ],
         ),
         Message(role="tool", contents=[Content.from_function_result(call_id="handoff-call-1", result="ok")]),
@@ -1020,24 +1023,24 @@ def test_clean_conversation_for_handoff_keeps_allowlist_history() -> None:
 
     cleaned = clean_conversation_for_handoff(conversation)
     assert [message.role for message in cleaned] == ["user", "assistant"]
-    
+
     # Assert Text is preserved
     assert [message.text for message in cleaned] == [
         "My order arrived damaged.",
         "Triage Agent: Routing you to Refund.",
     ]
-    
-    # Assert Multimodal URI is preserved in the first user message
+
+    # Assert Multimodal URI is preserved in the user message
     user_contents = cleaned[0].contents
     assert len(user_contents) == 2
     assert user_contents[0].type == "text"
     assert user_contents[1].type == "uri"
     assert user_contents[1].uri == "https://example.com/image.png"
     assert getattr(user_contents[1], "media_type", None) == "image/png"
-    
-    # Assert Tool call is stripped from the assistant message
+
+    # Assert Tool call and assistant multimodal contents are stripped from the assistant message
     assistant_contents = [c.type for c in cleaned[1].contents]
-    assert "function_call" not in assistant_contents
+    assert assistant_contents == ["text"]
 
 
 async def test_autonomous_mode_yields_output_without_user_request():

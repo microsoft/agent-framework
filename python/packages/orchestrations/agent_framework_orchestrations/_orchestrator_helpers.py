@@ -14,23 +14,28 @@ logger = logging.getLogger(__name__)
 
 
 def clean_conversation_for_handoff(conversation: list[Message]) -> list[Message]:
-    """Keep only plain text chat history for handoff routing.
+    """Clean conversation history for handoff routing.
 
     Handoff executors must not replay prior tool-control artifacts (function calls,
     tool outputs, approval payloads) into future model turns, or providers may reject
     the next request due to unmatched tool-call state.
 
-    This helper builds a text-only copy of the conversation:
-    - Drops all non-text content from every message.
-    - Drops messages with no remaining text content.
-    - Preserves original roles and author names for retained text messages.
+    This helper preserves semantic content:
+    - For `user` messages, preserves text and multimodal content (data, uri, hosted_file, hosted_vector_store).
+    - For non-user messages (assistant, system, etc.), preserves only text content to avoid serializing input-only
+      multimodal parts into assistant roles on model providers.
+    - Drops tool-control payloads (function_call, function_result, approval payloads, etc.).
+    - Drops messages with no remaining content.
+    - Preserves original roles, author names, and additional properties for retained messages.
 
     Args:
         conversation: Full conversation history, including tool-control content
+
     Returns:
-        Cleaned conversation history with semantic multimodal content preserved, suitable for handoff routing
+        Cleaned conversation history with semantic multimodal content preserved for user messages,
+        suitable for handoff routing.
     """
-    ALLOWED_CONTENT_TYPES = {
+    USER_ALLOWED_CONTENT_TYPES = {
         "text",
         "data",
         "uri",
@@ -40,23 +45,23 @@ def clean_conversation_for_handoff(conversation: list[Message]) -> list[Message]
 
     cleaned: list[Message] = []
     for msg in conversation:
-        # Keep non-tool history for handoff routing. Tool-control content
-        # (function_call/function_result/approval payloads) is runtime-only and
-        # must not be replayed in future model turns.
+        is_user = msg.role == "user" or str(msg.role).lower() == "user"
+        allowed_types = USER_ALLOWED_CONTENT_TYPES if is_user else {"text"}
+
         retained_contents = []
         for content in msg.contents:
             ctype = getattr(content, "type", "text")
-            
-            # Skip disallowed types (tools, usage, errors, etc.)
-            if ctype not in ALLOWED_CONTENT_TYPES:
+
+            # Skip disallowed types
+            if ctype not in allowed_types:
                 continue
-                
+
             # Skip empty text parts
             if ctype == "text" and not getattr(content, "text", None):
                 continue
-                
+
             retained_contents.append(content)
-        
+
         if not retained_contents:
             continue
 
