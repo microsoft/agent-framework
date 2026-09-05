@@ -13,13 +13,17 @@ from agent_framework import (
     SKIP_PARSING,
     Content,
     FunctionTool,
+    Message,
     tool,
 )
 from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
     _auto_invoke_function,
+    _collect_approval_responses,
+    _collect_unanswered_approval_requests,
     _parse_annotation,
     _parse_inputs,
+    _remove_unanswered_approval_batches_from_model_input,
     normalize_function_invocation_configuration,
 )
 from agent_framework.observability import OtelAttr
@@ -1573,6 +1577,114 @@ def test_skip_parsing_is_singleton() -> None:
 
     assert _SkipParsingSentinel() is SKIP_PARSING
     assert repr(SKIP_PARSING) == "SKIP_PARSING"
+
+
+# endregion
+
+# region Approval collection and filtering regression tests
+
+
+def test_collect_approval_responses_order_independent_result_first() -> None:
+    """Result before response must still mark as resolved."""
+    call = Content.from_function_call(call_id="c1", name="t", arguments="{}")
+    req = Content.from_function_approval_request(id="a1", function_call=call)
+    resp = req.to_function_approval_response(approved=True)
+    result = Content.from_function_result(call_id="c1", result="done")
+
+    messages = [Message(role="tool", contents=[result, resp])]
+    collected = _collect_approval_responses(messages)
+
+    assert collected == {}
+
+
+def test_collect_approval_responses_follow_up_does_not_suppress_response() -> None:
+    """An unrelated user-input request without a call_id does not resolve approval responses.
+
+    `_collect_approval_responses` only treats an approval response as resolved when a terminal
+    `function_result` or a follow-up `user_input_request` with the same `call_id` exists.
+    """
+    call = Content.from_function_call(call_id="c2", name="t", arguments="{}")
+    req = Content.from_function_approval_request(id="a2", function_call=call)
+    resp = req.to_function_approval_response(approved=True)
+    follow_up = Content.from_text("more info needed")
+    follow_up.user_input_request = True
+
+    messages = [
+        Message(role="assistant", contents=[call, req]),
+        Message(role="user", contents=[resp]),
+        Message(role="user", contents=[follow_up]),
+    ]
+    collected = _collect_approval_responses(messages)
+
+    assert "a2" in collected
+    assert collected["a2"].type == "function_approval_response"
+
+
+def test_collect_unanswered_requests_respects_call_id_reuse() -> None:
+    """A result before a new request does not answer the new request (reused call_id)."""
+    call = Content.from_function_call(call_id="c3", name="t", arguments="{}")
+    req = Content.from_function_approval_request(id="a3", function_call=call)
+    result = Content.from_function_result(call_id="c3", result="done")
+
+    messages = [
+        Message(role="tool", contents=[result]),
+        Message(role="assistant", contents=[call, req]),
+    ]
+    unanswered = _collect_unanswered_approval_requests(messages)
+
+    assert unanswered == [req]
+
+
+def test_remove_unanswered_batches_strips_resolved_local_responses() -> None:
+    """Resolved local approval responses are stripped from model input.
+
+    The corresponding answered request is preserved for model context.
+    Only the local response is removed to prevent MCP serialization leaks.
+    """
+    call = Content.from_function_call(call_id="c4", name="local_tool", arguments="{}")
+    req = Content.from_function_approval_request(id="a4", function_call=call)
+    resp = req.to_function_approval_response(approved=True)
+    result = Content.from_function_result(call_id="c4", result="ok")
+
+    messages = [
+        Message(role="assistant", contents=[call, req]),
+        Message(role="user", contents=[resp]),
+        Message(role="tool", contents=[result]),
+    ]
+
+    _remove_unanswered_approval_batches_from_model_input(messages)
+
+    remaining_controls = [
+        c for m in messages for c in m.contents if c.type in {"function_approval_request", "function_approval_response"}
+    ]
+    assert len(remaining_controls) == 1
+    assert remaining_controls[0].type == "function_approval_request"
+    assert remaining_controls[0].id == "a4"
+
+
+def test_remove_unanswered_batches_preserves_hosted_responses() -> None:
+    """Hosted (MCP) approval responses are never stripped by this function."""
+    hosted_call = Content.from_function_call(
+        call_id="mcp1",
+        name="hosted",
+        arguments="{}",
+        additional_properties={"server_label": "srv"},
+    )
+    hosted_req = Content.from_function_approval_request(id="mcp_a1", function_call=hosted_call)
+    hosted_resp = hosted_req.to_function_approval_response(approved=True)
+    result = Content.from_function_result(call_id="mcp1", result="ok")
+
+    messages = [
+        Message(role="assistant", contents=[hosted_call, hosted_req]),
+        Message(role="user", contents=[hosted_resp]),
+        Message(role="tool", contents=[result]),
+    ]
+
+    _remove_unanswered_approval_batches_from_model_input(messages)
+
+    remaining = [c for m in messages for c in m.contents if c.type == "function_approval_response"]
+    assert len(remaining) == 1
+    assert remaining[0].id == "mcp_a1"
 
 
 # endregion

@@ -448,6 +448,85 @@ def test_filter_approval_controls_keeps_response_for_pending_placeholder() -> No
     assert any(placeholder in message.contents for message in filtered)
 
 
+def test_filter_approval_controls_resolves_when_result_precedes_response() -> None:
+    """when a terminal function_result appears BEFORE the approval response
+
+    (the 'approval-resume' layout), the two-pass approach must still
+    correctly identify the approval as resolved and filter it out.
+    """
+    function_call = Content.from_function_call(call_id="call_resume", name="guarded", arguments="{}")
+    request = Content.from_function_approval_request(id="approval_resume", function_call=function_call)
+    response = request.to_function_approval_response(approved=True)
+    result = Content.from_function_result(call_id="call_resume", result="completed successfully")
+
+    filtered = _filter_approval_control_messages([
+        Message(role="assistant", contents=[function_call, request]),
+        Message(role="tool", contents=[result, response]),
+    ])
+
+    controls = [
+        content
+        for message in filtered
+        for content in message.contents
+        if content.type in {"function_approval_request", "function_approval_response"}
+    ]
+    assert controls == []
+
+
+def test_filter_approval_controls_follow_up_does_not_resolve_approval_controls() -> None:
+    """Follow-up requests do NOT resolve approval controls in session history filtering.
+
+    _approval_controls_to_keep resolves requests via matching function_approval_response
+    (not via follow-up requests). The request is removed because a response exists,
+    but the response itself is preserved since no terminal result has arrived.
+    Follow-up requests have no effect on this filtering logic.
+    """
+    function_call = Content.from_function_call(call_id="call_followup", name="guarded", arguments="{}")
+    request = Content.from_function_approval_request(id="approval_followup", function_call=function_call)
+    response = request.to_function_approval_response(approved=True)
+
+    follow_up = Content.from_text("Please provide more details")
+    follow_up.user_input_request = True
+
+    filtered = _filter_approval_control_messages([
+        Message(role="assistant", contents=[function_call, request]),
+        Message(role="user", contents=[response]),
+        Message(role="user", contents=[follow_up]),
+    ])
+
+    controls = [
+        content
+        for message in filtered
+        for content in message.contents
+        if content.type in {"function_approval_request", "function_approval_response"}
+    ]
+    assert len(controls) == 1
+    assert controls[0].type == "function_approval_response"
+    assert controls[0].id == "approval_followup"
+
+
+def test_filter_approval_controls_preserves_unresolved_across_messages() -> None:
+    """Ensures unresolved approvals survive when no terminal result exists."""
+    function_call = Content.from_function_call(call_id="call_pending", name="guarded", arguments="{}")
+    request = Content.from_function_approval_request(id="approval_pending", function_call=function_call)
+    response = request.to_function_approval_response(approved=True)
+
+    filtered = _filter_approval_control_messages([
+        Message(role="assistant", contents=[function_call, request]),
+        Message(role="user", contents=[response]),
+    ])
+
+    controls = [
+        content
+        for message in filtered
+        for content in message.contents
+        if content.type in {"function_approval_request", "function_approval_response"}
+    ]
+    assert len(controls) == 1
+    assert controls[0].type == "function_approval_response"
+    assert controls[0].id == "approval_pending"
+
+
 class TestHistoryProviderBase:
     def test_default_flags(self) -> None:
         provider = ConcreteHistoryProvider("mem")

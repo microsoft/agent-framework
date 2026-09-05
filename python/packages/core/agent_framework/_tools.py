@@ -2366,93 +2366,149 @@ def _pop_already_approved_approval_responses(
     return responses
 
 
-def _collect_approval_responses(
-    messages: list[Message],
-) -> dict[str, Content]:
-    """Collect approval responses (both approved and rejected) from messages.
+def _collect_approval_responses(messages: list[Message]) -> dict[str, Content]:
+    requests: list[tuple[int, int, str]] = []
+    resolving_events: list[tuple[int, int, str]] = []
 
-    Hosted tool approvals (e.g. MCP) are excluded because they must be
-    forwarded to the API as-is rather than processed locally.
-    """
-    approval_responses: list[Content] = []
-    pending_by_call_id: dict[str, deque[Content]] = {}
-    resolved_response_ids: set[int] = set()
-    for message in messages:
-        for content in message.contents:
+    for msg_idx, message in enumerate(messages):
+        for content_idx, content in enumerate(message.contents):
+            if content.type == "function_approval_request":
+                if content.function_call is not None and content.function_call.call_id is not None:
+                    requests.append((msg_idx, content_idx, content.function_call.call_id))
+            elif content.call_id is not None:
+                is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+                is_follow_up_request = content.user_input_request and content.type not in {
+                    "function_approval_request",
+                    "function_approval_response",
+                }
+                if is_terminal_result or is_follow_up_request:
+                    resolving_events.append((msg_idx, content_idx, content.call_id))
+
+    unresolved_responses: dict[str, Content] = {}
+    for msg_idx, message in enumerate(messages):
+        for content_idx, content in enumerate(message.contents):
             if content.type == "function_approval_response" and not _is_hosted_tool_approval(content):
-                function_call = content.function_call
-                if function_call is None or function_call.call_id is None:
+                if content.id is None or content.function_call is None or content.function_call.call_id is None:
                     continue
-                approval_responses.append(content)
-                pending_by_call_id.setdefault(function_call.call_id, deque()).append(content)
-                continue
-            if content.call_id is None:
-                continue
-            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
-            is_follow_up_request = content.user_input_request and content.type not in {
-                "function_approval_request",
-                "function_approval_response",
-            }
-            if not (is_terminal_result or is_follow_up_request):
-                continue
-            pending_responses = pending_by_call_id.get(content.call_id)
-            if pending_responses:
-                resolved_response_ids.add(id(pending_responses.popleft()))
 
-    return {
-        content.id: content
-        for content in approval_responses
-        if id(content) not in resolved_response_ids and content.id is not None
-    }
+                call_id = content.function_call.call_id
+                resp_pos = (msg_idx, content_idx)
+
+                latest_req_pos = None
+                for r_msg, r_cidx, r_call in requests:
+                    if (
+                        r_call == call_id
+                        and (r_msg, r_cidx) < resp_pos
+                        and (latest_req_pos is None or (r_msg, r_cidx) > latest_req_pos)
+                    ):
+                        latest_req_pos = (r_msg, r_cidx)
+
+                is_resolved = False
+                for res_msg_idx, res_content_idx, res_call_id in resolving_events:
+                    if res_call_id == call_id:
+                        res_pos = (res_msg_idx, res_content_idx)
+                        if latest_req_pos is not None:
+                            if res_pos > latest_req_pos or res_pos[0] == resp_pos[0]:
+                                is_resolved = True
+                                break
+                        else:
+                            if res_pos >= resp_pos or res_pos[0] == resp_pos[0]:
+                                is_resolved = True
+                                break
+
+                if not is_resolved:
+                    unresolved_responses[content.id] = content
+
+    return unresolved_responses
 
 
 def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[Content]:
-    approval_requests_by_id: dict[str, Content] = {}
-    pending_request_ids_by_call_id: dict[str, deque[str]] = {}
-    answered_approval_ids: set[str] = set()
+    responses: set[str] = set()
+    resolving_events: list[tuple[int, int, str]] = []
 
-    for message in messages:
-        for content in message.contents:
-            if content.type == "function_approval_request":
-                function_call = content.function_call
-                if content.id is None or function_call is None or function_call.call_id is None:
-                    continue
-                if content.id not in approval_requests_by_id:
-                    approval_requests_by_id[content.id] = content
-                    pending_request_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
-                continue
+    for msg_idx, message in enumerate(messages):
+        for content_idx, content in enumerate(message.contents):
             if content.type == "function_approval_response":
                 if content.id is not None:
-                    answered_approval_ids.add(content.id)
-                continue
-            if content.call_id is None:
-                continue
-            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
-            is_follow_up_request = content.user_input_request and content.type not in {
-                "function_approval_request",
-                "function_approval_response",
-            }
-            if not (is_terminal_result or is_follow_up_request):
-                continue
-            if request_ids := pending_request_ids_by_call_id.get(content.call_id):
-                answered_approval_ids.add(request_ids.popleft())
+                    responses.add(content.id)
+            elif content.call_id is not None:
+                is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+                is_follow_up_request = content.user_input_request and content.type not in {
+                    "function_approval_request",
+                    "function_approval_response",
+                }
+                if is_terminal_result or is_follow_up_request:
+                    resolving_events.append((msg_idx, content_idx, content.call_id))
 
-    return [
-        request for approval_id, request in approval_requests_by_id.items() if approval_id not in answered_approval_ids
-    ]
+    unanswered_requests: list[Content] = []
+    seen_request_ids: set[str] = set()
+
+    for msg_idx, message in enumerate(messages):
+        for content_idx, content in enumerate(message.contents):
+            if content.type == "function_approval_request" and not _is_hosted_tool_approval(content):
+                if content.id is None or content.function_call is None or content.function_call.call_id is None:
+                    continue
+                if content.id in seen_request_ids:
+                    continue
+
+                req_pos = (msg_idx, content_idx)
+                call_id = content.function_call.call_id
+
+                is_answered = content.id in responses
+                if not is_answered:
+                    for res_msg_idx, res_content_idx, res_call_id in resolving_events:
+                        if res_call_id == call_id and (res_msg_idx, res_content_idx) > req_pos:
+                            is_answered = True
+                            break
+
+                if not is_answered:
+                    unanswered_requests.append(content)
+                    seen_request_ids.add(content.id)
+
+    return unanswered_requests
 
 
 def _remove_unanswered_approval_batches_from_model_input(messages: list[Message]) -> None:
     pending_requests = _collect_unanswered_approval_requests(messages)
-    if not pending_requests:
-        return
-
     pending_approval_ids = {request.id for request in pending_requests if request.id is not None}
     pending_call_ids = {
         request.function_call.call_id
         for request in pending_requests
         if request.function_call is not None and request.function_call.call_id is not None
     }
+
+    resolved_response_ids: set[int] = set()
+    request_positions: dict[str, tuple[int, int]] = {}
+    resolving_events: list[tuple[int, int, str]] = []
+
+    for msg_idx, message in enumerate(messages):
+        for content_idx, content in enumerate(message.contents):
+            if content.type == "function_approval_request":
+                if content.id is not None:
+                    request_positions[content.id] = (msg_idx, content_idx)
+            elif content.call_id is not None:
+                is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+                is_follow_up_request = content.user_input_request and content.type not in {
+                    "function_approval_request",
+                    "function_approval_response",
+                }
+                if is_terminal_result or is_follow_up_request:
+                    resolving_events.append((msg_idx, content_idx, content.call_id))
+
+    for msg_idx, message in enumerate(messages):
+        for content_idx, content in enumerate(message.contents):
+            if content.type == "function_approval_response" and not _is_hosted_tool_approval(content):
+                if content.id is None or content.function_call is None or content.function_call.call_id is None:
+                    continue
+                call_id = content.function_call.call_id
+                resp_pos = (msg_idx, content_idx)
+                ref_pos = request_positions.get(content.id, resp_pos)
+
+                for res_msg_idx, res_content_idx, res_call_id in resolving_events:
+                    if res_call_id == call_id and (res_msg_idx, res_content_idx) >= ref_pos:
+                        resolved_response_ids.add(id(content))
+                        break
+
     open_calls_by_id: dict[str, deque[tuple[Content, int]]] = {}
     bound_call_content_ids: set[int] = set()
     call_batch_message_indices: set[int] = set()
@@ -2518,11 +2574,14 @@ def _remove_unanswered_approval_batches_from_model_input(messages: list[Message]
 
     filtered_messages: list[Message] = []
     for message_index, message in enumerate(messages):
+        if message_index in fully_pending_call_message_indices:
+            continue
         filtered_contents = [
             content
             for content in message.contents
             if not (
                 (content.type == "function_approval_request" and content.id in pending_approval_ids)
+                or (id(content) in resolved_response_ids)
                 or (
                     message_index in call_batch_message_indices
                     and (
@@ -2530,7 +2589,6 @@ def _remove_unanswered_approval_batches_from_model_input(messages: list[Message]
                         or (content.type == "mcp_server_tool_call" and content.call_id in pending_call_ids)
                     )
                 )
-                or (message_index in fully_pending_call_message_indices and content.type == "text_reasoning")
             )
         ]
         if not filtered_contents:
@@ -2567,9 +2625,7 @@ def _replace_approval_contents_with_results(
     Returns:
         The terminal contents produced while resolving the approval responses, in response order.
     """
-    from ._types import (
-        Content,
-    )
+    from ._types import Content
 
     result_groups_by_call_id: dict[str, deque[list[Content]]] = {}
     for result_group in approved_function_result_groups:
@@ -3561,7 +3617,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 if fallback_added:
                     yield _function_invocation_limit_fallback_update()
                 return
-
             try:
                 function_processing = await _process_model_function_calls(
                     response=response,
