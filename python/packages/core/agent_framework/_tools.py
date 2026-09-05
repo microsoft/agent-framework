@@ -1670,6 +1670,19 @@ def _underlying_function_call(content: Content) -> Content:
     return content
 
 
+def _mark_user_input_pause(function_call: Content) -> None:
+    """Surface a declaration-only/additional call as a user-input pause instead of executing it.
+
+    These tools have no local implementation (spec 004); AgentExecutor emits its request_info events off
+    ``user_input_request``, and the id is backfilled from ``call_id`` so the resume can correlate the reply.
+    Both the approval-pausing batch branch and the standalone declaration-only branch route through here so
+    the two pause surfaces cannot silently diverge if one is later changed in isolation.
+    """
+    function_call.user_input_request = True
+    if function_call.id is None:
+        function_call.id = function_call.call_id
+
+
 async def _execute_single_function_call(
     function_call: Content,
     *,
@@ -1834,9 +1847,7 @@ async def _try_execute_function_call_groups(
             if tool_name is not None and (
                 tool_name in declaration_only_tool_names or tool_name in additional_tool_names
             ):
-                function_call.user_input_request = True
-                if function_call.id is None:
-                    function_call.id = function_call.call_id
+                _mark_user_input_pause(function_call)
                 declaration_only_calls.append(function_call)
                 continue
             approval_request = Content.from_function_approval_request(
@@ -1869,9 +1880,7 @@ async def _try_execute_function_call_groups(
         declaration_only_calls: list[Content] = []
         for function_call in function_calls:
             if function_call.type == "function_call":
-                function_call.user_input_request = True
-                if function_call.id is None:
-                    function_call.id = function_call.call_id
+                _mark_user_input_pause(function_call)
                 declaration_only_calls.append(function_call)
         return [[function_call] for function_call in declaration_only_calls], False
 
