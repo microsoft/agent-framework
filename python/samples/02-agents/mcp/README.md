@@ -43,6 +43,8 @@ async def main() -> None:
         url="https://search.parallel.ai/mcp",
         load_prompts=False,
         request_timeout=30,
+        # Use the text payload once; Parallel also returns it as structured content.
+        parse_tool_results=lambda result: "\n".join(c.text for c in result.content if c.type == "text"),
     ) as mcp:
         print("Tools:", [tool.name for tool in mcp.functions])
         search_result = await mcp.call_tool(
@@ -58,12 +60,11 @@ async def main() -> None:
             session_id=session_id,
         )
         for result in (search_result, fetch_result):
-            for content in result:
-                if content.type == "text":
-                    print(content.text)
+            print(result)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 The output lists `web_search` and `web_fetch`, followed by their results, including source URLs and excerpts. Queries, requested URLs, objectives, and the session identifier are sent to Parallel when the calls run. The context manager closes the connection afterward.
