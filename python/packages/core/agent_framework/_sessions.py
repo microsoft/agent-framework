@@ -29,7 +29,6 @@ import warnings
 import weakref
 from abc import abstractmethod
 from base64 import urlsafe_b64encode
-from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Iterable, Mapping, Sequence
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
@@ -876,46 +875,71 @@ def _is_approval_placeholder_result(content: Content) -> bool:
 
 
 def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
-    unresolved_requests_by_id: dict[str, Content] = {}
-    unresolved_local_responses_by_id: dict[str, Content] = {}
-    local_response_ids_by_call_id: dict[str, deque[str]] = {}
+    request_positions: dict[str, tuple[int, int]] = {}
+    response_ids: set[str] = set()
+    resolving_events: list[tuple[int, int, str]] = []
 
-    for message in messages:
-        for content in message.contents:
+    for msg_idx, message in enumerate(messages):
+        for content_idx, content in enumerate(message.contents):
             if content.type == "function_approval_request":
-                function_call = content.function_call
-                if content.id is not None and function_call is not None and function_call.call_id is not None:
-                    unresolved_requests_by_id.setdefault(content.id, content)
-                continue
-            if content.type == "function_approval_response":
-                function_call = content.function_call
                 if content.id is not None:
-                    unresolved_requests_by_id.pop(content.id, None)
-                if (
-                    content.id is not None
-                    and function_call is not None
-                    and function_call.call_id is not None
-                    and not function_call.additional_properties.get("server_label")
-                    and content.id not in unresolved_local_responses_by_id
-                ):
-                    unresolved_local_responses_by_id[content.id] = content
-                    local_response_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
-                continue
-            if content.call_id is None:
-                continue
-            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
-            is_follow_up_request = content.user_input_request and content.type not in {
-                "function_approval_request",
-                "function_approval_response",
-            }
-            if not (is_terminal_result or is_follow_up_request):
-                continue
-            if response_ids := local_response_ids_by_call_id.get(content.call_id):
-                unresolved_local_responses_by_id.pop(response_ids.popleft(), None)
+                    request_positions[content.id] = (msg_idx, content_idx)
+            elif content.type == "function_approval_response":
+                if content.id is not None:
+                    response_ids.add(content.id)
+            elif content.call_id is not None:
+                is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+                is_follow_up_request = content.user_input_request and content.type not in {
+                    "function_approval_request",
+                    "function_approval_response",
+                }
+                if is_terminal_result or is_follow_up_request:
+                    resolving_events.append((msg_idx, content_idx, content.call_id))
 
-    return {
-        id(content) for content in (*unresolved_requests_by_id.values(), *unresolved_local_responses_by_id.values())
-    }
+    keep_ids: set[int] = set()
+    seen_request_ids: set[str] = set()
+
+    for msg_idx, message in enumerate(messages):
+        for content_idx, content in enumerate(message.contents):
+            if content.type == "function_approval_request":
+                if content.id is None or content.function_call is None or content.function_call.call_id is None:
+                    continue
+                if content.id in seen_request_ids:
+                    continue
+
+                req_pos = (msg_idx, content_idx)
+                call_id = content.function_call.call_id
+
+                is_resolved = content.id in response_ids
+                if not is_resolved:
+                    for res_msg_idx, res_content_idx, res_call_id in resolving_events:
+                        if res_call_id == call_id and (res_msg_idx, res_content_idx) >= req_pos:
+                            is_resolved = True
+                            break
+                if not is_resolved:
+                    keep_ids.add(id(content))
+                    seen_request_ids.add(content.id)
+
+            elif content.type == "function_approval_response":
+                function_call = content.function_call
+                if content.id is None or function_call is None or function_call.call_id is None:
+                    continue
+                if function_call.additional_properties.get("server_label"):
+                    continue
+
+                call_id = function_call.call_id
+                resp_pos = (msg_idx, content_idx)
+                ref_pos = request_positions.get(content.id, resp_pos)
+
+                is_resolved = False
+                for res_msg_idx, res_content_idx, res_call_id in resolving_events:
+                    if res_call_id == call_id and (res_msg_idx, res_content_idx) >= ref_pos:
+                        is_resolved = True
+                        break
+                if not is_resolved:
+                    keep_ids.add(id(content))
+
+    return keep_ids
 
 
 def _filter_approval_control_messages(messages: Sequence[Message]) -> list[Message]:

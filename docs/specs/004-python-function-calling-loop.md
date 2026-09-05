@@ -427,6 +427,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
   `ResponseStream.get_final_response()`.
 - The function invocation layer normalizes a private copy of caller messages. It must not mutate the caller's
   approval `Message`, approval `Content`, or an earlier returned response.
+
 - Approval-time `UserInputRequiredException` and `MiddlewareTermination` return immediately without another model
   call.
 
@@ -487,6 +488,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Function invocation disabled | The client bypasses the invocation loop without losing invocation kwargs. | `test_function_invocation_config_enabled_false`, `test_function_invocation_config_enabled_false_preserves_invocation_kwargs`, `test_streaming_function_invocation_config_enabled_false` |
 | Runtime tool changes | Added tools become available on the next iteration and retain approval behavior. | `test_add_tools_available_next_iteration`, `test_add_tools_with_approval_required_tool` |
 
+
 ### Approval pause and resume
 
 | Scenario | Required invariant | Primary regression test |
@@ -511,7 +513,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Truthy non-boolean decision | Strings, integers, null, and other non-booleans do not authorize execution. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_binding_treats_truthy_non_boolean_as_rejection`, `packages/core/tests/core/test_types.py::test_function_approval_response_deserialization_rejects_non_boolean_decisions`, `packages/ag-ui/tests/ag_ui/test_message_adapters.py::test_function_approval_requires_real_boolean`, `packages/ag-ui/tests/ag_ui/test_approval_result_event.py::test_resolve_approval_responses_treats_non_boolean_decision_as_rejection` |
 | Active batch replacement | A newly surfaced model batch replaces abandoned approval authority instead of growing session state. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_binding_replaces_abandoned_batch` |
 | Duplicate request id | Ambiguous request IDs within one active batch fail explicitly. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_batch_rejects_duplicate_request_ids` |
-| Tool registry changes | Same-name upgrades may execute the recorded operation; removing the recorded name executes nothing. | `packages/core/tests/core/test_harness_tool_approval.py::test_approval_resume_allows_same_name_tool_upgrade`, `test_approval_resume_does_not_execute_when_recorded_tool_disappears` |
+
+| Tool registry changes | Same-name upgrades may execute the recorded operation; removing the recorded name executes nothing. | `packages/core/tests/core/test_harness_tool_approval.py::test_approval_resume_allows_same_name_tool_upgrade`, `test_approval_resume_does_not_execute_when_recorded_tool_disappears` | 
 
 ### Approval correlation and replay
 

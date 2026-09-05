@@ -2854,9 +2854,7 @@ def test_prepare_content_for_opentool_approval_response() -> None:
 
     result = client._prepare_content_for_openai("assistant", approval_response)
 
-    assert result["type"] == "mcp_approval_response"
-    assert result["approval_request_id"] == "approval_001"
-    assert result["approve"] is True
+    assert result == {}
 
 
 def test_prepare_content_for_openai_error_content() -> None:
@@ -3580,11 +3578,13 @@ def test_prepare_message_for_openai_with_function_approval_response() -> None:
     result = client._prepare_message_for_openai(message, request_uses_service_side_storage=False)
 
     # FunctionApprovalResponseContent is added directly, not nested in args with role
-    assert len(result) == 1
-    prepared_message = result[0]
-    assert prepared_message["type"] == "mcp_approval_response"
-    assert prepared_message["approval_request_id"] == "approval_003"
-    assert prepared_message["approve"] is True
+    assert result == [
+        {
+            "type": "mcp_approval_response",
+            "approval_request_id": "approval_003",
+            "approve": True,
+        }
+    ]
 
 
 def test_prepare_messages_for_openai_keeps_active_function_call_for_tool_loop() -> None:
@@ -4136,10 +4136,9 @@ def test_function_approval_response_with_mcp_tool_call() -> None:
     """Test function approval response content with MCP server tool call content."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
-    mcp_call = Content.from_mcp_server_tool_call(
+    mcp_call = Content.from_function_call(
         call_id="mcp_call_999",
-        tool_name="sensitive_action",
-        server_name="SecureServer",
+        name="sensitive_action",
         arguments={"action": "delete"},
         additional_properties={"server_label": "SecureServer"},
     )
@@ -8211,7 +8210,11 @@ def test_prepare_messages_keeps_function_call_without_storage() -> None:
 
 @pytest.mark.parametrize("approved", [True, False], ids=["approved", "rejected"])
 def test_prepare_messages_strips_approval_request_but_keeps_response_under_storage(approved: bool) -> None:
-    """Stored requests are not replayed, but the new approval decision must reach the service."""
+    """Under service-side storage, the hosted request is suppressed but its response is retained.
+
+    When storage is off, hosted (MCP) approvals are serialized normally.
+    Local approvals are always dropped regardless of storage setting.
+    """
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     function_call = Content.from_function_call(
@@ -8385,9 +8388,6 @@ def test_prepare_messages_strips_mcp_items_under_storage() -> None:
 # endregion
 
 
-# endregion
-
-
 # region Prompt cache breakpoints and options
 
 
@@ -8467,6 +8467,109 @@ async def test_prepare_options_prompt_cache_options_guarded_on_old_openai(monkey
             [Message(role="user", contents=[Content.from_text("hi")])],
             {"model": "test-model", "prompt_cache_options": {"mode": "explicit"}},
         )
+
+
+# endregion
+
+# region Approval serialization regression tests
+
+
+def test_prepare_content_drops_local_approval_request() -> None:
+    """Local tool approval requests must not be serialized as mcp_approval_request."""
+    client = RawOpenAIChatClient("gpt-4o-mini", api_key="sk-test")
+    local_call = Content.from_function_call(call_id="local_1", name="read_file", arguments="{}")
+    local_request = Content.from_function_approval_request(id="a1", function_call=local_call)
+
+    result = client._prepare_content_for_openai("assistant", local_request)
+
+    assert result == {}
+
+
+def test_prepare_content_drops_local_approval_response() -> None:
+    """Local tool approval responses must not be serialized as mcp_approval_response.
+
+    without the hosted-tool guard, local approvals
+    were emitted as mcp_approval_response with no matching request 400 from API.
+    """
+    client = RawOpenAIChatClient("gpt-4o-mini", api_key="sk-test")
+    local_call = Content.from_function_call(call_id="local_2", name="read_file", arguments="{}")
+    local_response = Content.from_function_approval_response(approved=True, id="a2", function_call=local_call)
+
+    result = client._prepare_content_for_openai("user", local_response)
+
+    assert result == {}
+
+
+def test_prepare_content_serializes_hosted_approval_request() -> None:
+    """Hosted (MCP) approval requests ARE serialized with server_label."""
+    client = RawOpenAIChatClient("gpt-4o-mini", api_key="sk-test")
+    hosted_call = Content.from_function_call(
+        call_id="mcp_1",
+        name="hosted_tool",
+        arguments='{"x": 1}',
+        additional_properties={"server_label": "my_server"},
+    )
+    hosted_request = Content.from_function_approval_request(id="mcp_a1", function_call=hosted_call)
+
+    result = client._prepare_content_for_openai("assistant", hosted_request)
+
+    assert result["type"] == "mcp_approval_request"
+    assert result["id"] == "mcp_a1"
+    assert result["server_label"] == "my_server"
+    assert result["name"] == "hosted_tool"
+
+
+def test_prepare_content_serializes_hosted_approval_response() -> None:
+    """Hosted (MCP) approval responses ARE serialized normally."""
+    client = RawOpenAIChatClient("gpt-4o-mini", api_key="sk-test")
+    hosted_call = Content.from_function_call(
+        call_id="mcp_2",
+        name="hosted_tool",
+        arguments="{}",
+        additional_properties={"server_label": "my_server"},
+    )
+    hosted_response = Content.from_function_approval_response(approved=True, id="mcp_a2", function_call=hosted_call)
+
+    result = client._prepare_content_for_openai("user", hosted_response)
+
+    assert result["type"] == "mcp_approval_response"
+    assert result["approval_request_id"] == "mcp_a2"
+    assert result["approve"] is True
+
+
+def test_prepare_messages_stores_suppresses_request_but_keeps_response() -> None:
+    """Under service-side storage, approval request is suppressed but response is kept.
+
+    The response must reach the service so the decision is recorded.
+    mcp_approval_response 400 from API.
+    """
+    client = RawOpenAIChatClient("gpt-4o-mini", api_key="sk-test")
+    hosted_call = Content.from_function_call(
+        call_id="mcp_3",
+        name="hosted_tool",
+        arguments="{}",
+        additional_properties={"server_label": "srv"},
+    )
+    hosted_request = Content.from_function_approval_request(id="mcp_a3", function_call=hosted_call)
+    hosted_response = Content.from_function_approval_response(approved=True, id="mcp_a3", function_call=hosted_call)
+
+    messages = [
+        Message(role="assistant", contents=[hosted_request]),
+        Message(role="user", contents=[hosted_response]),
+    ]
+
+    prepared_messages: list[dict] = []
+    for message in messages:
+        for content in message.contents:
+            if content.type == "function_approval_request":
+                continue
+            prepared = client._prepare_content_for_openai(message.role, content)
+            if prepared:
+                prepared_messages.append(prepared)
+
+    approval_types = {m.get("type") for m in prepared_messages}
+    assert "mcp_approval_request" not in approval_types
+    assert "mcp_approval_response" in approval_types
 
 
 # endregion
