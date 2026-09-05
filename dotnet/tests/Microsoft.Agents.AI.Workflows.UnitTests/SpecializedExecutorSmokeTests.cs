@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.Specialized;
@@ -88,14 +87,14 @@ public class SpecializedExecutorSmokeTests
         await host.TakeTurnAsync(new TurnToken(emitEvents: true), collectingContext);
 
         // The first empty message is skipped.
-        collectingContext.Updates.Should().HaveCount(MessageStrings.Length - 1);
+        Assert.Equal(MessageStrings.Length - 1, collectingContext.Updates.Count);
 
         for (int i = 1; i < MessageStrings.Length; i++)
         {
             string expectedText = MessageStrings[i];
             ChatMessage collected = collectingContext.Updates[i - 1];
 
-            collected.Text.Should().Be(expectedText);
+            Assert.Equal(expectedText, collected.Text);
         }
     }
 
@@ -112,15 +111,15 @@ public class SpecializedExecutorSmokeTests
         // Verify that the agent host executor registration IDs in the workflow definition
         // match the agent names when agent names are provided.
         // The property DisplayName falls back to using the agent ID when Name is not set.
-        agentA.GetDescriptiveId().Should().Contain(AgentAName);
-        agentB.GetDescriptiveId().Should().Contain(AgentBName);
-        definition.Executors[agentA.GetDescriptiveId()].ExecutorId.Should().Be(agentA.GetDescriptiveId());
-        definition.Executors[agentB.GetDescriptiveId()].ExecutorId.Should().Be(agentB.GetDescriptiveId());
+        Assert.Contains(AgentAName, agentA.GetDescriptiveId());
+        Assert.Contains(AgentBName, agentB.GetDescriptiveId());
+        Assert.Equal(agentA.GetDescriptiveId(), definition.Executors[agentA.GetDescriptiveId()].ExecutorId);
+        Assert.Equal(agentB.GetDescriptiveId(), definition.Executors[agentB.GetDescriptiveId()].ExecutorId);
 
         // This will create an instance of the start agent and verify that the ID
         // of the executor instance matches the ID of the registration.
         var protocolDescriptor = await workflow.DescribeProtocolAsync();
-        protocolDescriptor.Accepts.Should().Contain(typeof(ChatMessage));
+        Assert.Contains(typeof(ChatMessage), protocolDescriptor.Accepts);
     }
 
     [Fact]
@@ -134,14 +133,14 @@ public class SpecializedExecutorSmokeTests
         // Verify that the agent host executor registration IDs in the workflow definition
         // match the agent IDs when agent names are not provided.
         // The property DisplayName falls back to using the agent ID when Name is not set.
-        agentA.GetDescriptiveId().Should().Contain(agentA.Id);
-        agentB.GetDescriptiveId().Should().Contain(agentB.Id);
-        definition.Executors[agentA.GetDescriptiveId()].ExecutorId.Should().Be(agentA.GetDescriptiveId());
-        definition.Executors[agentB.GetDescriptiveId()].ExecutorId.Should().Be(agentB.GetDescriptiveId());
+        Assert.Contains(agentA.Id, agentA.GetDescriptiveId());
+        Assert.Contains(agentB.Id, agentB.GetDescriptiveId());
+        Assert.Equal(agentA.GetDescriptiveId(), definition.Executors[agentA.GetDescriptiveId()].ExecutorId);
+        Assert.Equal(agentB.GetDescriptiveId(), definition.Executors[agentB.GetDescriptiveId()].ExecutorId);
 
         // This will create an instance of the start agent and verify that the ID
         // of the executor instance matches the ID of the registration.
         var protocolDescriptor = await workflow.DescribeProtocolAsync();
-        protocolDescriptor.Accepts.Should().Contain(typeof(ChatMessage));
+        Assert.Contains(typeof(ChatMessage), protocolDescriptor.Accepts);
     }
 }

@@ -291,7 +291,7 @@ class RawOpenAIEmbeddingClient(
 
         encoding = kwargs.get("encoding_format", "float")
         embeddings: list[Embedding[list[float]]] = []
-        for item in response.data:
+        for item in sorted(response.data, key=lambda item: item.index):
             vector: list[float]
             if encoding == "base64" and isinstance(item.embedding, str):
                 # Decode base64-encoded floats (little-endian IEEE 754)

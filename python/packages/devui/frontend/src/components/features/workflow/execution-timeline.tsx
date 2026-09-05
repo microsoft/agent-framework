@@ -97,10 +97,16 @@ function getStateBadgeClass(state: ExecutorState) {
 }
 
 function getMessageText(item: unknown): string {
-  const content = (item as { content?: Array<{ type: string; text?: string }> }).content;
+  const content = (item as { content?: Array<{ type: string; text?: string; refusal?: string }> }).content;
   return content
-    ?.filter((content) => content.type === "output_text" && content.text)
-    .map((content) => content.text)
+    ?.map((content) =>
+      content.type === "output_text"
+        ? content.text
+        : content.type === "refusal"
+          ? content.refusal
+          : undefined
+    )
+    .filter((text): text is string => Boolean(text))
     .join("\n") ?? "";
 }
 

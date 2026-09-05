@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -53,24 +52,30 @@ public class ExecutorTestsBase
     internal static void CheckInvoked<TMessage>(ExecutorTestResult result, TMessage expectedInput, object? expectedCallResult = null)
         where TMessage : class
     {
-        result.CallResult.Should().Be(expectedCallResult);
+        Assert.Equal(expectedCallResult, result.CallResult);
 
-        result.Context.EmittedEvents.Should().Contain(evt => evt is ExecutorInvokedEvent
-                                                          && ((ExecutorInvokedEvent)evt).Data as TMessage == expectedInput)
-                                         .And.Contain(evt => evt is ExecutorCompletedEvent
-                                                          && ((ExecutorCompletedEvent)evt).Data == expectedCallResult);
+        Assert.Contains(result.Context.EmittedEvents, evt => evt is ExecutorInvokedEvent invoked
+                               && MatchesExpected(invoked.Data, expectedInput));
+        Assert.Contains(result.Context.EmittedEvents, evt => evt is ExecutorCompletedEvent completed
+                               && ReferenceEquals(completed.Data, result.CallResult));
     }
 
     internal static void CheckInvoked<TMessage, TOutput>(ExecutorTestResult result, TMessage expectedInput, TOutput expectedCallResult)
         where TMessage : class
         where TOutput : class
     {
-        result.CallResult.Should().Be(expectedCallResult);
+        Assert.Equal(expectedCallResult, result.CallResult);
 
-        result.Context.EmittedEvents.Should().Contain(evt => evt is ExecutorInvokedEvent
-                                                          && ((ExecutorInvokedEvent)evt).Data as TMessage == expectedInput)
-                                         .And.Contain(evt => evt is ExecutorCompletedEvent
-                                                          && ((ExecutorCompletedEvent)evt).Data as TOutput == expectedCallResult);
+        Assert.Contains(result.Context.EmittedEvents, evt => evt is ExecutorInvokedEvent invoked
+                               && MatchesExpected(invoked.Data, expectedInput));
+        Assert.Contains(result.Context.EmittedEvents, evt => evt is ExecutorCompletedEvent completed
+                               && ReferenceEquals(completed.Data, result.CallResult));
+    }
+
+    private static bool MatchesExpected<TExpected>(object? actual, TExpected expected)
+        where TExpected : class
+    {
+        return actual as TExpected == expected;
     }
 
     internal TestWorkflowContext CreateWorkflowContext(Executor executor) => new(executor.Id);
@@ -147,8 +152,8 @@ public class FunctionExecutorTests : ExecutorTestsBase
         ProtocolDescriptor protocol = executor.DescribeProtocol();
 
         // Assert
-        protocol.Sends.Should().BeEquivalentTo([typeof(TextMessage)]);
-        protocol.Yields.Should().BeEmpty();
+        Assert.Equivalent(new[] { typeof(TextMessage) }, protocol.Sends);
+        Assert.Empty(protocol.Yields ?? []);
 
         // Helpers
         [SendsMessage(typeof(TextMessage))]
@@ -197,8 +202,8 @@ public class FunctionExecutorTests : ExecutorTestsBase
         ProtocolDescriptor protocol = executor.DescribeProtocol();
 
         // Assert
-        protocol.Sends.Should().BeEquivalentTo([typeof(TextMessage)]);
-        protocol.Yields.Should().BeEmpty();
+        Assert.Equivalent(new[] { typeof(TextMessage) }, protocol.Sends);
+        Assert.Empty(protocol.Yields ?? []);
 
         // Helpers
         [SendsMessage(typeof(TextMessage))]
@@ -246,8 +251,8 @@ public class FunctionExecutorTests : ExecutorTestsBase
         ProtocolDescriptor protocol = executor.DescribeProtocol();
 
         // Assert
-        protocol.Yields.Should().BeEquivalentTo([typeof(DataMessage)]);
-        protocol.Sends.Should().BeEmpty();
+        Assert.Equivalent(new[] { typeof(DataMessage) }, protocol.Yields);
+        Assert.Empty(protocol.Sends ?? []);
 
         // Helpers
         [YieldsOutput(typeof(DataMessage))]
@@ -296,8 +301,8 @@ public class FunctionExecutorTests : ExecutorTestsBase
         ProtocolDescriptor protocol = executor.DescribeProtocol();
 
         // Assert
-        protocol.Yields.Should().BeEquivalentTo([typeof(DataMessage)]);
-        protocol.Sends.Should().BeEmpty();
+        Assert.Equivalent(new[] { typeof(DataMessage) }, protocol.Yields);
+        Assert.Empty(protocol.Sends ?? []);
 
         // Helpers
         [YieldsOutput(typeof(DataMessage))]
@@ -347,8 +352,8 @@ public class FunctionExecutorTests : ExecutorTestsBase
                                                : new(nameof(FunctionExecutor<>), MessageHandler, options);
 
         ProtocolDescriptor protocol = executor.DescribeProtocol();
-        protocol.Sends.Should().BeEmpty();
-        protocol.Yields.Should().BeEmpty();
+        Assert.Empty(protocol.Sends ?? []);
+        Assert.Empty(protocol.Yields ?? []);
 
         // Helpers
         ValueTask MessageHandlerAsync(TextMessage message, IWorkflowContext context, CancellationToken cancellationToken)
@@ -392,25 +397,28 @@ public class FunctionExecutorTests : ExecutorTestsBase
         CheckInvoked(result, TestMessage, TestDataMessage);
         if (autoSendReturnValue)
         {
-            protocol.Sends.Should().BeEquivalentTo([typeof(DataMessage)]);
-            result.Context.SentMessages.Should().ContainEquivalentOf(TestDataMessage);
+            Assert.Equivalent(new[] { typeof(DataMessage) }, protocol.Sends);
+            Assert.Contains(result.Context.SentMessages, IsTestDataMessage);
         }
         else
         {
-            protocol.Sends.Should().BeEmpty();
-            result.Context.SentMessages.Should().NotContainEquivalentOf(TestDataMessage);
+            Assert.Empty(protocol.Sends ?? []);
+            Assert.DoesNotContain(result.Context.SentMessages, IsTestDataMessage);
         }
 
         if (autoYieldReturnValue)
         {
-            protocol.Yields.Should().BeEquivalentTo([typeof(DataMessage)]);
-            result.Context.YieldedOutputs.Should().ContainEquivalentOf(TestDataMessage);
+            Assert.Equivalent(new[] { typeof(DataMessage) }, protocol.Yields);
+            Assert.Contains(result.Context.YieldedOutputs, IsTestDataMessage);
         }
         else
         {
-            protocol.Yields.Should().BeEmpty();
-            result.Context.YieldedOutputs.Should().NotContainEquivalentOf(TestDataMessage);
+            Assert.Empty(protocol.Yields ?? []);
+            Assert.DoesNotContain(result.Context.YieldedOutputs, IsTestDataMessage);
         }
+
+        static bool IsTestDataMessage(object message)
+            => TestDataMessage.Equals(message is PortableValue portableValue ? portableValue.As<DataMessage>() : message);
 
         // Helpers
         ValueTask<DataMessage> MessageHandlerAsync(TextMessage message, IWorkflowContext context, CancellationToken cancellationToken)

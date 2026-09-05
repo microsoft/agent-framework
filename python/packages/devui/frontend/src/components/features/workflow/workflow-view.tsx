@@ -677,9 +677,14 @@ export function WorkflowView({
               Array.isArray(item.content)
             ) {
               // Extract text from message content
-              for (const content of item.content as Array<{ type: string; text?: string }>) {
-                if (content.type === "output_text" && content.text) {
-                  const text = content.text; // Capture for closure
+              for (const content of item.content as Array<{ type: string; text?: string; refusal?: string }>) {
+                const text =
+                  content.type === "output_text"
+                    ? content.text
+                    : content.type === "refusal"
+                      ? content.refusal
+                      : undefined;
+                if (text) {
                   // Append to workflow result (support multiple yield_output calls)
                   setWorkflowResult((prev) => {
                     if (prev && prev.length > 0) {
@@ -691,7 +696,7 @@ export function WorkflowView({
 
                   // Try to parse as JSON for structured metadata
                   try {
-                    const parsed = JSON.parse(content.text);
+                    const parsed = content.type === "output_text" ? JSON.parse(text) : undefined;
                     if (typeof parsed === "object" && parsed !== null) {
                       workflowMetadata.current = parsed;
                     }
@@ -758,7 +763,8 @@ export function WorkflowView({
 
           // Handle text output - assign to current item (not executor!)
           if (
-            openAIEvent.type === "response.output_text.delta" &&
+            (openAIEvent.type === "response.output_text.delta" ||
+              openAIEvent.type === "response.refusal.delta") &&
             "delta" in openAIEvent &&
             openAIEvent.delta
           ) {
@@ -882,18 +888,24 @@ export function WorkflowView({
         if (response.output) {
           for (const outputItem of response.output) {
             if (outputItem.type === "message" && "content" in outputItem && Array.isArray(outputItem.content)) {
-              for (const content of outputItem.content as Array<{ type: string; text?: string }>) {
-                if (content.type === "output_text" && content.text) {
+              for (const content of outputItem.content as Array<{ type: string; text?: string; refusal?: string }>) {
+                const text =
+                  content.type === "output_text"
+                    ? content.text
+                    : content.type === "refusal"
+                      ? content.refusal
+                      : undefined;
+                if (text) {
                   setWorkflowResult((prev) => {
                     if (prev && prev.length > 0) {
-                      return prev + "\n\n" + content.text;
+                      return prev + "\n\n" + text;
                     }
-                    return content.text || "";
+                    return text;
                   });
 
                   // Try to parse as JSON for structured metadata
                   try {
-                    const parsed = JSON.parse(content.text || "");
+                    const parsed = content.type === "output_text" ? JSON.parse(text) : undefined;
                     if (typeof parsed === "object" && parsed !== null) {
                       workflowMetadata.current = parsed;
                     }
@@ -1121,9 +1133,14 @@ export function WorkflowView({
             const metadata = item.metadata as { workflow_output_kind?: string } | undefined;
             if (metadata?.workflow_output_kind !== "intermediate") {
               // Extract text from message content
-              for (const content of item.content as Array<{ type: string; text?: string }>) {
-                if (content.type === "output_text" && content.text) {
-                  const text = content.text; // Capture for closure
+              for (const content of item.content as Array<{ type: string; text?: string; refusal?: string }>) {
+                const text =
+                  content.type === "output_text"
+                    ? content.text
+                    : content.type === "refusal"
+                      ? content.refusal
+                      : undefined;
+                if (text) {
                   // Append to workflow result (support multiple yield_output calls)
                   setWorkflowResult((prev) => {
                     if (prev && prev.length > 0) {
@@ -1135,7 +1152,7 @@ export function WorkflowView({
 
                   // Try to parse as JSON for structured metadata
                   try {
-                    const parsed = JSON.parse(text);
+                    const parsed = content.type === "output_text" ? JSON.parse(text) : undefined;
                     if (typeof parsed === "object" && parsed !== null) {
                       workflowMetadata.current = parsed;
                     }
@@ -1150,7 +1167,8 @@ export function WorkflowView({
 
         // Handle text output - assign to current item (not executor!)
         if (
-          openAIEvent.type === "response.output_text.delta" &&
+          (openAIEvent.type === "response.output_text.delta" ||
+            openAIEvent.type === "response.refusal.delta") &&
           "delta" in openAIEvent &&
           openAIEvent.delta
         ) {
