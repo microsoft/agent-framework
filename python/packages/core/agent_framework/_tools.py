@@ -1777,10 +1777,13 @@ async def _try_execute_function_call_groups(
     )
     declaration_only_tool_names = {tool_name for tool_name, tool in tool_map.items() if tool.declaration_only}
     additional_tool_names = {tool.name for tool in config.get("additional_tools") or []}
-    # Classify the entire batch first: any required user interaction pauses the batch before execution.
-    # Scan every call before deciding so classification travels with each call, not with its position in
-    # the batch. Priority (highest first): approval pause > declaration-only user-input > unknown-call
-    # termination. A user-input pause therefore takes precedence over unknown-call termination in mixed batches.
+    # Classify the entire batch first so classification travels with each call, not with its position in
+    # the batch. Scan every call before acting on any of it. Precedence (highest first): unknown-call
+    # termination > approval pause > declaration-only user-input. unknown-call termination is a fail-closed
+    # security gate: when terminate_on_unknown_calls is enabled, an unknown call aborts the whole batch up
+    # front, before any approval is solicited or any sibling executes, so it can never be downgraded into a
+    # rejectable approval request and slip past the abort on a rejection or a dropped response. Approval and
+    # declaration-only calls otherwise pause together (see the approval branch) so neither is bypassed.
     requires_approval = False
     has_declaration_only_call = False
     unknown_call_found = False
