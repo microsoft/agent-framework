@@ -33,7 +33,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// Initializes a new instance of the <see cref="A2AAgentHandler"/> class.
     /// </summary>
     /// <param name="hostAgent">The hosted agent that provides the execution logic.</param>
-    /// <param name="runMode">Controls whether the agent runs in background mode.</param>
+    /// <param name="runMode">Controls which A2A artifact the agent response is returned as.</param>
     public A2AAgentHandler(
         AIHostAgent hostAgent,
         AgentRunMode runMode)
@@ -80,20 +80,20 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// <param name="eventQueue">The queue the response events are written to.</param>
     /// <param name="aggregateTaskUpdates">
     /// <see langword="true"/> to run the agent to completion before emitting a single completed task;
-    /// <see langword="false"/> to emit task updates as they are produced. Ignored when the server disallows
-    /// background responses, because a message response is always aggregated.
+    /// <see langword="false"/> to emit task updates as they are produced. Ignored when the server is configured
+    /// through <see cref="AgentRunMode"/> to return a message, because a message response is always aggregated.
     /// </param>
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> to cancel the operation.</param>
     /// <remarks>
     /// The response shape is decided by two independent inputs:
     /// <list type="number">
     /// <item><description>
-    /// Whether the server allows background responses. This is configured per agent registration, for example:
+    /// Which A2A artifact the server returns. This is configured per agent registration, for example:
     /// <code>
     /// builder.AddA2AServer(agent, (A2AServerRegistrationOptions options) =>
-    ///     options.AgentRunMode = AgentRunMode.AllowBackgroundIfSupported);
+    ///     options.AgentRunMode = AgentRunMode.ReturnTask);
     /// </code>
-    /// Use <c>AgentRunMode.DisallowBackground</c> to always respond with a message instead of a task.
+    /// Use <c>AgentRunMode.ReturnMessage</c> to always respond with a message instead of a task.
     /// </description></item>
     /// <item><description>
     /// Whether the client asked for an immediate response. In the A2A protocol this is the
@@ -104,17 +104,20 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// The resulting combinations are:
     /// <list type="bullet">
     /// <item><description>
-    /// Server allows background responses and <c>ReturnImmediately = true</c>: returns the initial task, then the
-    /// rest of the updates piece by piece.
+    /// Server is configured through <see cref="AgentRunMode"/> to return a task and <c>ReturnImmediately = true</c>:
+    /// returns the initial task, then the rest of the updates piece by piece.
     /// </description></item>
     /// <item><description>
-    /// Server allows background responses and <c>ReturnImmediately = false</c>: returns a single completed task.
+    /// Server is configured through <see cref="AgentRunMode"/> to return a task and <c>ReturnImmediately = false</c>:
+    /// returns a single completed task.
     /// </description></item>
     /// <item><description>
-    /// Server disallows background responses and <c>ReturnImmediately = true</c>: returns a message.
+    /// Server is configured through <see cref="AgentRunMode"/> to return a message and <c>ReturnImmediately = true</c>:
+    /// returns a message.
     /// </description></item>
     /// <item><description>
-    /// Server disallows background responses and <c>ReturnImmediately = false</c>: returns a message.
+    /// Server is configured through <see cref="AgentRunMode"/> to return a message and <c>ReturnImmediately = false</c>:
+    /// returns a message.
     /// </description></item>
     /// </list>
     /// </remarks>
@@ -133,11 +136,11 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
         List<ChatMessage> chatMessages = context.Message is not null ? [context.Message.ToChatMessage()] : [];
 
-        var options = CreateRunOptions(context);
-
-        // Decide whether to run in background based on user preferences and agent capabilities
+        // Decide which A2A artifact to return based on the configured run mode.
         var decisionContext = new A2ARunDecisionContext(context);
-        var returnTask = await this._runMode.ShouldRunInBackgroundAsync(decisionContext, cancellationToken).ConfigureAwait(false);
+        var returnTask = await this._runMode.ShouldReturnTaskAsync(decisionContext, cancellationToken).ConfigureAwait(false);
+
+        var options = CreateRunOptions(context);
 
         var updates = this._hostAgent.RunStreamingAsync(chatMessages, session, options, cancellationToken);
 
@@ -148,20 +151,20 @@ internal sealed class A2AAgentHandler : IAgentHandler
                 var taskUpdater = new TaskUpdater(eventQueue, context.TaskId, contextId);
                 if (aggregateTaskUpdates)
                 {
-                    // The server allows background responses, but the non-streaming client request has
+                    // The server is configured through AgentRunMode to return a task, but the non-streaming client request has
                     // ReturnImmediately disabled, so collect all updates and return a completed task.
                     await AggregateTaskUpdatesAsync(updates, taskUpdater, eventQueue, cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
-                    // The server allows background responses and this is either a streaming request or a
+                    // The server is configured through AgentRunMode to return a task and this is either a streaming request or a
                     // non-streaming request with ReturnImmediately enabled, so emit task updates as they arrive.
                     await StreamTaskUpdatesAsync(updates, taskUpdater, cancellationToken).ConfigureAwait(false);
                 }
             }
             else
             {
-                // The server disallows background responses, so return one aggregated message regardless
+                // The server is configured through AgentRunMode to return a message, so return one aggregated message regardless
                 // of the client request's ReturnImmediately value.
                 await StreamMessageUpdatesAsync(contextId, updates, eventQueue, cancellationToken).ConfigureAwait(false);
             }
@@ -179,10 +182,7 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
         List<ChatMessage> chatMessages = ExtractChatMessagesFromTaskHistory(context.Task);
 
-        var decisionContext = new A2ARunDecisionContext(context);
-        var allowBackgroundResponses = await this._runMode.ShouldRunInBackgroundAsync(decisionContext, cancellationToken).ConfigureAwait(false);
-
-        var options = CreateRunOptions(context, allowBackgroundResponses);
+        var options = CreateRunOptions(context);
 
         AgentResponse response;
         try
@@ -233,13 +233,8 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// <c>MessageSendParams.metadata</c> and <c>MessageSendParams.configuration</c> to the hosted agent.
     /// </summary>
     /// <param name="context">The A2A request context of the incoming request.</param>
-    /// <param name="allowBackgroundResponses">
-    /// The value to assign to <see cref="AgentRunOptions.AllowBackgroundResponses"/>. Defaults to <see langword="null"/>, which leaves it unset.
-    /// </param>
-    /// <returns>
-    /// The run options to invoke the agent with, or <see langword="null"/> when there is nothing to forward.
-    /// </returns>
-    private static AgentRunOptions? CreateRunOptions(RequestContext context, bool? allowBackgroundResponses = null)
+    /// <returns>The run options to invoke the agent with.</returns>
+    private static AgentRunOptions CreateRunOptions(RequestContext context)
     {
         AdditionalPropertiesDictionary? additionalProperties = context.Metadata is { Count: > 0 }
             ? context.Metadata.ToAdditionalProperties()
@@ -252,14 +247,8 @@ internal sealed class A2AAgentHandler : IAgentHandler
             (additionalProperties ??= [])[ConfigurationPropertyKey] = configuration;
         }
 
-        if (allowBackgroundResponses is null && additionalProperties is null)
-        {
-            return null;
-        }
-
         return new AgentRunOptions
         {
-            AllowBackgroundResponses = allowBackgroundResponses,
             AdditionalProperties = additionalProperties
         };
     }
@@ -294,7 +283,8 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// Emits a task and streams the agent updates into it as artifacts as they are produced.
     /// </summary>
     /// <remarks>
-    /// Handles the case where the server allows background responses and the response is delivered incrementally:
+    /// Handles the case where the server is configured through <see cref="AgentRunMode"/> to return a task and the
+    /// response is delivered incrementally:
     /// either a streaming (<c>message/stream</c>) request, or a non-streaming request with
     /// <c>ReturnImmediately = true</c>. In the latter case the caller receives the initial task immediately and
     /// obtains the remaining updates by polling the task.
@@ -342,7 +332,8 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// Consumes the agent updates without emitting them and then returns a single completed task.
     /// </summary>
     /// <remarks>
-    /// Handles the case where the server allows background responses and a non-streaming client sent
+    /// Handles the case where the server is configured through <see cref="AgentRunMode"/> to return a task and a
+    /// non-streaming client sent
     /// <c>ReturnImmediately = false</c>, meaning it wants the final result in the response rather than a task
     /// it has to poll. No task event is emitted until the agent stream finishes, because the server returns on the
     /// first task event; emitting early would hand the caller an in-progress task instead of a completed one.
@@ -384,7 +375,8 @@ internal sealed class A2AAgentHandler : IAgentHandler
     /// Consumes the agent updates and emits the aggregated result as a single message.
     /// </summary>
     /// <remarks>
-    /// Handles the case where the server disallows background responses, which applies regardless of the client's
+    /// Handles the case where the server is configured through <see cref="AgentRunMode"/> to return a message, which
+    /// applies regardless of the client's
     /// <c>ReturnImmediately</c> value: a message is not a long-running entity, so there is nothing to return early
     /// or poll for and the full agent run is always aggregated into one message. An empty message is emitted when
     /// the agent produces no messages.

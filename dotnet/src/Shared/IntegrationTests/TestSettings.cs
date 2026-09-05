@@ -22,6 +22,8 @@ internal static class TestSettings
     public const string AzureAIProjectEndpoint = "AZURE_AI_PROJECT_ENDPOINT";
 
     // Azure AI Search (Foundry.Hosting integration tests, RAG scenario)
+    public const string AzureSearchConnectionId = "AZURE_SEARCH_CONNECTION_ID";
+    public const string AzureSearchConnectionName = "AZURE_SEARCH_CONNECTION_NAME";
     public const string AzureSearchEndpoint = "AZURE_SEARCH_ENDPOINT";
     public const string AzureSearchIndexName = "AZURE_SEARCH_INDEX_NAME";
 

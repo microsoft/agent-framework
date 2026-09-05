@@ -3591,7 +3591,16 @@ class OpenAIChatClient(
     RawOpenAIChatClient[OpenAIChatOptionsT],
     Generic[OpenAIChatOptionsT],
 ):
-    """OpenAI Responses client class with middleware, telemetry, and function invocation support."""
+    """OpenAI Responses client class with middleware, telemetry, and function invocation support.
+
+    Note:
+        One client instance can be shared by concurrent asynchronous calls on the same event loop,
+        including any combination of streaming and non-streaming calls. Each call must use its own
+        ``Agent``, ``AgentSession``, messages, and options. User-supplied mutable extensions, such as
+        middleware, tools, and callbacks, are safe only if their implementations support concurrent use.
+        Sharing a client across OS threads or event loops, or mutating its configuration while calls are
+        active, is not supported.
+    """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "openai"
 
