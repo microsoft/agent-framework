@@ -985,8 +985,8 @@ async def test_handoff_clone_preserves_additional_properties() -> None:
     assert cloned_additional_properties is not coordinator.additional_properties
 
 
-def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
-    """Tool-control messages must be excluded from persisted handoff history."""
+def test_clean_conversation_for_handoff_keeps_allowlist_history() -> None:
+    """Tool-control messages must be excluded, multimodal data preserved for user, and text-only for assistant."""
     function_call = Content.from_function_call(
         call_id="handoff-call-1",
         name="handoff_to_refund_agent",
@@ -998,13 +998,32 @@ def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
         function_call=function_call,
     )
 
+    # Simulate a user attaching multiple multimodal types to their message
+    uri_content = Content(type="uri", uri="https://example.com/image.png", media_type="image/png")
+    data_content = Content.from_data(data=b"fake-bytes", media_type="image/jpeg")
+    file_content = Content(type="hosted_file", file_id="file-123")
+    vector_content = Content(type="hosted_vector_store", vector_store_id="vs-456")
+
+    # Simulate an assistant containing uri/data that should not be replayed as input-only items
+    assistant_multimodal_content = Content(type="uri", uri="https://example.com/output.png", media_type="image/png")
+
     conversation = [
-        Message(role="user", contents=["My order arrived damaged."]),
+        Message(
+            role="user",
+            contents=[
+                "My order arrived damaged.",
+                uri_content,
+                data_content,
+                file_content,
+                vector_content,
+            ],
+        ),
         Message(
             role="assistant",
             contents=[
                 function_call,
                 Content.from_text(text="Triage Agent: Routing you to Refund."),
+                assistant_multimodal_content,
             ],
         ),
         Message(role="tool", contents=[Content.from_function_result(call_id="handoff-call-1", result="ok")]),
@@ -1017,10 +1036,25 @@ def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
 
     cleaned = clean_conversation_for_handoff(conversation)
     assert [message.role for message in cleaned] == ["user", "assistant"]
+
+    # Assert Text is preserved
     assert [message.text for message in cleaned] == [
         "My order arrived damaged.",
         "Triage Agent: Routing you to Refund.",
     ]
+
+    # Assert all Multimodal contents are preserved in the user message
+    user_contents = cleaned[0].contents
+    assert [c.type for c in user_contents] == ["text", "uri", "data", "hosted_file", "hosted_vector_store"]
+    assert user_contents[1].uri == "https://example.com/image.png"
+    assert user_contents[2].type == "data"
+    assert user_contents[2].uri is not None and user_contents[2].uri.startswith("data:image/jpeg;base64,")
+    assert getattr(user_contents[3], "file_id", None) == "file-123"
+    assert getattr(user_contents[4], "vector_store_id", None) == "vs-456"
+
+    # Assert Tool call and assistant multimodal contents are stripped from the assistant message
+    assistant_contents = [c.type for c in cleaned[1].contents]
+    assert assistant_contents == ["text"]
 
 
 async def test_autonomous_mode_yields_output_without_user_request():
