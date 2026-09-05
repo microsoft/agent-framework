@@ -8,7 +8,7 @@ No inheritance required - just import and call.
 
 import logging
 
-from agent_framework._types import Message
+from agent_framework._types import Content, Message
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ def clean_conversation_for_handoff(conversation: list[Message]) -> list[Message]
         is_user = msg.role == "user" or str(msg.role).lower() == "user"
         allowed_types = USER_ALLOWED_CONTENT_TYPES if is_user else {"text"}
 
-        retained_contents = []
+        retained_contents: list[Content] = []
         for content in msg.contents:
             ctype = getattr(content, "type", "text")
 

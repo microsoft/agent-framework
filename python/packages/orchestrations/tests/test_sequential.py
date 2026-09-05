@@ -254,11 +254,9 @@ async def test_sequential_builder_preserves_multimodal_content() -> None:
             self, messages: AgentRunInputs | None = None, **kwargs: Any
         ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
             async def _run() -> AgentResponse:
+                assert isinstance(messages, Sequence) and not isinstance(messages, str)
                 uri_contents = [
-                    c.uri
-                    for m in (messages or [])
-                    for c in getattr(m, "contents", [])
-                    if getattr(c, "type", "") == "uri"
+                    c.uri for m in messages for c in getattr(m, "contents", []) if getattr(c, "type", "") == "uri"
                 ]
                 return AgentResponse(messages=[Message("assistant", [f"Found URIs: {uri_contents}"])])
 
