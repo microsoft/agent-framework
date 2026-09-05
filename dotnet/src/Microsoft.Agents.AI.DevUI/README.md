@@ -52,6 +52,33 @@ if (builder.Environment.IsDevelopment())
 app.Run();
 ```
 
+## Function approval responses
+
+DevUI sends decisions for `ApprovalRequiredAIFunction` as a non-standard Responses API extension inside a user message's `content` array:
+
+```json
+{
+  "input": [{
+    "type": "message",
+    "role": "user",
+    "content": [{
+      "type": "function_approval_response",
+      "request_id": "request-1",
+      "approved": true,
+      "function_call": {
+        "id": "call-1",
+        "name": "get_weather",
+        "arguments": { "location": "Seattle" }
+      }
+    }]
+  }]
+}
+```
+
+The hosting layer converts this content to `ToolApprovalResponseContent`, preserving the request ID, decision, and function call. Rejections use `"approved": false`; function arguments can be an object or `null` for a call without arguments. The IDs and function call must come from the pending approval request, including any workflow prefix on the request ID.
+
+Accepting this payload does not provide session persistence. The host must retain the agent session containing the pending approval across requests; workflows exposed through `AsAIAgent` also need that session's workflow state to resume. A conversation ID alone is not a substitute for restoring the agent session.
+
 ## Security
 
 DevUI exposes `/v1/entities` and `/v1/entities/{id}/info`, which return agent metadata including the system prompt (`ChatClientAgent.Instructions`). To prevent accidental disclosure, the DevUI route group is wrapped in a small endpoint filter that:

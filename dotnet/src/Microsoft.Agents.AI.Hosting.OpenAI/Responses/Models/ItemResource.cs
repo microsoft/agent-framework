@@ -266,6 +266,7 @@ internal enum FunctionToolCallOutputItemResourceStatus
 [JsonDerivedType(typeof(ItemContentOutputText), "output_text")]
 [JsonDerivedType(typeof(ItemContentOutputAudio), "output_audio")]
 [JsonDerivedType(typeof(ItemContentRefusal), "refusal")]
+[JsonDerivedType(typeof(ItemContentFunctionApprovalResponse), "function_approval_response")]
 internal abstract class ItemContent
 {
     /// <summary>
@@ -280,6 +281,47 @@ internal abstract class ItemContent
     /// </summary>
     [JsonIgnore]
     public object? RawRepresentation { get; set; }
+}
+
+/// <summary>
+/// A function approval decision submitted as message content by the DevUI extension.
+/// </summary>
+internal sealed class ItemContentFunctionApprovalResponse : ItemContent, IJsonOnDeserialized
+{
+    /// <inheritdoc/>
+    [JsonIgnore]
+    public override string Type => "function_approval_response";
+
+    /// <summary>
+    /// The identifier of the approval request being answered.
+    /// </summary>
+    [JsonPropertyName("request_id")]
+    public required string RequestId { get; init; }
+
+    /// <summary>
+    /// Whether the function call is approved.
+    /// </summary>
+    [JsonPropertyName("approved")]
+    public required bool Approved { get; init; }
+
+    /// <summary>
+    /// The function call from the approval request.
+    /// </summary>
+    [JsonPropertyName("function_call")]
+    public required FunctionCallInfo FunctionCall { get; init; }
+
+    /// <inheritdoc/>
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        if (string.IsNullOrWhiteSpace(this.RequestId) ||
+            this.FunctionCall is null ||
+            string.IsNullOrWhiteSpace(this.FunctionCall.Id) ||
+            string.IsNullOrWhiteSpace(this.FunctionCall.Name) ||
+            this.FunctionCall.Arguments.ValueKind is not (JsonValueKind.Object or JsonValueKind.Null))
+        {
+            throw new JsonException("Function approval responses require a request_id and a function_call with an id, name, and object or null arguments.");
+        }
+    }
 }
 
 /// <summary>

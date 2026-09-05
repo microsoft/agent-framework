@@ -147,6 +147,7 @@ internal static class OpenAIHostingJsonUtilities
 [JsonSerializable(typeof(ItemContentOutputText))]
 [JsonSerializable(typeof(ItemContentOutputAudio))]
 [JsonSerializable(typeof(ItemContentRefusal))]
+[JsonSerializable(typeof(ItemContentFunctionApprovalResponse))]
 [JsonSerializable(typeof(TextConfiguration))]
 [JsonSerializable(typeof(ResponseTextFormatConfiguration))]
 [JsonSerializable(typeof(ResponseTextFormatConfigurationText))]
@@ -154,5 +155,6 @@ internal static class OpenAIHostingJsonUtilities
 [JsonSerializable(typeof(ResponseTextFormatConfigurationJsonSchema))]
 // Common types
 [JsonSerializable(typeof(Dictionary<string, string>))]
+[JsonSerializable(typeof(Dictionary<string, object?>))]
 [ExcludeFromCodeCoverage]
 internal sealed partial class OpenAIHostingJsonContext : JsonSerializerContext;
