@@ -998,13 +998,26 @@ def test_clean_conversation_for_handoff_keeps_allowlist_history() -> None:
         function_call=function_call,
     )
 
-    # Simulate a user attaching an image to their message
-    user_multimodal_content = Content(type="uri", uri="https://example.com/image.png", media_type="image/png")
+    # Simulate a user attaching multiple multimodal types to their message
+    uri_content = Content(type="uri", uri="https://example.com/image.png", media_type="image/png")
+    data_content = Content.from_data(data=b"fake-bytes", media_type="image/jpeg")
+    file_content = Content(type="hosted_file", file_id="file-123")
+    vector_content = Content(type="hosted_vector_store", vector_store_id="vs-456")
+
     # Simulate an assistant containing uri/data that should not be replayed as input-only items
     assistant_multimodal_content = Content(type="uri", uri="https://example.com/output.png", media_type="image/png")
 
     conversation = [
-        Message(role="user", contents=["My order arrived damaged.", user_multimodal_content]),
+        Message(
+            role="user",
+            contents=[
+                "My order arrived damaged.",
+                uri_content,
+                data_content,
+                file_content,
+                vector_content,
+            ],
+        ),
         Message(
             role="assistant",
             contents=[
@@ -1030,13 +1043,14 @@ def test_clean_conversation_for_handoff_keeps_allowlist_history() -> None:
         "Triage Agent: Routing you to Refund.",
     ]
 
-    # Assert Multimodal URI is preserved in the user message
+    # Assert all Multimodal contents are preserved in the user message
     user_contents = cleaned[0].contents
-    assert len(user_contents) == 2
-    assert user_contents[0].type == "text"
-    assert user_contents[1].type == "uri"
+    assert [c.type for c in user_contents] == ["text", "uri", "data", "hosted_file", "hosted_vector_store"]
     assert user_contents[1].uri == "https://example.com/image.png"
-    assert getattr(user_contents[1], "media_type", None) == "image/png"
+    assert user_contents[2].type == "data"
+    assert user_contents[2].uri is not None and user_contents[2].uri.startswith("data:image/jpeg;base64,")
+    assert getattr(user_contents[3], "file_id", None) == "file-123"
+    assert getattr(user_contents[4], "vector_store_id", None) == "vs-456"
 
     # Assert Tool call and assistant multimodal contents are stripped from the assistant message
     assistant_contents = [c.type for c in cleaned[1].contents]
