@@ -36,6 +36,7 @@ from agent_framework import (
     included_token_count,
 )
 from agent_framework._compaction import (
+    _format_summary_message,
     _select_summary_input_groups,
     _serialize_message,
     append_compaction_message,
@@ -970,6 +971,68 @@ def test_summary_input_selection_does_not_retokenize_selected_transcript() -> No
         ])
         not in tokenizer.seen_texts
     )
+
+
+def test_format_summary_message_includes_function_call_details() -> None:
+    message = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"city":"Seattle"}')],
+    )
+
+    rendered = _format_summary_message(1, message)
+
+    assert "get_weather" in rendered
+    assert '{"city":"Seattle"}' in rendered
+    assert "[call_id=call_1]" in rendered
+
+
+def test_format_summary_message_includes_function_result_and_exception() -> None:
+    message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id="call_1", result="42", exception="ValueError")],
+    )
+
+    rendered = _format_summary_message(2, message)
+
+    assert "function_result" in rendered
+    assert "42" in rendered
+    assert "error(ValueError)" in rendered
+    assert "[call_id=call_1]" in rendered
+
+
+def test_format_summary_message_renders_function_result_without_call_id() -> None:
+    message = Message(
+        role="tool",
+        contents=[Content("function_result", call_id=None, result="done")],
+    )
+
+    rendered = _format_summary_message(3, message)
+
+    assert "done" in rendered
+    assert "call_id" not in rendered
+
+
+def test_format_summary_message_combines_tool_calls_with_text() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            "I'll check the weather.",
+            Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"city":"Seattle"}'),
+        ],
+    )
+
+    rendered = _format_summary_message(4, message)
+
+    assert "I'll check the weather." in rendered
+    assert "get_weather" in rendered
+
+
+def test_format_summary_message_preserves_text_only_messages() -> None:
+    message = Message(role="user", contents=["hello world"])
+
+    rendered = _format_summary_message(5, message)
+
+    assert rendered == "5. [user] hello world"
 
 
 async def test_summarization_strategy_returns_false_when_summary_generation_fails(

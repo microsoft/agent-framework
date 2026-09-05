@@ -1205,10 +1205,24 @@ def _tool_result_text(value: Any) -> str:
 def _format_summary_content(content: Content) -> str:
     """Render one content item for the summarizer input transcript.
 
-    Returns an empty string when the item has no structured rendering of its
-    own (text contents are aggregated via ``Message.text`` instead), so callers
-    can fall back to the legacy rendering.
+    Tool calls and results are rendered with their name, arguments, result
+    text, and call id so the summarizer sees the tool trajectory instead of a
+    bare content type. Text contents are aggregated via ``Message.text``
+    instead. Returns an empty string when the item has no structured rendering
+    of its own, so callers can fall back to the legacy rendering.
     """
+    if content.type == "function_call":
+        arguments = _tool_result_text(content.arguments) if content.arguments is not None else ""
+        call = f"function_call {content.name or ''}({arguments})"
+        if content.call_id:
+            call += f" [call_id={content.call_id}]"
+        return call
+    if content.type == "function_result":
+        result_text = _tool_result_text(content.result) if content.result is not None else "no result"
+        if content.exception:
+            result_text = f"error({content.exception}): {result_text}"
+        call_id_suffix = f" [call_id={content.call_id}]" if content.call_id else ""
+        return f"function_result: {result_text}{call_id_suffix}"
     return ""
 
 
