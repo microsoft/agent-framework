@@ -81,33 +81,40 @@ class ThreadItemConverter:
         """
         # Extract text content from the user message
         text_content = ""
+        contents: list[Content] = []
+
+        def append_text_content() -> None:
+            nonlocal text_content
+            if stripped_text := text_content.strip():
+                contents.append(Content.from_text(text=stripped_text))
+            text_content = ""
+
         if item.content:
             for content_part in item.content:
                 if isinstance(content_part, UserMessageTextContent):
                     text_content += content_part.text
+                elif isinstance(content_part, UserMessageTagContent):
+                    tag_content = self.tag_to_message_content(content_part)
+                    if tag_content.type == "text":
+                        text_content += tag_content.text or ""
+                    else:
+                        append_text_content()
+                        contents.append(tag_content)
 
-        # Convert attachments to Content
-        data_contents: list[Content] = []
+        append_text_content()
+
+        # Append attachments after the ordered message content.
         if item.attachments:
             for attachment in item.attachments:
                 content = await self.attachment_to_message_content(attachment)
                 if content is not None:
-                    data_contents.append(content)
+                    contents.append(content)
 
         # Create the message with text and attachments
-        if not text_content.strip() and not data_contents:
+        if not contents:
             return None
 
-        # If only text and no attachments, use text parameter for simplicity
-        if text_content.strip() and not data_contents:
-            user_message = Message(role="user", contents=[text_content.strip()])
-        else:
-            # Build contents list with both text and attachments
-            contents: list[Content] = []
-            if text_content.strip():
-                contents.append(Content.from_text(text=text_content.strip()))
-            contents.extend(data_contents)
-            user_message = Message(role="user", contents=contents)
+        user_message = Message(role="user", contents=contents)
 
         # Handle quoted text if this is the last message
         messages = [user_message]
