@@ -2825,8 +2825,12 @@ async def test_mixed_batch_approval_enforced_regardless_of_call_order(
     """
     from agent_framework import FunctionTool
 
+    approval_calls = 0
+
     @tool(name="approval_func", approval_mode="always_require")
     def approval_func(arg1: str) -> str:
+        nonlocal approval_calls
+        approval_calls += 1
         return f"Approved {arg1}"
 
     declaration_func = FunctionTool(
@@ -2873,42 +2877,84 @@ async def test_mixed_batch_approval_enforced_regardless_of_call_order(
         if content.type == "function_call" and content.user_input_request and content.name == "declaration_func"
     ]
     assert len(declaration_user_input) == 1, "declaration-only call must be surfaced as user input"
+    assert approval_calls == 0, "approval-required tool must not execute before approval"
 
 
-async def test_mixed_batch_unknown_call_fails_closed_before_approval(
-    chat_client_base: SupportsChatGetResponse,
-):
-    """With terminate_on_unknown_calls=True, an unknown call aborts the batch fail-closed before any
-    approval is solicited.
-
-    Regression: an earlier fix inverted this, letting an approval pause take precedence over unknown-call
-    termination. That downgraded the unknown call into a rejectable approval request, so rejecting it (or
-    dropping its response) silently skipped the fail-closed abort. terminate_on_unknown_calls is a security
-    gate and must win outright.
-    """
+async def test_mixed_batch_pause_groups_preserve_model_call_order():
+    """Approval and declaration-only pause groups retain the model call order."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import _try_execute_function_call_groups
 
     @tool(name="approval_func", approval_mode="always_require")
     def approval_func(arg1: str) -> str:
+        return arg1
+
+    declaration_func = FunctionTool(
+        name="declaration_func",
+        func=None,
+        description="A declaration-only function for testing",
+        input_model={"type": "object", "properties": {"arg1": {"type": "string"}}, "required": ["arg1"]},
+    )
+    calls = [
+        Content.from_function_call(call_id="d1", name="declaration_func", arguments={"arg1": "1"}),
+        Content.from_function_call(call_id="a1", name="approval_func", arguments={"arg1": "2"}),
+        Content.from_function_call(call_id="d2", name="declaration_func", arguments={"arg1": "3"}),
+    ]
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=calls,
+        tools=[approval_func, declaration_func],
+        config={},
+    )
+
+    ordered_call_ids = [
+        group[0].function_call.call_id if group[0].type == "function_approval_request" else group[0].call_id
+        for group in result_groups
+    ]
+    assert ordered_call_ids == ["d1", "a1", "d2"]
+    assert should_terminate is False
+
+
+@pytest.mark.parametrize("unknown_first", [True, False], ids=["unknown-first", "approval-first"])
+async def test_mixed_batch_unknown_call_fails_closed_before_approval(
+    chat_client_base: SupportsChatGetResponse, unknown_first: bool
+):
+    """With terminate_on_unknown_calls=True, an unknown call aborts the whole batch before any tool runs."""
+    approval_calls = 0
+    safe_calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func(arg1: str) -> str:
+        nonlocal approval_calls
+        approval_calls += 1
         return f"Approved {arg1}"
+
+    @tool(name="safe_func", approval_mode="never_require")
+    def safe_func(arg1: str) -> str:
+        nonlocal safe_calls
+        safe_calls += 1
+        return f"Safe {arg1}"
+
+    unknown_call = Content.from_function_call(call_id="u1", name="unknown_function", arguments={"arg1": "x"})
+    approval_call = Content.from_function_call(call_id="a1", name="approval_func", arguments={"arg1": "y"})
+    safe_call = Content.from_function_call(call_id="s1", name="safe_func", arguments={"arg1": "z"})
+    contents = [unknown_call, approval_call, safe_call] if unknown_first else [approval_call, safe_call, unknown_call]
 
     chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-        ChatResponse(
-            messages=Message(
-                role="assistant",
-                contents=[
-                    Content.from_function_call(call_id="u1", name="unknown_function", arguments='{"arg1": "x"}'),
-                    Content.from_function_call(call_id="a1", name="approval_func", arguments='{"arg1": "y"}'),
-                ],
-            )
-        ),
+        ChatResponse(messages=Message(role="assistant", contents=contents)),
         ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
-    with pytest.raises(KeyError, match='Requested function "unknown_function" not found'):
+    with pytest.raises(KeyError, match=r'Requested function "unknown_function" not found'):
         await chat_client_base.get_response(
-            [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [approval_func]}
+            [Message(role="user", contents=["hello"])],
+            options={"tool_choice": "auto", "tools": [approval_func, safe_func]},
         )
+
+    assert approval_calls == 0
+    assert safe_calls == 0
 
 
 async def test_mixed_batch_declaration_only_not_executed_after_approval_resume(

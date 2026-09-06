@@ -1835,7 +1835,7 @@ async def _try_execute_function_call_groups(
         logger.debug("Returning visible function_approval_request contents and storing already-approved requests")
         visible_requests: list[Content] = []
         already_approved_requests: list[Content] = []
-        declaration_only_calls: list[Content] = []
+        pause_groups: list[list[Content]] = []
         for function_call in function_calls:
             if function_call.type != "function_call":
                 continue
@@ -1848,7 +1848,7 @@ async def _try_execute_function_call_groups(
                 tool_name in declaration_only_tool_names or tool_name in additional_tool_names
             ):
                 _mark_user_input_pause(function_call)
-                declaration_only_calls.append(function_call)
+                pause_groups.append([function_call])
                 continue
             approval_request = Content.from_function_approval_request(
                 id=function_call.id or function_call.call_id,  # type: ignore[arg-type]
@@ -1857,9 +1857,11 @@ async def _try_execute_function_call_groups(
             tool = tool_map.get(tool_name) if tool_name is not None else None
             if tool_name is None or tool_name in approval_tool_names or tool is None:
                 visible_requests.append(approval_request)
+                pause_groups.append([approval_request])
                 continue
             if invocation_session is None:
                 visible_requests.append(approval_request)
+                pause_groups.append([approval_request])
                 continue
             already_approved_requests.append(approval_request)
         _store_already_approved_approval_requests(
@@ -1870,8 +1872,6 @@ async def _try_execute_function_call_groups(
         _store_pending_approval_requests(invocation_session, visible_requests)
         # Surface approval pauses and declaration-only user-input pauses together so a mixed batch neither
         # bypasses approval nor executes a declaration-only call.
-        pause_groups: list[list[Content]] = [[request] for request in visible_requests]
-        pause_groups.extend([call] for call in declaration_only_calls)
         return pause_groups, False
     if has_declaration_only_call:
         # Declaration-only calls are returned as user input rather than executed locally.
