@@ -1981,11 +1981,15 @@ async def test_file_checkpoint_storage_get_latest_surfaces_permission_errors(
 
 
 @pytest.mark.parametrize("change", ["create", "replace", "delete", "overwrite"])
+@pytest.mark.parametrize("nested", [False, True])
 async def test_file_checkpoint_storage_get_latest_rejects_changes_during_read(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str, nested: bool
 ) -> None:
     storage = FileCheckpointStorage(tmp_path)
     checkpoint = _stamped_checkpoint({"stage": "first"}, "2026-01-01T10:00:00+00:00")
+    if nested:
+        (tmp_path / "nested").mkdir()
+        checkpoint.checkpoint_id = f"nested/{checkpoint.checkpoint_id}"
     checkpoint_id = await storage.save(checkpoint)
     path = tmp_path / f"{checkpoint_id}.json"
     original_load = json.load
@@ -1998,6 +2002,7 @@ async def test_file_checkpoint_storage_get_latest_rejects_changes_during_read(
             changed = True
             if change == "create":
                 newer = _stamped_checkpoint({}, "2026-01-01T11:00:00+00:00")
+                newer.checkpoint_id = f"nested/{newer.checkpoint_id}" if nested else newer.checkpoint_id
                 (tmp_path / f"{newer.checkpoint_id}.json").write_text(json.dumps(newer.to_dict()))
             elif change == "delete":
                 path.unlink()
@@ -2120,17 +2125,285 @@ async def test_file_checkpoint_storage_get_latest_detects_concurrent_save(
         await reading
 
 
-async def test_file_checkpoint_storage_get_latest_rejects_hidden_nested_checkpoint(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "checkpoint_id", ["nested/latest", "nested/deeper/latest", ".hidden/latest", "nested/./latest", "nested/../latest"]
+)
+async def test_file_checkpoint_storage_get_latest_finds_nested_checkpoint(tmp_path: Path, checkpoint_id: str) -> None:
+    storage = FileCheckpointStorage(tmp_path)
+    await storage.save(_stamped_checkpoint({}, "2026-01-01T10:00:00+00:00"))
+    (tmp_path / "nested").mkdir()
+    (tmp_path / checkpoint_id).parent.mkdir(parents=True, exist_ok=True)
+    newer = _stamped_checkpoint({}, "2026-01-01T11:00:00+00:00")
+    newer.checkpoint_id = checkpoint_id
+    await storage.save(newer)
+
+    assert await storage.get_latest(workflow_name="recovery-workflow") == newer
+    assert await storage.load(newer.checkpoint_id) == newer
+
+
+@pytest.mark.parametrize("newest_location", ["", "nested", "sibling"])
+async def test_file_checkpoint_storage_get_latest_compares_across_directories(
+    tmp_path: Path, newest_location: str
+) -> None:
+    storage = FileCheckpointStorage(tmp_path)
+    newest = None
+    for location in ("", "nested", "sibling"):
+        (tmp_path / location).mkdir(exist_ok=True)
+        checkpoint = _stamped_checkpoint({}, "2026-01-01T10:00:00+00:00")
+        checkpoint.checkpoint_id = f"{location}/latest" if location else "latest"
+        if location == newest_location:
+            checkpoint.timestamp = "2026-01-01T11:00:00+00:00"
+            newest = checkpoint
+        await storage.save(checkpoint)
+
+    assert newest is not None
+    assert await storage.get_latest(workflow_name="recovery-workflow") == newest
+
+
+async def test_file_checkpoint_storage_get_latest_supports_relative_storage_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    storage = FileCheckpointStorage("storage")
+    (storage.storage_path / "nested").mkdir()
+    checkpoint = _stamped_checkpoint({}, "2026-01-01T10:00:00+00:00")
+    checkpoint.checkpoint_id = "nested/latest"
+    await storage.save(checkpoint)
+
+    assert await storage.get_latest(workflow_name="recovery-workflow") == checkpoint
+
+
+@pytest.mark.parametrize("defect", ["timestamp", "checkpoint_id", "json", "payload"])
+async def test_file_checkpoint_storage_get_latest_rejects_invalid_nested_checkpoint(
+    tmp_path: Path, defect: str
+) -> None:
     storage = FileCheckpointStorage(tmp_path)
     await storage.save(_stamped_checkpoint({}, "2026-01-01T10:00:00+00:00"))
     (tmp_path / "nested").mkdir()
     newer = _stamped_checkpoint({}, "2026-01-01T11:00:00+00:00")
     newer.checkpoint_id = "nested/latest"
+    if defect == "payload":
+        newer.state = {"app": _UnlistedState(stage="second")}
     await storage.save(newer)
+    path = tmp_path / "nested" / "latest.json"
+    if defect in ("timestamp", "checkpoint_id"):
+        data = json.loads(path.read_text())
+        data[defect] = "latest"  # Invalid time, or an ID pointing to the root instead of this file.
+        path.write_text(json.dumps(data))
+    elif defect == "json":
+        path.write_text("{ incomplete }")
 
-    with pytest.raises(WorkflowCheckpointException, match="flat"):
+    with pytest.raises(WorkflowCheckpointException):
         await storage.get_latest(workflow_name="recovery-workflow")
-    assert await storage.load(newer.checkpoint_id) == newer
+
+
+async def test_file_checkpoint_storage_get_latest_surfaces_nested_directory_permission_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = FileCheckpointStorage(tmp_path)
+    await storage.save(_stamped_checkpoint({}, "2026-01-01T10:00:00+00:00"))
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    original_scandir = os.scandir
+
+    def deny_nested(path: Any) -> Any:
+        if Path(path) == nested:
+            raise PermissionError("nested checkpoint directory read denied")
+        return original_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", deny_nested)
+    with pytest.raises(WorkflowCheckpointException) as exc:
+        await storage.get_latest(workflow_name="recovery-workflow")
+    assert isinstance(exc.value.__cause__, PermissionError)
+
+
+@pytest.mark.parametrize("change", ["create_directory", "delete_directory", "transient_file"])
+async def test_file_checkpoint_storage_get_latest_detects_nested_directory_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    storage = FileCheckpointStorage(tmp_path)
+    checkpoint = _stamped_checkpoint({}, "2026-01-01T10:00:00+00:00")
+    await storage.save(checkpoint)
+    nested = tmp_path / "nested"
+    (nested / "empty").mkdir(parents=True)
+    original_load = json.load
+
+    def change_after_read(stream: Any, **kwargs: Any) -> Any:
+        data = original_load(stream, **kwargs)
+        if change == "create_directory":
+            (nested / "new").mkdir()
+        elif change == "delete_directory":
+            (nested / "empty").rmdir()
+        else:
+            transient = nested / "transient.json"
+            transient.write_text(json.dumps(checkpoint.to_dict()))
+            transient.unlink()
+        return data
+
+    monkeypatch.setattr(json, "load", change_after_read)
+    with pytest.raises(WorkflowCheckpointException, match="changed during the scan"):
+        await storage.get_latest(workflow_name="recovery-workflow")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="directory symlink creation requires Windows privileges")
+async def test_file_checkpoint_storage_get_latest_handles_directory_aliases_and_cycles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage = FileCheckpointStorage(tmp_path)
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (tmp_path / "alias").symlink_to(nested, target_is_directory=True)
+    (nested / "back").symlink_to(tmp_path, target_is_directory=True)
+    checkpoint = _stamped_checkpoint({}, "2026-01-01T10:00:00+00:00")
+    checkpoint.checkpoint_id = "alias/latest"
+    await storage.save(checkpoint)
+    original_load = json.load
+    reads = 0
+
+    def count_reads(stream: Any, **kwargs: Any) -> Any:
+        nonlocal reads
+        reads += 1
+        return original_load(stream, **kwargs)
+
+    monkeypatch.setattr(json, "load", count_reads)
+
+    assert await storage.get_latest(workflow_name="recovery-workflow") == checkpoint
+    assert reads == 1
+
+
+async def test_file_checkpoint_storage_get_latest_revalidates_directories_after_final_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from collections.abc import Generator, Iterator
+    from contextlib import contextmanager
+
+    storage = FileCheckpointStorage(tmp_path)
+    checkpoint = _stamped_checkpoint({}, "2026-01-01T10:00:00+00:00")
+    await storage.save(checkpoint)
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    original_scandir = os.scandir
+    nested_scans = 0
+
+    @contextmanager
+    def change_after_scan(path: Any) -> Generator[Iterator[os.DirEntry[str]], None, None]:
+        nonlocal nested_scans
+        with original_scandir(path) as entries:
+            yield entries
+        if Path(path) == nested:
+            nested_scans += 1
+            if nested_scans == 2:
+                transient = nested / "transient.json"
+                transient.write_text(json.dumps(checkpoint.to_dict()))
+                transient.unlink()
+
+    monkeypatch.setattr(os, "scandir", change_after_scan)
+    with pytest.raises(WorkflowCheckpointException, match="changed during the scan"):
+        await storage.get_latest(workflow_name="recovery-workflow")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="directory symlink creation requires Windows privileges")
+@pytest.mark.parametrize("retarget", [False, True])
+async def test_file_checkpoint_storage_get_latest_validates_symlinked_storage_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retarget: bool
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(root, target_is_directory=True)
+    other = tmp_path / "other"
+    other.mkdir()
+    storage = FileCheckpointStorage(alias)
+    checkpoint = _stamped_checkpoint({}, "2026-01-01T10:00:00+00:00")
+    await storage.save(checkpoint)
+    original_scandir = os.scandir
+    scans = 0
+
+    def retarget_after_read(path: Any) -> Any:
+        nonlocal scans
+        scans += 1
+        if retarget and scans == 2:
+            alias.unlink()
+            alias.symlink_to(other, target_is_directory=True)
+        return original_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", retarget_after_read)
+    if retarget:
+        with pytest.raises(WorkflowCheckpointException, match="changed during the scan"):
+            await storage.get_latest(workflow_name="recovery-workflow")
+    else:
+        assert await storage.get_latest(workflow_name="recovery-workflow") == checkpoint
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink creation requires Windows privileges")
+@pytest.mark.parametrize("directory_link", [False, True])
+async def test_file_checkpoint_storage_get_latest_rejects_links_outside_storage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directory_link: bool
+) -> None:
+    import builtins
+
+    storage = FileCheckpointStorage(tmp_path / "storage")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "latest.json").write_text("{ untrusted }")
+    if directory_link:
+        (storage.storage_path / "link").symlink_to(outside, target_is_directory=True)
+    else:
+        (storage.storage_path / "link.json").symlink_to(outside / "latest.json")
+
+    def unexpected_read(*args: Any, **kwargs: Any) -> Any:
+        pytest.fail("must reject the escaped path before reading JSON")
+
+    monkeypatch.setattr(builtins, "open", unexpected_read)
+    with pytest.raises(WorkflowCheckpointException, match="outside storage root|Invalid checkpoint ID"):
+        await storage.get_latest(workflow_name="recovery-workflow")
+
+
+@pytest.mark.parametrize("has_checkpoint", [False, True])
+async def test_file_checkpoint_storage_get_latest_ignores_unrelated_directories(
+    tmp_path: Path, has_checkpoint: bool
+) -> None:
+    storage = FileCheckpointStorage(tmp_path)
+    checkpoint = _stamped_checkpoint({}, "2026-01-01T10:00:00+00:00") if has_checkpoint else None
+    if checkpoint is not None:
+        await storage.save(checkpoint)
+    (tmp_path / "unrelated" / "empty.json").mkdir(parents=True)
+    (tmp_path / "unrelated" / "notes.txt").write_text("not a checkpoint")
+
+    assert await storage.get_latest(workflow_name="recovery-workflow") == checkpoint
+
+
+async def test_file_checkpoint_storage_get_latest_keeps_event_loop_responsive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_framework._workflows import _checkpoint_encoding
+
+    storage = FileCheckpointStorage(tmp_path)
+    checkpoint = _stamped_checkpoint({}, "2026-01-01T10:00:00+00:00")
+    await storage.save(checkpoint)
+    loop = asyncio.get_running_loop()
+    decode_started = asyncio.Event()
+    release_decode = threading.Event()
+    original_decode = _checkpoint_encoding.decode_checkpoint_value
+
+    def pause_decode(value: Any, **kwargs: Any) -> Any:
+        loop.call_soon_threadsafe(decode_started.set)
+        if not release_decode.wait(timeout=5):
+            raise TimeoutError("event loop could not resume while decoding")
+        return original_decode(value, **kwargs)
+
+    async def resume_decode() -> None:
+        await decode_started.wait()
+        release_decode.set()
+
+    monkeypatch.setattr(_checkpoint_encoding, "decode_checkpoint_value", pause_decode)
+    resuming = asyncio.create_task(resume_decode())
+    try:
+        assert await storage.get_latest(workflow_name="recovery-workflow") == checkpoint
+    finally:
+        release_decode.set()
+        resuming.cancel()
+        await asyncio.gather(resuming, return_exceptions=True)
 
 
 async def test_file_checkpoint_storage_get_latest_rejects_duplicate_json_keys(tmp_path: Path) -> None:

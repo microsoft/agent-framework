@@ -435,8 +435,8 @@ class FileCheckpointStorage:
         can retry. Writes after validation belong to a subsequent snapshot. This relies on the
         filesystem reporting file changes and writers using atomic replacement, as save does.
         Checkpoints with equal timestamps retain directory iteration order.
-        The directory must be flat: nested directories are rejected because their checkpoints
-        would otherwise be invisible to this scan. Use load with an explicit ID for a nested path.
+        Nested directories are included, with in-tree directory aliases visited only once.
+        Reading and decoding run in a worker thread so decoding does not block the event loop.
 
         Args:
             workflow_name: The name of the workflow to get the latest checkpoint for.
@@ -454,18 +454,27 @@ class FileCheckpointStorage:
             # Reads may change atime; it is not a content/version signal.
             return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
-        def _checkpoint_paths() -> list[Path]:
+        def _checkpoint_paths(root: Path) -> tuple[list[Path], dict[Path, tuple[int, int, int, int, int]]]:
             # Path.glob suppresses some filesystem errors, including permission failures.
-            with os.scandir(self.storage_path) as entries:
-                paths: list[Path] = []
-                for entry in entries:
-                    if entry.is_dir():
-                        raise WorkflowCheckpointException(
-                            f"Checkpoint directory must be flat; found directory {entry.path}"
-                        )
-                    if os.path.normcase(entry.name).endswith(".json"):
-                        paths.append(Path(entry.path))
-                return paths
+            paths: list[Path] = []
+            directories: dict[Path, tuple[int, int, int, int, int]] = {}
+            pending = [root]
+            while pending:
+                directory = pending.pop().resolve()
+                if not directory.is_relative_to(root):
+                    raise WorkflowCheckpointException(
+                        f"Checkpoint directory {directory} is outside storage root {root}"
+                    )
+                if directory in directories:
+                    continue  # An in-tree symlink may alias an already visited directory, including an ancestor.
+                directories[directory] = _version(directory.stat())
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        if entry.is_dir():
+                            pending.append(Path(entry.path))
+                        elif os.path.normcase(entry.name).endswith(".json"):
+                            paths.append(Path(entry.path))
+            return paths, directories
 
         def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             result: dict[str, Any] = {}
@@ -475,14 +484,14 @@ class FileCheckpointStorage:
                 result[key] = value
             return result
 
-        def _read_latest() -> dict[str, Any] | None:
-            directory_version = _version(self.storage_path.stat())
-            paths = _checkpoint_paths()
+        def _read_latest() -> WorkflowCheckpoint | None:
+            root = self.storage_path.resolve()
+            paths, directories = _checkpoint_paths(root)
             versions: dict[Path, tuple[int, int, int, int, int]] = {}
             latest: tuple[datetime, dict[str, Any]] | None = None
             for file_path in paths:
                 try:
-                    self._validate_file_path(file_path.name[:-5])
+                    self._validate_file_path(str(file_path.relative_to(root))[:-5])
                     info = file_path.stat()
                     if not stat.S_ISREG(info.st_mode):
                         raise ValueError("checkpoint path is not a regular file")
@@ -519,18 +528,23 @@ class FileCheckpointStorage:
                     raise WorkflowCheckpointException(
                         f"Checkpoint {file_path} changed during the scan; retry get_latest"
                     )
-            if set(_checkpoint_paths()) != set(paths) or _version(self.storage_path.stat()) != directory_version:
+            current_paths, current_directories = _checkpoint_paths(root)
+            if (
+                set(current_paths) != set(paths)
+                or current_directories != directories
+                or any(_version(path.stat()) != version for path, version in directories.items())
+                or self.storage_path.resolve() != root
+            ):
                 raise WorkflowCheckpointException(
                     f"Checkpoint directory {self.storage_path} changed during the scan; retry get_latest"
                 )
-            return latest[1] if latest else None
+            # Do not reopen through load(): it could decode a replacement rather than the selected data.
+            return self._decode_checkpoint(latest[1]) if latest else None
 
         try:
-            encoded_checkpoint = await asyncio.to_thread(_read_latest)
-            if encoded_checkpoint is None:
+            checkpoint = await asyncio.to_thread(_read_latest)
+            if checkpoint is None:
                 return None
-            # Do not reopen through load(): it could decode a replacement rather than the selected data.
-            checkpoint = self._decode_checkpoint(encoded_checkpoint)
         except WorkflowCheckpointException:
             raise
         except Exception as e:
