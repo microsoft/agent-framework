@@ -1152,6 +1152,68 @@ def test_format_summary_message_uses_tool_name_for_mcp_approval() -> None:
     assert "[id=approval_mcp_1]" in rendered
 
 
+def test_format_summary_message_renders_error_items_for_rich_results() -> None:
+    message = Message(
+        role="tool",
+        contents=[
+            Content(
+                "function_result",
+                call_id="call_err_1",
+                result="",
+                items=[Content.from_error(message="Execution error", error_details="ValueError: boom")],
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(12, message)
+
+    assert "Execution error" in rendered
+    assert "ValueError: boom" in rendered
+    assert "[call_id=call_err_1]" in rendered
+
+
+def test_format_summary_message_falls_back_to_result_when_items_render_empty() -> None:
+    message = Message(
+        role="tool",
+        contents=[
+            Content(
+                "function_result",
+                call_id="call_fb_1",
+                result="fallback result",
+                items=[Content.from_error()],
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(13, message)
+
+    assert "fallback result" in rendered
+    assert "[call_id=call_fb_1]" in rendered
+
+
+def test_format_summary_message_renders_mixed_text_and_error_items() -> None:
+    message = Message(
+        role="tool",
+        contents=[
+            Content(
+                "function_result",
+                call_id="call_mix_1",
+                result="",
+                items=[
+                    Content.from_text("partial output"),
+                    Content.from_error(message="Execution error", error_details="sandbox timed out"),
+                ],
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(14, message)
+
+    assert "partial output" in rendered
+    assert "Execution error" in rendered
+    assert "sandbox timed out" in rendered
+
+
 async def test_summarization_strategy_returns_false_when_summary_generation_fails(
     caplog: Any,
 ) -> None:

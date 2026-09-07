@@ -1205,6 +1205,29 @@ def _tool_result_text(value: Any) -> str:
     return str(cast(object, value))
 
 
+def _format_summary_result_items(items: Sequence[Content]) -> str:
+    """Render function_result items (text and error contents) for the summarizer transcript.
+
+    Rich results store their payload in ``items`` (for example the error
+    contents emitted by Monty and Hyperlight) while ``result`` only carries
+    the concatenated text. Returns an empty string when nothing is renderable
+    so callers can fall back to ``result``.
+    """
+    parts: list[str] = []
+    for item in items:
+        if item.type == "text" and item.text:
+            parts.append(item.text)
+        elif item.type == "error":
+            label = item.message or ""
+            if item.error_details:
+                label = f"{label}: {item.error_details}" if label else item.error_details
+            if item.error_code:
+                label = f"error({item.error_code}): {label}"
+            if label:
+                parts.append(label)
+    return "\n".join(parts)
+
+
 def _format_summary_content(content: Content) -> str:
     """Render one content item for the summarizer input transcript.
 
@@ -1221,7 +1244,9 @@ def _format_summary_content(content: Content) -> str:
             call += f" [call_id={content.call_id}]"
         return call
     if content.type == "function_result":
-        result_text = _tool_result_text(content.result) if content.result is not None else "no result"
+        result_text = _format_summary_result_items(content.items) if content.items else ""
+        if not result_text:
+            result_text = _tool_result_text(content.result) if content.result is not None else "no result"
         if content.exception:
             result_text = f"error({content.exception}): {result_text}"
         call_id_suffix = f" [call_id={content.call_id}]" if content.call_id else ""
