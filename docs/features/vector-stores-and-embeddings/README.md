@@ -250,6 +250,9 @@ Options considered:
     pass `generate_vectors=False` to preserve supplied vector values
   - `generate_vectors` can also take a list or tuple of selected vector field names, allowing one model to combine
     locally generated, precomputed, and provider-vectorized values
+  - After optional generation, check materialized dense sequence lengths against each field's `dimensions` for the
+    entire batch before connector conversion or writes. A mismatch raises `ValueError` with the zero-based record
+    index, logical field name, and expected/actual lengths; this rejection performs no writes
   - Batch upsert does not promise atomicity; stable application keys make retries safer, while store-generated keys
     may produce duplicates after a partial failure
   - CRUD `get()` excludes vectors by default; pass `include_vectors=True` when stored embeddings are needed
@@ -266,6 +269,9 @@ Options considered:
   - `_inner_search` abstract method for implementations
   - Portable `Filter` and `FilterGroup` trees passed unchanged to connector implementations
   - Vector generation from values using embedding generator
+  - Check supplied or locally generated dense query length against the selected field's `dimensions` before
+    connector dispatch, including empty collections. In-memory search also checks array-like queries after its
+    numeric normalization; existing query/stored length checks remain in scoring
 
 #### 3.6 — Protocols for type checking
 - `SupportsVectorUpsert` — Protocol for upsert/get/delete operations
@@ -321,6 +327,18 @@ Options considered:
   `supported_vector_types`
 - Sparse vectors remain provider-native values supplied through model codecs or `search(values=...)`; core does not
   define a sparse representation or dense+sparse fusion mode
+
+#### 4.1.2 — Dense vector dimension checks
+- Enforce declared dimensions at the shared write and search boundaries by default. This replaces the earlier
+  decision to leave dense length enforcement entirely to providers
+- Check sequence length only, without copying, converting, or scanning elements solely for validation. Resolve
+  vector fields and storage names once per write batch, and validate final values after any local generation
+- Null vectors remain allowed. Source text and non-sequence provider-native values are not treated as dense
+  vectors; `bytes`/`bytearray` length is not assumed to equal dimensionality. Connectors validate these representations
+- The contract covers materialized non-string, non-binary sequences, not arbitrary provider-specific encodings,
+  numeric element validity, or revalidation on retrieval. Provider-side vectorization remains unchanged
+- Local benchmarking of 1,000-record batches found length checking inexpensive relative to serialization and
+  in-memory copying. Use a straightforward pass without an opt-out flag or a more complex serialization path
 
 #### 4.2 — Derive search-tool parameters from filters
 - A `Param` used as a complete filter value defines its model-visible name, native type, default, and constraints

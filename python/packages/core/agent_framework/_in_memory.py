@@ -37,6 +37,7 @@ from ._vectors import (
     SearchType,
     Vector,
     VectorStoreCollectionDefinition,
+    _validate_vector_dimensions,  # pyright: ignore[reportPrivateUsage]
 )
 from .exceptions import IntegrationException
 
@@ -423,6 +424,7 @@ class InMemoryCollection(
         vector_field = self.definition.try_get_vector_field(vector_property_name)
         if vector_field is None:
             raise ValueError("InMemoryCollection vector search requires a vector field.")
+        _validate_vector_dimensions(query_vector, vector_field)
         if filter is not None:
             _validate_in_memory_filter(filter, self.definition)
 

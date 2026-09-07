@@ -446,7 +446,7 @@ async def test_in_memory_rejects_invalid_vectors() -> None:
 
     with pytest.raises(TypeError, match="field 'query'.*numeric sequence"):
         await collection.search(vector=b"\x01\x02")
-    with pytest.raises(ValueError, match="same length"):
+    with pytest.raises(ValueError, match="Query vector field 'vector' expects 2 dimensions; got 1"):
         await collection.search(vector=[1.0])
     with pytest.raises(ValueError, match="zero-magnitude"):
         await collection.search(vector=[0.0, 0.0])
@@ -474,6 +474,47 @@ async def test_in_memory_rejects_invalid_vectors() -> None:
     )
     with pytest.raises(ValueError, match="type must be one of"):
         InMemoryCollection(dict, definition=binary_definition)
+
+
+@pytest.mark.parametrize("vector", [[], [1.0], [1.0, 0.0, 0.0]])
+async def test_in_memory_dimension_mismatch_rejects_batch_without_writes(vector: list[float]) -> None:
+    collection = InMemoryCollection(Document)
+    await collection.ensure_collection_exists()
+
+    with pytest.raises(
+        ValueError, match=f"Record at index 1, vector field 'vector' expects 2 dimensions; got {len(vector)}"
+    ):
+        await collection.upsert(
+            [DOCUMENTS[0], Document("invalid", "text", "travel", 5, [], None, vector)],
+            generate_vectors=False,
+        )
+
+    assert await collection.get() == []
+
+
+@pytest.mark.parametrize("has_records", [False, True])
+@pytest.mark.parametrize("dimensions", [1, 2, 3])
+async def test_in_memory_checks_normalized_array_query_dimensions(has_records: bool, dimensions: int) -> None:
+    class ArrayLike:
+        def tolist(self) -> list[float]:
+            return [1.0] * dimensions
+
+    collection = InMemoryCollection(Document)
+    await collection.ensure_collection_exists()
+    if has_records:
+        await collection.upsert(DOCUMENTS, generate_vectors=False)
+
+    if dimensions != 2:
+        with pytest.raises(ValueError, match=f"Query vector field 'vector' expects 2 dimensions; got {dimensions}"):
+            await collection.search(vector=cast(Any, ArrayLike()))
+    else:
+        results = await collection.search(vector=cast(Any, ArrayLike()))
+        assert len([result async for result in results]) == (2 if has_records else 0)
+
+
+def test_in_memory_retains_pairwise_vector_length_check() -> None:
+    with pytest.raises(ValueError, match="Query and stored vectors must have the same length"):
+        in_memory_module._calculate_score([1.0, 0.0], [1.0], "cosine_similarity")
 
 
 async def test_in_memory_contains_rejects_mapping_fields() -> None:

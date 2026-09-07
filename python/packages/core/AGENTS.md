@@ -90,6 +90,11 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 - **Vector payloads** - Shared dense query/generated vectors accept numeric sequences and binary bytes; connectors
   declare supported element/representation types. Sparse vectors remain provider-native through codecs or
   `search(values=...)`, not a core sparse type.
+- **Vector dimensions** - Final dense sequence lengths are checked after optional generation for the whole write
+  batch before connector conversion or writes, and for the selected query field before search dispatch. In-memory
+  queries also check their normalized numeric sequence, including array-like inputs and empty collections. These
+  are length checks, not element validation; null vectors, source text, binary payloads, and non-sequence
+  provider-native representations remain connector-owned.
 - **`BaseVectorStore`** - Base class for stores that create collection clients
 - **`BaseVectorSearch`** - Base class for vector and keyword-hybrid search
 - **`create_vector_search_tool`** - Creates an agent tool from any `SupportsVectorSearch` implementation

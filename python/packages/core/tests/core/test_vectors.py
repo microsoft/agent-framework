@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import AsyncIterable, Mapping, Sequence
+from collections.abc import AsyncIterable, Iterator, Mapping, Sequence
 from dataclasses import FrozenInstanceError, dataclass, field
 from decimal import Decimal
 from typing import Annotated, Any, ClassVar, Literal, cast
@@ -625,6 +625,9 @@ async def test_array_like_vectors_round_trip_without_array_dependency() -> None:
     assert isinstance(restored, ArrayRecord)
     assert restored.vector.values == [0.1, 0.2, 0.3]
 
+    with pytest.raises(ValueError, match="vector field 'vector' expects 3 dimensions; got 1"):
+        await handler.serialize(ArrayRecord("bad", ArrayLike([0.1])), generate_vectors=False)
+
 
 async def test_custom_encoder_normalizes_array_like_vectors() -> None:
     class ArrayLike:
@@ -717,6 +720,96 @@ async def test_upsert_controls_embedding_generation() -> None:
         await MockCollection().upsert([Record("missing-generator", "text", [1.0, 0.0])])
 
 
+@pytest.mark.parametrize("vector", [[], [1.0], [1.0, 0.0, 0.0]])
+async def test_upsert_rejects_dimension_mismatches_before_connector_conversion(vector: list[float]) -> None:
+    collection = MockCollection()
+    records = [Record("valid", "text", [1.0, 0.0]), Record("invalid", "text", vector)]
+
+    with patch.object(
+        collection, "_serialize_dicts_to_store_models", wraps=collection._serialize_dicts_to_store_models
+    ) as convert:
+        with pytest.raises(
+            ValueError, match=f"Record at index 1, vector field 'vector' expects 2 dimensions; got {len(vector)}"
+        ):
+            await collection.upsert(records, generate_vectors=False)
+        convert.assert_not_called()
+
+    assert collection.records == {}
+
+
+async def test_upsert_checks_generated_dimensions_instead_of_replaced_input() -> None:
+    collection = MockCollection(embedding_generator=MockEmbeddingClient())
+    record = Record("replaced", "text", [1.0])
+
+    await collection.upsert([record])
+
+    assert len(collection.records["replaced"]["vector"]) == 2
+    assert record.vector == [1.0]
+
+
+async def test_upsert_rejects_generated_dimension_mismatch_before_writing() -> None:
+    class WrongDimensionEmbeddingClient(MockEmbeddingClient):
+        async def get_embeddings(
+            self,
+            values: Sequence[Any],
+            *,
+            options: EmbeddingGenerationOptions | None = None,
+        ) -> GeneratedEmbeddings[list[float]]:
+            return GeneratedEmbeddings([
+                Embedding(vector=[1.0, 0.0] if index == 0 else [1.0], dimensions=2) for index, _ in enumerate(values)
+            ])
+
+    collection = MockCollection(embedding_generator=WrongDimensionEmbeddingClient())
+
+    with pytest.raises(ValueError, match="Record at index 1, vector field 'vector' expects 2 dimensions; got 1"):
+        await collection.upsert([Record("valid", "text", "source"), Record("invalid", "text", "source")])
+
+    assert collection.records == {}
+
+
+@pytest.mark.parametrize(("field_name", "dimensions"), [("primary", 2), ("secondary", 3)])
+async def test_serialization_validates_all_vector_fields_and_storage_aliases(field_name: str, dimensions: int) -> None:
+    definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id"),
+        VectorStoreField("vector", name="primary", storage_name="primary_vector", dimensions=2),
+        VectorStoreField("vector", name="secondary", storage_name="secondary_vector", dimensions=3),
+    ])
+    handler = VectorStoreRecordHandler(dict, definition=definition)
+    records = [
+        {"id": "one", "primary": [1.0, 0.0], "secondary": [1.0, 0.0, 0.0]},
+        {"id": "two", "primary_vector": [1.0, 0.0], "secondary_vector": [1.0, 0.0, 0.0]},
+    ]
+    records[1][f"{field_name}_vector"] = [1.0]
+
+    with pytest.raises(
+        ValueError, match=f"Record at index 1, vector field '{field_name}' expects {dimensions} dimensions; got 1"
+    ):
+        await handler.serialize(records, generate_vectors=False)
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (None, None),
+        ("provider-side source", "provider-side source"),
+        (b"\x01\x02", b"\x01\x02"),
+        (bytearray((1, 2)), b"\x01\x02"),
+        ({"indices": [4], "values": [0.5]}, {"indices": [4], "values": [0.5]}),
+    ],
+)
+async def test_serialization_leaves_non_dense_dimensions_to_connector(payload: Any, expected: Any) -> None:
+    definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id"),
+        VectorStoreField("vector", name="vector", dimensions=1536),
+    ])
+    handler = VectorStoreRecordHandler(dict, definition=definition)
+
+    assert await handler.serialize({"id": "one", "vector": payload}, generate_vectors=False) == {
+        "id": "one",
+        "vector": expected,
+    }
+
+
 async def test_serialization_selects_vector_fields_for_generation() -> None:
     embedding_client = MockEmbeddingClient()
 
@@ -749,6 +842,12 @@ async def test_serialization_selects_vector_fields_for_generation() -> None:
         "provider_vector": "send to provider",
     }
     assert embedding_client.values == ["embed locally"]
+
+    with pytest.raises(ValueError, match="vector field 'provider_vector' expects 2 dimensions; got 1"):
+        await handler.serialize(
+            MixedVectorRecord("bad", "embed locally", [1.0]),
+            generate_vectors=["local_vector"],
+        )
 
     with pytest.raises(ValueError, match="Unknown vector field"):
         await handler.serialize(
@@ -912,13 +1011,101 @@ async def test_keyword_hybrid_search_uses_single_search_method() -> None:
     assert collection.last_search_type == "keyword_hybrid"
 
 
-async def test_search_passes_values_to_provider_when_no_generator_is_configured() -> None:
+@pytest.mark.parametrize("values", ["vectorize this on the provider", {"indices": [4], "values": [0.5]}, [1.0]])
+async def test_search_passes_values_to_provider_when_no_generator_is_configured(values: Any) -> None:
     collection = MockCollection()
 
-    await collection.search("vectorize this on the provider")
+    await collection.search(values)
 
-    assert collection.last_search_values == "vectorize this on the provider"
+    assert collection.last_search_values is values
     assert collection.last_search_vector is None
+
+
+@pytest.mark.parametrize("vector", [[], [1.0], (1.0,), range(1), [1.0, 0.0, 0.0]])
+@pytest.mark.parametrize("search_type", ["vector", "keyword_hybrid"])
+async def test_search_rejects_dense_dimension_mismatches_before_dispatch(
+    vector: Sequence[float], search_type: SearchType
+) -> None:
+    collection = MockCollection()
+
+    with pytest.raises(ValueError, match=f"Query vector field 'vector' expects 2 dimensions; got {len(vector)}"):
+        await collection.search("query", vector=vector, search_type=search_type)
+
+    assert collection.last_search_type is None
+
+
+@pytest.mark.parametrize(
+    ("selected_field", "logical_name", "dimensions"),
+    [(None, "vector", 2), ("secondary", "secondary", 3), ("secondary_vector", "secondary", 3)],
+)
+async def test_search_checks_dimensions_of_selected_vector_field(
+    selected_field: str | None, logical_name: str, dimensions: int
+) -> None:
+    collection = MockCollection()
+    collection.definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id"),
+        VectorStoreField("vector", name="vector", dimensions=2),
+        VectorStoreField("vector", name="secondary", storage_name="secondary_vector", dimensions=3),
+    ])
+    vector = [1.0] * dimensions
+
+    await collection.search(vector=vector, vector_property_name=selected_field)
+    assert collection.last_search_vector is vector
+
+    with pytest.raises(
+        ValueError, match=f"Query vector field '{logical_name}' expects {dimensions} dimensions; got {dimensions + 1}"
+    ):
+        await collection.search(vector=[1.0] * (dimensions + 1), vector_property_name=selected_field)
+    assert collection.last_search_vector is vector
+
+
+async def test_search_rejects_generated_dimension_mismatch() -> None:
+    class WrongDimensionEmbeddingClient(MockEmbeddingClient):
+        async def get_embeddings(
+            self,
+            values: Sequence[Any],
+            *,
+            options: EmbeddingGenerationOptions | None = None,
+        ) -> GeneratedEmbeddings[list[float]]:
+            return GeneratedEmbeddings([Embedding(vector=[1.0], dimensions=2)])
+
+    collection = MockCollection(embedding_generator=WrongDimensionEmbeddingClient())
+
+    with pytest.raises(ValueError, match="Query vector field 'vector' expects 2 dimensions; got 1"):
+        await collection.search("source")
+
+    assert collection.last_search_type is None
+
+
+async def test_search_dimension_check_does_not_iterate_or_copy_vectors() -> None:
+    class LengthOnlyVector(list[float]):
+        def __iter__(self) -> Iterator[float]:
+            raise AssertionError("Dimension checks must not iterate vector elements.")
+
+    vector = LengthOnlyVector([1.0, 0.0])
+    collection = MockCollection()
+
+    await collection.search(vector=vector)
+
+    assert collection.last_search_vector is vector
+
+
+@pytest.mark.parametrize("vector", [(1.0, 0.0), range(2)])
+async def test_search_accepts_matching_dense_sequence_dimensions(vector: Sequence[float | int]) -> None:
+    collection = MockCollection()
+
+    await collection.search(vector=vector)
+
+    assert collection.last_search_vector is vector
+
+
+@pytest.mark.parametrize("vector", [b"\x01", bytearray((1,))])
+async def test_search_leaves_binary_dimensions_to_connector(vector: bytes | bytearray) -> None:
+    collection = MockCollection()
+
+    await collection.search(vector=vector)
+
+    assert collection.last_search_vector is vector
 
 
 async def test_vector_search_validates_inputs_and_supported_type() -> None:
@@ -926,6 +1113,8 @@ async def test_vector_search_validates_inputs_and_supported_type() -> None:
 
     with pytest.raises(ValueError, match="requires values"):
         await cast(Any, collection.search)()
+    with pytest.raises(ValueError, match="Vector field 'missing' was not found"):
+        await collection.search(vector=[1.0, 0.0], vector_property_name="missing")
 
     class VectorOnlyCollection(MockCollection):
         supported_search_types: ClassVar[set[SearchType]] = {"vector"}

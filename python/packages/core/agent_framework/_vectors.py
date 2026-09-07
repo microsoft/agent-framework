@@ -133,10 +133,32 @@ def _normalize_vector(value: Any) -> Vector:
     raise TypeError("The embedding client returned an unsupported vector type.")
 
 
+def _validate_vector_dimensions(
+    vector: Any,
+    field: VectorStoreField,
+    *,
+    record_index: int | None = None,
+) -> None:
+    """Check dense sequence length without inspecting elements or interpreting native encodings."""
+    # Normalized vectors do not need the more expensive generic sequence check.
+    if type(vector) not in (list, tuple) and not _is_non_string_sequence(vector):
+        return
+    actual_dimensions = len(vector)
+    if actual_dimensions != field.dimensions:
+        context = "Query" if record_index is None else f"Record at index {record_index},"
+        raise ValueError(
+            f"{context} vector field '{field.name}' expects {field.dimensions} dimensions; got {actual_dimensions}."
+        )
+
+
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
 @dataclass(frozen=True, slots=True, init=False)
 class VectorStoreField:
-    """Describe one field in a vector store model."""
+    """Describe one field in a vector store model.
+
+    Vector ``dimensions`` is the expected length of materialized dense sequences.
+    Binary bytes and non-sequence provider-native representations remain connector-validated.
+    """
 
     field_type: FieldTypes
     name: str
@@ -864,6 +886,12 @@ class _VectorStoreRecordHandler(Generic[KeyT, ModelT]):
     ) -> Any:
         """Serialize one or more application records for the backing store.
 
+        After optional embedding generation, materialized dense sequence lengths
+        are checked against their fields' dimensions for the entire batch before
+        connector conversion. This does not inspect vector elements. Null vectors,
+        source text, binary payloads, and non-sequence provider-native values are
+        left to the connector.
+
         Args:
             records: One application record or a sequence of records.
             generate_vectors: Whether to generate all vector fields, preserve all supplied values, or generate only
@@ -883,6 +911,10 @@ class _VectorStoreRecordHandler(Generic[KeyT, ModelT]):
         vector_fields = self._resolve_vector_fields_to_generate(generate_vectors)
         if vector_fields:
             await self._add_vectors_to_records(dict_records, vector_fields=vector_fields)
+        dimension_fields = tuple((field.storage_name or field.name, field) for field in self.definition.vector_fields)
+        for record_index, record in enumerate(dict_records):
+            for storage_name, field in dimension_fields:
+                _validate_vector_dimensions(record.get(storage_name), field, record_index=record_index)
         store_models = list(self._serialize_dicts_to_store_models(dict_records, context=context))
 
         if len(store_models) != len(dict_records):
@@ -1150,6 +1182,11 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
     ) -> Sequence[KeyT]:
         """Upsert a batch of records.
 
+        Dense sequence lengths are checked after optional embedding generation,
+        before connector conversion or writes. A dimension mismatch rejects the
+        whole batch at this boundary. Binary and non-sequence provider-native
+        representations remain connector-validated.
+
         A connector may partially persist a batch before reporting an error; the
         abstraction does not guarantee rollback or atomicity. Retrying records
         with stable application-provided keys should be idempotent when the
@@ -1413,6 +1450,10 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
     ) -> SearchResults[SearchResponse[ModelT]]:
         """Search from a value, optionally with a precomputed vector.
 
+        Materialized dense sequence length must match the selected vector field's
+        dimensions before connector dispatch. Binary bytes and non-sequence
+        provider-native formats remain connector-validated.
+
         Args:
             values: The value to search for or vectorize.
             search_type: Whether to perform vector or keyword-hybrid search.
@@ -1454,6 +1495,10 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
     ) -> SearchResults[SearchResponse[ModelT]]:
         """Search from a required precomputed vector.
 
+        Dense sequence length must match the selected vector field's dimensions
+        before connector dispatch. Binary bytes and non-sequence provider-native
+        formats remain connector-validated.
+
         Args:
             search_type: The vector search type.
             vector: The precomputed query vector.
@@ -1493,6 +1538,13 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         operation_options: Mapping[str, Any] | None = None,
     ) -> SearchResults[SearchResponse[ModelT]]:
         """Search the vector store.
+
+        Supplied or locally generated dense sequence length is checked against the
+        selected vector field's dimensions before connector dispatch, even for
+        empty collections. This does not inspect elements or convert native
+        payloads. Binary and non-sequence provider-native formats remain
+        connector-validated; provider-side vectorization still receives ``values``
+        and no vector.
 
         Args:
             values: The value to search for or vectorize.
@@ -1541,6 +1593,14 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
                     values,
                     vector_property_name=vector_property_name,
                 )
+            if resolved_vector is not None:
+                vector_field = self.definition.try_get_vector_field(vector_property_name)
+                if vector_field is None and vector_property_name is not None:
+                    raise ValueError(
+                        f"Vector field '{vector_property_name}' was not found in the collection definition."
+                    )
+                if vector_field is not None:
+                    _validate_vector_dimensions(resolved_vector, vector_field)
             raw_results = await self._inner_search(
                 search_type=search_type,
                 filter=operation_filter,
