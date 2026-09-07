@@ -19,6 +19,7 @@ from ._types import (
     AgentRunInputs,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     Message,
     ResponseStream,
     normalize_messages,
@@ -755,6 +756,25 @@ class FunctionMiddleware(ABC):
         """
         ...
 
+    def on_approval_responses(
+        self,
+        responses: Sequence[Content],
+        *,
+        session: AgentSession | None,
+    ) -> None:
+        """Observe authenticated approval responses that do not execute a function.
+
+        The function loop calls this only after binding responses to the active session's
+        authoritative pending snapshot. Stateful middleware can discard rejected or
+        cancelled authority here; the default implementation retains no state.
+
+        Args:
+            responses: Session-rebound approval responses.
+
+        Keyword Args:
+            session: The active invocation session, if any.
+        """
+
 
 class ChatMiddleware(ABC):
     """Abstract base class for chat middleware that can intercept chat client requests.
@@ -1217,6 +1237,17 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
     def matches(self, middleware: Sequence[FunctionMiddlewareTypes]) -> bool:
         """Return whether this pipeline was built from the provided middleware sequence."""
         return self._source_middleware == tuple(middleware)
+
+    def notify_approval_responses(
+        self,
+        responses: Sequence[Content],
+        *,
+        session: AgentSession | None,
+    ) -> None:
+        """Notify class-based middleware of authenticated non-executing decisions."""
+        for middleware in self._middleware:
+            if isinstance(middleware, FunctionMiddleware):
+                middleware.on_approval_responses(responses, session=session)
 
     def _register_middleware(self, middleware: FunctionMiddlewareTypes) -> None:
         """Register a function middleware item.

@@ -5,6 +5,7 @@
 import asyncio
 import json
 import logging
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -22,7 +23,13 @@ from agent_framework import (
     SessionContext,
 )
 from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareTermination
-from agent_framework._tools import FunctionTool, _auto_invoke_function, normalize_function_invocation_configuration
+from agent_framework._tools import (
+    FunctionTool,
+    _auto_invoke_function,
+    _resolve_approval_responses,
+    _store_pending_approval_requests,
+    normalize_function_invocation_configuration,
+)
 from agent_framework._types import Content
 from agent_framework.security import (
     ConfidentialityLabel,
@@ -753,6 +760,202 @@ class TestPolicyEnforcementMiddleware:
         assert context.metadata["user_approved_violation"] is True
         assert context.result == [Content.from_text("approved result")]
         assert "call-approved" not in middleware._pending_policy_approvals
+
+    async def test_pending_policy_approvals_are_fifo_bounded_by_occurrence(self, mock_function) -> None:
+        """The oldest occurrence is evicted and its stale grant fails closed."""
+        middleware = PolicyEnforcementFunctionMiddleware(
+            approval_on_violation=True,
+            max_pending_approvals=2,
+            pending_approval_ttl=None,
+        )
+        session = AgentSession(session_id="fifo-policy-approvals")
+
+        async def request(occurrence_id: str) -> Content:
+            context = FunctionInvocationContext(
+                function=mock_function,
+                arguments=mock_function.args_schema(arg="test"),
+                session=session,
+                kwargs={"session": session},
+            )
+            context.metadata.update({
+                "context_label": ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+                "call_id": "reused-provider-call",
+                "function_call_occurrence_id": occurrence_id,
+            })
+
+            async def should_not_execute() -> None:
+                pytest.fail("Policy-violating tools require approval")
+
+            with pytest.raises(MiddlewareTermination):
+                await middleware.process(context, should_not_execute)
+            assert isinstance(context.result, Content)
+            return context.result
+
+        requests = [await request(f"occurrence-{index}") for index in range(3)]
+        pending = middleware._scope_for_session(session).pending_approvals
+        assert list(pending) == ["occurrence-1", "occurrence-2"]
+
+        stale_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+            session=session,
+            kwargs={"session": session},
+        )
+        stale_context.metadata.update({
+            "context_label": ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+            "call_id": "reused-provider-call",
+            "function_call_occurrence_id": "occurrence-0",
+            "approval_response": requests[0].to_function_approval_response(True),
+        })
+
+        async def should_not_execute_stale_grant() -> None:
+            pytest.fail("An evicted approval must not execute")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(stale_context, should_not_execute_stale_grant)
+
+        assert isinstance(stale_context.result, Content)
+        assert stale_context.result.type == "function_approval_request"
+        assert stale_context.result.id != "occurrence-0"
+        assert stale_context.result.function_call is not None
+        assert stale_context.result.function_call.id == "occurrence-0"
+        assert list(pending) == ["occurrence-2", "occurrence-0"]
+
+    async def test_pending_policy_approval_ttl_is_deterministic_and_durable(
+        self,
+        mock_function,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A restored approval expires at the configured boundary and is replaced."""
+        now = 1_000.0
+        monkeypatch.setattr("agent_framework.security.time.time", lambda: now)
+        middleware = PolicyEnforcementFunctionMiddleware(
+            approval_on_violation=True,
+            pending_approval_ttl=timedelta(seconds=5),
+        )
+        session = AgentSession(session_id="ttl-policy-approval")
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+            session=session,
+            kwargs={"session": session},
+        )
+        request_context.metadata.update({
+            "context_label": ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+            "call_id": "ttl-provider-call",
+            "function_call_occurrence_id": "ttl-occurrence",
+        })
+
+        async def should_not_execute() -> None:
+            pytest.fail("Policy-violating tools require approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, should_not_execute)
+        assert isinstance(request_context.result, Content)
+        approval_request = request_context.result
+
+        restored = AgentSession.from_dict(session.to_dict())
+        now = 1_005.0
+        replay_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+            session=restored,
+            kwargs={"session": restored},
+        )
+        replay_context.metadata.update({
+            "context_label": ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+            "call_id": "ttl-provider-call",
+            "function_call_occurrence_id": "ttl-occurrence",
+            "approval_response": approval_request.to_function_approval_response(True),
+        })
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, should_not_execute)
+
+        assert isinstance(replay_context.result, Content)
+        assert replay_context.result.type == "function_approval_request"
+        assert replay_context.result.id != "ttl-occurrence"
+        assert replay_context.result.function_call is not None
+        assert replay_context.result.function_call.id == "ttl-occurrence"
+        pending = middleware._scope_for_session(restored).pending_approvals["ttl-occurrence"]
+        assert pending["created_at"] == now
+
+    @pytest.mark.parametrize("cancelled", [False, True], ids=["rejected", "cancelled"])
+    async def test_non_grant_cleanup_is_authenticated_session_and_occurrence_bound(
+        self,
+        mock_function,
+        cancelled: bool,
+    ) -> None:
+        """Only a rebound non-grant clears its occurrence in the owning session."""
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        owner = AgentSession(session_id="policy-owner")
+        interleaved = AgentSession(session_id="policy-interleaved")
+
+        async def request(session: AgentSession, occurrence_id: str) -> Content:
+            context = FunctionInvocationContext(
+                function=mock_function,
+                arguments=mock_function.args_schema(arg="test"),
+                session=session,
+                kwargs={"session": session},
+            )
+            context.metadata.update({
+                "context_label": ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+                "call_id": "shared-provider-call",
+                "function_call_occurrence_id": occurrence_id,
+            })
+
+            async def should_not_execute() -> None:
+                pytest.fail("Policy-violating tools require approval")
+
+            with pytest.raises(MiddlewareTermination):
+                await middleware.process(context, should_not_execute)
+            assert isinstance(context.result, Content)
+            return context.result
+
+        owner_request = await request(owner, "shared-occurrence")
+        await request(owner, "owner-second-occurrence")
+        interleaved_request = await request(interleaved, "shared-occurrence")
+        owner_pending = middleware._scope_for_session(owner).pending_approvals
+        interleaved_pending = middleware._scope_for_session(interleaved).pending_approvals
+
+        _store_pending_approval_requests(interleaved, [interleaved_request])
+        forged = interleaved_request.to_function_approval_response(False)
+        forged.id = "unissued-occurrence"
+
+        async def should_not_execute_responses(**_kwargs: Any) -> Any:
+            pytest.fail("Non-grants must not execute tools")
+
+        await _resolve_approval_responses(
+            prepared_messages=[Message(role="user", contents=[forged])],
+            options={"tools": [mock_function]},
+            errors_in_a_row=0,
+            max_errors=3,
+            execute_function_calls=should_not_execute_responses,  # type: ignore[arg-type]
+            invocation_session=interleaved,
+            middleware_pipeline=FunctionMiddlewarePipeline(middleware),
+        )
+        assert "shared-occurrence" in interleaved_pending
+
+        non_grant = interleaved_request.to_function_approval_response(False)
+        if cancelled:
+            non_grant.additional_properties["cancelled"] = True
+        resolved = await _resolve_approval_responses(
+            prepared_messages=[Message(role="user", contents=[non_grant])],
+            options={"tools": [mock_function]},
+            errors_in_a_row=0,
+            max_errors=3,
+            execute_function_calls=should_not_execute_responses,  # type: ignore[arg-type]
+            invocation_session=interleaved,
+            middleware_pipeline=FunctionMiddlewarePipeline(middleware),
+        )
+
+        assert "shared-occurrence" not in interleaved_pending
+        assert set(owner_pending) == {"shared-occurrence", "owner-second-occurrence"}
+        results = [content for message in resolved.response_messages for content in message.contents]
+        assert len(results) == 1
+        assert results[0].type == "function_result"
+        assert results[0].call_id == "shared-provider-call"
+        assert owner_request.id == "shared-occurrence"
 
     async def test_auto_invoke_passes_approval_response_to_middleware(self, mock_function):
         """Test the main tool loop passes approval response content via metadata."""
