@@ -137,14 +137,33 @@ class Param:
     """Reference one model-set search-tool parameter.
 
     An optional parameter without a default removes the containing filter when
-    omitted. Required parameters and parameters with defaults are substituted
-    before the filter reaches the vector store.
+    omitted. Otherwise, the supplied value or declared default is substituted
+    before the filter reaches the vector store. A missing required parameter
+    raises an error.
+
+    Set ``omit_if_none=True`` to remove the containing filter when the resolved
+    value is ``None`` (JSON ``null``). This requires a nullable ``value_type``
+    and an explicit ``default=None``, for example
+    ``Param("text", str | None, default=None, omit_if_none=True)``. Both an
+    absent argument and an explicit ``None`` then omit the filter. Non-None
+    values still undergo the declared type and constraint checks.
+
+    Omission removes the entire leaf, not the field value and not a boolean
+    ``True`` substitute. AND/OR groups evaluate their remaining children;
+    empty groups, including NOT groups whose child was removed, are removed
+    recursively. If the whole tree is removed, search receives no filter.
+    Fixed filters are retained. See ``FilterGroup`` for composition examples.
+
+    With ``omit_if_none=False`` (the default), ``None`` is an ordinary supplied
+    value subject to type and operator validation, not an omission request.
+    Null omission is only supported for filter parameters, not paging options.
     """
 
     name: str
     value_type: Any
     required: bool
     _default: Any
+    omit_if_none: bool
     description: str | None
     minimum: float | int | None
     maximum: float | int | None
@@ -158,6 +177,7 @@ class Param:
         *,
         required: bool = False,
         default: Any = _PARAM_UNSET,
+        omit_if_none: bool = False,
         description: str | None = None,
         minimum: float | int | None = None,
         maximum: float | int | None = None,
@@ -169,8 +189,12 @@ class Param:
         Args:
             name: The tool parameter name exposed to the model.
             value_type: The Python type used for schema generation and validation.
+                Must accept ``None``, such as ``str | None``, when ``omit_if_none=True``.
             required: Whether the model must supply the parameter.
             default: The value used when an optional parameter is omitted.
+                Must be explicitly set to ``None`` when ``omit_if_none=True``.
+            omit_if_none: Whether a resolved ``None`` removes the containing filter.
+                Requires a nullable type and ``default=None``; not supported for paging.
             description: The parameter description shown to the model.
             minimum: The inclusive minimum for numeric values.
             maximum: The inclusive maximum for numeric values.
@@ -178,13 +202,19 @@ class Param:
             max_length: The maximum length for string, array, or object values.
 
         Raises:
-            ValueError: If the name is invalid or a required parameter declares a default.
+            TypeError: If the annotation is unsupported or ``omit_if_none`` is not a boolean.
+            ValueError: If the name or constraints are invalid, a required parameter declares a default,
+                or ``omit_if_none=True`` is used without a nullable type and explicit ``default=None``.
         """
         _validate_name(name, kind="Parameter name", allow_path=False)
         if name == "query":
             raise ValueError("'query' is reserved by vector search tools.")
         if required and default is not _PARAM_UNSET:
             raise ValueError("A required parameter cannot declare a default.")
+        if not isinstance(omit_if_none, bool):
+            raise TypeError("Param omit_if_none must be a boolean.")
+        if omit_if_none and default is not None:
+            raise ValueError("Param omit_if_none=True requires an explicit default=None.")
         if minimum is not None and (isinstance(minimum, bool) or not math.isfinite(minimum)):
             raise ValueError("Param minimum must be a finite number.")
         if maximum is not None and (isinstance(maximum, bool) or not math.isfinite(maximum)):
@@ -205,6 +235,7 @@ class Param:
         object.__setattr__(self, "value_type", value_type)
         object.__setattr__(self, "required", required)
         object.__setattr__(self, "_default", deepcopy(default))
+        object.__setattr__(self, "omit_if_none", omit_if_none)
         object.__setattr__(self, "description", description)
         object.__setattr__(self, "minimum", minimum)
         object.__setattr__(self, "maximum", maximum)
@@ -289,6 +320,8 @@ def param_schema(param: Param) -> dict[str, Any]:
     """Build a JSON Schema property for a parameter without Pydantic."""
     schema = _schema_for_type(param.value_type)
     schema_types = _schema_types(schema)
+    if param.omit_if_none and "null" not in schema_types:
+        raise ValueError("Param omit_if_none=True requires a value type that accepts None.")
     non_null_schema_types = schema_types - {"null"}
     if (param.minimum is not None or param.maximum is not None) and (
         not non_null_schema_types or not non_null_schema_types <= {"integer", "number"}
@@ -456,7 +489,25 @@ def validate_param_value(param: Param, value: Any) -> Any:
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
 @dataclass(slots=True, init=False)
 class Filter:
-    """Describe one data-only vector store filter."""
+    """Describe one data-only vector store filter.
+
+    A ``Param`` must be the complete value of a leaf. In a search tool,
+    ``Filter("description", "contains_text",
+    Param("text", str | None, default=None, omit_if_none=True))`` is omitted
+    when ``text`` is absent or explicitly ``None`` (JSON ``null``).
+    ``omit_if_none=True`` requires both a nullable parameter type and an
+    explicit ``default=None``. Non-None arguments use normal operator
+    semantics; strings such as ``"*"`` are not special omission values.
+
+    Omission removes this leaf from its group rather than making it match
+    every record. Remaining AND/OR children still apply; a NOT group is
+    removed if its child is removed. Empty groups are removed recursively,
+    and removing the whole tree means search receives no filter.
+
+    With ``omit_if_none=False`` (the default), a supplied ``None`` is validated
+    as a value, not omitted. A literal ``Filter(..., value=None)`` does not
+    opt into omission either; use ``is_null`` to test for a null field.
+    """
 
     field_name: str
     operator: FilterOperator
@@ -494,7 +545,28 @@ class Filter:
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
 @dataclass(slots=True, init=False)
 class FilterGroup:
-    """Combine vector store filters with explicit boolean semantics."""
+    """Combine vector store filters with explicit boolean semantics.
+
+    Search tools resolve parameters before evaluating the group. An absent
+    optional parameter without a default removes its leaf. A parameter such
+    as ``Param("text", str | None, default=None, omit_if_none=True)`` also
+    removes its leaf for an explicit ``None`` (JSON ``null``). This opt-in
+    requires a nullable type and an explicit ``default=None``.
+
+    After omission, ``"and"`` requires all remaining children to match, and
+    ``"or"`` requires any remaining child to match. For example, combining
+    ``Filter("rating", "gte", 4)`` with an omitted text filter leaves only
+    the rating condition in either group. The omitted leaf is not replaced
+    with ``True``, which would make an OR group match every record.
+
+    A ``"not"`` group negates its remaining child; if that child is removed,
+    the NOT group is removed too. Any group left with no children is removed
+    recursively. If the whole tree disappears, search receives no filter;
+    other search options still apply. Fixed children are never omitted.
+
+    With ``omit_if_none=False`` (the default), explicit ``None`` values retain
+    normal type and operator validation rather than removing a child.
+    """
 
     operator: FilterGroupOperator
     filters: tuple[Filter | FilterGroup, ...]
@@ -620,12 +692,14 @@ def _resolve_param_value(
 ) -> Any:
     if isinstance(value, Param):
         if value.name in arguments:
-            return arguments[value.name]
-        if value.has_default:
-            return value.default
-        if value.required:
+            resolved = arguments[value.name]
+        elif value.has_default:
+            resolved = value.default
+        elif value.required:
             raise TypeError(f"Missing required search parameter '{value.name}'.")
-        return _OMIT_FILTER
+        else:
+            return _OMIT_FILTER
+        return _OMIT_FILTER if value.omit_if_none and resolved is None else resolved
     return deepcopy(value)
 
 

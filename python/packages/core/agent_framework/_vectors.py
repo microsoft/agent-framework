@@ -1835,6 +1835,9 @@ def create_vector_search_tool(
         top: A fixed result limit or a bounded model-set parameter.
         skip: A fixed result offset or a bounded model-set parameter.
         filter: A fixed filter that may contain model-set ``Param`` values.
+            A nullable ``Param`` with ``default=None`` and ``omit_if_none=True`` removes
+            its leaf for an absent or null argument. Remaining group children still apply;
+            empty groups are removed recursively. See ``FilterGroup`` for details.
         result_mapper: Maps each search response to text or one or more multimodal content items.
 
     Returns:
@@ -1990,6 +1993,8 @@ def _validate_search_tool_paging_param(
 ) -> None:
     if isinstance(option, int):
         return
+    if option.omit_if_none:
+        raise ValueError(f"The {option_name} Param does not support omit_if_none.")
     if not option.required and not option.has_default:
         raise ValueError(f"A model-set {option_name} Param must be required or declare a default.")
     parameter_schema = cast(Mapping[str, Any], cast(Mapping[str, Any], input_schema["properties"])[option.name])

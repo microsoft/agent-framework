@@ -257,6 +257,55 @@ async def test_in_memory_search_tool_resolves_params_without_weakening_fixed_fil
     assert len(await tool(query="hotel")) == 1
 
 
+async def test_in_memory_search_tool_omits_null_text_condition_in_and_group() -> None:
+    definition = VectorStoreCollectionDefinition(
+        [
+            VectorStoreField("key", name="id"),
+            VectorStoreField("data", name="description"),
+            VectorStoreField("data", name="rating"),
+            VectorStoreField("vector", name="vector", dimensions=2),
+        ],
+        collection_name="optional-text",
+    )
+    collection: InMemoryCollection[str, dict[str, Any]] = InMemoryCollection(
+        dict, definition=definition, embedding_generator=QueryEmbeddingClient()
+    )
+    await collection.ensure_collection_exists()
+    records = [
+        {"id": "text", "rating": 5, "description": "Pool hotel"},
+        {"id": "empty", "rating": 5, "description": ""},
+        {"id": "star", "rating": 5, "description": "5* hotel"},
+        {"id": "null", "rating": 5, "description": None},
+        {"id": "low", "rating": 3, "description": "Pool hotel"},
+    ]
+    await collection.upsert(
+        [{**record, "vector": [1.0, 0.0]} for record in records],
+        generate_vectors=False,
+    )
+    tool = create_vector_search_tool(
+        collection,
+        top=10,
+        filter=FilterGroup(
+            "and",
+            (
+                Filter("rating", "gte", 4),
+                Filter(
+                    "description",
+                    "contains_text",
+                    Param("text", str | None, default=None, omit_if_none=True),
+                ),
+            ),
+        ),
+        result_mapper=lambda response: response["record"]["id"],
+    )
+
+    assert {item.text for item in await tool(query="hotel")} == {"text", "empty", "star", "null"}
+    assert {item.text for item in await tool(query="hotel", text=None)} == {"text", "empty", "star", "null"}
+    assert {item.text for item in await tool(query="hotel", text="Pool")} == {"text"}
+    assert {item.text for item in await tool(query="hotel", text="")} == {"text", "empty", "star"}
+    assert {item.text for item in await tool(query="hotel", text="*")} == {"star"}
+
+
 @pytest.mark.parametrize(
     ("distance_function", "expected_scores"),
     [

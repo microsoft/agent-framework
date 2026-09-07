@@ -77,6 +77,10 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 - **`Filter` / `FilterGroup`** - Mutable data-only filter inputs shared by local and remote vector stores; collection
   operations validate and pass an independent snapshot to connectors
 - **`Param`** - Native typed search-tool parameter reference embedded in filter values or paging options
+  - Filter parameters may opt into null omission with a nullable type and explicit `default=None`, such as
+    `Param("text", str | None, default=None, omit_if_none=True)`; absent/null arguments remove that leaf, while
+    remaining AND/OR children still apply. Empty groups (including NOT with an omitted child) are removed
+    recursively; removing the whole tree means no filter. Paging parameters do not support null omission.
 - **`BaseVectorCollection`** - Base class for collection lifecycle and msgspec-backed record CRUD operations;
   upserts generate embeddings by default, retrieval excludes vectors by default, and filtered retrieval is an
   alternate mode to key lookup

@@ -325,7 +325,16 @@ Options considered:
 #### 4.2 — Derive search-tool parameters from filters
 - A `Param` used as a complete filter value defines its model-visible name, native type, default, and constraints
 - The tool factory emits a closed JSON Schema and resolves parameters before search
-- Optional unresolved parameters remove their containing filter; fixed filters remain unchanged
+- An absent optional parameter without a default removes its containing filter; fixed filters remain unchanged
+- `omit_if_none=True` also removes the leaf when its resolved argument is `None` (JSON `null`). It requires a
+  nullable type and an explicit `default=None`, for example
+  `Param("text", str | None, default=None, omit_if_none=True)`. Absent/null arguments omit the leaf; non-null
+  arguments retain normal type, constraint, and operator validation. This policy is not supported for paging.
+- AND/OR groups evaluate their remaining children, not a `True` replacement for an omitted leaf. Groups left
+  empty, including NOT groups whose child is removed, are removed recursively. If the whole tree is removed,
+  search receives no filter; other search options still apply.
+- Without the opt-in, explicit null values retain normal validation and provider semantics. Strings such as
+  `"*"` are literal filter values, not omission markers.
 
 #### 4.3 — Add `InMemoryCollection` and `InMemoryStore`
 - Dedicated `_in_memory.py` module

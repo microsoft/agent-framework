@@ -1733,6 +1733,164 @@ async def test_search_tool_param_edge_paths() -> None:
         await collection.search("query", filter=Filter("text", "provider.number", Decimal("NaN")))
 
 
+@pytest.mark.parametrize("value_type", [str, int, list[str | None]])
+def test_param_omit_if_none_requires_nullable_type(value_type: Any) -> None:
+    with pytest.raises(ValueError, match="value type that accepts None"):
+        Param("value", value_type, default=None, omit_if_none=True)
+
+
+def test_param_omit_if_none_requires_explicit_null_default() -> None:
+    with pytest.raises(ValueError, match="explicit default=None"):
+        Param("text", str | None, omit_if_none=True)
+    with pytest.raises(ValueError, match="explicit default=None"):
+        Param("text", str | None, default="hotel", omit_if_none=True)
+    with pytest.raises(ValueError, match="required parameter cannot declare a default"):
+        Param("text", str | None, required=True, default=None, omit_if_none=True)
+    with pytest.raises(TypeError, match="omit_if_none must be a boolean"):
+        Param("text", str | None, default=None, omit_if_none=cast(Any, "true"))
+
+
+async def test_param_omit_if_none_exposes_nullable_schema_and_validates_values() -> None:
+    param = Param("text", str | None, default=None, omit_if_none=True, max_length=8)
+    tool = create_vector_search_tool(MockCollection(), filter=Filter("text", "contains_text", param))
+
+    assert param.omit_if_none
+    assert param.has_default
+    assert param.default is None
+    assert tool.parameters()["properties"]["text"] == {
+        "anyOf": [{"type": "string", "maxLength": 8}, {"type": "null"}],
+        "default": None,
+    }
+    assert tool.parameters()["required"] == ["query"]
+    with pytest.raises(TypeError, match="does not match"):
+        await tool(query="query", text=123)
+    with pytest.raises(ValueError, match="longer than 8"):
+        await tool(query="query", text="too long a value")
+
+
+@pytest.mark.parametrize(
+    ("operator", "value_type", "supplied"),
+    [
+        ("contains_text", str | None, "hotel"),
+        ("contains_text", str | None, ""),
+        ("contains_text", str | None, "*"),
+        ("eq", Literal["hotel", None], "hotel"),
+        ("gte", float | None, 0),
+        ("in", list[str] | None, []),
+        ("provider.enabled", bool | None, False),
+    ],
+)
+async def test_search_tool_omits_only_null_param_values(operator: str, value_type: Any, supplied: Any) -> None:
+    collection = MockCollection()
+    param = Param("value", value_type, default=None, omit_if_none=True)
+    search_filter = Filter("text", operator, param)
+    tool = create_vector_search_tool(collection, filter=search_filter)
+
+    await tool(query="query")
+    assert collection.last_search_filter is None
+    await tool(query="query", value=None)
+    assert collection.last_search_filter is None
+    await tool(query="query", value=supplied)
+    assert collection.last_search_filter == Filter("text", operator, supplied)
+    await tool(query="query", value=None)
+    assert collection.last_search_filter is None
+    assert search_filter.value is param
+
+
+@pytest.mark.parametrize("operator", ["and", "or"])
+async def test_search_tool_null_omission_keeps_remaining_group_children(operator: Literal["and", "or"]) -> None:
+    collection = MockCollection()
+    param = Param("text", str | None, default=None, omit_if_none=True)
+    fixed = Filter("id", "eq", "one")
+    tool = create_vector_search_tool(
+        collection,
+        filter=FilterGroup(operator, (fixed, Filter("text", "contains_text", param))),
+    )
+
+    await tool(query="query")
+    assert collection.last_search_filter == FilterGroup(operator, (fixed,))
+    await tool(query="query", text=None)
+    assert collection.last_search_filter == FilterGroup(operator, (fixed,))
+    await tool(query="query", text="hotel")
+    assert collection.last_search_filter == FilterGroup(operator, (fixed, Filter("text", "contains_text", "hotel")))
+
+
+@pytest.mark.parametrize("operator", ["and", "or", "not"])
+@pytest.mark.parametrize("nested", [False, True])
+async def test_search_tool_null_omission_prunes_empty_groups(
+    operator: Literal["and", "or", "not"], nested: bool
+) -> None:
+    collection = MockCollection()
+    param = Param("text", str | None, default=None, omit_if_none=True)
+    fixed = Filter("id", "eq", "one")
+    group = FilterGroup(operator, (Filter("text", "contains_text", param),))
+    tool = create_vector_search_tool(
+        collection,
+        filter=FilterGroup("and", (fixed, group)) if nested else group,
+    )
+    expected = FilterGroup("and", (fixed,)) if nested else None
+
+    await tool(query="query")
+    assert collection.last_search_filter == expected
+    await tool(query="query", text=None)
+    assert collection.last_search_filter == expected
+    await tool(query="query", text="hotel")
+    resolved_group = FilterGroup(operator, (Filter("text", "contains_text", "hotel"),))
+    assert collection.last_search_filter == (FilterGroup("and", (fixed, resolved_group)) if nested else resolved_group)
+
+
+async def test_search_tool_null_omission_is_opt_in_per_parameter() -> None:
+    collection = MockCollection()
+    omitted = Param("text", str | None, default=None, omit_if_none=True)
+    retained = Param("native", str | None, default=None)
+    tool = create_vector_search_tool(
+        collection,
+        filter=FilterGroup(
+            "and",
+            (Filter("text", "contains_text", omitted), Filter("text", "provider.nullable", retained)),
+        ),
+    )
+
+    assert not retained.omit_if_none
+    await tool(query="query", text=None, native=None)
+    assert collection.last_search_filter == FilterGroup("and", (Filter("text", "provider.nullable", None),))
+    await tool(query="query")
+    assert collection.last_search_filter == FilterGroup("and", (Filter("text", "provider.nullable", None),))
+
+    strict_tool = create_vector_search_tool(collection, filter=Filter("text", "contains_text", retained))
+    with pytest.raises(ValueError, match="requires a value"):
+        await strict_tool(query="query", native=None)
+    with pytest.raises(ValueError, match="requires a value"):
+        await strict_tool(query="query")
+    with pytest.raises(ValueError, match="requires a value"):
+        Filter("text", "contains_text", None)
+
+
+def test_search_tool_rejects_conflicting_null_omission_policies() -> None:
+    with pytest.raises(ValueError, match="conflicting declarations"):
+        create_vector_search_tool(
+            MockCollection(),
+            filter=FilterGroup(
+                "and",
+                (
+                    Filter("text", "contains_text", Param("text", str | None, default=None, omit_if_none=True)),
+                    Filter("text", "provider.nullable", Param("text", str | None, default=None)),
+                ),
+            ),
+        )
+
+
+@pytest.mark.parametrize("option_name", ["top", "skip"])
+def test_search_tool_rejects_null_omission_for_paging(option_name: Literal["top", "skip"]) -> None:
+    param = Param(option_name, int | None, default=None, omit_if_none=True, minimum=1, maximum=10)
+    with pytest.raises(ValueError, match=f"{option_name} Param does not support omit_if_none"):
+        create_vector_search_tool(
+            MockCollection(),
+            top=param if option_name == "top" else 5,
+            skip=param if option_name == "skip" else 0,
+        )
+
+
 async def test_search_operations_snapshot_mutable_filters() -> None:
     collection = MockCollection()
     collection.mutate_search_filter = True
