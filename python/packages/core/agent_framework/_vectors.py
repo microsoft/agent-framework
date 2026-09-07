@@ -6,11 +6,11 @@ from __future__ import annotations
 
 import operator
 from abc import ABC, abstractmethod
-from ast import AST, Lambda, NodeVisitor, expr, parse
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, is_dataclass, replace
-from inspect import Parameter, getsource, signature
-from types import UnionType
+from inspect import Parameter, signature
+from types import NotImplementedType, UnionType
 from typing import (
     Annotated,
     Any,
@@ -39,30 +39,41 @@ from ._feature_stage import ExperimentalFeature, experimental
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._tools import FunctionTool
 from ._types import Content, EmbeddingGenerationOptions
+from ._vector_filters import (
+    FilterExpression,
+    Param,
+    iter_filter_params,
+    param_schema,
+    resolve_filter_params,
+    validate_filter,
+    validate_param_value,
+)
 from .exceptions import IntegrationException, IntegrationInvalidResponseException
 
 ModelT = TypeVar("ModelT", default=Any)
 KeyT = TypeVar("KeyT", default=Any)
-FilterT = TypeVar("FilterT")
 ResultT = TypeVar("ResultT")
 DecoratedModelT = TypeVar("DecoratedModelT")
 
 SearchType: TypeAlias = Literal["vector", "keyword_hybrid"]
 FieldTypes: TypeAlias = Literal["key", "vector", "data"]
-IndexKind: TypeAlias = Literal["hnsw", "flat", "ivf_flat", "disk_ann", "quantized_flat", "dynamic", "default"]
-DistanceFunction: TypeAlias = Literal[
-    "cosine_similarity",
-    "cosine_distance",
-    "dot_prod",
-    "euclidean_distance",
-    "euclidean_squared_distance",
-    "manhattan",
-    "hamming",
-    "DEFAULT",
-]
-Vector: TypeAlias = Sequence[float | int]
-RecordFilter: TypeAlias = Callable[[Any], bool] | str
-RecordFilters: TypeAlias = RecordFilter | Sequence[RecordFilter]
+IndexKind: TypeAlias = Literal["hnsw", "flat", "ivf_flat", "disk_ann", "quantized_flat", "dynamic", "default"] | str
+DistanceFunction: TypeAlias = (
+    Literal[
+        "cosine_similarity",
+        "cosine_distance",
+        "dot_prod",
+        "negative_dot_prod",
+        "euclidean_distance",
+        "euclidean_squared_distance",
+        "manhattan",
+        "hamming",
+        "DEFAULT",
+    ]
+    | str
+)
+Vector: TypeAlias = Sequence[float | int] | bytes | bytearray
+GenerateVectors: TypeAlias = bool | list[str] | tuple[str, ...]
 EmbeddingClient: TypeAlias = SupportsGetEmbeddings[Any, Any, Any]
 VectorModelEncoder: TypeAlias = Callable[[Any], Mapping[str, Any]]
 VectorModelDecoder: TypeAlias = Callable[[Mapping[str, Any]], Any]
@@ -71,31 +82,11 @@ _DEFAULT_SEARCH_TOOL_NAME: Final[str] = "search"
 _DEFAULT_SEARCH_TOOL_DESCRIPTION: Final[str] = (
     "Perform a vector search for data in a vector store using the provided query."
 )
-_INDEX_KINDS: Final[tuple[str, ...]] = (
-    "hnsw",
-    "flat",
-    "ivf_flat",
-    "disk_ann",
-    "quantized_flat",
-    "dynamic",
-    "default",
-)
-_DISTANCE_FUNCTIONS: Final[tuple[str, ...]] = (
-    "cosine_similarity",
-    "cosine_distance",
-    "dot_prod",
-    "euclidean_distance",
-    "euclidean_squared_distance",
-    "manhattan",
-    "hamming",
-    "DEFAULT",
-)
-
-
 DISTANCE_FUNCTION_DIRECTION_HELPER: Final[Mapping[DistanceFunction, Callable[[float | int, float | int], bool]]] = {
     "cosine_similarity": operator.ge,
     "cosine_distance": operator.le,
     "dot_prod": operator.ge,
+    "negative_dot_prod": operator.le,
     "euclidean_distance": operator.le,
     "euclidean_squared_distance": operator.le,
     "manhattan": operator.le,
@@ -103,9 +94,94 @@ DISTANCE_FUNCTION_DIRECTION_HELPER: Final[Mapping[DistanceFunction, Callable[[fl
 }
 
 
+class _FrozenMapping(Mapping[str, Any]):
+    """Backport the subset of Python 3.15 ``frozendict`` used here.
+
+    Replace this class with the built-in ``frozendict`` as soon as Python 3.15
+    is the minimum supported version. Keep its mapping, copy, union, hashing,
+    comparison, insertion-order, and pickle behavior aligned with PEP 814.
+    """
+
+    __slots__ = ("_data", "_hash")
+
+    def __init__(
+        self,
+        values: Mapping[str, Any] | Iterable[tuple[str, Any]] = (),
+        /,
+        **kwargs: Any,
+    ) -> None:
+        self._data = dict(values, **kwargs)
+        self._hash: int | None = None
+
+    def __getitem__(self, key: str) -> Any:
+        return self._data[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __hash__(self) -> int:
+        if self._hash is None:
+            self._hash = hash(frozenset(self._data.items()))
+        return self._hash
+
+    def copy(self) -> _FrozenMapping:
+        """Return a shallow copy, reusing this immutable instance."""
+        return self
+
+    def __copy__(self) -> _FrozenMapping:
+        return self
+
+    def __or__(self, other: Mapping[str, Any]) -> _FrozenMapping | NotImplementedType:
+        if not isinstance(other, Mapping):
+            return NotImplemented
+        return type(self)((*self.items(), *other.items()))
+
+    def __ror__(self, other: Mapping[str, Any]) -> _FrozenMapping | NotImplementedType:
+        if not isinstance(other, Mapping):
+            return NotImplemented
+        return type(self)((*other.items(), *self.items()))
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> _FrozenMapping:
+        return self
+
+    def __reduce__(self) -> tuple[type[_FrozenMapping], tuple[dict[str, Any]]]:
+        return type(self), (dict(self._data),)
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self._data!r})"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Mapping):
+            return False
+        return dict(self.items()) == dict(cast(Mapping[Any, Any], other).items())
+
+
+def _freeze_provider_annotation(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        annotations = cast(Mapping[Any, Any], value)
+        if any(not isinstance(key, str) for key in annotations):
+            raise TypeError("Provider annotation keys must be strings.")
+        return _FrozenMapping({cast(str, key): _freeze_provider_annotation(item) for key, item in annotations.items()})
+    if isinstance(value, list | tuple):
+        return tuple(_freeze_provider_annotation(item) for item in cast(Sequence[Any], value))
+    if isinstance(value, set | frozenset):
+        return frozenset(_freeze_provider_annotation(item) for item in cast(set[Any] | frozenset[Any], value))
+    frozen = deepcopy(value)
+    try:
+        hash(frozen)
+    except TypeError as exc:
+        raise TypeError("Provider annotation values must be immutable structured data.") from exc
+    return frozen
+
+
 def _msgspec_enc_hook(value: Any) -> Any:
     if isinstance(value, BaseModel):
         return value.model_dump()
+    if isinstance(value, Mapping):
+        return dict(cast(Mapping[Any, Any], value))
     to_list = getattr(value, "tolist", None)
     if callable(to_list):
         return to_list()
@@ -115,12 +191,18 @@ def _msgspec_enc_hook(value: Any) -> Any:
 
 
 def _normalize_vector(value: Any) -> Vector:
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, bytearray):
+        return bytes(value)
+    if isinstance(value, Sequence) and not isinstance(value, str):
         return cast(Vector, value)
     to_list = getattr(value, "tolist", None)
     if callable(to_list):
         converted = to_list()
-        if isinstance(converted, Sequence) and not isinstance(converted, (str, bytes, bytearray)):
+        if isinstance(converted, bytearray):
+            return bytes(converted)
+        if isinstance(converted, Sequence) and not isinstance(converted, str):
             return cast(Vector, converted)
     raise TypeError("The embedding client returned an unsupported vector type.")
 
@@ -140,6 +222,8 @@ class VectorStoreField:
     index_kind: IndexKind | None
     distance_function: DistanceFunction | None
     embedding_generator: EmbeddingClient | None
+    is_auto_generated: bool
+    provider_annotations: Mapping[str, Any]
 
     @overload
     def __init__(
@@ -149,6 +233,8 @@ class VectorStoreField:
         name: str | None = None,
         type_: str | None = None,
         storage_name: str | None = None,
+        is_auto_generated: bool = False,
+        provider_annotations: Mapping[str, Any] | None = None,
     ) -> None:
         """Initialize a key field.
 
@@ -157,6 +243,8 @@ class VectorStoreField:
             name: The model field name. The decorator supplies this when omitted.
             type_: The scalar type name used by the backing store.
             storage_name: The field name used by the backing store.
+            is_auto_generated: Whether the backing store generates missing key values.
+            provider_annotations: Provider-specific structured field configuration.
         """
         ...
 
@@ -170,6 +258,7 @@ class VectorStoreField:
         storage_name: str | None = None,
         is_indexed: bool | None = None,
         is_full_text_indexed: bool | None = None,
+        provider_annotations: Mapping[str, Any] | None = None,
     ) -> None:
         """Initialize a data field with optional indexing.
 
@@ -180,6 +269,7 @@ class VectorStoreField:
             storage_name: The field name used by the backing store.
             is_indexed: Whether the field should be indexed.
             is_full_text_indexed: Whether the field should have a full-text index.
+            provider_annotations: Provider-specific structured field configuration.
         """
         ...
 
@@ -195,6 +285,7 @@ class VectorStoreField:
         index_kind: IndexKind | None = None,
         distance_function: DistanceFunction | None = None,
         embedding_generator: EmbeddingClient | None = None,
+        provider_annotations: Mapping[str, Any] | None = None,
     ) -> None:
         """Initialize a vector field with required dimensions.
 
@@ -207,6 +298,7 @@ class VectorStoreField:
             index_kind: The vector index kind.
             distance_function: The vector distance function.
             embedding_generator: An optional client used to generate this field's embeddings.
+            provider_annotations: Provider-specific structured field configuration.
 
         Raises:
             ValueError: If dimensions or vector options are invalid.
@@ -226,6 +318,8 @@ class VectorStoreField:
         index_kind: IndexKind | None = None,
         distance_function: DistanceFunction | None = None,
         embedding_generator: EmbeddingClient | None = None,
+        is_auto_generated: bool = False,
+        provider_annotations: Mapping[str, Any] | None = None,
     ) -> None:
         """Initialize a vector store field.
 
@@ -240,6 +334,8 @@ class VectorStoreField:
             index_kind: The vector index kind.
             distance_function: The vector distance function.
             embedding_generator: An optional client used to generate this field's embeddings.
+            is_auto_generated: Whether a key field is generated by the backing store when missing.
+            provider_annotations: Provider-specific structured field configuration.
 
         Raises:
             ValueError: If field options are invalid.
@@ -253,16 +349,14 @@ class VectorStoreField:
         if field_type == "vector":
             if dimensions is None or dimensions <= 0:
                 raise ValueError("Vector fields must specify a positive number of dimensions.")
-            if index_kind is not None and index_kind not in _INDEX_KINDS:
-                raise ValueError(f"Unknown vector index kind '{index_kind}'.")
-            if distance_function is not None and distance_function not in _DISTANCE_FUNCTIONS:
-                raise ValueError(f"Unknown vector distance function '{distance_function}'.")
             resolved_dimensions = dimensions
             resolved_index_kind = index_kind or "default"
             resolved_distance_function = distance_function or "DEFAULT"
             resolved_embedding_generator = embedding_generator
         elif any(value is not None for value in (dimensions, index_kind, distance_function, embedding_generator)):
             raise ValueError("Vector-only options can only be set on vector fields.")
+        if field_type != "key" and is_auto_generated:
+            raise ValueError("Only key fields can be auto-generated.")
 
         object.__setattr__(self, "field_type", field_type)
         object.__setattr__(self, "name", name or "")
@@ -274,6 +368,12 @@ class VectorStoreField:
         object.__setattr__(self, "index_kind", resolved_index_kind)
         object.__setattr__(self, "distance_function", resolved_distance_function)
         object.__setattr__(self, "embedding_generator", resolved_embedding_generator)
+        object.__setattr__(self, "is_auto_generated", is_auto_generated)
+        object.__setattr__(
+            self,
+            "provider_annotations",
+            _freeze_provider_annotation(dict(provider_annotations or {})),
+        )
 
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
@@ -325,6 +425,12 @@ class VectorStoreCollectionDefinition:
         storage_names = [field.storage_name or field.name for field in self.fields]
         if len(storage_names) != len(set(storage_names)):
             raise ValueError("Vector store field storage names must be unique.")
+        name_set = set(names)
+        if any(
+            field.storage_name is not None and field.storage_name != field.name and field.storage_name in name_set
+            for field in self.fields
+        ):
+            raise ValueError("A vector store field storage name cannot match another field's model name.")
 
         key_fields = [field for field in self.fields if field.field_type == "key"]
         if len(key_fields) != 1:
@@ -371,14 +477,19 @@ class VectorStoreCollectionDefinition:
         """Get the data field names."""
         return [field.name for field in self.data_fields]
 
+    def try_get_field(self, field_name: str) -> VectorStoreField | None:
+        """Get a field by model or storage name."""
+        model_field = next((field for field in self.fields if field.name == field_name), None)
+        if model_field is not None:
+            return model_field
+        return next((field for field in self.fields if field.storage_name == field_name), None)
+
     def try_get_vector_field(self, field_name: str | None = None) -> VectorStoreField | None:
         """Get a vector field by model or storage name, defaulting to the first vector field."""
         if field_name is None:
             return self.vector_fields[0] if self.vector_fields else None
-        return next(
-            (field for field in self.vector_fields if field.name == field_name or field.storage_name == field_name),
-            None,
-        )
+        field = self.try_get_field(field_name)
+        return field if field is not None and field.field_type == "vector" else None
 
     def get_names(self, *, include_vector_fields: bool = True, include_key_field: bool = True) -> list[str]:
         """Get selected model field names."""
@@ -416,7 +527,12 @@ def _default_vector_model_encoder(record_type: type[Any]) -> VectorModelEncoder:
     def encode(value: Any) -> Mapping[str, Any]:
         if not isinstance(value, record_type):
             raise TypeError(f"Expected {record_type.__name__}, got {type(value).__name__}.")
-        converted = msgspec.to_builtins(value, str_keys=True, enc_hook=_msgspec_enc_hook)
+        converted = msgspec.to_builtins(
+            value,
+            str_keys=True,
+            builtin_types=(bytes, bytearray),
+            enc_hook=_msgspec_enc_hook,
+        )
         if not isinstance(converted, Mapping):
             raise TypeError(f"Vector model {record_type.__name__!r} must serialize to a mapping.")
         return cast(Mapping[str, Any], converted)
@@ -484,6 +600,14 @@ def register_vectorstoremodel(
                 "Vector fields omitted by include_vectors=False must declare defaults when using the default decoder. "
                 f"Add defaults or supply a custom decoder for: {', '.join(required_vector_fields)}."
             )
+        if is_dataclass(record_type) or issubclass(record_type, msgspec.Struct):
+            try:
+                msgspec.inspect.type_info(record_type)
+            except TypeError as exc:
+                raise ValueError(
+                    f"Vector model {record_type.__name__!r} is not supported by the default msgspec decoder: {exc}. "
+                    "Supply a custom decoder."
+                ) from exc
     resolved_encoder = (
         cast(VectorModelEncoder, encoder) if encoder is not None else _default_vector_model_encoder(record_type)
     )
@@ -533,6 +657,9 @@ def _infer_type_name(annotation: Any, *, vector: bool) -> str | None:
             if origin is not None and args:
                 candidate = next((arg for arg in args if arg is not Ellipsis), candidate)
                 return getattr(candidate, "__name__", str(candidate))
+        binary_candidate = next((candidate for candidate in candidates if candidate in (bytes, bytearray)), None)
+        if binary_candidate is not None:
+            return binary_candidate.__name__
     candidate = candidates[0] if candidates else annotation
     origin = get_origin(candidate)
     return getattr(origin or candidate, "__name__", None)
@@ -806,15 +933,15 @@ class _VectorStoreRecordHandler(Generic[KeyT, ModelT]):
         self,
         records: ModelT | Sequence[ModelT],
         *,
-        generate_vectors: bool = True,
+        generate_vectors: GenerateVectors = True,
         context: Mapping[str, Any] | None = None,
     ) -> Any:
         """Serialize one or more application records for the backing store.
 
         Args:
             records: One application record or a sequence of records.
-            generate_vectors: Whether to generate vector values, overwriting any supplied values. When ``False``,
-                supplied values are preserved.
+            generate_vectors: Whether to generate all vector fields, preserve all supplied values, or generate only
+                the vector fields named in a sequence. Generated values overwrite supplied values.
             context: Connector-specific serialization context.
 
         Raises:
@@ -827,8 +954,9 @@ class _VectorStoreRecordHandler(Generic[KeyT, ModelT]):
         input_records = list(cast(Sequence[ModelT], records)) if is_batch else [cast(ModelT, records)]
         dict_records = [self._serialize_record_to_dict(record) for record in input_records]
 
-        if generate_vectors:
-            await self._add_vectors_to_records(dict_records)
+        vector_fields = self._resolve_vector_fields_to_generate(generate_vectors)
+        if vector_fields:
+            await self._add_vectors_to_records(dict_records, vector_fields=vector_fields)
         store_models = list(self._serialize_dicts_to_store_models(dict_records, context=context))
 
         if len(store_models) != len(dict_records):
@@ -852,7 +980,12 @@ class _VectorStoreRecordHandler(Generic[KeyT, ModelT]):
 
     @staticmethod
     def _to_builtin_mapping(record: Any) -> Mapping[str, Any]:
-        converted = msgspec.to_builtins(record, str_keys=True, enc_hook=_msgspec_enc_hook)
+        converted = msgspec.to_builtins(
+            record,
+            str_keys=True,
+            builtin_types=(bytes, bytearray),
+            enc_hook=_msgspec_enc_hook,
+        )
         if not isinstance(converted, Mapping):
             raise TypeError("Vector records must serialize to mappings.")
         return cast(Mapping[str, Any], converted)
@@ -864,14 +997,47 @@ class _VectorStoreRecordHandler(Generic[KeyT, ModelT]):
                 value = source[field.name]
             elif field.storage_name is not None and field.storage_name in source:
                 value = source[field.storage_name]
+            elif field.field_type == "key" and field.is_auto_generated:
+                continue
             else:
                 raise ValueError(f"Record is missing vector store field '{field.name}'.")
+            if field.field_type == "key" and field.is_auto_generated and value is None:
+                continue
+            if field.field_type == "vector" and isinstance(value, bytearray):
+                value = bytes(value)
             serialized[field.storage_name or field.name] = value
         return serialized
 
-    async def _add_vectors_to_records(self, records: Sequence[dict[str, Any]]) -> None:
+    def _resolve_vector_fields_to_generate(
+        self,
+        generate_vectors: GenerateVectors,
+    ) -> tuple[VectorStoreField, ...]:
+        if isinstance(generate_vectors, bool):
+            return tuple(self.definition.vector_fields) if generate_vectors else ()
+        if not _is_non_string_sequence(generate_vectors) or any(
+            not isinstance(field_name, str) for field_name in generate_vectors
+        ):
+            raise TypeError("generate_vectors must be a boolean or a sequence of vector field names.")
+        field_names = list(cast(Sequence[str], generate_vectors))
+        if len(field_names) != len(set(field_names)):
+            raise ValueError("generate_vectors field names must be unique.")
+        vector_fields = {field.name: field for field in self.definition.vector_fields}
+        unknown = sorted(set(field_names) - set(vector_fields))
+        if unknown:
+            raise ValueError(f"Unknown vector field(s) in generate_vectors: {', '.join(unknown)}.")
+        selected = set(field_names)
+        return tuple(field for field in self.definition.vector_fields if field.name in selected)
+
+    async def _add_vectors_to_records(
+        self,
+        records: Sequence[dict[str, Any]],
+        *,
+        vector_fields: Sequence[VectorStoreField],
+    ) -> None:
+        if not records:
+            return
         field_generators: list[tuple[VectorStoreField, EmbeddingClient]] = []
-        for field in self.definition.vector_fields:
+        for field in vector_fields:
             embedding_generator = field.embedding_generator or self.embedding_generator
             if embedding_generator is None:
                 raise ValueError(
@@ -1029,6 +1195,7 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         self,
         *,
         keys: Sequence[KeyT] | None = None,
+        filter: FilterExpression | None = None,
         top: int = 10,
         skip: int = 0,
         order_by: Mapping[str, bool] | None = None,
@@ -1052,15 +1219,21 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         self,
         records: Sequence[ModelT],
         *,
-        generate_vectors: bool = True,
+        generate_vectors: GenerateVectors = True,
         operation_options: Mapping[str, Any] | None = None,
     ) -> Sequence[KeyT]:
         """Upsert a batch of records.
 
+        A connector may partially persist a batch before reporting an error; the
+        abstraction does not guarantee rollback or atomicity. Retrying records
+        with stable application-provided keys should be idempotent when the
+        backing store supports ordinary upsert semantics. Retrying records whose
+        keys are generated by the store may create duplicates.
+
         Args:
             records: A sequence of models.
-            generate_vectors: Whether to generate vector values, overwriting any supplied values. When ``False``,
-                supplied values are preserved.
+            generate_vectors: Whether to generate all vector fields, preserve all supplied values, or generate only
+                the vector fields named in a sequence. Generated values overwrite supplied values.
             operation_options: Store-specific operation options.
 
         Returns:
@@ -1079,7 +1252,7 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
             serialized = await self.serialize(records, generate_vectors=generate_vectors)
             store_records = list(serialized) if _is_non_string_sequence(serialized) else [serialized]
             keys = list(await self._inner_upsert(store_records, operation_options=operation_options))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, NotImplementedError):
             raise
         except IntegrationException:
             raise
@@ -1097,6 +1270,7 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         self,
         keys: Sequence[KeyT] | None = None,
         *,
+        filter: FilterExpression | None = None,
         top: int = 10,
         skip: int = 0,
         order_by: Mapping[str, bool] | None = None,
@@ -1107,6 +1281,7 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
 
         Args:
             keys: A sequence of keys, or ``None`` to list a page of records.
+            filter: A portable data-only filter used when listing records.
             top: The maximum number of records returned when listing.
             skip: The number of records skipped when listing.
             order_by: Field names mapped to ascending (``True``) or descending (``False``) order.
@@ -1117,7 +1292,7 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
             A sequence of models. Keys that do not exist are omitted.
 
         Raises:
-            ValueError: If paging arguments are invalid.
+            ValueError: If paging arguments or filters are invalid, or keys and a filter are supplied together.
             TypeError: If keys or a returned record has an unsupported type.
             IntegrationException: If retrieval fails.
         """
@@ -1125,15 +1300,22 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         _validate_paging(top=top, skip=skip)
         if keys is not None and not _is_non_string_sequence(keys):
             raise TypeError("keys must be a sequence.")
+        if keys is not None and filter is not None:
+            raise ValueError("keys and filter are alternate retrieval modes and cannot be combined.")
+        if filter is not None:
+            validate_filter(filter, field_names=self.definition.names)
         try:
             records = await self._inner_get(
                 keys=keys,
+                filter=filter,
                 top=top,
                 skip=skip,
                 order_by=order_by,
                 include_vectors=include_vectors,
                 operation_options=operation_options,
             )
+        except (TypeError, ValueError, NotImplementedError):
+            raise
         except IntegrationException:
             raise
         except Exception as exc:
@@ -1251,15 +1433,6 @@ class BaseVectorStore(ABC):
         ...
 
 
-class _LambdaVisitor(NodeVisitor, Generic[FilterT]):
-    def __init__(self, lambda_parser: Callable[[expr], FilterT]) -> None:
-        self.lambda_parser = lambda_parser
-        self.output_filters: list[FilterT] = []
-
-    def visit_Lambda(self, node: Lambda) -> None:
-        self.output_filters.append(self.lambda_parser(node.body))
-
-
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
 class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
     """Base class for vector and keyword-hybrid search."""
@@ -1271,7 +1444,7 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         self,
         *,
         search_type: SearchType,
-        filter: Any | list[Any] | None = None,
+        filter: FilterExpression | None = None,
         values: Any | None = None,
         vector: Vector | None = None,
         top: int = 3,
@@ -1295,11 +1468,6 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         """Extract a score from one raw search result."""
         ...
 
-    @abstractmethod
-    def _lambda_parser(self, node: AST) -> Any:
-        """Translate one lambda expression body into a store filter."""
-        ...
-
     @overload
     async def search(
         self,
@@ -1307,7 +1475,7 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         *,
         search_type: SearchType = "vector",
         vector: Vector | None = None,
-        filter: RecordFilters | None = None,
+        filter: FilterExpression | None = None,
         top: int = 3,
         skip: int = 0,
         include_vectors: bool = False,
@@ -1322,7 +1490,7 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
             values: The value to search for or vectorize.
             search_type: Whether to perform vector or keyword-hybrid search.
             vector: An optional precomputed query vector.
-            filter: One or more lambda filters.
+            filter: A portable data-only filter.
             top: The maximum number of results.
             skip: The number of results to skip.
             include_vectors: Whether returned records include vector fields.
@@ -1348,7 +1516,7 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         *,
         search_type: Literal["vector"] = "vector",
         vector: Vector,
-        filter: RecordFilters | None = None,
+        filter: FilterExpression | None = None,
         top: int = 3,
         skip: int = 0,
         include_vectors: bool = False,
@@ -1362,7 +1530,7 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         Args:
             search_type: The vector search type.
             vector: The precomputed query vector.
-            filter: One or more lambda filters.
+            filter: A portable data-only filter.
             top: The maximum number of results.
             skip: The number of results to skip.
             include_vectors: Whether returned records include vector fields.
@@ -1388,7 +1556,7 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         *,
         search_type: SearchType = "vector",
         vector: Vector | None = None,
-        filter: RecordFilters | None = None,
+        filter: FilterExpression | None = None,
         top: int = 3,
         skip: int = 0,
         include_vectors: bool = False,
@@ -1403,7 +1571,7 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
             values: The value to search for or vectorize.
             search_type: Whether to perform vector or keyword-hybrid search.
             vector: A precomputed query vector.
-            filter: One or more lambda filters.
+            filter: A portable data-only filter.
             top: The maximum number of results.
             skip: The number of results to skip.
             include_vectors: Whether returned records include vector fields.
@@ -1443,10 +1611,11 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
                     values,
                     vector_property_name=vector_property_name,
                 )
-            translated_filter = self._build_filter(filter)
+            if filter is not None:
+                validate_filter(filter, field_names=self.definition.names)
             raw_results = await self._inner_search(
                 search_type=search_type,
-                filter=translated_filter,
+                filter=filter,
                 values=values,
                 vector=resolved_vector,
                 top=top,
@@ -1466,7 +1635,7 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
                 ),
                 metadata=raw_results.metadata,
             )
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, NotImplementedError):
             raise
         except IntegrationException:
             raise
@@ -1486,6 +1655,11 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
             raise ValueError("A score threshold requires a vector field.")
         if vector_field.distance_function == "DEFAULT":
             raise ValueError("A score threshold requires an explicit distance function on the vector field.")
+        if vector_field.distance_function not in DISTANCE_FUNCTION_DIRECTION_HELPER:
+            raise ValueError(
+                f"A score threshold requires a known comparison direction for "
+                f"distance function '{vector_field.distance_function}'."
+            )
 
     async def _generate_vector_from_values(
         self,
@@ -1511,30 +1685,6 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
             )
         generated_vector = embeddings[0].vector
         return _normalize_vector(generated_vector)
-
-    def _build_filter(self, search_filter: RecordFilters | None) -> Any | list[Any] | None:
-        """Translate lambda filters with the connector's AST parser."""
-        if not search_filter:
-            return None
-        filters: list[RecordFilter]
-        if _is_non_string_sequence(search_filter) and not callable(search_filter):
-            filters = cast(list[RecordFilter], list(search_filter))
-        else:
-            filters = [cast(RecordFilter, search_filter)]
-        visitor = _LambdaVisitor(self._lambda_parser)
-        try:
-            for filter_item in filters:
-                source = (
-                    filter_item
-                    if isinstance(filter_item, str)
-                    else getsource(cast(Callable[..., Any], filter_item)).strip()
-                )
-                visitor.visit(parse(source))
-        except (OSError, SyntaxError, TypeError) as exc:
-            raise ValueError(f"Unable to parse vector search filter: {exc}") from exc
-        if not visitor.output_filters:
-            raise ValueError("No lambda expression was found in the vector search filter.")
-        return visitor.output_filters[0] if len(visitor.output_filters) == 1 else visitor.output_filters
 
     def _get_search_results_from_results(
         self,
@@ -1615,23 +1765,24 @@ class SupportsVectorUpsert(Protocol[KeyT, ModelT]):
         self,
         records: Sequence[ModelT],
         *,
-        generate_vectors: bool = True,
+        generate_vectors: GenerateVectors = True,
         operation_options: Mapping[str, Any] | None = None,
     ) -> Sequence[KeyT]:
-        """Upsert a batch of records, generating embeddings by default."""
+        """Upsert a batch, which may partially succeed, generating embeddings by default."""
         ...
 
     async def get(
         self,
         keys: Sequence[KeyT] | None = None,
         *,
+        filter: FilterExpression | None = None,
         top: int = 10,
         skip: int = 0,
         order_by: Mapping[str, bool] | None = None,
         include_vectors: bool = False,
         operation_options: Mapping[str, Any] | None = None,
     ) -> Sequence[ModelT]:
-        """Get records by keys or list a page of records, excluding vectors by default."""
+        """Get records by keys or filter, or list a page of records, excluding vectors by default."""
         ...
 
     async def delete(
@@ -1656,7 +1807,7 @@ class SupportsVectorSearch(Protocol[ModelT]):
         *,
         search_type: SearchType = "vector",
         vector: Vector | None = None,
-        filter: RecordFilters | None = None,
+        filter: FilterExpression | None = None,
         top: int = 3,
         skip: int = 0,
         include_vectors: bool = False,
@@ -1671,7 +1822,7 @@ class SupportsVectorSearch(Protocol[ModelT]):
             values: The value to search for or vectorize.
             search_type: Whether to perform vector or keyword-hybrid search.
             vector: An optional precomputed query vector.
-            filter: One or more lambda filters.
+            filter: A portable data-only filter.
             top: The maximum number of results.
             skip: The number of results to skip.
             include_vectors: Whether returned records include vector fields.
@@ -1697,7 +1848,7 @@ class SupportsVectorSearch(Protocol[ModelT]):
         *,
         search_type: Literal["vector"] = "vector",
         vector: Vector,
-        filter: RecordFilters | None = None,
+        filter: FilterExpression | None = None,
         top: int = 3,
         skip: int = 0,
         include_vectors: bool = False,
@@ -1711,7 +1862,7 @@ class SupportsVectorSearch(Protocol[ModelT]):
         Args:
             search_type: The vector search type.
             vector: The precomputed query vector.
-            filter: One or more lambda filters.
+            filter: A portable data-only filter.
             top: The maximum number of results.
             skip: The number of results to skip.
             include_vectors: Whether returned records include vector fields.
@@ -1740,11 +1891,9 @@ def create_vector_search_tool(
     description: str = _DEFAULT_SEARCH_TOOL_DESCRIPTION,
     approval_mode: Literal["always_require", "never_require"] = "never_require",
     search_type: SearchType = "vector",
-    parameters: type[BaseModel] | Mapping[str, Any] | None = None,
-    top: int = 5,
-    skip: int = 0,
-    filter: RecordFilters | None = None,
-    filter_mapper: Callable[[RecordFilters | None, Mapping[str, Any]], RecordFilters | None] | None = None,
+    top: int | Param = 5,
+    skip: int | Param = 0,
+    filter: FilterExpression | None = None,
     result_mapper: Callable[[SearchResponse[ModelT]], str | Content | Sequence[Content]] | None = None,
 ) -> FunctionTool:
     """Create an agent-usable tool backed by vector search.
@@ -1755,51 +1904,74 @@ def create_vector_search_tool(
         description: The tool description shown to the model.
         approval_mode: Whether the tool requires approval before invocation.
         search_type: Whether the tool performs vector or keyword-hybrid search.
-        parameters: A Pydantic model or JSON schema declaring the tool parameters.
-            It must declare ``query`` as a required string. A custom schema can
-            expose ``top`` and ``skip`` as integers with finite ``maximum`` values;
-            additional fields are passed to ``filter_mapper``.
-        top: The default result limit and the maximum when ``parameters`` does not expose ``top``.
-        skip: The default offset and the maximum when ``parameters`` does not expose ``skip``.
-        filter: A fixed filter applied to each tool invocation.
-        filter_mapper: Maps additional declared tool arguments to search filters.
-            The default creates equality filters for each additional argument.
+        top: A fixed result limit or a bounded model-set parameter.
+        skip: A fixed result offset or a bounded model-set parameter.
+        filter: A fixed filter that may contain model-set ``Param`` values.
         result_mapper: Maps each search response to text or one or more multimodal content items.
 
     Returns:
-        A function tool with only a ``query`` parameter by default. Custom parameters can expose
-        ``top``, ``skip``, and fields mapped into filters by ``filter_mapper``.
+        A function tool with ``query`` and any parameters discovered in ``filter``, ``top``, or ``skip``.
 
     Raises:
-        ValueError: If parameters or paging limits are invalid.
+        TypeError: If a parameter annotation or default is invalid.
+        ValueError: If filters, parameters, or paging limits are invalid.
         NotImplementedError: If the search type is unsupported.
     """
-    _validate_paging(top=top, skip=skip)
-    map_filter = filter_mapper or _default_search_filter_mapper
+    if isinstance(top, bool) or isinstance(skip, bool):
+        raise TypeError("top and skip must be integers or Param instances.")
+    if not isinstance(top, int | Param) or not isinstance(skip, int | Param):
+        raise TypeError("top and skip must be integers or Param instances.")
+    if isinstance(top, int):
+        _validate_paging(top=top, skip=0)
+    if isinstance(skip, int):
+        _validate_paging(top=1, skip=skip)
+
     map_result = result_mapper or _default_search_result_mapper
-    input_model = parameters if parameters is not None else _default_search_tool_parameters()
-    max_top, max_skip = _validate_search_tool_parameters(
-        input_model,
-        default_top=top,
-        default_skip=skip,
+    input_schema, param_definitions = _create_search_tool_input_schema(
+        filter=filter,
+        top=top,
+        skip=skip,
     )
+    _validate_search_tool_paging_param("top", top, input_schema)
+    _validate_search_tool_paging_param("skip", skip, input_schema)
+    definition = getattr(search, "definition", None)
+    if filter is not None and isinstance(definition, VectorStoreCollectionDefinition):
+        validate_filter(filter, field_names=definition.names, allow_params=True)
 
     async def search_tool(**arguments: Any) -> list[Content]:
-        query = arguments.pop("query")
+        unexpected = sorted(set(arguments) - set(cast(Mapping[str, Any], input_schema["properties"])))
+        if unexpected:
+            raise TypeError(f"Unexpected argument(s) for '{name}': {', '.join(unexpected)}")
+        missing = sorted(set(cast(Sequence[str], input_schema["required"])) - set(arguments))
+        if missing:
+            raise TypeError(f"Missing required argument(s) for '{name}': {', '.join(missing)}")
+        query = arguments.get("query")
         if not isinstance(query, str):
             raise TypeError("The search tool 'query' argument must be a string.")
-        invocation_top = arguments.pop("top", top)
-        invocation_skip = arguments.pop("skip", skip)
+        validated_arguments = {
+            parameter_name: validate_param_value(param, arguments[parameter_name])
+            for parameter_name, param in param_definitions.items()
+            if parameter_name in arguments
+            and not (arguments[parameter_name] is None and not param.required and not param.has_default)
+        }
+        resolved_arguments = {
+            **{
+                parameter_name: param.default
+                for parameter_name, param in param_definitions.items()
+                if param.has_default
+            },
+            **validated_arguments,
+        }
+        invocation_top = _resolve_search_tool_option("top", top, resolved_arguments)
+        invocation_skip = _resolve_search_tool_option("skip", skip, resolved_arguments)
         _validate_paging(top=invocation_top, skip=invocation_skip)
-        if invocation_top > max_top:
-            raise ValueError(f"top must not exceed the configured maximum of {max_top}.")
-        if invocation_skip > max_skip:
-            raise ValueError(f"skip must not exceed the configured maximum of {max_skip}.")
-        dynamic_filter = map_filter(filter, arguments)
+        resolved_filter = resolve_filter_params(filter, resolved_arguments) if filter is not None else None
+        if resolved_filter is not None and isinstance(definition, VectorStoreCollectionDefinition):
+            validate_filter(resolved_filter, field_names=definition.names)
         results = await search.search(
             query,
             search_type=search_type,
-            filter=dynamic_filter,
+            filter=resolved_filter,
             top=invocation_top,
             skip=invocation_skip,
         )
@@ -1823,7 +1995,7 @@ def create_vector_search_tool(
         description=description,
         approval_mode=approval_mode,
         func=search_tool,
-        input_model=input_model,
+        input_model=input_schema,
     )
 
 
@@ -1842,78 +2014,79 @@ async def _as_async_iterable(
         yield value
 
 
-def _default_search_tool_parameters() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "The query to search for.",
-            },
-        },
-        "required": ["query"],
-        "additionalProperties": False,
-    }
-
-
-def _validate_search_tool_parameters(
-    parameters: type[BaseModel] | Mapping[str, Any],
+def _create_search_tool_input_schema(
     *,
-    default_top: int,
-    default_skip: int,
-) -> tuple[int, int]:
-    schema: Mapping[str, Any] = parameters.model_json_schema() if isinstance(parameters, type) else parameters
-    raw_properties = schema.get("properties")
-    if not isinstance(raw_properties, Mapping):
-        raise ValueError("Search tool parameters must define object properties.")
-    properties = cast(Mapping[str, Any], raw_properties)
-    query_schema = properties.get("query")
-    required = schema.get("required")
-    query_type = cast(Mapping[str, Any], query_schema).get("type") if isinstance(query_schema, Mapping) else None
-    if (
-        not isinstance(query_schema, Mapping)
-        or query_type != "string"
-        or not _is_non_string_sequence(required)
-        or "query" not in required
-    ):
-        raise ValueError("Search tool parameters must define 'query' as a required string.")
+    filter: FilterExpression | None,
+    top: int | Param,
+    skip: int | Param,
+) -> tuple[dict[str, Any], dict[str, Param]]:
+    params = [*iter_filter_params(filter)] if filter is not None else []
+    params.extend(option for option in (top, skip) if isinstance(option, Param))
+    definitions: dict[str, Param] = {}
 
-    limits = {"top": default_top, "skip": default_skip}
-    for name, minimum in (("top", 1), ("skip", 0)):
-        parameter_schema = properties.get(name)
-        if parameter_schema is None:
+    for param in params:
+        existing = definitions.get(param.name)
+        if existing is not None:
+            if existing != param:
+                raise ValueError(f"Search parameter '{param.name}' has conflicting declarations.")
             continue
-        if not isinstance(parameter_schema, Mapping):
-            raise ValueError(f"Search tool parameter '{name}' must be an integer.")
-        typed_parameter_schema = cast(Mapping[str, Any], parameter_schema)
-        if typed_parameter_schema.get("type") != "integer":
-            raise ValueError(f"Search tool parameter '{name}' must be an integer.")
-        maximum = typed_parameter_schema.get("maximum")
-        if not isinstance(maximum, int) or isinstance(maximum, bool) or maximum < minimum:
-            raise ValueError(f"Search tool parameter '{name}' must declare an integer maximum of at least {minimum}.")
-        configured_default = default_top if name == "top" else default_skip
-        if configured_default > maximum:
-            raise ValueError(f"Configured {name}={configured_default} exceeds the parameter maximum of {maximum}.")
-        limits[name] = maximum
-    return limits["top"], limits["skip"]
+        definitions[param.name] = param
+        if param.has_default:
+            validate_param_value(param, param.default)
+
+    properties = {
+        "query": {
+            "type": "string",
+            "description": "The query to search for.",
+        },
+        **{name: param_schema(param) for name, param in definitions.items()},
+    }
+    required = ["query", *(name for name, param in definitions.items() if param.required)]
+    return (
+        {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": False,
+        },
+        definitions,
+    )
 
 
-def _default_search_filter_mapper(
-    search_filter: RecordFilters | None,
+def _validate_search_tool_paging_param(
+    option_name: Literal["top", "skip"],
+    option: int | Param,
+    input_schema: Mapping[str, Any],
+) -> None:
+    if isinstance(option, int):
+        return
+    if not option.required and not option.has_default:
+        raise ValueError(f"A model-set {option_name} Param must be required or declare a default.")
+    parameter_schema = cast(Mapping[str, Any], cast(Mapping[str, Any], input_schema["properties"])[option.name])
+    minimum = parameter_schema.get("minimum")
+    maximum = parameter_schema.get("maximum")
+    required_minimum = 1 if option_name == "top" else 0
+    if parameter_schema.get("type") != "integer":
+        raise ValueError(f"The {option_name} Param must use an integer annotation.")
+    if not isinstance(minimum, int | float) or isinstance(minimum, bool) or minimum < required_minimum:
+        raise ValueError(f"The {option_name} Param must declare a minimum of at least {required_minimum}.")
+    if not isinstance(maximum, int) or isinstance(maximum, bool) or maximum < required_minimum:
+        raise ValueError(f"The {option_name} Param must declare a finite integer maximum.")
+
+
+def _resolve_search_tool_option(
+    option_name: Literal["top", "skip"],
+    option: int | Param,
     arguments: Mapping[str, Any],
-) -> RecordFilters | None:
-    dynamic_filters: list[RecordFilter] = []
-    for name, value in arguments.items():
-        if not name.isidentifier():
-            raise ValueError(f"Search tool parameter '{name}' cannot be mapped to a model field.")
-        dynamic_filters.append(f"lambda record: record.{name} == {value!r}")
-    if not dynamic_filters:
-        return search_filter
-    if search_filter is None:
-        return dynamic_filters
-    if _is_non_string_sequence(search_filter) and not callable(search_filter):
-        return [*cast(Sequence[RecordFilter], search_filter), *dynamic_filters]
-    return [cast(RecordFilter, search_filter), *dynamic_filters]
+) -> int:
+    if isinstance(option, int):
+        return option
+    if option.name not in arguments:
+        raise TypeError(f"Missing search parameter '{option.name}' for {option_name}.")
+    value = arguments[option.name]
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TypeError(f"Search parameter '{option.name}' for {option_name} must be an integer.")
+    return value
 
 
 def _default_search_result_mapper(response: SearchResponse[Any]) -> str:

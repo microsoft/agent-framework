@@ -65,17 +65,30 @@ agent_framework/
 - **`@tool`** decorator - Converts functions to tools
 - **`use_function_invocation()`** - Decorator to add automatic function calling to chat clients
 
-### Vector stores (`_vectors.py`)
+### Vector stores
 
 The vector store API is experimental under the shared `VECTOR_STORES` feature ID.
 
 - **`@vectorstoremodel`** - Declares key, data, and vector fields on dataclasses, Pydantic models, and plain classes
 - **`register_vectorstoremodel`** - Registers one definition and msgspec-backed codec pair per model type
+- **`VectorStoreField`** - Immutable key/data/vector metadata; common index and distance values remain open to
+  provider-defined strings, key fields can be store-generated, and `provider_annotations` carries structured
+  connector-specific field configuration
+- **`Filter` / `FilterGroup`** - Immutable, data-only filter tree shared by local and remote vector stores
+- **`Param`** - Native typed search-tool parameter reference embedded in filter values or paging options
 - **`BaseVectorCollection`** - Base class for collection lifecycle and msgspec-backed record CRUD operations;
-  upserts generate embeddings by default and retrieval excludes vectors by default
+  upserts generate embeddings by default, retrieval excludes vectors by default, and filtered retrieval is an
+  alternate mode to key lookup
+- **Embedding generation selection** - `generate_vectors=True` regenerates every vector field, `False` preserves all
+  values, and a list or tuple of logical vector field names generates only those fields so connectors can combine
+  local, precomputed, and provider-side vectorization
+- **Vector payloads** - Shared dense query/generated vectors accept numeric sequences and binary bytes; connectors
+  declare supported element/representation types. Sparse vectors remain provider-native through codecs or
+  `search(values=...)`, not a core sparse type.
 - **`BaseVectorStore`** - Base class for stores that create collection clients
 - **`BaseVectorSearch`** - Base class for vector and keyword-hybrid search
 - **`create_vector_search_tool`** - Creates an agent tool from any `SupportsVectorSearch` implementation
+- **`InMemoryCollection` / `InMemoryStore`** - Dependency-free, process-local development and test implementation
 - **`SupportsVectorUpsert`** / **`SupportsVectorSearch`** - Structural protocols for vector store capabilities
 
 ### Middleware (`_middleware.py`)
