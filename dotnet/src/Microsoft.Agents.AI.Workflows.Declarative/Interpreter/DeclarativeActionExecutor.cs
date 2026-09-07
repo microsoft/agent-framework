@@ -104,7 +104,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
         catch (Exception exception)
         {
             Debug.WriteLine($"ERROR [{this.Id}] {exception.GetType().Name}\n{exception.Message}");
-            throw new DeclarativeActionException($"Unhandled workflow failure - #{this.Id} ({this.Model.GetType().Name})", exception);
+            throw new DeclarativeActionException($"Unhandled workflow failure - #{this.Id} ({this.Model.GetType().Name}): {exception.Message}", exception);
         }
         finally
         {
