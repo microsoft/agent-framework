@@ -71,10 +71,11 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 
 - **`@vectorstoremodel`** - Declares key, data, and vector fields on dataclasses, Pydantic models, and plain classes
 - **`register_vectorstoremodel`** - Registers one definition and msgspec-backed codec pair per model type
-- **`VectorStoreField`** - Immutable key/data/vector metadata; common index and distance values remain open to
-  provider-defined strings, key fields can be store-generated, and `provider_annotations` carries structured
-  connector-specific field configuration
-- **`Filter` / `FilterGroup`** - Immutable, data-only filter tree shared by local and remote vector stores
+- **`VectorStoreField`** - Frozen core key/data/vector metadata; common index and distance values remain open to
+  provider-defined strings, key fields can be store-generated, and copied `provider_annotations` remains mutable for
+  connector-specific configuration
+- **`Filter` / `FilterGroup`** - Mutable data-only filter inputs shared by local and remote vector stores; collection
+  operations validate and pass an independent snapshot to connectors
 - **`Param`** - Native typed search-tool parameter reference embedded in filter values or paging options
 - **`BaseVectorCollection`** - Base class for collection lifecycle and msgspec-backed record CRUD operations;
   upserts generate embeddings by default, retrieval excludes vectors by default, and filtered retrieval is an

@@ -26,6 +26,7 @@ import re
 from collections.abc import Collection, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
+from decimal import Decimal
 from types import UnionType
 from typing import Any, Final, Literal, TypeAlias, Union, cast, get_args, get_origin
 
@@ -149,7 +150,6 @@ class Param:
     maximum: float | int | None
     min_length: int | None
     max_length: int | None
-    pattern: str | None
 
     def __init__(
         self,
@@ -163,7 +163,6 @@ class Param:
         maximum: float | int | None = None,
         min_length: int | None = None,
         max_length: int | None = None,
-        pattern: str | None = None,
     ) -> None:
         """Initialize a parameter reference.
 
@@ -177,7 +176,6 @@ class Param:
             maximum: The inclusive maximum for numeric values.
             min_length: The minimum length for string, array, or object values.
             max_length: The maximum length for string, array, or object values.
-            pattern: A full-match regular expression. String values that do not match are rejected.
 
         Raises:
             ValueError: If the name is invalid or a required parameter declares a default.
@@ -203,14 +201,6 @@ class Param:
             raise ValueError("Param max_length must be a non-negative integer.")
         if min_length is not None and max_length is not None and min_length > max_length:
             raise ValueError("Param min_length cannot exceed max_length.")
-        if pattern is not None:
-            if max_length is None:
-                raise ValueError("A Param pattern requires max_length to bound validation work.")
-            if max_length > 2048:
-                raise ValueError("A Param pattern requires max_length of at most 2048.")
-            if len(pattern) > 512:
-                raise ValueError("Param patterns cannot exceed 512 characters.")
-            re.compile(pattern)
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "value_type", value_type)
         object.__setattr__(self, "required", required)
@@ -220,7 +210,6 @@ class Param:
         object.__setattr__(self, "maximum", maximum)
         object.__setattr__(self, "min_length", min_length)
         object.__setattr__(self, "max_length", max_length)
-        object.__setattr__(self, "pattern", pattern)
         param_schema(self)
 
     @property
@@ -232,6 +221,9 @@ class Param:
     def default(self) -> Any:
         """Return an independent copy of the default value."""
         return deepcopy(self._default)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Param:
+        return self
 
 
 def _json_type(value_type: Any) -> str | None:
@@ -259,7 +251,13 @@ def _schema_for_type(value_type: Any) -> dict[str, Any]:
         return schema
     if origin in (Union, UnionType):
         return {"anyOf": [_schema_for_type(item) for item in get_args(value_type)]}
-    if origin in (list, tuple, Sequence):
+    if origin is tuple:
+        args = get_args(value_type)
+        if len(args) != 2 or args[1] is not Ellipsis:
+            raise TypeError("Param tuple types must use the homogeneous tuple[T, ...] form.")
+        item_type = args[0]
+        return {"type": "array", "items": _schema_for_type(item_type)}
+    if origin in (list, Sequence):
         args = get_args(value_type)
         item_type = args[0] if args else Any
         return {"type": "array", "items": _schema_for_type(item_type)}
@@ -288,17 +286,13 @@ def param_schema(param: Param) -> dict[str, Any]:
         schema["maximum"] = param.maximum
     schema_types = _schema_types(schema)
     non_null_schema_types = schema_types - {"null"}
-    if (param.min_length is not None or param.max_length is not None or param.pattern is not None) and len(
-        non_null_schema_types
-    ) != 1:
-        raise ValueError("Param length and pattern constraints require one string, array, or object type.")
+    if (param.min_length is not None or param.max_length is not None) and len(non_null_schema_types) != 1:
+        raise ValueError("Param length constraints require one string, array, or object type.")
     schema_type = next(iter(non_null_schema_types), None)
     if schema_type not in (None, "string", "array", "object") and (
-        param.min_length is not None or param.max_length is not None or param.pattern is not None
+        param.min_length is not None or param.max_length is not None
     ):
-        raise ValueError("Param length and pattern constraints require a string, array, or object type.")
-    if param.pattern is not None and schema_type != "string":
-        raise ValueError("Param pattern requires a string value type.")
+        raise ValueError("Param length constraints require a string, array, or object type.")
     if param.min_length is not None:
         length_key = (
             "minLength" if schema_type == "string" else "minProperties" if schema_type == "object" else "minItems"
@@ -309,8 +303,6 @@ def param_schema(param: Param) -> dict[str, Any]:
             "maxLength" if schema_type == "string" else "maxProperties" if schema_type == "object" else "maxItems"
         )
         _set_schema_constraint(schema, schema_type, length_key, param.max_length)
-    if param.pattern is not None:
-        _set_schema_constraint(schema, "string", "pattern", param.pattern)
     return schema
 
 
@@ -351,7 +343,14 @@ def _matches_param_type(value: Any, value_type: Any) -> bool:
         return any(filter_values_equal(value, item) for item in get_args(value_type))
     if origin in (Union, UnionType):
         return any(_matches_param_type(value, item) for item in get_args(value_type))
-    if origin in (list, tuple, Sequence):
+    if origin is tuple:
+        if not _is_non_string_sequence(value):
+            return False
+        args = get_args(value_type)
+        if len(args) != 2 or args[1] is not Ellipsis:
+            return False
+        return all(_matches_param_type(item, args[0]) for item in cast(Sequence[Any], value))
+    if origin in (list, Sequence):
         if not _is_non_string_sequence(value):
             return False
         args = get_args(value_type)
@@ -375,42 +374,48 @@ def _matches_param_type(value: Any, value_type: Any) -> bool:
     return isinstance(value, value_type)
 
 
-def _validate_param_data(
-    value: Any,
-    *,
-    seen: set[int] | None = None,
-    depth: int = 0,
-) -> None:
-    if depth > 16:
-        raise ValueError("Search parameter values cannot exceed a depth of 16.")
-    if isinstance(value, float) and not math.isfinite(value):
-        raise ValueError("Filter and search parameter numbers must be finite.")
-    if seen is None:
-        seen = set()
-    if isinstance(value, Mapping):
-        mapping = cast(Mapping[Any, Any], value)
-        if len(mapping) > 256:
-            raise ValueError("Search parameter mappings cannot contain more than 256 entries.")
-        if id(mapping) in seen:
-            raise ValueError("Search parameter values cannot contain cycles.")
-        seen.add(id(mapping))
-        try:
-            for item in mapping.values():
-                _validate_param_data(item, seen=seen, depth=depth + 1)
-        finally:
-            seen.remove(id(mapping))
-    elif _is_non_string_sequence(value):
-        sequence = cast(Sequence[Any], value)
-        if len(sequence) > 256:
-            raise ValueError("Search parameter sequences cannot contain more than 256 values.")
-        if id(sequence) in seen:
-            raise ValueError("Search parameter values cannot contain cycles.")
-        seen.add(id(sequence))
-        try:
-            for item in sequence:
-                _validate_param_data(item, seen=seen, depth=depth + 1)
-        finally:
-            seen.remove(id(sequence))
+@dataclass(slots=True)
+class _ParamDataValidator:
+    max_depth: int = 16
+    max_nodes: int = 256
+    node_count: int = 0
+
+    def validate(self, value: Any, *, seen: set[int] | None = None, depth: int = 0) -> None:
+        self.node_count += 1
+        if self.node_count > self.max_nodes:
+            raise ValueError(f"Search parameter values cannot contain more than {self.max_nodes} nodes.")
+        if depth > self.max_depth:
+            raise ValueError(f"Search parameter values cannot exceed a depth of {self.max_depth}.")
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("Filter and search parameter numbers must be finite.")
+        if isinstance(value, Decimal) and not value.is_finite():
+            raise ValueError("Filter and search parameter numbers must be finite.")
+        if seen is None:
+            seen = set()
+        if isinstance(value, Mapping):
+            mapping = cast(Mapping[Any, Any], value)
+            if id(mapping) in seen:
+                raise ValueError("Search parameter values cannot contain cycles.")
+            seen.add(id(mapping))
+            try:
+                for item in mapping.values():
+                    self.validate(item, seen=seen, depth=depth + 1)
+            finally:
+                seen.remove(id(mapping))
+        elif _is_non_string_sequence(value):
+            sequence = cast(Sequence[Any], value)
+            if id(sequence) in seen:
+                raise ValueError("Search parameter values cannot contain cycles.")
+            seen.add(id(sequence))
+            try:
+                for item in sequence:
+                    self.validate(item, seen=seen, depth=depth + 1)
+            finally:
+                seen.remove(id(sequence))
+
+
+def _validate_param_data(value: Any) -> None:
+    _ParamDataValidator().validate(value)
 
 
 def validate_param_value(param: Param, value: Any) -> Any:
@@ -429,13 +434,11 @@ def validate_param_value(param: Param, value: Any) -> Any:
             raise ValueError(f"Search parameter '{param.name}' is shorter than {param.min_length}.")
         if param.max_length is not None and len(sized_value) > param.max_length:
             raise ValueError(f"Search parameter '{param.name}' is longer than {param.max_length}.")
-    if param.pattern is not None and isinstance(value, str) and re.fullmatch(param.pattern, value) is None:
-        raise ValueError(f"Search parameter '{param.name}' does not match the required pattern.")
     return cast(Any, value)
 
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(slots=True, init=False)
 class Filter:
     """Describe one data-only vector store filter."""
 
@@ -466,14 +469,14 @@ class Filter:
             raise ValueError(
                 f"Unknown filter operator '{operator}'. Provider-specific operators must use a namespaced name."
             )
-        object.__setattr__(self, "field_name", field_name)
-        object.__setattr__(self, "operator", operator)
-        object.__setattr__(self, "value", value)
+        self.field_name = field_name
+        self.operator = operator
+        self.value = value
         _validate_filter_value_shape(self, allow_params=True)
 
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(slots=True, init=False)
 class FilterGroup:
     """Combine vector store filters with explicit boolean semantics."""
 
@@ -504,11 +507,20 @@ class FilterGroup:
             raise ValueError("A 'not' FilterGroup requires exactly one filter.")
         if any(not isinstance(item, Filter | FilterGroup) for item in resolved_filters):
             raise TypeError("FilterGroup entries must be Filter or FilterGroup instances.")
-        object.__setattr__(self, "operator", operator)
-        object.__setattr__(self, "filters", resolved_filters)
+        self.operator = operator
+        self.filters = resolved_filters
 
 
 FilterExpression: TypeAlias = Filter | FilterGroup
+
+
+def snapshot_filter(filter_: FilterExpression) -> FilterExpression:
+    """Create an independent filter snapshot for one operation."""
+    if isinstance(filter_, Filter):
+        return Filter(filter_.field_name, filter_.operator, deepcopy(filter_.value))
+    if isinstance(filter_, FilterGroup):
+        return FilterGroup(filter_.operator, tuple(snapshot_filter(item) for item in filter_.filters))
+    raise TypeError("filter must be a Filter or FilterGroup.")
 
 
 def _value_contains_param(value: Any, *, seen: set[int] | None = None) -> bool:
@@ -587,7 +599,7 @@ def _resolve_param_value(
         if value.required:
             raise TypeError(f"Missing required search parameter '{value.name}'.")
         return _OMIT_FILTER
-    return value
+    return deepcopy(value)
 
 
 def resolve_filter_params(
@@ -621,6 +633,8 @@ class _FilterValidator:
         if depth > self.max_depth:
             raise ValueError(f"Filter values cannot exceed a depth of {self.max_depth}.")
         if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("Filter numbers must be finite.")
+        if isinstance(value, Decimal) and not value.is_finite():
             raise ValueError("Filter numbers must be finite.")
         if isinstance(value, Param):
             raise ValueError("Param must be the entire Filter value, not nested inside a collection or mapping.")

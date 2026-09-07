@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import operator
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, is_dataclass, replace
+from dataclasses import field as dataclass_field
 from inspect import Parameter, signature
-from types import NotImplementedType, UnionType
+from types import UnionType
 from typing import (
     Annotated,
     Any,
@@ -45,6 +46,7 @@ from ._vector_filters import (
     iter_filter_params,
     param_schema,
     resolve_filter_params,
+    snapshot_filter,
     validate_filter,
     validate_param_value,
 )
@@ -94,87 +96,11 @@ DISTANCE_FUNCTION_DIRECTION_HELPER: Final[Mapping[DistanceFunction, Callable[[fl
 }
 
 
-class _FrozenMapping(Mapping[str, Any]):
-    """Backport the subset of Python 3.15 ``frozendict`` used here.
-
-    Replace this class with the built-in ``frozendict`` as soon as Python 3.15
-    is the minimum supported version. Keep its mapping, copy, union, hashing,
-    comparison, insertion-order, and pickle behavior aligned with PEP 814.
-    """
-
-    __slots__ = ("_data", "_hash")
-
-    def __init__(
-        self,
-        values: Mapping[str, Any] | Iterable[tuple[str, Any]] = (),
-        /,
-        **kwargs: Any,
-    ) -> None:
-        self._data = dict(values, **kwargs)
-        self._hash: int | None = None
-
-    def __getitem__(self, key: str) -> Any:
-        return self._data[key]
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self._data)
-
-    def __len__(self) -> int:
-        return len(self._data)
-
-    def __hash__(self) -> int:
-        if self._hash is None:
-            self._hash = hash(frozenset(self._data.items()))
-        return self._hash
-
-    def copy(self) -> _FrozenMapping:
-        """Return a shallow copy, reusing this immutable instance."""
-        return self
-
-    def __copy__(self) -> _FrozenMapping:
-        return self
-
-    def __or__(self, other: Mapping[str, Any]) -> _FrozenMapping | NotImplementedType:
-        if not isinstance(other, Mapping):
-            return NotImplemented
-        return type(self)((*self.items(), *other.items()))
-
-    def __ror__(self, other: Mapping[str, Any]) -> _FrozenMapping | NotImplementedType:
-        if not isinstance(other, Mapping):
-            return NotImplemented
-        return type(self)((*other.items(), *self.items()))
-
-    def __deepcopy__(self, memo: dict[int, Any]) -> _FrozenMapping:
-        return self
-
-    def __reduce__(self) -> tuple[type[_FrozenMapping], tuple[dict[str, Any]]]:
-        return type(self), (dict(self._data),)
-
-    def __repr__(self) -> str:
-        return f"{type(self).__name__}({self._data!r})"
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Mapping):
-            return False
-        return dict(self.items()) == dict(cast(Mapping[Any, Any], other).items())
-
-
-def _freeze_provider_annotation(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        annotations = cast(Mapping[Any, Any], value)
-        if any(not isinstance(key, str) for key in annotations):
-            raise TypeError("Provider annotation keys must be strings.")
-        return _FrozenMapping({cast(str, key): _freeze_provider_annotation(item) for key, item in annotations.items()})
-    if isinstance(value, list | tuple):
-        return tuple(_freeze_provider_annotation(item) for item in cast(Sequence[Any], value))
-    if isinstance(value, set | frozenset):
-        return frozenset(_freeze_provider_annotation(item) for item in cast(set[Any] | frozenset[Any], value))
-    frozen = deepcopy(value)
-    try:
-        hash(frozen)
-    except TypeError as exc:
-        raise TypeError("Provider annotation values must be immutable structured data.") from exc
-    return frozen
+def _copy_provider_annotations(value: Mapping[str, Any] | None) -> dict[str, Any]:
+    annotations = dict(value or {})
+    if any(not isinstance(key, str) for key in annotations):
+        raise TypeError("Provider annotation keys must be strings.")
+    return deepcopy(annotations)
 
 
 def _msgspec_enc_hook(value: Any) -> Any:
@@ -223,7 +149,7 @@ class VectorStoreField:
     distance_function: DistanceFunction | None
     embedding_generator: EmbeddingClient | None
     is_auto_generated: bool
-    provider_annotations: Mapping[str, Any]
+    provider_annotations: dict[str, Any] = dataclass_field(hash=False)
 
     @overload
     def __init__(
@@ -244,7 +170,7 @@ class VectorStoreField:
             type_: The scalar type name used by the backing store.
             storage_name: The field name used by the backing store.
             is_auto_generated: Whether the backing store generates missing key values.
-            provider_annotations: Provider-specific structured field configuration.
+            provider_annotations: Mutable provider-specific configuration, copied when the field is created.
         """
         ...
 
@@ -269,7 +195,7 @@ class VectorStoreField:
             storage_name: The field name used by the backing store.
             is_indexed: Whether the field should be indexed.
             is_full_text_indexed: Whether the field should have a full-text index.
-            provider_annotations: Provider-specific structured field configuration.
+            provider_annotations: Mutable provider-specific configuration, copied when the field is created.
         """
         ...
 
@@ -298,7 +224,7 @@ class VectorStoreField:
             index_kind: The vector index kind.
             distance_function: The vector distance function.
             embedding_generator: An optional client used to generate this field's embeddings.
-            provider_annotations: Provider-specific structured field configuration.
+            provider_annotations: Mutable provider-specific configuration, copied when the field is created.
 
         Raises:
             ValueError: If dimensions or vector options are invalid.
@@ -335,7 +261,7 @@ class VectorStoreField:
             distance_function: The vector distance function.
             embedding_generator: An optional client used to generate this field's embeddings.
             is_auto_generated: Whether a key field is generated by the backing store when missing.
-            provider_annotations: Provider-specific structured field configuration.
+            provider_annotations: Mutable provider-specific configuration, copied when the field is created.
 
         Raises:
             ValueError: If field options are invalid.
@@ -349,6 +275,10 @@ class VectorStoreField:
         if field_type == "vector":
             if dimensions is None or dimensions <= 0:
                 raise ValueError("Vector fields must specify a positive number of dimensions.")
+            if index_kind is not None and not isinstance(index_kind, str):
+                raise TypeError("Vector index_kind must be a string.")
+            if distance_function is not None and not isinstance(distance_function, str):
+                raise TypeError("Vector distance_function must be a string.")
             resolved_dimensions = dimensions
             resolved_index_kind = index_kind or "default"
             resolved_distance_function = distance_function or "DEFAULT"
@@ -369,11 +299,7 @@ class VectorStoreField:
         object.__setattr__(self, "distance_function", resolved_distance_function)
         object.__setattr__(self, "embedding_generator", resolved_embedding_generator)
         object.__setattr__(self, "is_auto_generated", is_auto_generated)
-        object.__setattr__(
-            self,
-            "provider_annotations",
-            _freeze_provider_annotation(dict(provider_annotations or {})),
-        )
+        object.__setattr__(self, "provider_annotations", _copy_provider_annotations(provider_annotations))
 
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
@@ -1302,12 +1228,13 @@ class BaseVectorCollection(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
             raise TypeError("keys must be a sequence.")
         if keys is not None and filter is not None:
             raise ValueError("keys and filter are alternate retrieval modes and cannot be combined.")
-        if filter is not None:
-            validate_filter(filter, field_names=self.definition.names)
+        operation_filter = snapshot_filter(filter) if filter is not None else None
+        if operation_filter is not None:
+            validate_filter(operation_filter, field_names=self.definition.names)
         try:
             records = await self._inner_get(
                 keys=keys,
-                filter=filter,
+                filter=operation_filter,
                 top=top,
                 skip=skip,
                 order_by=order_by,
@@ -1600,6 +1527,9 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
             raise ValueError("Keyword-hybrid search requires values.")
 
         _validate_paging(top=top, skip=skip)
+        operation_filter = snapshot_filter(filter) if filter is not None else None
+        if operation_filter is not None:
+            validate_filter(operation_filter, field_names=self.definition.names)
         try:
             self._validate_score_threshold(
                 score_threshold=score_threshold,
@@ -1611,11 +1541,9 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
                     values,
                     vector_property_name=vector_property_name,
                 )
-            if filter is not None:
-                validate_filter(filter, field_names=self.definition.names)
             raw_results = await self._inner_search(
                 search_type=search_type,
-                filter=filter,
+                filter=operation_filter,
                 values=values,
                 vector=resolved_vector,
                 top=top,
@@ -1927,16 +1855,17 @@ def create_vector_search_tool(
         _validate_paging(top=1, skip=skip)
 
     map_result = result_mapper or _default_search_result_mapper
+    configured_filter = snapshot_filter(filter) if filter is not None else None
     input_schema, param_definitions = _create_search_tool_input_schema(
-        filter=filter,
+        filter=configured_filter,
         top=top,
         skip=skip,
     )
     _validate_search_tool_paging_param("top", top, input_schema)
     _validate_search_tool_paging_param("skip", skip, input_schema)
     definition = getattr(search, "definition", None)
-    if filter is not None and isinstance(definition, VectorStoreCollectionDefinition):
-        validate_filter(filter, field_names=definition.names, allow_params=True)
+    if configured_filter is not None and isinstance(definition, VectorStoreCollectionDefinition):
+        validate_filter(configured_filter, field_names=definition.names, allow_params=True)
 
     async def search_tool(**arguments: Any) -> list[Content]:
         unexpected = sorted(set(arguments) - set(cast(Mapping[str, Any], input_schema["properties"])))
@@ -1952,7 +1881,6 @@ def create_vector_search_tool(
             parameter_name: validate_param_value(param, arguments[parameter_name])
             for parameter_name, param in param_definitions.items()
             if parameter_name in arguments
-            and not (arguments[parameter_name] is None and not param.required and not param.has_default)
         }
         resolved_arguments = {
             **{
@@ -1965,7 +1893,9 @@ def create_vector_search_tool(
         invocation_top = _resolve_search_tool_option("top", top, resolved_arguments)
         invocation_skip = _resolve_search_tool_option("skip", skip, resolved_arguments)
         _validate_paging(top=invocation_top, skip=invocation_skip)
-        resolved_filter = resolve_filter_params(filter, resolved_arguments) if filter is not None else None
+        resolved_filter = (
+            resolve_filter_params(configured_filter, resolved_arguments) if configured_filter is not None else None
+        )
         if resolved_filter is not None and isinstance(definition, VectorStoreCollectionDefinition):
             validate_filter(resolved_filter, field_names=definition.names)
         results = await search.search(

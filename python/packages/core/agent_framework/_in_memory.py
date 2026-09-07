@@ -134,6 +134,8 @@ def _validate_in_memory_filter_value(value: Any) -> None:
     if value is None or isinstance(value, _SCALAR_FILTER_TYPES):
         if isinstance(value, float) and not math.isfinite(value):
             raise ValueError("In-memory filter values must be finite.")
+        if isinstance(value, Decimal) and not value.is_finite():
+            raise ValueError("In-memory filter values must be finite.")
         return
     if isinstance(value, Mapping):
         raise TypeError("InMemoryCollection does not support mapping filter values.")

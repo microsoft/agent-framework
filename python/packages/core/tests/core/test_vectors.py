@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import pickle
 import warnings
 from collections.abc import AsyncIterable, Mapping, Sequence
-from copy import copy, deepcopy
 from dataclasses import FrozenInstanceError, dataclass, field
+from decimal import Decimal
 from typing import Annotated, Any, ClassVar, Literal, cast
 from unittest.mock import patch
 
@@ -46,7 +45,6 @@ from agent_framework import (
 )
 from agent_framework._feature_stage import ExperimentalWarning
 from agent_framework._telemetry import FeatureIndex
-from agent_framework._vectors import _FrozenMapping
 from agent_framework._vectors import _VectorStoreRecordHandler as VectorStoreRecordHandler
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
 
@@ -112,6 +110,7 @@ class MockCollection(BaseVectorCollection[str, Record], BaseVectorSearch[str, Re
         self.get_error: Exception | None = None
         self.delete_error: Exception | None = None
         self.search_error: Exception | None = None
+        self.mutate_search_filter = False
         self.upsert_keys: Sequence[str] | None = None
         self.raw_search_results: AsyncIterable[Any] | Sequence[Any] | None = None
 
@@ -207,6 +206,8 @@ class MockCollection(BaseVectorCollection[str, Record], BaseVectorSearch[str, Re
         self.last_search_filter = filter
         self.last_search_top = top
         self.last_search_skip = skip
+        if self.mutate_search_filter and isinstance(filter, Filter) and isinstance(filter.value, list):
+            filter.value.append("connector mutation")
         raw_results = self.raw_search_results or [
             {"record": record, "score": score} for record, score in zip(self.records.values(), (0.9, 0.4), strict=False)
         ]
@@ -299,6 +300,10 @@ def test_vector_field_validates_vector_options() -> None:
         cast(Any, VectorStoreField)("data", dimensions=3)
     with pytest.raises(ValueError, match="Only key fields"):
         cast(Any, VectorStoreField)("data", is_auto_generated=True)
+    with pytest.raises(TypeError, match="index_kind must be a string"):
+        cast(Any, VectorStoreField)("vector", dimensions=3, index_kind=1)
+    with pytest.raises(TypeError, match="distance_function must be a string"):
+        cast(Any, VectorStoreField)("vector", dimensions=3, distance_function=object())
 
     annotations = {"index": {"ef_construction": 200}}
     provider_field = VectorStoreField(
@@ -312,33 +317,11 @@ def test_vector_field_validates_vector_options() -> None:
     assert provider_field.index_kind == "provider.custom_index"
     assert provider_field.distance_function == "provider.custom_distance"
     assert provider_field.provider_annotations["index"]["ef_construction"] == 200
-    assert hash(deepcopy(provider_field)) == hash(provider_field)
-    assert pickle.loads(pickle.dumps(provider_field)) == provider_field
-    with pytest.raises(TypeError):
-        cast(Any, provider_field.provider_annotations)["new"] = "value"
-    with pytest.raises(TypeError):
-        provider_field.provider_annotations["index"]["ef_construction"] = 100
+    provider_field.provider_annotations["index"]["ef_construction"] = 100
+    assert provider_field.provider_annotations["index"]["ef_construction"] == 100
+    assert hash(provider_field)
     with pytest.raises(TypeError, match="keys must be strings"):
         VectorStoreField("data", provider_annotations=cast(Any, {1: "value"}))
-
-
-def test_frozen_mapping_follows_frozendict_semantics() -> None:
-    first = _FrozenMapping({"one": 1, "two": 2})
-    reordered = _FrozenMapping({"two": 2, "one": 1})
-
-    assert list(first) == ["one", "two"]
-    assert first == {"two": 2, "one": 1}
-    assert first == reordered
-    assert hash(first) == hash(reordered)
-    assert copy(first) is first
-    assert deepcopy(first) is first
-    assert first | {"two": 3, "three": 4} == {"one": 1, "two": 3, "three": 4}
-    assert {"zero": 0, "one": 5} | first == {"zero": 0, "one": 1, "two": 2}
-    assert pickle.loads(pickle.dumps(first)) == first
-    assert repr(first) == "_FrozenMapping({'one': 1, 'two': 2})"
-
-    with pytest.raises(TypeError):
-        hash(_FrozenMapping({"mutable": []}))
 
 
 def test_collection_definition_exposes_fields() -> None:
@@ -881,7 +864,8 @@ async def test_collection_get_accepts_filter_as_alternate_retrieval_mode() -> No
 
     await collection.get(filter=filter_)
 
-    assert collection.last_get_filter is filter_
+    assert collection.last_get_filter == filter_
+    assert collection.last_get_filter is not filter_
     with pytest.raises(ValueError, match="alternate retrieval modes"):
         await collection.get(["one"], filter=filter_)
 
@@ -1004,7 +988,8 @@ async def test_vector_search_passes_filter_to_connector() -> None:
         filter=search_filter,
     )
 
-    assert collection.last_search_filter is search_filter
+    assert collection.last_search_filter == search_filter
+    assert collection.last_search_filter is not search_filter
 
 
 async def test_vector_search_rejects_invalid_or_unresolved_filters() -> None:
@@ -1542,14 +1527,19 @@ def test_param_generates_native_schema_and_validates_constraints() -> None:
         Param("unsupported", object)
     with pytest.raises(ValueError, match="minimum cannot exceed"):
         Param("invalid_range", float, minimum=2, maximum=1)
-    with pytest.raises(ValueError, match="requires max_length"):
-        Param("unsafe_pattern", str, pattern="(a+)+$")
 
     optional_code = Param("code", str | None, max_length=8)
     schema = create_vector_search_tool(MockCollection(), filter=Filter("text", "eq", optional_code)).parameters()
     assert {"type": "string", "maxLength": 8} in schema["properties"]["code"]["anyOf"]
-    with pytest.raises(ValueError, match="requires a string"):
-        Param("items", list[str], pattern="x", max_length=8)
+    with pytest.raises(TypeError, match="homogeneous"):
+        Param("pair", tuple[int, str])
+
+    tuple_param = Param("numbers", tuple[int, ...])
+    tuple_schema = create_vector_search_tool(
+        MockCollection(),
+        filter=Filter("text", "provider.numbers", tuple_param),
+    ).parameters()
+    assert tuple_schema["properties"]["numbers"] == {"type": "array", "items": {"type": "integer"}}
 
     source_default = ["travel"]
     frozen_default = Param("categories", list[str], default=source_default)
@@ -1572,8 +1562,6 @@ def test_filter_and_param_constructor_boundaries() -> None:
         Param("length", str, min_length=-1)
     with pytest.raises(ValueError, match="cannot exceed max_length"):
         Param("length", str, min_length=2, max_length=1)
-    with pytest.raises(ValueError, match="at most 2048"):
-        Param("pattern", str, pattern="x", max_length=2049)
     with pytest.raises(TypeError, match="field_name must be a string"):
         Filter(cast(Any, 1), "eq", "value")
     with pytest.raises(TypeError, match="operator must be a string"):
@@ -1596,7 +1584,6 @@ async def test_param_native_schema_and_runtime_validation_for_container_types() 
     items = Param("items", list[str], min_length=1, max_length=3)
     flags = Param("flags", dict[str, int], max_length=2)
     enabled = Param("enabled", bool, required=True)
-    code = Param("code", str, pattern="[A-Z]+", max_length=4)
     collection = MockCollection()
     tool = create_vector_search_tool(
         collection,
@@ -1606,7 +1593,6 @@ async def test_param_native_schema_and_runtime_validation_for_container_types() 
                 Filter("text", "eq", items),
                 Filter("text", "eq", flags),
                 Filter("text", "eq", enabled),
-                Filter("text", "eq", code),
             ),
         ),
     )
@@ -1625,13 +1611,11 @@ async def test_param_native_schema_and_runtime_validation_for_container_types() 
     }
     assert schema["required"] == ["query", "enabled"]
 
-    await tool(query="query", items=["a"], flags={"one": 1}, enabled=True, code="ABC")
+    await tool(query="query", items=["a"], flags={"one": 1}, enabled=True)
     with pytest.raises(TypeError, match="does not match"):
         await tool(query="query", items=[1], enabled=True)
     with pytest.raises(ValueError, match="longer than 3"):
         await tool(query="query", items=["a", "b", "c", "d"], enabled=True)
-    with pytest.raises(ValueError, match="required pattern"):
-        await tool(query="query", enabled=True, code="abc")
     with pytest.raises(TypeError, match="Missing required"):
         await tool(query="query")
 
@@ -1697,6 +1681,44 @@ async def test_search_tool_param_edge_paths() -> None:
             collection,
             filter=Filter("text", "eq", Param("level", Literal[1, 2], required=True)),
         )(query="query", level=True)
+
+    nullable_tool = create_vector_search_tool(
+        collection,
+        filter=Filter("text", "provider.nullable", Param("nullable", str | None)),
+    )
+    await nullable_tool(query="query", nullable=None)
+    assert collection.last_search_filter == Filter("text", "provider.nullable", None)
+
+    nested_values_tool = create_vector_search_tool(
+        collection,
+        filter=Filter("text", "provider.values", Param("values", list[list[int]])),
+    )
+    with pytest.raises(ValueError, match="more than 256 nodes"):
+        await nested_values_tool(query="query", values=[[index for index in range(20)] for _ in range(20)])
+
+    with pytest.raises(ValueError, match="must be finite"):
+        await collection.search("query", filter=Filter("text", "provider.number", Decimal("NaN")))
+
+
+async def test_search_operations_snapshot_mutable_filters() -> None:
+    collection = MockCollection()
+    collection.mutate_search_filter = True
+    values = ["one"]
+    search_filter = Filter("id", "in", values)
+
+    await collection.search("query", filter=search_filter)
+
+    assert values == ["one"]
+    assert search_filter.value == ["one"]
+
+    tool = create_vector_search_tool(collection, filter=search_filter)
+    search_filter.field_name = "text"
+    values.append("two")
+    await tool(query="query")
+
+    assert isinstance(collection.last_search_filter, Filter)
+    assert collection.last_search_filter.field_name == "id"
+    assert collection.last_search_filter.value == ["one", "connector mutation"]
 
 
 async def test_search_tool_copies_mutable_param_defaults_per_invocation() -> None:

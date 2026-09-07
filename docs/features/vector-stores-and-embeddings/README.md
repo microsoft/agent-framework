@@ -40,7 +40,7 @@ This feature ports the vector store abstractions, embedding generator abstractio
 - **Support Pydantic for user-facing data models** — the `@vectorstoremodel` decorator and `VectorStoreCollectionDefinition` should work with Pydantic models, dataclasses, plain classes, and dicts
 - **Remove SK-specific dependencies** — no `KernelBaseModel`, `KernelFunction`, `KernelParameterMetadata`, `kernel_function`, `PromptExecutionSettings`
 - **Embedding types in `_types.py`**, embedding protocol/base class in `_clients.py`
-- **Portable filters** are immutable data in `_vector_filters.py`; no Python source or AST translation
+- **Portable filters** are data-only operation inputs in `_vector_filters.py`; no Python source or AST translation
 - **Dependency-free local storage** is isolated in `_in_memory.py`
 - **Vector store definitions, protocols, and base classes** remain in `_vectors.py`
 - **Error handling** uses AF's exception hierarchy (e.g., `IntegrationException` variants)
@@ -218,7 +218,7 @@ Options considered:
 - `SearchType`: `Literal["vector", "keyword_hybrid"]`
 - `VectorStoreField` plain class (not Pydantic)
   - Key fields can opt into store-generated keys
-  - Immutable provider annotations carry structured connector-specific field configuration
+  - Provider annotations are copied on construction and carry mutable connector-specific field configuration
 - `VectorStoreCollectionDefinition` class (not Pydantic internally, but supports Pydantic models as input)
 - `SearchResponse` generic `TypedDict`
 - `SearchResults` generic result container
@@ -308,7 +308,8 @@ Options considered:
 
 #### 4.1.1 — Connector extensibility aligned with Microsoft.Extensions.VectorData
 - Index kinds and distance functions provide common literal hints but remain open to provider-defined strings
-- `VectorStoreField.provider_annotations` carries immutable provider-specific structured configuration
+- `VectorStoreField.provider_annotations` is copied when the field is created and carries mutable provider-specific
+  configuration; the frozen field protects core schema attributes, not nested provider values
 - Key fields can declare `is_auto_generated=True`; connectors decide which generated key types they support
 - Search already supports provider-side query vectorization: without a local generator, connectors receive the
   original `values` and `vector=None`
@@ -330,7 +331,7 @@ Options considered:
 - Dedicated `_in_memory.py` module
 - Shared process-local collection state, full CRUD/listing/order behavior, and flat vector search
 - Pure-Python distance functions with no NumPy or SciPy dependency
-- Strict filter evaluator over serialized mappings with tighter resource and operator limits
+- Strict filter evaluator over serialized mappings with the shared conservative resource limits
 
 #### 4.4 — Tests and samples
 - Direct filter composition and model-set search-tool filter parameters
