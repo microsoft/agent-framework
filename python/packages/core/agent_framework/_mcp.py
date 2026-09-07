@@ -3265,6 +3265,7 @@ class MCPStreamableHTTPTool(MCPTool):
                     timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
                 )
                 self._httpx_client = http_client
+                self._exit_stack.push_async_callback(self._close_owned_http_client, http_client)
 
             if not hasattr(self, "_inject_headers_hook"):
 
@@ -3321,6 +3322,9 @@ class MCPStreamableHTTPTool(MCPTool):
                 self._header_hook_client = http_client
             if self._inject_headers_hook not in http_client.event_hooks["request"]:
                 http_client.event_hooks["request"].append(self._inject_headers_hook)
+                # Register before transport entry so failed connections clean up too,
+                # while successful sessions keep the hook through transport shutdown.
+                self._exit_stack.callback(self._remove_header_hook)
 
         transport_http_client = (
             _MCPHeaderScopedClient(http_client, self._header_request_owner) if http_client is not None else None
@@ -3331,6 +3335,14 @@ class MCPStreamableHTTPTool(MCPTool):
             http_client=transport_http_client,
             terminate_on_close=self.terminate_on_close if self.terminate_on_close is not None else True,
         )
+
+    async def _close_owned_http_client(self, http_client: AsyncClient) -> None:
+        """Release a framework-created client without retaining it for reconnect."""
+        try:
+            await http_client.aclose()
+        finally:
+            if self._httpx_client is http_client:
+                self._httpx_client = None
 
     def _remove_header_hook(self) -> None:
         """Detach this tool's request hook from its HTTP client."""
