@@ -1977,6 +1977,56 @@ class TestSecureAgentSessionIsolation:
         assert secret not in routine_logs
         assert quarantine_prompt not in routine_logs
 
+    async def test_provider_scoping_preserves_middleware_customization(self) -> None:
+        """Provider runs clone the current overridable middleware stack into the session scope."""
+
+        class CustomConfig(SecureAgentConfig):
+            def get_middleware(self) -> list[FunctionMiddleware]:
+                assert self.policy_enforcer is not None
+                return [self.policy_enforcer, self.label_tracker]
+
+        config = CustomConfig()
+        configured_tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=False)
+        config.label_tracker = configured_tracker
+        assert config.policy_enforcer is not None
+        config.policy_enforcer.allow_untrusted_tools.add("post_init_tool")
+
+        session = AgentSession(session_id="customized-provider")
+        context = SessionContext(session_id=session.session_id, input_messages=[])
+        await config.before_run(
+            agent=SimpleNamespace(),
+            session=session,
+            context=context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        scoped_policy, scoped_tracker = context.get_middleware()
+        assert isinstance(scoped_tracker, LabelTrackingFunctionMiddleware)
+        assert scoped_tracker is not configured_tracker
+        assert scoped_tracker.auto_hide_untrusted is False
+        assert isinstance(scoped_policy, PolicyEnforcementFunctionMiddleware)
+        assert scoped_policy is not config.policy_enforcer
+        assert "post_init_tool" in scoped_policy.allow_untrusted_tools
+
+    async def test_provider_use_requires_session_for_state_accessors(self) -> None:
+        """No-session access remains standalone-only and becomes explicit after provider use."""
+        config = SecureAgentConfig()
+        standalone_id = config.get_variable_store().store("standalone", ContentLabel())
+        assert config.list_variables() == [standalone_id]
+
+        session = AgentSession(session_id="provider-accessor")
+        await _get_session_security_middleware(config, session)
+
+        with pytest.raises(ValueError, match="session is required"):
+            config.get_audit_log()
+        with pytest.raises(ValueError, match="session is required"):
+            config.get_variable_store()
+        with pytest.raises(ValueError, match="session is required"):
+            config.list_variables()
+
+        assert config.get_audit_log(session) == []
+        assert config.list_variables(session) == []
+
     async def test_explicit_sessions_isolate_and_restore_state_across_a_b_a(self) -> None:
         """A shared config persists each explicit session without reset-on-switch."""
         config = SecureAgentConfig()
@@ -2083,8 +2133,9 @@ class TestSecureAgentSessionIsolation:
         ]
         assert get_current_middleware() is None
 
-    async def test_foreign_owned_known_variable_is_not_inspected_or_expanded(self) -> None:
-        """An entry copied into another scope remains inaccessible there."""
+    async def test_foreign_owned_variable_and_metadata_are_denied_without_logging_id(self, caplog) -> None:
+        """Copied foreign state remains inaccessible and its handle stays out of routine logs."""
+        caplog.set_level(logging.WARNING, logger="agent_framework.security")
         config = SecureAgentConfig()
         alice = AgentSession(session_id="alice-owner")
         bob = AgentSession(session_id="bob-owner")
@@ -2094,8 +2145,20 @@ class TestSecureAgentSessionIsolation:
             "alice secret", ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
         )
         alice_entry = alice.state[config.source_id]["variables"][alice_variable]
+        alice_metadata = {"details": ["alice metadata"]}
+        alice.state[config.source_id].setdefault("variable_metadata", {})[alice_variable] = alice_metadata
+        detached_metadata = alice_tracker.get_variable_metadata(alice_variable)
+        assert detached_metadata == alice_metadata
+        assert detached_metadata is not None
+        detached_metadata["details"].append("mutation")
+        assert alice_tracker.get_variable_metadata(alice_variable) == alice_metadata
+
         bob.state[config.source_id].setdefault("variables", {})[alice_variable] = json.loads(json.dumps(alice_entry))
+        bob.state[config.source_id].setdefault("variable_metadata", {})[alice_variable] = json.loads(
+            json.dumps(alice_metadata)
+        )
         assert not bob_tracker.get_variable_store().exists(alice_variable)
+        assert bob_tracker.get_variable_metadata(alice_variable) is None
 
         inspect_tool = next(tool for tool in config.get_tools() if tool.name == "inspect_variable")
         inspect_context = FunctionInvocationContext(
@@ -2109,6 +2172,8 @@ class TestSecureAgentSessionIsolation:
 
         await FunctionMiddlewarePipeline(bob_tracker, bob_policy).execute(inspect_context, lambda _: inspect())
         inspected = json.loads(inspect_context.result[0].text)
+        routine_logs = "\n".join(record.getMessage() for record in caplog.records)
+        assert alice_variable not in routine_logs
         assert inspected["security_label"] is None
         assert "error" in inspected
 

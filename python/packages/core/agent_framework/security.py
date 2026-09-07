@@ -23,7 +23,7 @@ import re
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping
 from contextvars import ContextVar
-from copy import deepcopy
+from copy import copy, deepcopy
 from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, cast
@@ -1048,8 +1048,6 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         default_confidentiality: ConfidentialityLabel = ConfidentialityLabel.PUBLIC,
         auto_hide_untrusted: bool = True,
         hide_threshold: IntegrityLabel = IntegrityLabel.UNTRUSTED,
-        *,
-        security_scope: _SecurityScope | None = None,
     ) -> None:
         """Initialize LabelTrackingFunctionMiddleware.
 
@@ -1059,15 +1057,21 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             default_confidentiality: Default confidentiality label. Defaults to PUBLIC.
             auto_hide_untrusted: Whether to automatically hide untrusted results. Defaults to True.
             hide_threshold: The integrity level at which to hide content. Defaults to UNTRUSTED.
-            security_scope: Internal state scope for provider-driven runs.
         """
         self.default_integrity = default_integrity
         self.default_confidentiality = default_confidentiality
         self.auto_hide_untrusted = auto_hide_untrusted
         self.hide_threshold = hide_threshold
 
-        self._security_scope = security_scope or _SecurityScope()
+        self._security_scope = _SecurityScope()
         self._variable_store = _ScopedVariableStore(self._security_scope)
+
+    def _clone_for_scope(self, scope: _SecurityScope) -> LabelTrackingFunctionMiddleware:
+        """Clone current middleware configuration into a session scope."""
+        scoped = copy(self)
+        scoped._security_scope = scope
+        scoped._variable_store = _ScopedVariableStore(scope)
+        return scoped
 
     @property
     def _context_label(self) -> ContentLabel:
@@ -1841,7 +1845,12 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         Returns:
             Metadata dictionary or None if not found.
         """
-        return self._variable_metadata.get(var_id)
+        if not self._variable_store.exists(var_id):
+            return None
+        metadata = self._variable_metadata.get(var_id)
+        if not isinstance(metadata, dict):
+            return None
+        return deepcopy(cast(dict[str, Any], metadata))
 
     def list_variables(self) -> list[str]:
         """Get a list of all stored variable IDs.
@@ -2013,8 +2022,6 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         block_on_violation: bool = True,
         enable_audit_log: bool = True,
         approval_on_violation: bool = False,
-        *,
-        security_scope: _SecurityScope | None = None,
     ) -> None:
         """Initialize PolicyEnforcementFunctionMiddleware.
 
@@ -2027,14 +2034,19 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                 when a policy violation is detected. If True, the middleware will return
                 a special result that triggers an approval request in the UI. After user
                 approval, the tool will execute with a warning about untrusted context.
-            security_scope: Internal state scope for provider-driven runs.
         """
         self.allow_untrusted_tools = allow_untrusted_tools or set()
         self.approval_on_violation = approval_on_violation
         # If approval_on_violation is True, we don't block - we request approval instead
         self.block_on_violation = block_on_violation if not approval_on_violation else False
         self.enable_audit_log = enable_audit_log
-        self._security_scope = security_scope or _SecurityScope()
+        self._security_scope = _SecurityScope()
+
+    def _clone_for_scope(self, scope: _SecurityScope) -> PolicyEnforcementFunctionMiddleware:
+        """Clone current middleware configuration into a session scope."""
+        scoped = copy(self)
+        scoped._security_scope = scope
+        return scoped
 
     @property
     def audit_log(self) -> list[dict[str, Any]]:
@@ -2558,11 +2570,10 @@ class SecureAgentConfig(ContextProvider):
     This class extends BaseContextProvider to automatically inject security tools,
     instructions, and middleware into any agent via the context provider pipeline.
 
-    Provider-driven runs keep their context label, hidden variables, audit entries,
-    and pending approvals in the active ``AgentSession``. Reusing or restoring that
-    session preserves its security state, while explicit and generated sessions remain
-    isolated. The middleware returned by :meth:`get_middleware` retains a private
-    standalone scope; pass a session to the state accessors to inspect provider state.
+    Provider runs store security state in the active ``AgentSession``: reused or
+    restored sessions persist, while explicit and generated sessions isolate. The
+    middleware returned by :meth:`get_middleware` stays standalone; after provider use,
+    state accessors require an explicit session.
 
     Attributes:
         label_tracker: The LabelTrackingFunctionMiddleware instance.
@@ -2644,48 +2655,32 @@ class SecureAgentConfig(ContextProvider):
         """
         super().__init__(source_id or self.DEFAULT_SOURCE_ID)
 
-        self._auto_hide_untrusted = auto_hide_untrusted
-        self._default_integrity = default_integrity
-        self._default_confidentiality = default_confidentiality
-        self._block_on_violation = block_on_violation
-        self._approval_on_violation = approval_on_violation
-        self._enable_audit_log = enable_audit_log
-        self._allow_untrusted_tools = {"quarantined_llm", "inspect_variable"}
-        if allow_untrusted_tools:
-            self._allow_untrusted_tools.update(allow_untrusted_tools)
-
-        # Keep standalone middleware private; provider runs get session-bound instances.
-        self.label_tracker = self._create_label_tracker()
+        self.label_tracker = LabelTrackingFunctionMiddleware(
+            auto_hide_untrusted=auto_hide_untrusted,
+            default_integrity=default_integrity,
+            default_confidentiality=default_confidentiality,
+        )
 
         self.enable_policy_enforcement = enable_policy_enforcement
-        self.policy_enforcer: PolicyEnforcementFunctionMiddleware | None = (
-            self._create_policy_enforcer() if enable_policy_enforcement else None
-        )
+        if enable_policy_enforcement:
+            tools_allowing_untrusted = {"quarantined_llm", "inspect_variable"}
+            if allow_untrusted_tools:
+                tools_allowing_untrusted.update(allow_untrusted_tools)
+            self.policy_enforcer: PolicyEnforcementFunctionMiddleware | None = PolicyEnforcementFunctionMiddleware(
+                allow_untrusted_tools=tools_allowing_untrusted,
+                block_on_violation=block_on_violation,
+                approval_on_violation=approval_on_violation,
+                enable_audit_log=enable_audit_log,
+            )
+        else:
+            self.policy_enforcer = None
+        self._provider_state_used = False
 
         # Store and configure quarantine client for real LLM calls
         self._quarantine_chat_client = quarantine_chat_client
         if quarantine_chat_client is not None:
             set_quarantine_client(quarantine_chat_client)
             logger.info("Quarantine chat client configured for real LLM calls")
-
-    def _create_label_tracker(self, scope: _SecurityScope | None = None) -> LabelTrackingFunctionMiddleware:
-        """Create a label tracker using this config's settings."""
-        return LabelTrackingFunctionMiddleware(
-            auto_hide_untrusted=self._auto_hide_untrusted,
-            default_integrity=self._default_integrity,
-            default_confidentiality=self._default_confidentiality,
-            security_scope=scope,
-        )
-
-    def _create_policy_enforcer(self, scope: _SecurityScope | None = None) -> PolicyEnforcementFunctionMiddleware:
-        """Create a policy enforcer using this config's settings."""
-        return PolicyEnforcementFunctionMiddleware(
-            allow_untrusted_tools=set(self._allow_untrusted_tools),
-            block_on_violation=self._block_on_violation,
-            approval_on_violation=self._approval_on_violation,
-            enable_audit_log=self._enable_audit_log,
-            security_scope=scope,
-        )
 
     def _scope_for_session(self, session: AgentSession) -> _SecurityScope:
         """Return the FIDES scope stored in an explicit session's provider state."""
@@ -2695,11 +2690,13 @@ class SecureAgentConfig(ContextProvider):
         return _SecurityScope(cast(dict[str, Any], provider_state), scope_id=session.session_id)
 
     def _middleware_for_scope(self, scope: _SecurityScope) -> list[FunctionMiddleware]:
-        """Create the middleware stack bound to one scope."""
-        middleware: list[FunctionMiddleware] = [self._create_label_tracker(scope)]
-        if self.enable_policy_enforcement:
-            middleware.append(self._create_policy_enforcer(scope))
-        return middleware
+        """Clone the current overridable middleware stack into one scope."""
+        return [
+            middleware._clone_for_scope(scope)  # pyright: ignore[reportPrivateUsage]
+            if isinstance(middleware, (LabelTrackingFunctionMiddleware, PolicyEnforcementFunctionMiddleware))
+            else middleware
+            for middleware in self.get_middleware()
+        ]
 
     async def before_run(
         self,
@@ -2722,9 +2719,11 @@ class SecureAgentConfig(ContextProvider):
             state: The provider-scoped mutable state dict.
         """
         scope = _SecurityScope(state, scope_id=session.session_id)
+        middleware = self._middleware_for_scope(scope)
+        self._provider_state_used = True
         context.extend_tools(self.source_id, self.get_tools())
         context.extend_instructions(self.source_id, self.get_instructions())
-        context.extend_middleware(self.source_id, self._middleware_for_scope(scope))
+        context.extend_middleware(self.source_id, middleware)
 
     def get_tools(self) -> list[FunctionTool]:
         """Get the security tools for agent integration.
@@ -2757,12 +2756,14 @@ class SecureAgentConfig(ContextProvider):
         """Get the audit log for an optional session.
 
         Args:
-            session: Session used by provider-driven runs. When omitted, reads the
-                private standalone middleware state.
+            session: Session used by provider-driven runs. Omit only for exclusive
+                standalone use through ``get_middleware``.
 
         Returns:
             List of violation records, or empty list if policy enforcement disabled.
         """
+        if session is None and self._provider_state_used:
+            raise ValueError("session is required after SecureAgentConfig is used as a context provider")
         if not self.enable_policy_enforcement:
             return []
         if session is not None:
@@ -2775,12 +2776,14 @@ class SecureAgentConfig(ContextProvider):
         """Get the variable store for an optional session.
 
         Args:
-            session: Session used by provider-driven runs. When omitted, reads the
-                private standalone middleware state.
+            session: Session used by provider-driven runs. Omit only for exclusive
+                standalone use through ``get_middleware``.
 
         Returns:
             The ContentVariableStore instance.
         """
+        if session is None and self._provider_state_used:
+            raise ValueError("session is required after SecureAgentConfig is used as a context provider")
         if session is not None:
             return _ScopedVariableStore(self._scope_for_session(session))
         return self.label_tracker.get_variable_store()
@@ -2789,8 +2792,8 @@ class SecureAgentConfig(ContextProvider):
         """Get variable IDs for an optional session.
 
         Args:
-            session: Session used by provider-driven runs. When omitted, reads the
-                private standalone middleware state.
+            session: Session used by provider-driven runs. Omit only for exclusive
+                standalone use through ``get_middleware``.
 
         Returns:
             List of variable ID strings.
@@ -3330,8 +3333,8 @@ async def inspect_variable(
 
         return result
 
-    except KeyError as e:
-        logger.error("Requested variable was not found in the active security scope: %s", e)
+    except KeyError:
+        logger.error("Requested variable was not found in the active security scope")
         return {
             "variable_id": variable_id,
             "error": f"Variable not found: {variable_id}",

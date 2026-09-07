@@ -502,7 +502,8 @@ agent = Agent(
 
 > **Note:** Security state (context label, hidden-content variables, audit log, and pending approvals) is stored per
 > session in `AgentSession.state`. Reusing or restoring a session preserves its state; different sessions remain
-> isolated. Pass the session to the state accessors above for provider-driven runs.
+> isolated. Pass the session to the state accessors above for provider-driven runs; after provider use, omitting it
+> raises rather than reading unrelated standalone state.
 
 ### 9. Security Instructions for Agents
 
@@ -1104,7 +1105,7 @@ config.get_middleware() -> List[FunctionMiddleware]  # Returns configured middle
 config.get_audit_log(session: AgentSession | None = None) -> List[Dict[str, Any]]
 config.get_variable_store(session: AgentSession | None = None) -> ContentVariableStore
 config.list_variables(session: AgentSession | None = None) -> List[str]
-# Omitting session reads the private standalone middleware state.
+# Omit session only when using config.get_middleware() exclusively.
 ```
 
 ### quarantined_llm
