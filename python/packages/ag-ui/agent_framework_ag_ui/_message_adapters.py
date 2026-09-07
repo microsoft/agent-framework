@@ -968,10 +968,14 @@ def _convert_framework_content_to_agui(content: Content) -> dict[str, Any] | Non
     part_type = media_type_prefix if media_type_prefix in {"image", "audio", "video"} else "document"
 
     if content.type == "data":
-        _, separator, encoded_data = content.uri.partition(",")
-        if not separator:
-            return None
-        source: dict[str, Any] = {"type": "data", "value": encoded_data}
+        data_uri_prefix, separator, encoded_data = content.uri.partition(",")
+        is_base64_data_uri = bool(separator) and any(
+            parameter.lower() == "base64" for parameter in data_uri_prefix.split(";")[1:]
+        )
+        if is_base64_data_uri:
+            source: dict[str, Any] = {"type": "data", "value": encoded_data}
+        else:
+            source = {"type": "url", "value": content.uri}
     else:
         source = {"type": "url", "value": content.uri}
 

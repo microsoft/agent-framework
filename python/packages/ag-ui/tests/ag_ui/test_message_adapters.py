@@ -93,6 +93,23 @@ def test_agent_framework_to_agui_converts_data_uri_to_inline_data_source():
     ]
 
 
+def test_agent_framework_to_agui_preserves_non_base64_data_uri_as_url_source():
+    """Non-base64 data URIs remain complete URL sources for AG-UI."""
+    data_uri = "data:text/plain,hello%20world"
+    message = Message(
+        role="user",
+        contents=[Content.from_uri(data_uri, media_type="text/plain")],
+        message_id="msg-data-uri",
+    )
+
+    assert agent_framework_messages_to_agui([message])[0]["content"] == [
+        {
+            "type": "document",
+            "source": {"type": "url", "value": data_uri, "mimeType": "text/plain"},
+        }
+    ]
+
+
 def test_agent_framework_to_agui_preserves_mixed_content_order():
     """Mixed text and media content remains in its original order."""
     message = Message(
