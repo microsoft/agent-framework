@@ -224,6 +224,57 @@ async def test_in_memory_filter_operators(
     assert await _result_ids(await _create_collection(), filter_) == expected
 
 
+@pytest.mark.parametrize(
+    ("operator", "operand", "expected"),
+    [
+        ("eq", [[1]], {"integer", "float"}),
+        ("eq", [[True]], {"boolean"}),
+        ("ne", [[1]], {"boolean", "zero"}),
+        ("ne", [[True]], {"integer", "float", "zero"}),
+        ("in", ([[1]],), {"integer", "float"}),
+        ("in", ([[True]],), {"boolean"}),
+        ("not_in", ([[1]],), {"boolean", "zero"}),
+        ("not_in", ([[True]],), {"integer", "float", "zero"}),
+        ("contains", [1], {"integer", "float"}),
+        ("contains", [True], {"boolean"}),
+        ("contains_any", ([1],), {"integer", "float"}),
+        ("contains_any", ([True],), {"boolean"}),
+        ("contains_all", ([1],), {"integer", "float"}),
+        ("contains_all", ([True],), {"boolean"}),
+    ],
+)
+async def test_in_memory_filters_distinguish_nested_booleans_from_numbers(
+    operator: str,
+    operand: Any,
+    expected: set[str],
+) -> None:
+    definition = VectorStoreCollectionDefinition(
+        [
+            VectorStoreField("key", name="id"),
+            VectorStoreField("data", name="value"),
+            VectorStoreField("vector", name="vector", dimensions=2),
+        ],
+        collection_name="nested-values",
+    )
+    collection: InMemoryCollection[str, dict[str, Any]] = InMemoryCollection(dict, definition=definition)
+    await collection.ensure_collection_exists()
+    await collection.upsert(
+        [
+            {"id": "integer", "value": [[1]], "vector": [1.0, 0.0]},
+            {"id": "float", "value": [[1.0]], "vector": [1.0, 0.0]},
+            {"id": "boolean", "value": [[True]], "vector": [1.0, 0.0]},
+            {"id": "zero", "value": [[0]], "vector": [1.0, 0.0]},
+        ],
+        generate_vectors=False,
+    )
+    filter_ = Filter("value", operator, operand)
+
+    records = await collection.get(filter=filter_)
+    assert {record["id"] for record in records} == expected
+    results = await collection.search(vector=[1.0, 0.0], filter=filter_)
+    assert {result["record"]["id"] async for result in results} == expected
+
+
 async def test_in_memory_filter_groups_use_explicit_and_or_semantics() -> None:
     collection = await _create_collection()
     tenant_scope = Filter("category", "eq", "travel")

@@ -45,6 +45,7 @@ from agent_framework import (
 )
 from agent_framework._feature_stage import ExperimentalWarning
 from agent_framework._telemetry import FeatureIndex
+from agent_framework._vector_filters import filter_values_equal
 from agent_framework._vectors import _VectorStoreRecordHandler as VectorStoreRecordHandler
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
 
@@ -1472,6 +1473,44 @@ async def test_scoreless_results_remain_when_threshold_cannot_be_applied() -> No
     responses = [result async for result in results]
     assert len(responses) == 1
     assert responses[0]["score"] is None
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "expected"),
+    [
+        (True, 1, False),
+        (False, 0, False),
+        (True, True, True),
+        (False, False, True),
+        (1, 1.0, True),
+        ([1], [True], False),
+        ([0], [False], False),
+        ((1,), (True,), False),
+        ([[1]], [[True]], False),
+        ([(1, [0])], [(True, [False])], False),
+        ([True, [False]], [True, [False]], True),
+        ([1, [0]], [1.0, [0.0]], True),
+        ((1, (0,)), (1.0, (0.0,)), True),
+        ([1], (1,), False),
+        ([], (), False),
+        ([1, 2], [2, 1], False),
+        ([1], [1, 2], False),
+        ([], [], True),
+        ({"value": [1]}, {"value": [True]}, False),
+        ([{"value": (0,)}], [{"value": (False,)}], False),
+        ({"value": [1]}, {"value": [1.0]}, True),
+        ({"one": True, "two": False}, {"two": False, "one": True}, True),
+        ({"one": True}, {"two": True}, False),
+        ({"value": True}, {}, False),
+        ("1", 1, False),
+        ("text", "text", True),
+        (b"\x01", b"\x01", True),
+        (None, None, True),
+    ],
+)
+def test_filter_values_equal_preserves_nested_types(left: Any, right: Any, expected: bool) -> None:
+    assert filter_values_equal(left, right) is expected
+    assert filter_values_equal(right, left) is expected
 
 
 def test_filter_model_accepts_namespaced_provider_operators() -> None:

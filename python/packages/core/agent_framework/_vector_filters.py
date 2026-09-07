@@ -112,9 +112,21 @@ def require_filter_string(value: Any) -> str:
 
 
 def filter_values_equal(left: Any, right: Any) -> bool:
-    """Compare filter values while keeping booleans distinct from numbers."""
+    """Compare validated scalars, sequences, and mappings without equating booleans to numbers."""
     if isinstance(left, bool) or isinstance(right, bool):
         return isinstance(left, bool) and isinstance(right, bool) and left == right
+    if _is_non_string_sequence(left) and _is_non_string_sequence(right):
+        # Preserve native container semantics, such as lists not equaling tuples.
+        return left == right and all(
+            filter_values_equal(left_item, right_item)
+            for left_item, right_item in zip(cast(Sequence[Any], left), cast(Sequence[Any], right), strict=True)
+        )
+    if isinstance(left, Mapping) and isinstance(right, Mapping):
+        left_mapping = cast(Mapping[str, Any], left)
+        right_mapping = cast(Mapping[str, Any], right)
+        return left_mapping == right_mapping and all(
+            filter_values_equal(item, right_mapping[key]) for key, item in left_mapping.items()
+        )
     return left == right
 
 
