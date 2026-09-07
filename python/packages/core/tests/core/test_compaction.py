@@ -916,6 +916,35 @@ async def test_summarization_strategy_bounds_summary_input_to_complete_groups() 
     assert oversized_message.message_id not in summarized_message_ids
 
 
+async def test_summarization_strategy_preserves_tool_trajectory_in_summary_input() -> None:
+    summarizer = _RecordingSummarizer()
+    messages = [
+        Message(role="user", contents=["use the tool"]),
+        _assistant_function_call("call_1"),
+        _tool_result("call_1", "ok"),
+        Message(role="assistant", contents=["tool completed"]),
+        Message(role="user", contents=["what next"]),
+        Message(role="assistant", contents=["here is the follow-up"]),
+    ]
+    strategy = SummarizationStrategy(
+        client=summarizer,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        target_count=2,
+        threshold=0,
+    )
+    annotate_message_groups(messages)
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    assert len(summarizer.requests) == 1
+    summary_request_text = summarizer.requests[0][1].text
+    assert summary_request_text is not None
+    assert "tool" in summary_request_text
+    assert '{"value":"x"}' in summary_request_text
+    assert "[call_id=call_1]" in summary_request_text
+    assert "ok" in summary_request_text
+
+
 async def test_summarization_strategy_skips_oversized_first_group() -> None:
     summarizer = _RecordingSummarizer()
     messages = [
