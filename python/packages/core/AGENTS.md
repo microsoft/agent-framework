@@ -38,6 +38,14 @@ agent_framework/
 - Public deprecation behavior for a lazy export belongs in the owning module. The root package should delegate via
   the normal lazy export map instead of carrying one-off branches.
 
+### Settings (`_settings.py`)
+
+- **`SecretString`** is a non-`str` wrapper: string conversion, representation, formatting, and concatenation
+  display a mask. String-only APIs such as `str.join()` and JSON encoding reject it unless callers explicitly
+  convert it. Use `get_secret_value()` when passing credentials to provider SDKs; `str(secret)` returns the mask.
+- **`load_settings`** accepts plain string overrides for `SecretString` fields and wraps them, as it does for
+  environment and `.env` values. Existing `SecretString` overrides are preserved.
+
 ### Agents (`_agents.py`)
 
 - **`SupportsAgentRun`** - Protocol defining the agent interface
