@@ -296,6 +296,16 @@ class TestSecretString:
         assert hash(secret) == hash(value)
         assert {secret, SecretString(value), value} == {value}
 
+    def test_secretstring_is_immutable(self) -> None:
+        secret = SecretString("my-secret")
+        secrets = {secret}
+
+        with pytest.raises(AttributeError, match="^SecretString is immutable\\.$"):
+            secret._value = "another-secret"
+
+        assert secret.get_secret_value() == "my-secret"
+        assert secret in secrets
+
     def test_secretstring_can_wrap_existing_secret(self) -> None:
         secret = SecretString(SecretString("my-secret"))
 

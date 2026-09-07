@@ -78,12 +78,18 @@ class SecretString:
 
     __slots__ = ("_value",)
 
+    _value: str
+
     def __init__(self, value: str | SecretString) -> None:
         if isinstance(value, SecretString):
             value = value.get_secret_value()
         if not isinstance(value, str):
             raise TypeError("SecretString requires a string value.")
-        self._value = value
+        object.__setattr__(self, "_value", value)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        """Reject mutation after construction."""
+        raise AttributeError("SecretString is immutable.")
 
     def __str__(self) -> str:
         """Return a masked string to prevent secret exposure."""
