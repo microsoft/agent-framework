@@ -21,7 +21,7 @@ from agent_framework import (
     Message,
     SessionContext,
 )
-from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareTermination
+from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareFailure, MiddlewareTermination
 from agent_framework._tools import FunctionTool, _auto_invoke_function, normalize_function_invocation_configuration
 from agent_framework._types import Content
 from agent_framework.security import (
@@ -4310,3 +4310,526 @@ class TestMCPIFCMetaLabels:
         wrapped_once = func_tool.func
         _wrap_mcp_function_for_ifc(func_tool, IntegrityLabel.UNTRUSTED)
         assert func_tool.func is wrapped_once
+
+
+async def _hide_session_value(
+    tracker: LabelTrackingFunctionMiddleware,
+    policy: PolicyEnforcementFunctionMiddleware,
+    session: AgentSession,
+    value: str,
+) -> str:
+    """Hide one untrusted result through the public middleware pipeline."""
+
+    class SourceArgs(BaseModel):
+        value: str
+
+    async def source(value: str) -> str:
+        return value
+
+    source_tool = FunctionTool(
+        func=source,
+        name="source",
+        description="Return untrusted data",
+        input_model=SourceArgs,
+        additional_properties={"source_integrity": "untrusted"},
+    )
+    context = FunctionInvocationContext(function=source_tool, arguments={"value": value}, session=session)
+
+    async def execute(_context: FunctionInvocationContext) -> list[Content]:
+        return [Content.from_text(value)]
+
+    await FunctionMiddlewarePipeline(tracker, policy).execute(context, execute)
+    result = cast(list[Content], context.result)
+    assert result[0].text is not None
+    return cast(str, json.loads(result[0].text)["variable_id"])
+
+
+class TestManualSecuritySessionSelection:
+    """Manual middleware wiring must select explicit session state safely."""
+
+    @staticmethod
+    def _sink() -> FunctionTool:
+        class SinkArgs(BaseModel):
+            value: str
+
+        async def sink(value: str) -> str:
+            return value
+
+        return FunctionTool(
+            func=sink,
+            name="sink",
+            description="Forward hidden data",
+            input_model=SinkArgs,
+            additional_properties={"accepts_untrusted": True, "source_integrity": "trusted"},
+        )
+
+    async def test_shared_middleware_selects_explicit_sessions_a_b_a(self) -> None:
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        alice = AgentSession(session_id="alice")
+        bob = AgentSession(session_id="bob")
+        alice_variable = await _hide_session_value(tracker, policy, alice, "alice secret")
+        bob_variable = await _hide_session_value(tracker, policy, bob, "bob secret")
+        sink = self._sink()
+        received: list[tuple[str, str]] = []
+
+        async def forward(session: AgentSession, variable_id: str) -> None:
+            context = FunctionInvocationContext(
+                function=sink,
+                arguments={"value": f"[{variable_id}]"},
+                session=session,
+            )
+
+            async def execute(current: FunctionInvocationContext) -> list[Content]:
+                value = cast(dict[str, Any], current.arguments)["value"]
+                received.append((session.session_id, cast(str, value)))
+                return [Content.from_text("sent")]
+
+            await FunctionMiddlewarePipeline(tracker, policy).execute(context, execute)
+
+        await forward(bob, alice_variable)
+        await forward(alice, alice_variable)
+        await forward(alice, bob_variable)
+        await forward(bob, bob_variable)
+        await forward(alice, alice_variable)
+
+        assert received == [
+            ("bob", f"[{alice_variable}]"),
+            ("alice", "alice secret"),
+            ("alice", f"[{bob_variable}]"),
+            ("bob", "bob secret"),
+            ("alice", "alice secret"),
+        ]
+
+    async def test_overlapping_sessions_keep_task_local_variable_scope(self) -> None:
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        alice = AgentSession(session_id="alice-overlap")
+        bob = AgentSession(session_id="bob-overlap")
+        alice_variable = await _hide_session_value(tracker, policy, alice, "alice secret")
+        bob_variable = await _hide_session_value(tracker, policy, bob, "bob secret")
+        inspect_tool = next(tool for tool in tracker.get_security_tools() if tool.name == "inspect_variable")
+        both_started = asyncio.Event()
+        started = 0
+
+        async def inspect(session: AgentSession, variable_id: str) -> str:
+            nonlocal started
+            context = FunctionInvocationContext(
+                function=inspect_tool,
+                arguments={"variable_id": variable_id, "reason": "overlap isolation"},
+                session=session,
+            )
+
+            async def execute(current: FunctionInvocationContext) -> list[Content]:
+                nonlocal started
+                started += 1
+                if started == 2:
+                    both_started.set()
+                await both_started.wait()
+                await asyncio.sleep(0)
+                assert get_current_middleware() is tracker
+                return await inspect_tool.invoke(arguments=current.arguments, context=current)
+
+            await FunctionMiddlewarePipeline(tracker, policy).execute(context, execute)
+            result = cast(list[Content], context.result)
+            assert result[0].text is not None
+            return cast(str, json.loads(result[0].text)["content"])
+
+        assert await asyncio.gather(
+            inspect(alice, alice_variable),
+            inspect(bob, bob_variable),
+        ) == ["alice secret", "bob secret"]
+        assert get_current_middleware() is None
+
+    async def test_manual_agent_loop_without_session_fails_closed(self) -> None:
+        tracker = LabelTrackingFunctionMiddleware()
+        sink = self._sink()
+        context = FunctionInvocationContext(
+            function=sink,
+            arguments={"value": "test"},
+            tools=[sink],
+        )
+
+        with pytest.raises(MiddlewareFailure, match="requires an AgentSession"):
+            await tracker.process(context, lambda: pytest.fail("Tool must not execute without a session"))
+
+    async def test_direct_standalone_invocation_keeps_private_scope(self) -> None:
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "standalone secret",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        sink = self._sink()
+        received: list[str] = []
+        context = FunctionInvocationContext(function=sink, arguments={"value": f"[{variable_id}]"})
+
+        async def execute(current: FunctionInvocationContext) -> list[Content]:
+            received.append(cast(str, cast(dict[str, Any], current.arguments)["value"]))
+            return [Content.from_text("sent")]
+
+        await FunctionMiddlewarePipeline(tracker, policy).execute(context, execute)
+
+        assert received == ["standalone secret"]
+        assert tracker.get_variable_store().retrieve(variable_id)[0] == "standalone secret"
+
+
+class TestVariableArgumentPolicy:
+    """Expanded hidden values retain their labels for policy enforcement."""
+
+    @staticmethod
+    def _sink(
+        *,
+        accepts_untrusted: bool,
+        max_confidentiality: str = "private",
+    ) -> FunctionTool:
+        class SinkArgs(BaseModel):
+            value: Any
+
+        async def sink(value: Any) -> str:
+            return str(value)
+
+        return FunctionTool(
+            func=sink,
+            name="sink",
+            description="Forward hidden data",
+            input_model=SinkArgs,
+            additional_properties={
+                "accepts_untrusted": accepts_untrusted,
+                "max_allowed_confidentiality": max_confidentiality,
+                "source_integrity": "trusted",
+            },
+        )
+
+    @pytest.mark.parametrize(
+        ("make_value", "expected"),
+        [
+            pytest.param(lambda variable_id: f"[{variable_id}]", "payload", id="bracketed"),
+            pytest.param(lambda variable_id: f"  [ {variable_id} ]  ", "payload", id="whitespace"),
+            pytest.param(lambda variable_id: variable_id, "payload", id="bare"),
+            pytest.param(lambda variable_id: f"prefix [{variable_id}] suffix", "prefix payload suffix", id="embedded"),
+            pytest.param(lambda variable_id: f"[{variable_id}]/[{variable_id}]", "payload/payload", id="duplicate"),
+            pytest.param(lambda variable_id: [f"[{variable_id}]", variable_id], ["payload", "payload"], id="list"),
+            pytest.param(lambda variable_id: {"item": f"[{variable_id}]"}, {"item": "payload"}, id="mapping"),
+            pytest.param(
+                lambda variable_id: {"outer": [{"inner": f"value=[{variable_id}]"}]},
+                {"outer": [{"inner": "value=payload"}]},
+                id="deep",
+            ),
+        ],
+    )
+    async def test_all_reference_forms_resolve_and_block_untrusted_arguments(
+        self,
+        make_value: Any,
+        expected: Any,
+    ) -> None:
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        value = make_value(variable_id)
+        context = FunctionInvocationContext(
+            function=self._sink(accepts_untrusted=False),
+            arguments={"value": value},
+        )
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(
+                context,
+                lambda _context: pytest.fail("Blocked tool must not execute"),
+            )
+
+        assert cast(dict[str, Any], context.arguments)["value"] == expected
+        assert cast(dict[str, Any], context.metadata["original_arguments_for_messages"])["value"] == value
+        assert context.metadata["argument_label"].integrity == IntegrityLabel.UNTRUSTED
+        assert policy.get_audit_log()[-1]["type"] == "untrusted_arguments"
+
+    @pytest.mark.parametrize("value", ["[var_0123456789abcdef]", "var_0123456789abcdef"])
+    async def test_unknown_references_remain_literal(self, value: str) -> None:
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        received: list[str] = []
+        context = FunctionInvocationContext(
+            function=self._sink(accepts_untrusted=False),
+            arguments={"value": value},
+        )
+
+        async def execute(current: FunctionInvocationContext) -> list[Content]:
+            received.append(cast(str, cast(dict[str, Any], current.arguments)["value"]))
+            return [Content.from_text("sent")]
+
+        await FunctionMiddlewarePipeline(tracker, policy).execute(context, execute)
+
+        assert received == [value]
+        argument_label = cast(ContentLabel, context.metadata["argument_label"])
+        assert argument_label.integrity == IntegrityLabel.TRUSTED
+        assert argument_label.confidentiality == ConfidentialityLabel.PUBLIC
+
+    async def test_accepts_untrusted_blind_forwards_without_model_context_taint(self) -> None:
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        received: list[str] = []
+        context = FunctionInvocationContext(
+            function=self._sink(accepts_untrusted=True),
+            arguments={"value": f"[{variable_id}]"},
+        )
+
+        async def execute(current: FunctionInvocationContext) -> list[Content]:
+            received.append(cast(str, cast(dict[str, Any], current.arguments)["value"]))
+            return [Content.from_text("sent")]
+
+        await FunctionMiddlewarePipeline(tracker, policy).execute(context, execute)
+
+        assert received == ["payload"]
+        assert context.metadata["argument_label"].integrity == IntegrityLabel.UNTRUSTED
+        assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
+
+    async def test_private_hidden_argument_is_blocked_from_public_sink(self) -> None:
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "private payload",
+            ContentLabel(
+                integrity=IntegrityLabel.UNTRUSTED,
+                confidentiality=ConfidentialityLabel.PRIVATE,
+            ),
+        )
+        context = FunctionInvocationContext(
+            function=self._sink(accepts_untrusted=True, max_confidentiality="public"),
+            arguments={"value": f"[{variable_id}]"},
+        )
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(
+                context,
+                lambda _context: pytest.fail("Confidential value must not reach a public sink"),
+            )
+
+        assert context.metadata["effective_invocation_label"].confidentiality == ConfidentialityLabel.PRIVATE
+        assert policy.get_audit_log()[-1]["subtype"] == "max_allowed_confidentiality"
+
+    async def test_argument_labels_do_not_rewrite_result_labels(self) -> None:
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "private payload",
+            ContentLabel(
+                integrity=IntegrityLabel.UNTRUSTED,
+                confidentiality=ConfidentialityLabel.PRIVATE,
+            ),
+        )
+        context = FunctionInvocationContext(
+            function=self._sink(accepts_untrusted=True),
+            arguments={"value": f"[{variable_id}]"},
+        )
+
+        async def execute(_context: FunctionInvocationContext) -> list[Content]:
+            return [Content.from_text("public result")]
+
+        await FunctionMiddlewarePipeline(tracker, policy).execute(context, execute)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.TRUSTED
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PUBLIC
+        assert tracker.get_context_label().confidentiality == ConfidentialityLabel.PUBLIC
+
+    async def test_policy_approval_allows_exact_resolved_invocation(self) -> None:
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        variable_id = tracker.get_variable_store().store(
+            "payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        sink = self._sink(accepts_untrusted=False)
+        request = FunctionInvocationContext(function=sink, arguments={"value": f"[{variable_id}]"})
+        request.metadata.update({"call_id": "call-approved", "function_call_occurrence_id": "occurrence-approved"})
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(
+                request,
+                lambda _context: pytest.fail("Tool must wait for approval"),
+            )
+
+        approval_request = request.result
+        assert isinstance(approval_request, Content)
+        assert approval_request.id == "occurrence-approved"
+        assert approval_request.function_call is not None
+        assert approval_request.function_call.call_id == "call-approved"
+        assert approval_request.function_call.parse_arguments() == {"value": f"[{variable_id}]"}
+
+        replay = FunctionInvocationContext(function=sink, arguments={"value": f"[{variable_id}]"})
+        replay.metadata.update({
+            "call_id": "call-approved",
+            "function_call_occurrence_id": "occurrence-approved",
+            "approval_response": approval_request.to_function_approval_response(True),
+        })
+        received: list[str] = []
+
+        async def execute(current: FunctionInvocationContext) -> list[Content]:
+            received.append(cast(str, cast(dict[str, Any], current.arguments)["value"]))
+            return [Content.from_text("sent")]
+
+        await FunctionMiddlewarePipeline(tracker, policy).execute(replay, execute)
+
+        assert received == ["payload"]
+        assert replay.metadata["user_approved_violation"] is True
+
+    async def test_changed_resolved_arguments_do_not_match_approval(self) -> None:
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        session = AgentSession(session_id="resolved-mismatch")
+        variable_id = tracker.get_variable_store(session).store(
+            "original",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        sink = self._sink(accepts_untrusted=False)
+        request = FunctionInvocationContext(
+            function=sink,
+            arguments={"value": f"[{variable_id}]"},
+            session=session,
+        )
+        request.metadata.update({"call_id": "call-resolved", "function_call_occurrence_id": "occurrence-resolved"})
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(
+                request,
+                lambda _context: pytest.fail("Tool must wait for approval"),
+            )
+        approval_request = cast(Content, request.result)
+        security_state = cast(dict[str, Any], session.state["__agent_framework_fides_security__"])
+        variable_state = cast(dict[str, Any], security_state["variables"])
+        cast(dict[str, Any], variable_state[variable_id])["content"] = json.dumps("changed")
+
+        replay = FunctionInvocationContext(
+            function=sink,
+            arguments={"value": f"[{variable_id}]"},
+            session=session,
+        )
+        replay.metadata.update({
+            "call_id": "call-resolved",
+            "function_call_occurrence_id": "occurrence-resolved",
+            "approval_response": approval_request.to_function_approval_response(True),
+        })
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(
+                replay,
+                lambda _context: pytest.fail("Changed resolved arguments need fresh approval"),
+            )
+        assert isinstance(replay.result, Content)
+        assert replay.result.type == "function_approval_request"
+
+    async def test_changed_runtime_kwargs_do_not_match_approval(self) -> None:
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        variable_id = tracker.get_variable_store().store(
+            "payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        sink = self._sink(accepts_untrusted=False)
+        request = FunctionInvocationContext(
+            function=sink,
+            arguments={"value": f"[{variable_id}]"},
+            kwargs={"tenant": "one"},
+        )
+        request.metadata["call_id"] = "call-runtime"
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(
+                request,
+                lambda _context: pytest.fail("Tool must wait for approval"),
+            )
+        approval_request = cast(Content, request.result)
+        replay = FunctionInvocationContext(
+            function=sink,
+            arguments={"value": f"[{variable_id}]"},
+            kwargs={"tenant": "two"},
+        )
+        replay.metadata.update({
+            "call_id": "call-runtime",
+            "approval_response": approval_request.to_function_approval_response(True),
+        })
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(
+                replay,
+                lambda _context: pytest.fail("Changed runtime kwargs need fresh approval"),
+            )
+        assert isinstance(replay.result, Content)
+        assert replay.result.type == "function_approval_request"
+
+    async def test_opaque_runtime_kwarg_fails_closed(self) -> None:
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        variable_id = tracker.get_variable_store().store(
+            "payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        context = FunctionInvocationContext(
+            function=self._sink(accepts_untrusted=False),
+            arguments={"value": f"[{variable_id}]"},
+            kwargs={"opaque": object()},
+        )
+        context.metadata["call_id"] = "call-opaque"
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(
+                context,
+                lambda _context: pytest.fail("Opaque invocation must not execute"),
+            )
+
+        assert isinstance(context.result, dict)
+        assert context.result["violation_type"] == "unsafe_approval_binding"
+
+    async def test_pending_policy_approval_survives_session_restore(self) -> None:
+        config = SecureAgentConfig(approval_on_violation=True)
+        session = AgentSession(session_id="restored-approval")
+        tracker, policy = await _get_session_security_middleware(config, session)
+        variable_id = config.get_variable_store(session).store(
+            ["durable", 1],
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        sink = self._sink(accepts_untrusted=False)
+        request = FunctionInvocationContext(
+            function=sink,
+            arguments={"value": f"[{variable_id}]"},
+            session=session,
+            kwargs={"session": session, "tenant": "one"},
+        )
+        request.metadata.update({"call_id": "call-restored", "function_call_occurrence_id": "occurrence-restored"})
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(tracker, policy).execute(
+                request,
+                lambda _context: pytest.fail("Tool must wait for approval"),
+            )
+        approval_request = cast(Content, request.result)
+        restored = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        restored_tracker, restored_policy = await _get_session_security_middleware(config, restored)
+        replay = FunctionInvocationContext(
+            function=sink,
+            arguments={"value": f"[{variable_id}]"},
+            session=restored,
+            kwargs={"session": restored, "tenant": "one"},
+        )
+        replay.metadata.update({
+            "call_id": "call-restored",
+            "function_call_occurrence_id": "occurrence-restored",
+            "approval_response": approval_request.to_function_approval_response(True),
+        })
+        executed = False
+
+        async def execute(_context: FunctionInvocationContext) -> list[Content]:
+            nonlocal executed
+            executed = True
+            return [Content.from_text("sent")]
+
+        await FunctionMiddlewarePipeline(restored_tracker, restored_policy).execute(replay, execute)
+
+        assert executed is True
+        assert replay.metadata["user_approved_violation"] is True
