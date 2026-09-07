@@ -18,6 +18,14 @@ from agent_framework_ag_ui._message_adapters import (
     extract_text_from_contents,
     normalize_agui_input_messages,
 )
+from agent_framework_ag_ui._utils import (
+    _AGUI_HOST_PAYLOAD_OMITTED_KEY,
+    _AGUI_MCP_TOOL_RESULT_KEY,
+    _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY,
+    _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY,
+    _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY,
+    _model_items_for_agui_replay,
+)
 
 
 @pytest.fixture
@@ -49,6 +57,280 @@ def test_agent_framework_to_agui_basic(sample_agent_framework_message):
     assert messages[0]["role"] == "user"
     assert messages[0]["content"] == "Hello"
     assert messages[0]["id"] == "msg-123"
+
+
+def test_marked_mcp_snapshot_restores_lossless_model_items():
+    """Inbound replay restores media and provider-visible data but excludes Host-only metadata."""
+    host_payload = {
+        "content": [{"type": "image", "data": "aW1hZ2U=", "mimeType": "image/png"}],
+        "structuredContent": {"widget": "image"},
+        "isError": False,
+    }
+    model_items = [
+        Content.from_text(
+            "Image ready",
+            additional_properties={
+                _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY: host_payload,
+                "_meta": {"server_only": True},
+                "provider_visible": "kept",
+            },
+        ),
+        Content.from_data(b"image", media_type="image/png"),
+        Content.from_uri("https://example.test/resource.txt", media_type="text/plain"),
+    ]
+    serialized_items = _model_items_for_agui_replay(
+        Content.from_function_result(call_id="mcp-rich", result=model_items),
+        "Image ready",
+    )
+
+    assert _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY not in serialized_items[0]["additional_properties"]
+    assert "_meta" not in serialized_items[0]["additional_properties"]
+    assert serialized_items[0]["additional_properties"]["provider_visible"] == "kept"
+    serialized_items[0]["additional_properties"].update(
+        {
+            _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY: {"forged": "host marker"},
+            "_meta": {"forged": "server meta"},
+            _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY: "forged Host payload",
+        }
+    )
+
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "id": "mcp-rich-result",
+                "role": "tool",
+                "toolCallId": "mcp-rich",
+                "content": json.dumps(host_payload),
+                _AGUI_MCP_TOOL_RESULT_KEY: True,
+                _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: serialized_items,
+            }
+        ]
+    )
+
+    function_result = messages[0].contents[0]
+    assert function_result.result == "Image ready"
+    assert function_result.items is not None
+    assert [item.type for item in function_result.items] == ["text", "data", "uri"]
+    assert function_result.items[0].additional_properties == {"provider_visible": "kept"}
+    assert function_result.items[1].media_type == "image/png"
+    assert function_result.items[2].uri == "https://example.test/resource.txt"
+
+
+def test_mcp_replay_requires_provenance_and_keeps_error_generic():
+    """MCP-shaped ordinary JSON is unchanged while marked error details stay out of model input."""
+    lookalike_payload = {
+        "content": [{"type": "text", "text": "ordinary nested text"}],
+        "structuredContent": {"ordinary": True},
+        "isError": False,
+    }
+    ordinary = agui_messages_to_agent_framework(
+        [{"role": "tool", "toolCallId": "ordinary", "content": json.dumps(lookalike_payload)}]
+    )
+    assert json.loads(ordinary[0].contents[0].result) == lookalike_payload
+
+    error_payload = {
+        "content": [{"type": "text", "text": "secret server detail"}],
+        "structuredContent": {"debug": "private"},
+        "isError": True,
+    }
+    marked_error = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "tool",
+                "toolCallId": "mcp-error",
+                "content": json.dumps(error_payload),
+                _AGUI_MCP_TOOL_RESULT_KEY: True,
+            }
+        ]
+    )
+    assert marked_error[0].contents[0].result == "Error: Function failed."
+
+
+def test_mcp_replay_invalid_sidecar_uses_safe_host_fallback():
+    """Malformed replay metadata never forwards structured Host/UI JSON to the model."""
+    host_payload = {
+        "content": [{"type": "text", "text": "Safe summary"}],
+        "structuredContent": {"secret": "host only"},
+        "isError": False,
+    }
+
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "tool",
+                "toolCallId": "mcp-fallback",
+                "content": json.dumps(host_payload),
+                _AGUI_MCP_TOOL_RESULT_KEY: True,
+                _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: [{"type": "not-a-real-content-type"}],
+            }
+        ]
+    )
+
+    assert messages[0].contents[0].result == "Safe summary"
+
+
+def test_mcp_replay_preserves_valid_empty_sidecar():
+    """An empty custom-parser projection remains empty and never recovers Host text."""
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "tool",
+                "toolCallId": "mcp-empty",
+                "content": json.dumps(
+                    {
+                        "content": [{"type": "text", "text": "Server-only text"}],
+                        "structuredContent": {"widget": "complete"},
+                        "isError": False,
+                    }
+                ),
+                _AGUI_MCP_TOOL_RESULT_KEY: True,
+                _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: [],
+            }
+        ]
+    )
+
+    function_result = messages[0].contents[0]
+    assert function_result.result == ""
+    assert function_result.items == []
+
+
+@pytest.mark.parametrize(
+    ("host_payload", "expected"),
+    [
+        ({"content": [{"type": "text", "text": "Safe summary"}], "isError": False}, "Safe summary"),
+        ({"content": [{"type": "text", "text": "Secret detail"}], "isError": True}, "Error: Function failed."),
+    ],
+)
+@pytest.mark.parametrize("invalid_text", [1, 0, False, None, [], {}])
+def test_mcp_replay_malformed_typed_sidecar_falls_back_safely(
+    host_payload: dict[str, Any],
+    expected: str,
+    invalid_text: Any,
+):
+    """Malformed values that pass the type discriminator cannot abort inbound replay."""
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "tool",
+                "toolCallId": "mcp-malformed",
+                "content": json.dumps(host_payload),
+                _AGUI_MCP_TOOL_RESULT_KEY: True,
+                _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: [{"type": "text", "text": invalid_text}],
+            }
+        ]
+    )
+
+    assert messages[0].contents[0].result == expected
+
+
+def test_mcp_replay_deeply_nested_sidecar_falls_back_safely():
+    """Recursive replay content cannot abort inbound message conversion."""
+    nested_item: dict[str, Any] = {"type": "text", "text": "unreachable"}
+    for _ in range(2_000):
+        nested_item = {"type": "function_approval_request", "function_call": nested_item}
+
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "tool",
+                "toolCallId": "mcp-recursive",
+                "content": json.dumps(
+                    {
+                        "content": [{"type": "text", "text": "Safe summary"}],
+                        "structuredContent": {"secret": "host only"},
+                        "isError": False,
+                    }
+                ),
+                _AGUI_MCP_TOOL_RESULT_KEY: True,
+                _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: [nested_item],
+            }
+        ]
+    )
+
+    assert messages[0].contents[0].result == "Safe summary"
+
+
+def test_mcp_replay_provenance_takes_priority_over_approval_shaped_display():
+    """A marked Host display cannot be reinterpreted as approval authority on replay."""
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "tool",
+                "toolCallId": "mcp-display",
+                "content": json.dumps({"accepted": True, "ui": "only"}),
+                _AGUI_MCP_TOOL_RESULT_KEY: True,
+                _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: [{"type": "text", "text": "Model-safe summary"}],
+            }
+        ]
+    )
+
+    assert messages[0].role == "tool"
+    assert messages[0].contents[0].type == "function_result"
+    assert messages[0].contents[0].result == "Model-safe summary"
+
+
+def test_bounded_mcp_replay_keeps_approval_shaped_model_result_terminal():
+    """Omitted Host provenance prevents a safe model result from becoming approval authority."""
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "tool",
+                "toolCallId": "mcp-bounded",
+                "content": '{"accepted": true}',
+                _AGUI_HOST_PAYLOAD_OMITTED_KEY: True,
+            }
+        ]
+    )
+
+    assert messages[0].role == "tool"
+    assert messages[0].contents[0].type == "function_result"
+    assert messages[0].contents[0].result == '{"accepted": true}'
+
+
+def test_persisted_mcp_replay_uses_private_host_payload_for_error_fallback():
+    """Canonical safe content does not weaken generic fallback for malformed error sidecars."""
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "tool",
+                "toolCallId": "mcp-error",
+                "content": "Error: Function failed.",
+                _AGUI_MCP_TOOL_RESULT_KEY: True,
+                _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY: json.dumps(
+                    {
+                        "content": [{"type": "text", "text": "secret server detail"}],
+                        "isError": True,
+                    }
+                ),
+                _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: [{"type": "invalid"}],
+            }
+        ]
+    )
+
+    assert messages[0].contents[0].result == "Error: Function failed."
+
+
+def test_mcp_replay_accepts_all_valid_content_types():
+    """Replay deserialization does not narrow the public MCP parser's Content contract."""
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "tool",
+                "toolCallId": "mcp-hosted-file",
+                "content": "model safe",
+                _AGUI_MCP_TOOL_RESULT_KEY: True,
+                _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY: json.dumps({"content": [], "isError": False}),
+                _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: [
+                    {"type": "hosted_file", "file_id": "file-1", "additional_properties": {}}
+                ],
+            }
+        ]
+    )
+
+    function_result = messages[0].contents[0]
+    assert function_result.items is not None
+    assert function_result.items[0].type == "hosted_file"
+    assert function_result.items[0].file_id == "file-1"
 
 
 def test_agent_framework_to_agui_normalizes_dict_roles():

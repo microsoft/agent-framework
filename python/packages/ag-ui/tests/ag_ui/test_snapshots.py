@@ -185,6 +185,39 @@ def test_workflow_snapshot_builder_splits_tool_call_groups() -> None:
     ]
 
 
+def test_workflow_snapshot_builder_preserves_safe_bounded_mcp_replay() -> None:
+    """Workflow event synthesis persists model-safe content and private Host replay data."""
+    from ag_ui.core import ToolCallResultEvent
+
+    from agent_framework_ag_ui._utils import (
+        _AGUI_MCP_TOOL_RESULT_KEY,
+        _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY,
+        _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY,
+    )
+    from agent_framework_ag_ui._workflow import _WorkflowSnapshotBuilder
+
+    host_content = '{"structuredContent":{"widget":"host"}}'
+    builder = _WorkflowSnapshotBuilder([])
+    builder.observe(
+        ToolCallResultEvent.model_validate(
+            {
+                "messageId": "result",
+                "toolCallId": "mcp-call",
+                "content": host_content,
+                "role": "tool",
+                _AGUI_MCP_TOOL_RESULT_KEY: True,
+                _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY: host_content,
+                _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: [{"type": "text", "text": "Model summary"}],
+            }
+        )
+    )
+
+    message = builder.build().messages[0]
+    assert message["content"] == "Model summary"
+    assert message[_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY] == host_content
+    assert message[_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY] == [{"type": "text", "text": "Model summary"}]
+
+
 async def test_in_memory_snapshot_store_rejects_invalid_keys() -> None:
     """Key parts must be non-empty strings for every store operation."""
     import pytest
