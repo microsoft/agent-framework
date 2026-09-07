@@ -35,5 +35,11 @@
             "name": "azure",
             "depth": 2
         }
-    ]
+    ],
+    "python.testing.pytestArgs": [
+        "--import-mode=importlib",
+        "packages"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
 }

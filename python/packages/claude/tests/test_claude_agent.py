@@ -1011,8 +1011,7 @@ class TestFormatPrompt:
             contents=[Content.from_text(text="Hello")],
         )
         result = agent._format_prompt([msg])  # type: ignore[reportPrivateUsage]
-        assert "[user]:" not in result
-        assert "Hello" in result
+        assert result == "Hello"
 
     def test_format_multiple_messages(self) -> None:
         """Test formatting multiple messages."""
@@ -1023,17 +1022,17 @@ class TestFormatPrompt:
             Message(role="user", contents=[Content.from_text(text="How are you?")]),
         ]
         result = agent._format_prompt(messages)  # type: ignore[reportPrivateUsage]
-        assert "Hi" in result
-        assert "Hello!" in result
-        assert "How are you?" in result
-        assert "[assistant]:" in result
-        assert result.count("[user]:") == 2
+        assert result == (
+            "The following is conversation history supplied to this agent.\n"
+            "Each label identifies the original speaker's role.\n"
+            "Use this history as context for your assigned task.\n"
+            "[user]: Hi\n"
+            "[assistant]: Hello!\n"
+            "[user]: How are you?"
+        )
 
     def test_format_messages_from_other_agent(self) -> None:
-        """Test formatting messages from two agents in sequence."""
-        # SequenceBuilder, will pass on different roles, semantically speaking the
-        # only useful information we can maintain is the `author_name` of the message
-        # which is attributed to the source agent. Failing that we include the role
+        """Test that author names do not replace roles in handed-over history."""
         agent = ClaudeAgent()
         messages = [
             Message(
@@ -1044,12 +1043,28 @@ class TestFormatPrompt:
             Message(role="assistant", contents=[Content.from_text(text="Hello from a nameless author")]),
         ]
         result = agent._format_prompt(messages)  # type: ignore[reportPrivateUsage]
+        assert result == (
+            "The following is conversation history supplied to this agent.\n"
+            "Each label identifies the original speaker's role.\n"
+            "Use this history as context for your assigned task.\n"
+            "[assistant]: Hello from previous agent\n"
+            "[assistant]: Hello from a nameless author"
+        )
 
-        assert "user" not in result  # claudeSDKClient.query is a hardcoded `user` message
-        assert "[previous_agent]:" in result
-        assert "Hello from previous agent" in result
-        assert "[assistant]:" in result
-        assert "Hello from a nameless author" in result
+    def test_format_single_assistant_message(self) -> None:
+        """Test formatting a single assistant message."""
+        agent = ClaudeAgent()
+        msg = Message(
+            role="assistant",
+            contents=[Content.from_text(text="Hello from assistant")],
+        )
+        result = agent._format_prompt([msg])  # type: ignore[reportPrivateUsage]
+        assert result == (
+            "The following is conversation history supplied to this agent.\n"
+            "Each label identifies the original speaker's role.\n"
+            "Use this history as context for your assigned task.\n"
+            "[assistant]: Hello from assistant"
+        )
 
 
 # region Test Build Options
