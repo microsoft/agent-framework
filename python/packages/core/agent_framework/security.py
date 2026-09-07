@@ -1262,14 +1262,25 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
     def _extract_primary_tool_content(expanded_content: Any) -> Any:
         """Return the tool-visible content for an expanded variable payload.
 
-        Some hidden results are stored as rich payloads containing fields such as
-        ``response``, ``security_label``, and ``metadata``. Tool arguments should
-        only receive the primary content they would normally have seen without
-        variable indirection.
+        Hidden ``quarantined_llm`` results are stored as rich payloads containing
+        the response plus security metadata. Tool arguments should receive only the
+        primary response they would have seen without variable indirection. Ordinary
+        mappings or JSON text that happen to contain a ``response`` key remain intact.
         """
+
+        def is_quarantine_payload(payload: dict[str, Any]) -> bool:
+            return (
+                payload.get("quarantined") is True
+                and "response" in payload
+                and isinstance(payload.get("security_label"), MutableMapping)
+                and isinstance(payload.get("metadata"), MutableMapping)
+                and isinstance(payload.get("variables_processed"), list)
+                and isinstance(payload.get("content_summary"), list)
+            )
+
         if isinstance(expanded_content, dict):
             content_map = cast(dict[str, Any], expanded_content)
-            if "response" in content_map:
+            if is_quarantine_payload(content_map):
                 return content_map["response"]
             return content_map
 
@@ -1280,7 +1291,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                     parsed = json.loads(stripped)
                     if isinstance(parsed, dict):
                         parsed_map = cast(dict[str, Any], parsed)
-                        if "response" in parsed_map:
+                        if is_quarantine_payload(parsed_map):
                             return parsed_map["response"]
 
         return expanded_content
@@ -1516,23 +1527,37 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             declared_source_integrity = self._get_source_integrity(context)
             confidentiality = self._get_function_confidentiality(context)
 
+            # Expand hidden references before execution and retain their stored labels.
+            resolved_labels = self._expand_variable_references_in_context(context)
+            argument_labels = [*input_labels, *resolved_labels]
+            argument_label = combine_labels(*argument_labels) if argument_labels else ContentLabel()
+
+            # Integrity may be declared by the source, but a transformer cannot
+            # implicitly declassify data derived from its inputs.
+            result_confidentiality = combine_labels(
+                ContentLabel(confidentiality=confidentiality), argument_label
+            ).confidentiality
+
+            # Step 3: Build tiered fallback_label
+            # This label is used for result items that have NO embedded labels.
+            # Priority: source_integrity declaration (tier 2) > input labels join (tier 3)
             if declared_source_integrity is not None:
                 fallback_label = ContentLabel(
                     integrity=declared_source_integrity,
-                    confidentiality=confidentiality,
+                    confidentiality=result_confidentiality,
                     metadata={"source": "source_integrity", "function_name": function_name},
                 )
             elif input_labels:
                 combined = combine_labels(*input_labels)
                 fallback_label = ContentLabel(
                     integrity=combined.integrity,
-                    confidentiality=confidentiality,
+                    confidentiality=result_confidentiality,
                     metadata={"source": "input_labels_join", "function_name": function_name},
                 )
             else:
                 fallback_label = ContentLabel(
                     integrity=self.default_integrity,
-                    confidentiality=confidentiality,
+                    confidentiality=result_confidentiality,
                     metadata={"source": "default", "function_name": function_name},
                 )
 
@@ -1724,11 +1749,18 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         """
         additional_props = _get_additional_properties(item)
 
-        # Check for standard security_label
+        # Embedded labels remain authoritative for integrity, but cannot
+        # declassify data inherited from the tool's inputs.
         label_data = additional_props.get("security_label")
         if label_data and isinstance(label_data, dict):
             try:
-                return ContentLabel.from_dict(cast(dict[str, Any], label_data))
+                embedded_label = ContentLabel.from_dict(cast(dict[str, Any], label_data))
+                combined_label = combine_labels(fallback_label, embedded_label)
+                return ContentLabel(
+                    integrity=embedded_label.integrity,
+                    confidentiality=combined_label.confidentiality,
+                    metadata=combined_label.metadata,
+                )
             except Exception as e:
                 logger.warning(f"Failed to parse security_label from Content: {e}")
 
@@ -2874,6 +2906,34 @@ the call is blocked, audited, or sent for policy approval. That opt-in does not 
 """
 
 
+def _quarantined_llm_result_parser(result: Any) -> list[Content]:
+    """Publish quarantine output integrity and combined input confidentiality."""
+    contents = FunctionTool.parse_result(result)
+    if not contents or not isinstance(result, dict):
+        return contents
+
+    label_data = cast(dict[str, Any], result).get("security_label")
+    if not isinstance(label_data, MutableMapping):
+        return contents
+
+    try:
+        parsed_label = ContentLabel.from_dict(cast(MutableMapping[str, Any], label_data))
+    except (TypeError, ValueError) as exc:
+        logger.warning("Failed to parse quarantined_llm result label: %s", exc)
+        return contents
+
+    quarantine_label = ContentLabel(
+        integrity=IntegrityLabel.UNTRUSTED,
+        confidentiality=parsed_label.confidentiality,
+        metadata=parsed_label.metadata,
+    )
+    first = contents[0]
+    props = first.additional_properties or {}
+    props["security_label"] = quarantine_label.to_dict()
+    first.additional_properties = props
+    return contents
+
+
 @tool(
     description=(
         "Make an isolated LLM call with labeled data in a quarantined context. "
@@ -2883,6 +2943,7 @@ the call is blocked, audited, or sent for policy approval. That opt-in does not 
         "You can pass variable_ids directly to reference hidden content from VariableReferenceContent objects. "
         "UNTRUSTED results are automatically hidden by the middleware."
     ),
+    result_parser=_quarantined_llm_result_parser,
     additional_properties={
         "confidentiality": "private",
         "accepts_untrusted": True,
@@ -3122,6 +3183,9 @@ class InspectVariableInput(BaseModel):
     reason: str | None = Field(default=None, description="Reason for inspecting this variable (for audit purposes)")
 
 
+_INSPECT_VARIABLE_CONFIDENTIALITY = ConfidentialityLabel.PRIVATE
+
+
 def _inspect_variable_result_parser(result: Any) -> list[Content]:
     """Parse ``inspect_variable``'s dict result while preserving its security label.
 
@@ -3134,13 +3198,21 @@ def _inspect_variable_result_parser(result: Any) -> list[Content]:
     downgrading the real label.
 
     This parser stamps the inspected label back onto the produced Content so
-    ``LabelTrackingFunctionMiddleware`` propagates it faithfully. The error path
-    (``security_label`` is ``None``) is left unstamped so it safely falls back to
-    the tool's default label.
+    ``LabelTrackingFunctionMiddleware`` propagates it faithfully. Missing-variable
+    errors are labeled as trusted tool output so probing an absent or foreign id
+    does not falsely taint cumulative integrity.
     """
     contents = FunctionTool.parse_result(result)
+    if not contents:
+        return contents
+
     label = cast(dict[str, Any], result).get("security_label") if isinstance(result, dict) else None
-    if label and contents:
+    if label is None and isinstance(result, dict) and "error" in cast(dict[str, Any], result):
+        label = ContentLabel(
+            integrity=IntegrityLabel.TRUSTED,
+            confidentiality=_INSPECT_VARIABLE_CONFIDENTIALITY,
+        ).to_dict()
+    if label:
         first = contents[0]
         props = first.additional_properties or {}
         props["security_label"] = label
@@ -3158,7 +3230,7 @@ def _inspect_variable_result_parser(result: Any) -> list[Content]:
     approval_mode="never_require",
     result_parser=_inspect_variable_result_parser,
     additional_properties={
-        "confidentiality": "private",
+        "confidentiality": _INSPECT_VARIABLE_CONFIDENTIALITY.value,
         # No source_integrity declared: output inherits the label of the
         # inspected content via Tier 3. The variable store is just a
         # container — the data inside it is untrusted external content.

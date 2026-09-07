@@ -536,6 +536,39 @@ class TestLabelTrackingMiddleware:
 
         await middleware.process(context, next_fn)
 
+    async def test_json_response_object_is_not_mistaken_for_quarantine_payload(self, middleware) -> None:
+        """Ordinary JSON objects containing ``response`` survive expansion intact."""
+
+        class MessageArgs(BaseModel):
+            summary: str
+
+        async def send_message(summary: str) -> str:
+            return summary
+
+        message_tool = FunctionTool(
+            fn=send_message,
+            name="SendMessagetoSelf",
+            description="Send message",
+            args_schema=MessageArgs,
+        )
+        stored_payload = json.dumps({"response": "keep", "other": "also keep"})
+        variable_id = middleware.get_variable_store().store(
+            stored_payload,
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        context = FunctionInvocationContext(
+            function=message_tool,
+            arguments=MessageArgs(summary=f"[{variable_id}]"),
+        )
+
+        async def next_fn() -> None:
+            current_args = context.arguments
+            assert isinstance(current_args, dict)
+            assert current_args["summary"] == stored_payload
+            context.result = [Content.from_text("sent")]
+
+        await middleware.process(context, next_fn)
+
 
 class TestPolicyEnforcementMiddleware:
     """Tests for PolicyEnforcementFunctionMiddleware."""
@@ -1750,7 +1783,9 @@ class TestAutomaticHiding:
         await middleware_no_auto_hide.process(context, next_fn)
 
         result_label = context.metadata["result_label"]
+        assert result_label.integrity == IntegrityLabel.UNTRUSTED
         assert result_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+        assert middleware_no_auto_hide.get_context_label().integrity == IntegrityLabel.UNTRUSTED
         assert middleware_no_auto_hide.get_context_label().confidentiality == ConfidentialityLabel.USER_IDENTITY
 
     @pytest.mark.asyncio
@@ -1780,7 +1815,7 @@ class TestAutomaticHiding:
 
     @pytest.mark.asyncio
     async def test_inspect_variable_missing_var_does_not_crash(self, middleware_no_auto_hide):
-        """A missing variable id returns an error result and falls back safely."""
+        """A missing variable id returns a trusted tool-generated error."""
         from agent_framework.security import get_security_tools
 
         inspect_tool = next(tool for tool in get_security_tools() if tool.name == "inspect_variable")
@@ -1798,8 +1833,37 @@ class TestAutomaticHiding:
         payload = json.loads(context.result[0].text)
         assert payload["security_label"] is None
         assert "error" in payload
-        # No embedded label -> falls back to the tool's default confidentiality.
+        assert context.metadata["result_label"].integrity == IntegrityLabel.TRUSTED
         assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
+        assert middleware_no_auto_hide.get_context_label().integrity == IntegrityLabel.TRUSTED
+
+    async def test_inspect_variable_foreign_var_does_not_taint_integrity(self) -> None:
+        """An id owned by another store returns a trusted tool-generated error."""
+        from agent_framework.security import get_security_tools
+
+        owner = LabelTrackingFunctionMiddleware()
+        foreign_id = owner.get_variable_store().store(
+            "foreign secret",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.USER_IDENTITY),
+        )
+        middleware = LabelTrackingFunctionMiddleware(auto_hide_untrusted=False)
+        inspect_tool = next(tool for tool in get_security_tools() if tool.name == "inspect_variable")
+        context = FunctionInvocationContext(
+            function=inspect_tool,
+            arguments={"variable_id": foreign_id, "reason": "foreign id"},
+        )
+
+        async def next_fn() -> None:
+            context.result = await inspect_tool.invoke(arguments=context.arguments, context=context)
+
+        await middleware.process(context, next_fn)
+
+        payload = json.loads(context.result[0].text)
+        assert payload["security_label"] is None
+        assert "error" in payload
+        assert context.metadata["result_label"].integrity == IntegrityLabel.TRUSTED
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
+        assert middleware.get_context_label().integrity == IntegrityLabel.TRUSTED
 
     @pytest.mark.asyncio
     async def test_multiple_calls_accumulate_variables(self, middleware_auto_hide, mock_function):
@@ -2869,6 +2933,36 @@ class TestQuarantinedLLM:
     via source_integrity="untrusted", not by quarantined_llm itself.
     """
 
+    async def test_quarantined_llm_publishes_combined_confidentiality(self) -> None:
+        """Quarantine output is UNTRUSTED at the highest input confidentiality."""
+        middleware = LabelTrackingFunctionMiddleware()
+        variable_id = middleware.get_variable_store().store(
+            "identity secret",
+            ContentLabel(
+                integrity=IntegrityLabel.TRUSTED,
+                confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            ),
+        )
+        quarantine_tool = next(tool for tool in middleware.get_security_tools() if tool.name == "quarantined_llm")
+        context = FunctionInvocationContext(
+            function=quarantine_tool,
+            arguments={"prompt": "Summarize", "variable_ids": [variable_id]},
+        )
+
+        async def next_fn() -> None:
+            context.result = await quarantine_tool.invoke(arguments=context.arguments, context=context)
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.UNTRUSTED
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.USER_IDENTITY
+        assert middleware.get_context_label().integrity == IntegrityLabel.TRUSTED
+        assert middleware.get_context_label().confidentiality == ConfidentialityLabel.USER_IDENTITY
+        hidden_reference = json.loads(context.result[0].text)
+        _, hidden_label = middleware.get_variable_store().retrieve(hidden_reference["variable_id"])
+        assert hidden_label.integrity == IntegrityLabel.UNTRUSTED
+        assert hidden_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+
     @pytest.mark.asyncio
     async def test_quarantined_llm_returns_response(self):
         """Test that quarantined_llm returns a plain response dict."""
@@ -3357,6 +3451,31 @@ class TestPerItemEmbeddedLabels:
             parsed = json.loads(item.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
             assert parsed.get("type") == "variable_reference"
 
+    async def test_fully_hidden_result_updates_confidentiality_without_integrity_taint(
+        self, middleware, mock_function
+    ) -> None:
+        """Hidden content affects cumulative confidentiality but not integrity."""
+        context = FunctionInvocationContext(function=mock_function, arguments=mock_function.args_schema())
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "hidden identity data",
+                    additional_properties={
+                        "security_label": {
+                            "integrity": "untrusted",
+                            "confidentiality": "user_identity",
+                        }
+                    },
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        assert context.result[0].additional_properties["_variable_reference"] is True
+        assert middleware.get_context_label().integrity == IntegrityLabel.TRUSTED
+        assert middleware.get_context_label().confidentiality == ConfidentialityLabel.USER_IDENTITY
+
     @pytest.mark.asyncio
     async def test_items_without_labels_use_fallback(self, middleware, mock_function):
         """Test that items without embedded labels use the fallback (call) label."""
@@ -3575,6 +3694,86 @@ class TestTieredLabelPropagation:
         label = context.metadata["result_label"]
         # Tier 2 (source_integrity=trusted) wins over tier 3 (untrusted input)
         assert label.integrity == IntegrityLabel.TRUSTED
+
+    @pytest.mark.parametrize(
+        "confidentiality",
+        [ConfidentialityLabel.PRIVATE, ConfidentialityLabel.USER_IDENTITY],
+    )
+    async def test_hidden_input_confidentiality_propagates_to_transform_result(
+        self,
+        middleware: LabelTrackingFunctionMiddleware,
+        confidentiality: ConfidentialityLabel,
+    ) -> None:
+        """A trusted transformer cannot implicitly declassify hidden input."""
+
+        class Args(BaseModel):
+            value: str
+
+        async def transform(value: str) -> str:
+            return value.upper()
+
+        function = FunctionTool(
+            fn=transform,
+            name="trusted_transformer",
+            description="Transform hidden input",
+            args_schema=Args,
+            additional_properties={"source_integrity": "trusted"},
+        )
+        variable_id = middleware.get_variable_store().store(
+            "secret",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED, confidentiality=confidentiality),
+        )
+        context = FunctionInvocationContext(
+            function=function,
+            arguments=Args(value=f"[{variable_id}]"),
+        )
+
+        async def next_fn() -> None:
+            current_args = context.arguments
+            assert isinstance(current_args, dict)
+            context.result = [Content.from_text(current_args["value"].upper())]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.TRUSTED
+        assert context.metadata["result_label"].confidentiality == confidentiality
+        assert middleware.get_context_label().confidentiality == confidentiality
+
+    async def test_embedded_public_label_cannot_declassify_hidden_input(self, middleware) -> None:
+        """Embedded labels choose integrity without lowering input confidentiality."""
+
+        class Args(BaseModel):
+            value: str
+
+        async def transform(value: str) -> str:
+            return value
+
+        function = FunctionTool(
+            fn=transform,
+            name="embedded_label_transformer",
+            description="Transform hidden input",
+            args_schema=Args,
+            additional_properties={"source_integrity": "untrusted"},
+        )
+        variable_id = middleware.get_variable_store().store(
+            "private payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.PRIVATE),
+        )
+        context = FunctionInvocationContext(function=function, arguments=Args(value=f"[{variable_id}]"))
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "transformed",
+                    additional_properties={"security_label": {"integrity": "trusted", "confidentiality": "public"}},
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.TRUSTED
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
+        assert middleware.get_context_label().confidentiality == ConfidentialityLabel.PRIVATE
 
     @pytest.mark.asyncio
     async def test_embedded_labels_override_source_integrity(self, middleware):
