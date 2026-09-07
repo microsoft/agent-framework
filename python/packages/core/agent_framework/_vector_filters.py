@@ -11,7 +11,7 @@ Common operator semantics:
 - ``contains`` tests whether a non-mapping collection field contains one supplied value.
 - ``contains_any`` / ``contains_all`` test collection fields against supplied sequences.
 - ``is_null`` / ``is_not_null`` require the field to exist; use ``exists`` to test presence alone.
-- ``starts_with`` / ``ends_with`` / ``contains_text`` operate on strings.
+- ``starts_with`` / ``ends_with`` / ``contains_text`` require string operands.
 
 A missing field returns ``False`` for every operator except ``exists``. Use
 ``FilterGroup`` for explicit AND, OR, and NOT composition. Provider-specific
@@ -27,6 +27,7 @@ from collections.abc import Collection, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal
+from itertools import islice
 from types import UnionType
 from typing import Any, Final, Literal, TypeAlias, Union, cast, get_args, get_origin
 
@@ -80,6 +81,7 @@ _STANDARD_FILTER_OPERATORS: Final[frozenset[str]] = frozenset({
     "contains_text",
 })
 _NO_VALUE_OPERATORS: Final[frozenset[str]] = frozenset({"is_null", "is_not_null", "exists"})
+_TEXT_VALUE_OPERATORS: Final[frozenset[str]] = frozenset({"starts_with", "ends_with", "contains_text"})
 _SEQUENCE_VALUE_OPERATORS: Final[frozenset[str]] = frozenset({
     "between",
     "in",
@@ -91,6 +93,8 @@ _GROUP_OPERATORS: Final[frozenset[str]] = frozenset({"and", "or", "not"})
 _PROVIDER_OPERATOR_PATTERN: Final[re.Pattern[str]] = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+")
 _PARAM_UNSET = Sentinel("_PARAM_UNSET")
 _OMIT_FILTER = Sentinel("_OMIT_FILTER")
+_MAX_FILTER_DEPTH: Final[int] = 8
+_MAX_FILTER_NODES: Final[int] = 64
 
 
 def _is_non_string_sequence(value: Any) -> bool:
@@ -169,6 +173,9 @@ class Param:
     With ``omit_if_none=False`` (the default), ``None`` is an ordinary supplied
     value subject to type and operator validation, not an omission request.
     Null omission is only supported for filter parameters, not paging options.
+
+    Defaults and supplied mutable values are copied for each filter invocation.
+    Parameter data is bounded before copying or type validation.
     """
 
     name: str
@@ -243,6 +250,8 @@ class Param:
             raise ValueError("Param max_length must be a non-negative integer.")
         if min_length is not None and max_length is not None and min_length > max_length:
             raise ValueError("Param min_length cannot exceed max_length.")
+        if default is not _PARAM_UNSET:
+            _validate_param_data(default)
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "value_type", value_type)
         object.__setattr__(self, "required", required)
@@ -519,6 +528,11 @@ class Filter:
     With ``omit_if_none=False`` (the default), a supplied ``None`` is validated
     as a value, not omitted. A literal ``Filter(..., value=None)`` does not
     opt into omission either; use ``is_null`` to test for a null field.
+
+    Nested parameters are forbidden in collection members and mapping keys as
+    well as mapping values. Structural depth/node limits apply during parameter
+    inspection and before operation snapshots are copied; oversized inputs may
+    therefore fail at construction as well as at operation time.
     """
 
     field_name: str
@@ -534,10 +548,10 @@ class Filter:
             value: The structured value consumed by the operator.
 
         Raises:
-            TypeError: If the field name or operator is not a string.
+            TypeError: If the field name or operator is not a string, or an operand has an invalid shape.
             ValueError: If the field name or operator is invalid, an operator that takes no value receives one,
                 an operator that requires a value receives ``None``, ``between`` does not receive two boundaries,
-                or a ``Param`` is nested inside a larger value instead of being the complete value.
+                a ``Param`` is nested inside a larger value, or structural limits are exceeded.
         """
         if not isinstance(field_name, str):
             raise TypeError("Filter field_name must be a string.")
@@ -592,7 +606,7 @@ class FilterGroup:
 
         Raises:
             TypeError: If the operator or filters have unsupported types.
-            ValueError: If the operator or number of filters is invalid.
+            ValueError: If the operator or number of filters is invalid, including structural limits.
         """
         if not isinstance(operator, str):
             raise TypeError("Filter group operator must be a string.")
@@ -600,7 +614,9 @@ class FilterGroup:
             raise ValueError(f"Unknown filter group operator '{operator}'.")
         if not _is_non_string_sequence(filters):
             raise TypeError("FilterGroup filters must be a sequence.")
-        resolved_filters = tuple(filters)
+        resolved_filters = tuple(islice(filters, _MAX_FILTER_NODES))
+        if len(resolved_filters) >= _MAX_FILTER_NODES:
+            raise ValueError(f"Filters cannot contain more than {_MAX_FILTER_NODES} nodes.")
         if not resolved_filters:
             raise ValueError("FilterGroup requires at least one filter.")
         if operator == "not" and len(resolved_filters) != 1:
@@ -637,31 +653,45 @@ def _snapshot_filter(filter_: FilterExpression, *, active: set[int]) -> FilterEx
 
 
 def snapshot_filter(filter_: FilterExpression) -> FilterExpression:
-    """Create an independent filter snapshot for one operation."""
+    """Bound and validate the filter structure before copying it for one operation."""
+    validate_filter(filter_, allow_params=True)
     return _snapshot_filter(filter_, active=set())
 
 
-def _value_contains_param(value: Any, *, seen: set[int] | None = None) -> bool:
-    if isinstance(value, Param):
-        return True
-    if seen is None:
-        seen = set()
-    if not isinstance(value, Filter | FilterGroup | Mapping) and not _is_non_string_sequence(value):
-        return False
-    identity = id(cast(object, value))
-    if identity in seen:
-        raise ValueError("Filter values cannot contain cycles.")
-    seen.add(identity)
-    try:
-        if isinstance(value, Filter):
-            return _value_contains_param(value.value, seen=seen)
-        if isinstance(value, FilterGroup):
-            return any(_value_contains_param(item, seen=seen) for item in value.filters)
-        if isinstance(value, Mapping):
-            return any(_value_contains_param(item, seen=seen) for item in cast(Mapping[Any, Any], value).values())
-        return any(_value_contains_param(item, seen=seen) for item in cast(Sequence[Any], value))
-    finally:
-        seen.remove(identity)
+def _value_contains_param(value: Any) -> bool:
+    active: set[int] = set()
+    node_count = 0
+
+    def visit(value: Any, depth: int) -> bool:
+        nonlocal node_count
+        node_count += 1
+        if node_count > _MAX_FILTER_NODES:
+            raise ValueError(f"Filters cannot contain more than {_MAX_FILTER_NODES} nodes.")
+        if depth > _MAX_FILTER_DEPTH:
+            raise ValueError(f"Filter values cannot exceed a depth of {_MAX_FILTER_DEPTH}.")
+        if isinstance(value, Param):
+            return True
+        if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Filter | FilterGroup | Collection):
+            return False
+        identity = id(cast(object, value))
+        if identity in active:
+            raise ValueError("Filter values cannot contain cycles.")
+        active.add(identity)
+        try:
+            if isinstance(value, Filter):
+                return visit(value.value, depth + 1)
+            if isinstance(value, FilterGroup):
+                return any(visit(item, depth + 1) for item in value.filters)
+            if isinstance(value, Mapping):
+                return any(
+                    (not isinstance(key, str) and visit(key, depth + 1)) or visit(item, depth + 1)
+                    for key, item in cast(Mapping[Any, Any], value).items()
+                )
+            return any(visit(item, depth + 1) for item in cast(Collection[Any], value))
+        finally:
+            active.remove(identity)
+
+    return visit(value, 1)
 
 
 def _validate_filter_value_shape(filter_: Filter, *, allow_params: bool) -> None:
@@ -679,6 +709,8 @@ def _validate_filter_value_shape(filter_: Filter, *, allow_params: bool) -> None
         return
     if value is None:
         raise ValueError(f"Filter operator '{filter_.operator}' requires a value.")
+    if filter_.operator in _TEXT_VALUE_OPERATORS and not has_param:
+        require_filter_string(value)
     if filter_.operator not in _SEQUENCE_VALUE_OPERATORS or has_param:
         return
     if not _is_non_string_sequence(value):
@@ -711,7 +743,7 @@ def _resolve_param_value(
             raise TypeError(f"Missing required search parameter '{value.name}'.")
         else:
             return _OMIT_FILTER
-        return _OMIT_FILTER if value.omit_if_none and resolved is None else resolved
+        return _OMIT_FILTER if value.omit_if_none and resolved is None else deepcopy(resolved)
     return deepcopy(value)
 
 
@@ -736,7 +768,7 @@ def resolve_filter_params(
 
 @dataclass(slots=True)
 class _FilterValidator:
-    field_names: Collection[str]
+    field_names: Collection[str] | None
     allow_params: bool
     max_depth: int
     max_nodes: int
@@ -768,17 +800,17 @@ class _FilterValidator:
             finally:
                 active.remove(id(mapping))
             return
-        if _is_non_string_sequence(value):
-            sequence = cast(Sequence[Any], value)
-            if id(sequence) in active:
+        if isinstance(value, Collection) and not isinstance(value, (str, bytes, bytearray)):
+            collection = cast(Collection[Any], value)
+            if id(collection) in active:
                 raise ValueError("Filter values cannot contain cycles.")
-            active.add(id(sequence))
+            active.add(id(collection))
             try:
-                for item in sequence:
+                for item in collection:
                     self.count_node()
                     self.validate_value(item, depth=depth + 1, active=active)
             finally:
-                active.remove(id(sequence))
+                active.remove(id(collection))
 
     def validate_expression(
         self,
@@ -796,13 +828,17 @@ class _FilterValidator:
         try:
             self.count_node()
             if isinstance(expression, Filter):
-                if not relative_fields and expression.field_name.split(".", maxsplit=1)[0] not in self.field_names:
+                if (
+                    not relative_fields
+                    and self.field_names is not None
+                    and expression.field_name.split(".", maxsplit=1)[0] not in self.field_names
+                ):
                     raise ValueError(
                         f"Filter field '{expression.field_name}' is not part of the vector store definition."
                     )
-                _validate_filter_value_shape(expression, allow_params=self.allow_params)
                 if not isinstance(expression.value, Param):
                     self.validate_value(expression.value, depth=depth + 1, active=active)
+                _validate_filter_value_shape(expression, allow_params=self.allow_params)
                 return
             if not isinstance(expression, FilterGroup):
                 raise TypeError("filter must be a Filter or FilterGroup.")
@@ -825,10 +861,10 @@ class _FilterValidator:
 def validate_filter(
     filter_: FilterExpression,
     *,
-    field_names: Collection[str],
+    field_names: Collection[str] | None = None,
     allow_params: bool = False,
-    max_depth: int = 8,
-    max_nodes: int = 64,
+    max_depth: int = _MAX_FILTER_DEPTH,
+    max_nodes: int = _MAX_FILTER_NODES,
 ) -> None:
     _FilterValidator(
         field_names=field_names,

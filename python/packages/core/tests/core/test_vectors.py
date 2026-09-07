@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import AsyncIterable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterable, Callable, Iterator, Mapping, Sequence
 from dataclasses import FrozenInstanceError, dataclass, field
 from decimal import Decimal
 from typing import Annotated, Any, ClassVar, Literal, cast
@@ -351,6 +351,33 @@ def test_collection_definition_exposes_fields() -> None:
     frozen_definition = cast(Any, definition)
     with pytest.raises(FrozenInstanceError):
         frozen_definition.fields = ()
+
+
+@pytest.mark.parametrize("value", [0, 1, "false", None])
+@pytest.mark.parametrize("field_type", ["key", "data", "vector"])
+def test_auto_generated_flag_requires_a_boolean(value: Any, field_type: FieldTypes) -> None:
+    with pytest.raises(TypeError, match="is_auto_generated must be a boolean"):
+        cast(Any, VectorStoreField)(
+            field_type, is_auto_generated=value, dimensions=2 if field_type == "vector" else None
+        )
+
+
+async def test_bytearray_annotation_uses_normalized_binary_metadata() -> None:
+    @vectorstoremodel
+    @dataclass
+    class BinaryRecord:
+        id: Annotated[str, VectorStoreField("key")]
+        vector: Annotated[bytearray | None, VectorStoreField("vector", dimensions=24)] = None
+
+    class BinaryHandler(VectorStoreRecordHandler[str, BinaryRecord]):
+        supported_vector_types: ClassVar[set[str] | None] = {"bytes"}
+
+    handler = BinaryHandler(BinaryRecord)
+    assert handler.definition.vector_fields[0].type_ == "bytes"
+    assert await handler.serialize(BinaryRecord("one", bytearray((1, 2, 3))), generate_vectors=False) == {
+        "id": "one",
+        "vector": b"\x01\x02\x03",
+    }
 
 
 @pytest.mark.parametrize(
@@ -1883,7 +1910,8 @@ async def test_filter_resource_validation_boundaries() -> None:
     with pytest.raises(ValueError, match="entire Filter value"):
         await collection.search("query", filter=mutated_filter)
 
-    too_many = FilterGroup("and", tuple(Filter("text", "eq", str(index)) for index in range(65)))
+    too_many = FilterGroup("and", (Filter("text", "eq", "value"),))
+    too_many.filters = tuple(Filter("text", "eq", str(index)) for index in range(65))
     with pytest.raises(ValueError, match="more than 64 nodes"):
         await collection.search("query", filter=too_many)
 
@@ -1899,6 +1927,152 @@ async def test_filter_resource_validation_boundaries() -> None:
 
     nested: Filter | FilterGroup = Filter("relative_name", "eq", "value")
     assert Filter("text", "provider.nested", nested).value is nested
+
+
+@pytest.mark.parametrize("operation", ["get", "search", "tool"])
+async def test_filter_limits_are_checked_before_snapshot_copy(operation: str) -> None:
+    collection = MockCollection()
+    expression: Filter | FilterGroup = Filter("text", "eq", "value")
+    for _ in range(1100):
+        expression = FilterGroup("and", (expression,))
+
+    with patch("agent_framework._vector_filters.deepcopy") as copy:
+        with pytest.raises(ValueError, match="depth of 8"):
+            if operation == "get":
+                await collection.get(filter=expression)
+            elif operation == "search":
+                await collection.search("query", filter=expression)
+            else:
+                create_vector_search_tool(collection, filter=expression)
+        copy.assert_not_called()
+
+
+def test_filter_group_constructor_bounds_child_copying() -> None:
+    child = Filter("text", "eq", "value")
+
+    class LargeFilterSequence(Sequence[Filter]):
+        def __init__(self) -> None:
+            self.visited = 0
+
+        def __len__(self) -> int:
+            return 1_000_000
+
+        def __getitem__(self, index: Any) -> Any:
+            self.visited += 1
+            assert self.visited <= 64
+            return child
+
+    filters = LargeFilterSequence()
+    with pytest.raises(ValueError, match="more than 64 nodes"):
+        FilterGroup("and", filters)
+    assert filters.visited == 64
+    assert len(FilterGroup("and", [child] * 63).filters) == 63
+
+
+async def test_filter_value_traversal_stops_at_node_budget_before_copy() -> None:
+    class LargeSequence(Sequence[int]):
+        def __init__(self) -> None:
+            self.visited = 0
+
+        def __len__(self) -> int:
+            return 1_000_000
+
+        def __getitem__(self, index: Any) -> Any:
+            self.visited += 1
+            assert self.visited <= 64
+            return index
+
+        def __deepcopy__(self, memo: dict[int, Any]) -> Any:
+            raise AssertionError("Oversized values must not be copied.")
+
+    values = LargeSequence()
+    expression = Filter("text", "provider.values", [])
+    expression.value = values
+    with pytest.raises(ValueError, match="more than 64 nodes"):
+        await MockCollection().search("query", filter=expression)
+    assert values.visited == 64
+
+
+async def test_filter_collection_values_keep_existing_node_budget_and_snapshot_semantics() -> None:
+    values = set(range(63))
+    expression = Filter("text", "provider.native", values)
+    collection = MockCollection()
+    tool = create_vector_search_tool(collection, filter=expression)
+    values.add(63)
+
+    await tool(query="query")
+    assert collection.last_search_filter == Filter("text", "provider.native", set(range(63)))
+    with pytest.raises(ValueError, match="more than 64 nodes"):
+        await collection.search("query", filter=expression)
+
+
+@pytest.mark.parametrize(
+    "wrap",
+    [
+        lambda param: {param},
+        lambda param: frozenset((param,)),
+        lambda param: {"key": param}.values(),
+        lambda param: {param: "value"},
+        lambda param: {(param,): "value"},
+        lambda param: {"nested": {param}},
+    ],
+)
+def test_filters_reject_params_in_collection_values_and_mapping_keys(wrap: Callable[[Param], Any]) -> None:
+    with pytest.raises(ValueError, match="entire Filter value"):
+        Filter("text", "provider.native", wrap(Param("hidden", str)))
+
+
+def test_filter_constructor_bounds_nested_value_inspection() -> None:
+    value: Any = "value"
+    for _ in range(1100):
+        value = [value]
+    with pytest.raises(ValueError, match="depth of 8"):
+        Filter("text", "provider.nested", value)
+
+
+def test_param_default_is_bounded_before_copying() -> None:
+    with patch("agent_framework._vector_filters.deepcopy") as copy:
+        with pytest.raises(ValueError, match="more than 256 nodes"):
+            Param("values", list[int], default=list(range(300)))
+        copy.assert_not_called()
+
+
+@pytest.mark.parametrize("operator", ["starts_with", "ends_with", "contains_text"])
+@pytest.mark.parametrize("value", [1, False, []])
+def test_string_filter_operators_require_string_operands(operator: str, value: Any) -> None:
+    with pytest.raises(TypeError, match="must be a string"):
+        Filter("text", operator, value)
+
+
+@pytest.mark.parametrize("case", ["nested_param", "string_operand", "combined_budget"])
+async def test_definitionless_search_still_validates_portable_filter_structure(case: str) -> None:
+    class SearchOnly:
+        async def search(self, values: Any, **kwargs: Any) -> SearchResults[SearchResponse[Record]]:
+            raise AssertionError("Invalid filter reached the connector.")
+
+    search = cast(SupportsVectorSearch[Record], SearchOnly())
+    if case == "nested_param":
+        expression = Filter("text", "provider.native", set())
+        expression.value.add(Param("hidden", str))
+        with pytest.raises(ValueError, match="entire Filter value"):
+            create_vector_search_tool(search, filter=expression)
+    elif case == "string_operand":
+        tool = create_vector_search_tool(search, filter=Filter("text", "contains_text", Param("text", int)))
+        with pytest.raises(TypeError, match="must be a string"):
+            await tool(query="query", text=1)
+    else:
+        tool = create_vector_search_tool(
+            search,
+            filter=FilterGroup(
+                "and",
+                (
+                    Filter("first", "in", Param("first", list[str])),
+                    Filter("second", "in", Param("second", list[str])),
+                ),
+            ),
+        )
+        with pytest.raises(ValueError, match="more than 64 nodes"):
+            await tool(query="query", first=["one"] * 40, second=["two"] * 40)
 
 
 async def test_search_tool_param_edge_paths() -> None:
@@ -2140,7 +2314,8 @@ async def test_search_operations_snapshot_mutable_filters() -> None:
     assert collection.last_search_filter.value == ["one", "connector mutation"]
 
 
-async def test_search_tool_copies_mutable_param_defaults_per_invocation() -> None:
+@pytest.mark.parametrize("supply_argument", [False, True])
+async def test_search_tool_copies_mutable_param_values_per_invocation(supply_argument: bool) -> None:
     class MutatingSearch:
         def __init__(self) -> None:
             self.seen_values: list[list[str]] = []
@@ -2167,10 +2342,33 @@ async def test_search_tool_copies_mutable_param_defaults_per_invocation() -> Non
         filter=Filter("tenant_id", "in", Param("tenant_ids", list[str], default=["acme"])),
     )
 
-    await tool(query="first")
-    await tool(query="second")
+    supplied = ["acme"]
+    arguments = {"tenant_ids": supplied} if supply_argument else {}
+    await tool(query="first", **arguments)
+    await tool(query="second", **arguments)
 
     assert search.seen_values == [["acme"], ["acme"]]
+    assert supplied == ["acme"]
+
+
+async def test_search_tool_deep_copies_supplied_mapping_values() -> None:
+    class MutatingSearch:
+        async def search(
+            self, values: Any, *, filter: Filter | FilterGroup | None = None, **kwargs: Any
+        ) -> SearchResults[SearchResponse[Record]]:
+            assert isinstance(filter, Filter)
+            filter.value["tags"].append("mutated")
+            return SearchResults([])
+
+    tool = create_vector_search_tool(
+        cast(SupportsVectorSearch[Record], MutatingSearch()),
+        filter=Filter("metadata", "provider.native", Param("metadata", dict[str, list[str]])),
+    )
+    supplied = {"tags": ["original"]}
+
+    await tool(query="query", metadata=supplied)
+
+    assert supplied == {"tags": ["original"]}
 
 
 async def test_runtime_operations_mark_vector_store_feature_usage() -> None:

@@ -75,8 +75,10 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   provider-defined strings, key fields can be store-generated, and copied `provider_annotations` remains mutable for
   connector-specific configuration
 - **`Filter` / `FilterGroup`** - Mutable data-only filter inputs shared by local and remote vector stores; collection
-  operations validate and pass an independent snapshot to connectors
+  operations bound structural traversal before copying and pass an independent snapshot to connectors. Parameter
+  detection includes collection members and mapping keys; string operators require string operands after resolution
 - **`Param`** - Native typed search-tool parameter reference embedded in filter values or paging options
+  - Defaults and supplied mutable values are copied per filter invocation, including for definition-less search tools
   - Filter parameters may opt into null omission with a nullable type and explicit `default=None`, such as
     `Param("text", str | None, default=None, omit_if_none=True)`; absent/null arguments remove that leaf, while
     remaining AND/OR children still apply. Empty groups (including NOT with an omitted child) are removed
@@ -98,7 +100,10 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 - **`BaseVectorStore`** - Base class for stores that create collection clients
 - **`BaseVectorSearch`** - Base class for vector and keyword-hybrid search
 - **`create_vector_search_tool`** - Creates an agent tool from any `SupportsVectorSearch` implementation
-- **`InMemoryCollection` / `InMemoryStore`** - Dependency-free, process-local development and test implementation
+- **`InMemoryCollection` / `InMemoryStore`** - Dependency-free, process-local development and test implementation;
+  cosine scoring scales finite inputs, all metrics reject non-finite scores, and unsupported distance functions
+  fail before record scanning. Hamming scores/thresholds use the fraction of unequal dimensions, not a count.
+  Shared serialization normalizes stored data; codecs and connector overrides remain trusted Python code
 - **`SupportsVectorUpsert`** / **`SupportsVectorSearch`** - Structural protocols for vector store capabilities
 
 ### Middleware (`_middleware.py`)

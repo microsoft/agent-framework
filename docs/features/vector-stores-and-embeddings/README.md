@@ -353,12 +353,26 @@ Options considered:
   search receives no filter; other search options still apply.
 - Without the opt-in, explicit null values retain normal validation and provider semantics. Strings such as
   `"*"` are literal filter values, not omission markers.
+- String operators reject non-string operands centrally, after substitution for parameterized leaves
+- Defaults and supplied mutable parameter values are copied per invocation, including nested containers
+- Bound structural inspection before copying: filter depth/node limits apply to the tree and collection members,
+  including non-sequence collections such as sets; mapping keys cannot hide a `Param`. Limits also apply to
+  search tools whose search implementation has no collection definition. Unknown field names remain
+  connector-owned in that case
+- Structural budgets do not sandbox arbitrary provider-native objects or trusted Python hooks
 
 #### 4.3 — Add `InMemoryCollection` and `InMemoryStore`
 - Dedicated `_in_memory.py` module
 - Shared process-local collection state, full CRUD/listing/order behavior, and flat vector search
 - Pure-Python distance functions with no NumPy or SciPy dependency
+- Cosine calculations scale each vector independently to avoid overflow/underflow from finite magnitudes.
+  Non-finite scores are rejected for every metric, and unsupported distance functions fail before scanning records
+- Hamming distance is the proportion of unequal dimensions, not a mismatch count; scores and thresholds use
+  the range zero to one, consistent with `scipy.spatial.distance.hamming`
 - Strict filter evaluator over serialized mappings with the shared conservative resource limits
+- Dictionary inputs and custom encoder outputs both pass through `msgspec.to_builtins` before storage, so
+  ordinary filtering operates on normalized data rather than original object comparison methods. Custom codecs
+  and connector overrides are trusted Python code, not a sandbox
 
 #### 4.4 — Tests and samples
 - Direct filter composition and model-set search-tool filter parameters

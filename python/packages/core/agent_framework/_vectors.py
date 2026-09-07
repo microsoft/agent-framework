@@ -286,10 +286,13 @@ class VectorStoreField:
             provider_annotations: Mutable provider-specific configuration, copied when the field is created.
 
         Raises:
+            TypeError: If ``is_auto_generated`` is not a boolean.
             ValueError: If field options are invalid.
         """
         if field_type not in ("key", "vector", "data"):
             raise ValueError(f"Unknown vector store field type '{field_type}'.")
+        if not isinstance(is_auto_generated, bool):
+            raise TypeError("Vector is_auto_generated must be a boolean.")
         resolved_dimensions: int | None = None
         resolved_index_kind: IndexKind | None = None
         resolved_distance_function: DistanceFunction | None = None
@@ -607,7 +610,7 @@ def _infer_type_name(annotation: Any, *, vector: bool) -> str | None:
                 return getattr(candidate, "__name__", str(candidate))
         binary_candidate = next((candidate for candidate in candidates if candidate in (bytes, bytearray)), None)
         if binary_candidate is not None:
-            return binary_candidate.__name__
+            return "bytes"
     candidate = candidates[0] if candidates else annotation
     origin = get_origin(candidate)
     return getattr(origin or candidate, "__name__", None)
@@ -1959,8 +1962,11 @@ def create_vector_search_tool(
         resolved_filter = (
             resolve_filter_params(configured_filter, resolved_arguments) if configured_filter is not None else None
         )
-        if resolved_filter is not None and isinstance(definition, VectorStoreCollectionDefinition):
-            validate_filter(resolved_filter, field_names=definition.names)
+        if resolved_filter is not None:
+            validate_filter(
+                resolved_filter,
+                field_names=definition.names if isinstance(definition, VectorStoreCollectionDefinition) else None,
+            )
         results = await search.search(
             query,
             search_type=search_type,

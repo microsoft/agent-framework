@@ -66,6 +66,17 @@ _IN_MEMORY_FILTER_OPERATORS = frozenset({
 })
 _SCALAR_FILTER_TYPES = (str, int, float, bool, bytes, date, datetime, time, timedelta, Decimal, UUID)
 _DESCENDING_DISTANCE_FUNCTIONS = frozenset({"cosine_similarity", "dot_prod"})
+_IN_MEMORY_DISTANCE_FUNCTIONS = frozenset({
+    "cosine_similarity",
+    "cosine_distance",
+    "dot_prod",
+    "negative_dot_prod",
+    "euclidean_distance",
+    "euclidean_squared_distance",
+    "manhattan",
+    "hamming",
+    "DEFAULT",
+})
 
 
 @dataclass(slots=True)
@@ -108,27 +119,37 @@ def _paired_vectors(left: Vector, right: Vector) -> tuple[tuple[float, ...], tup
 def _calculate_score(left: Vector, right: Vector, distance_function: DistanceFunction) -> float:
     left_values, right_values = _paired_vectors(left, right)
     if distance_function in ("cosine_similarity", "cosine_distance", "DEFAULT"):
-        dot_product = sum(a * b for a, b in zip(left_values, right_values, strict=True))
-        left_norm = math.sqrt(sum(value * value for value in left_values))
-        right_norm = math.sqrt(sum(value * value for value in right_values))
-        if left_norm == 0 or right_norm == 0:
+        left_scale = max(abs(value) for value in left_values)
+        right_scale = max(abs(value) for value in right_values)
+        if left_scale == 0 or right_scale == 0:
             raise ValueError("Cosine distance is undefined for zero-magnitude vectors.")
-        similarity = max(-1.0, min(1.0, dot_product / (left_norm * right_norm)))
-        return similarity if distance_function == "cosine_similarity" else 1 - similarity
-    if distance_function == "dot_prod":
-        return sum(a * b for a, b in zip(left_values, right_values, strict=True))
-    if distance_function == "negative_dot_prod":
-        return -sum(a * b for a, b in zip(left_values, right_values, strict=True))
-    squared_differences = tuple((a - b) ** 2 for a, b in zip(left_values, right_values, strict=True))
-    if distance_function == "euclidean_distance":
-        return math.sqrt(sum(squared_differences))
-    if distance_function == "euclidean_squared_distance":
-        return sum(squared_differences)
-    if distance_function == "manhattan":
-        return sum(abs(a - b) for a, b in zip(left_values, right_values, strict=True))
-    if distance_function == "hamming":
-        return sum(a != b for a, b in zip(left_values, right_values, strict=True)) / len(left_values)
-    raise NotImplementedError(f"Distance function '{distance_function}' is not supported by InMemoryCollection.")
+        left_scaled = tuple(value / left_scale for value in left_values)
+        right_scaled = tuple(value / right_scale for value in right_values)
+        dot_product = math.fsum(a * b for a, b in zip(left_scaled, right_scaled, strict=True))
+        left_norm = math.sqrt(math.fsum(value * value for value in left_scaled))
+        right_norm = math.sqrt(math.fsum(value * value for value in right_scaled))
+        similarity = dot_product / (left_norm * right_norm)
+        if not math.isfinite(similarity):
+            raise ValueError("Cosine similarity must be finite.")
+        similarity = max(-1.0, min(1.0, similarity))
+        score = similarity if distance_function == "cosine_similarity" else 1 - similarity
+    elif distance_function == "dot_prod":
+        score = sum(a * b for a, b in zip(left_values, right_values, strict=True))
+    elif distance_function == "negative_dot_prod":
+        score = -sum(a * b for a, b in zip(left_values, right_values, strict=True))
+    elif distance_function == "euclidean_distance":
+        score = math.dist(left_values, right_values)
+    elif distance_function == "euclidean_squared_distance":
+        score = sum((a - b) * (a - b) for a, b in zip(left_values, right_values, strict=True))
+    elif distance_function == "manhattan":
+        score = sum(abs(a - b) for a, b in zip(left_values, right_values, strict=True))
+    elif distance_function == "hamming":
+        score = sum(a != b for a, b in zip(left_values, right_values, strict=True)) / len(left_values)
+    else:
+        raise NotImplementedError(f"Distance function '{distance_function}' is not supported by InMemoryCollection.")
+    if not math.isfinite(score):
+        raise ValueError(f"Distance function '{distance_function}' produced a non-finite score.")
+    return score
 
 
 def _validate_in_memory_filter_value(value: Any) -> None:
@@ -250,6 +271,11 @@ class InMemoryCollection(
 
     This implementation is intended for tests and development. It is
     nonpersistent, uses linear scans, and is not thread-safe.
+
+    Hamming scores are the proportion of unequal dimensions, between zero and
+    one, not a mismatch count. Non-finite scores are rejected. Records are
+    normalized by the shared serializer before storage; custom codecs and
+    connector overrides remain trusted Python code, not sandboxed execution.
     """
 
     supported_search_types: ClassVar[set[SearchType]] = {"vector"}
@@ -429,6 +455,10 @@ class InMemoryCollection(
             _validate_in_memory_filter(filter, self.definition)
 
         distance_function = vector_field.distance_function or "DEFAULT"
+        if distance_function not in _IN_MEMORY_DISTANCE_FUNCTIONS:
+            raise NotImplementedError(
+                f"Distance function '{distance_function}' is not supported by InMemoryCollection."
+            )
         storage_name = vector_field.storage_name or vector_field.name
         results: list[dict[str, Any]] = []
         key_storage_name = self.definition.key_field_storage_name

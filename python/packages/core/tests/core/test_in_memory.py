@@ -6,7 +6,7 @@ import ast
 import inspect
 import math
 import warnings
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, cast
 
@@ -26,6 +26,7 @@ from agent_framework import (
     VectorStoreCollectionDefinition,
     VectorStoreField,
     create_vector_search_tool,
+    register_vectorstoremodel,
     vectorstoremodel,
 )
 from agent_framework import _in_memory as in_memory_module
@@ -403,6 +404,194 @@ async def test_in_memory_distance_functions(
     assert [response["record"]["id"] for response in responses] == ["same", "other"]
     assert [cast(float, response["score"]) for response in responses] == pytest.approx(expected_scores)
     assert results.metadata == {"in_memory_total_count": 2}
+
+
+@pytest.mark.parametrize("scale", [1e308, 1e-308, 5e-324])
+@pytest.mark.parametrize("similarity", [1.0, 0.0, -1.0])
+@pytest.mark.parametrize("distance_function", ["cosine_similarity", "cosine_distance", "DEFAULT"])
+def test_cosine_scoring_handles_extreme_finite_magnitudes(
+    scale: float, similarity: float, distance_function: DistanceFunction
+) -> None:
+    left = [scale, 0.0]
+    right = [scale, 0.0] if similarity == 1.0 else [-scale, 0.0] if similarity == -1.0 else [0.0, scale]
+    expected = similarity if distance_function == "cosine_similarity" else 1 - similarity
+
+    assert in_memory_module._calculate_score(left, right, distance_function) == pytest.approx(expected)
+
+
+async def test_large_opposing_vectors_are_not_misranked() -> None:
+    collection = InMemoryCollection(Document)
+    await collection.ensure_collection_exists()
+    await collection.upsert(
+        [
+            Document("opposed", "text", "travel", 5, [], None, [-1e308, 0.0]),
+            Document("aligned", "text", "travel", 5, [], None, [1e308, 0.0]),
+        ],
+        generate_vectors=False,
+    )
+    results = await collection.search(vector=[1e308, 0.0], score_threshold=0.5)
+
+    assert [result["record"].id async for result in results] == ["aligned"]
+
+
+@pytest.mark.parametrize(
+    ("right", "expected"),
+    [([1e-308, 1e-308], 1.0), ([-1e-308, -1e-308], -1.0), ([1e-308, -1e-308], 0.0)],
+)
+def test_cosine_scales_each_vector_independently(right: list[float], expected: float) -> None:
+    assert in_memory_module._calculate_score([1e308, 1e308], right, "cosine_similarity") == pytest.approx(expected)
+
+
+async def test_non_finite_score_reports_the_record_context() -> None:
+    definition = VectorStoreCollectionDefinition(
+        [
+            VectorStoreField("key", name="id"),
+            VectorStoreField("vector", name="vector", dimensions=2, distance_function="dot_prod"),
+        ],
+        collection_name="non-finite-score",
+    )
+    collection: InMemoryCollection[str, dict[str, Any]] = InMemoryCollection(dict, definition=definition)
+    await collection.ensure_collection_exists()
+    await collection.upsert([{"id": "overflow", "vector": [1e308, 0.0]}], generate_vectors=False)
+
+    with pytest.raises(ValueError, match="Record 'overflow'.*non-finite score"):
+        await collection.search(vector=[1e308, 0.0])
+
+
+@pytest.mark.parametrize(
+    ("distance_function", "left", "right"),
+    [
+        ("dot_prod", [1e308, 0.0], [1e308, 0.0]),
+        ("dot_prod", [1e308, 1e308], [1e308, -1e308]),
+        ("negative_dot_prod", [1e308, 0.0], [1e308, 0.0]),
+        ("euclidean_distance", [1e308, 0.0], [-1e308, 0.0]),
+        ("euclidean_squared_distance", [1e200, 0.0], [0.0, 0.0]),
+        ("manhattan", [1e308, 0.0], [-1e308, 0.0]),
+    ],
+)
+def test_distance_functions_reject_non_finite_scores(
+    distance_function: DistanceFunction, left: list[float], right: list[float]
+) -> None:
+    with pytest.raises(ValueError, match="non-finite score"):
+        in_memory_module._calculate_score(left, right, distance_function)
+
+
+def test_distance_functions_do_not_compute_unnecessary_squares() -> None:
+    assert in_memory_module._calculate_score([1e200, 0], [0, 0], "euclidean_distance") == 1e200
+    assert in_memory_module._calculate_score([1e308, 0], [-1e308, 0], "hamming") == 0.5
+
+
+async def test_hamming_scores_and_thresholds_use_mismatch_proportions() -> None:
+    definition = VectorStoreCollectionDefinition(
+        [
+            VectorStoreField("key", name="id"),
+            VectorStoreField("vector", name="vector", dimensions=2, distance_function="hamming"),
+        ],
+        collection_name="normalized-hamming",
+    )
+    collection: InMemoryCollection[str, dict[str, Any]] = InMemoryCollection(dict, definition=definition)
+    await collection.ensure_collection_exists()
+    await collection.upsert(
+        [
+            {"id": "same", "vector": [0, 0]},
+            {"id": "partial", "vector": [1, 0]},
+            {"id": "different", "vector": [1, 1]},
+        ],
+        generate_vectors=False,
+    )
+    results = await collection.search(vector=[0, 0], score_threshold=0.5)
+
+    assert [(result["record"]["id"], result["score"]) async for result in results] == [
+        ("same", 0.0),
+        ("partial", 0.5),
+    ]
+
+
+@pytest.mark.parametrize("contents", ["empty", "missing_vector", "filtered_out"])
+async def test_unsupported_distance_is_rejected_independently_of_records(contents: str) -> None:
+    definition = VectorStoreCollectionDefinition(
+        [
+            VectorStoreField("key", name="id"),
+            VectorStoreField("vector", name="vector", dimensions=2, distance_function="provider.unsupported"),
+        ],
+        collection_name="unsupported-distance",
+    )
+    collection: InMemoryCollection[str, dict[str, Any]] = InMemoryCollection(dict, definition=definition)
+    await collection.ensure_collection_exists()
+    if contents != "empty":
+        await collection.upsert(
+            [{"id": "one", "vector": None if contents == "missing_vector" else [1.0, 0.0]}],
+            generate_vectors=False,
+        )
+    with pytest.raises(NotImplementedError, match="provider.unsupported"):
+        await collection.search(
+            vector=[1.0, 0.0], filter=Filter("id", "eq", "absent") if contents == "filtered_out" else None
+        )
+
+
+@pytest.mark.parametrize("operator", ["starts_with", "ends_with", "contains_text"])
+async def test_invalid_string_operand_is_rejected_for_empty_collection(operator: str) -> None:
+    collection = InMemoryCollection(Document)
+    await collection.ensure_collection_exists()
+    expression = Filter("text", operator, "valid")
+    expression.value = 1
+
+    with pytest.raises(TypeError, match="must be a string"):
+        await collection.search(vector=[1.0, 0.0], filter=expression)
+
+
+@pytest.mark.parametrize("custom_codec", [False, True])
+async def test_stored_values_are_normalized_before_filter_comparisons(custom_codec: bool) -> None:
+    class ComparisonProbe:
+        def __init__(self) -> None:
+            self.value = 1
+
+        def __eq__(self, other: object) -> bool:
+            raise AssertionError("Custom equality must not execute during filtering.")
+
+    class ComparisonList(list[Any]):
+        def __eq__(self, other: object) -> bool:
+            raise AssertionError("Custom list equality must not execute during filtering.")
+
+        def __iter__(self) -> Iterator[Any]:
+            raise AssertionError("Custom iteration must not execute during filtering.")
+
+    @dataclass
+    class EncodedRecord:
+        id: str
+        payload: Any
+        vector: list[float] | None = None
+
+    definition = VectorStoreCollectionDefinition(
+        [
+            VectorStoreField("key", name="id"),
+            VectorStoreField("data", name="payload"),
+            VectorStoreField("vector", name="vector", dimensions=2),
+        ],
+        collection_name="normalized-records",
+    )
+    payload = ComparisonList([ComparisonProbe()])
+    collection: InMemoryCollection[str, Any]
+    if custom_codec:
+        register_vectorstoremodel(
+            EncodedRecord,
+            definition=definition,
+            encoder=lambda record: {"id": record.id, "payload": record.payload, "vector": record.vector},
+        )
+        collection = InMemoryCollection(EncodedRecord)
+        await collection.ensure_collection_exists()
+        await collection.upsert([EncodedRecord("one", payload, [1.0, 0.0])], generate_vectors=False)
+    else:
+        collection = InMemoryCollection(dict, definition=definition)
+        await collection.ensure_collection_exists()
+        await collection.upsert([{"id": "one", "payload": payload, "vector": [1.0, 0.0]}], generate_vectors=False)
+    fetched = (await collection.get(["one"]))[0]
+    stored = fetched.payload if isinstance(fetched, EncodedRecord) else fetched["payload"]
+
+    assert type(stored) is list
+    assert stored == [{"value": 1}]
+    assert await collection.get(filter=Filter("payload", "eq", [1])) == []
+    assert await collection.get(filter=Filter("payload", "contains", 1)) == []
 
 
 async def test_in_memory_rejects_unsafe_or_unsupported_filters() -> None:
