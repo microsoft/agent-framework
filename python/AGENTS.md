@@ -60,12 +60,14 @@ Run `uv run poe` from the `python/` directory to see available commands. See [DE
 ## Function-Calling Loop Changes
 
 Changes to the Python function-calling loop, approval resume behavior, function-call history, provider
-serialization, or transport result handling must follow
-[the function-calling loop specification](../docs/specs/004-python-function-calling-loop.md). This area requires
-extra validation because small changes can duplicate side effects, orphan call/result pairs, replay stale approval
-authority, or make streaming and non-streaming behavior diverge. Update the specification and its scenario-to-test
-mapping only when the documented contract, scenario inventory, or authoritative scenario-to-test mapping materially
-changes. Adding or modifying tests that preserve existing documented behavior does not require a specification update.
+serialization, or transport result handling must be reviewed against
+[the function-calling loop specification](../docs/specs/004-python-function-calling-loop.md). Reading and validating
+against the specification is required; editing it is not the default. It is a stable contract, not a per-PR changelog.
+Update only the smallest affected sections when normative behavior, the scenario inventory, an acknowledged coverage
+gap, or the authoritative scenario-to-test mapping intentionally changes. Do not update it for implementation details
+or tests that preserve existing documented behavior. This area requires extra validation because small changes can
+duplicate side effects, orphan call/result pairs, replay stale approval authority, or make streaming and non-streaming
+behavior diverge.
 External contributors must check with the Agent Framework core team before picking up issues in this area.
 
 ## Project Structure

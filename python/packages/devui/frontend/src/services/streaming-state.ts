@@ -8,6 +8,46 @@
 
 import type { ExtendedResponseStreamEvent } from "@/types/openai";
 
+export interface StreamingTextPart {
+  itemId?: string;
+  contentIndex: number;
+  type: "text" | "refusal";
+  text: string;
+}
+
+export function applyTextDeltaToParts(
+  parts: StreamingTextPart[],
+  event: ExtendedResponseStreamEvent
+): StreamingTextPart[] {
+  if (
+    (event.type !== "response.output_text.delta" && event.type !== "response.refusal.delta") ||
+    !("delta" in event) ||
+    typeof event.delta !== "string" ||
+    event.delta.length === 0
+  ) {
+    return parts;
+  }
+  const partType = event.type === "response.refusal.delta" ? "refusal" : "text";
+  const nextParts = parts.map((part) => ({ ...part }));
+  const existingPart = nextParts.find(
+    (part) =>
+      part.itemId === event.item_id &&
+      part.contentIndex === (event.content_index ?? 0) &&
+      part.type === partType
+  );
+  if (existingPart) {
+    existingPart.text += event.delta;
+  } else {
+    nextParts.push({
+      itemId: event.item_id,
+      contentIndex: event.content_index ?? 0,
+      type: partType,
+      text: event.delta,
+    });
+  }
+  return nextParts;
+}
+
 export interface StreamingState {
   conversationId: string;
   responseId: string;
@@ -17,6 +57,8 @@ export interface StreamingState {
   completed: boolean; // Whether the stream completed successfully
   accumulatedText?: string; // Bounded tail preview for refresh restoration
   accumulatedTextIsPreview?: boolean;
+  accumulatedTextType?: "text" | "refusal";
+  accumulatedParts?: StreamingTextPart[];
 }
 
 const STORAGE_KEY_PREFIX = "devui_streaming_state_";
@@ -30,6 +72,8 @@ interface CreateStreamingStateOptions {
   lastSequenceNumber?: number;
   accumulatedText?: string;
   accumulatedTextIsPreview?: boolean;
+  accumulatedTextType?: "text" | "refusal";
+  accumulatedParts?: StreamingTextPart[];
 }
 
 /**
@@ -40,6 +84,25 @@ function getStorageKey(conversationId: string): string {
 }
 
 function normalizeAccumulatedTextPreview(state: StreamingState): StreamingState {
+  if (state.accumulatedParts?.length) {
+    const retained: StreamingTextPart[] = [];
+    let remaining = MAX_ACCUMULATED_TEXT_PREVIEW_CHARS;
+    for (const part of [...state.accumulatedParts].reverse()) {
+      if (remaining <= 0) break;
+      const text = part.text.slice(-remaining);
+      retained.unshift({ ...part, text });
+      remaining -= text.length;
+    }
+    const accumulatedText = retained.map((part) => part.text).join("");
+    return {
+      ...state,
+      accumulatedParts: retained,
+      accumulatedText,
+      accumulatedTextIsPreview:
+        state.accumulatedTextIsPreview ||
+        accumulatedText.length < state.accumulatedParts.reduce((total, part) => total + part.text.length, 0),
+    };
+  }
   if (
     state.accumulatedText === undefined ||
     state.accumulatedText.length <= MAX_ACCUMULATED_TEXT_PREVIEW_CHARS
@@ -87,6 +150,8 @@ export function createStreamingState({
   lastSequenceNumber = -1,
   accumulatedText,
   accumulatedTextIsPreview = false,
+  accumulatedTextType,
+  accumulatedParts,
 }: CreateStreamingStateOptions): StreamingState {
   return normalizeAccumulatedTextPreview({
     conversationId,
@@ -97,6 +162,8 @@ export function createStreamingState({
     completed: false,
     accumulatedText,
     accumulatedTextIsPreview,
+    accumulatedTextType,
+    accumulatedParts,
   });
 }
 
@@ -123,23 +190,30 @@ export function applyStreamingEventToState(
   }
 
   if (
-    event.type === "response.output_text.delta" &&
+    (event.type === "response.output_text.delta" || event.type === "response.refusal.delta") &&
     "delta" in event &&
     typeof event.delta === "string" &&
     event.delta.length > 0
   ) {
-    const accumulatedText = `${state.accumulatedText ?? ""}${event.delta}`;
-    const isPreview =
-      state.accumulatedTextIsPreview ||
-      accumulatedText.length > MAX_ACCUMULATED_TEXT_PREVIEW_CHARS;
-
-    nextState.accumulatedText = isPreview
-      ? accumulatedText.slice(-MAX_ACCUMULATED_TEXT_PREVIEW_CHARS)
-      : accumulatedText;
-    nextState.accumulatedTextIsPreview = isPreview;
+    const partType = event.type === "response.refusal.delta" ? "refusal" : "text";
+    const existingParts = state.accumulatedParts
+      ? state.accumulatedParts.map((part) => ({ ...part }))
+      : state.accumulatedText
+        ? [{
+            itemId: state.lastMessageId,
+            contentIndex: 0,
+            type: state.accumulatedTextType ?? "text",
+            text: state.accumulatedText,
+          } satisfies StreamingTextPart]
+        : [];
+    const accumulatedParts = applyTextDeltaToParts(existingParts, event);
+    nextState.accumulatedParts = accumulatedParts;
+    nextState.accumulatedText = accumulatedParts.map((part) => part.text).join("");
+    nextState.accumulatedTextIsPreview = state.accumulatedTextIsPreview;
+    nextState.accumulatedTextType = partType;
   }
 
-  return nextState;
+  return normalizeAccumulatedTextPreview(nextState);
 }
 
 /**

@@ -381,6 +381,7 @@ class WorkflowExecutor(Executor):
         # against the subworkflow's own executor IDs.
         fi_kwargs: dict[str, Any] | None = None
         ci_kwargs: dict[str, Any] | None = None
+        tools = ctx.get_runtime_tools()
         for key in ("function_invocation_kwargs", "client_kwargs"):
             resolved = parent_kwargs.get(key)
             if isinstance(resolved, dict):
@@ -394,6 +395,7 @@ class WorkflowExecutor(Executor):
         # Run the sub-workflow and collect all events, passing parent kwargs
         result = await self.workflow.run(
             input_data,
+            tools=tools,
             function_invocation_kwargs=fi_kwargs,  # type: ignore
             client_kwargs=ci_kwargs,  # type: ignore
         )
@@ -447,6 +449,15 @@ class WorkflowExecutor(Executor):
             response=response,
             ctx=ctx,
         )
+
+    @override
+    async def _cancel_pending_request(self, request_id: str, ctx: WorkflowContext[Any, Any]) -> None:
+        """Propagate cancellation into the wrapped workflow."""
+        result = await self.workflow.cancel_pending_requests(
+            [request_id],
+            tools=ctx.get_runtime_tools(),
+        )
+        await self._process_workflow_result(result, ctx)
 
     @override
     async def on_checkpoint_save(self) -> dict[str, Any]:
@@ -606,5 +617,5 @@ class WorkflowExecutor(Executor):
 
         # Forward the response to the sub-workflow, which resumes and validates it against its own
         # pending requests, then process whatever the sub-workflow produces.
-        result = await self.workflow.run(responses={request_id: response})
+        result = await self.workflow.run(responses={request_id: response}, tools=ctx.get_runtime_tools())
         await self._process_workflow_result(result, ctx)

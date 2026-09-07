@@ -896,6 +896,73 @@ def test_agent_framework_to_agui_function_result_multiple_text_contents():
     assert agui_msg["content"] == '["First result", "Second result"]'
 
 
+def test_agent_framework_to_agui_parallel_function_results_not_collapsed():
+    """A tool Message with several function_result contents emits one AG-UI tool message each."""
+    msg = Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(call_id="call_a", result="result-a"),
+            Content.from_function_result(call_id="call_b", result="result-b"),
+            Content.from_function_result(call_id="call_c", result="result-c"),
+        ],
+        message_id="tool-batch-1",
+    )
+
+    messages = agent_framework_messages_to_agui([msg])
+
+    tool_msgs = [m for m in messages if m.get("role") == "tool"]
+    assert len(tool_msgs) == 3
+    assert [m["toolCallId"] for m in tool_msgs] == ["call_a", "call_b", "call_c"]
+    assert [m["content"] for m in tool_msgs] == ["result-a", "result-b", "result-c"]
+    # Split messages must carry distinct ids so downstream clients keyed by id do not re-collapse them.
+    assert len({m["id"] for m in tool_msgs}) == 3
+    # The first result keeps the source message id for continuity.
+    assert tool_msgs[0]["id"] == "tool-batch-1"
+
+
+def test_agent_framework_to_agui_parallel_function_results_none_result():
+    """A None result among parallel results maps to empty string without dropping the entry."""
+    msg = Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(call_id="call_a", result="result-a"),
+            Content.from_function_result(call_id="call_b", result=None),
+        ],
+        message_id="tool-batch-2",
+    )
+
+    messages = agent_framework_messages_to_agui([msg])
+
+    tool_msgs = [m for m in messages if m.get("role") == "tool"]
+    assert len(tool_msgs) == 2
+    assert tool_msgs[1]["toolCallId"] == "call_b"
+    assert tool_msgs[1]["content"] == ""
+
+
+def test_agent_framework_to_agui_function_result_with_text_preserves_both():
+    """A mixed message (function_result + text) emits a tool message and keeps the text."""
+    msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_result(call_id="weather-call", result="Sunny in Seattle"),
+            Content.from_text("The weather is sunny."),
+        ],
+        message_id="mixed-1",
+    )
+
+    messages = agent_framework_messages_to_agui([msg])
+
+    assert len(messages) == 2
+    tool_msg, text_msg = messages
+    assert tool_msg["role"] == "tool"
+    assert tool_msg["toolCallId"] == "weather-call"
+    assert tool_msg["content"] == "Sunny in Seattle"
+    # The assistant text is not swallowed by the tool result and keeps its own role/id.
+    assert text_msg["role"] == "assistant"
+    assert text_msg["content"] == "The weather is sunny."
+    assert text_msg["id"] != tool_msg["id"]
+
+
 # Additional tests for better coverage
 
 

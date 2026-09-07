@@ -73,7 +73,12 @@ from agent_framework.exceptions import (
 )
 from agent_framework.observability import ChatTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
-from openai.types.responses import FunctionShellToolParam, ResponseCustomToolCall, ResponseToolSearchCall
+from openai.types.responses import (
+    FunctionShellToolParam,
+    ResponseCustomToolCall,
+    ResponseToolSearchCall,
+    response_create_params,
+)
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
 from openai.types.responses.function_tool_param import FunctionToolParam
 from openai.types.responses.parsed_response import (
@@ -115,23 +120,12 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import TypedDict  # pragma: no cover
 
-try:
-    from openai.types.responses.response_create_params import PromptCacheOptions
+_prompt_cache_options_supported = hasattr(response_create_params, "PromptCacheOptions")
 
-    _prompt_cache_options_supported = True
-except ImportError:  # pragma: no cover
-    _prompt_cache_options_supported = False
 
-    class PromptCacheOptions(TypedDict, total=False):
-        """Fallback for openai versions that predate prompt cache options.
-
-        Mirrors the SDK's shape so ``prompt_cache_options`` type-checks the same on
-        every supported openai version; a runtime guard rejects the option when the
-        installed openai is too old to send it.
-        """
-
-        mode: Literal["implicit", "explicit"]
-        ttl: Literal["30m"]
+class _PromptCacheOptions(TypedDict, total=False):
+    mode: Literal["implicit", "explicit"]
+    ttl: Literal["30m"]
 
 
 if TYPE_CHECKING:
@@ -141,6 +135,14 @@ if TYPE_CHECKING:
     AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
 logger = logging.getLogger("agent_framework.openai")
+
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
+
+
+def _is_refusal_text_content(content: Content) -> bool:
+    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+
 
 DEFAULT_AZURE_OPENAI_RESPONSES_API_VERSION = "preview"
 
@@ -233,7 +235,7 @@ class OpenAIChatOptions(ChatOptions[ResponseFormatT], Generic[ResponseFormatT], 
     prompt_cache_retention: Literal["24h"]
     """Retention policy for prompt cache. Set to '24h' for extended caching."""
 
-    prompt_cache_options: PromptCacheOptions
+    prompt_cache_options: _PromptCacheOptions
     """Request-wide prompt cache policy for GPT-5.6 and later models.
     Set mode to 'explicit' to use only the breakpoints set on content parts via
     ``Content.additional_properties["prompt_cache_breakpoint"]``.
@@ -1884,6 +1886,11 @@ class RawOpenAIChatClient(
         role = Role(role)
         match content.type:
             case "text":
+                if role == "assistant" and _is_refusal_text_content(content):
+                    return {
+                        "type": "refusal",
+                        "refusal": content.text,
+                    }
                 if role == "assistant":
                     # Assistant history is represented as output text items; Azure validation
                     # requires `annotations` to be present for this type.
@@ -1923,7 +1930,19 @@ class RawOpenAIChatClient(
                     ret["summary"].append({"type": "summary_text", "text": content.text})
                 return ret
             case "data" | "uri":
-                if content.has_top_level_media_type("image"):
+                openai_content_type = content.additional_properties.get("openai_content_type")
+                if openai_content_type == "input_file":
+                    filename = content.additional_properties.get("filename")
+                    file_obj = {
+                        "type": "input_file",
+                        "file_data": content.uri,
+                    }
+                    if filename:
+                        file_obj["filename"] = filename
+                    return _attach_prompt_cache_breakpoint(file_obj, content)
+                if openai_content_type == "input_image" or (
+                    openai_content_type is None and content.has_top_level_media_type("image")
+                ):
                     result: dict[str, Any] = {
                         "type": "input_image",
                         "image_url": content.uri,
@@ -2011,7 +2030,20 @@ class RawOpenAIChatClient(
                         "output": self._to_local_shell_output_payload(content),
                     }
                 # call_id for the result needs to be the same as the call_id for the function call
-                output: str | list[dict[str, Any]] = content.result or ""
+                raw_result: Any = content.result
+                if isinstance(raw_result, str):
+                    output: str | list[Any] = raw_result
+                elif isinstance(raw_result, list) and self.SUPPORTS_RICH_FUNCTION_OUTPUT:
+                    output = cast("list[Any]", raw_result)
+                elif raw_result is None or (
+                    isinstance(raw_result, list) and not self.SUPPORTS_RICH_FUNCTION_OUTPUT and not raw_result
+                ):
+                    output = ""
+                else:
+                    try:
+                        output = json.dumps(cast("Any", raw_result), default=str)
+                    except (TypeError, ValueError):
+                        output = str(cast("Any", raw_result))
                 if (
                     self.SUPPORTS_RICH_FUNCTION_OUTPUT
                     and content.items
@@ -2074,6 +2106,15 @@ class RawOpenAIChatClient(
                 # the citation context for round-tripping.
                 if role == "assistant":
                     return {}
+                openai_content_type = content.additional_properties.get("openai_content_type")
+                if openai_content_type == "input_image" or (
+                    openai_content_type is None and content.media_type and content.has_top_level_media_type("image")
+                ):
+                    return {
+                        "type": "input_image",
+                        "file_id": content.file_id,
+                        "detail": content.additional_properties.get("detail", "auto"),
+                    }
                 return {
                     "type": "input_file",
                     "file_id": content.file_id,
@@ -2723,6 +2764,7 @@ class RawOpenAIChatClient(
                                 contents.append(
                                     Content.from_text(
                                         text=message_content.refusal,
+                                        additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
                                         raw_representation=message_content,
                                     )
                                 )
@@ -3013,7 +3055,13 @@ class RawOpenAIChatClient(
                         )
                         metadata.update(self._get_metadata_from_response(event_part))
                     case "refusal":
-                        contents.append(Content.from_text(text=event_part.refusal, raw_representation=event))
+                        contents.append(
+                            Content.from_text(
+                                text=event_part.refusal,
+                                additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+                                raw_representation=event,
+                            )
+                        )
                     case _:
                         pass
             case "response.output_text.delta":
@@ -3025,6 +3073,14 @@ class RawOpenAIChatClient(
                     )
                 )
                 metadata.update(self._get_metadata_from_response(event))
+            case "response.refusal.delta":
+                contents.append(
+                    Content.from_text(
+                        text=event.delta,
+                        additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+                        raw_representation=event,
+                    )
+                )
             case "response.reasoning_text.delta":
                 if seen_reasoning_delta_item_ids is not None:
                     seen_reasoning_delta_item_ids.add(event.item_id)
@@ -3535,7 +3591,16 @@ class OpenAIChatClient(
     RawOpenAIChatClient[OpenAIChatOptionsT],
     Generic[OpenAIChatOptionsT],
 ):
-    """OpenAI Responses client class with middleware, telemetry, and function invocation support."""
+    """OpenAI Responses client class with middleware, telemetry, and function invocation support.
+
+    Note:
+        One client instance can be shared by concurrent asynchronous calls on the same event loop,
+        including any combination of streaming and non-streaming calls. Each call must use its own
+        ``Agent``, ``AgentSession``, messages, and options. User-supplied mutable extensions, such as
+        middleware, tools, and callbacks, are safe only if their implementations support concurrent use.
+        Sharing a client across OS threads or event loops, or mutating its configuration while calls are
+        active, is not supported.
+    """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "openai"
 

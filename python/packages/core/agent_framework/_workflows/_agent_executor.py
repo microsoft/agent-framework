@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import inspect
 import logging
 import sys
 from collections.abc import Awaitable, Callable
@@ -27,6 +28,15 @@ else:
     from typing_extensions import override  # pragma: no cover
 
 logger = logging.getLogger(__name__)
+
+
+def _accepts_runtime_tools(agent: SupportsAgentRun) -> bool:
+    """Return whether the agent run surface accepts a tools keyword."""
+    try:
+        parameters = inspect.signature(agent.run).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(parameter.name == "tools" or parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters)
 
 
 @dataclass
@@ -166,6 +176,7 @@ class AgentExecutor(Executor):
             raise ValueError("Agent must have a non-empty name or id or an explicit id must be provided.")
         super().__init__(exec_id)
         self._agent = agent
+        self._accepts_runtime_tools = _accepts_runtime_tools(agent)
         self._session = session or self._agent.create_session()
 
         self._pending_agent_requests: dict[str, Content] = {}
@@ -308,13 +319,32 @@ class AgentExecutor(Executor):
         self._pending_agent_requests.pop(original_request.id, None)  # type: ignore[arg-type]
 
         if not self._pending_agent_requests:
-            # All pending requests have been resolved; resume agent execution.
-            # Use role="tool" for function_result responses (from declaration-only tools)
-            # so the LLM receives proper tool results instead of orphaned tool_calls.
-            role = "tool" if all(r.type == "function_result" for r in self._pending_responses_to_agent) else "user"
-            self._cache = normalize_messages_input(Message(role=role, contents=self._pending_responses_to_agent))
-            self._pending_responses_to_agent.clear()
-            await self._run_agent_and_emit(ctx)
+            await self._resume_with_pending_responses(ctx)
+
+    async def _resume_with_pending_responses(
+        self,
+        ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate],
+    ) -> None:
+        """Resume agent execution after every pending request has reached an outcome."""
+        if not self._pending_responses_to_agent:
+            return
+        # Use role="tool" for function_result responses (from declaration-only tools)
+        # so the LLM receives proper tool results instead of orphaned tool_calls.
+        role = "tool" if all(r.type == "function_result" for r in self._pending_responses_to_agent) else "user"
+        self._cache = normalize_messages_input(Message(role=role, contents=self._pending_responses_to_agent))
+        self._pending_responses_to_agent.clear()
+        await self._run_agent_and_emit(ctx)
+
+    @override
+    async def _cancel_pending_request(
+        self,
+        request_id: str,
+        ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate],
+    ) -> None:
+        """Release an agent-owned user-input request after workflow cancellation."""
+        self._pending_agent_requests.pop(request_id, None)
+        if not self._pending_agent_requests:
+            await self._resume_with_pending_responses(ctx)
 
     @override
     async def on_checkpoint_save(self) -> dict[str, Any]:
@@ -410,9 +440,9 @@ class AgentExecutor(Executor):
         Returns:
             The complete AgentResponse, or None if waiting for user input.
         """
-        function_invocation_kwargs, client_kwargs = self._prepare_agent_run_args(
-            ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
-        )
+        raw_run_kwargs = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
+        function_invocation_kwargs, client_kwargs = self._prepare_agent_run_args(raw_run_kwargs)
+        tools = ctx.get_runtime_tools()
 
         if not self._cache:
             logger.warning(
@@ -422,13 +452,15 @@ class AgentExecutor(Executor):
             )
 
         run_agent = cast(Callable[..., Awaitable[AgentResponse[Any]]], self._agent.run)
-        response = await run_agent(
-            self._cache,
-            stream=False,
-            session=self._session,
-            function_invocation_kwargs=function_invocation_kwargs,
-            client_kwargs=client_kwargs,
-        )
+        run_kwargs: dict[str, Any] = {
+            "stream": False,
+            "session": self._session,
+            "function_invocation_kwargs": function_invocation_kwargs,
+            "client_kwargs": client_kwargs,
+        }
+        if tools is not None and self._accepts_runtime_tools:
+            run_kwargs["tools"] = tools
+        response = await run_agent(self._cache, **run_kwargs)
 
         # Handle any user input requests
         if response.user_input_requests:
@@ -464,9 +496,9 @@ class AgentExecutor(Executor):
         Returns:
             The complete AgentResponse, or None if waiting for user input.
         """
-        function_invocation_kwargs, client_kwargs = self._prepare_agent_run_args(
-            ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
-        )
+        raw_run_kwargs = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
+        function_invocation_kwargs, client_kwargs = self._prepare_agent_run_args(raw_run_kwargs)
+        tools = ctx.get_runtime_tools()
 
         if not self._cache:
             logger.warning(
@@ -478,13 +510,15 @@ class AgentExecutor(Executor):
         updates: list[AgentResponseUpdate] = []
         streamed_user_input_requests: list[Content] = []
         run_agent_stream = cast(Callable[..., ResponseStream[AgentResponseUpdate, AgentResponse[Any]]], self._agent.run)
-        stream = run_agent_stream(
-            self._cache,
-            stream=True,
-            session=self._session,
-            function_invocation_kwargs=function_invocation_kwargs,
-            client_kwargs=client_kwargs,
-        )
+        run_kwargs: dict[str, Any] = {
+            "stream": True,
+            "session": self._session,
+            "function_invocation_kwargs": function_invocation_kwargs,
+            "client_kwargs": client_kwargs,
+        }
+        if tools is not None and self._accepts_runtime_tools:
+            run_kwargs["tools"] = tools
+        stream = run_agent_stream(self._cache, **run_kwargs)
         async for update in stream:
             updates.append(update)
             if update.user_input_requests:
@@ -562,7 +596,6 @@ class AgentExecutor(Executor):
         """
         fi_resolved = raw_run_kwargs.get("function_invocation_kwargs")
         ci_resolved = raw_run_kwargs.get("client_kwargs")
-
         function_invocation_kwargs = self._resolve_executor_kwargs(fi_resolved)
         client_kwargs = self._resolve_executor_kwargs(ci_resolved)
 

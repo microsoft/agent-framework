@@ -61,6 +61,11 @@ Both default to `None` (no-op → byte-identical stock OpenAI behavior) and are 
 **both**: the parser surfaces the field for display, the preparer sends it back. Prefer a dedicated
 client (e.g. `agent-framework-mistral`) when an endpoint diverges substantially.
 
+Native Responses and Chat Completions refusals remain ordinary text content with the experimental
+`additional_properties["model_output_kind"] == "refusal"` marker. Assistant history reconstructs
+the provider's native refusal field without splitting mixed text/refusal turns; non-assistant
+marked text is sent as ordinary input text.
+
 ## Dependencies
 
 - `agent-framework-core` — core abstractions

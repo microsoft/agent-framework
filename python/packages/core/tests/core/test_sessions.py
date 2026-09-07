@@ -8,7 +8,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import patch
 
 import msgspec
@@ -1541,6 +1541,33 @@ class TestFileHistoryProvider:
         first_record_length = int.from_bytes(raw[:4], "big")
         assert first_record_length > 0
         assert raw[4 : 4 + first_record_length] == msgspec.msgpack.encode(messages[0].to_dict())
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_round_trips_marked_refusal_text(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
+        message = Message(
+            role="assistant",
+            contents=[
+                Content.from_text(
+                    "I cannot help with that.",
+                    additional_properties={"model_output_kind": "refusal"},
+                )
+            ],
+        )
+
+        await provider.save_messages("refusal-session", [message])
+        restored = await provider.get_messages("refusal-session")
+
+        assert len(restored) == 1
+        assert restored[0].contents == [
+            Content.from_text(
+                "I cannot help with that.",
+                additional_properties={"model_output_kind": "refusal"},
+            )
+        ]
+        assert restored[0].text == "I cannot help with that."
 
     def test_msgpack_rejects_custom_json_codecs(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="Custom dumps and loads"):

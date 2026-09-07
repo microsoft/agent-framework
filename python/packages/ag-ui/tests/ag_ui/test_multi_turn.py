@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from agent_framework import AgentResponseUpdate, Content
+from agent_framework import AgentResponseUpdate, Content, FunctionTool
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -27,6 +27,7 @@ from agent_framework_ag_ui import (
     InMemoryAGUIThreadSnapshotStore,
     add_agent_framework_fastapi_endpoint,
 )
+from agent_framework_ag_ui._approval_lifecycle import ApprovalExecutionOwner
 
 
 def _build_app_with_agent(updates: list[AgentResponseUpdate], **kwargs: Any) -> FastAPI:
@@ -703,6 +704,77 @@ async def test_service_session_keeps_incremental_trusted_tool_result() -> None:
         "call-input",
         "trusted answer",
     )
+
+
+async def test_service_session_legacy_approval_validates_against_authoritative_snapshot_history() -> None:
+    executed: list[str] = []
+
+    def guarded_write(value: str) -> str:
+        executed.append(value)
+        return value
+
+    tool = FunctionTool(
+        name="guarded_write",
+        description="Write a guarded value",
+        func=guarded_write,
+        approval_mode="always_require",
+    )
+    stub = StubAgent(default_options={"tools": [tool], "response_format": None})
+    store = InMemoryAGUIThreadSnapshotStore()
+    runner = AgentFrameworkAgent(agent=stub, use_service_session=True, snapshot_store=store)
+    runner._approval_state_store.lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="service-legacy-approval",
+        interrupt_id="af-call-write",
+        call_id="provider-call-write",
+        name="guarded_write",
+        arguments='{"value":"approved"}',
+    )
+    await store.save(
+        scope="service",
+        thread_id="service-legacy-approval",
+        snapshot=AGUIThreadSnapshot(
+            messages=[
+                {"role": "user", "content": "Write it"},
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "provider-call-write",
+                            "type": "function",
+                            "function": {
+                                "name": "guarded_write",
+                                "arguments": '{"value":"approved"}',
+                            },
+                        }
+                    ],
+                },
+            ]
+        ),
+    )
+
+    events = await _run_service_turn(
+        runner,
+        thread_id="service-legacy-approval",
+        scope="service",
+        messages=[
+            {
+                "role": "tool",
+                "toolCallId": "provider-call-write",
+                "content": '{"accepted":true}',
+            }
+        ],
+    )
+
+    assert executed == ["approved"]
+    assert not any(getattr(event, "type", None) == "RUN_ERROR" for event in events)
+    received_results = [
+        content
+        for message in stub.messages_received
+        for content in message.contents
+        if content.type == "function_result"
+    ]
+    assert [(result.call_id, result.result) for result in received_results] == [("provider-call-write", "approved")]
 
 
 async def test_service_session_empty_generic_resume_invokes_agent_with_only_new_result() -> None:

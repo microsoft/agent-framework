@@ -109,6 +109,21 @@ async def test_openai_get_embeddings(openai_unit_test_env: dict[str, str]) -> No
     assert result[0].dimensions == 3
 
 
+async def test_openai_get_embeddings_honors_response_indexes(openai_unit_test_env: dict[str, str]) -> None:
+    mock_response = _make_openai_response(
+        embeddings=[[0.1, 0.2], [0.3, 0.4]],
+    )
+    mock_response.data.reverse()
+    client = OpenAIEmbeddingClient()
+    client.client = MagicMock()
+    client.client.embeddings = MagicMock()
+    client.client.embeddings.create = AsyncMock(return_value=mock_response)
+
+    result = await client.get_embeddings(["first", "second"])
+
+    assert [embedding.vector for embedding in result] == [[0.1, 0.2], [0.3, 0.4]]
+
+
 async def test_embedding_request_marks_openai_feature(
     openai_unit_test_env: dict[str, str],
 ) -> None:
