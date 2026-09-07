@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import json
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
@@ -743,11 +744,14 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
             return ""
         if len(messages) == 1 and messages[0].role == "user":
             return messages[0].text or ""
-        prefix = "The following is conversation history supplied to this agent.\n"
-        prefix += "Each label identifies the original speaker's role.\n"
-        prefix += "Use this history as context for your assigned task.\n"
+        prefix = "The following messages were supplied to this agent in conversation order.\n"
+        prefix += "Each JSON record contains the original speaker's role and message content.\n"
+        prefix += (
+            "Use these messages as context. If the final message is a user request, "
+            "respond to it while following your instructions.\n"
+        )
 
-        return prefix + "\n".join(f"[{m.role}]: {m.text or ''}" for m in messages)
+        return prefix + "\n".join(json.dumps({"role": m.role, "content": m.text or ""}) for m in messages)
 
     @property
     def default_options(self) -> dict[str, Any]:
