@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncGenerator, Awaitable, MutableSequence
 from typing import Any, cast
 
+import httpx
 from ag_ui.core import Interrupt, ResumeEntry
 from agent_framework import (
     ChatOptions,
@@ -182,6 +183,59 @@ class TestAGUIChatClient:
         assert agui_messages[1]["role"] == "assistant"
         assert agui_messages[1]["content"] == "Let me check."
         assert agui_messages[1]["id"] == "msg_123"
+
+    async def test_sends_multimodal_messages_in_request(self) -> None:
+        """The client sends ordered multimodal content in the HTTP request JSON."""
+        captured_request: dict[str, Any] = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            captured_request.update(json.loads(request.content))
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=(
+                    b'data: {"type":"RUN_STARTED","threadId":"thread_1","runId":"run_1"}\n\n'
+                    b'data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg_1","delta":"ok"}\n\n'
+                    b'data: {"type":"RUN_FINISHED","threadId":"thread_1","runId":"run_1"}\n\n'
+                ),
+            )
+
+        message = Message(
+            role="user",
+            contents=[
+                Content.from_text("describe this"),
+                Content.from_uri("https://example.com/cat.png", media_type="image/png"),
+                Content.from_data(b"abc", media_type="image/png"),
+            ],
+            message_id="msg-request",
+        )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StubAGUIChatClient(endpoint="http://localhost:8888/", http_client=http_client)
+            response = await client.inner_get_response(messages=[message], options={})
+
+        assert response is not None
+        assert captured_request["messages"] == [
+            {
+                "id": "msg-request",
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "describe this"},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "url",
+                            "value": "https://example.com/cat.png",
+                            "mimeType": "image/png",
+                        },
+                    },
+                    {
+                        "type": "image",
+                        "source": {"type": "data", "value": "YWJj", "mimeType": "image/png"},
+                    },
+                ],
+            }
+        ]
 
     async def test_get_thread_id_from_metadata(self) -> None:
         """Test thread ID extraction from metadata."""
