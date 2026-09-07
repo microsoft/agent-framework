@@ -13,6 +13,7 @@ import pytest
 from pytest import raises
 
 from agent_framework import (
+    EXCLUDED_KEY,
     GROUP_ANNOTATION_KEY,
     GROUP_TOKEN_COUNT_KEY,
     Agent,
@@ -36,6 +37,7 @@ from agent_framework import (
     SlidingWindowStrategy,
     SupportsAgentRun,
     SupportsChatGetResponse,
+    ToolResultCompactionStrategy,
     TruncationStrategy,
     chat_middleware,
     enqueue_messages,
@@ -2342,6 +2344,86 @@ async def test_chat_agent_run_level_compaction_and_tokenizer_override_agent_defa
 
     assert captured_roles == [["assistant"]]
     assert captured_token_counts == [[23]]
+
+
+async def test_agent_run_returns_and_persists_compaction_summaries(
+    chat_client_base: Any,
+) -> None:
+    # End-to-end regression test for #8099: with call-level compaction and a history
+    # provider loading with skip_excluded=True, the run must return — and persist — the
+    # summaries replacing excluded tool groups; otherwise the next turn silently loses
+    # the summarized tool results with nothing replacing them.
+    from agent_framework._sessions import InMemoryHistoryProvider
+
+    chat_client_base.function_invocation_configuration["enabled"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        return f"Weather in {location}: sunny"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_1",
+                        name="lookup_weather",
+                        arguments='{"location": "London"}',
+                    )
+                ],
+            ),
+            response_id="resp_call_1",
+        ),
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_2",
+                        name="lookup_weather",
+                        arguments='{"location": "Paris"}',
+                    )
+                ],
+            ),
+            response_id="resp_call_2",
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"]), response_id="resp_done"),
+    ]
+
+    provider = InMemoryHistoryProvider(skip_excluded=True)
+    agent = Agent(
+        client=chat_client_base,
+        tools=[lookup_weather],
+        compaction_strategy=ToolResultCompactionStrategy(keep_last_tool_call_groups=1),
+        context_providers=[provider],
+    )
+    session = agent.create_session()
+
+    result = await agent.run("What is the weather in London?", session=session)
+
+    def _is_tool_result_summary(message: Message) -> bool:
+        return message.role == "assistant" and (message.text or "").startswith("[Tool results:")
+
+    returned_summaries = [message for message in result.messages if _is_tool_result_summary(message)]
+    assert len(returned_summaries) == 1, [message.text for message in result.messages]
+    assert "London" in (returned_summaries[0].text or "")
+
+    stored_messages = cast(list[Message], session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID]["messages"])
+    stored_summaries = [message for message in stored_messages if _is_tool_result_summary(message)]
+    assert len(stored_summaries) == 1, [message.text for message in stored_messages]
+
+    # A follow-up turn loading with skip_excluded=True drops the excluded groups while
+    # the summary that replaces them survives.
+    loaded_messages = await provider.get_messages(
+        session_id="turn-2", state=cast("dict[str, Any]", session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID])
+    )
+    loaded_summaries = [message for message in loaded_messages if _is_tool_result_summary(message)]
+    assert len(loaded_summaries) == 1
+    assert "London" in (loaded_summaries[0].text or "")
+    assert not any(message.additional_properties.get(EXCLUDED_KEY, False) for message in loaded_messages)
+    assert "done" in [message.text for message in loaded_messages]
 
 
 # region Test _merge_options

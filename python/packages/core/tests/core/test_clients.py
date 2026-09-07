@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from agent_framework import (
+    EXCLUDED_KEY,
     GROUP_ANNOTATION_KEY,
     GROUP_TOKEN_COUNT_KEY,
     BaseChatClient,
@@ -447,6 +448,122 @@ async def test_function_loop_persists_inserted_summaries_across_iterations_strea
     assert len(summaries) == 2, [message.text for message in final_input]
     assert "London" in summary_text
     assert "Paris" in summary_text
+
+
+async def test_function_loop_returns_compaction_summaries_in_final_response(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    # Regression test for #8099: compaction excludes tool groups via flags on Message
+    # objects shared with the returned transcript, but inserts summary messages only into
+    # the model-input list. The final response kept only the exclusion flags, so persisted
+    # history (loaded with skip_excluded=True) silently lost the summarized tool results.
+    chat_client_base.function_invocation_configuration["enabled"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.compaction_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        return f"Weather in {location}: sunny"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _tool_call_response("call_1", "London"),
+        _tool_call_response("call_2", "Paris"),
+        ChatResponse(messages=Message(role="assistant", contents=["done"]), response_id="resp_done"),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["What is the weather in London?"])],
+        options={"tools": [lookup_weather]},  # type: ignore[typeddict-unknown-key]
+    )
+
+    def _is_call(message: Message, call_id: str) -> bool:
+        return any(content.type == "function_call" and content.call_id == call_id for content in message.contents)
+
+    def _is_result(message: Message, call_id: str) -> bool:
+        return any(content.type == "function_result" and content.call_id == call_id for content in message.contents)
+
+    summary_index = next(
+        (index for index, message in enumerate(response.messages) if _is_tool_result_summary(message)), None
+    )
+    first_call_1_index = next(
+        (index for index, message in enumerate(response.messages) if _is_call(message, "call_1")), None
+    )
+    call_messages = {
+        call_id: [
+            message for message in response.messages if _is_call(message, call_id) or _is_result(message, call_id)
+        ]
+        for call_id in ("call_1", "call_2")
+    }
+
+    assert summary_index is not None, [message.text for message in response.messages]
+    assert "London" in (response.messages[summary_index].text or "")
+    # The summary replaces the excluded group in transcript order: it precedes the group it summarizes.
+    assert first_call_1_index is not None
+    assert summary_index < first_call_1_index
+    assert all(message.additional_properties.get(EXCLUDED_KEY, False) for message in call_messages["call_1"]), [
+        message.additional_properties for message in call_messages["call_1"]
+    ]
+    assert call_messages["call_2"]
+    assert not any(message.additional_properties.get(EXCLUDED_KEY, False) for message in call_messages["call_2"])
+
+
+async def test_function_loop_returns_compaction_summaries_when_iteration_budget_exhausted(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    # Companion of test_function_loop_returns_compaction_summaries_in_final_response for the
+    # max-iterations terminal path: summaries inserted before the final no-tools model call
+    # must reach the returned transcript too, not only the model input.
+    chat_client_base.function_invocation_configuration["enabled"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.compaction_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        return f"Weather in {location}: sunny"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _tool_call_response("call_1", "London"),
+        _tool_call_response("call_2", "Paris"),
+        _tool_call_response("call_3", "Tokyo"),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["What is the weather in London?"])],
+        options={"tools": [lookup_weather]},  # type: ignore[typeddict-unknown-key]
+    )
+
+    summaries = [message for message in response.messages if _is_tool_result_summary(message)]
+    summary_text = " ".join(message.text or "" for message in summaries)
+
+    def _first_call_index(call_id: str) -> int | None:
+        return next(
+            (
+                index
+                for index, message in enumerate(response.messages)
+                if any(content.type == "function_call" and content.call_id == call_id for content in message.contents)
+            ),
+            None,
+        )
+
+    assert len(summaries) == 2, [message.text for message in response.messages]
+    assert "London" in summary_text
+    assert "Paris" in summary_text
+    # Each summary precedes the excluded group it replaces in transcript order.
+    first_call_1_index = _first_call_index("call_1")
+    first_call_2_index = _first_call_index("call_2")
+    assert first_call_1_index is not None and first_call_2_index is not None
+    london_summary_index = next(
+        index
+        for index, message in enumerate(response.messages)
+        if _is_tool_result_summary(message) and "London" in (message.text or "")
+    )
+    paris_summary_index = next(
+        index
+        for index, message in enumerate(response.messages)
+        if _is_tool_result_summary(message) and "Paris" in (message.text or "")
+    )
+    assert london_summary_index < first_call_1_index
+    assert paris_summary_index < first_call_2_index
 
 
 @pytest.mark.parametrize("with_chat_middleware", [False, True])

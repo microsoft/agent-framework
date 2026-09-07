@@ -3250,6 +3250,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         max_errors: int,
     ) -> ChatResponse[Any]:
         """Run the non-streaming function invocation loop."""
+        from ._compaction import _merge_compaction_summaries_into_transcript  # pyright: ignore[reportPrivateUsage]
         from ._middleware import MiddlewareFailure
         from ._types import ChatResponse, add_usage_details
 
@@ -3314,6 +3315,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     client_kwargs=request_kwargs,
                 ),
             )
+            # Compaction inserts summaries only into prepared_messages while its exclusion
+            # flags land on Message objects shared with the transcript; copy the summaries
+            # back before the transcript is prepended to a terminal response (issue #8099).
+            # The merge is unconditional: compaction may also come from the inner client's
+            # own default strategy, which this layer does not see as a parameter.
+            _merge_compaction_summaries_into_transcript(function_call_messages, prepared_messages)
             if options.get("tool_choice") == "none" and _function_call_limit_reached(
                 total_function_calls, max_function_calls
             ):
@@ -3386,6 +3393,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 client_kwargs=request_kwargs,
             ),
         )
+        # See the Phase 2 merge: the final no-tools call can compact further groups, so its
+        # summaries must also reach the returned transcript.
+        _merge_compaction_summaries_into_transcript(function_call_messages, prepared_messages)
         _ensure_function_invocation_limit_fallback_response(response)
         aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
         self._update_function_invocation_continuation_state(
