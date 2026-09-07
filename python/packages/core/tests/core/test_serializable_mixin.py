@@ -3,7 +3,9 @@
 """Tests for SerializationMixin functionality."""
 
 import copy
+import json
 import logging
+from datetime import date, datetime, time
 from typing import Any
 
 import pytest
@@ -304,19 +306,82 @@ class TestSerializationMixin:
         assert data["items_dict"]["a"]["name"] == "item1"
         assert data["items_dict"]["b"]["name"] == "item2"
 
-    def test_to_dict_with_datetime_in_dict(self):
-        """Test to_dict converts datetime objects in dicts to strings."""
-        from datetime import datetime
+    def test_to_dict_recursively_serializes_nested_containers(self):
+        """Test to_dict serializes protocol objects nested in containers."""
+
+        class ItemClass(SerializationMixin):
+            def __init__(self, name: str):
+                self.name = name
+
+        class ContainerClass(SerializationMixin):
+            def __init__(self, payload: dict):
+                self.payload = payload
+
+        container = ContainerClass(payload={"groups": [{"items": [ItemClass(name="item1")]}]})
+
+        data = container.to_dict()
+
+        assert data["payload"]["groups"][0]["items"][0]["name"] == "item1"
+        assert json.loads(container.to_json()) == data
+
+    def test_to_dict_preserves_nested_non_string_dict_keys(self):
+        """Test recursive serialization preserves non-string keys below the attribute dictionary."""
+
+        class ContainerClass(SerializationMixin):
+            def __init__(self, payload: dict):
+                self.payload = payload
+
+        container = ContainerClass(payload={7: "direct", "nested": {True: "enabled", None: "missing"}})
+
+        data = container.to_dict()
+
+        assert data["payload"]["7"] == "direct"
+        assert data["payload"]["nested"] == {True: "enabled", None: "missing"}
+        json_payload = json.loads(container.to_json())["payload"]
+        assert json_payload["7"] == "direct"
+        assert json_payload["nested"] == {"true": "enabled", "null": "missing"}
+
+    def test_to_dict_rejects_circular_list(self):
+        """Test recursive serialization reports a controlled error for a circular list."""
+
+        class ContainerClass(SerializationMixin):
+            def __init__(self, payload: list[Any]):
+                self.payload = payload
+
+        payload: list[Any] = []
+        payload.append(payload)
+
+        with pytest.raises(ValueError, match="Circular reference detected"):
+            ContainerClass(payload).to_dict()
+
+    def test_to_dict_rejects_circular_dict(self):
+        """Test recursive serialization reports a controlled error for a circular dictionary."""
+
+        class ContainerClass(SerializationMixin):
+            def __init__(self, payload: dict[str, Any]):
+                self.payload = payload
+
+        payload: dict[str, Any] = {}
+        payload["self"] = payload
+
+        with pytest.raises(ValueError, match="Circular reference detected"):
+            ContainerClass(payload).to_dict()
+
+    @pytest.mark.parametrize("value", [datetime(2025, 1, 27, 12), date(2025, 1, 27), time(12)])
+    def test_to_dict_only_converts_date_time_in_dict_values(self, value):
+        """Test to_dict preserves the existing date/time conversion contexts."""
 
         class TestClass(SerializationMixin):
-            def __init__(self, metadata: dict):
-                self.metadata = metadata
+            def __init__(self):
+                self.top_level = value
+                self.items = [value]
+                self.metadata = {"created_at": value}
 
-        now = datetime(2025, 1, 27, 12, 0, 0)
-        obj = TestClass(metadata={"created_at": now})
-        data = obj.to_dict()
+        data = TestClass().to_dict()
 
-        assert isinstance(data["metadata"]["created_at"], str)
+        assert "top_level" not in data
+        assert data["items"] == []
+        assert data["metadata"]["created_at"] == str(value)
 
     def test_to_dict_skips_non_serializable_in_dict(self, caplog):
         """Test to_dict skips non-serializable values in dicts with debug logging."""
@@ -586,6 +651,7 @@ class TestSerializationMixin:
 
     def test_pickle_restores_slot_fields(self):
         """Pickle state should include fields declared in slots."""
+
         class TestClass(SerializationMixin):
             __slots__ = ("value",)
 
@@ -614,6 +680,7 @@ class TestSerializationMixin:
 
     def test_pickle_omission_is_separate_from_shallow_copy_policy(self):
         """Fields shallow-copied by default remain persistent unless explicitly omitted."""
+
         class TestClass(SerializationMixin):
             _PICKLE_OMIT_FIELDS = set()
 

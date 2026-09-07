@@ -30,6 +30,7 @@ from agent_framework import (
     add_usage_details,
     normalize_messages,
 )
+from agent_framework._mcp import MCPTool
 from agent_framework._settings import load_settings
 from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import FunctionTool, ToolTypes
@@ -178,6 +179,22 @@ async def _resolve_function_approval(
 
 
 logger = logging.getLogger("agent_framework.github_copilot")
+
+_MCP_TOOL_MESSAGE = (
+    "MCP server '{name}' cannot be passed to GitHubCopilotAgent as a tool: the Copilot SDK "
+    "connects to MCP servers itself, so a framework-managed MCPTool would keep none of its "
+    "framework behavior. Configure the server natively instead, for example "
+    "default_options={{'mcp_servers': {{'{name}': {{'type': 'stdio', 'command': 'python', "
+    "'args': ['server.py'], 'tools': ['*']}}}}}}, or use a ChatAgent, where the framework owns "
+    "the connection."
+)
+
+
+def _reject_mcp_tools(tools: Sequence[Any]) -> None:
+    """Refuse MCP servers handed in as tools, from whichever option carried them."""
+    for tool in tools:
+        if isinstance(tool, MCPTool):
+            raise TypeError(_MCP_TOOL_MESSAGE.format(name=tool.name))
 
 
 def _deny_all_permissions(
@@ -654,6 +671,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         )
 
         self._tools = normalize_tools(tools)
+        _reject_mcp_tools(self._tools)
         self._permission_handler = on_permission_request
         self._on_pre_tool_use: PreToolUseHandler | None = on_pre_tool_use
         self._function_approval_handler: FunctionApprovalCallback | None = on_function_approval
@@ -1472,7 +1490,10 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         # Merge agent-level tools with any caller-supplied tools (from default_options
         # or per-run options, the latter winning) and convert to SDK tools.
-        all_tools = list(self._tools or []) + list(kwargs.get("tools") or [])
+        # Normalize the option-supplied tools the way the constructor does: it converts callables
+        # and flattens tool-collection wrappers, which can otherwise hide an MCPTool.
+        all_tools = normalize_tools(list(self._tools or []) + list(kwargs.get("tools") or []))
+        _reject_mcp_tools(all_tools)
         kwargs["tools"] = self._prepare_tools(all_tools) if all_tools else None
 
         kwargs["streaming"] = streaming

@@ -61,6 +61,7 @@
 /python/packages/claude/                                        @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
 /python/packages/copilotstudio/                                 @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
 /python/packages/core/                                          @chetantoshniwal @eavanvalkenburg @moonbox3 @TaoChenOSU @jpalvarezl @giles17
+/python/packages/core/agent_framework/_vectors.py               @chetantoshniwal @westey-m @eavanvalkenburg @giles17 @moonbox3 @TaoChenOSU @jpalvarezl @peibekwe @baywet @rogerbarreto @SergeyMenshykh
 /python/packages/core/agent_framework/_workflows/               @chetantoshniwal @eavanvalkenburg @moonbox3 @TaoChenOSU @jpalvarezl
 /python/packages/core/agent_framework/_harness/                 @chetantoshniwal @westey-m @eavanvalkenburg @moonbox3
 /python/packages/declarative/                                   @chetantoshniwal @eavanvalkenburg @moonbox3 @peibekwe @baywet
