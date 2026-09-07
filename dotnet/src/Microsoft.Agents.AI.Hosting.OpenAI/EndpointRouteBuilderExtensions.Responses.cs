@@ -71,7 +71,7 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
         responsesPath ??= $"/{agent.Name}/v1/responses";
 
         // Create an executor for this agent
-        var executor = new AIAgentResponseExecutor(agent, mapOptions);
+        var executor = new AIAgentResponseExecutor(agent, endpoints.ServiceProvider, mapOptions);
         var storageOptions = endpoints.ServiceProvider.GetService<InMemoryStorageOptions>() ?? new InMemoryStorageOptions();
         var conversationStorage = endpoints.ServiceProvider.GetService<IConversationStorage>();
         var responsesService = new InMemoryResponsesService(executor, storageOptions, conversationStorage);

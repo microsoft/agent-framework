@@ -34,6 +34,12 @@ public static class MicrosoftAgentAIHostingOpenAIServiceCollectionExtensions
     /// Adds support for exposing <see cref="AIAgent"/> instances via OpenAI Responses.
     /// Uses the in-memory responses service implementation.
     /// </summary>
+    /// <remarks>
+    /// When an <see cref="Microsoft.Agents.AI.Hosting.AgentSessionStore"/> is registered under the
+    /// resolved agent's name (or as a non-keyed default), Responses endpoints restore and persist
+    /// agent sessions using the request's conversation or previous response ID. Without a session
+    /// store, endpoints retain transcript-based execution. Hosts own store retention and caller isolation.
+    /// </remarks>
     /// <param name="services">The <see cref="IServiceCollection"/> to configure.</param>
     /// <returns>The <see cref="IServiceCollection"/> for method chaining.</returns>
     public static IServiceCollection AddOpenAIResponses(this IServiceCollection services)

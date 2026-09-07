@@ -285,19 +285,24 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
         return state.Response;
     }
 
-    public Task<bool> DeleteResponseAsync(string responseId, CancellationToken cancellationToken = default)
+    public async Task<bool> DeleteResponseAsync(string responseId, CancellationToken cancellationToken = default)
     {
         if (!this._cache.TryGetValue(responseId, out ResponseState? state))
         {
-            return Task.FromResult(false);
+            return false;
         }
 
         // Cancel any ongoing execution
         state?.CancellationTokenSource?.Cancel();
 
+        if (state?.Request is { } request)
+        {
+            await this._executor.DeleteResponseStateAsync(responseId, request, state.CompletionTask, cancellationToken).ConfigureAwait(false);
+        }
+
         // Remove the response
         this._cache.Remove(responseId);
-        return Task.FromResult(true);
+        return true;
     }
 
     public Task<ListResponse<ItemResource>> ListResponseInputItemsAsync(

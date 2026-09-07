@@ -50,6 +50,7 @@ internal static class AgentResponseUpdateExtensions
 
         AgentResponseUpdate? previousUpdate = null;
         StreamingEventGenerator? generator = null;
+        bool isWorkflow = false;
         while (await updateEnumerator.MoveNextAsync().ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -58,6 +59,7 @@ internal static class AgentResponseUpdateExtensions
             // Special-case for agent framework workflow events.
             if (update.RawRepresentation is WorkflowEvent workflowEvent)
             {
+                isWorkflow = true;
                 // Convert executor events to standard OpenAI output_item events
                 if (workflowEvent is ExecutorInvokedEvent invokedEvent)
                 {
@@ -144,7 +146,12 @@ internal static class AgentResponseUpdateExtensions
                     // For other workflow events (not executor-specific), keep the old format as fallback
                     yield return CreateWorkflowEventResponse(workflowEvent, seq.Increment(), outputIndex);
                 }
-                continue;
+                // Workflow approval requests carry both an observability event and the
+                // workflow-scoped approval content needed by DevUI to resume the request.
+                if (workflowEvent is not RequestInfoEvent || !update.Contents.Any(content => content is ToolApprovalRequestContent))
+                {
+                    continue;
+                }
             }
 
             if (!IsSameMessage(update, previousUpdate))
@@ -165,6 +172,13 @@ internal static class AgentResponseUpdateExtensions
             while (contentEnumerator.MoveNext())
             {
                 var content = contentEnumerator.Current;
+
+                // The inner agent's approval ID cannot resume the workflow. Its paired
+                // RequestInfoEvent delivers the same approval with the workflow-facing ID.
+                if (isWorkflow && content is ToolApprovalRequestContent && update.RawRepresentation is not RequestInfoEvent)
+                {
+                    continue;
+                }
 
                 // Usage content is handled separately.
                 if (content is UsageContent usageContent && usageContent.Details != null)

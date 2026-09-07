@@ -25,6 +25,17 @@ internal interface IResponseExecutor
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Deletes execution state associated with a response, without deleting its conversation.
+    /// </summary>
+    /// <param name="responseId">The response whose state should be removed.</param>
+    /// <param name="request">The original request identifying the agent.</param>
+    /// <param name="completionTask">In-flight execution to await before deleting persisted state.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A task representing the deletion.</returns>
+    ValueTask DeleteResponseStateAsync(
+        string responseId, CreateResponse request, Task? completionTask = null, CancellationToken cancellationToken = default) => default;
+
+    /// <summary>
     /// Executes a response generation request and returns streaming events.
     /// </summary>
     /// <param name="context">The agent invocation context containing the ID generator and other context information.</param>

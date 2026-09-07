@@ -77,7 +77,27 @@ DevUI sends decisions for `ApprovalRequiredAIFunction` as a non-standard Respons
 
 The hosting layer converts this content to `ToolApprovalResponseContent`, preserving the request ID, decision, and function call. Rejections use `"approved": false`; function arguments can be an object or `null` for a call without arguments. The IDs and function call must come from the pending approval request, including any workflow prefix on the request ID.
 
-Accepting this payload does not provide session persistence. The host must retain the agent session containing the pending approval across requests; workflows exposed through `AsAIAgent` also need that session's workflow state to resume. A conversation ID alone is not a substitute for restoring the agent session.
+### Restoring the approval session
+
+Enable session persistence explicitly when registering the agent. Both Responses endpoint variants (`MapOpenAIResponses()` and `MapOpenAIResponses(agent)`) use the `AgentSessionStore` registered under the resolved agent's name, falling back to a non-keyed `AgentSessionStore` when one is registered:
+
+```csharp
+// Single-user local development only: no caller identity is configured.
+builder.AddAIAgent("assistant", "You are a helpful assistant.")
+    .WithInMemorySessionStore(withIsolation: false);
+
+// For an existing workflow:
+builder.AddAIAgent("workflow", (_, _) => workflow.AsAIAgent(name: "workflow"))
+    .WithInMemorySessionStore(withIsolation: false);
+```
+
+Use `WithSessionStore(...)` for a custom store. In multi-user hosts, configure an `AgentIsolationKeyProvider` and leave isolation enabled; the default isolation wrapper rejects requests without an isolation key. Session isolation does not replace authentication and authorization on the Responses and Conversations endpoints.
+
+DevUI sends the same `conversation` ID on subsequent turns. The hosting layer restores the full agent session, including pending approvals and workflow checkpoints, and saves it before publishing `response.completed`. It uses the session's history instead of replaying the conversation transcript, so previously handled approvals are not submitted again. Workflow approval events expose the workflow-facing request ID rather than a duplicate internal agent request.
+
+Clients can alternatively continue with `previous_response_id`, which restores that response's independent session snapshot. Each successful turn saves a new snapshot unless `store` is `false`; a conversation's session is also advanced under its stable ID. Deleting a stored response deletes its snapshot without deleting the conversation's session.
+
+Without a configured session store, the existing transcript-based behavior is unchanged and pending approval sessions are not restored. The in-memory session store is for local development and loses state on restart. Hosts own session-store retention, stable agent IDs across agent recreation, and coordination of concurrent turns against the same conversation. Conversation transcript storage is separate: adding or deleting transcript items does not edit a persisted agent session.
 
 ## Security
 

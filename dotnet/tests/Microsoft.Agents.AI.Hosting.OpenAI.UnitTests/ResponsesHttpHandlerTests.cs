@@ -10,6 +10,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.Tests;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
@@ -25,17 +26,20 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 /// </summary>
 public sealed class ResponsesHttpHandlerTests : ConformanceTestBase
 {
+    private static readonly bool[] s_booleanValues = [true, false];
+
+    public static IEnumerable<object[]> ApprovalScenarios =>
+        from approved in s_booleanValues
+        from stream in s_booleanValues
+        from resolveAgent in s_booleanValues
+        from workflow in s_booleanValues
+        from conversation in s_booleanValues
+        select new object[] { approved, stream, resolveAgent, workflow, conversation };
+
     [Theory]
-    [InlineData(true, true, true)]
-    [InlineData(true, true, false)]
-    [InlineData(true, false, true)]
-    [InlineData(true, false, false)]
-    [InlineData(false, true, true)]
-    [InlineData(false, true, false)]
-    [InlineData(false, false, true)]
-    [InlineData(false, false, false)]
-    public async Task CreateResponseAsync_FunctionApproval_WithSession_InvokesToolOnlyWhenApprovedAsync(
-        bool approved, bool stream, bool resolveAgent)
+    [MemberData(nameof(ApprovalScenarios))]
+    public async Task CreateResponseAsync_FunctionApproval_RestoresSessionAndInvokesToolOnlyWhenApprovedAsync(
+        bool approved, bool stream, bool resolveAgent, bool workflow, bool conversation)
     {
         // Arrange
         List<string> toolInvocations = [];
@@ -58,15 +62,19 @@ public sealed class ResponsesHttpHandlerTests : ConformanceTestBase
                 return new ChatResponse([new ChatMessage(ChatRole.Assistant, [content])]).ToChatResponseUpdates().ToAsyncEnumerable();
             });
         AIAgent agent = new ChatClientAgent(chatClient.Object, name: "approval-agent", tools: [tool]);
-        // The host must retain the pending approval's session across the two HTTP requests.
-        AgentSession session = await agent.CreateSessionAsync();
-        agent = agent.AsBuilder().Use((messages, _, options, next, cancellationToken) =>
-            next(messages, session, options, cancellationToken)).Build();
+        if (workflow)
+        {
+            agent = new WorkflowBuilder(agent.BindAsExecutor(new AIAgentHostOptions { EmitAgentUpdateEvents = true }))
+                .Build().AsAIAgent(name: "approval-agent");
+        }
+
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddKeyedSingleton("approval-agent", agent);
+        builder.AddAIAgent("approval-agent", (_, _) => agent).WithInMemorySessionStore(withIsolation: false);
         builder.AddOpenAIResponses();
+        builder.AddOpenAIConversations();
         await using WebApplication app = builder.Build();
+        app.MapOpenAIConversations();
         if (resolveAgent)
         {
             app.MapOpenAIResponses();
@@ -78,17 +86,38 @@ public sealed class ResponsesHttpHandlerTests : ConformanceTestBase
 
         await app.StartAsync();
         using HttpClient client = app.GetTestClient();
+        string? conversationId = null;
+        if (conversation)
+        {
+            using StringContent createConversationContent = new("{}", Encoding.UTF8, "application/json");
+            using HttpResponseMessage conversationResponse = await client.PostAsync(new Uri("/v1/conversations", UriKind.Relative), createConversationContent);
+            conversationResponse.EnsureSuccessStatusCode();
+            using JsonDocument conversationDocument = JsonDocument.Parse(await conversationResponse.Content.ReadAsStringAsync());
+            conversationId = conversationDocument.RootElement.GetProperty("id").GetString();
+        }
+
         using StringContent initialContent = new(
-            """{"agent":{"name":"approval-agent"},"input":"What is the weather?","stream":true}""",
+            $$"""{"agent":{"name":"approval-agent"},"input":"What is the weather?","stream":true,"conversation":{{JsonSerializer.Serialize(conversationId)}}}""",
             Encoding.UTF8, "application/json");
         using HttpResponseMessage initialResponse = await client.PostAsync(new Uri("/v1/responses", UriKind.Relative), initialContent);
         Assert.Equal(HttpStatusCode.OK, initialResponse.StatusCode);
-        JsonElement approvalEvent = Assert.Single(ParseSseEvents(await initialResponse.Content.ReadAsStringAsync()),
+        List<JsonElement> initialEvents = ParseSseEvents(await initialResponse.Content.ReadAsStringAsync());
+        JsonElement approvalEvent = Assert.Single(initialEvents,
             e => e.GetProperty("type").GetString() == "response.function_approval.requested");
+        string? responseId = initialEvents.Last().GetProperty("response").GetProperty("id").GetString();
+        string continuation = conversation
+            ? $""" "conversation": {JsonSerializer.Serialize(conversationId)} """
+            : $""" "previous_response_id": {JsonSerializer.Serialize(responseId)} """;
         Assert.Empty(toolInvocations);
+        if (workflow)
+        {
+            Assert.Contains(":", approvalEvent.GetProperty("request_id").GetString(), StringComparison.Ordinal);
+        }
+
         string approvalJson = $$"""
             {
               "agent": { "name": "approval-agent" },
+              {{continuation}},
               "stream": {{(stream ? "true" : "false")}},
               "input": [{
                 "type": "message",

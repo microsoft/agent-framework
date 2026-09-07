@@ -22,6 +22,7 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<HostedAgentResponseExecutor> _logger;
     private readonly Func<OpenAIResponseRequestInfo, AgentRunOptions?> _runOptionsFactory;
+    private readonly OpenAIResponsesMapOptions _mapOptions;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="HostedAgentResponseExecutor"/> class.
@@ -39,7 +40,8 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
 
         this._serviceProvider = serviceProvider;
         this._logger = logger;
-        this._runOptionsFactory = (mapOptions ?? new OpenAIResponsesMapOptions()).RunOptionsFactory;
+        this._mapOptions = mapOptions ?? new OpenAIResponsesMapOptions();
+        this._runOptionsFactory = this._mapOptions.RunOptionsFactory;
     }
 
     /// <inheritdoc/>
@@ -98,6 +100,16 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
     }
 
     /// <inheritdoc/>
+    public ValueTask DeleteResponseStateAsync(
+        string responseId, CreateResponse request, Task? completionTask = null, CancellationToken cancellationToken = default)
+    {
+        string agentName = GetAgentName(request)!;
+        AIAgent agent = this._serviceProvider.GetRequiredKeyedService<AIAgent>(agentName);
+        var executor = new AIAgentResponseExecutor(agent, this._serviceProvider, this._mapOptions);
+        return executor.DeleteResponseStateAsync(responseId, request, completionTask, cancellationToken);
+    }
+
+    /// <inheritdoc/>
     public async IAsyncEnumerable<StreamingResponseEvent> ExecuteAsync(
         AgentInvocationContext context,
         CreateResponse request,
@@ -107,23 +119,9 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
         string agentName = GetAgentName(request)!;
         AIAgent agent = this._serviceProvider.GetRequiredKeyedService<AIAgent>(agentName);
 
-        // The hosting developer controls, via OpenAIResponsesMapOptions.RunOptionsFactory, which (if any)
-        // request settings are mapped onto the agent run. By default no request setting is mapped.
-        AgentRunOptions? options = this._runOptionsFactory(request.ToRequestInfo());
-        var messages = new List<ChatMessage>();
+        var executor = new AIAgentResponseExecutor(agent, this._serviceProvider, this._mapOptions);
 
-        if (conversationHistory is not null)
-        {
-            messages.AddRange(conversationHistory);
-        }
-
-        foreach (var inputMessage in request.Input.GetInputMessages())
-        {
-            messages.Add(inputMessage.ToChatMessage());
-        }
-
-        await foreach (var streamingEvent in agent.RunStreamingAsync(messages, options: options, cancellationToken: cancellationToken)
-            .ToStreamingResponseAsync(request, context, cancellationToken).ConfigureAwait(false))
+        await foreach (var streamingEvent in executor.ExecuteAsync(context, request, conversationHistory, cancellationToken).ConfigureAwait(false))
         {
             yield return streamingEvent;
         }

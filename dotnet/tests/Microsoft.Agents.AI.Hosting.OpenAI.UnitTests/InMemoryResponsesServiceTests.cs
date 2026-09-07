@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,6 +11,8 @@ using Microsoft.Agents.AI.Hosting.OpenAI.Conversations.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
+using Moq;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 
@@ -82,6 +85,55 @@ public sealed class InMemoryResponsesServiceTests
 
         // Assert
         Assert.Null(error);
+    }
+
+    [Fact]
+    public async Task DeleteResponseAsync_RemovesPersistedAgentSessionAsync()
+    {
+        // Arrange
+        AIAgent agent = new ChatClientAgent(new TestHelpers.SimpleMockChatClient(), name: "agent");
+        AgentSession session = await agent.CreateSessionAsync();
+        Mock<AgentSessionStore> store = new();
+        store.Setup(s => s.GetSessionAsync(agent, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        ServiceCollection services = new();
+        services.AddKeyedSingleton(agent.Name, store.Object);
+        using ServiceProvider provider = services.BuildServiceProvider();
+        using var service = new InMemoryResponsesService(new AIAgentResponseExecutor(agent, provider));
+        Response response = await service.CreateResponseAsync(new CreateResponse { Input = "hello" });
+        Assert.Equal(ResponseStatus.Completed, response.Status);
+
+        // Act
+        bool deleted = await service.DeleteResponseAsync(response.Id);
+
+        // Assert
+        Assert.True(deleted);
+        Assert.Null(await service.GetResponseAsync(response.Id));
+        store.Verify(s => s.DeleteSessionAsync(agent, response.Id, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateResponseStreamingAsync_SessionSaveFails_ReportsFailureWithoutCompletionAsync()
+    {
+        // Arrange
+        AIAgent agent = new ChatClientAgent(new TestHelpers.SimpleMockChatClient(), name: "agent");
+        AgentSession session = await agent.CreateSessionAsync();
+        Mock<AgentSessionStore> store = new();
+        store.Setup(s => s.GetSessionAsync(agent, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        store.Setup(s => s.SaveSessionAsync(agent, It.IsAny<string>(), session, It.IsAny<CancellationToken>()))
+            .Returns(() => ValueTask.FromException(new InvalidOperationException("session save failed")));
+        ServiceCollection services = new();
+        services.AddKeyedSingleton(agent.Name, store.Object);
+        using ServiceProvider provider = services.BuildServiceProvider();
+        using var service = new InMemoryResponsesService(new AIAgentResponseExecutor(agent, provider));
+
+        // Act
+        List<StreamingResponseEvent> events = await service.CreateResponseStreamingAsync(
+            new CreateResponse { Input = "hello", Stream = true }).ToListAsync();
+
+        // Assert
+        StreamingResponseFailed failure = Assert.IsType<StreamingResponseFailed>(events.Last());
+        Assert.Equal("session save failed", failure.Response.Error?.Message);
+        Assert.DoesNotContain(events, e => e is StreamingResponseCompleted);
     }
 
     private sealed class StubResponseExecutor : IResponseExecutor
