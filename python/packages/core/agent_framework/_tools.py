@@ -106,6 +106,9 @@ _TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
 _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY: Final[str] = "already_approved_approval_request_groups"
 _PENDING_APPROVAL_REQUESTS_KEY: Final[str] = "pending_approval_requests"
 _FUNCTION_INVOCATION_BUDGET_STATE_KEY: Final[str] = "_function_invocation_budget_state"
+_FUNCTION_RESULT_CARRIER_CONTEXT_KEY: Final[str] = "_function_result_carrier"
+_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY: Final[str] = "_function_result_payload_budget"
+_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY: Final[str] = "_function_result_payload_budget"
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
 )
@@ -113,6 +116,40 @@ _USER_VISIBLE_CONTENT_TYPES: Final[set[str]] = {"data", "uri", "error", "hosted_
 ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+
+
+@dataclass
+class _FunctionResultCarrier:
+    """Host-only properties retained independently of model-facing tool output."""
+
+    additional_properties: dict[str, Any]
+    item_additional_properties: dict[str, Any]
+    exclusive_outer_keys: frozenset[str] = frozenset()
+    exclusive_item_keys: frozenset[str] = frozenset()
+    result_already_parsed: bool = False
+
+
+@dataclass
+class _FunctionResultPayloadBudget:
+    """Bound retained Host payloads across one function-invocation request."""
+
+    limit_bytes: int = 0
+    retained_bytes: int = 0
+
+    def remaining(self, per_result_limit: int | None) -> int | None:
+        if per_result_limit is None:
+            return None
+        self.limit_bytes = max(self.limit_bytes, per_result_limit)
+        return max(self.limit_bytes - self.retained_bytes, 0)
+
+    def reserve(self, size_bytes: int, per_result_limit: int | None) -> bool:
+        if per_result_limit is None:
+            return True
+        remaining = self.remaining(per_result_limit)
+        if remaining is None or size_bytes > remaining:
+            return False
+        self.retained_bytes += size_bytes
+        return True
 
 
 class _SkipParsingSentinel:
@@ -722,11 +759,21 @@ class FunctionTool(SerializationMixin):
                 logger.info(f"Function {self.name} succeeded.")
                 logger.debug(f"Function result: {type(result).__name__}")
                 return result
-            try:
-                parsed = parser(result)
-            except Exception:
-                logger.warning(f"Function {self.name}: result parser failed, falling back to str().")
-                parsed = [Content.from_text(str(result))]
+            carrier = (
+                effective_context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY) if effective_context else None
+            )
+            if (
+                isinstance(carrier, _FunctionResultCarrier)
+                and carrier.result_already_parsed
+                and configured_parser is None
+            ):
+                parsed = result
+            else:
+                try:
+                    parsed = parser(result)
+                except Exception:
+                    logger.warning(f"Function {self.name}: result parser failed, falling back to str().")
+                    parsed = [Content.from_text(str(result))]
             if isinstance(parsed, str):
                 parsed = [Content.from_text(parsed)]
             logger.info(f"Function {self.name} succeeded.")
@@ -787,11 +834,21 @@ class FunctionTool(SerializationMixin):
                         if emit_tool_call_attrs:
                             span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
                     return result
-                try:
-                    parsed = parser(result)
-                except Exception:
-                    logger.warning(f"Function {self.name}: result parser failed, falling back to str().")
-                    parsed = [Content.from_text(str(result))]
+                carrier = (
+                    effective_context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY) if effective_context else None
+                )
+                if (
+                    isinstance(carrier, _FunctionResultCarrier)
+                    and carrier.result_already_parsed
+                    and configured_parser is None
+                ):
+                    parsed = result
+                else:
+                    try:
+                        parsed = parser(result)
+                    except Exception:
+                        logger.warning(f"Function {self.name}: result parser failed, falling back to str().")
+                        parsed = [Content.from_text(str(result))]
                 if isinstance(parsed, str):
                     parsed = [Content.from_text(parsed)]
                 logger.info(f"Function {self.name} succeeded.")
@@ -1440,9 +1497,8 @@ def _function_execution_error_result(
     tool_name: str,
     exception: Exception,
     config: FunctionInvocationConfiguration,
+    context: FunctionInvocationContext | None = None,
 ) -> Content:
-    from ._types import Content
-
     logger.warning(
         "Function '%s' raised an exception; returning an error result to the model. "
         "Set include_detailed_errors=True for the full detail. Exception: %r",
@@ -1452,12 +1508,57 @@ def _function_execution_error_result(
     message = "Error: Function failed."
     if config.get("include_detailed_errors", False):
         message = f"{message} Exception: {exception}"
-    return Content.from_function_result(
+    return _finalize_function_result(
         call_id=function_call.call_id,  # type: ignore[arg-type]
         result=message,
         exception=str(exception),
-        additional_properties=function_call.additional_properties,
+        base_additional_properties=function_call.additional_properties,
+        context=context,
     )
+
+
+def _finalize_function_result(
+    *,
+    call_id: str,
+    result: Any,
+    base_additional_properties: Mapping[str, Any] | None = None,
+    exception: str | None = None,
+    context: FunctionInvocationContext | None = None,
+) -> Content:
+    """Build the stable function-result wrapper and apply private Host metadata."""
+    from ._types import Content
+
+    carrier: _FunctionResultCarrier | None = None
+    if context is not None:
+        raw_carrier = context.metadata.pop(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY, None)
+        if isinstance(raw_carrier, _FunctionResultCarrier):
+            carrier = raw_carrier
+
+    additional_properties = dict(base_additional_properties or {})
+    if carrier is not None:
+        for key in carrier.exclusive_outer_keys:
+            additional_properties.pop(key, None)
+        additional_properties.update(carrier.additional_properties)
+
+    function_result = Content.from_function_result(
+        call_id=call_id,
+        result=result,
+        exception=exception,
+        additional_properties=additional_properties,
+    )
+    if carrier is None or function_result.items is None:
+        return function_result
+
+    updated_items = list(function_result.items)
+    for index, item in enumerate(updated_items):
+        updated_item = copy.copy(item)
+        updated_item.additional_properties = dict(updated_item.additional_properties)
+        for key in carrier.exclusive_outer_keys | carrier.exclusive_item_keys:
+            updated_item.additional_properties.pop(key, None)
+        updated_item.additional_properties.update(carrier.item_additional_properties)
+        updated_items[index] = updated_item
+    function_result.items = updated_items
+    return function_result
 
 
 async def _auto_invoke_function(
@@ -1469,6 +1570,7 @@ async def _auto_invoke_function(
     invocation_session: AgentSession | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     live_tools: list[ToolTypes] | None = None,
+    host_payload_budget: _FunctionResultPayloadBudget | None = None,
 ) -> Content:
     """Invoke a function call requested by the agent, applying middleware that is defined.
 
@@ -1483,6 +1585,7 @@ async def _auto_invoke_function(
         middleware_pipeline: Optional middleware pipeline to apply during execution.
         live_tools: The live, mutable tools list for the current agent run, exposed on
             the FunctionInvocationContext so tools can add/remove tools at runtime.
+        host_payload_budget: Shared request budget for retained Host-only function result payloads.
 
     Returns:
         The function result content.
@@ -1572,8 +1675,8 @@ async def _auto_invoke_function(
 
     if middleware_pipeline is None or not middleware_pipeline.has_middlewares:
         # No middleware - execute directly
+        direct_context = None
         try:
-            direct_context = None
             if getattr(tool, "_context_parameter_name", None):
                 direct_context = FunctionInvocationContext(
                     function=tool,
@@ -1582,22 +1685,25 @@ async def _auto_invoke_function(
                     kwargs=runtime_kwargs.copy(),
                     tools=live_tools,
                 )
+                if host_payload_budget is not None:
+                    direct_context.metadata[_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY] = host_payload_budget
             function_result = await tool.invoke(
                 arguments=args,
                 context=direct_context,
                 tool_call_id=function_call_content.call_id,
             )
-            return Content.from_function_result(
+            return _finalize_function_result(
                 call_id=function_call_content.call_id,  # type: ignore[arg-type]
                 result=function_result,
-                additional_properties=function_call_content.additional_properties,
+                base_additional_properties=function_call_content.additional_properties,
+                context=direct_context,
             )
         except (MiddlewareFailure, UserInputRequiredException):
             # Explicit control-flow signals escape the loop; only ordinary exceptions
             # are absorbed into tool-error results below.
             raise
         except Exception as exc:
-            return _function_execution_error_result(function_call_content, tool.name, exc, config)
+            return _function_execution_error_result(function_call_content, tool.name, exc, config, direct_context)
     # Execute through middleware pipeline if available
     middleware_context = FunctionInvocationContext(
         function=tool,
@@ -1606,6 +1712,8 @@ async def _auto_invoke_function(
         kwargs=runtime_kwargs.copy(),
         tools=live_tools,
     )
+    if host_payload_budget is not None:
+        middleware_context.metadata[_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY] = host_payload_budget
 
     call_id = function_call_content.call_id
     if call_id is None:
@@ -1641,7 +1749,12 @@ async def _auto_invoke_function(
         if isinstance(function_result, Content) and function_result.type == "function_approval_request":
             return function_result
 
-        return Content.from_function_result(call_id=call_id, result=function_result)
+        return _finalize_function_result(
+            call_id=call_id,
+            result=function_result,
+            base_additional_properties=function_call_content.additional_properties,
+            context=middleware_context,
+        )
     except MiddlewareTermination as term_exc:
         # Re-raise to signal loop termination, but first capture any result set by middleware
         if middleware_context.result is not None:
@@ -1654,10 +1767,11 @@ async def _auto_invoke_function(
                 term_exc.result = middleware_context.result
             else:
                 # Store result in exception for caller to extract
-                term_exc.result = Content.from_function_result(
+                term_exc.result = _finalize_function_result(
                     call_id=call_id,
                     result=middleware_context.result,
-                    additional_properties=function_call_content.additional_properties,
+                    base_additional_properties=function_call_content.additional_properties,
+                    context=middleware_context,
                 )
         raise
     except (MiddlewareFailure, UserInputRequiredException):
@@ -1666,7 +1780,7 @@ async def _auto_invoke_function(
         # relying on the tool-error conversion below, and it propagates to the caller.
         raise
     except Exception as exc:
-        return _function_execution_error_result(function_call_content, tool.name, exc, config)
+        return _function_execution_error_result(function_call_content, tool.name, exc, config, middleware_context)
 
 
 def _get_tool_map(
@@ -1698,6 +1812,7 @@ async def _execute_single_function_call(
     invocation_session: AgentSession | None,
     middleware_pipeline: FunctionMiddlewarePipeline | None,
     live_tools: list[ToolTypes] | None,
+    host_payload_budget: _FunctionResultPayloadBudget | None,
 ) -> tuple[list[Content], bool]:
     from ._middleware import MiddlewareTermination
     from ._sessions import _suspend_run_persistence_gate  # pyright: ignore[reportPrivateUsage]
@@ -1719,6 +1834,7 @@ async def _execute_single_function_call(
                 middleware_pipeline=middleware_pipeline,
                 config=config,
                 live_tools=live_tools,
+                host_payload_budget=host_payload_budget,
             )
         return [result], False
     except MiddlewareTermination as exc:
@@ -1757,6 +1873,7 @@ async def _try_execute_function_call_groups(
     config: FunctionInvocationConfiguration,
     invocation_session: AgentSession | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
+    host_payload_budget: _FunctionResultPayloadBudget | None = None,
 ) -> tuple[list[list[Content]], bool]:
     """Execute multiple function calls concurrently while preserving per-call result groups.
 
@@ -1767,6 +1884,7 @@ async def _try_execute_function_call_groups(
         config: Configuration for function invocation.
         invocation_session: The agent session for this invocation, if any.
         middleware_pipeline: Optional middleware pipeline to apply during execution.
+        host_payload_budget: Shared request budget for retained Host-only function result payloads.
 
     Returns:
         A tuple of:
@@ -1885,6 +2003,7 @@ async def _try_execute_function_call_groups(
                 invocation_session=invocation_session,
                 middleware_pipeline=middleware_pipeline,
                 live_tools=live_tools,
+                host_payload_budget=host_payload_budget,
             ),
         )
         for function_call in function_calls
@@ -1955,6 +2074,7 @@ async def _execute_function_calls(
     config: FunctionInvocationConfiguration,
     invocation_session: AgentSession | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
+    host_payload_budget: _FunctionResultPayloadBudget | None = None,
 ) -> _FunctionExecutionBatch:
     tools = _extract_tools(options)
     if not tools:
@@ -1966,6 +2086,7 @@ async def _execute_function_calls(
         invocation_session=invocation_session,
         middleware_pipeline=middleware_pipeline,
         config=config,
+        host_payload_budget=host_payload_budget,
     )
     return _FunctionExecutionBatch(
         result_groups=result_groups,
@@ -3858,6 +3979,13 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         # setdefault preserves the original timestamp across approval re-entries so that
         # max_duration_seconds measures cumulative elapsed time, not just the current segment.
         budget_state.setdefault("start_time", perf_counter())
+        raw_host_payload_budget = budget_state.get(_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY)
+        host_payload_budget = (
+            raw_host_payload_budget
+            if isinstance(raw_host_payload_budget, _FunctionResultPayloadBudget)
+            else _FunctionResultPayloadBudget()
+        )
+        budget_state[_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY] = host_payload_budget
         max_errors = self.function_invocation_configuration.get(
             "max_consecutive_errors_per_request", DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST
         )
@@ -3879,6 +4007,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             config=self.function_invocation_configuration,
             invocation_session=invocation_session,
             middleware_pipeline=function_middleware_pipeline,
+            host_payload_budget=host_payload_budget,
         )
 
         # Give the loop private mutable options and one shared run-local tool list for progressive tool changes.
