@@ -1363,6 +1363,8 @@ class MCPTool:
 
     def _reset_session_state(self) -> None:
         self._server_capabilities = None
+        self._tools_loaded = False
+        self._prompts_loaded = False
         self._supports_tools = True
         self._supports_prompts = True
         self._supports_logging = None
@@ -1499,33 +1501,52 @@ class MCPTool:
                     logger.debug(error_msg, exc_info=True)
                 raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
             self.session = session
-        elif self.session._request_id == 0:  # type: ignore[attr-defined]
-            # If the session is not initialized, we need to reinitialize it
-            with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
-                initialize_result = await self.session.initialize()
-                init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocolVersion)
-                self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
-        elif self._server_capabilities is None:
-            self._set_server_capabilities(getattr(self.session, "_server_capabilities", None))
-        logger.debug("Connected to MCP server: %s", self.session)
-        self.is_connected = True
-        if load_configured and self.load_tools_flag:
-            if self._supports_tools:
-                await self.load_tools()
-            self._tools_loaded = True
-        if load_configured and self.load_prompts_flag:
-            if self._supports_prompts:
-                await self.load_prompts()
-            self._prompts_loaded = True
-
-        if logger.level != logging.NOTSET and self._supports_logging is not False:
+        else:
             try:
-                level_name = cast(
-                    Any, next(level for level, value in LOG_LEVEL_MAPPING.items() if value == logger.level)
-                )
-                await self.session.set_logging_level(level_name)
-            except Exception as exc:
-                logger.warning("Failed to set log level to %s", logger.level, exc_info=exc)
+                if self.session._request_id == 0:  # type: ignore[attr-defined]
+                    # If the session is not initialized, we need to reinitialize it
+                    with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
+                        initialize_result = await self.session.initialize()
+                        init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocolVersion)
+                        self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
+                elif self._server_capabilities is None:
+                    self._set_server_capabilities(getattr(self.session, "_server_capabilities", None))
+            except (Exception, asyncio.CancelledError):
+                await self._close_on_owner()
+                raise
+        functions_before_discovery = self._functions.copy()
+        call_meta_before_discovery = self._tool_call_meta_by_name
+        task_support_before_discovery = self._tool_task_support_by_name
+        param_names_before_discovery = self._tool_param_names_by_name
+        try:
+            logger.debug("Connected to MCP server: %s", self.session)
+            self.is_connected = True
+            if load_configured and self.load_tools_flag:
+                if self._supports_tools:
+                    await self.load_tools()
+                self._tools_loaded = True
+            if load_configured and self.load_prompts_flag:
+                if self._supports_prompts:
+                    await self.load_prompts()
+                self._prompts_loaded = True
+
+            if logger.level != logging.NOTSET and self._supports_logging is not False:
+                try:
+                    level_name = cast(
+                        Any, next(level for level, value in LOG_LEVEL_MAPPING.items() if value == logger.level)
+                    )
+                    await self.session.set_logging_level(level_name)
+                except Exception as exc:
+                    logger.warning("Failed to set log level to %s", logger.level, exc_info=exc)
+        except (Exception, asyncio.CancelledError):
+            try:
+                await self._close_on_owner()
+            finally:
+                self._functions[:] = functions_before_discovery
+                self._tool_call_meta_by_name = call_meta_before_discovery
+                self._tool_task_support_by_name = task_support_before_discovery
+                self._tool_param_names_by_name = param_names_before_discovery
+            raise
 
     async def _sampling_request_approved(self, params: types.CreateMessageRequestParams) -> bool:
         """Run the configured sampling approval gate.

@@ -5,19 +5,22 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import sys
 from collections.abc import AsyncGenerator, AsyncIterator
-from typing import Any
-from unittest.mock import patch
+from typing import Any, Literal, TypeAlias
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
 
 from agent_framework import MCPStreamableHTTPTool
-from agent_framework.exceptions import ToolException
+from agent_framework.exceptions import ToolException, ToolExecutionException
+
+MCPHTTPServer: TypeAlias = tuple[httpx.AsyncClient, list[httpx.Request], dict[str, list[str]]]
 
 
 @pytest.fixture
-async def mcp_http_server() -> AsyncIterator[tuple[httpx.AsyncClient, list[httpx.Request], dict[str, list[str]]]]:
+async def mcp_http_server() -> AsyncIterator[MCPHTTPServer]:
     requests: list[httpx.Request] = []
     writes: dict[str, list[str]] = {"token-a": [], "token-b": [], "token-c": []}
 
@@ -42,7 +45,7 @@ async def mcp_http_server() -> AsyncIterator[tuple[httpx.AsyncClient, list[httpx
             headers["mcp-session-id"] = f"session-{principal}"
             result = {
                 "protocolVersion": body["params"]["protocolVersion"],
-                "capabilities": {"tools": {}},
+                "capabilities": {"tools": {}, "prompts": {}},
                 "serverInfo": {"name": "auth-test", "version": "1"},
             }
         elif method == "tools/list":
@@ -60,6 +63,8 @@ async def mcp_http_server() -> AsyncIterator[tuple[httpx.AsyncClient, list[httpx
             if marker is not None:
                 writes[principal].append(marker)
             result = {"content": [{"type": "text", "text": principal}]}
+        elif method == "prompts/list":
+            result = {"prompts": []}
         if "id" not in body:
             return httpx.Response(202)
         return httpx.Response(200, headers=headers, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
@@ -89,7 +94,9 @@ def _calls(requests: list[httpx.Request]) -> list[httpx.Request]:
 
 
 @pytest.mark.parametrize("principals", [("token-a", "token-b"), ("token-b", "token-a")])
-async def test_shared_client_keeps_tools_and_caller_requests_isolated(mcp_http_server, principals):
+async def test_shared_client_keeps_tools_and_caller_requests_isolated(
+    mcp_http_server: MCPHTTPServer, principals: tuple[str, str]
+) -> None:
     client, requests, writes = mcp_http_server
     original_hooks = list(client.event_hooks["request"])
     first, second = (_tool(client, principal) for principal in principals)
@@ -128,7 +135,7 @@ async def test_shared_client_keeps_tools_and_caller_requests_isolated(mcp_http_s
     assert "Authorization" not in requests[-1].headers
 
 
-async def test_closing_another_tool_does_not_skip_inflight_request_hooks(mcp_http_server):
+async def test_closing_another_tool_does_not_skip_inflight_request_hooks(mcp_http_server: MCPHTTPServer) -> None:
     client, requests, _ = mcp_http_server
     started = asyncio.Event()
     release = asyncio.Event()
@@ -147,14 +154,18 @@ async def test_closing_another_tool_does_not_skip_inflight_request_hooks(mcp_htt
                 await first.close()
             finally:
                 release.set()
-                await call
+                result = await call
+    assert isinstance(result, list)
+    assert result[0].text == "token-b"
     assert _calls(requests)[-1].headers["Authorization"] == "token-b"
     assert pause_call in client.event_hooks["request"]
 
 
 @pytest.mark.parametrize("failure", ["entry", "cancellation", "initialize"])
 @pytest.mark.parametrize("owned_client", [False, True])
-async def test_transport_failure_cleans_up_hooks_and_owned_client(mcp_http_server, failure, owned_client):
+async def test_transport_failure_cleans_up_hooks_and_owned_client(
+    mcp_http_server: MCPHTTPServer, failure: str, owned_client: bool
+) -> None:
     client, _, _ = mcp_http_server
     original_hooks = list(client.event_hooks["request"])
     tool = _tool(client, "token-a")
@@ -180,7 +191,7 @@ async def test_transport_failure_cleans_up_hooks_and_owned_client(mcp_http_serve
         raise RuntimeError("transport entry failed")
         yield ()
 
-    error = asyncio.CancelledError if failure == "cancellation" else ToolException
+    error = asyncio.CancelledError if failure == "cancellation" and sys.version_info >= (3, 11) else ToolException
     transport_patch = (
         contextlib.nullcontext()
         if failure == "initialize"
@@ -195,7 +206,7 @@ async def test_transport_failure_cleans_up_hooks_and_owned_client(mcp_http_serve
         await tool.close()
 
 
-async def test_owned_client_is_closed_after_successful_session(mcp_http_server):
+async def test_owned_client_is_closed_after_successful_session(mcp_http_server: MCPHTTPServer) -> None:
     client, _, _ = mcp_http_server
     original_hooks = list(client.event_hooks["request"])
     tool = MCPStreamableHTTPTool(
@@ -211,7 +222,9 @@ async def test_owned_client_is_closed_after_successful_session(mcp_http_server):
     assert client.event_hooks["request"] == original_hooks
 
 
-async def test_connecting_another_tool_during_a_call_does_not_capture_its_headers(mcp_http_server):
+async def test_connecting_another_tool_during_a_call_does_not_capture_its_headers(
+    mcp_http_server: MCPHTTPServer,
+) -> None:
     client, requests, _ = mcp_http_server
     second = _tool(client, "token-b")
     connected = False
@@ -243,7 +256,7 @@ async def test_connecting_another_tool_during_a_call_does_not_capture_its_header
     assert "Authorization" not in requests[-1].headers
 
 
-async def test_shared_client_concurrent_calls_keep_dynamic_headers_isolated(mcp_http_server):
+async def test_shared_client_concurrent_calls_keep_dynamic_headers_isolated(mcp_http_server: MCPHTTPServer) -> None:
     client, requests, writes = mcp_http_server
     async with _tool(client, "token-a") as first, _tool(client, "token-b") as second:
         await asyncio.gather(
@@ -259,7 +272,9 @@ async def test_shared_client_concurrent_calls_keep_dynamic_headers_isolated(mcp_
     assert all("credential" not in json.loads(request.content)["params"]["arguments"] for request in calls)
 
 
-async def test_headerless_transport_does_not_inherit_another_transports_credentials(mcp_http_server):
+async def test_headerless_transport_does_not_inherit_another_transports_credentials(
+    mcp_http_server: MCPHTTPServer,
+) -> None:
     client, requests, _ = mcp_http_server
     second = MCPStreamableHTTPTool(
         name="unauthenticated", url="https://mcp.example/mcp", http_client=client, load_prompts=False
@@ -289,7 +304,7 @@ async def test_headerless_transport_does_not_inherit_another_transports_credenti
         await second.close()
 
 
-async def test_failed_connect_removes_only_its_own_authentication_hook(mcp_http_server):
+async def test_failed_connect_removes_only_its_own_authentication_hook(mcp_http_server: MCPHTTPServer) -> None:
     client, requests, _ = mcp_http_server
     async with _tool(client, "token-a") as first:
         original_hooks = list(client.event_hooks["request"])
@@ -305,7 +320,7 @@ async def test_failed_connect_removes_only_its_own_authentication_hook(mcp_http_
     assert not client.is_closed
 
 
-async def test_prepared_transport_hook_is_removed_on_close(mcp_http_server):
+async def test_prepared_transport_hook_is_removed_on_close(mcp_http_server: MCPHTTPServer) -> None:
     client, _, _ = mcp_http_server
     original_hooks = list(client.event_hooks["request"])
     tool = _tool(client, "token-a")
@@ -313,3 +328,140 @@ async def test_prepared_transport_hook_is_removed_on_close(mcp_http_server):
     tool.get_mcp_client()
     await tool.close()
     assert client.event_hooks["request"] == original_hooks
+
+
+@pytest.mark.parametrize("discovery_method", ["load_tools", "load_prompts"])
+@pytest.mark.parametrize("entry_method", ["connect", "context_manager"])
+@pytest.mark.parametrize("owned_client", [False, True])
+@pytest.mark.parametrize("failure_type", [ToolExecutionException, asyncio.CancelledError])
+async def test_discovery_failure_cleans_up_resources(
+    mcp_http_server: MCPHTTPServer,
+    discovery_method: str,
+    entry_method: str,
+    owned_client: bool,
+    failure_type: type[ToolExecutionException] | type[asyncio.CancelledError],
+) -> None:
+    client, _, _ = mcp_http_server
+    original_hooks = list(client.event_hooks["request"])
+    tool = MCPStreamableHTTPTool(
+        name="discovery",
+        url="https://mcp.example/mcp",
+        http_client=None if owned_client else client,
+        header_provider=lambda _: {"Authorization": "token-a"},
+    )
+    failure = failure_type("discovery failed")
+    try:
+        with (
+            patch("httpx.AsyncClient", return_value=client),
+            patch.object(tool, discovery_method, new=AsyncMock(side_effect=failure)),
+            pytest.raises(failure_type, match="discovery failed") as error,
+        ):
+            if entry_method == "connect":
+                await tool.connect()
+            else:
+                async with tool:
+                    pytest.fail("Failed discovery must not enter the context manager")
+        assert error.value is failure
+        assert client.event_hooks["request"] == original_hooks
+        assert client.is_closed is owned_client
+        assert tool.session is None
+        assert not tool.is_connected
+        assert not tool._tools_loaded
+        assert not tool._prompts_loaded
+    finally:
+        await tool.close()
+
+
+@pytest.mark.parametrize("discovery_method", ["tools/list", "prompts/list"])
+@pytest.mark.parametrize("owned_client", [False, True])
+async def test_discovery_failure_retry_starts_a_fresh_session(
+    discovery_method: Literal["tools/list", "prompts/list"], owned_client: bool
+) -> None:
+    initialize_count = 0
+    failure_count = 0
+    clients: list[httpx.AsyncClient] = []
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal initialize_count, failure_count
+        if request.method == "GET":
+            return httpx.Response(405)
+        if request.method == "DELETE":
+            return httpx.Response(200)
+        body = json.loads(request.content)
+        method = body.get("method")
+        if method == discovery_method and body.get("params", {}).get("cursor") and failure_count < 2:
+            failure_count += 1
+            return httpx.Response(
+                200, json={"jsonrpc": "2.0", "id": body["id"], "error": {"code": -32603, "message": "discovery failed"}}
+            )
+        result: dict[str, Any] = {}
+        headers: dict[str, str] = {}
+        if method == "initialize":
+            initialize_count += 1
+            headers["mcp-session-id"] = f"session-{initialize_count}"
+            result = {
+                "protocolVersion": body["params"]["protocolVersion"],
+                "capabilities": {"tools": {}, "prompts": {}},
+                "serverInfo": {"name": "discovery-test", "version": "1"},
+            }
+        elif method == "tools/list":
+            result = {
+                "tools": [
+                    {
+                        "name": "record" if failure_count == 2 else "partial_record",
+                        "inputSchema": {"type": "object", "properties": {"marker": {"type": "string"}}},
+                        "_meta": {"source": "discovery"},
+                        "execution": {"taskSupport": "optional"},
+                    }
+                ]
+            }
+        elif method == "prompts/list":
+            result = {"prompts": [{"name": "partial_prompt"}] if failure_count < 2 else []}
+        if method == discovery_method and failure_count < 2:
+            result["nextCursor"] = "next-page"
+        if "id" not in body:
+            return httpx.Response(202)
+        return httpx.Response(200, headers=headers, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+
+    async_client = httpx.AsyncClient
+
+    def create_client(**kwargs: Any) -> httpx.AsyncClient:
+        client = async_client(transport=httpx.MockTransport(handle), **kwargs)
+        clients.append(client)
+        return client
+
+    tool = MCPStreamableHTTPTool(
+        name="discovery",
+        url="https://mcp.example/mcp",
+        http_client=None if owned_client else create_client(),
+        header_provider=lambda _: {"Authorization": "token-a"},
+    )
+    from mcp.shared.exceptions import McpError
+
+    try:
+        with patch("httpx.AsyncClient", side_effect=create_client):
+            for _ in range(2):
+                with pytest.raises(McpError, match="discovery failed"):
+                    await tool.connect()
+                assert tool.session is None
+                assert not tool.is_connected
+                assert not tool._tools_loaded
+                assert not tool._prompts_loaded
+                assert tool.functions == []
+                assert tool._tool_call_meta_by_name == {}
+                assert tool._tool_task_support_by_name == {}
+                assert tool._tool_param_names_by_name == {}
+                assert all(not client.event_hooks["request"] for client in clients)
+                assert all(client.is_closed is owned_client for client in clients)
+            await tool.connect()
+            assert tool.is_connected
+            assert [function.name for function in tool.functions] == ["record"]
+            assert initialize_count == 3
+            assert len(clients) == (3 if owned_client else 1)
+            await tool.close()
+            assert all(not client.event_hooks["request"] for client in clients)
+            assert all(client.is_closed is owned_client for client in clients)
+    finally:
+        await tool.close()
+        for client in clients:
+            await client.aclose()
