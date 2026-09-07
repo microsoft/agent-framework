@@ -7059,10 +7059,10 @@ async def test_phase1_duration_expiry_prevents_approval_execution(chat_client_ba
         tool_executed = True
         return "done"
 
-    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 1.0  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 1.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     call = Content.from_function_call(call_id="op1", name="op", arguments="{}")
-    chat_client_base.run_responses = [  # type: ignore[attr-defined]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(messages=[Message(role="assistant", contents=[call])], finish_reason="tool_calls"),
         ChatResponse(
             messages=[Message(role="assistant", contents=[Content.from_text("fallback")])], finish_reason="stop"
@@ -7109,17 +7109,17 @@ async def test_duration_expiry_drops_unexecutable_provider_call(
     def op() -> str:
         return "done"
 
-    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 1.0  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 1.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     call = Content.from_function_call(call_id="op1", name="op", arguments="{}")
     if streaming:
-        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             [ChatResponseUpdate(contents=[call], role="assistant", finish_reason="tool_calls")],
             [ChatResponseUpdate(contents=[call], role="assistant", finish_reason="tool_calls")],
             [ChatResponseUpdate(contents=[Content.from_text("fallback")], role="assistant", finish_reason="stop")],
         ]
     else:
-        chat_client_base.run_responses = [  # type: ignore[attr-defined]
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             ChatResponse(messages=[Message(role="assistant", contents=[call])], finish_reason="tool_calls"),
             ChatResponse(messages=[Message(role="assistant", contents=[call])], finish_reason="tool_calls"),
             ChatResponse(
@@ -7163,9 +7163,9 @@ async def test_session_budget_state_persists_during_approval_and_cleans_up_on_co
     def op() -> str:
         return "done"
 
-    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 100.0  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 100.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     call = Content.from_function_call(call_id="op1", name="op", arguments="{}")
-    chat_client_base.run_responses = [  # type: ignore[attr-defined]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(messages=[Message(role="assistant", contents=[call])], finish_reason="tool_calls"),
         ChatResponse(
             messages=[Message(role="assistant", contents=[Content.from_text("fallback")])], finish_reason="stop"
@@ -7212,8 +7212,8 @@ async def test_plain_session_multiturn_has_isolated_budget_state_per_invocation(
     def op() -> str:
         return "done"
 
-    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 100.0  # type: ignore[attr-defined]
-    chat_client_base.run_responses = [  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 100.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(messages=[Message(role="assistant", contents=[Content.from_text("first")])], finish_reason="stop"),
         ChatResponse(
             messages=[Message(role="assistant", contents=[Content.from_text("second")])], finish_reason="stop"
@@ -7239,9 +7239,9 @@ async def test_streaming_pending_approval_survives_budget_state_pop(chat_client_
     def op() -> str:
         return "done"
 
-    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 100.0  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 100.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     call = Content.from_function_call(call_id="op1", name="op", arguments="{}")
-    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [ChatResponseUpdate(contents=[call], role="assistant", finish_reason="tool_calls")],
         [ChatResponseUpdate(contents=[Content.from_text("fallback")], role="assistant", finish_reason="stop")],
     ]

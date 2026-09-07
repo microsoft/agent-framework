@@ -2848,7 +2848,7 @@ def _disable_tools_at_function_call_limit(
     return True
 
 
-def _clear_budget_state_from_session(invocation_session: "AgentSession | None") -> None:
+def _clear_budget_state_from_session(invocation_session: AgentSession | None) -> None:
     """Remove the per-invocation budget state from session.state once a run fully completes.
 
     The budget key is left in session.state across approval round-trips so that
@@ -3922,9 +3922,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
         response_format = mutable_options.get("response_format")
 
-        def _finalizer(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
-            return ChatResponse.from_updates(updates, output_format_type=response_format)
-
         return ResponseStream(
             self._stream_response_with_function_invocation(
                 super_get_response=super_get_response,
@@ -3938,7 +3935,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 budget_state=budget_state,
                 max_errors=max_errors,
             ),
-            finalizer=_finalizer,
+            finalizer=partial(ChatResponse.from_updates, output_format_type=response_format),
         )
 
 
