@@ -1533,6 +1533,17 @@ def test_param_generates_native_schema_and_validates_constraints() -> None:
     assert {"type": "string", "maxLength": 8} in schema["properties"]["code"]["anyOf"]
     with pytest.raises(TypeError, match="homogeneous"):
         Param("pair", tuple[int, str])
+    with pytest.raises(TypeError, match="JSON-compatible"):
+        Param("binary_literal", Literal[b"value"])
+    non_finite_literal = cast(Any, Literal)[float("inf")]
+    with pytest.raises(ValueError, match="Literal numbers must be finite"):
+        Param("non_finite_literal", non_finite_literal)
+    with pytest.raises(TypeError, match="mapping keys must use the str type"):
+        Param("integer_keys", dict[int, str])
+    with pytest.raises(ValueError, match="numeric constraints require numeric"):
+        Param("category_with_minimum", str, minimum=1)
+    with pytest.raises(ValueError, match="numeric constraints require numeric"):
+        Param("mixed_with_minimum", int | str, minimum=1)
 
     tuple_param = Param("numbers", tuple[int, ...])
     tuple_schema = create_vector_search_tool(
@@ -1540,6 +1551,18 @@ def test_param_generates_native_schema_and_validates_constraints() -> None:
         filter=Filter("text", "provider.numbers", tuple_param),
     ).parameters()
     assert tuple_schema["properties"]["numbers"] == {"type": "array", "items": {"type": "integer"}}
+
+    nullable_number = Param("score", float | None, minimum=0, maximum=1)
+    nullable_number_schema = create_vector_search_tool(
+        MockCollection(),
+        filter=Filter("text", "provider.score", nullable_number),
+    ).parameters()
+    assert nullable_number_schema["properties"]["score"] == {
+        "anyOf": [{"type": "number"}, {"type": "null"}],
+        "minimum": 0,
+        "maximum": 1,
+    }
+    assert Param("level", Literal[1, None], minimum=1).minimum == 1
 
     source_default = ["travel"]
     frozen_default = Param("categories", list[str], default=source_default)
@@ -1635,6 +1658,16 @@ async def test_filter_resource_validation_boundaries() -> None:
     too_many = FilterGroup("and", tuple(Filter("text", "eq", str(index)) for index in range(65)))
     with pytest.raises(ValueError, match="more than 64 nodes"):
         await collection.search("query", filter=too_many)
+
+    cyclic_group = FilterGroup("and", (Filter("text", "eq", "value"),))
+    cyclic_group.filters = (cyclic_group,)
+    with pytest.raises(ValueError, match="cannot contain cycles"):
+        await collection.search("query", filter=cyclic_group)
+
+    cyclic_expression_value = Filter("text", "provider.nested", "value")
+    cyclic_expression_value.value = cyclic_expression_value
+    with pytest.raises(ValueError, match="cannot contain cycles"):
+        await collection.search("query", filter=cyclic_expression_value)
 
     nested: Filter | FilterGroup = Filter("relative_name", "eq", "value")
     assert Filter("text", "provider.nested", nested).value is nested

@@ -244,10 +244,20 @@ def _schema_for_type(value_type: Any) -> dict[str, Any]:
     origin = get_origin(value_type)
     if origin is Literal:
         values = list(get_args(value_type))
+        json_types: list[str] = []
+        for value in values:
+            json_type = _json_type(type(value))
+            if json_type is None:
+                raise TypeError("Param Literal values must be JSON-compatible scalar values.")
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError("Param Literal numbers must be finite.")
+            if json_type not in json_types:
+                json_types.append(json_type)
         schema: dict[str, Any] = {"enum": values}
-        json_types = {_json_type(type(value)) for value in values}
-        if len(json_types) == 1 and None not in json_types:
-            schema["type"] = json_types.pop()
+        if len(json_types) == 1:
+            schema["type"] = json_types[0]
+        else:
+            schema["anyOf"] = [{"type": json_type} for json_type in json_types]
         return schema
     if origin in (Union, UnionType):
         return {"anyOf": [_schema_for_type(item) for item in get_args(value_type)]}
@@ -263,7 +273,9 @@ def _schema_for_type(value_type: Any) -> dict[str, Any]:
         return {"type": "array", "items": _schema_for_type(item_type)}
     if origin in (dict, Mapping):
         args = get_args(value_type)
-        value_annotation = args[1] if len(args) == 2 else Any
+        key_annotation, value_annotation = args if len(args) == 2 else (Any, Any)
+        if key_annotation is not str:
+            raise TypeError("Param mapping keys must use the str type.")
         return {"type": "object", "additionalProperties": _schema_for_type(value_annotation)}
     if value_type is Any:
         raise TypeError("Param requires an explicit JSON-compatible value type.")
@@ -276,6 +288,12 @@ def _schema_for_type(value_type: Any) -> dict[str, Any]:
 def param_schema(param: Param) -> dict[str, Any]:
     """Build a JSON Schema property for a parameter without Pydantic."""
     schema = _schema_for_type(param.value_type)
+    schema_types = _schema_types(schema)
+    non_null_schema_types = schema_types - {"null"}
+    if (param.minimum is not None or param.maximum is not None) and (
+        not non_null_schema_types or not non_null_schema_types <= {"integer", "number"}
+    ):
+        raise ValueError("Param numeric constraints require numeric value types.")
     if param.description is not None:
         schema["description"] = param.description
     if param.has_default:
@@ -284,8 +302,6 @@ def param_schema(param: Param) -> dict[str, Any]:
         schema["minimum"] = param.minimum
     if param.maximum is not None:
         schema["maximum"] = param.maximum
-    schema_types = _schema_types(schema)
-    non_null_schema_types = schema_types - {"null"}
     if (param.min_length is not None or param.max_length is not None) and len(non_null_schema_types) != 1:
         raise ValueError("Param length constraints require one string, array, or object type.")
     schema_type = next(iter(non_null_schema_types), None)
@@ -514,43 +530,54 @@ class FilterGroup:
 FilterExpression: TypeAlias = Filter | FilterGroup
 
 
+def _snapshot_filter(filter_: FilterExpression, *, active: set[int]) -> FilterExpression:
+    if id(filter_) in active:
+        raise ValueError("Filter expressions cannot contain cycles.")
+    active.add(id(filter_))
+    try:
+        if isinstance(filter_, Filter):
+            value = (
+                _snapshot_filter(filter_.value, active=active)
+                if isinstance(filter_.value, Filter | FilterGroup)
+                else deepcopy(filter_.value)
+            )
+            return Filter(filter_.field_name, filter_.operator, value)
+        if isinstance(filter_, FilterGroup):
+            return FilterGroup(
+                filter_.operator,
+                tuple(_snapshot_filter(item, active=active) for item in filter_.filters),
+            )
+    finally:
+        active.remove(id(filter_))
+    raise TypeError("filter must be a Filter or FilterGroup.")
+
+
 def snapshot_filter(filter_: FilterExpression) -> FilterExpression:
     """Create an independent filter snapshot for one operation."""
-    if isinstance(filter_, Filter):
-        return Filter(filter_.field_name, filter_.operator, deepcopy(filter_.value))
-    if isinstance(filter_, FilterGroup):
-        return FilterGroup(filter_.operator, tuple(snapshot_filter(item) for item in filter_.filters))
-    raise TypeError("filter must be a Filter or FilterGroup.")
+    return _snapshot_filter(filter_, active=set())
 
 
 def _value_contains_param(value: Any, *, seen: set[int] | None = None) -> bool:
     if isinstance(value, Param):
         return True
-    if isinstance(value, Filter):
-        return _value_contains_param(value.value, seen=seen)
-    if isinstance(value, FilterGroup):
-        return any(_value_contains_param(item, seen=seen) for item in value.filters)
     if seen is None:
         seen = set()
-    if isinstance(value, Mapping):
-        mapping = cast(Mapping[Any, Any], value)
-        if id(mapping) in seen:
-            raise ValueError("Filter values cannot contain cycles.")
-        seen.add(id(mapping))
-        try:
-            return any(_value_contains_param(item, seen=seen) for item in mapping.values())
-        finally:
-            seen.remove(id(mapping))
-    if _is_non_string_sequence(value):
-        sequence = cast(Sequence[Any], value)
-        if id(sequence) in seen:
-            raise ValueError("Filter values cannot contain cycles.")
-        seen.add(id(sequence))
-        try:
-            return any(_value_contains_param(item, seen=seen) for item in sequence)
-        finally:
-            seen.remove(id(sequence))
-    return False
+    if not isinstance(value, Filter | FilterGroup | Mapping) and not _is_non_string_sequence(value):
+        return False
+    identity = id(cast(object, value))
+    if identity in seen:
+        raise ValueError("Filter values cannot contain cycles.")
+    seen.add(identity)
+    try:
+        if isinstance(value, Filter):
+            return _value_contains_param(value.value, seen=seen)
+        if isinstance(value, FilterGroup):
+            return any(_value_contains_param(item, seen=seen) for item in value.filters)
+        if isinstance(value, Mapping):
+            return any(_value_contains_param(item, seen=seen) for item in cast(Mapping[Any, Any], value).values())
+        return any(_value_contains_param(item, seen=seen) for item in cast(Sequence[Any], value))
+    finally:
+        seen.remove(identity)
 
 
 def _validate_filter_value_shape(filter_: Filter, *, allow_params: bool) -> None:
@@ -629,7 +656,7 @@ class _FilterValidator:
     max_nodes: int
     node_count: int = 0
 
-    def validate_value(self, value: Any, *, depth: int, seen: set[int]) -> None:
+    def validate_value(self, value: Any, *, depth: int, active: set[int]) -> None:
         if depth > self.max_depth:
             raise ValueError(f"Filter values cannot exceed a depth of {self.max_depth}.")
         if isinstance(value, float) and not math.isfinite(value):
@@ -639,33 +666,33 @@ class _FilterValidator:
         if isinstance(value, Param):
             raise ValueError("Param must be the entire Filter value, not nested inside a collection or mapping.")
         if isinstance(value, Filter | FilterGroup):
-            self.validate_expression(value, depth=depth, relative_fields=True)
+            self.validate_expression(value, depth=depth, relative_fields=True, active=active)
             return
         if isinstance(value, Mapping):
             mapping = cast(Mapping[Any, Any], value)
-            if id(mapping) in seen:
+            if id(mapping) in active:
                 raise ValueError("Filter values cannot contain cycles.")
-            seen.add(id(mapping))
+            active.add(id(mapping))
             try:
                 for key, item in mapping.items():
                     if not isinstance(key, str):
                         raise TypeError("Filter mapping keys must be strings.")
                     self.count_node()
-                    self.validate_value(item, depth=depth + 1, seen=seen)
+                    self.validate_value(item, depth=depth + 1, active=active)
             finally:
-                seen.remove(id(mapping))
+                active.remove(id(mapping))
             return
         if _is_non_string_sequence(value):
             sequence = cast(Sequence[Any], value)
-            if id(sequence) in seen:
+            if id(sequence) in active:
                 raise ValueError("Filter values cannot contain cycles.")
-            seen.add(id(sequence))
+            active.add(id(sequence))
             try:
                 for item in sequence:
                     self.count_node()
-                    self.validate_value(item, depth=depth + 1, seen=seen)
+                    self.validate_value(item, depth=depth + 1, active=active)
             finally:
-                seen.remove(id(sequence))
+                active.remove(id(sequence))
 
     def validate_expression(
         self,
@@ -673,21 +700,35 @@ class _FilterValidator:
         *,
         depth: int,
         relative_fields: bool,
+        active: set[int],
     ) -> None:
         if depth > self.max_depth:
             raise ValueError(f"Filters cannot exceed a depth of {self.max_depth}.")
-        self.count_node()
-        if isinstance(expression, Filter):
-            if not relative_fields and expression.field_name.split(".", maxsplit=1)[0] not in self.field_names:
-                raise ValueError(f"Filter field '{expression.field_name}' is not part of the vector store definition.")
-            _validate_filter_value_shape(expression, allow_params=self.allow_params)
-            if not isinstance(expression.value, Param):
-                self.validate_value(expression.value, depth=depth + 1, seen=set())
-            return
-        if not isinstance(expression, FilterGroup):
-            raise TypeError("filter must be a Filter or FilterGroup.")
-        for item in expression.filters:
-            self.validate_expression(item, depth=depth + 1, relative_fields=relative_fields)
+        if id(expression) in active:
+            raise ValueError("Filter expressions cannot contain cycles.")
+        active.add(id(expression))
+        try:
+            self.count_node()
+            if isinstance(expression, Filter):
+                if not relative_fields and expression.field_name.split(".", maxsplit=1)[0] not in self.field_names:
+                    raise ValueError(
+                        f"Filter field '{expression.field_name}' is not part of the vector store definition."
+                    )
+                _validate_filter_value_shape(expression, allow_params=self.allow_params)
+                if not isinstance(expression.value, Param):
+                    self.validate_value(expression.value, depth=depth + 1, active=active)
+                return
+            if not isinstance(expression, FilterGroup):
+                raise TypeError("filter must be a Filter or FilterGroup.")
+            for item in expression.filters:
+                self.validate_expression(
+                    item,
+                    depth=depth + 1,
+                    relative_fields=relative_fields,
+                    active=active,
+                )
+        finally:
+            active.remove(id(expression))
 
     def count_node(self) -> None:
         self.node_count += 1
@@ -708,4 +749,4 @@ def validate_filter(
         allow_params=allow_params,
         max_depth=max_depth,
         max_nodes=max_nodes,
-    ).validate_expression(filter_, depth=1, relative_fields=False)
+    ).validate_expression(filter_, depth=1, relative_fields=False, active=set())
