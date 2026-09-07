@@ -15,10 +15,13 @@ public static class HostedWorkflowBuilderExtensions
     /// </summary>
     /// <param name="builder">The <see cref="IHostedWorkflowBuilder"/> instance to extend.</param>
     /// <param name="lifetime">The DI service lifetime for the agent registration. Defaults to <see cref="ServiceLifetime.Singleton"/>.</param>
-    /// <remarks>Workflow outputs are included in the hosted agent response.</remarks>
+    /// <param name="includeWorkflowOutputsInResponse">If <see langword="true"/>, workflow outputs are included in the agent response.</param>
     /// <returns>An <see cref="IHostedAgentBuilder"/> that can be used to further configure the agent.</returns>
-    public static IHostedAgentBuilder AddAsAIAgent(this IHostedWorkflowBuilder builder, ServiceLifetime lifetime = ServiceLifetime.Singleton)
-        => builder.AddAsAIAgent(name: null, lifetime: lifetime);
+    public static IHostedAgentBuilder AddAsAIAgent(
+        this IHostedWorkflowBuilder builder,
+        ServiceLifetime lifetime = ServiceLifetime.Singleton,
+        bool includeWorkflowOutputsInResponse = false)
+        => builder.AddAsAIAgent(name: null, lifetime: lifetime, includeWorkflowOutputsInResponse: includeWorkflowOutputsInResponse);
 
     /// <summary>
     /// Registers the workflow as an AI agent in the dependency injection container.
@@ -26,9 +29,13 @@ public static class HostedWorkflowBuilderExtensions
     /// <param name="builder">The <see cref="IHostedWorkflowBuilder"/> instance to extend.</param>
     /// <param name="name">The optional name for the AI agent. If not specified, the workflow name is used.</param>
     /// <param name="lifetime">The DI service lifetime for the agent registration. Defaults to <see cref="ServiceLifetime.Singleton"/>.</param>
-    /// <remarks>Workflow outputs are included in the hosted agent response.</remarks>
+    /// <param name="includeWorkflowOutputsInResponse">If <see langword="true"/>, workflow outputs are included in the agent response.</param>
     /// <returns>An <see cref="IHostedAgentBuilder"/> that can be used to further configure the agent.</returns>
-    public static IHostedAgentBuilder AddAsAIAgent(this IHostedWorkflowBuilder builder, string? name, ServiceLifetime lifetime = ServiceLifetime.Singleton)
+    public static IHostedAgentBuilder AddAsAIAgent(
+        this IHostedWorkflowBuilder builder,
+        string? name,
+        ServiceLifetime lifetime = ServiceLifetime.Singleton,
+        bool includeWorkflowOutputsInResponse = false)
     {
         var workflowName = builder.Name;
         var agentName = name ?? workflowName;
@@ -36,6 +43,6 @@ public static class HostedWorkflowBuilderExtensions
         return builder.HostApplicationBuilder.AddAIAgent(agentName, (sp, key) =>
             sp.GetRequiredKeyedService<Workflow>(workflowName).AsAIAgent(
                 name: key,
-                includeWorkflowOutputsInResponse: true), lifetime);
+                includeWorkflowOutputsInResponse: includeWorkflowOutputsInResponse), lifetime);
     }
 }
