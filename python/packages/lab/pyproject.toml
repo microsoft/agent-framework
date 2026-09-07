@@ -58,7 +58,7 @@ math = [
 [dependency-groups]
 dev = [
     "uv==0.12.6",
-    "ruff==0.16.4",
+    "ruff==0.16.5",
     "pytest==9.1.1",
     "mypy==2.3.1",
     "pyright==1.1.411",
