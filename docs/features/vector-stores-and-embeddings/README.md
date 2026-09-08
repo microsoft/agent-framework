@@ -268,6 +268,8 @@ Options considered:
   - Single `search(search_type=...)` method with `search_type: Literal["vector", "keyword_hybrid"]` parameter — no enum, just a literal
   - `_inner_search` abstract method for implementations
   - Portable `Filter` and `FilterGroup` trees passed unchanged to connector implementations
+  - Core validates portable request structure and deserializes returned records, but does not compute scores,
+    interpret score thresholds, or re-filter connector results. Connectors own execution and paging
   - Vector generation from values using embedding generator
   - Check supplied or locally generated dense query length against the selected field's `dimensions` before
     connector dispatch, including empty collections. In-memory search also checks array-like queries after its
@@ -365,6 +367,8 @@ Options considered:
 - Dedicated `_in_memory.py` module
 - Shared process-local collection state, full CRUD/listing/order behavior, and flat vector search
 - Pure-Python distance functions with no NumPy or SciPy dependency
+- Scoring, filters, and thresholds execute locally before paging. `DEFAULT` resolves to cosine distance and
+  therefore accepts scores at or below the threshold, including zero for identical vectors
 - Cosine calculations scale each vector independently to avoid overflow/underflow from finite magnitudes.
   Non-finite scores are rejected for every metric, and unsupported distance functions fail before scanning records
 - Hamming distance is the proportion of unequal dimensions, not a mismatch count; scores and thresholds use
@@ -500,4 +504,11 @@ Each connector follows the AF package structure:
    - `create_delete_tool(...)` → tool for deleting records
    - These are separate from search and are placed in a later phase
 
-10. **Score threshold filtering**: `search(score_threshold=...)` filters results by relevance score (ref: [SK .NET PR #13501](https://github.com/microsoft/semantic-kernel/pull/13501)). The semantics depend on the distance function: for similarity functions (cosine similarity, dot product), results *below* the threshold are filtered out; for distance functions (cosine distance, euclidean), results *above* the threshold are filtered out. Use `DISTANCE_FUNCTION_DIRECTION_HELPER` to determine direction. Connectors should implement this natively where the database supports it, falling back to client-side post-filtering otherwise.
+10. **Score threshold filtering**: Scoring, filter execution, score thresholds, and paging belong to the connector
+    and backing store (ref: [SK .NET PR #13501](https://github.com/microsoft/semantic-kernel/pull/13501)). Core passes
+    `score_threshold` through without requiring a known distance function or an explicit metric and does not
+    post-filter returned results, including results without scores. Each connector defines its score units,
+    threshold direction, and default metric. Execute filtering and thresholding natively where supported;
+    otherwise implement an explicit connector-local fallback coordinated with paging, or reject the unsupported
+    option rather than silently ignoring it. `DISTANCE_FUNCTION_DIRECTION_HELPER` remains available for
+    connectors implementing comparisons for common metrics locally; it is not a core capability gate.

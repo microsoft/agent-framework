@@ -98,11 +98,16 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
   are length checks, not element validation; null vectors, source text, binary payloads, and non-sequence
   provider-native representations remain connector-owned.
 - **`BaseVectorStore`** - Base class for stores that create collection clients
-- **`BaseVectorSearch`** - Base class for vector and keyword-hybrid search
+- **`BaseVectorSearch`** - Base class for vector and keyword-hybrid search; core validates portable requests and
+  deserializes results without interpreting thresholds or re-filtering returned scores. Connectors own scoring,
+  filter execution, score thresholds (including provider-defined/default metrics), and paging. Use native backend
+  execution where available, otherwise an explicit connector-local fallback or reject unsupported options
 - **`create_vector_search_tool`** - Creates an agent tool from any `SupportsVectorSearch` implementation
 - **`InMemoryCollection` / `InMemoryStore`** - Dependency-free, process-local development and test implementation;
   cosine scoring scales finite inputs, all metrics reject non-finite scores, and unsupported distance functions
   fail before record scanning. Hamming scores/thresholds use the fraction of unequal dimensions, not a count.
+  Scoring, filtering, and thresholds run locally before paging; `DEFAULT` means cosine distance and uses a maximum
+  distance threshold.
   Shared serialization normalizes stored data; codecs and connector overrides remain trusted Python code
 - **`SupportsVectorUpsert`** / **`SupportsVectorSearch`** - Structural protocols for vector store capabilities
 

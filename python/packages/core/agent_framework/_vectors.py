@@ -1402,7 +1402,12 @@ class BaseVectorStore(ABC):
 
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
 class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
-    """Base class for vector and keyword-hybrid search."""
+    """Base class for vector and keyword-hybrid search.
+
+    Core validates portable request structure and deserializes connector results.
+    Connectors own scoring, filter execution, score thresholds, and paging.
+    Returned scores and results are not re-filtered by core.
+    """
 
     supported_search_types: ClassVar[set[SearchType]] = {"vector"}
 
@@ -1422,7 +1427,14 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         score_threshold: float | None = None,
         operation_options: Mapping[str, Any] | None = None,
     ) -> SearchResults[Any]:
-        """Execute a search and return raw connector results."""
+        """Execute a search and return raw connector results.
+
+        Apply filters and score thresholds natively in the backing store where
+        supported. Otherwise implement an explicit connector-local fallback or
+        raise ``NotImplementedError``; do not silently ignore these options.
+        The connector owns score units, comparison direction, default metrics,
+        and coordinating filtering with paging. Core does not post-filter results.
+        """
         ...
 
     @abstractmethod
@@ -1467,8 +1479,8 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
             include_vectors: Whether returned records include vector fields.
             vector_property_name: The vector field used for search.
             additional_property_name: The data field used for keyword-hybrid search.
-            score_threshold: The minimum similarity or maximum distance accepted.
-                Results without scores remain included.
+            score_threshold: An optional cutoff interpreted and enforced by the connector.
+                Score units, comparison direction, and default metrics are connector-specific.
             operation_options: Store-specific operation options.
 
         Returns:
@@ -1511,8 +1523,8 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
             include_vectors: Whether returned records include vector fields.
             vector_property_name: The vector field used for search.
             additional_property_name: The data field used for keyword-hybrid search.
-            score_threshold: The minimum similarity or maximum distance accepted.
-                Results without scores remain included.
+            score_threshold: An optional cutoff interpreted and enforced by the connector.
+                Score units, comparison direction, and default metrics are connector-specific.
             operation_options: Store-specific operation options.
 
         Returns:
@@ -1549,6 +1561,10 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         connector-validated; provider-side vectorization still receives ``values``
         and no vector.
 
+        Filters and score thresholds are passed to the connector for execution,
+        normally in the backing store. Core deserializes returned records without
+        applying another threshold comparison or changing returned scores.
+
         Args:
             values: The value to search for or vectorize.
             search_type: Whether to perform vector or keyword-hybrid search.
@@ -1559,8 +1575,8 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
             include_vectors: Whether returned records include vector fields.
             vector_property_name: The vector field used for search.
             additional_property_name: The data field used for keyword-hybrid search.
-            score_threshold: The minimum similarity or maximum distance accepted.
-                Results without scores remain included.
+            score_threshold: An optional cutoff interpreted and enforced by the connector.
+                Score units, comparison direction, and default metrics are connector-specific.
             operation_options: Store-specific operation options.
 
         Returns:
@@ -1586,10 +1602,6 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         if operation_filter is not None:
             validate_filter(operation_filter, field_names=self.definition.names)
         try:
-            self._validate_score_threshold(
-                score_threshold=score_threshold,
-                vector_property_name=vector_property_name,
-            )
             resolved_vector = vector
             if resolved_vector is None and values is not None:
                 resolved_vector = await self._generate_vector_from_values(
@@ -1621,8 +1633,6 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
                 self._get_search_results_from_results(
                     raw_results.results,
                     include_vectors=include_vectors,
-                    vector_property_name=vector_property_name,
-                    score_threshold=score_threshold,
                 ),
                 metadata=raw_results.metadata,
             )
@@ -1632,25 +1642,6 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
             raise
         except Exception as exc:
             raise IntegrationException(f"Vector search failed: {exc}") from exc
-
-    def _validate_score_threshold(
-        self,
-        *,
-        score_threshold: float | None,
-        vector_property_name: str | None,
-    ) -> None:
-        if score_threshold is None:
-            return
-        vector_field = self.definition.try_get_vector_field(vector_property_name)
-        if vector_field is None:
-            raise ValueError("A score threshold requires a vector field.")
-        if vector_field.distance_function == "DEFAULT":
-            raise ValueError("A score threshold requires an explicit distance function on the vector field.")
-        if vector_field.distance_function not in DISTANCE_FUNCTION_DIRECTION_HELPER:
-            raise ValueError(
-                f"A score threshold requires a known comparison direction for "
-                f"distance function '{vector_field.distance_function}'."
-            )
 
     async def _generate_vector_from_values(
         self,
@@ -1682,8 +1673,6 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
         results: AsyncIterable[Any] | Sequence[Any],
         *,
         include_vectors: bool,
-        vector_property_name: str | None,
-        score_threshold: float | None,
     ) -> AsyncIterable[SearchResponse[ModelT]]:
         """Convert raw connector results into deserialized search responses."""
 
@@ -1702,12 +1691,6 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
                                 "A search result must deserialize to exactly one record."
                             )
                         score = self._get_score_from_result(result)
-                        if not self._meets_score_threshold(
-                            score,
-                            score_threshold=score_threshold,
-                            vector_property_name=vector_property_name,
-                        ):
-                            continue
                         yield SearchResponse(record=cast(ModelT, record), score=score)
                     except IntegrationException:
                         raise
@@ -1721,26 +1704,6 @@ class BaseVectorSearch(_VectorStoreRecordHandler[KeyT, ModelT], ABC):
                 raise IntegrationException(f"Vector search iteration failed: {exc}") from exc
 
         return generate()
-
-    def _meets_score_threshold(
-        self,
-        score: float | None,
-        *,
-        score_threshold: float | None,
-        vector_property_name: str | None,
-    ) -> bool:
-        """Apply a threshold when a result includes a comparable score.
-
-        Results without scores remain included because the threshold cannot be
-        evaluated for them.
-        """
-        if score_threshold is None or score is None:
-            return True
-        vector_field = self.definition.try_get_vector_field(vector_property_name)
-        if vector_field is None or vector_field.distance_function is None:
-            return True
-        comparison = DISTANCE_FUNCTION_DIRECTION_HELPER.get(vector_field.distance_function)
-        return comparison(score, score_threshold) if comparison is not None else True
 
 
 @runtime_checkable
@@ -1789,7 +1752,12 @@ class SupportsVectorUpsert(Protocol[KeyT, ModelT]):
 @runtime_checkable
 @experimental(feature_id=ExperimentalFeature.VECTOR_STORES)
 class SupportsVectorSearch(Protocol[ModelT]):
-    """Protocol for vector and keyword-hybrid search."""
+    """Protocol for vector and keyword-hybrid search.
+
+    Implementations own scoring, filter execution, score thresholds, and paging.
+    Execute these in the backing store where supported, otherwise use an explicit
+    local fallback or reject unsupported options.
+    """
 
     @overload
     async def search(
@@ -1819,8 +1787,8 @@ class SupportsVectorSearch(Protocol[ModelT]):
             include_vectors: Whether returned records include vector fields.
             vector_property_name: The vector field used for search.
             additional_property_name: The data field used for keyword-hybrid search.
-            score_threshold: The minimum similarity or maximum distance accepted.
-                Results without scores remain included.
+            score_threshold: An optional cutoff interpreted and enforced by the connector.
+                Score units, comparison direction, and default metrics are connector-specific.
             operation_options: Store-specific operation options.
 
         Returns:
@@ -1859,8 +1827,8 @@ class SupportsVectorSearch(Protocol[ModelT]):
             include_vectors: Whether returned records include vector fields.
             vector_property_name: The vector field used for search.
             additional_property_name: The data field used for keyword-hybrid search.
-            score_threshold: The minimum similarity or maximum distance accepted.
-                Results without scores remain included.
+            score_threshold: An optional cutoff interpreted and enforced by the connector.
+                Score units, comparison direction, and default metrics are connector-specific.
             operation_options: Store-specific operation options.
 
         Returns:

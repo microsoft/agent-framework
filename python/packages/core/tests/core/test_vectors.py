@@ -106,6 +106,7 @@ class MockCollection(BaseVectorCollection[str, Record], BaseVectorSearch[str, Re
         self.last_get_filter: Filter | FilterGroup | None = None
         self.last_search_top = 0
         self.last_search_skip = 0
+        self.last_search_score_threshold: float | None = None
         self.fail_upsert = False
         self.upsert_error: Exception | None = None
         self.get_error: Exception | None = None
@@ -207,6 +208,7 @@ class MockCollection(BaseVectorCollection[str, Record], BaseVectorSearch[str, Re
         self.last_search_filter = filter
         self.last_search_top = top
         self.last_search_skip = skip
+        self.last_search_score_threshold = score_threshold
         if self.mutate_search_filter and isinstance(filter, Filter) and isinstance(filter.value, list):
             filter.value.append("connector mutation")
         raw_results = self.raw_search_results or [
@@ -1008,7 +1010,7 @@ async def test_collection_crud_rejects_singular_ordinary_inputs() -> None:
         await collection.delete("one")
 
 
-async def test_vector_search_generates_query_vector_and_filters_threshold() -> None:
+async def test_vector_search_generates_query_vector_and_forwards_threshold() -> None:
     embedding_client = MockEmbeddingClient()
     collection = MockCollection(embedding_generator=embedding_client)
     await collection.upsert([
@@ -1025,9 +1027,11 @@ async def test_vector_search_generates_query_vector_and_filters_threshold() -> N
     assert results.metadata == {"mock_count": 2}
     assert embedding_client.values == ["find this"]
     assert collection.last_search_vector == [9.0, 0.5]
+    assert collection.last_search_score_threshold == 0.5
     assert responses[0]["record"].id == "one"
     assert responses[0]["score"] == 0.9
-    assert len(responses) == 1
+    assert [response["record"].id for response in responses] == ["one", "two"]
+    assert responses[1]["score"] == 0.4
 
 
 async def test_keyword_hybrid_search_uses_single_search_method() -> None:
@@ -1150,33 +1154,107 @@ async def test_vector_search_validates_inputs_and_supported_type() -> None:
         await VectorOnlyCollection().search("words", search_type="keyword_hybrid")
 
 
-async def test_vector_search_requires_explicit_distance_for_score_threshold() -> None:
+@pytest.mark.parametrize(
+    "distance_function", [None, "DEFAULT", "provider.custom_distance", "cosine_similarity", "cosine_distance"]
+)
+@pytest.mark.parametrize("precomputed", [False, True])
+@pytest.mark.parametrize("threshold", [0.0, 0.5])
+async def test_core_preserves_connector_scores_without_interpreting_thresholds(
+    distance_function: DistanceFunction | None, precomputed: bool, threshold: float
+) -> None:
     collection = MockCollection()
+    fields = [
+        VectorStoreField("key", name="id", storage_name="record_id"),
+        VectorStoreField("data", name="text", storage_name="body"),
+    ]
+    if distance_function is not None:
+        fields.append(
+            VectorStoreField("vector", name="vector", type_="float", dimensions=2, distance_function=distance_function)
+        )
     collection.definition = VectorStoreCollectionDefinition(
-        [
-            VectorStoreField("key", name="id", type_="str"),
-            VectorStoreField("vector", name="vector", type_="float", dimensions=2),
-        ],
+        fields,
         collection_name="records",
     )
+    collection.raw_search_results = [
+        {"record": {"record_id": "low", "body": "low"}, "score": -0.2},
+        {"record": {"record_id": "equal", "body": "equal"}, "score": threshold},
+        {"record": {"record_id": "high", "body": "high"}, "score": 0.9},
+        {"record": {"record_id": "scoreless", "body": "scoreless"}, "score": None},
+    ]
+    filter_ = Filter("text", "eq", "provider interprets this")
 
-    with pytest.raises(ValueError, match="explicit distance"):
-        await collection.search(vector=[1.0, 0.0], score_threshold=0.5)
+    results = await collection.search(
+        "query",
+        vector=[1.0, 0.0] if precomputed else None,
+        filter=filter_,
+        score_threshold=threshold,
+        top=4,
+        skip=2,
+    )
+    responses = [response async for response in results]
 
+    assert collection.last_search_score_threshold == threshold
+    assert collection.last_search_filter == filter_
+    assert collection.last_search_top == 4
+    assert collection.last_search_skip == 2
+    assert [response["record"].id for response in responses] == ["low", "equal", "high", "scoreless"]
+    assert [response["score"] for response in responses] == [-0.2, threshold, 0.9, None]
+
+
+async def test_connector_can_enforce_provider_threshold_before_core_deserialization() -> None:
+    class ProviderThresholdCollection(MockCollection):
+        async def _inner_search(
+            self,
+            *,
+            search_type: SearchType,
+            filter: Filter | FilterGroup | None = None,
+            values: Any | None = None,
+            vector: Sequence[float | int] | bytes | bytearray | None = None,
+            top: int = 3,
+            skip: int = 0,
+            include_vectors: bool = False,
+            vector_property_name: str | None = None,
+            additional_property_name: str | None = None,
+            score_threshold: float | None = None,
+            operation_options: Mapping[str, Any] | None = None,
+        ) -> SearchResults[Any]:
+            self.last_search_score_threshold = score_threshold
+            assert self.raw_search_results is not None
+            results = SearchResults(self.raw_search_results)
+            return SearchResults([
+                result async for result in results if score_threshold is None or result["score"] <= score_threshold
+            ])
+
+    collection = ProviderThresholdCollection()
     collection.definition = VectorStoreCollectionDefinition(
         [
-            VectorStoreField("key", name="id", type_="str"),
+            VectorStoreField("key", name="id", storage_name="record_id"),
+            VectorStoreField("data", name="text", storage_name="body"),
             VectorStoreField(
                 "vector",
                 name="vector",
-                type_="float",
                 dimensions=2,
                 distance_function="provider.custom_distance",
             ),
         ],
         collection_name="records",
     )
-    with pytest.raises(ValueError, match="known comparison direction"):
+    collection.raw_search_results = [
+        {"record": {"record_id": "rejected", "body": "far"}, "score": 0.9},
+        {"record": {"record_id": "accepted", "body": "near"}, "score": 0.2},
+    ]
+
+    results = await collection.search(vector=[1.0, 0.0], score_threshold=0.5)
+
+    assert collection.last_search_score_threshold == 0.5
+    assert [(result["record"].id, result["score"]) async for result in results] == [("accepted", 0.2)]
+
+
+async def test_connector_can_reject_unsupported_threshold_execution() -> None:
+    collection = MockCollection()
+    collection.search_error = NotImplementedError("Connector does not support score thresholds.")
+
+    with pytest.raises(NotImplementedError, match="Connector does not support score thresholds"):
         await collection.search(vector=[1.0, 0.0], score_threshold=0.5)
 
 

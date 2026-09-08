@@ -508,7 +508,10 @@ async def test_hamming_scores_and_thresholds_use_mismatch_proportions() -> None:
 
 
 @pytest.mark.parametrize("contents", ["empty", "missing_vector", "filtered_out"])
-async def test_unsupported_distance_is_rejected_independently_of_records(contents: str) -> None:
+@pytest.mark.parametrize("score_threshold", [None, 0.5])
+async def test_unsupported_distance_is_rejected_independently_of_records(
+    contents: str, score_threshold: float | None
+) -> None:
     definition = VectorStoreCollectionDefinition(
         [
             VectorStoreField("key", name="id"),
@@ -525,8 +528,76 @@ async def test_unsupported_distance_is_rejected_independently_of_records(content
         )
     with pytest.raises(NotImplementedError, match="provider.unsupported"):
         await collection.search(
-            vector=[1.0, 0.0], filter=Filter("id", "eq", "absent") if contents == "filtered_out" else None
+            vector=[1.0, 0.0],
+            filter=Filter("id", "eq", "absent") if contents == "filtered_out" else None,
+            score_threshold=score_threshold,
         )
+
+
+@pytest.mark.parametrize(
+    ("distance_function", "threshold"),
+    [("DEFAULT", 1.0), ("cosine_distance", 1.0), ("cosine_similarity", 0.0)],
+)
+async def test_in_memory_owns_filtering_and_thresholds_before_paging(
+    distance_function: DistanceFunction, threshold: float
+) -> None:
+    definition = VectorStoreCollectionDefinition(
+        [
+            VectorStoreField("key", name="id"),
+            VectorStoreField("data", name="category"),
+            VectorStoreField("vector", name="vector", dimensions=2, distance_function=distance_function),
+        ],
+        collection_name="threshold-paging",
+    )
+    collection: InMemoryCollection[str, dict[str, Any]] = InMemoryCollection(dict, definition=definition)
+    await collection.ensure_collection_exists()
+    await collection.upsert(
+        [
+            {"id": "threshold-excluded", "category": "keep", "vector": [-1.0, 0.0]},
+            {"id": "filter-excluded", "category": "exclude", "vector": [1.0, 0.0]},
+            {"id": "best", "category": "keep", "vector": [1.0, 0.0]},
+            {"id": "boundary", "category": "keep", "vector": [0.0, 1.0]},
+        ],
+        generate_vectors=False,
+    )
+
+    results = await collection.search(
+        vector=[1.0, 0.0],
+        filter=Filter("category", "eq", "keep"),
+        score_threshold=threshold,
+        skip=1,
+        top=1,
+    )
+
+    assert [(result["record"]["id"], result["score"]) async for result in results] == [("boundary", threshold)]
+    assert results.metadata == {"in_memory_total_count": 2}
+
+
+@pytest.mark.parametrize("has_records", [False, True])
+async def test_in_memory_default_threshold_accepts_zero_distance(has_records: bool) -> None:
+    definition = VectorStoreCollectionDefinition(
+        [
+            VectorStoreField("key", name="id"),
+            VectorStoreField("vector", name="vector", dimensions=2),
+        ],
+        collection_name="default-threshold",
+    )
+    collection: InMemoryCollection[str, dict[str, Any]] = InMemoryCollection(dict, definition=definition)
+    await collection.ensure_collection_exists()
+    if has_records:
+        await collection.upsert(
+            [
+                {"id": "same", "vector": [1.0, 0.0]},
+                {"id": "different", "vector": [0.0, 1.0]},
+            ],
+            generate_vectors=False,
+        )
+
+    results = await collection.search(vector=[1.0, 0.0], score_threshold=0.0)
+
+    assert [(result["record"]["id"], result["score"]) async for result in results] == (
+        [("same", 0.0)] if has_records else []
+    )
 
 
 @pytest.mark.parametrize("operator", ["starts_with", "ends_with", "contains_text"])

@@ -272,6 +272,8 @@ class InMemoryCollection(
     This implementation is intended for tests and development. It is
     nonpersistent, uses linear scans, and is not thread-safe.
 
+    Scoring, filtering, and score thresholds are applied locally before paging.
+    The default metric is cosine distance, so its threshold is a maximum distance.
     Hamming scores are the proportion of unequal dimensions, between zero and
     one, not a mismatch count. Non-finite scores are rejected. Records are
     normalized by the shared serializer before storage; custom codecs and
@@ -455,10 +457,13 @@ class InMemoryCollection(
             _validate_in_memory_filter(filter, self.definition)
 
         distance_function = vector_field.distance_function or "DEFAULT"
+        if distance_function == "DEFAULT":
+            distance_function = "cosine_distance"
         if distance_function not in _IN_MEMORY_DISTANCE_FUNCTIONS:
             raise NotImplementedError(
                 f"Distance function '{distance_function}' is not supported by InMemoryCollection."
             )
+        comparison = DISTANCE_FUNCTION_DIRECTION_HELPER[distance_function]
         storage_name = vector_field.storage_name or vector_field.name
         results: list[dict[str, Any]] = []
         key_storage_name = self.definition.key_field_storage_name
@@ -478,12 +483,8 @@ class InMemoryCollection(
                 raise ValueError(
                     f"Record {record.get(key_storage_name)!r} has an invalid vector in field '{storage_name}': {exc}"
                 ) from exc
-            if score_threshold is not None:
-                comparison = DISTANCE_FUNCTION_DIRECTION_HELPER.get(distance_function)
-                if comparison is None:
-                    raise ValueError("A score threshold requires an explicit distance function.")
-                if not comparison(score, score_threshold):
-                    continue
+            if score_threshold is not None and not comparison(score, score_threshold):
+                continue
             results.append({"record": deepcopy(record), "score": score})
         results.sort(
             key=lambda result: cast(float, result["score"]),
