@@ -26,6 +26,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// The handler applies the per-request <see cref="HttpRequestInfo.Timeout"/> using a linked <see cref="CancellationTokenSource"/>
 /// so it does not mutate <see cref="HttpClient.Timeout"/> on shared instances.
 /// </para>
+/// <para>
 /// Redirects are handled by this handler so per-request headers are not forwarded to redirect destinations. The
 /// internally owned client disables automatic redirects. Supplied clients should also disable automatic
 /// redirects; clients with credential-bearing default headers are rejected because their redirect behavior is
