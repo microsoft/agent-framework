@@ -1084,7 +1084,9 @@ class DeclarativeActionExecutor(Executor):
         Follows .NET's DefaultTransform pattern - accepts any input type:
         - dict/Mapping: Used directly as workflow.inputs
         - str: Converted to {"input": value}
-        - Message or list[Message]: Treated as the agent-facing message contract
+        - Message: Starts a fresh run (e.g. from DevUI), with text and ID
+          surfaced through Inputs.input and System.LastMessage*.
+        - list[Message]: Treated as the agent-facing message contract
           (e.g. from WorkflowAgent / as_agent()). The prior conversation
           history is stored in ``Conversation.messages``/
           ``Conversation.history`` and mirrored to
@@ -1119,22 +1121,12 @@ class DeclarativeActionExecutor(Executor):
             # Message (e.g. from DevUI) or list[Message] (e.g. from WorkflowAgent / as_agent()).
             messages_list = [trigger] if isinstance(trigger, Message) else cast(list[Message], trigger)
 
-            # Detect continuation: if the workflow's shared state already
-            # carries declarative data from a prior turn (because the host
-            # restored a checkpoint and dispatched this run with
-            # reset_context=False), we MUST NOT call state.initialize() -
-            # that would wipe Conversation.messages, Local.*, System.* etc.
-            # Instead, treat the trigger as the new turn's user input only:
-            # update Inputs.input, append the new user message to existing
-            # Conversation history, and refresh System.LastMessage*.
-            #
-            # Continuation = declarative state already exists in the workflow's
-            # shared state (either left over in-memory from a prior turn on
-            # the same instance, or restored from a checkpoint just before
-            # this run). In that case state.initialize() would wipe Local.*,
-            # System.*, Conversation.* etc., destroying the cross-turn
-            # context we're trying to preserve.
-            is_continuation = state.is_initialized()
+            # Preserve the existing list[Message] continuation contract used
+            # by WorkflowAgent. A bare Message starts a fresh run: DevUI can
+            # reuse this workflow instance across unrelated conversations.
+            # State left on the instance is not evidence of session ownership.
+            # Explicit checkpoint/HIL restores use the runner's resume path.
+            is_continuation = not isinstance(trigger, Message) and state.is_initialized()
 
             # Locate the trailing user message in the trigger.
             last_user_index = -1
