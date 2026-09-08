@@ -3,7 +3,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -113,19 +112,19 @@ public class AgentEventsTests
         }
 
         // Assert
-        events.Should().NotBeEmpty();
+        Assert.NotEmpty(events);
 
         List<WorkflowStartedEvent> startedEvents = events.OfType<WorkflowStartedEvent>().ToList();
-        startedEvents.Should().NotBeEmpty();
+        Assert.NotEmpty(startedEvents);
 
         WorkflowStartedEvent? firstStartedEvent = startedEvents.FirstOrDefault();
         SuperStepStartedEvent? firstSuperStepEvent = events.OfType<SuperStepStartedEvent>().FirstOrDefault();
-        firstSuperStepEvent.Should().NotBeNull();
+        Assert.NotNull(firstSuperStepEvent);
 
         int startedIndex = events.IndexOf(firstStartedEvent!);
         int superStepIndex = events.IndexOf(firstSuperStepEvent!);
 
-        startedIndex.Should().BeLessThan(superStepIndex);
+        Assert.True(startedIndex < superStepIndex);
     }
 
     /// <summary>
@@ -150,9 +149,9 @@ public class AgentEventsTests
         }
 
         // Assert
-        events.Should().NotBeEmpty();
+        Assert.NotEmpty(events);
 
         List<WorkflowStartedEvent> startedEvents = events.OfType<WorkflowStartedEvent>().ToList();
-        startedEvents.Should().NotBeEmpty();
+        Assert.NotEmpty(startedEvents);
     }
 }

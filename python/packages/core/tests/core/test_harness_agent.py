@@ -6,7 +6,7 @@ import importlib.util
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -1130,6 +1130,25 @@ def test_create_harness_agent_disable_tool_auto_approval_preserves_user_middlewa
     assert custom in agent.middleware
     assert any(isinstance(mw, MessageInjectionMiddleware) for mw in agent.middleware)
     assert [type(mw) for mw in agent.middleware] == [MessageInjectionMiddleware, _CustomMiddleware]
+
+
+def test_create_harness_agent_rejects_generator_middleware() -> None:
+    """Harness middleware rejects iterables that are not sequences."""
+    from agent_framework import AgentMiddleware
+
+    class _CustomMiddleware(AgentMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            await call_next()
+
+    middleware = (item for item in [_CustomMiddleware()])
+
+    with pytest.raises(TypeError):
+        create_harness_agent(
+            client=_FakeChatClient(),  # type: ignore[arg-type]
+            max_context_window_tokens=128_000,
+            max_output_tokens=16_384,
+            middleware=cast("Any", middleware),
+        )
 
 
 def test_create_harness_agent_no_middleware_when_tool_approval_disabled_and_none() -> None:

@@ -15,7 +15,6 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using OpenAI;
 using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
@@ -1321,7 +1320,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
     {
         return new ResponsesClient(
             credential: new ApiKeyCredential("test-api-key"),
-            options: new OpenAIClientOptions
+            options: new ResponsesClientOptions
             {
                 Endpoint = new Uri(this._httpClient!.BaseAddress!, $"/{agentName}/v1/"),
                 Transport = new HttpClientPipelineTransport(this._httpClient)

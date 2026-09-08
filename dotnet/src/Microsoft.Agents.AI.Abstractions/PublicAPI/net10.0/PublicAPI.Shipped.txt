@@ -1,0 +1,303 @@
+﻿#nullable enable
+Microsoft.Agents.AI.AIAgent
+Microsoft.Agents.AI.AIAgent.AIAgent() -> void
+Microsoft.Agents.AI.AIAgent.CreateSessionAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSession!>
+Microsoft.Agents.AI.AIAgent.DeserializeSessionAsync(System.Text.Json.JsonElement serializedState, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSession!>
+Microsoft.Agents.AI.AIAgent.GetService<TService>(object? serviceKey = null) -> TService?
+Microsoft.Agents.AI.AIAgent.Id.get -> string!
+Microsoft.Agents.AI.AIAgent.RunAsync(Microsoft.Agents.AI.AgentSession? session = null, Microsoft.Agents.AI.AgentRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse!>!
+Microsoft.Agents.AI.AIAgent.RunAsync(Microsoft.Extensions.AI.ChatMessage! message, Microsoft.Agents.AI.AgentSession? session = null, Microsoft.Agents.AI.AgentRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse!>!
+Microsoft.Agents.AI.AIAgent.RunAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Agents.AI.AgentSession? session = null, Microsoft.Agents.AI.AgentRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse!>!
+Microsoft.Agents.AI.AIAgent.RunAsync(string! message, Microsoft.Agents.AI.AgentSession? session = null, Microsoft.Agents.AI.AgentRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse!>!
+Microsoft.Agents.AI.AIAgent.RunAsync<T>(Microsoft.Agents.AI.AgentSession? session = null, System.Text.Json.JsonSerializerOptions? serializerOptions = null, Microsoft.Agents.AI.AgentRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse<T>!>!
+Microsoft.Agents.AI.AIAgent.RunAsync<T>(Microsoft.Extensions.AI.ChatMessage! message, Microsoft.Agents.AI.AgentSession? session = null, System.Text.Json.JsonSerializerOptions? serializerOptions = null, Microsoft.Agents.AI.AgentRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse<T>!>!
+Microsoft.Agents.AI.AIAgent.RunAsync<T>(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Agents.AI.AgentSession? session = null, System.Text.Json.JsonSerializerOptions? serializerOptions = null, Microsoft.Agents.AI.AgentRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse<T>!>!
+Microsoft.Agents.AI.AIAgent.RunAsync<T>(string! message, Microsoft.Agents.AI.AgentSession? session = null, System.Text.Json.JsonSerializerOptions? serializerOptions = null, Microsoft.Agents.AI.AgentRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse<T>!>!
+Microsoft.Agents.AI.AIAgent.RunStreamingAsync(Microsoft.Agents.AI.AgentSession? session = null, Microsoft.Agents.AI.AgentRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Agents.AI.AgentResponseUpdate!>!
+Microsoft.Agents.AI.AIAgent.RunStreamingAsync(Microsoft.Extensions.AI.ChatMessage! message, Microsoft.Agents.AI.AgentSession? session = null, Microsoft.Agents.AI.AgentRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Agents.AI.AgentResponseUpdate!>!
+Microsoft.Agents.AI.AIAgent.RunStreamingAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Agents.AI.AgentSession? session = null, Microsoft.Agents.AI.AgentRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Agents.AI.AgentResponseUpdate!>!
+Microsoft.Agents.AI.AIAgent.RunStreamingAsync(string! message, Microsoft.Agents.AI.AgentSession? session = null, Microsoft.Agents.AI.AgentRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Agents.AI.AgentResponseUpdate!>!
+Microsoft.Agents.AI.AIAgent.SerializeSessionAsync(Microsoft.Agents.AI.AgentSession! session, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Text.Json.JsonElement>
+Microsoft.Agents.AI.AIAgentMetadata
+Microsoft.Agents.AI.AIAgentMetadata.AIAgentMetadata(string? providerName = null) -> void
+Microsoft.Agents.AI.AIAgentMetadata.ProviderName.get -> string?
+Microsoft.Agents.AI.AIContext
+Microsoft.Agents.AI.AIContext.AIContext() -> void
+Microsoft.Agents.AI.AIContext.Instructions.get -> string?
+Microsoft.Agents.AI.AIContext.Instructions.set -> void
+Microsoft.Agents.AI.AIContext.Messages.get -> System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>?
+Microsoft.Agents.AI.AIContext.Messages.set -> void
+Microsoft.Agents.AI.AIContext.Tools.get -> System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.AITool!>?
+Microsoft.Agents.AI.AIContext.Tools.set -> void
+Microsoft.Agents.AI.AIContextProvider
+Microsoft.Agents.AI.AIContextProvider.AIContextProvider(System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>? provideInputMessageFilter = null, System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>? storeInputRequestMessageFilter = null, System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>? storeInputResponseMessageFilter = null) -> void
+Microsoft.Agents.AI.AIContextProvider.GetService<TService>(object? serviceKey = null) -> TService?
+Microsoft.Agents.AI.AIContextProvider.InvokedAsync(Microsoft.Agents.AI.AIContextProvider.InvokedContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.AIContextProvider.InvokedContext
+Microsoft.Agents.AI.AIContextProvider.InvokedContext.Agent.get -> Microsoft.Agents.AI.AIAgent!
+Microsoft.Agents.AI.AIContextProvider.InvokedContext.InvokeException.get -> System.Exception?
+Microsoft.Agents.AI.AIContextProvider.InvokedContext.InvokedContext(Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.AgentSession? session, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! requestMessages, System.Exception! invokeException) -> void
+Microsoft.Agents.AI.AIContextProvider.InvokedContext.RequestMessages.get -> System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!
+Microsoft.Agents.AI.AIContextProvider.InvokedContext.ResponseMessages.get -> System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>?
+Microsoft.Agents.AI.AIContextProvider.InvokedContext.Session.get -> Microsoft.Agents.AI.AgentSession?
+Microsoft.Agents.AI.AIContextProvider.InvokingAsync(Microsoft.Agents.AI.AIContextProvider.InvokingContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIContext!>
+Microsoft.Agents.AI.AIContextProvider.InvokingContext
+Microsoft.Agents.AI.AIContextProvider.InvokingContext.AIContext.get -> Microsoft.Agents.AI.AIContext!
+Microsoft.Agents.AI.AIContextProvider.InvokingContext.Agent.get -> Microsoft.Agents.AI.AIAgent!
+Microsoft.Agents.AI.AIContextProvider.InvokingContext.Session.get -> Microsoft.Agents.AI.AgentSession?
+Microsoft.Agents.AI.AIContextProvider.ProvideInputMessageFilter.get -> System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>!
+Microsoft.Agents.AI.AIContextProvider.StoreInputRequestMessageFilter.get -> System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>!
+Microsoft.Agents.AI.AIContextProvider.StoreInputResponseMessageFilter.get -> System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>!
+Microsoft.Agents.AI.AdditionalPropertiesExtensions
+Microsoft.Agents.AI.AgentAbstractionsJsonUtilities
+Microsoft.Agents.AI.AgentRequestMessageSourceAttribution
+Microsoft.Agents.AI.AgentRequestMessageSourceAttribution.AgentRequestMessageSourceAttribution() -> void
+Microsoft.Agents.AI.AgentRequestMessageSourceAttribution.AgentRequestMessageSourceAttribution(Microsoft.Agents.AI.AgentRequestMessageSourceType sourceType, string? sourceId) -> void
+Microsoft.Agents.AI.AgentRequestMessageSourceAttribution.Equals(Microsoft.Agents.AI.AgentRequestMessageSourceAttribution other) -> bool
+Microsoft.Agents.AI.AgentRequestMessageSourceAttribution.SourceId.get -> string?
+Microsoft.Agents.AI.AgentRequestMessageSourceAttribution.SourceType.get -> Microsoft.Agents.AI.AgentRequestMessageSourceType
+Microsoft.Agents.AI.AgentRequestMessageSourceType
+Microsoft.Agents.AI.AgentRequestMessageSourceType.AgentRequestMessageSourceType() -> void
+Microsoft.Agents.AI.AgentRequestMessageSourceType.AgentRequestMessageSourceType(string! value) -> void
+Microsoft.Agents.AI.AgentRequestMessageSourceType.Equals(Microsoft.Agents.AI.AgentRequestMessageSourceType other) -> bool
+Microsoft.Agents.AI.AgentRequestMessageSourceType.Value.get -> string!
+Microsoft.Agents.AI.AgentResponse
+Microsoft.Agents.AI.AgentResponse.AdditionalProperties.get -> Microsoft.Extensions.AI.AdditionalPropertiesDictionary?
+Microsoft.Agents.AI.AgentResponse.AdditionalProperties.set -> void
+Microsoft.Agents.AI.AgentResponse.AgentId.get -> string?
+Microsoft.Agents.AI.AgentResponse.AgentId.set -> void
+Microsoft.Agents.AI.AgentResponse.AgentResponse() -> void
+Microsoft.Agents.AI.AgentResponse.AgentResponse(Microsoft.Agents.AI.AgentResponse! response) -> void
+Microsoft.Agents.AI.AgentResponse.AgentResponse(Microsoft.Extensions.AI.ChatMessage! message) -> void
+Microsoft.Agents.AI.AgentResponse.AgentResponse(Microsoft.Extensions.AI.ChatResponse! response) -> void
+Microsoft.Agents.AI.AgentResponse.AgentResponse(System.Collections.Generic.IList<Microsoft.Extensions.AI.ChatMessage!>? messages) -> void
+Microsoft.Agents.AI.AgentResponse.CreatedAt.get -> System.DateTimeOffset?
+Microsoft.Agents.AI.AgentResponse.CreatedAt.set -> void
+Microsoft.Agents.AI.AgentResponse.FinishReason.get -> Microsoft.Extensions.AI.ChatFinishReason?
+Microsoft.Agents.AI.AgentResponse.FinishReason.set -> void
+Microsoft.Agents.AI.AgentResponse.Messages.get -> System.Collections.Generic.IList<Microsoft.Extensions.AI.ChatMessage!>!
+Microsoft.Agents.AI.AgentResponse.Messages.set -> void
+Microsoft.Agents.AI.AgentResponse.RawRepresentation.get -> object?
+Microsoft.Agents.AI.AgentResponse.RawRepresentation.set -> void
+Microsoft.Agents.AI.AgentResponse.ResponseId.get -> string?
+Microsoft.Agents.AI.AgentResponse.ResponseId.set -> void
+Microsoft.Agents.AI.AgentResponse.Text.get -> string!
+Microsoft.Agents.AI.AgentResponse.ToAgentResponseUpdates() -> Microsoft.Agents.AI.AgentResponseUpdate![]!
+Microsoft.Agents.AI.AgentResponse.Usage.get -> Microsoft.Extensions.AI.UsageDetails?
+Microsoft.Agents.AI.AgentResponse.Usage.set -> void
+Microsoft.Agents.AI.AgentResponse<T>
+Microsoft.Agents.AI.AgentResponse<T>.AgentResponse(Microsoft.Agents.AI.AgentResponse! response, System.Text.Json.JsonSerializerOptions! serializerOptions) -> void
+Microsoft.Agents.AI.AgentResponse<T>.IsWrappedInObject.get -> bool
+Microsoft.Agents.AI.AgentResponse<T>.IsWrappedInObject.init -> void
+Microsoft.Agents.AI.AgentResponseExtensions
+Microsoft.Agents.AI.AgentResponseUpdate
+Microsoft.Agents.AI.AgentResponseUpdate.AdditionalProperties.get -> Microsoft.Extensions.AI.AdditionalPropertiesDictionary?
+Microsoft.Agents.AI.AgentResponseUpdate.AdditionalProperties.set -> void
+Microsoft.Agents.AI.AgentResponseUpdate.AgentId.get -> string?
+Microsoft.Agents.AI.AgentResponseUpdate.AgentId.set -> void
+Microsoft.Agents.AI.AgentResponseUpdate.AgentResponseUpdate() -> void
+Microsoft.Agents.AI.AgentResponseUpdate.AgentResponseUpdate(Microsoft.Extensions.AI.ChatResponseUpdate! chatResponseUpdate) -> void
+Microsoft.Agents.AI.AgentResponseUpdate.AgentResponseUpdate(Microsoft.Extensions.AI.ChatRole? role, System.Collections.Generic.IList<Microsoft.Extensions.AI.AIContent!>? contents) -> void
+Microsoft.Agents.AI.AgentResponseUpdate.AgentResponseUpdate(Microsoft.Extensions.AI.ChatRole? role, string? content) -> void
+Microsoft.Agents.AI.AgentResponseUpdate.AuthorName.get -> string?
+Microsoft.Agents.AI.AgentResponseUpdate.AuthorName.set -> void
+Microsoft.Agents.AI.AgentResponseUpdate.Contents.get -> System.Collections.Generic.IList<Microsoft.Extensions.AI.AIContent!>!
+Microsoft.Agents.AI.AgentResponseUpdate.Contents.set -> void
+Microsoft.Agents.AI.AgentResponseUpdate.ContinuationToken.get -> Microsoft.Extensions.AI.ResponseContinuationToken?
+Microsoft.Agents.AI.AgentResponseUpdate.ContinuationToken.set -> void
+Microsoft.Agents.AI.AgentResponseUpdate.CreatedAt.get -> System.DateTimeOffset?
+Microsoft.Agents.AI.AgentResponseUpdate.CreatedAt.set -> void
+Microsoft.Agents.AI.AgentResponseUpdate.FinishReason.get -> Microsoft.Extensions.AI.ChatFinishReason?
+Microsoft.Agents.AI.AgentResponseUpdate.FinishReason.set -> void
+Microsoft.Agents.AI.AgentResponseUpdate.MessageId.get -> string?
+Microsoft.Agents.AI.AgentResponseUpdate.MessageId.set -> void
+Microsoft.Agents.AI.AgentResponseUpdate.RawRepresentation.get -> object?
+Microsoft.Agents.AI.AgentResponseUpdate.RawRepresentation.set -> void
+Microsoft.Agents.AI.AgentResponseUpdate.ResponseId.get -> string?
+Microsoft.Agents.AI.AgentResponseUpdate.ResponseId.set -> void
+Microsoft.Agents.AI.AgentResponseUpdate.Role.get -> Microsoft.Extensions.AI.ChatRole?
+Microsoft.Agents.AI.AgentResponseUpdate.Role.set -> void
+Microsoft.Agents.AI.AgentResponseUpdate.Text.get -> string!
+Microsoft.Agents.AI.AgentRunContext
+Microsoft.Agents.AI.AgentRunContext.Agent.get -> Microsoft.Agents.AI.AIAgent!
+Microsoft.Agents.AI.AgentRunContext.AgentRunContext(Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.AgentSession? session, System.Collections.Generic.IReadOnlyCollection<Microsoft.Extensions.AI.ChatMessage!>! requestMessages, Microsoft.Agents.AI.AgentRunOptions? agentRunOptions) -> void
+Microsoft.Agents.AI.AgentRunContext.RequestMessages.get -> System.Collections.Generic.IReadOnlyCollection<Microsoft.Extensions.AI.ChatMessage!>!
+Microsoft.Agents.AI.AgentRunContext.RunOptions.get -> Microsoft.Agents.AI.AgentRunOptions?
+Microsoft.Agents.AI.AgentRunContext.Session.get -> Microsoft.Agents.AI.AgentSession?
+Microsoft.Agents.AI.AgentRunOptions
+Microsoft.Agents.AI.AgentRunOptions.AdditionalProperties.get -> Microsoft.Extensions.AI.AdditionalPropertiesDictionary?
+Microsoft.Agents.AI.AgentRunOptions.AdditionalProperties.set -> void
+Microsoft.Agents.AI.AgentRunOptions.AgentRunOptions() -> void
+Microsoft.Agents.AI.AgentRunOptions.AgentRunOptions(Microsoft.Agents.AI.AgentRunOptions! options) -> void
+Microsoft.Agents.AI.AgentRunOptions.AllowBackgroundResponses.get -> bool?
+Microsoft.Agents.AI.AgentRunOptions.AllowBackgroundResponses.set -> void
+Microsoft.Agents.AI.AgentRunOptions.ResponseFormat.get -> Microsoft.Extensions.AI.ChatResponseFormat?
+Microsoft.Agents.AI.AgentRunOptions.ResponseFormat.set -> void
+Microsoft.Agents.AI.AgentSession
+Microsoft.Agents.AI.AgentSession.AgentSession() -> void
+Microsoft.Agents.AI.AgentSession.AgentSession(Microsoft.Agents.AI.AgentSessionStateBag! stateBag) -> void
+Microsoft.Agents.AI.AgentSession.GetService<TService>(object? serviceKey = null) -> TService?
+Microsoft.Agents.AI.AgentSession.StateBag.get -> Microsoft.Agents.AI.AgentSessionStateBag!
+Microsoft.Agents.AI.AgentSession.StateBag.set -> void
+Microsoft.Agents.AI.AgentSessionExtensions
+Microsoft.Agents.AI.AgentSessionStateBag
+Microsoft.Agents.AI.AgentSessionStateBag.AgentSessionStateBag() -> void
+Microsoft.Agents.AI.AgentSessionStateBag.Count.get -> int
+Microsoft.Agents.AI.AgentSessionStateBag.GetValue<T>(string! key, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null) -> T?
+Microsoft.Agents.AI.AgentSessionStateBag.Serialize() -> System.Text.Json.JsonElement
+Microsoft.Agents.AI.AgentSessionStateBag.SetValue<T>(string! key, T? value, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null) -> void
+Microsoft.Agents.AI.AgentSessionStateBag.TryGetValue<T>(string! key, out T? value, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null) -> bool
+Microsoft.Agents.AI.AgentSessionStateBag.TryRemoveValue(string! key) -> bool
+Microsoft.Agents.AI.AgentSessionStateBagJsonConverter
+Microsoft.Agents.AI.AgentSessionStateBagJsonConverter.AgentSessionStateBagJsonConverter() -> void
+Microsoft.Agents.AI.ChatHistoryProvider
+Microsoft.Agents.AI.ChatHistoryProvider.ChatHistoryProvider(System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>? provideOutputMessageFilter = null, System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>? storeInputRequestMessageFilter = null, System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>? storeInputResponseMessageFilter = null) -> void
+Microsoft.Agents.AI.ChatHistoryProvider.GetService<TService>(object? serviceKey = null) -> TService?
+Microsoft.Agents.AI.ChatHistoryProvider.InvokedAsync(Microsoft.Agents.AI.ChatHistoryProvider.InvokedContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.ChatHistoryProvider.InvokedContext
+Microsoft.Agents.AI.ChatHistoryProvider.InvokedContext.Agent.get -> Microsoft.Agents.AI.AIAgent!
+Microsoft.Agents.AI.ChatHistoryProvider.InvokedContext.InvokeException.get -> System.Exception?
+Microsoft.Agents.AI.ChatHistoryProvider.InvokedContext.InvokedContext(Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.AgentSession? session, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! requestMessages, System.Exception! invokeException) -> void
+Microsoft.Agents.AI.ChatHistoryProvider.InvokedContext.RequestMessages.get -> System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!
+Microsoft.Agents.AI.ChatHistoryProvider.InvokedContext.ResponseMessages.get -> System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>?
+Microsoft.Agents.AI.ChatHistoryProvider.InvokedContext.Session.get -> Microsoft.Agents.AI.AgentSession?
+Microsoft.Agents.AI.ChatHistoryProvider.InvokingAsync(Microsoft.Agents.AI.ChatHistoryProvider.InvokingContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>
+Microsoft.Agents.AI.ChatHistoryProvider.InvokingContext
+Microsoft.Agents.AI.ChatHistoryProvider.InvokingContext.Agent.get -> Microsoft.Agents.AI.AIAgent!
+Microsoft.Agents.AI.ChatHistoryProvider.InvokingContext.RequestMessages.get -> System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!
+Microsoft.Agents.AI.ChatHistoryProvider.InvokingContext.RequestMessages.set -> void
+Microsoft.Agents.AI.ChatHistoryProvider.InvokingContext.Session.get -> Microsoft.Agents.AI.AgentSession?
+Microsoft.Agents.AI.ChatMessageExtensions
+Microsoft.Agents.AI.DelegatingAIAgent
+Microsoft.Agents.AI.DelegatingAIAgent.DelegatingAIAgent(Microsoft.Agents.AI.AIAgent! innerAgent) -> void
+Microsoft.Agents.AI.DelegatingAIAgent.InnerAgent.get -> Microsoft.Agents.AI.AIAgent!
+Microsoft.Agents.AI.InMemoryChatHistoryProvider
+Microsoft.Agents.AI.InMemoryChatHistoryProvider.ChatReducer.get -> Microsoft.Extensions.AI.IChatReducer?
+Microsoft.Agents.AI.InMemoryChatHistoryProvider.GetMessages(Microsoft.Agents.AI.AgentSession? session) -> System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>!
+Microsoft.Agents.AI.InMemoryChatHistoryProvider.InMemoryChatHistoryProvider(Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions? options = null) -> void
+Microsoft.Agents.AI.InMemoryChatHistoryProvider.ReducerTriggerEvent.get -> Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent
+Microsoft.Agents.AI.InMemoryChatHistoryProvider.SetMessages(Microsoft.Agents.AI.AgentSession? session, System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>! messages) -> void
+Microsoft.Agents.AI.InMemoryChatHistoryProvider.State
+Microsoft.Agents.AI.InMemoryChatHistoryProvider.State.Messages.get -> System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>!
+Microsoft.Agents.AI.InMemoryChatHistoryProvider.State.Messages.set -> void
+Microsoft.Agents.AI.InMemoryChatHistoryProvider.State.State() -> void
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.ChatReducer.get -> Microsoft.Extensions.AI.IChatReducer?
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.ChatReducer.set -> void
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.AfterMessageAdded = 0 -> Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.BeforeMessagesRetrieval = 1 -> Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.InMemoryChatHistoryProviderOptions() -> void
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.JsonSerializerOptions.get -> System.Text.Json.JsonSerializerOptions?
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.JsonSerializerOptions.set -> void
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.ProvideOutputMessageFilter.get -> System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>?
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.ProvideOutputMessageFilter.set -> void
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.ReducerTriggerEvent.get -> Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.ReducerTriggerEvent.set -> void
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.StateInitializer.get -> System.Func<Microsoft.Agents.AI.AgentSession?, Microsoft.Agents.AI.InMemoryChatHistoryProvider.State!>?
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.StateInitializer.set -> void
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.StateKey.get -> string?
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.StateKey.set -> void
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.StorageInputRequestMessageFilter.get -> System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>?
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.StorageInputRequestMessageFilter.set -> void
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.StorageInputResponseMessageFilter.get -> System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>?
+Microsoft.Agents.AI.InMemoryChatHistoryProviderOptions.StorageInputResponseMessageFilter.set -> void
+Microsoft.Agents.AI.MessageAIContextProvider
+Microsoft.Agents.AI.MessageAIContextProvider.InvokingAsync(Microsoft.Agents.AI.MessageAIContextProvider.InvokingContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>
+Microsoft.Agents.AI.MessageAIContextProvider.InvokingContext
+Microsoft.Agents.AI.MessageAIContextProvider.InvokingContext.Agent.get -> Microsoft.Agents.AI.AIAgent!
+Microsoft.Agents.AI.MessageAIContextProvider.InvokingContext.RequestMessages.get -> System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!
+Microsoft.Agents.AI.MessageAIContextProvider.InvokingContext.RequestMessages.set -> void
+Microsoft.Agents.AI.MessageAIContextProvider.InvokingContext.Session.get -> Microsoft.Agents.AI.AgentSession?
+Microsoft.Agents.AI.MessageAIContextProvider.MessageAIContextProvider(System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>? provideInputMessageFilter = null, System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>? storeInputRequestMessageFilter = null, System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>? storeInputResponseMessageFilter = null) -> void
+Microsoft.Agents.AI.ProviderSessionState<TState>
+Microsoft.Agents.AI.ProviderSessionState<TState>.GetOrInitializeState(Microsoft.Agents.AI.AgentSession? session) -> TState!
+Microsoft.Agents.AI.ProviderSessionState<TState>.ProviderSessionState(System.Func<Microsoft.Agents.AI.AgentSession?, TState!>! stateInitializer, string! stateKey, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null) -> void
+Microsoft.Agents.AI.ProviderSessionState<TState>.SaveState(Microsoft.Agents.AI.AgentSession? session, TState! state) -> void
+Microsoft.Agents.AI.ProviderSessionState<TState>.StateKey.get -> string!
+[MAAI001]Microsoft.Agents.AI.AIContextProvider.InvokedContext.InvokedContext(Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.AgentSession? session, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! requestMessages, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! responseMessages) -> void
+[MAAI001]Microsoft.Agents.AI.AIContextProvider.InvokingContext.InvokingContext(Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.AgentSession? session, Microsoft.Agents.AI.AIContext! aiContext) -> void
+[MAAI001]Microsoft.Agents.AI.ChatHistoryProvider.InvokedContext.InvokedContext(Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.AgentSession? session, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! requestMessages, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! responseMessages) -> void
+[MAAI001]Microsoft.Agents.AI.ChatHistoryProvider.InvokingContext.InvokingContext(Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.AgentSession? session, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! requestMessages) -> void
+[MAAI001]Microsoft.Agents.AI.FeatureUsage
+[MAAI001]Microsoft.Agents.AI.MessageAIContextProvider.InvokingContext.InvokingContext(Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.AgentSession? session, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! requestMessages) -> void
+[MAAI001]static Microsoft.Agents.AI.FeatureUsage.ApplyToUserAgent(string! userAgent, bool includeFeatureToken = true) -> string!
+[MAAI001]static Microsoft.Agents.AI.FeatureUsage.MarkUsed(int index) -> void
+[MEAI001]Microsoft.Agents.AI.AgentResponse.ContinuationToken.get -> Microsoft.Extensions.AI.ResponseContinuationToken?
+[MEAI001]Microsoft.Agents.AI.AgentResponse.ContinuationToken.set -> void
+[MEAI001]Microsoft.Agents.AI.AgentRunOptions.ContinuationToken.get -> Microsoft.Extensions.AI.ResponseContinuationToken?
+[MEAI001]Microsoft.Agents.AI.AgentRunOptions.ContinuationToken.set -> void
+abstract Microsoft.Agents.AI.AIAgent.CreateSessionCoreAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSession!>
+abstract Microsoft.Agents.AI.AIAgent.DeserializeSessionCoreAsync(System.Text.Json.JsonElement serializedState, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSession!>
+abstract Microsoft.Agents.AI.AIAgent.RunCoreAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Agents.AI.AgentSession? session = null, Microsoft.Agents.AI.AgentRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse!>!
+abstract Microsoft.Agents.AI.AIAgent.RunCoreStreamingAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Agents.AI.AgentSession? session = null, Microsoft.Agents.AI.AgentRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Agents.AI.AgentResponseUpdate!>!
+abstract Microsoft.Agents.AI.AIAgent.SerializeSessionCoreAsync(Microsoft.Agents.AI.AgentSession! session, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Text.Json.JsonElement>
+override Microsoft.Agents.AI.AgentRequestMessageSourceAttribution.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.AgentRequestMessageSourceAttribution.GetHashCode() -> int
+override Microsoft.Agents.AI.AgentRequestMessageSourceAttribution.ToString() -> string!
+override Microsoft.Agents.AI.AgentRequestMessageSourceType.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.AgentRequestMessageSourceType.GetHashCode() -> int
+override Microsoft.Agents.AI.AgentRequestMessageSourceType.ToString() -> string!
+override Microsoft.Agents.AI.AgentResponse.ToString() -> string!
+override Microsoft.Agents.AI.AgentResponseUpdate.ToString() -> string!
+override Microsoft.Agents.AI.AgentSessionStateBagJsonConverter.Read(ref System.Text.Json.Utf8JsonReader reader, System.Type! typeToConvert, System.Text.Json.JsonSerializerOptions! options) -> Microsoft.Agents.AI.AgentSessionStateBag!
+override Microsoft.Agents.AI.AgentSessionStateBagJsonConverter.Write(System.Text.Json.Utf8JsonWriter! writer, Microsoft.Agents.AI.AgentSessionStateBag! value, System.Text.Json.JsonSerializerOptions! options) -> void
+override Microsoft.Agents.AI.DelegatingAIAgent.CreateSessionCoreAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSession!>
+override Microsoft.Agents.AI.DelegatingAIAgent.Description.get -> string?
+override Microsoft.Agents.AI.DelegatingAIAgent.DeserializeSessionCoreAsync(System.Text.Json.JsonElement serializedState, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSession!>
+override Microsoft.Agents.AI.DelegatingAIAgent.GetService(System.Type! serviceType, object? serviceKey = null) -> object?
+override Microsoft.Agents.AI.DelegatingAIAgent.IdCore.get -> string?
+override Microsoft.Agents.AI.DelegatingAIAgent.Name.get -> string?
+override Microsoft.Agents.AI.DelegatingAIAgent.RunCoreAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Agents.AI.AgentSession? session = null, Microsoft.Agents.AI.AgentRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse!>!
+override Microsoft.Agents.AI.DelegatingAIAgent.RunCoreStreamingAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Agents.AI.AgentSession? session = null, Microsoft.Agents.AI.AgentRunOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Agents.AI.AgentResponseUpdate!>!
+override Microsoft.Agents.AI.DelegatingAIAgent.SerializeSessionCoreAsync(Microsoft.Agents.AI.AgentSession! session, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Text.Json.JsonElement>
+override Microsoft.Agents.AI.InMemoryChatHistoryProvider.StateKeys.get -> System.Collections.Generic.IReadOnlyList<string!>!
+override Microsoft.Agents.AI.MessageAIContextProvider.ProvideAIContextAsync(Microsoft.Agents.AI.AIContextProvider.InvokingContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIContext!>
+static Microsoft.Agents.AI.AIAgent.CurrentRunContext.get -> Microsoft.Agents.AI.AgentRunContext?
+static Microsoft.Agents.AI.AIAgent.CurrentRunContext.set -> void
+static Microsoft.Agents.AI.AdditionalPropertiesExtensions.Add<T>(this Microsoft.Extensions.AI.AdditionalPropertiesDictionary! additionalProperties, T value) -> void
+static Microsoft.Agents.AI.AdditionalPropertiesExtensions.Contains<T>(this Microsoft.Extensions.AI.AdditionalPropertiesDictionary! additionalProperties) -> bool
+static Microsoft.Agents.AI.AdditionalPropertiesExtensions.Remove<T>(this Microsoft.Extensions.AI.AdditionalPropertiesDictionary! additionalProperties) -> bool
+static Microsoft.Agents.AI.AdditionalPropertiesExtensions.TryAdd<T>(this Microsoft.Extensions.AI.AdditionalPropertiesDictionary! additionalProperties, T value) -> bool
+static Microsoft.Agents.AI.AdditionalPropertiesExtensions.TryGetValue<T>(this Microsoft.Extensions.AI.AdditionalPropertiesDictionary! additionalProperties, out T? value) -> bool
+static Microsoft.Agents.AI.AgentAbstractionsJsonUtilities.DefaultOptions.get -> System.Text.Json.JsonSerializerOptions!
+static Microsoft.Agents.AI.AgentRequestMessageSourceAttribution.operator !=(Microsoft.Agents.AI.AgentRequestMessageSourceAttribution left, Microsoft.Agents.AI.AgentRequestMessageSourceAttribution right) -> bool
+static Microsoft.Agents.AI.AgentRequestMessageSourceAttribution.operator ==(Microsoft.Agents.AI.AgentRequestMessageSourceAttribution left, Microsoft.Agents.AI.AgentRequestMessageSourceAttribution right) -> bool
+static Microsoft.Agents.AI.AgentRequestMessageSourceType.AIContextProvider.get -> Microsoft.Agents.AI.AgentRequestMessageSourceType
+static Microsoft.Agents.AI.AgentRequestMessageSourceType.ChatHistory.get -> Microsoft.Agents.AI.AgentRequestMessageSourceType
+static Microsoft.Agents.AI.AgentRequestMessageSourceType.External.get -> Microsoft.Agents.AI.AgentRequestMessageSourceType
+static Microsoft.Agents.AI.AgentRequestMessageSourceType.operator !=(Microsoft.Agents.AI.AgentRequestMessageSourceType left, Microsoft.Agents.AI.AgentRequestMessageSourceType right) -> bool
+static Microsoft.Agents.AI.AgentRequestMessageSourceType.operator ==(Microsoft.Agents.AI.AgentRequestMessageSourceType left, Microsoft.Agents.AI.AgentRequestMessageSourceType right) -> bool
+static Microsoft.Agents.AI.AgentResponseExtensions.AsChatResponse(this Microsoft.Agents.AI.AgentResponse! response) -> Microsoft.Extensions.AI.ChatResponse!
+static Microsoft.Agents.AI.AgentResponseExtensions.AsChatResponseUpdate(this Microsoft.Agents.AI.AgentResponseUpdate! responseUpdate) -> Microsoft.Extensions.AI.ChatResponseUpdate!
+static Microsoft.Agents.AI.AgentResponseExtensions.AsChatResponseUpdatesAsync(this System.Collections.Generic.IAsyncEnumerable<Microsoft.Agents.AI.AgentResponseUpdate!>! responseUpdates) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.AI.ChatResponseUpdate!>!
+static Microsoft.Agents.AI.AgentResponseExtensions.ToAgentResponse(this System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AgentResponseUpdate!>! updates) -> Microsoft.Agents.AI.AgentResponse!
+static Microsoft.Agents.AI.AgentResponseExtensions.ToAgentResponseAsync(this System.Collections.Generic.IAsyncEnumerable<Microsoft.Agents.AI.AgentResponseUpdate!>! updates, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse!>!
+static Microsoft.Agents.AI.AgentSessionExtensions.SetInMemoryChatHistory(this Microsoft.Agents.AI.AgentSession! session, System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>! messages, string? stateKey = null, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null) -> void
+static Microsoft.Agents.AI.AgentSessionExtensions.TryGetInMemoryChatHistory(this Microsoft.Agents.AI.AgentSession! session, out System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>! messages, string? stateKey = null, System.Text.Json.JsonSerializerOptions? jsonSerializerOptions = null) -> bool
+static Microsoft.Agents.AI.AgentSessionStateBag.Deserialize(System.Text.Json.JsonElement jsonElement) -> Microsoft.Agents.AI.AgentSessionStateBag!
+static Microsoft.Agents.AI.ChatMessageExtensions.GetAgentRequestMessageSourceId(this Microsoft.Extensions.AI.ChatMessage! message) -> string?
+static Microsoft.Agents.AI.ChatMessageExtensions.GetAgentRequestMessageSourceType(this Microsoft.Extensions.AI.ChatMessage! message) -> Microsoft.Agents.AI.AgentRequestMessageSourceType
+static Microsoft.Agents.AI.ChatMessageExtensions.WithAgentRequestMessageSource(this Microsoft.Extensions.AI.ChatMessage! message, Microsoft.Agents.AI.AgentRequestMessageSourceType sourceType, string? sourceId = null) -> Microsoft.Extensions.AI.ChatMessage!
+static readonly Microsoft.Agents.AI.AgentRequestMessageSourceAttribution.AdditionalPropertiesKey -> string!
+virtual Microsoft.Agents.AI.AIAgent.Description.get -> string?
+virtual Microsoft.Agents.AI.AIAgent.GetService(System.Type! serviceType, object? serviceKey = null) -> object?
+virtual Microsoft.Agents.AI.AIAgent.IdCore.get -> string?
+virtual Microsoft.Agents.AI.AIAgent.Name.get -> string?
+virtual Microsoft.Agents.AI.AIContextProvider.GetService(System.Type! serviceType, object? serviceKey = null) -> object?
+virtual Microsoft.Agents.AI.AIContextProvider.InvokedCoreAsync(Microsoft.Agents.AI.AIContextProvider.InvokedContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+virtual Microsoft.Agents.AI.AIContextProvider.InvokingCoreAsync(Microsoft.Agents.AI.AIContextProvider.InvokingContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIContext!>
+virtual Microsoft.Agents.AI.AIContextProvider.ProvideAIContextAsync(Microsoft.Agents.AI.AIContextProvider.InvokingContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIContext!>
+virtual Microsoft.Agents.AI.AIContextProvider.StateKeys.get -> System.Collections.Generic.IReadOnlyList<string!>!
+virtual Microsoft.Agents.AI.AIContextProvider.StoreAIContextAsync(Microsoft.Agents.AI.AIContextProvider.InvokedContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+virtual Microsoft.Agents.AI.AgentResponse<T>.Result.get -> T
+virtual Microsoft.Agents.AI.AgentRunOptions.Clone() -> Microsoft.Agents.AI.AgentRunOptions!
+virtual Microsoft.Agents.AI.AgentSession.GetService(System.Type! serviceType, object? serviceKey = null) -> object?
+virtual Microsoft.Agents.AI.ChatHistoryProvider.GetService(System.Type! serviceType, object? serviceKey = null) -> object?
+virtual Microsoft.Agents.AI.ChatHistoryProvider.InvokedCoreAsync(Microsoft.Agents.AI.ChatHistoryProvider.InvokedContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+virtual Microsoft.Agents.AI.ChatHistoryProvider.InvokingCoreAsync(Microsoft.Agents.AI.ChatHistoryProvider.InvokingContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>
+virtual Microsoft.Agents.AI.ChatHistoryProvider.ProvideChatHistoryAsync(Microsoft.Agents.AI.ChatHistoryProvider.InvokingContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>
+virtual Microsoft.Agents.AI.ChatHistoryProvider.StateKeys.get -> System.Collections.Generic.IReadOnlyList<string!>!
+virtual Microsoft.Agents.AI.ChatHistoryProvider.StoreChatHistoryAsync(Microsoft.Agents.AI.ChatHistoryProvider.InvokedContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+virtual Microsoft.Agents.AI.MessageAIContextProvider.InvokingCoreAsync(Microsoft.Agents.AI.MessageAIContextProvider.InvokingContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>
+virtual Microsoft.Agents.AI.MessageAIContextProvider.ProvideMessagesAsync(Microsoft.Agents.AI.MessageAIContextProvider.InvokingContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>

@@ -355,6 +355,7 @@ SAMPLE_TYPING_EXCLUDES = (
     "05-end-to-end",
     "harness",
     "local_telegram",
+    "foundry-hosted-agents/invocations/telegram",
 )
 
 

@@ -10,6 +10,7 @@ import json
 import logging
 import sys
 import typing
+import warnings
 from collections import deque
 from collections.abc import (
     AsyncIterable,
@@ -38,6 +39,7 @@ from typing import (
     get_origin,
     overload,
 )
+from uuid import uuid4
 
 from opentelemetry.metrics import Histogram, NoOpHistogram
 from pydantic import BaseModel, Field, ValidationError, create_model
@@ -90,6 +92,11 @@ else:
 
 
 logger = logging.getLogger("agent_framework")
+
+
+def _generate_function_call_occurrence_id() -> str:
+    """Generate an Agent Framework identity for one function-call occurrence."""
+    return f"af-call-{uuid4().hex}"
 
 
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
@@ -1585,8 +1592,10 @@ async def _auto_invoke_function(
     if call_id is None:
         raise KeyError(f'Function "{function_call_content.name}" is missing call_id.')
 
-    # Always pass call_id to middleware for policy violation approval flow
+    # Pass both provider correlation and framework occurrence identity to middleware.
     middleware_context.metadata["call_id"] = call_id
+    if function_call_content.id is not None:
+        middleware_context.metadata["function_call_occurrence_id"] = function_call_content.id
 
     # Pass through the original approval response so middleware can decide whether
     # this replay corresponds to a middleware-specific approval flow.
@@ -1803,7 +1812,7 @@ async def _try_execute_function_call_groups(
             if function_call.type != "function_call":
                 continue
             approval_request = Content.from_function_approval_request(
-                id=function_call.call_id,  # type: ignore[arg-type]
+                id=function_call.id or function_call.call_id,  # type: ignore[arg-type]
                 function_call=function_call,
             )
             tool_name = function_call.name
@@ -1838,7 +1847,8 @@ async def _try_execute_function_call_groups(
         for function_call in function_calls:
             if function_call.type == "function_call":
                 function_call.user_input_request = True
-                function_call.id = function_call.call_id
+                if function_call.id is None:
+                    function_call.id = function_call.call_id
                 declaration_only_calls.append(function_call)
         return [[function_call] for function_call in declaration_only_calls], False
 
@@ -2190,25 +2200,69 @@ def _bind_approval_response_to_pending_request(
 
     if invocation_session is None:
         return response
-    if response.id is None:
-        return None
     pending = _load_pending_approval_requests(invocation_session)
-    request = pending.get(response.id)
-    if request is None or request.function_call is None:
+    request_key = response.id
+    request = pending.get(request_key) if request_key is not None else None
+
+    # During the staged migration, accept the occurrence id even if an intermediate
+    # producer still stored the provider call_id as the request id. This is not a
+    # call_id alias: the lookup uses the stored function_call.id only.
+    if request is None and response.id is not None:
+        matching_occurrences = [
+            (pending_id, candidate)
+            for pending_id, candidate in pending.items()
+            if not _is_hosted_tool_approval(candidate)
+            and candidate.function_call is not None
+            and candidate.function_call.id == response.id
+        ]
+        if len(matching_occurrences) == 1:
+            request_key, request = matching_occurrences[0]
+
+    if request is None or request.function_call is None or request_key is None:
         return None
-    rebound_call = _content_from_state(request.function_call.to_dict())
+
+    stored_call = request.function_call
+    is_hosted = _is_hosted_tool_approval(request)
+    occurrence_id = stored_call.id
+    if not is_hosted and occurrence_id is not None:
+        embedded_call = response.function_call
+        uses_occurrence_id = response.id == occurrence_id
+        uses_legacy_request_id = response.id == request.id
+        if not uses_occurrence_id:
+            if not (uses_legacy_request_id and embedded_call is not None and embedded_call.id == occurrence_id):
+                return None
+            warnings.warn(
+                "An occurrence-aware approval used the legacy provider call_id request binding. "
+                "Return function_call.id as the approval response id; legacy request-id binding will be removed "
+                "in a future release.",
+                FutureWarning,
+                stacklevel=3,
+            )
+        elif embedded_call is not None and embedded_call.id != occurrence_id:
+            return None
+    elif not is_hosted:
+        warnings.warn(
+            "Resuming a legacy stored approval whose function_call has no Content.id. This exact request-id "
+            "compatibility path is deprecated; complete the pending approval and store occurrence-aware snapshots "
+            "before support is removed in a future release.",
+            FutureWarning,
+            stacklevel=3,
+        )
+
+    rebound_call = _content_from_state(stored_call.to_dict())
     if rebound_call is None:
         return None
+    rebound_id = occurrence_id if not is_hosted and occurrence_id is not None else response.id
     rebound = Content.from_function_approval_response(
         approved=_is_approval_granted(response.approved),
-        id=response.id,
+        id=rebound_id,  # type: ignore[arg-type]
         function_call=rebound_call,
         annotations=response.annotations,
         additional_properties=copy.deepcopy(response.additional_properties),
         raw_representation=response.raw_representation,
     )
     if consume:
-        pending.pop(response.id, None)
+        pending.pop(request_key, None)
         _save_pending_approval_requests(invocation_session, pending)
     return rebound
 
@@ -2235,7 +2289,8 @@ def _bind_approval_responses_to_pending_requests(
             )
             if rebound is None:
                 logger.warning(
-                    "Ignored an approval response with request id %r because no pending approval request exists.",
+                    "Ignored an approval response with id %r because it did not match the active approval "
+                    "occurrence identity; the pending request was retained for retry.",
                     content.id,
                 )
                 continue
@@ -2673,26 +2728,35 @@ def _replace_approval_contents_with_results(
 
 
 def _extract_function_calls(response: ChatResponse) -> list[Content]:
-    completed_call_ids: set[str] = set()
-    seen_call_ids: set[str] = set()
+    completed_occurrence_ids: set[str] = set()
+    open_occurrence_ids_by_call_id: dict[str, deque[str]] = {}
+    seen_occurrence_ids: set[str] = set()
     candidate_calls: list[Content] = []
     for message in response.messages:
         for item in message.contents:
             if item.type == "function_result" and item.call_id:
-                completed_call_ids.add(item.call_id)
+                if open_occurrence_ids := open_occurrence_ids_by_call_id.get(item.call_id):
+                    completed_occurrence_ids.add(open_occurrence_ids.popleft())
                 continue
             if not _is_actionable_function_call(item):
                 continue
-            if item.call_id and item.call_id in seen_call_ids:
+            if item.id is None:
+                item.id = _generate_function_call_occurrence_id()
+            if not item.call_id:
+                item.call_id = item.id
+                warnings.warn(
+                    "An actionable function_call had an empty call_id. Agent Framework used its generated "
+                    "Content.id for local correlation. Providers should supply and preserve their service call_id; "
+                    "this fallback will be removed in a future release.",
+                    FutureWarning,
+                    stacklevel=3,
+                )
+            if item.id in seen_occurrence_ids:
                 continue
-            if item.call_id:
-                seen_call_ids.add(item.call_id)
+            seen_occurrence_ids.add(item.id)
             candidate_calls.append(item)
-    return [
-        function_call
-        for function_call in candidate_calls
-        if not function_call.call_id or function_call.call_id not in completed_call_ids
-    ]
+            open_occurrence_ids_by_call_id.setdefault(item.call_id, deque()).append(item.id)
+    return [function_call for function_call in candidate_calls if function_call.id not in completed_occurrence_ids]
 
 
 def _prepend_function_call_messages(response: ChatResponse, function_call_messages: list[Message]) -> None:
@@ -3414,7 +3478,61 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 total_function_calls,
                 max_function_calls,
             )
+            streamed_identities_by_call_id: dict[str, tuple[str, str]] = {}
+            streamed_names_by_call_id: dict[str, str] = {}
+            last_streamed_identity: tuple[str, str] | None = None
+            warned_empty_call_ids: set[str] = set()
             async for update in inner_stream:
+                for content in update.contents:
+                    if content.type != "function_call":
+                        continue
+                    if not _is_actionable_function_call(content):
+                        continue
+                    had_occurrence_id = content.id is not None
+                    provider_call_id = content.call_id
+                    identity = streamed_identities_by_call_id.get(provider_call_id) if provider_call_id else None
+                    if (
+                        identity is not None
+                        and provider_call_id is not None
+                        and content.id is None
+                        and content.name
+                        and (
+                            streamed_names_by_call_id.get(provider_call_id) != content.name
+                            or isinstance(content.arguments, Mapping)
+                        )
+                    ):
+                        identity = None
+                    if identity is None and not provider_call_id and not content.name:
+                        identity = last_streamed_identity
+
+                    if identity is None:
+                        occurrence_id = content.id or _generate_function_call_occurrence_id()
+                        effective_call_id = provider_call_id or ("" if had_occurrence_id else occurrence_id)
+                    else:
+                        occurrence_id, effective_call_id = identity
+                    if content.id is not None:
+                        occurrence_id = content.id
+                    if provider_call_id:
+                        effective_call_id = provider_call_id
+
+                    content.id = occurrence_id
+                    if not content.call_id and not had_occurrence_id:
+                        content.call_id = effective_call_id
+                        if identity is None and occurrence_id not in warned_empty_call_ids:
+                            warnings.warn(
+                                "An actionable function_call had an empty call_id. Agent Framework used its generated "
+                                "Content.id for local correlation. Providers should supply and preserve their service "
+                                "call_id; this fallback will be removed in a future release.",
+                                FutureWarning,
+                                stacklevel=3,
+                            )
+                            warned_empty_call_ids.add(occurrence_id)
+                    identity = (occurrence_id, effective_call_id)
+                    if effective_call_id:
+                        streamed_identities_by_call_id[effective_call_id] = identity
+                        if content.name:
+                            streamed_names_by_call_id[effective_call_id] = content.name
+                    last_streamed_identity = identity
                 if drop_unexecutable_calls:
                     update = _drop_unexecutable_tool_contents_from_update(update)
                     if update is None:

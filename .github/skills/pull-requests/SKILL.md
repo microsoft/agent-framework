@@ -52,6 +52,16 @@ Check every item that applies. For the breaking-change item:
   the checklist already cover validation status.
 - Do **not** remove or reorder the template's headings.
 
+### Stable specifications
+
+For Python function-calling loop changes, read
+[`docs/specs/004-python-function-calling-loop.md`](../../../docs/specs/004-python-function-calling-loop.md)
+and validate the PR against it. Do not edit that specification by default. It
+is a stable cross-package contract, not a per-PR changelog. A specification
+change is warranted only when the PR intentionally changes normative behavior,
+the scenario inventory, an acknowledged coverage gap, or the authoritative
+scenario-to-test mapping; keep any such edit to the smallest affected sections.
+
 ### Creating the PR
 Open new PRs as **drafts** until they are ready for review. Example:
 

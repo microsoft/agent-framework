@@ -4,7 +4,7 @@
 
 Posts to ``/responses`` using the standard ``openai`` SDK. This client
 demonstrates the sample's only supported continuation mode:
-``previous_response_id``. It deliberately does not send ``conversation_id``,
+``previous_response_id``. It deliberately does not send ``conversation``,
 which the sample server rejects.
 
 Start the server first (in another shell)::
@@ -38,7 +38,7 @@ def main() -> None:
     print(f"Response ID: {response.id}")
 
     # Continue with the returned response id. The server sample rejects
-    # `conversation_id` continuity.
+    # `conversation` continuity.
     follow_up = client.responses.create(
         input=FOLLOW_UP,
         previous_response_id=response.id,

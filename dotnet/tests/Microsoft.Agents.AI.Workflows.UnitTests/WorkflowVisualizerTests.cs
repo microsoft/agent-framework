@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -35,12 +34,12 @@ public class WorkflowVisualizerTests
         var dotContent = workflow.ToDotString();
 
         // Check that the DOT content contains expected elements
-        dotContent.Should().Contain("digraph Workflow {");
-        dotContent.Should().Contain("\"executor1\"");
-        dotContent.Should().Contain("\"executor2\"");
-        dotContent.Should().Contain("\"executor1\" -> \"executor2\"");
-        dotContent.Should().Contain("fillcolor=lightgreen"); // Start executor styling
-        dotContent.Should().Contain("(Start)");
+        Assert.Contains("digraph Workflow {", dotContent);
+        Assert.Contains("\"executor1\"", dotContent);
+        Assert.Contains("\"executor2\"", dotContent);
+        Assert.Contains("\"executor1\" -> \"executor2\"", dotContent);
+        Assert.Contains("fillcolor=lightgreen", dotContent); // Start executor styling
+        Assert.Contains("(Start)", dotContent);
     }
 
     [Fact]
@@ -62,19 +61,19 @@ public class WorkflowVisualizerTests
         var dotContent = workflow.ToDotString();
 
         // Check all executors are present
-        dotContent.Should().Contain("\"start\"");
-        dotContent.Should().Contain("\"middle1\"");
-        dotContent.Should().Contain("\"middle2\"");
-        dotContent.Should().Contain("\"end\"");
+        Assert.Contains("\"start\"", dotContent);
+        Assert.Contains("\"middle1\"", dotContent);
+        Assert.Contains("\"middle2\"", dotContent);
+        Assert.Contains("\"end\"", dotContent);
 
         // Check all edges are present
-        dotContent.Should().Contain("\"start\" -> \"middle1\"");
-        dotContent.Should().Contain("\"start\" -> \"middle2\"");
-        dotContent.Should().Contain("\"middle1\" -> \"end\"");
-        dotContent.Should().Contain("\"middle2\" -> \"end\"");
+        Assert.Contains("\"start\" -> \"middle1\"", dotContent);
+        Assert.Contains("\"start\" -> \"middle2\"", dotContent);
+        Assert.Contains("\"middle1\" -> \"end\"", dotContent);
+        Assert.Contains("\"middle2\" -> \"end\"", dotContent);
 
         // Check start executor has special styling
-        dotContent.Should().Contain("fillcolor=lightgreen");
+        Assert.Contains("fillcolor=lightgreen", dotContent);
     }
 
     [Fact]
@@ -96,10 +95,10 @@ public class WorkflowVisualizerTests
         var dotContent = workflow.ToDotString();
 
         // Conditional edge should be dashed and labeled
-        dotContent.Should().Contain("\"start\" -> \"mid\" [style=dashed, label=\"conditional\"];");
+        Assert.Contains("\"start\" -> \"mid\" [style=dashed, label=\"conditional\"];", dotContent);
         // Non-conditional edge should be plain
-        dotContent.Should().Contain("\"mid\" -> \"end\"");
-        dotContent.Should().NotContain("\"mid\" -> \"end\" [style=dashed");
+        Assert.Contains("\"mid\" -> \"end\"", dotContent);
+        Assert.DoesNotContain("\"mid\" -> \"end\" [style=dashed", dotContent);
     }
 
     [Fact]
@@ -123,25 +122,25 @@ public class WorkflowVisualizerTests
         var lines = dotContent.Split('\n');
         var fanInLines = Array.FindAll(lines, line =>
             line.Contains("shape=ellipse") && line.Contains("label=\"fan-in\""));
-        fanInLines.Should().HaveCount(1);
+        Assert.Single(fanInLines);
 
         // Extract the intermediate node id from the line
         var fanInLine = fanInLines[0];
         var firstQuote = fanInLine.IndexOf('"');
         var secondQuote = fanInLine.IndexOf('"', firstQuote + 1);
-        firstQuote.Should().BeGreaterThan(-1);
-        secondQuote.Should().BeGreaterThan(-1);
+        Assert.True(firstQuote > (-1));
+        Assert.True(secondQuote > (-1));
         var fanInNodeId = fanInLine.Substring(firstQuote + 1, secondQuote - firstQuote - 1);
-        fanInNodeId.Should().NotBeNullOrEmpty();
+        Assert.False(string.IsNullOrEmpty(fanInNodeId));
 
         // Edges should be routed through the intermediate node, not direct to target
-        dotContent.Should().Contain($"\"s1\" -> \"{fanInNodeId}\";");
-        dotContent.Should().Contain($"\"s2\" -> \"{fanInNodeId}\";");
-        dotContent.Should().Contain($"\"{fanInNodeId}\" -> \"t\";");
+        Assert.Contains($"\"s1\" -> \"{fanInNodeId}\";", dotContent);
+        Assert.Contains($"\"s2\" -> \"{fanInNodeId}\";", dotContent);
+        Assert.Contains($"\"{fanInNodeId}\" -> \"t\";", dotContent);
 
         // Ensure direct edges are not present
-        dotContent.Should().NotContain("\"s1\" -> \"t\"");
-        dotContent.Should().NotContain("\"s2\" -> \"t\"");
+        Assert.DoesNotContain("\"s1\" -> \"t\"", dotContent);
+        Assert.DoesNotContain("\"s2\" -> \"t\"", dotContent);
     }
 
     // Note: Sub-workflow tests are commented out as the current implementation
@@ -182,9 +181,9 @@ public class WorkflowVisualizerTests
         var dotContent = workflow.ToDotString();
 
         // Check all fan-out edges are present
-        dotContent.Should().Contain("\"start\" -> \"target1\"");
-        dotContent.Should().Contain("\"start\" -> \"target2\"");
-        dotContent.Should().Contain("\"start\" -> \"target3\"");
+        Assert.Contains("\"start\" -> \"target1\"", dotContent);
+        Assert.Contains("\"start\" -> \"target2\"", dotContent);
+        Assert.Contains("\"start\" -> \"target3\"", dotContent);
     }
 
     [Fact]
@@ -208,15 +207,15 @@ public class WorkflowVisualizerTests
         var dotContent = workflow.ToDotString();
 
         // Check conditional edge
-        dotContent.Should().Contain("\"start\" -> \"a\" [style=dashed, label=\"conditional\"];");
+        Assert.Contains("\"start\" -> \"a\" [style=dashed, label=\"conditional\"];", dotContent);
 
         // Check fan-out edges
-        dotContent.Should().Contain("\"a\" -> \"b\"");
-        dotContent.Should().Contain("\"a\" -> \"c\"");
+        Assert.Contains("\"a\" -> \"b\"", dotContent);
+        Assert.Contains("\"a\" -> \"c\"", dotContent);
 
         // Check fan-in (should have intermediate node)
-        dotContent.Should().Contain("shape=ellipse");
-        dotContent.Should().Contain("label=\"fan-in\"");
+        Assert.Contains("shape=ellipse", dotContent);
+        Assert.Contains("label=\"fan-in\"", dotContent);
     }
 
     [Fact]
@@ -232,9 +231,9 @@ public class WorkflowVisualizerTests
         var dotContent = workflow.ToDotString();
 
         // Check single node is present with start styling
-        dotContent.Should().Contain("\"single\"");
-        dotContent.Should().Contain("fillcolor=lightgreen");
-        dotContent.Should().Contain("(Start)");
+        Assert.Contains("\"single\"", dotContent);
+        Assert.Contains("fillcolor=lightgreen", dotContent);
+        Assert.Contains("(Start)", dotContent);
     }
 
     [Fact]
@@ -252,7 +251,7 @@ public class WorkflowVisualizerTests
         var dotContent = workflow.ToDotString();
 
         // Check self-loop edge is present and conditional
-        dotContent.Should().Contain("\"loop\" -> \"loop\" [style=dashed, label=\"conditional\"];");
+        Assert.Contains("\"loop\" -> \"loop\" [style=dashed, label=\"conditional\"];", dotContent);
     }
 
     [Fact]
@@ -269,10 +268,10 @@ public class WorkflowVisualizerTests
         var mermaidContent = workflow.ToMermaidString();
 
         // Check that the Mermaid content contains expected elements
-        mermaidContent.Should().Contain("flowchart TD");
-        mermaidContent.Should().Contain("executor1[\"executor1 (Start)\"]");
-        mermaidContent.Should().Contain("executor2[\"executor2\"]");
-        mermaidContent.Should().Contain("executor1 --> executor2");
+        Assert.Contains("flowchart TD", mermaidContent);
+        Assert.Contains("executor1[\"executor1 (Start)\"]", mermaidContent);
+        Assert.Contains("executor2[\"executor2\"]", mermaidContent);
+        Assert.Contains("executor1 --> executor2", mermaidContent);
     }
 
     [Fact]
@@ -293,13 +292,13 @@ public class WorkflowVisualizerTests
         var mermaidContent = workflow.ToMermaidString();
 
         // Conditional edge should be dotted with label (using .-> not .-->)
-        mermaidContent.Should().Contain("-. conditional .-> ");
+        Assert.Contains("-. conditional .-> ", mermaidContent);
         // Non-conditional edge should be a specific solid arrow
-        mermaidContent.Should().Contain("mid --> end");
+        Assert.Contains("mid --> end", mermaidContent);
         // Display labels should be present
-        mermaidContent.Should().Contain("\"start (Start)\"");
-        mermaidContent.Should().Contain("\"mid\"");
-        mermaidContent.Should().Contain("\"end\"");
+        Assert.Contains("\"start (Start)\"", mermaidContent);
+        Assert.Contains("\"mid\"", mermaidContent);
+        Assert.Contains("\"end\"", mermaidContent);
     }
 
     [Fact]
@@ -321,27 +320,27 @@ public class WorkflowVisualizerTests
         // There should be a fan-in node with special styling
         var lines = mermaidContent.Split('\n');
         var fanInLines = Array.FindAll(lines, line => line.Contains("((fan-in))"));
-        fanInLines.Should().HaveCount(1);
+        Assert.Single(fanInLines);
 
         // Extract the intermediate fan-in node id from the line
         var fanInLine = fanInLines[0].Trim();
         var fanInNodeId = fanInLine.Substring(0, fanInLine.IndexOf("((fan-in))", StringComparison.Ordinal)).Trim();
-        fanInNodeId.Should().NotBeNullOrEmpty();
+        Assert.False(string.IsNullOrEmpty(fanInNodeId));
 
         // Edges should be routed through the intermediate node
-        mermaidContent.Should().Contain($"s1 --> {fanInNodeId}");
-        mermaidContent.Should().Contain($"s2 --> {fanInNodeId}");
-        mermaidContent.Should().Contain($"{fanInNodeId} --> t");
+        Assert.Contains($"s1 --> {fanInNodeId}", mermaidContent);
+        Assert.Contains($"s2 --> {fanInNodeId}", mermaidContent);
+        Assert.Contains($"{fanInNodeId} --> t", mermaidContent);
 
         // Ensure direct edges are not present
-        mermaidContent.Should().NotContain("s1 --> t");
-        mermaidContent.Should().NotContain("s2 --> t");
+        Assert.DoesNotContain("s1 --> t", mermaidContent);
+        Assert.DoesNotContain("s2 --> t", mermaidContent);
 
         // Display labels should be present
-        mermaidContent.Should().Contain("\"start (Start)\"");
-        mermaidContent.Should().Contain("\"s1\"");
-        mermaidContent.Should().Contain("\"s2\"");
-        mermaidContent.Should().Contain("\"t\"");
+        Assert.Contains("\"start (Start)\"", mermaidContent);
+        Assert.Contains("\"s1\"", mermaidContent);
+        Assert.Contains("\"s2\"", mermaidContent);
+        Assert.Contains("\"t\"", mermaidContent);
 
         // All node IDs should be safe aliases (ASCII-only identifiers)
         foreach (var line in mermaidContent.Split('\n'))
@@ -351,7 +350,7 @@ public class WorkflowVisualizerTests
             {
                 var bracketIdx = trimmed.IndexOfAny(['[', '(']);
                 var nodeId = trimmed.Substring(0, bracketIdx);
-                nodeId.Should().MatchRegex("^[a-zA-Z_][a-zA-Z0-9_]*$");
+                Assert.Matches("^[a-zA-Z_][a-zA-Z0-9_]*$", nodeId);
             }
         }
     }
@@ -375,17 +374,17 @@ public class WorkflowVisualizerTests
         var mermaidContent = workflow.ToMermaidString();
 
         // Check display labels are present
-        mermaidContent.Should().Contain("\"start (Start)\"");
-        mermaidContent.Should().Contain("\"middle1\"");
-        mermaidContent.Should().Contain("\"middle2\"");
-        mermaidContent.Should().Contain("\"end\"");
+        Assert.Contains("\"start (Start)\"", mermaidContent);
+        Assert.Contains("\"middle1\"", mermaidContent);
+        Assert.Contains("\"middle2\"", mermaidContent);
+        Assert.Contains("\"end\"", mermaidContent);
 
         // Check that sanitized IDs are used and all edges connect them
-        mermaidContent.Should().Contain("start[\"start (Start)\"]");
-        mermaidContent.Should().Contain("start --> middle1");
-        mermaidContent.Should().Contain("start --> middle2");
-        mermaidContent.Should().Contain("middle1 --> end");
-        mermaidContent.Should().Contain("middle2 --> end");
+        Assert.Contains("start[\"start (Start)\"]", mermaidContent);
+        Assert.Contains("start --> middle1", mermaidContent);
+        Assert.Contains("start --> middle2", mermaidContent);
+        Assert.Contains("middle1 --> end", mermaidContent);
+        Assert.Contains("middle2 --> end", mermaidContent);
     }
 
     [Fact]
@@ -409,18 +408,18 @@ public class WorkflowVisualizerTests
         var mermaidContent = workflow.ToMermaidString();
 
         // Check conditional edge uses correct syntax (.-> not .-->)
-        mermaidContent.Should().Contain("-. conditional .->");
-        mermaidContent.Should().NotContain(".-->");
+        Assert.Contains("-. conditional .->", mermaidContent);
+        Assert.DoesNotContain(".-->", mermaidContent);
 
         // Check fan-in (should have intermediate node)
-        mermaidContent.Should().Contain("((fan-in))");
+        Assert.Contains("((fan-in))", mermaidContent);
 
         // Display labels should be present
-        mermaidContent.Should().Contain("\"start (Start)\"");
-        mermaidContent.Should().Contain("\"a\"");
-        mermaidContent.Should().Contain("\"b\"");
-        mermaidContent.Should().Contain("\"c\"");
-        mermaidContent.Should().Contain("\"end\"");
+        Assert.Contains("\"start (Start)\"", mermaidContent);
+        Assert.Contains("\"a\"", mermaidContent);
+        Assert.Contains("\"b\"", mermaidContent);
+        Assert.Contains("\"c\"", mermaidContent);
+        Assert.Contains("\"end\"", mermaidContent);
     }
 
     [Fact]
@@ -437,9 +436,9 @@ public class WorkflowVisualizerTests
         var mermaidContent = workflow.ToMermaidString();
 
         // Should escape pipe character
-        mermaidContent.Should().Contain("-->|High &#124; Low Priority|");
+        Assert.Contains("-->|High &#124; Low Priority|", mermaidContent);
         // Should not contain unescaped pipe that would break syntax
-        mermaidContent.Should().NotContain("-->|High | Low");
+        Assert.DoesNotContain("-->|High | Low", mermaidContent);
     }
 
     [Fact]
@@ -456,9 +455,9 @@ public class WorkflowVisualizerTests
         var mermaidContent = workflow.ToMermaidString();
 
         // Should escape special characters
-        mermaidContent.Should().Contain("&amp;");
-        mermaidContent.Should().Contain("&gt;");
-        mermaidContent.Should().Contain("&lt;");
+        Assert.Contains("&amp;", mermaidContent);
+        Assert.Contains("&gt;", mermaidContent);
+        Assert.Contains("&lt;", mermaidContent);
     }
 
     [Fact]
@@ -475,9 +474,9 @@ public class WorkflowVisualizerTests
         var mermaidContent = workflow.ToMermaidString();
 
         // Should convert newline to <br/>
-        mermaidContent.Should().Contain("Line 1<br/>Line 2");
+        Assert.Contains("Line 1<br/>Line 2", mermaidContent);
         // Should not contain literal newline in the label (but the overall output has newlines between statements)
-        mermaidContent.Should().NotContain("Line 1\nLine 2");
+        Assert.DoesNotContain("Line 1\nLine 2", mermaidContent);
     }
 
     [Fact]
@@ -497,8 +496,8 @@ public class WorkflowVisualizerTests
         var mermaidContent = workflow.ToMermaidString();
 
         // The output should use ".->" not ".-->" for conditional (dotted) edges
-        mermaidContent.Should().NotContain(".-->", because: "'.-->' is invalid Mermaid syntax for dotted arrows; should be '.->'");
-        mermaidContent.Should().Contain("-. conditional .->", because: "'-. label .->' is the correct Mermaid syntax for dotted arrows with labels");
+        Assert.DoesNotContain(".-->", mermaidContent);
+        Assert.Contains("-. conditional .->", mermaidContent);
     }
 
     [Fact]
@@ -527,7 +526,7 @@ public class WorkflowVisualizerTests
             {
                 var bracketIdx = trimmed.IndexOf('[');
                 var nodeId = trimmed.Substring(0, bracketIdx);
-                nodeId.Should().NotContain(" ", because: $"Mermaid node IDs must not contain spaces, but got '{nodeId}'");
+                Assert.DoesNotContain(" ", nodeId);
             }
         }
     }
@@ -546,8 +545,8 @@ public class WorkflowVisualizerTests
         var mermaidContent = workflow.ToMermaidString();
 
         // The display labels should contain the original names
-        mermaidContent.Should().Contain("ユーザー入力");
-        mermaidContent.Should().Contain("データ処理");
+        Assert.Contains("ユーザー入力", mermaidContent);
+        Assert.Contains("データ処理", mermaidContent);
 
         // But node IDs (before the bracket) should be safe ASCII-only identifiers
         foreach (var line in mermaidContent.Split('\n'))
@@ -558,8 +557,7 @@ public class WorkflowVisualizerTests
                 var bracketIdx = trimmed.IndexOf('[');
                 var nodeId = trimmed.Substring(0, bracketIdx);
                 // Node ID should start with a letter or underscore, followed by ASCII alphanumeric or underscores
-                nodeId.Should().MatchRegex("^[a-zA-Z_][a-zA-Z0-9_]*$",
-                    because: $"Mermaid node IDs should be ASCII-safe, but got '{nodeId}'");
+                Assert.Matches("^[a-zA-Z_][a-zA-Z0-9_]*$", nodeId);
             }
         }
     }

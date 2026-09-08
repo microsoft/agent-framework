@@ -6,7 +6,6 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -33,18 +32,18 @@ public class InProcessExecutionTests
 
         // Assert: The workflow should have executed and produced events
         RunStatus status = await run.GetStatusAsync();
-        status.Should().Be(RunStatus.Idle, "workflow should complete execution");
+        Assert.Equal(RunStatus.Idle, status);
 
         // The run should have events (at minimum, a WorkflowOutputEvent)
-        run.OutgoingEvents.Should().NotBeEmpty("workflow should produce events during execution");
+        Assert.NotEmpty(run.OutgoingEvents);
 
         // Check that we have an agent execution event
         var agentEvents = run.OutgoingEvents.OfType<AgentResponseUpdateEvent>().ToList();
-        agentEvents.Should().NotBeEmpty("agent should have executed and produced update events");
+        Assert.NotEmpty(agentEvents);
 
         // Check that we have output events
         var outputEvents = run.OutgoingEvents.OfType<WorkflowOutputEvent>().ToList();
-        outputEvents.Should().NotBeEmpty("workflow should produce output events");
+        Assert.NotEmpty(outputEvents);
     }
 
     /// <summary>
@@ -63,7 +62,7 @@ public class InProcessExecutionTests
 
         // Send TurnToken to actually trigger execution (this is the key step)
         bool messageSent = await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
-        messageSent.Should().BeTrue("TurnToken should be accepted");
+        Assert.True(messageSent);
 
         // Collect events
         List<WorkflowEvent> events = [];
@@ -74,17 +73,17 @@ public class InProcessExecutionTests
 
         // Assert: The workflow should have executed and produced events
         RunStatus status = await run.GetStatusAsync();
-        status.Should().Be(RunStatus.Idle, "workflow should complete execution");
+        Assert.Equal(RunStatus.Idle, status);
 
-        events.Should().NotBeEmpty("workflow should produce events during execution");
+        Assert.NotEmpty(events);
 
         // Check that we have agent execution events
         var agentEvents = events.OfType<AgentResponseUpdateEvent>().ToList();
-        agentEvents.Should().NotBeEmpty("agent should have executed and produced update events");
+        Assert.NotEmpty(agentEvents);
 
         // Check that we have output events
         var outputEvents = events.OfType<WorkflowOutputEvent>().ToList();
-        outputEvents.Should().NotBeEmpty("workflow should produce output events");
+        Assert.NotEmpty(outputEvents);
     }
 
     /// <summary>
@@ -119,17 +118,16 @@ public class InProcessExecutionTests
 
         // Assert: Both should have produced events
         // The streaming version works (we know this from the issue report)
-        streamingEvents.Should().NotBeEmpty("streaming version should produce events");
+        Assert.NotEmpty(streamingEvents);
 
         // The non-streaming version should also produce events (this is the bug being tested)
-        nonStreamingEvents.Should().NotBeEmpty("non-streaming version should also produce events");
+        Assert.NotEmpty(nonStreamingEvents);
 
         // Both should have similar types of events
         var streamingAgentEvents = streamingEvents.OfType<AgentResponseUpdateEvent>().Count();
         var nonStreamingAgentEvents = nonStreamingEvents.OfType<AgentResponseUpdateEvent>().Count();
 
-        nonStreamingAgentEvents.Should().Be(streamingAgentEvents,
-            "both versions should produce the same number of agent events");
+        Assert.Equal(streamingAgentEvents, nonStreamingAgentEvents);
     }
 
     /// <summary>
@@ -149,7 +147,7 @@ public class InProcessExecutionTests
 
         // Send TurnToken to actually trigger execution (this is the key step)
         bool messageSent = await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
-        messageSent.Should().BeTrue("TurnToken should be accepted");
+        Assert.True(messageSent);
 
         while (await run.GetStatusAsync() != RunStatus.Idle)
         {
@@ -166,17 +164,17 @@ public class InProcessExecutionTests
 
         // Assert: The workflow should have executed and produced events
         RunStatus status = await run.GetStatusAsync();
-        status.Should().Be(RunStatus.Idle, "workflow should complete execution");
+        Assert.Equal(RunStatus.Idle, status);
 
-        events.Should().NotBeEmpty("workflow should produce events during execution");
+        Assert.NotEmpty(events);
 
         // Check that we have agent execution events
         var agentEvents = events.OfType<AgentResponseUpdateEvent>().ToList();
-        agentEvents.Should().NotBeEmpty("agent should have executed and produced update events");
+        Assert.NotEmpty(agentEvents);
 
         // Check that we have output events
         var outputEvents = events.OfType<WorkflowOutputEvent>().ToList();
-        outputEvents.Should().NotBeEmpty("workflow should produce output events");
+        Assert.NotEmpty(outputEvents);
     }
 
     /// <summary>

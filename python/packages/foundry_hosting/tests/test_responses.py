@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -57,6 +58,7 @@ from azure.ai.agentserver.responses import (
     ResponseExitForRecovery,
     ResponsesServerOptions,
 )
+from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
@@ -69,8 +71,10 @@ from agent_framework_foundry_hosting._responses import (
     CONSENT_ERROR_CODE,
     ConsentError,
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
+    _json_safe_to_str,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
+    _stringify_mcp_output,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
 )
 from agent_framework_foundry_hosting._state_store import (
@@ -134,6 +138,9 @@ def _make_agent(
     agent.name = "Test Agent"
     agent.description = "A mock agent for testing"
     agent.context_providers = []
+    agent.default_options = {}
+    agent.client = MagicMock()
+    agent.client.STORES_BY_DEFAULT = False
 
     def create_session(*, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
@@ -168,10 +175,44 @@ def _make_agent(
     return agent
 
 
+class _StrictCustomAgent:
+    """Custom SupportsAgentRun implementation without a runtime options keyword."""
+
+    id = "strict-custom-agent"
+    name = "Strict Custom Agent"
+    description = "Exercises the exact SupportsAgentRun keyword contract."
+
+    def __init__(self) -> None:
+        self.context_providers: list[Any] = []
+        self.calls: list[Any] = []
+
+    def create_session(self, *, session_id: str | None = None) -> AgentSession:
+        return AgentSession(session_id=session_id)
+
+    def run(
+        self,
+        messages: Any = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        del session, function_invocation_kwargs, client_kwargs
+        assert stream is True
+        self.calls.append(messages)
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("ok")], role="assistant")
+
+        return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+
 class _RecordingHistoryClient(BaseChatClient):
     def __init__(self) -> None:
         super().__init__()
         self.calls: list[list[Message]] = []
+        self.options: list[dict[str, Any]] = []
 
     def _inner_get_response(
         self,
@@ -181,12 +222,51 @@ class _RecordingHistoryClient(BaseChatClient):
         options: Mapping[str, Any],
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
-        del options, kwargs
+        del kwargs
         assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
         self.calls.append(list(messages))
+        self.options.append(dict(options))
 
         async def stream_response() -> AsyncIterator[ChatResponseUpdate]:
             yield ChatResponseUpdate(contents=[Content.from_text("recorded")], role="assistant")
+
+        return ResponseStream(stream_response(), finalizer=ChatResponse.from_updates)
+
+
+class _ServiceStorageRecordingClient(BaseChatClient):
+    """Record service-storage options and mimic a client that returns a conversation ID."""
+
+    STORES_BY_DEFAULT = True
+
+    def __init__(self, *, honors_store: bool = True) -> None:
+        super().__init__()
+        self._honors_store = honors_store
+        self.calls: list[list[Message]] = []
+        self.store_options: list[Any] = []
+        self.conversation_ids: list[Any] = []
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        del kwargs
+        assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
+        self.calls.append(list(messages))
+        self.store_options.append(options.get("store"))
+        self.conversation_ids.append(options.get("conversation_id"))
+        stores_response = options.get("store") is not False if self._honors_store else True
+        conversation_id = "service-thread-1" if stores_response else None
+
+        async def stream_response() -> AsyncIterator[ChatResponseUpdate]:
+            yield ChatResponseUpdate(
+                contents=[Content.from_text("recorded")],
+                role="assistant",
+                conversation_id=conversation_id,
+            )
 
         return ResponseStream(stream_response(), finalizer=ChatResponse.from_updates)
 
@@ -286,6 +366,92 @@ def _make_server(agent: Any, **kwargs: Any) -> ResponsesHostServer:
         provider.get_store.return_value = cast(SessionStore | None, session_store)
         server._session_storage_provider = provider  # pyright: ignore[reportPrivateUsage]
     return server
+
+
+async def test_output_item_tracker_emits_native_refusal_events_for_marked_text() -> None:
+    stream = ResponseEventStream(response_id="resp_refusal")
+    stream.emit_created()
+    stream.emit_in_progress()
+    tracker = _OutputItemTracker(stream)
+    refusal = Content.from_text(
+        "I cannot help.",
+        additional_properties={"model_output_kind": "refusal"},
+    )
+    events: list[Any] = []
+
+    async for event in tracker.handle(refusal, message_id="msg_refusal"):
+        events.append(event)
+    events.extend(tracker.close())
+
+    event_types = [event.get("type") if isinstance(event, Mapping) else event.type for event in events]
+    assert event_types == [
+        "response.output_item.added",
+        "response.content_part.added",
+        "response.refusal.delta",
+        "response.refusal.done",
+        "response.content_part.done",
+        "response.output_item.done",
+    ]
+
+
+async def test_output_item_tracker_keeps_mixed_text_and_refusal_in_one_message() -> None:
+    stream = ResponseEventStream(response_id="resp_mixed")
+    stream.emit_created()
+    stream.emit_in_progress()
+    tracker = _OutputItemTracker(stream)
+    events: list[Any] = []
+
+    for content in [
+        Content.from_text("Partial answer."),
+        Content.from_text(
+            "I cannot continue.",
+            additional_properties={"model_output_kind": "refusal"},
+        ),
+    ]:
+        async for event in tracker.handle(content, message_id="msg_mixed"):
+            events.append(event)
+    events.extend(tracker.close())
+
+    event_types = [event.get("type") if isinstance(event, Mapping) else event.type for event in events]
+    assert event_types == [
+        "response.output_item.added",
+        "response.content_part.added",
+        "response.output_text.delta",
+        "response.output_text.done",
+        "response.content_part.done",
+        "response.content_part.added",
+        "response.refusal.delta",
+        "response.refusal.done",
+        "response.content_part.done",
+        "response.output_item.done",
+    ]
+    output_items = [event["item"] for event in events if isinstance(event, Mapping) and event.get("item") is not None]
+    assert {item["id"] for item in output_items} == {output_items[0]["id"]}
+    assert [part["type"] for part in output_items[-1]["content"]] == ["output_text", "refusal"]
+    part_events = [
+        event for event in events if isinstance(event, Mapping) and event.get("type") == "response.content_part.added"
+    ]
+    assert [(event["content_index"], event["part"]["type"]) for event in part_events] == [
+        (0, "output_text"),
+        (1, "refusal"),
+    ]
+
+
+async def test_item_to_message_marks_refusal_text() -> None:
+    message = await _item_to_message(
+        cast(
+            Item,
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "refusal", "refusal": "I cannot help."}],
+            },
+        )
+    )
+
+    assert message.contents[0].type == "text"
+    assert message.contents[0].text == "I cannot help."
+    assert message.contents[0].additional_properties == {"model_output_kind": "refusal"}
 
 
 class _CapturingASGITransport(httpx.AsyncBaseTransport):
@@ -551,9 +717,113 @@ async def test_agui_service_storage_response_mode_persists_provider_continuation
     assert [message["role"] for message in second_snapshot] == ["user", "assistant", "user", "assistant"]
 
 
+async def test_agui_stateless_store_true_does_not_restore_provider_continuation() -> None:
+    """Stateless snapshot replay must not combine full history with a stored response id."""
+    hosted_agent_backend = _make_agent(
+        response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ACK")])])
+    )
+    transport = _CapturingASGITransport(_make_server(hosted_agent_backend))
+    responses_client = AsyncOpenAI(
+        api_key="test-key",
+        base_url="http://test",
+        http_client=httpx.AsyncClient(transport=transport),
+        max_retries=0,
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    runner = AgentFrameworkAgent(
+        agent=Agent(
+            client=OpenAIChatClient(  # ty: ignore[invalid-argument-type]
+                model="test-model",
+                async_client=responses_client,
+            ),
+            default_options={"store": True},
+        ),
+        snapshot_store=store,
+    )
+    thread_id = "stateless-thread"
+
+    try:
+        first_events = [
+            event
+            async for event in runner.run({
+                "thread_id": thread_id,
+                "__ag_ui_snapshot_scope": "test",
+                "messages": [{"role": "user", "content": "first"}],
+            })
+        ]
+        first_snapshot = next(
+            event.model_dump(by_alias=True)["messages"]
+            for event in reversed(first_events)
+            if getattr(event, "type", None) == "MESSAGES_SNAPSHOT"
+        )
+        second_events = [
+            event
+            async for event in runner.run({
+                "thread_id": thread_id,
+                "__ag_ui_snapshot_scope": "test",
+                "messages": [*first_snapshot, {"role": "user", "content": "second"}],
+            })
+        ]
+    finally:
+        await responses_client.close()
+
+    assert all("conversation" not in payload for payload in transport.payloads)
+    assert all("previous_response_id" not in payload for payload in transport.payloads)
+    assert [item["role"] for item in transport.payloads[1]["input"]] == ["user", "assistant", "user"]
+    assert not [event for event in second_events if getattr(event, "type", None) == "RUN_ERROR"]
+    stored = await store.get(scope="test", thread_id=thread_id)
+    assert stored is not None
+    assert stored.session_state is None
+
+
 def _sse_event_types(events: list[dict[str, Any]]) -> list[str]:
     """Extract event type strings from parsed SSE events."""
     return [e["event"] for e in events]
+
+
+# endregion
+
+
+# region Serialization Helpers
+
+
+class TestSerializationHelpers:
+    def test_json_safe_to_str_preserves_structured_conversion_and_falls_back_to_string(self) -> None:
+        @dataclass
+        class DataclassValue:
+            count: int
+
+        class ToDictValue:
+            def to_dict(self) -> dict[str, bool]:
+                return {"ok": False}
+
+        class SerializationErrorValue:
+            def to_dict(self) -> dict[str, Any]:
+                raise ValueError("unsupported structure")
+
+            def __str__(self) -> str:
+                return "serialization-error"
+
+        class UnexpectedErrorValue:
+            def to_dict(self) -> dict[str, Any]:
+                raise RuntimeError("unexpected conversion failure")
+
+        cyclic: list[Any] = []
+        cyclic.append(cyclic)
+
+        assert json.loads(_json_safe_to_str(DataclassValue(count=0))) == {"count": 0}
+        assert json.loads(_json_safe_to_str(ToDictValue())) == {"ok": False}
+        assert json.loads(_json_safe_to_str(Path("result.txt"))) == "result.txt"
+        for value in (cyclic, {("kind",): "value"}, SerializationErrorValue()):
+            assert json.loads(_json_safe_to_str(value)) == str(value)
+        with pytest.raises(RuntimeError, match="unexpected conversion failure"):
+            _json_safe_to_str(UnexpectedErrorValue())
+
+    def test_stringify_mcp_output_extracts_only_text_content_mappings(self) -> None:
+        assert _stringify_mcp_output({"text": "ok"}) == "ok"
+        assert _stringify_mcp_output({"type": "text", "text": "ok", "annotations": {"priority": 0}}) == "ok"
+        assert json.loads(_stringify_mcp_output({"text": "ok", "count": 0})) == {"text": "ok", "count": 0}
+        assert _stringify_mcp_output([{"type": "text", "text": "first"}, {"text": "second"}]) == "firstsecond"
 
 
 # endregion
@@ -619,8 +889,71 @@ class TestResponsesHostServerInit:
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
         agent.context_providers = [hp]
-        with pytest.raises(RuntimeError, match="history provider"):
+        with pytest.raises(RuntimeError, match="HistoryProvider"):
             ResponsesHostServer(agent)
+
+    def test_init_allows_history_provider_with_load_messages_for_agent_history(self) -> None:
+        hp = InMemoryHistoryProvider()
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.context_providers = [hp]
+
+        ResponsesHostServer(agent, history_source="agent")
+
+        assert agent.context_providers == [hp]
+
+    def test_init_rejects_invalid_history_source(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+
+        with pytest.raises(ValueError, match="history_source"):
+            ResponsesHostServer(agent, history_source=cast(Any, "invalid"))
+
+    @pytest.mark.parametrize("option_name", ["conversation_id", "previous_response_id", "conversation"])
+    def test_init_rejects_default_service_continuation_for_agent_server_history(self, option_name: str) -> None:
+        agent = Agent(
+            client=_ServiceStorageRecordingClient(),
+            default_options=cast(Any, {option_name: "service-thread"}),
+        )
+
+        with pytest.raises(RuntimeError, match=option_name):
+            ResponsesHostServer(agent)
+
+    def test_init_allows_default_conversation_id_for_agent_history(self) -> None:
+        agent = Agent(
+            client=_ServiceStorageRecordingClient(),
+            default_options={"conversation_id": "service-thread"},  # pyrefly: ignore[bad-argument-type]
+        )
+
+        ResponsesHostServer(agent, history_source="agent")
+
+    def test_init_rejects_custom_agent_for_agent_server_history(self) -> None:
+        with pytest.raises(RuntimeError, match="history_source='agent'"):
+            ResponsesHostServer(cast(Any, _StrictCustomAgent()))
+
+    def test_init_requires_storage_capability_for_agent_server_history(self) -> None:
+        agent = _make_agent()
+        agent.client = object()
+
+        with pytest.raises(RuntimeError, match="STORES_BY_DEFAULT"):
+            ResponsesHostServer(agent)
+
+    def test_failed_init_does_not_mutate_agent(self) -> None:
+        agent = Agent(
+            client=_RecordingHistoryClient(),
+            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+        )
+
+        with pytest.raises(RuntimeError, match="resilient_background"):
+            ResponsesHostServer(
+                agent,
+                options=ResponsesServerOptions(resilient_background=True),
+            )
+
+        assert agent.default_options["store"] is True
+        assert agent.context_providers == []
 
     def test_init_rejects_resilient_background_for_non_workflow_agent(self, tmp_path: Path) -> None:
         agent = _make_agent(
@@ -738,6 +1071,139 @@ class TestAgentSessionPersistence:
         assert stored is not None
         assert InMemoryHistoryProvider.DEFAULT_SOURCE_ID not in stored.state
         assert "_foundry_responses_history" not in stored.state
+
+    async def test_agent_server_history_disables_service_storage(self) -> None:
+        client = _ServiceStorageRecordingClient()
+        agent = Agent(
+            client=client,
+            name="Service Storage Agent",
+            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+        )
+        store = SessionStore()
+        server = _make_server(agent, session_store=store)
+
+        first = await _post(server, input_text="first")
+        second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
+
+        assert second.json()["status"] == "completed"
+        assert [[message.text for message in call] for call in client.calls] == [
+            ["first"],
+            ["first", "recorded", "second"],
+        ]
+        assert client.store_options == [False, False]
+        assert client.conversation_ids == [None, None]
+
+        stored = await store.get(second.json()["id"])
+        assert stored is not None
+        assert stored.service_session_id is None
+
+    async def test_agent_server_history_removes_store_for_non_storing_client(self) -> None:
+        client = _RecordingHistoryClient()
+        agent = Agent(
+            client=client,
+            name="Non-Storing Agent",
+            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+        )
+        server = _make_server(agent, session_store=SessionStore())
+
+        response = await _post(server, input_text="first")
+
+        assert response.json()["status"] == "completed"
+        assert "store" not in agent.default_options
+        assert "store" not in client.options[0]
+
+    async def test_agent_history_does_not_forward_runtime_options_to_custom_agent(self) -> None:
+        agent = _StrictCustomAgent()
+        server = _make_server(agent, session_store=SessionStore(), history_source="agent")
+
+        response = await _post(server, input_text="first", temperature=0.5)
+
+        assert response.json()["status"] == "completed"
+        assert len(agent.calls) == 1
+
+    async def test_agent_server_history_clears_restored_service_session_id(self) -> None:
+        client = _ServiceStorageRecordingClient()
+        agent = Agent(client=client, name="Migrated Agent")
+        store = SessionStore()
+        server = _make_server(agent, session_store=store)
+        first = await _post(server, input_text="first")
+        first_id = first.json()["id"]
+        stale_session = await store.get(first_id)
+        assert stale_session is not None
+        stale_session.service_session_id = "contaminated-service-thread"
+        await store.set(first_id, stale_session)
+        client.store_options.clear()
+        client.conversation_ids.clear()
+
+        response = await _post(server, input_text="next", previous_response_id=first_id)
+
+        assert response.json()["status"] == "completed"
+        assert client.store_options == [False]
+        assert client.conversation_ids == [None]
+        stored = await store.get(response.json()["id"])
+        assert stored is not None
+        assert stored.service_session_id is None
+
+    async def test_agent_history_preserves_service_storage(self) -> None:
+        client = _ServiceStorageRecordingClient()
+        agent = Agent(
+            client=client,
+            name="Agent Managed Service Storage",
+            default_options={"store": True},  # pyrefly: ignore[bad-argument-type]
+        )
+        store = SessionStore()
+        server = _make_server(agent, session_store=store, history_source="agent")
+
+        first = await _post(server, input_text="first")
+        second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
+
+        assert second.json()["status"] == "completed"
+        assert [[message.text for message in call] for call in client.calls] == [["first"], ["second"]]
+        assert client.store_options == [True, True]
+        assert client.conversation_ids == [None, "service-thread-1"]
+        stored = await store.get(second.json()["id"])
+        assert stored is not None
+        assert stored.service_session_id == "service-thread-1"
+
+    async def test_agent_history_uses_in_memory_history_from_session_store(self) -> None:
+        client = _RecordingHistoryClient()
+        history = InMemoryHistoryProvider()
+        agent = Agent(
+            client=client,
+            name="Agent Managed In-Memory History",
+            context_providers=[history],
+            default_options={"store": False},  # pyrefly: ignore[bad-argument-type]
+        )
+        store = SessionStore()
+        server = _make_server(agent, session_store=store, history_source="agent")
+
+        first = await _post(server, input_text="first")
+        second = await _post(server, input_text="second", previous_response_id=first.json()["id"])
+
+        assert second.json()["status"] == "completed"
+        assert [[message.text for message in call] for call in client.calls] == [
+            ["first"],
+            ["first", "recorded", "second"],
+        ]
+        stored = await store.get(second.json()["id"])
+        assert stored is not None
+        assert history.source_id in stored.state
+
+    async def test_client_that_ignores_disabled_storage_fails_without_saving_session(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        client = _ServiceStorageRecordingClient(honors_store=False)
+        agent = Agent(client=client, name="Ignores Store Agent")
+        store = SessionStore()
+        server = _make_server(agent, session_store=store)
+
+        with caplog.at_level(logging.ERROR):
+            response = await _post(server, input_text="first")
+
+        assert response.json()["status"] == "failed"
+        assert "stored this turn server-side" in caplog.text
+        assert await store.get(response.json()["id"]) is None
 
     async def test_per_service_call_persistence_preserves_function_loop_history(self) -> None:
         provider = _PerServiceCallHistoryProvider()
@@ -1165,6 +1631,90 @@ class TestNonStreaming:
         assert "function_call_output" in types
         assert "message" in types
 
+    @pytest.mark.parametrize(
+        ("result", "expected_output"),
+        [
+            (0, "0"),
+            (False, "false"),
+            ({"count": 0, "ok": False}, '{"count": 0, "ok": false}'),
+        ],
+    )
+    async def test_function_result_serializes_json_safely(self, result: Any, expected_output: str) -> None:
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[Content.from_function_call("call_1", "get_value", arguments="{}")],
+                    ),
+                    Message(role="tool", contents=[Content.from_function_result("call_1", result=result)]),
+                ]
+            )
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, stream=False)
+
+        assert resp.status_code == 200
+        result_item = next(item for item in resp.json()["output"] if item["type"] == "function_call_output")
+        assert result_item["output"] == expected_output
+
+    async def test_function_result_serialization_failure_falls_back_to_json_string(self) -> None:
+        cyclic: dict[str, Any] = {}
+        cyclic["self"] = cyclic
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[Content.from_function_call("call_1", "get_value", arguments="{}")],
+                    ),
+                    Message(
+                        role="tool",
+                        contents=[Content("function_result", call_id="call_1", result=cyclic)],
+                    ),
+                ]
+            )
+        )
+
+        resp = await _post(_make_server(agent), stream=False)
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "completed"
+        result_item = next(item for item in resp.json()["output"] if item["type"] == "function_call_output")
+        assert json.loads(result_item["output"]) == str(cyclic)
+
+    async def test_shell_call_preserves_execution_limits(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_shell_tool_call(
+                                call_id="shell_1",
+                                commands=["python --version"],
+                                timeout_ms=30_000,
+                                max_output_length=4096,
+                                status="completed",
+                            )
+                        ],
+                    )
+                ]
+            )
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, stream=False)
+
+        assert resp.status_code == 200
+        shell_item = next(item for item in resp.json()["output"] if item["type"] == "shell_call")
+        assert shell_item["action"] == {
+            "commands": ["python --version"],
+            "timeout_ms": 30_000,
+            "max_output_length": 4096,
+        }
+
     async def test_hosted_mcp_call_and_result_persist_as_single_mcp_call(self) -> None:
         agent = _make_agent(
             response=AgentResponse(
@@ -1208,6 +1758,62 @@ class TestNonStreaming:
         assert len(mcp_items) == 1
         assert mcp_items[0]["id"] == "mcp_abc123"
         assert mcp_items[0]["output"] == "found 10 cats"
+
+    @pytest.mark.parametrize(
+        ("output", "expected_output"),
+        [
+            ({"count": 0, "ok": False}, {"count": 0, "ok": False}),
+            ({"text": "ok", "count": 0}, {"text": "ok", "count": 0}),
+            (Path("result.txt"), "result.txt"),
+            ({("kind",): "value"}, "{('kind',): 'value'}"),
+        ],
+    )
+    async def test_mcp_result_serialization_matches_with_and_without_correlated_call(
+        self, output: Any, expected_output: Any
+    ) -> None:
+        correlated_agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_mcp_server_tool_call(
+                                call_id="mcp_correlated",
+                                tool_name="search",
+                                server_name="api_specs",
+                                arguments="{}",
+                            )
+                        ],
+                    ),
+                    Message(
+                        role="tool",
+                        contents=[Content.from_mcp_server_tool_result(call_id="mcp_correlated", output=output)],
+                    ),
+                ]
+            )
+        )
+        uncorrelated_agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="tool",
+                        contents=[Content.from_mcp_server_tool_result(call_id="mcp_uncorrelated", output=output)],
+                    )
+                ]
+            )
+        )
+
+        correlated_response = await _post(_make_server(correlated_agent), stream=False)
+        uncorrelated_response = await _post(_make_server(uncorrelated_agent), stream=False)
+
+        assert correlated_response.status_code == 200
+        assert uncorrelated_response.status_code == 200
+        correlated_item = next(item for item in correlated_response.json()["output"] if item["type"] == "mcp_call")
+        uncorrelated_item = next(
+            item for item in uncorrelated_response.json()["output"] if item["type"] == "custom_tool_call_output"
+        )
+        assert correlated_item["output"] == uncorrelated_item["output"]
+        assert json.loads(correlated_item["output"]) == expected_output
 
     async def test_reasoning_content(self) -> None:
         reasoning_id = "rs_576d207b35d96b3200pkcXkMwXAij920Wcv7WhRXiMPiLdOA63"
@@ -1842,6 +2448,20 @@ class TestOutputItemToMessage:
         assert msg.contents[0].call_id == "call_1"
         assert msg.contents[0].result == "sunny"
 
+    async def test_function_call_output_structured_result_is_json(self) -> None:
+        item = cast(
+            OutputItem,
+            {
+                "type": "function_call_output",
+                "call_id": "call_2",
+                "output": {"count": 0, "ok": False},
+            },
+        )
+
+        msg = await _output_item_to_message(item)
+
+        assert json.loads(msg.contents[0].result) == {"count": 0, "ok": False}
+
     async def test_function_call_output_without_call_id_raises(self) -> None:
         from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
 
@@ -1988,6 +2608,8 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "shell_tool_call"
         assert msg.contents[0].commands == ["ls", "-la"]
         assert msg.contents[0].call_id == "call_sc"
+        assert msg.contents[0].timeout_ms == 5000
+        assert msg.contents[0].max_output_length == 1024
 
     async def test_shell_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import (
@@ -2022,13 +2644,19 @@ class TestOutputItemToMessage:
             "type": "local_shell_call",
             "id": "lsc-1",
             "call_id": "call_lsc",
-            "action": LocalShellExecAction({"type": "exec", "command": ["echo", "hello"], "env": {}}),
+            "action": LocalShellExecAction({
+                "type": "exec",
+                "command": ["echo", "hello"],
+                "timeout_ms": 5000,
+                "env": {},
+            }),
             "status": "completed",
         })
         msg = await _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "shell_tool_call"
         assert msg.contents[0].commands == ["echo", "hello"]
+        assert msg.contents[0].timeout_ms == 5000
 
     async def test_local_shell_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemLocalShellToolCallOutput
@@ -2089,6 +2717,9 @@ class TestOutputItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "computer_use"
+        arguments = msg.contents[0].arguments
+        assert isinstance(arguments, str)
+        assert json.loads(arguments) == {"type": "click"}
         assert msg.contents[0].informational_only is True
 
     async def test_computer_call_output(self) -> None:
@@ -2107,6 +2738,10 @@ class TestOutputItemToMessage:
         assert msg.role == "tool"
         assert msg.contents[0].type == "function_result"
         assert msg.contents[0].call_id == "call_cc"
+        assert json.loads(msg.contents[0].result) == {
+            "type": "computer_screenshot",
+            "image_url": "data:image/png;base64,abc",
+        }
 
     async def test_custom_tool_call(self) -> None:
         item = cast(
@@ -2182,6 +2817,13 @@ class TestOutputItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "apply_patch"
+        arguments = msg.contents[0].arguments
+        assert isinstance(arguments, str)
+        assert json.loads(arguments) == {
+            "type": "update_file",
+            "path": "file.py",
+            "diff": "+ new line",
+        }
         assert msg.contents[0].informational_only is True
 
     async def test_apply_patch_call_output(self) -> None:
@@ -2341,17 +2983,18 @@ class TestItemToMessage:
         assert msg.contents[0].call_id == "call_1"
         assert msg.contents[0].result == "sunny"
 
-    async def test_function_call_output_non_string(self) -> None:
+    @pytest.mark.parametrize("output", [0, False, {"count": 0, "ok": False}])
+    async def test_function_call_output_non_string(self, output: Any) -> None:
         from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
 
         item = cast(
             FunctionCallOutputItemParam,
-            {"type": "function_call_output", "call_id": "call_2", "output": 42},
+            {"type": "function_call_output", "call_id": "call_2", "output": output},
         )
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "tool"
-        assert msg.contents[0].result == "42"
+        assert json.loads(msg.contents[0].result) == output
 
     async def test_function_call_output_without_call_id_raises(self) -> None:
         from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
@@ -2511,6 +3154,8 @@ class TestItemToMessage:
         assert msg.contents[0].type == "shell_tool_call"
         assert msg.contents[0].commands == ["ls", "-la"]
         assert msg.contents[0].call_id == "call_sc"
+        assert msg.contents[0].timeout_ms == 5000
+        assert msg.contents[0].max_output_length == 1024
 
     async def test_shell_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import (
@@ -2544,7 +3189,12 @@ class TestItemToMessage:
             "type": "local_shell_call",
             "id": "lsc-1",
             "call_id": "call_lsc",
-            "action": LocalShellExecAction({"type": "exec", "command": ["echo", "hello"], "env": {}}),
+            "action": LocalShellExecAction({
+                "type": "exec",
+                "command": ["echo", "hello"],
+                "timeout_ms": 5000,
+                "env": {},
+            }),
             "status": "completed",
         })
         msg = await _item_to_message(item)
@@ -2552,6 +3202,7 @@ class TestItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "shell_tool_call"
         assert msg.contents[0].commands == ["echo", "hello"]
+        assert msg.contents[0].timeout_ms == 5000
 
     async def test_local_shell_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ItemLocalShellToolCallOutput
@@ -2618,6 +3269,9 @@ class TestItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "computer_use"
+        arguments = msg.contents[0].arguments
+        assert isinstance(arguments, str)
+        assert json.loads(arguments) == {"type": "click"}
         assert msg.contents[0].informational_only is True
 
     async def test_computer_call_output(self) -> None:
@@ -2636,6 +3290,10 @@ class TestItemToMessage:
         assert msg.role == "tool"
         assert msg.contents[0].type == "function_result"
         assert msg.contents[0].call_id == "call_cc"
+        assert json.loads(msg.contents[0].result) == {
+            "type": "computer_screenshot",
+            "image_url": "data:image/png;base64,abc",
+        }
 
     async def test_custom_tool_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemCustomToolCall
@@ -2732,6 +3390,13 @@ class TestItemToMessage:
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
         assert msg.contents[0].name == "apply_patch"
+        arguments = msg.contents[0].arguments
+        assert isinstance(arguments, str)
+        assert json.loads(arguments) == {
+            "type": "update_file",
+            "path": "file.py",
+            "diff": "+ new line",
+        }
         assert msg.contents[0].informational_only is True
 
     async def test_apply_patch_call_output(self) -> None:
@@ -2783,6 +3448,9 @@ def _make_multi_response_agent(
     agent.name = "Test Agent"
     agent.description = "A mock agent for testing"
     agent.context_providers = []
+    agent.default_options = {}
+    agent.client = MagicMock()
+    agent.client.STORES_BY_DEFAULT = False
 
     def create_session(*, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
@@ -4175,6 +4843,7 @@ class TestOAuthConsentSurfacing:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "incomplete"
+        assert body.get("incomplete_details") is None
 
         oauth_items = [it for it in body["output"] if it["type"] == "oauth_consent_request"]
         assert len(oauth_items) == 1
@@ -4197,6 +4866,8 @@ class TestOAuthConsentSurfacing:
         assert types[0] == "response.created"
         assert types[1] == "response.in_progress"
         assert types[-1] == "response.incomplete"
+        incomplete = next(event for event in events if event["event"] == "response.incomplete")
+        assert incomplete["data"]["response"].get("incomplete_details") is None
 
         added = [e for e in events if e["event"] == "response.output_item.added"]
         oauth_added = [e for e in added if e["data"]["item"]["type"] == "oauth_consent_request"]
@@ -4244,13 +4915,190 @@ class TestOAuthConsentSurfacing:
         agent.run.assert_not_called()
 
         # After the user authenticates, the next request enters successfully.
-        resp2 = await _post(server, input_text="second", stream=False)
+        resp2 = await _post(server, input_text="second", stream=False, previous_response_id=body1["id"])
         assert resp2.status_code == 200
         body2 = resp2.json()
         assert body2["status"] == "completed"
         assert any(it["type"] == "message" for it in body2["output"])
         assert agent.__aenter__.await_count == 2
         agent.run.assert_called_once()
+
+    async def test_connect_time_consent_preserves_an_existing_session(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hello!")])])
+        )
+        session_store = SessionStore()
+        server = _make_server(agent, session_store=session_store)
+
+        first = await _post(server, input_text="first", stream=False)
+        first_response_id = first.json()["id"]
+        session = await session_store.get(first_response_id)
+        assert session is not None
+        session.state["marker"] = "preserved"
+        await session_store.set(first_response_id, session)
+
+        await server._cleanup_agent()  # pyright: ignore[reportPrivateUsage]
+        agent.__aenter__.side_effect = _make_consent_error()
+        consent = await _post(
+            server,
+            input_text="second",
+            stream=False,
+            previous_response_id=first_response_id,
+        )
+        assert consent.json()["status"] == "incomplete"
+
+        preserved = await session_store.get(consent.json()["id"])
+        assert preserved is not None
+        assert preserved.state["marker"] == "preserved"
+
+    async def test_recovered_consent_is_tracked_and_not_emitted_twice(self) -> None:
+        from azure.ai.agentserver.responses._id_generator import IdGenerator
+        from azure.ai.agentserver.responses.aio import ResponseEventStream
+        from azure.ai.agentserver.responses.models import OAuthConsentRequestOutputItem, ResponseObject
+
+        stream = ResponseEventStream(response_id="response-1")
+        stream.emit_created()
+        stream.emit_in_progress()
+        oauth_item = OAuthConsentRequestOutputItem(
+            id=IdGenerator.new_id("oacr"),
+            response_id="response-1",
+            type="oauth_consent_request",
+            consent_link="https://consent.example.com/obo",
+            server_label="Foundry Toolbox",
+        )
+        builder = stream.add_output_item(oauth_item["id"])
+        builder.emit_added(oauth_item)
+        builder.emit_done(oauth_item)
+
+        recovered_response = cast(ResponseObject, stream.response)
+        recovered_stream = ResponseEventStream(response=recovered_response, response_id="response-1")
+        tracker = _OutputItemTracker(recovered_stream)
+        assert tracker.oauth_consent_requested
+
+        duplicate = Content.from_oauth_consent_request(
+            consent_link="https://consent.example.com/obo",
+            additional_properties={"server_label": "Foundry Toolbox"},
+        )
+        assert [event async for event in tracker.handle(duplicate)] == []
+
+    async def test_mid_run_consent_is_persisted_without_an_incomplete_reason(self) -> None:
+        raw_item = MagicMock()
+        raw_item.server_label = "Foundry Toolbox"
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_oauth_consent_request(
+                                consent_link="https://consent.example.com/obo",
+                                raw_representation=raw_item,
+                            )
+                        ],
+                    )
+                ]
+            )
+        )
+        response_store = InMemoryResponseProvider()
+        server = _make_server(agent, response_store=response_store)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "incomplete"
+        assert body.get("incomplete_details") is None
+
+        oauth_items = [item for item in body["output"] if item["type"] == "oauth_consent_request"]
+        assert len(oauth_items) == 1
+        assert oauth_items[0]["consent_link"] == "https://consent.example.com/obo"
+        assert oauth_items[0]["server_label"] == "Foundry Toolbox"
+
+    async def test_streaming_mid_run_consent_is_emitted_once_and_can_be_retried(self) -> None:
+        consent = Content.from_oauth_consent_request(
+            consent_link="https://consent.example.com/obo",
+            additional_properties={"server_label": "Foundry Toolbox"},
+        )
+
+        async def consent_updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[consent], role="assistant")
+            yield AgentResponseUpdate(contents=[consent], role="assistant")
+
+        async def success_updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("tool result")], role="assistant")
+
+        agent = _make_agent(stream_updates=[])
+        agent.run.side_effect = [
+            ResponseStream(consent_updates(), finalizer=AgentResponse.from_updates),
+            ResponseStream(success_updates(), finalizer=AgentResponse.from_updates),
+        ]
+        server = _make_server(agent)
+
+        first = await _post(server, input_text="first", stream=True)
+        assert first.status_code == 200
+        events = _parse_sse_events(first.text)
+        oauth_items = [
+            event
+            for event in events
+            if event["event"] == "response.output_item.added"
+            and event["data"]["item"]["type"] == "oauth_consent_request"
+        ]
+        assert len(oauth_items) == 1
+        incomplete = next(event for event in events if event["event"] == "response.incomplete")
+        assert incomplete["data"]["response"].get("incomplete_details") is None
+
+        response_id = incomplete["data"]["response"]["id"]
+        second = await _post(server, input_text="second", stream=False, previous_response_id=response_id)
+        assert second.status_code == 200
+        assert second.json()["status"] == "completed"
+        assert agent.run.call_count == 2
+
+    @pytest.mark.parametrize(
+        "consent_link",
+        [
+            "http://consent.example.com/obo",
+            "javascript:alert(1)",
+            "https://user@consent.example.com/obo",
+            "https://consent.example.com:invalid/obo",
+            "https://cons ent.example.com/obo",
+            "https://%zz.example.com/obo",
+            "https://%0d%0a.example.com/obo",
+            "https://[::::]/obo",
+            "https://[example.com]/obo",
+            "https://[::1]evil.com/obo",
+        ],
+    )
+    async def test_mid_run_consent_rejects_unsafe_links(self, consent_link: str) -> None:
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[Content.from_oauth_consent_request(consent_link=consent_link)],
+                    )
+                ]
+            )
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "failed"
+        assert not any(item["type"] == "oauth_consent_request" for item in body["output"])
+
+    async def test_connect_time_consent_rejects_unsafe_links(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.__aenter__.side_effect = _make_consent_error("javascript:alert(1)")
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "failed"
+        assert not any(item["type"] == "oauth_consent_request" for item in body["output"])
+        agent.run.assert_not_called()
 
 
 # endregion
@@ -4299,6 +5147,9 @@ class TestResponseFailedSurfacing:
         agent.name = "Test Agent"
         agent.description = "A mock agent for testing"
         agent.context_providers = []
+        agent.default_options = {}
+        agent.client = MagicMock()
+        agent.client.STORES_BY_DEFAULT = False
 
         def create_session(*, session_id: str | None = None) -> AgentSession:
             return AgentSession(session_id=session_id)
@@ -4347,6 +5198,9 @@ class TestResponseFailedSurfacing:
         agent.name = "Test Agent"
         agent.description = "A mock agent for testing"
         agent.context_providers = []
+        agent.default_options = {}
+        agent.client = MagicMock()
+        agent.client.STORES_BY_DEFAULT = False
 
         def create_session(*, session_id: str | None = None) -> AgentSession:
             return AgentSession(session_id=session_id)
