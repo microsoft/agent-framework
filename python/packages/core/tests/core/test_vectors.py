@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import AsyncIterable, Callable, Iterator, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import FrozenInstanceError, dataclass, field
 from decimal import Decimal
 from typing import Annotated, Any, ClassVar, Literal, cast
@@ -45,7 +46,7 @@ from agent_framework import (
 )
 from agent_framework._feature_stage import ExperimentalWarning
 from agent_framework._telemetry import FeatureIndex
-from agent_framework._vector_filters import filter_values_equal
+from agent_framework._vector_filters import _PARAM_UNSET, filter_values_equal
 from agent_framework._vectors import _VectorStoreRecordHandler as VectorStoreRecordHandler
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
 
@@ -1833,6 +1834,37 @@ def test_filter_model_rejects_invalid_shapes() -> None:
         Filter("text", "in", ("fixed", Param("dynamic", str)))
 
 
+@pytest.mark.parametrize("required", [False, True])
+async def test_param_without_default_preserves_unset_sentinel(required: bool) -> None:
+    def copy_value(value: Any) -> Any:
+        if value is _PARAM_UNSET:
+            raise TypeError("Cannot pickle 'Sentinel' object")
+        return deepcopy(value)
+
+    with patch("agent_framework._vector_filters.deepcopy", side_effect=copy_value):
+        param = Param("tenant", str, required=required)
+        assert not param.has_default
+        assert param.default is _PARAM_UNSET
+        assert deepcopy(param) is param
+        expression = Filter("text", "eq", param)
+        assert deepcopy(expression).value is param
+
+        collection = MockCollection()
+        tool = create_vector_search_tool(collection, filter=expression)
+        schema = tool.parameters()
+        assert schema["properties"]["tenant"] == {"type": "string"}
+        assert schema["required"] == (["query", "tenant"] if required else ["query"])
+
+        await tool(query="query", tenant="acme")
+        assert collection.last_search_filter == Filter("text", "eq", "acme")
+        if required:
+            with pytest.raises(TypeError, match="Missing required.*tenant"):
+                await tool(query="query")
+        else:
+            await tool(query="query")
+            assert collection.last_search_filter is None
+
+
 def test_param_generates_native_schema_and_validates_constraints() -> None:
     param = Param(
         "category",
@@ -2332,6 +2364,8 @@ async def test_search_tool_null_omission_is_opt_in_per_parameter() -> None:
     )
 
     assert not retained.omit_if_none
+    assert retained.has_default
+    assert retained.default is None
     await tool(query="query", text=None, native=None)
     assert collection.last_search_filter == FilterGroup("and", (Filter("text", "provider.nullable", None),))
     await tool(query="query")
@@ -2429,24 +2463,39 @@ async def test_search_tool_copies_mutable_param_values_per_invocation(supply_arg
     assert supplied == ["acme"]
 
 
-async def test_search_tool_deep_copies_supplied_mapping_values() -> None:
+@pytest.mark.parametrize("supply_argument", [False, True])
+async def test_search_tool_deep_copies_mapping_values(supply_argument: bool) -> None:
     class MutatingSearch:
         async def search(
             self, values: Any, *, filter: Filter | FilterGroup | None = None, **kwargs: Any
         ) -> SearchResults[SearchResponse[Record]]:
             assert isinstance(filter, Filter)
+            assert filter.value == {"tags": ["supplied" if supply_argument else "original"]}
             filter.value["tags"].append("mutated")
             return SearchResults([])
 
+    source_default = {"tags": ["original"]}
+    param = Param("metadata", dict[str, list[str]], default=source_default)
+    source_default["tags"].append("source mutation")
+    returned_default = param.default
+    returned_default["tags"].append("access mutation")
+    assert param.has_default
+    assert param.default == {"tags": ["original"]}
+    assert deepcopy(param) is param
+
     tool = create_vector_search_tool(
         cast(SupportsVectorSearch[Record], MutatingSearch()),
-        filter=Filter("metadata", "provider.native", Param("metadata", dict[str, list[str]])),
+        filter=Filter("metadata", "provider.native", param),
     )
-    supplied = {"tags": ["original"]}
+    tool.parameters()["properties"]["metadata"]["default"]["tags"].append("schema mutation")
+    supplied = {"tags": ["supplied"]}
+    arguments = {"metadata": supplied} if supply_argument else {}
 
-    await tool(query="query", metadata=supplied)
+    await tool(query="first", **arguments)
+    await tool(query="second", **arguments)
 
-    assert supplied == {"tags": ["original"]}
+    assert supplied == {"tags": ["supplied"]}
+    assert param.default == {"tags": ["original"]}
 
 
 async def test_runtime_operations_mark_vector_store_feature_usage() -> None:
