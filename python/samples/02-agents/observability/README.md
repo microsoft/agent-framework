@@ -172,6 +172,24 @@ configure_otel_providers(exporters=[exporter])
 enable_sensitive_telemetry()
 ```
 
+Or with [capsule-emit](https://github.com/action-state-group/capsule-emit/blob/main/docs/adapters/msft-agent-framework.md):
+
+```python
+# pip install "capsule-emit[msft-agent-framework]"
+from agent_framework import Agent
+
+from capsule_emit.adapters.msft_agent_framework import capsule_middleware
+
+# Writes a local, hash-chained ledger of each agent run and tool call it observes —
+# no account or endpoint to configure. See the docs for what it does and doesn't prove.
+agent = Agent(
+    chat_client,
+    tools=[...],
+    middleware=capsule_middleware(operator="acme-co", developer="my-agent@v1"),
+)
+```
+
+
 **4. Manual setup**
 
 For full control, set up providers and exporters yourself. See [advanced_manual_setup_console_output.py](./advanced_manual_setup_console_output.py) for a complete example that sends traces, logs, and metrics to the console. The `create_resource()` helper in `agent_framework.observability` can build a resource with the appropriate service name and version from environment variables (or sensible defaults), although the sample does not use it.
