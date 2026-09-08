@@ -10,7 +10,7 @@ This feature ports the vector store abstractions, embedding generator abstractio
 | Vector store collections | CRUD operations on vector store collections (upsert, get, delete) |
 | Vector search | Unified search interface with `search_type` parameter (`"vector"`, `"keyword_hybrid"`) |
 | Data model decorator | `@vectorstoremodel` decorator for defining vector store data models (supports Pydantic, dataclasses, plain classes, dicts) |
-| Agent tools | `create_search_tool`, `create_upsert_tool`, `create_get_tool`, `create_delete_tool` for agent-usable vector store operations |
+| Agent tools | `create_vector_search_tool`, `create_upsert_tool`, `create_get_tool`, `create_delete_tool` for agent-usable vector store operations |
 | In-memory store | Zero-dependency vector store for testing and development |
 | 13+ connectors | Azure AI Search, Qdrant, Redis, PostgreSQL, MongoDB, Cosmos DB, Pinecone, Chroma, Weaviate, Oracle, SQL Server, FAISS |
 
@@ -36,29 +36,52 @@ This feature ports the vector store abstractions, embedding generator abstractio
   - `SupportsVectorUpsert` / `SupportsVectorSearch` — Protocols for duck-typing (follows `Supports<Capability>` naming convention)
   - `BaseVectorCollection` / `BaseVectorSearch` — ABC base classes for implementations
   - `BaseVectorStore` — ABC base class for store operations (factory for collections, no protocol needed)
-- **TypeVar naming convention**: `ModelT`, `KeyT`, `FilterT` (suffix T, per AF standard)
+- **TypeVar naming convention**: `ModelT`, `KeyT` (suffix T, per AF standard)
 - **Support Pydantic for user-facing data models** — the `@vectorstoremodel` decorator and `VectorStoreCollectionDefinition` should work with Pydantic models, dataclasses, plain classes, and dicts
 - **Remove SK-specific dependencies** — no `KernelBaseModel`, `KernelFunction`, `KernelParameterMetadata`, `kernel_function`, `PromptExecutionSettings`
 - **Embedding types in `_types.py`**, embedding protocol/base class in `_clients.py`
-- **All vector store specific types, enums, protocols, base classes** in `_vectors.py`
+- **Portable filters** are data-only operation inputs in `_vector_filters.py`; no Python source or AST translation
+- **Dependency-free local storage** is isolated in `_in_memory.py`
+- **Vector store definitions, protocols, and base classes** remain in `_vectors.py`
 - **Error handling** uses AF's exception hierarchy (e.g., `IntegrationException` variants)
+
+### Vector Filter Representation
+
+The original Phase 3 design accepted callable or string lambdas, recovered
+their source with `inspect`, parsed the source into an AST, and delegated
+translation to each connector. Phase 4 replaces that experimental model before
+connector implementations depend on it.
+
+Options considered:
+
+- **Lambda source and connector-specific AST translation** — concise authoring,
+  but brittle across Python execution contexts, vulnerable to semantic drift,
+  and carries security concerns when evaluated locally.
+- **A closed class hierarchy with one type per operation** — strongly typed,
+  but every provider-specific capability would require another core type.
+- **A small data-only tree with namespaced provider extensions** — chosen.
+  `Filter` represents a field, operator, and value; `FilterGroup` provides
+  explicit AND, OR, and NOT composition; `Param` marks model-set values when
+  creating a search tool. Common operators have shared semantics, while
+  namespaced operators let connectors add structured provider capabilities
+  without accepting raw query source.
 
 ### Package Structure
 - **Embedding types** (`Embedding`, `GeneratedEmbeddings`, `EmbeddingGenerationOptions`) in `agent_framework/_types.py`
 - **Embedding protocol + base class** (`SupportsGetEmbeddings`, `BaseEmbeddingClient`) in `agent_framework/_clients.py`
-- **All vector store specific code** in a new `agent_framework/_vectors.py` module — this includes:
-  - Enums: `FieldTypes`, `IndexKind`, `DistanceFunction`
+- **Vector store abstractions** in `agent_framework/_vectors.py` — this includes:
+  - String literal aliases: `FieldTypes`, `IndexKind`, `DistanceFunction`
   - `VectorStoreField`, `VectorStoreCollectionDefinition`
-  - `SearchOptions`, `SearchResponse`, `RecordFilterOptions`
+  - `SearchResponse`, `SearchResults`, and explicit CRUD/search keyword arguments
   - `@vectorstoremodel` decorator
-  - Serialization/deserialization protocols
-  - `VectorStoreRecordHandler`, `BaseVectorCollection`, `BaseVectorStore`, `BaseVectorSearch`
+  - `register_vectorstoremodel` with msgspec-backed default codecs and optional custom codecs
+  - Internal record conversion shared by `BaseVectorCollection` and `BaseVectorSearch`
   - `SupportsVectorUpsert`, `SupportsVectorSearch` protocols
 - **OpenAI embeddings** in `agent_framework/openai/` (built into core, like OpenAI chat)
 - **Azure OpenAI embeddings** in `agent_framework/azure/` (built into core, follows `AzureOpenAIChatClient` pattern)
 - **Each vector store connector** in its own AF package under `packages/`
-- **In-memory store** in core (no external deps)
-- **TextSearch and its implementations** (Brave, Google) — last phase, separate work
+- **Portable filters** (`Filter`, `FilterGroup`, `Param`) in `agent_framework/_vector_filters.py`
+- **In-memory store** in `agent_framework/_in_memory.py`
 
 ## Naming: SK → AF
 
@@ -69,9 +92,9 @@ This feature ports the vector store abstractions, embedding generator abstractio
 | `VectorStoreCollection` | `BaseVectorCollection` | Drop redundant `Store`, add `Base` prefix per AF pattern |
 | `VectorStore` | `BaseVectorStore` | Add `Base` prefix per AF pattern |
 | `VectorSearch` | `BaseVectorSearch` | Add `Base` prefix per AF pattern |
-| `VectorSearchOptions` | `SearchOptions` | Shorter — context is already vector search |
+| `VectorSearchOptions` | Explicit `search()` keyword arguments | Avoid an options object that only forwards values |
 | `VectorSearchResult` | `SearchResponse` | Align with `ChatResponse`/`AgentResponse` |
-| `GetFilteredRecordOptions` | `RecordFilterOptions` | Shorter, more natural |
+| `GetFilteredRecordOptions` | Explicit `get()` keyword arguments | Avoid an options object that only forwards values |
 | `EmbeddingGeneratorBase` | `BaseEmbeddingClient` | Matches AF `BaseChatClient` pattern |
 | `VectorStoreCollectionProtocol` | `SupportsVectorUpsert` | AF `Supports*` naming convention |
 | `VectorSearchProtocol` | `SupportsVectorSearch` | AF `Supports*` naming convention |
@@ -88,7 +111,6 @@ This feature ports the vector store abstractions, embedding generator abstractio
 | `@vectorstoremodel` | `_vectors.py` |
 | `VectorStoreField` | `_vectors.py` |
 | `VectorStoreCollectionDefinition` | `_vectors.py` |
-| `VectorStoreRecordHandler` | `_vectors.py` |
 | `FieldTypes` | `_vectors.py` |
 | `IndexKind` | `_vectors.py` |
 | `DistanceFunction` | `_vectors.py` |
@@ -107,7 +129,7 @@ This feature ports the vector store abstractions, embedding generator abstractio
 | `EmbeddingTelemetryLayer` | `observability.py` | MRO-based OTel tracing for embeddings |
 | `SupportsVectorUpsert` | `_vectors.py` | Protocol for collection CRUD |
 | `SupportsVectorSearch` | `_vectors.py` | Protocol for vector search |
-| `create_search_tool` | `_vectors.py` | Creates AF `FunctionTool` from vector search |
+| `create_vector_search_tool` | `_vectors.py` | Creates AF `FunctionTool` from vector search |
 
 ## Source Files Reference (SK → AF mapping)
 
@@ -187,45 +209,71 @@ This feature ports the vector store abstractions, embedding generator abstractio
 ### Phase 3: Core Vector Store Abstractions
 **Goal:** Establish all vector store types, enums, the decorator, collection definition, and base classes.
 **Mergeable:** Yes — adds new abstractions, no breaking changes.
+**Feature stage:** Experimental (`VECTOR_STORES`).
 
-#### 3.1 — Vector store enums and field types in `_vectors.py`
-- `FieldTypes` enum: `KEY`, `VECTOR`, `DATA`
-- `IndexKind` enum: `HNSW`, `FLAT`, `IVF_FLAT`, `DISK_ANN`, `QUANTIZED_FLAT`, `DYNAMIC`, `DEFAULT`
-- `DistanceFunction` enum: `COSINE_SIMILARITY`, `COSINE_DISTANCE`, `DOT_PROD`, `EUCLIDEAN_DISTANCE`, `EUCLIDEAN_SQUARED_DISTANCE`, `MANHATTAN`, `HAMMING`, `DEFAULT`
-- No `SearchType` enum — use `Literal["vector", "keyword_hybrid"]` instead, per AF convention of avoiding unnecessary imports
+#### 3.1 — Vector store literal aliases and field types in `_vectors.py`
+- `FieldTypes`: `Literal["key", "vector", "data"]`
+- `IndexKind`: common literal values for IDE guidance plus open provider-defined strings
+- `DistanceFunction`: common literal values, including negative dot product, plus open provider-defined strings
+- `SearchType`: `Literal["vector", "keyword_hybrid"]`
 - `VectorStoreField` plain class (not Pydantic)
+  - Key fields can opt into store-generated keys
+  - Provider annotations are copied on construction and carry mutable connector-specific field configuration
 - `VectorStoreCollectionDefinition` class (not Pydantic internally, but supports Pydantic models as input)
-- `SearchOptions` plain class — includes `score_threshold: float | None` for filtering results by score (see note below)
-- `SearchResponse` generic class
-- `RecordFilterOptions` plain class
+- `SearchResponse` generic `TypedDict`
+- `SearchResults` generic result container
+- Explicit keyword arguments on `get()` and `search()` instead of options classes
 - `DISTANCE_FUNCTION_DIRECTION_HELPER` dict
 
 #### 3.2 — `@vectorstoremodel` decorator
 - Port from SK, works with dataclasses, Pydantic models, plain classes, and dicts
+- Plain classes can declare `VectorStoreField` metadata on annotated `__init__` parameters, matching `@tool`
 - Sets `__vectorstoremodel__` and `__vectorstoremodel_definition__` on the class
 - Remove SK-specific `kernel` prefix (`__kernel_vectorstoremodel__` → `__vectorstoremodel__`)
 
-#### 3.3 — Serialization/deserialization protocols
-- `SerializeMethodProtocol`, `ToDictFunctionProtocol`, `FromDictFunctionProtocol`, etc.
-- Port the record handler logic but without Pydantic base class — use plain class or ABC
+#### 3.3 — Registered model codecs
+- `register_vectorstoremodel` registers one collection definition and encoder/decoder pair per model type
+- `@vectorstoremodel` creates the definition and registers msgspec-backed default codecs
+- Dictionary records provide their collection definition directly
+- DataFrames and other row containers convert to sequences of row mappings before using the batch API
+- Custom encoder and decoder callbacks can be overridden independently
+- Array-like values such as NumPy arrays serialize through their `tolist()` method without a NumPy dependency;
+  supply a custom decoder that calls `numpy.array` or `numpy.asarray` when the model should restore an array
 
 #### 3.4 — Vector store base classes in `_vectors.py`
-- `VectorStoreRecordHandler` — internal base class that handles serialization/deserialization between user data models and store-specific formats, plus embedding generation for vector fields. Both `BaseVectorCollection` and `BaseVectorSearch` extend this.
-- `BaseVectorCollection(VectorStoreRecordHandler)` — base for collections
+- `_VectorStoreRecordHandler` — private base class that handles record conversion and embedding generation
+- `BaseVectorCollection` — base for collections
   - Uses `SupportsGetEmbeddings` instead of `EmbeddingGeneratorBase`
   - Not a Pydantic model — use `__init__` with explicit params
-  - `upsert`, `get`, `delete`, `ensure_collection_exists`, `collection_exists`, `ensure_collection_deleted`
+  - Batch-oriented `upsert`, `get`, and `delete`
+  - `upsert()` generates vector values by default and requires an embedding generator for every vector field;
+    pass `generate_vectors=False` to preserve supplied vector values
+  - `generate_vectors` can also take a list or tuple of selected vector field names, allowing one model to combine
+    locally generated, precomputed, and provider-vectorized values
+  - After optional generation, check materialized dense sequence lengths against each field's `dimensions` for the
+    entire batch before connector conversion or writes. A mismatch raises `ValueError` with the zero-based record
+    index, logical field name, and expected/actual lengths; this rejection performs no writes
+  - Batch upsert does not promise atomicity; stable application keys make retries safer, while store-generated keys
+    may produce duplicates after a partial failure
+  - CRUD `get()` excludes vectors by default; pass `include_vectors=True` when stored embeddings are needed
+  - CRUD `get()` accepts either keys or a portable filter with paging and ordering
+  - `ensure_collection_exists`, `collection_exists`, `ensure_collection_deleted`
   - Async context manager support
 - `BaseVectorStore` — base for stores
   - `get_collection`, `list_collection_names`, `collection_exists`, `ensure_collection_deleted`
   - Async context manager support
 
 #### 3.5 — Vector search base class
-- `BaseVectorSearch(VectorStoreRecordHandler)` — base for vector search
+- `BaseVectorSearch` — base for vector search
   - Single `search(search_type=...)` method with `search_type: Literal["vector", "keyword_hybrid"]` parameter — no enum, just a literal
   - `_inner_search` abstract method for implementations
-  - Filter building with lambda parser (AST-based)
+  - Portable `Filter` and `FilterGroup` trees passed unchanged to connector implementations
+  - Core validates portable request structure and deserializes returned records, but does not compute scores,
+    interpret score thresholds, or re-filter connector results. Connectors own execution and paging
   - Vector generation from values using embedding generator
+  - Check supplied or locally generated dense query length against the selected field's `dimensions` before
+    connector dispatch, including empty collections. In-memory search also checks array-like queries after its
+    numeric normalization; existing query/stored length checks remain in scoring
 
 #### 3.6 — Protocols for type checking
 - `SupportsVectorUpsert` — Protocol for upsert/get/delete operations
@@ -234,14 +282,18 @@ This feature ports the vector store abstractions, embedding generator abstractio
 - No protocol for `VectorStore` — it's a factory for collections, not a capability to duck-type against
 
 #### 3.7 — Exception types
-- Add vector store exceptions under `IntegrationException` or create new branch
-- `VectorStoreException`, `VectorStoreOperationException`, `VectorSearchException`, `VectorStoreModelException`, etc.
+- Use `ValueError` and `TypeError` for invalid arguments, model definitions, and record conversion
+- Use `NotImplementedError` for connector capabilities that are not supported
+- Use the existing `IntegrationException` and `IntegrationInvalidResponseException` at connector boundaries
 
-#### 3.8 — `create_search_tool` on `BaseVectorSearch`
-- Method on `BaseVectorSearch` that creates an AF `FunctionTool` from the vector search
+#### 3.8 — `create_vector_search_tool`
+- Standalone factory that creates an AF `FunctionTool` from any `SupportsVectorSearch` implementation
 - Wraps the single `search()` method, passing `search_type` parameter
-- Accepts: `name`, `description`, `search_type`, `top`, `skip`, `filter`, `string_mapper`
-- The tool takes a query string, vectorizes it, searches, and returns results as strings
+- Accepts: `name`, `description`, `approval_mode`, `search_type`, `top`, `skip`, `filter`, `result_mapper`
+- Defaults to a required string `query`
+- Discovers `Param` values in filters and paging options, generating a closed JSON Schema without Pydantic
+- Validates model-set values against native Python types and inline constraints before resolving the filter
+- The tool vectorizes the query, searches, and maps results to text or multimodal `Content`
 - Can also be a standalone factory function in `_vectors.py`
 
 #### 3.9 — Tests for all vector store abstractions
@@ -252,19 +304,84 @@ This feature ports the vector store abstractions, embedding generator abstractio
 
 ---
 
-### Phase 4: In-Memory Vector Store
-**Goal:** Provide a zero-dependency vector store for testing and development.
-**Mergeable:** Yes — first usable vector store.
+### Phase 4: Portable Filters and In-Memory Vector Store
+**Goal:** Provide safe cross-store filters and a zero-dependency vector store for testing and development.
+**Mergeable:** Yes — the filter contract and in-memory implementation can be reviewed independently.
 
-#### 4.1 — Port `InMemoryCollection` and `InMemoryStore` into core
-- Place in `agent_framework/_vectors.py` (alongside the abstractions)
-- Supports vector search (cosine similarity, etc.)
-- No external dependencies
+#### 4.1 — Replace source filters with portable data
+- `Filter(field_name, operator, value)` for leaf conditions
+- `FilterGroup(operator, filters)` for explicit AND, OR, and NOT composition
+- Common operators plus namespaced provider extensions
+- No callable inspection, source strings, AST parsing, `eval`, `exec`, or `compile`
 
-#### 4.2 — Port FAISS extension (optional, can be separate package)
-- Extends InMemory with FAISS indexing
+#### 4.1.1 — Connector extensibility aligned with Microsoft.Extensions.VectorData
+- Index kinds and distance functions provide common literal hints but remain open to provider-defined strings
+- `VectorStoreField.provider_annotations` is copied when the field is created and carries mutable provider-specific
+  configuration; the frozen field protects core schema attributes, not nested provider values
+- Key fields can declare `is_auto_generated=True`; connectors decide which generated key types they support
+- Search already supports provider-side query vectorization: without a local generator, connectors receive the
+  original `values` and `vector=None`
+- Server-side write vectorization needs no core flag; leave that field out of `generate_vectors` so its source value
+  reaches a connector that supports it
+- Dense vectors support numeric sequences and binary `bytes`; supplied and generated mutable `bytearray` values
+  normalize to `bytes`
+- Float16, float32, float64, and integer element support remains connector-specific through `type_` and
+  `supported_vector_types`
+- Sparse vectors remain provider-native values supplied through model codecs or `search(values=...)`; core does not
+  define a sparse representation or dense+sparse fusion mode
 
-#### 4.3 — Tests and sample code
+#### 4.1.2 — Dense vector dimension checks
+- Enforce declared dimensions at the shared write and search boundaries by default. This replaces the earlier
+  decision to leave dense length enforcement entirely to providers
+- Check sequence length only, without copying, converting, or scanning elements solely for validation. Resolve
+  vector fields and storage names once per write batch, and validate final values after any local generation
+- Null vectors remain allowed. Source text and non-sequence provider-native values are not treated as dense
+  vectors; `bytes`/`bytearray` length is not assumed to equal dimensionality. Connectors validate these representations
+- The contract covers materialized non-string, non-binary sequences, not arbitrary provider-specific encodings,
+  numeric element validity, or revalidation on retrieval. Provider-side vectorization remains unchanged
+- Local benchmarking of 1,000-record batches found length checking inexpensive relative to serialization and
+  in-memory copying. Use a straightforward pass without an opt-out flag or a more complex serialization path
+
+#### 4.2 — Derive search-tool parameters from filters
+- A `Param` used as a complete filter value defines its model-visible name, native type, default, and constraints
+- The tool factory emits a closed JSON Schema and resolves parameters before search
+- An absent optional parameter without a default removes its containing filter; fixed filters remain unchanged
+- `omit_if_none=True` also removes the leaf when its resolved argument is `None` (JSON `null`). It requires a
+  nullable type and an explicit `default=None`, for example
+  `Param("text", str | None, default=None, omit_if_none=True)`. Absent/null arguments omit the leaf; non-null
+  arguments retain normal type, constraint, and operator validation. This policy is not supported for paging.
+- AND/OR groups evaluate their remaining children, not a `True` replacement for an omitted leaf. Groups left
+  empty, including NOT groups whose child is removed, are removed recursively. If the whole tree is removed,
+  search receives no filter; other search options still apply.
+- Without the opt-in, explicit null values retain normal validation and provider semantics. Strings such as
+  `"*"` are literal filter values, not omission markers.
+- String operators reject non-string operands centrally, after substitution for parameterized leaves
+- Defaults and supplied mutable parameter values are copied per invocation, including nested containers
+- Bound structural inspection before copying: filter depth/node limits apply to the tree and collection members,
+  including non-sequence collections such as sets; mapping keys cannot hide a `Param`. Limits also apply to
+  search tools whose search implementation has no collection definition. Unknown field names remain
+  connector-owned in that case
+- Structural budgets do not sandbox arbitrary provider-native objects or trusted Python hooks
+
+#### 4.3 — Add `InMemoryCollection` and `InMemoryStore`
+- Dedicated `_in_memory.py` module
+- Shared process-local collection state, full CRUD/listing/order behavior, and flat vector search
+- Pure-Python distance functions with no NumPy or SciPy dependency
+- Scoring, filters, and thresholds execute locally before paging. `DEFAULT` resolves to cosine distance and
+  therefore accepts scores at or below the threshold, including zero for identical vectors
+- Cosine calculations scale each vector independently to avoid overflow/underflow from finite magnitudes.
+  Non-finite scores are rejected for every metric, and unsupported distance functions fail before scanning records
+- Hamming distance is the proportion of unequal dimensions, not a mismatch count; scores and thresholds use
+  the range zero to one, consistent with `scipy.spatial.distance.hamming`
+- Strict filter evaluator over serialized mappings with the shared conservative resource limits
+- Dictionary inputs and custom encoder outputs both pass through `msgspec.to_builtins` before storage, so
+  ordinary filtering operates on normalized data rather than original object comparison methods. Custom codecs
+  and connector overrides are trusted Python code, not a sandbox
+
+#### 4.4 — Tests and samples
+- Direct filter composition and model-set search-tool filter parameters
+- Security regressions for fail-closed behavior, scope preservation, and the SK exploit class
+- FAISS remains deferred to its own optional connector phase
 
 ---
 
@@ -326,7 +443,7 @@ Each connector follows the AF package structure:
 #### 8.1 — `create_upsert_tool` — tool for upserting records into a collection
 #### 8.2 — `create_get_tool` — tool for retrieving records by key
 - Key-based lookup only (by primary key), not a search tool
-- Documentation must clearly distinguish this from `create_search_tool`: get_tool retrieves specific records by their known key, while search_tool performs similarity/filtered search across the collection
+- Documentation must clearly distinguish this from `create_vector_search_tool`: get_tool retrieves specific records by their known key, while the search tool performs similarity/filtered search across the collection
 - Consider if this overlaps with filtered search and document when to use which
 #### 8.3 — `create_delete_tool` — tool for deleting records by key
 #### 8.4 — Tests and samples for CRUD tools
@@ -349,7 +466,7 @@ Each connector follows the AF package structure:
 **Mergeable:** Yes — independent of vector stores.
 
 #### 10.1 — TextSearch base class and types
-- `SearchOptions`, `SearchResponse`, `TextSearchResult`
+- `SearchResponse`, `TextSearchResult`, and explicit search keyword arguments
 - `TextSearch` base class with `search()` method
 - `create_search_function()` for kernel integration (may need AF equivalent)
 
@@ -361,7 +478,7 @@ Each connector follows the AF package structure:
 
 ## Key Considerations
 
-1. **No Pydantic for internal classes**: All AF internal classes should use plain classes. Pydantic is only used for user-facing input validation (e.g., vector store data models).
+1. **msgspec-backed conversion**: Use msgspec as the default serialization/deserialization path. Pydantic and plain classes remain supported user-model adapters.
 
 2. **Protocol + Base class**: Follow AF's pattern of both a `Protocol` for duck-typing and a `Base` ABC for implementation, matching how `SupportsChatGetResponse` + `BaseChatClient` works.
 
@@ -375,11 +492,11 @@ Each connector follows the AF package structure:
 
 7. **Reusable data models**: The `@vectorstoremodel` decorator and `VectorStoreCollectionDefinition` should be agnostic enough to work with both SK and AF. The core types (`FieldTypes`, `IndexKind`, `DistanceFunction`, `VectorStoreField`) should be identical or easily mapped.
 
-8. **`create_search_tool`**: The AF-native equivalent of SK's `create_search_function`. Instead of creating a `KernelFunction`, this creates an AF `FunctionTool` (via the `@tool` decorator pattern) from a vector search. This allows agents to use vector search as a tool during conversations. Design:
-   - `create_search_tool(name, description, search_type, ...)` → returns a `FunctionTool` that wraps `VectorSearch.search(search_type=...)`
-   - The tool accepts a query string, performs embedding + vector search, and returns results as strings
-   - Supports configurable string mappers, filter functions, top/skip defaults
-   - Lives in `_vectors.py` as a method on `BaseVectorSearch` and/or as a standalone factory function
+8. **`create_vector_search_tool`**: The AF-native equivalent of SK's `create_search_function`. Instead of creating a `KernelFunction`, this creates an AF `FunctionTool` from any `SupportsVectorSearch` implementation. This allows agents to use vector search as a tool during conversations. Design:
+   - `create_vector_search_tool(search, name, description, search_type, ...)` returns a `FunctionTool`
+   - The tool accepts `query` plus `Param` values discovered in filters or paging options
+   - It generates a closed native JSON Schema, performs embedding + vector search, and returns text or multimodal content
+   - Lives in `_vectors.py` without expanding the structural search protocol
 
 9. **CRUD tools**: A full set of create/read/update/delete tools for vector store collections, allowing agents to manage data in vector stores. Design:
    - `create_upsert_tool(...)` → tool for upserting records
@@ -387,4 +504,11 @@ Each connector follows the AF package structure:
    - `create_delete_tool(...)` → tool for deleting records
    - These are separate from search and are placed in a later phase
 
-10. **Score threshold filtering**: `SearchOptions` includes `score_threshold: float | None` to filter search results by relevance score (ref: [SK .NET PR #13501](https://github.com/microsoft/semantic-kernel/pull/13501)). The semantics depend on the distance function: for similarity functions (cosine similarity, dot product), results *below* the threshold are filtered out; for distance functions (cosine distance, euclidean), results *above* the threshold are filtered out. Use `DISTANCE_FUNCTION_DIRECTION_HELPER` to determine direction. Connectors should implement this natively where the database supports it, falling back to client-side post-filtering otherwise.
+10. **Score threshold filtering**: Scoring, filter execution, score thresholds, and paging belong to the connector
+    and backing store (ref: [SK .NET PR #13501](https://github.com/microsoft/semantic-kernel/pull/13501)). Core passes
+    `score_threshold` through without requiring a known distance function or an explicit metric and does not
+    post-filter returned results, including results without scores. Each connector defines its score units,
+    threshold direction, and default metric. Execute filtering and thresholding natively where supported;
+    otherwise implement an explicit connector-local fallback coordinated with paging, or reject the unsupported
+    option rather than silently ignoring it. `DISTANCE_FUNCTION_DIRECTION_HELPER` remains available for
+    connectors implementing comparisons for common metrics locally; it is not a core capability gate.

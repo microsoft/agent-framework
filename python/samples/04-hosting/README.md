@@ -9,7 +9,7 @@ This directory contains Python samples that demonstrate different ways to host A
 | A2A | Agent-to-Agent protocol interoperability or remote agent invocation. | [`a2a/README.md`](./a2a/README.md) |
 | Azure Functions | HTTP or serverless hosting on Azure Functions. | [Durable extension Azure Functions samples](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples/azure_functions) |
 | Durable Task | Durable execution, long-running flows, or orchestration patterns. | [Durable extension samples](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples) |
-| Foundry Hosted Agents | Microsoft Foundry hosted agent deployment. | [`foundry-hosted-agents/README.md`](./foundry-hosted-agents/README.md) |
+| Foundry Hosted Agents | Microsoft Foundry hosted agent deployment, including a Telegram + APIM Invocations sample. | [`foundry-hosted-agents/README.md`](./foundry-hosted-agents/README.md) |
 | Self-Hosted Protocol Helpers | Application-owned OpenAI Responses endpoints or Telegram bots. | [`af-hosting/README.md`](./af-hosting/README.md) |
 
 ## How to Choose

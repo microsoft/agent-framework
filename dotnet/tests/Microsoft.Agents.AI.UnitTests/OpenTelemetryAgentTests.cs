@@ -606,7 +606,7 @@ public class OpenTelemetryAgentTests
             Assert.False(tags.ContainsKey("gen_ai.system_instructions"));
 
             // gen_ai.tool.definitions is always emitted regardless of EnableSensitiveData (ME.AI 10.4.0+).
-            // ME.AI 10.5.1 omits description/parameters for function tools when sensitive data is disabled.
+            // ME.AI 10.9.0 omits description/parameters for function tools when sensitive data is disabled.
             Assert.Equal(ReplaceWhitespace("""
                 [
                   {

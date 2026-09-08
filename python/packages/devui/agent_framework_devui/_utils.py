@@ -5,13 +5,42 @@
 import inspect
 import json
 import logging
+import mimetypes
 from dataclasses import fields, is_dataclass
 from types import UnionType
 from typing import Any, Union, cast, get_args, get_origin, get_type_hints
+from urllib.parse import urlparse
 
 from agent_framework import Message
 
 logger = logging.getLogger(__name__)
+
+_CANONICAL_MEDIA_TYPES = {
+    ".jpeg": "image/jpeg",
+    ".jpg": "image/jpeg",
+    ".m4a": "audio/mp4",
+    ".mp3": "audio/mpeg",
+}
+
+
+def infer_media_type(*, filename: str | None = None, uri: str | None = None, default: str) -> str:
+    """Infer a canonical media type from explicit data or a filename."""
+    if uri and uri.startswith("data:"):
+        media_type = uri[5:].split(";", 1)[0].split(",", 1)[0]
+        if "/" in media_type:
+            return media_type
+
+    for candidate in (filename, urlparse(uri).path if uri else None):
+        if not candidate:
+            continue
+        candidate_lower = candidate.lower()
+        for suffix, canonical_media_type in _CANONICAL_MEDIA_TYPES.items():
+            if candidate_lower.endswith(suffix):
+                return canonical_media_type
+        if guessed_media_type := mimetypes.guess_type(candidate)[0]:
+            return guessed_media_type
+
+    return default
 
 
 def _string_key_dict(value: object) -> dict[str, Any] | None:

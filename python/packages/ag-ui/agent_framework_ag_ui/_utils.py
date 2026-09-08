@@ -71,6 +71,31 @@ def canonical_function_arguments(function_call: Any) -> str | None:
     return json.dumps(make_json_safe(parsed_arguments), sort_keys=True, separators=(",", ":"))
 
 
+def _function_call_server_label(function_call: Any) -> str | None:
+    """Return a normalized hosted-tool server label."""
+    if function_call is None:
+        return None
+    server_label = getattr(function_call, "additional_properties", {}).get("server_label")
+    return server_label if isinstance(server_label, str) and server_label else None
+
+
+def _approval_interrupt_id(content: Any) -> str | None:
+    """Return the canonical client and lifecycle identity for an approval request."""
+    function_call = getattr(content, "function_call", None)
+    if function_call is None:
+        return None
+    request_id = getattr(content, "id", None)
+    if _function_call_server_label(function_call) is not None:
+        return request_id if isinstance(request_id, str) and request_id else None
+    occurrence_id = getattr(function_call, "id", None)
+    if isinstance(occurrence_id, str) and occurrence_id:
+        return occurrence_id
+    call_id = getattr(function_call, "call_id", None)
+    if isinstance(call_id, str) and call_id:
+        return call_id
+    return request_id if isinstance(request_id, str) and request_id else None
+
+
 def get_role_value(message: Any) -> str:
     """Extract role string from a message object.
 

@@ -2,7 +2,6 @@
 
 using System.Text.Json;
 using AGUI.Abstractions;
-using FluentAssertions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -21,7 +20,7 @@ public sealed class ConfigureAGUIJsonOptionsTests
 
         // The AG-UI wire context must be in the resolver chain (needed on the net10
         // TypedResults.ServerSentEvents path, which serializes events through these options).
-        options.Invoking(o => o.GetTypeInfo(typeof(RunStartedEvent))).Should().NotThrow();
+        Assert.Null(Record.Exception(() => options.GetTypeInfo(typeof(RunStartedEvent))));
     }
 
     [Fact]
@@ -30,7 +29,7 @@ public sealed class ConfigureAGUIJsonOptionsTests
         JsonSerializerOptions options = BuildConfiguredSerializerOptions();
 
         // The Agent Framework abstractions resolver must also be present so M.E.AI types resolve.
-        options.Invoking(o => o.GetTypeInfo(typeof(ChatMessage))).Should().NotThrow();
+        Assert.Null(Record.Exception(() => options.GetTypeInfo(typeof(ChatMessage))));
     }
 
     private static JsonSerializerOptions BuildConfiguredSerializerOptions()

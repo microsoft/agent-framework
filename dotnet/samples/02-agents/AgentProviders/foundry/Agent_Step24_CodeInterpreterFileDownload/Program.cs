@@ -38,8 +38,7 @@ foreach (TextContent textContent in response.Messages.SelectMany(x => x.Contents
 }
 
 // Extract container file citations from response annotations and download.
-// AIProjectClient.GetProjectOpenAIClient() returns a ProjectOpenAIClient (inherits from OpenAI.OpenAIClient)
-// which supports GetContainerClient(), unlike AzureOpenAIClient which does not.
+// AIProjectClient.GetProjectOpenAIClient() returns a ProjectOpenAIClient that supports GetContainerClient().
 var containerClient = aiProjectClient.GetProjectOpenAIClient().GetContainerClient();
 
 HashSet<string> downloadedFiles = [];

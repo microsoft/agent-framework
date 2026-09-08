@@ -181,6 +181,7 @@ class ApprovalOccurrence:
     owner: ApprovalExecutionOwner
     scope: str | None = None
     aliases: tuple[str, ...] = ()
+    response_id: str | None = None
     already_approved_requests: tuple[dict[str, Any], ...] = ()
     server_label: str | None = None
     idempotency_key: str | None = None
@@ -276,6 +277,7 @@ class ApprovalLifecycle:
         name: str,
         arguments: str,
         aliases: list[str] | None = None,
+        response_id: str | None = None,
         already_approved_requests: list[dict[str, Any]] | None = None,
         server_label: str | None = None,
         idempotency_key: str | None = None,
@@ -293,6 +295,7 @@ class ApprovalLifecycle:
             owner=owner,
             scope=scope,
             aliases=aliases,
+            response_id=response_id,
             already_approved_requests=already_approved_requests,
             server_label=server_label,
             idempotency_key=idempotency_key,
@@ -310,6 +313,7 @@ class ApprovalLifecycle:
         owner: ApprovalExecutionOwner,
         scope: str | None = None,
         aliases: list[str] | None = None,
+        response_id: str | None = None,
         already_approved_requests: list[dict[str, Any]] | None = None,
         server_label: str | None = None,
         idempotency_key: str | None = None,
@@ -342,6 +346,7 @@ class ApprovalLifecycle:
                 or occurrence.arguments != arguments
                 or occurrence.owner is not owner
                 or occurrence.scope != scope
+                or occurrence.response_id != response_id
                 or occurrence.idempotency_key != idempotency_key
                 or occurrence.already_approved_requests != tuple(already_approved_requests or ())
                 or occurrence.server_label != server_label
@@ -371,6 +376,7 @@ class ApprovalLifecycle:
             owner=owner,
             scope=scope,
             aliases=occurrence_aliases,
+            response_id=response_id,
             already_approved_requests=tuple(already_approved_requests or ()),
             server_label=server_label,
             idempotency_key=idempotency_key,
@@ -542,6 +548,19 @@ class ApprovalLifecycle:
                 continue
             occurrence.decision = decision
             if not decision.accepted:
+                if occurrence.owner is ApprovalExecutionOwner.DEFERRED:
+                    occurrence.status = ApprovalStatus.CLAIMED
+                    self._emit_event("claim", occurrence)
+                    intents.append(
+                        AuthorizedExecution(
+                            identity=occurrence.identity,
+                            name=occurrence.name,
+                            arguments=occurrence.arguments,
+                            owner=occurrence.owner,
+                            idempotency_key=occurrence.idempotency_key,
+                        )
+                    )
+                    continue
                 result = Content.from_function_result(
                     call_id=occurrence.identity.call_id,
                     result="Error: Tool call invocation was rejected by user.",
@@ -840,6 +859,11 @@ class ApprovalLifecycle:
             )
         if occurrence.status is not ApprovalStatus.EXECUTING:
             raise ApprovalSettlementConflictError(f"Approval occurrence is not executing: {occurrence.status}.")
+        if occurrence.decision is not None and not occurrence.decision.accepted:
+            occurrence.status = ApprovalStatus.PENDING
+            occurrence.pending_since = self._clock()
+            self._emit_event("rejection_recovery", occurrence)
+            return None
         if intent.idempotency_key is not None and intent.idempotency_key == occurrence.idempotency_key:
             occurrence.status = ApprovalStatus.CLAIMED
             return intent
@@ -901,19 +925,30 @@ class ApprovalLifecycle:
             result
             for result in results
             if result.type == "function_approval_response"
-            and result.approved is True
+            and isinstance(result.approved, bool)
             and result.function_call is not None
             and result.function_call.call_id == occurrence.identity.call_id
         ]
         if len(replayable_results) + len(forwarded_responses) != 1:
             raise ValueError("A hosted approval must record exactly one outcome for its original call.")
+        is_rejection = len(forwarded_responses) == 1 and forwarded_responses[0].approved is False
+        if is_rejection:
+            rejection_result = Content.from_function_result(
+                call_id=occurrence.identity.call_id,
+                result="Error: Tool call invocation was rejected by user.",
+            )
+            replayable_results = [ReplayableToolResult(content=rejection_result)]
+            result_group = (rejection_result,)
+            occurrence.status = ApprovalStatus.REJECTED
+        else:
+            result_group = tuple(results)
+            occurrence.status = ApprovalStatus.SETTLED
         occurrence.replayable_results = replayable_results
-        occurrence.status = ApprovalStatus.SETTLED
         self._remove_pending_aliases(occurrence)
         outcome = ApprovalOutcome(
             identity=occurrence.identity,
             replayable_results=tuple(replayable_results),
-            result_group=tuple(results),
+            result_group=result_group,
             snapshot_reconciliation=self._snapshot_reconciliation(occurrence),
         )
         occurrence.outcome = outcome

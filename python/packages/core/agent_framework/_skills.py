@@ -66,7 +66,7 @@ from pathlib import Path, PurePosixPath
 from typing import IO, TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
 
 from ._feature_stage import ExperimentalFeature, experimental
-from ._filesystem import is_link_or_reparse_point
+from ._filesystem import _is_link_or_reparse_point  # pyright: ignore[reportPrivateUsage]
 from ._sessions import ContextProvider
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._tools import ApprovalMode, FunctionTool
@@ -3022,7 +3022,7 @@ class FileSkillsSource(SkillsSource):
         for part in relative.parts:
             current = current / part
             try:
-                is_link = is_link_or_reparse_point(current)
+                is_link = _is_link_or_reparse_point(current)
             except OSError:
                 return True
             if is_link:
@@ -3569,7 +3569,7 @@ class FileSkillsSource(SkillsSource):
 
         def _is_unsafe_link(path: Path) -> bool:
             try:
-                return is_link_or_reparse_point(path)
+                return _is_link_or_reparse_point(path)
             except OSError:
                 return True
 

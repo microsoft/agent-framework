@@ -25,15 +25,54 @@ reflection-disabled `System.Text.Json` -- the same constraint imposed by
      return is the proof JSON **reads** round-trip too. The resumed run
      is disposed immediately; without a pending external request it
      would park in `WaitForInputAsync` indefinitely.
+- The initial workflow input is a `WorkflowInput` record. `TransformInput` uses the
+  source-generated `AotCheckpointingJsonContext` to serialize it into a
+  `ChatMessage` before the declarative workflow runs.
 
 `DeclarativeWorkflowJsonOptions` is marked
 `[Experimental("MAAI001")]`. Suppress that diagnostic in your csproj to
 use it.
 
-### Registering user-defined types
+### Initial input and checkpoint serialization are separate
 
-For workflows whose inputs or custom `ActionExecutorResult.Result`
-payloads are user-defined, clone `Default` and append your own resolver:
+`DeclarativeWorkflowBuilder.Build` accepts an optional `inputTransform` delegate.
+For a non-`ChatMessage` input, the default behavior is to call `ToString()`; the
+checkpoint serializer is not involved in this conversion. Use a source-generated
+context (or your own `JsonSerializerOptions`) in the delegate when the workflow
+should receive a JSON representation of a typed input:
+
+```csharp
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Agents.AI.Workflows.Declarative;
+using Microsoft.Extensions.AI;
+
+internal sealed record WorkflowInput(string Message);
+
+[JsonSerializable(typeof(WorkflowInput))]
+internal sealed partial class AppJsonContext : JsonSerializerContext;
+
+Workflow workflow = DeclarativeWorkflowBuilder.Build<WorkflowInput>(
+    workflowPath,
+    options,
+    input => new ChatMessage(
+        ChatRole.User,
+        JsonSerializer.Serialize(input, AppJsonContext.Default.WorkflowInput)));
+```
+
+This sample uses `AotCheckpointingJsonContext` for that initial-input transform.
+The separate `DeclarativeWorkflowJsonOptions.Default` passed to
+`CheckpointManager.CreateJson` supplies type information for declarative workflow
+checkpoint state. If checkpoint state also contains application-defined payloads,
+clone those options and append the application's resolver as shown below; adding
+the resolver to checkpoint options does not automatically change the initial input.
+
+### Registering user-defined checkpoint types
+
+For custom `ActionExecutorResult.Result` payloads or other user-defined values
+that are persisted in workflow checkpoint state, clone `Default` and append your
+own resolver:
 
 ```csharp
 JsonSerializerOptions options = new(DeclarativeWorkflowJsonOptions.Default);
