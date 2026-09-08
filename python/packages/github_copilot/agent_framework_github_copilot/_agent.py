@@ -395,15 +395,39 @@ def _parse_telemetry_config(raw: str) -> TelemetryConfig | None:
     return cast(TelemetryConfig, parsed)
 
 
-def _working_directory_has_file_hooks(working_directory: str | None) -> bool:
-    """Return whether ``.github/hooks/`` holds hook definitions the CLI would otherwise load.
+def _client_working_directory(client: CopilotClient | None) -> str | None:
+    """Best-effort read of the working directory an injected client configured.
 
-    ``working_directory`` mirrors the SDK: the session's working directory when one is
-    configured, and the process working directory when it is not.
+    A client created with ``CopilotClient(working_directory=...)`` spawns the CLI process
+    in that directory, so the CLI resolves ``.github/hooks/`` relative to it rather than to
+    this process. The SDK keeps the value on a private options object, so this is read
+    defensively: if the attribute ever moves, hook detection falls back to the process
+    working directory instead of failing.
     """
-    base = Path(working_directory) if working_directory else Path.cwd()
+    options = getattr(client, "_options", None)
+    working_directory = getattr(options, "working_directory", None)
+    return working_directory if isinstance(working_directory, str) else None
+
+
+def _resolve_effective_working_directory(session_working_directory: str | None, client: CopilotClient | None) -> Path:
+    """Resolve the directory the CLI will treat as the workspace, mirroring the SDK.
+
+    The SDK resolves in this order: the session's ``working_directory`` when supplied,
+    otherwise the CLI process's own directory, which is the injected client's configured
+    ``working_directory`` when it set one and this process's directory otherwise.
+    """
+    if session_working_directory:
+        return Path(session_working_directory)
+    client_working_directory = _client_working_directory(client)
+    if client_working_directory:
+        return Path(client_working_directory)
+    return Path.cwd()
+
+
+def _has_file_hooks(working_directory: Path) -> bool:
+    """Return whether ``.github/hooks/`` holds hook definitions the CLI would otherwise load."""
     try:
-        return any((base / ".github" / "hooks").iterdir())
+        return any((working_directory / ".github" / "hooks").iterdir())
     except OSError:
         # Missing directory, unreadable path, or a file where the directory would be:
         # there is nothing the caller needs to know about.
@@ -1484,14 +1508,17 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         except Exception as ex:
             raise AgentException(f"Failed to create GitHub Copilot session: {ex}") from ex
 
-    def _warn_once_about_unloaded_file_hooks(self, working_directory: str | None) -> None:
-        """Warn once when the working directory defines file hooks that will not run.
+    def _warn_once_about_unloaded_file_hooks(self, session_working_directory: str | None) -> None:
+        """Warn once when the effective working directory defines file hooks that will not run.
 
         Without this the default is silent: hooks simply stop running, with nothing to
         point at the cause. The warning fires at most once per agent so a long-lived agent
         does not repeat it on every run.
         """
-        if self._file_hooks_warning_emitted or not _working_directory_has_file_hooks(working_directory):
+        if self._file_hooks_warning_emitted:
+            return
+        working_directory = _resolve_effective_working_directory(session_working_directory, self._client)
+        if not _has_file_hooks(working_directory):
             return
         self._file_hooks_warning_emitted = True
         logger.warning(
@@ -1499,7 +1526,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             "enable_file_hooks off so a session behaves the same way in every working "
             "directory. Set enable_file_hooks=True in default_options (or in per-run "
             "options) to run them.",
-            Path(working_directory or Path.cwd()) / ".github" / "hooks",
+            working_directory / ".github" / "hooks",
         )
 
     def _build_session_kwargs(

@@ -2125,7 +2125,13 @@ def _write_file_hook(working_directory: Path) -> None:
     """Create a hook definition the CLI would load if file hooks were enabled."""
     hooks_dir = working_directory / ".github" / "hooks"
     hooks_dir.mkdir(parents=True)
-    (hooks_dir / "sessionStart.json").write_text(json.dumps({"command": "echo hello"}), encoding="utf-8")
+    (hooks_dir / "sessionStart.json").write_text(
+        json.dumps({
+            "version": 1,
+            "hooks": {"sessionStart": [{"type": "command", "command": "echo hello"}]},
+        }),
+        encoding="utf-8",
+    )
 
 
 class TestGitHubCopilotAgentFileHooksWarning:
@@ -2225,6 +2231,66 @@ class TestGitHubCopilotAgentFileHooksWarning:
             await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
 
         assert caplog.text.count("Not loading the file hooks") == 1
+
+    async def test_uses_working_directory_configured_on_injected_client(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A client built with its own working_directory decides where the CLI looks."""
+        _write_file_hook(tmp_path)
+        # The CLI process runs in the client's directory, so hooks resolve relative to it
+        # even though this process is running somewhere else entirely.
+        mock_client._options.working_directory = str(tmp_path)
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert "Not loading the file hooks" in caplog.text
+        assert str(tmp_path) in caplog.text
+
+    async def test_session_working_directory_takes_precedence_over_client(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An explicit session working_directory wins, matching the SDK's own resolution."""
+        session_dir = tmp_path / "session"
+        client_dir = tmp_path / "client"
+        session_dir.mkdir()
+        client_dir.mkdir()
+        _write_file_hook(session_dir)
+        mock_client._options.working_directory = str(client_dir)
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(session_dir)}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert str(session_dir) in caplog.text
+
+    async def test_unreadable_client_options_fall_back_to_process_directory(
+        self,
+        mock_client: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A client that does not expose its options degrades quietly instead of raising."""
+        del mock_client._options
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["enable_file_hooks"] is False
 
 
 class TestGitHubCopilotAgentToolConversion:
