@@ -392,7 +392,6 @@ class RedisCollection(BaseVectorCollection[str, ModelT], BaseVectorSearch[str, M
             redis_url, redis_client, env_file_path=env_file_path, env_file_encoding=env_file_encoding
         )
         self._closed = False
-        self._validated = False
         self._index = AsyncSearchIndex(self._prepare_schema(), redis_client=self.redis_client)
 
     def _prepare_schema(self) -> IndexSchema:
@@ -455,11 +454,10 @@ class RedisCollection(BaseVectorCollection[str, ModelT], BaseVectorSearch[str, M
             raise ValueError(f"Redis index '{self.index_name}' has an incompatible schema or document prefix.")
 
     async def _require_index(self) -> None:
-        if not self._validated:
-            if not await self._index.exists():
-                raise IntegrationException("Redis collection does not exist; call ensure_collection_exists() first.")
-            await self._validate_schema()
-            self._validated = True
+        # Observe completed external lifecycle changes; validation and subsequent I/O are not atomic.
+        if not await self._index.exists():
+            raise IntegrationException("Redis collection does not exist; call ensure_collection_exists() first.")
+        await self._validate_schema()
 
     async def ensure_collection_exists(self, *, operation_options: Mapping[str, Any] | None = None) -> None:
         """Create or validate the index; never overwrite an existing index."""
@@ -496,7 +494,6 @@ class RedisCollection(BaseVectorCollection[str, ModelT], BaseVectorSearch[str, M
                 "Redis vector index initialization failed. Requires Redis Search with INDEXMISSING/INDEXEMPTY "
                 "and RedisJSON for JSON storage (tested minimum Redis 8.0.3)."
             ) from exc
-        self._validated = True
 
     async def collection_exists(self, *, operation_options: Mapping[str, Any] | None = None) -> bool:
         """Check index existence using Redis Search, not merely server connectivity."""
@@ -509,7 +506,6 @@ class RedisCollection(BaseVectorCollection[str, ModelT], BaseVectorSearch[str, M
         if await self._index.exists():
             await self._validate_schema()
             await self._index.delete(drop=True)
-        self._validated = False
 
     async def close(self) -> None:
         """Close this handle and its client only when the client is owned."""
@@ -906,27 +902,36 @@ class RedisStore(BaseVectorStore):
             record_type,
             definition=definition,
             collection_name=collection_name,
-            embedding_generator=embedding_generator or self.embedding_generator,
+            embedding_generator=self.embedding_generator if embedding_generator is None else embedding_generator,
             redis_client=self.redis_client,
             namespace=self.namespace,
-            storage_type=storage_type or self.storage_type,
+            storage_type=self.storage_type if storage_type is None else storage_type,
         )
         self._collections.add(collection)
         return collection
 
     async def list_collection_names(self, *, operation_options: Mapping[str, Any] | None = None) -> Sequence[str]:
-        """List Search indexes belonging to this namespace, regardless of HASH/JSON format."""
+        """List canonical collection index names in this namespace, ignoring foreign index names."""
         _validate_operation_options(operation_options)
         if self._closed:
             raise RuntimeError("The Redis store is closed.")
         mark_feature_used(FeatureIndex.REDIS)
-        prefix = f"af:vector:{_prepare_namespace_component(self.namespace)}:index:"
+        prefix = f"af:vector:{_prepare_namespace_component(self.namespace)}:index:".encode("ascii")
         names: list[str] = []
         indexes = cast(list[bytes], await self.redis_client.execute_command("FT._LIST"))  # pyright: ignore[reportUnknownMemberType]
-        for name in indexes:
-            index_name = name.decode("utf-8")
-            if index_name.startswith(prefix):
-                names.append(bytes.fromhex(index_name[len(prefix) :]).decode("utf-8"))
+        for index_name in indexes:
+            if not index_name.startswith(prefix):
+                continue
+            encoded_name = index_name[len(prefix) :]
+            if not 2 <= len(encoded_name) <= 512:
+                continue
+            try:
+                name = bytes.fromhex(encoded_name.decode("ascii")).decode("utf-8")
+                canonical_name = _prepare_namespace_component(name).encode("ascii")
+            except ValueError:
+                continue
+            if encoded_name == canonical_name:
+                names.append(name)
         return sorted(names)
 
     async def _inner_ensure_collection_deleted(
@@ -940,9 +945,6 @@ class RedisStore(BaseVectorStore):
         if existing.schema.index.prefix != key_prefix:
             raise ValueError("Refusing to delete a Redis index with a different document prefix.")
         await existing.delete(drop=True)
-        for collection in self._collections:
-            if collection.collection_name == collection_name:
-                collection._validated = False  # pyright: ignore[reportPrivateUsage]
 
     async def close(self) -> None:
         """Close the store's owned client without deleting collections."""

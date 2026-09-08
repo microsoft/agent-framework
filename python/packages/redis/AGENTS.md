@@ -13,6 +13,8 @@ Redis-based storage for agent threads and context.
   the store, separate from the preexisting history/context providers. `_create_client` shares AF settings resolution;
   `RedisCollection._prepare_filter` validates support and translates portable filters to native Redis queries.
   Requires Redis Search with INDEXMISSING/INDEXEMPTY support.
+  Nonempty CRUD/search operations recheck index existence and schema. These checks observe completed external
+  lifecycle changes but are not atomic with subsequent operations.
   See README for the per-type native filter restrictions, HASH null rejection, and distance units.
 
 ## Vector connector tests
@@ -25,7 +27,7 @@ uv run --no-sync pytest packages/redis/tests/test_vector_store.py packages/redis
 
 Set `REDIS_VECTOR_TEST_URL` to an explicitly disposable Search/JSON instance
 and select `-m integration` to run integration tests in `tests/test_vector_store.py`.
-Live tests cover Redis 8.0.3 and 8.8. A configured but insufficient server fails;
+Automated live tests use Redis 8.0.3, pinned in both CI workflows. A configured but insufficient server fails;
 only an unset URL skips them. Tests create unique namespaces and clean only
 their own indexes/keys, never `FLUSHALL`. Coverage includes both formats and
 1000-record batches with two 1536-dimensional vectors without embedding API calls.

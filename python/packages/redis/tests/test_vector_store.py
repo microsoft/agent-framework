@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -80,6 +80,23 @@ def record(key="one", **overrides):
 @pytest.fixture(params=["hash", "json"])
 def storage_type(request):
     return request.param
+
+
+@pytest.fixture
+def noncanonical_index_suffixes():
+    return [
+        b"",
+        b"not-hex",
+        b"6",
+        b"6F6E65",
+        b"6f 6e65",
+        b"6f6e65 ",
+        b"  ",
+        b"ff",
+        b"\xff",
+        b"eda080",
+        b"20" * 257,
+    ]
 
 
 @pytest.fixture
@@ -313,6 +330,37 @@ async def test_owned_and_borrowed_client_lifecycle():
         owned_close.assert_awaited_once()
 
 
+async def test_collection_overrides_only_default_when_none(storage_type):
+    default_generator = MagicMock()
+    falsey_generator = MagicMock()
+    falsey_generator.__bool__.return_value = False
+    async with RedisStore(storage_type=storage_type, embedding_generator=default_generator) as store:
+        inherited = store.get_collection(
+            dict, definition=definition(), collection_name="inherited", embedding_generator=None, storage_type=None
+        )
+        assert inherited.embedding_generator is default_generator
+        assert inherited.storage_type == storage_type
+        override_type: Literal["hash", "json"] = "json" if storage_type == "hash" else "hash"
+        overridden = store.get_collection(
+            dict,
+            definition=definition(),
+            collection_name="overridden",
+            embedding_generator=falsey_generator,
+            storage_type=override_type,
+        )
+        assert overridden.embedding_generator is falsey_generator
+        assert overridden.storage_type == override_type
+        default_generator.get_embeddings.assert_not_called()
+        falsey_generator.get_embeddings.assert_not_called()
+
+
+@pytest.mark.parametrize("override", [""])
+async def test_empty_collection_storage_override_is_rejected(override):
+    async with RedisStore() as store:
+        with pytest.raises(ValueError, match="storage_type"):
+            store.get_collection(dict, definition=definition(), collection_name="invalid", storage_type=override)
+
+
 @pytest.mark.parametrize("kwargs", [{"decode_responses": True}, {"protocol": 3}])
 def test_incompatible_borrowed_clients(kwargs):
     with pytest.raises(ValueError, match="RESP"):
@@ -387,7 +435,7 @@ async def test_search_tool_params_without_defaults(collection, required):
     collection._fetch_records = AsyncMock(return_value=[])
     parameter = Param("text", str, required=required)
     assert not parameter.has_default
-    assert parameter.default is parameter.default
+    assert parameter.default is Param("independent", str).default
     tool = create_vector_search_tool(
         collection,
         filter=FilterGroup("and", [Filter("enabled", "eq", True), Filter("text", "eq", parameter)]),
@@ -489,6 +537,25 @@ async def test_index_initialization_schema_validation_and_cleanup(collection):
         await collection.get()
 
 
+@pytest.mark.parametrize("change", ["deleted", "replaced"])
+async def test_index_validation_is_not_cached(collection, change):
+    with (
+        patch.object(collection._index, "exists", AsyncMock(return_value=True)) as exists,
+        patch.object(collection, "_validate_schema", new_callable=AsyncMock) as validate,
+    ):
+        await collection._require_index()
+        if change == "replaced":
+            validate.side_effect = ValueError("incompatible")
+        else:
+            exists.return_value = False
+        error = ValueError if change == "replaced" else IntegrationException
+        message = "incompatible" if change == "replaced" else "does not exist"
+        with pytest.raises(error, match=message):
+            await collection._require_index()
+        assert exists.await_count == 2
+        assert validate.await_count == (2 if change == "replaced" else 1)
+
+
 async def test_missing_server_capability_fails_at_initialization(collection):
     collection._index.exists = AsyncMock(side_effect=ResponseError("unknown command FT._LIST"))
     with (
@@ -510,25 +577,52 @@ async def test_key_delete_is_batched_and_validated_before_io(collection):
         delete.assert_not_awaited()
 
 
-async def test_store_lists_and_deletes_only_its_namespace():
+async def test_store_lists_and_deletes_only_its_namespace(noncanonical_index_suffixes):
     async with RedisStore(namespace="scope") as store:
         c = store.get_collection(dict, definition=definition(), collection_name="one")
-        c._validated = True
         c._index.delete = AsyncMock()
+        prefix = c.index_name.rsplit(":", 1)[0].encode() + b":"
         with (
             patch.object(
                 store.redis_client,
                 "execute_command",
-                AsyncMock(return_value=[c.index_name.encode(), b"unrelated:index"]),
+                AsyncMock(
+                    return_value=[
+                        c.index_name.encode(),
+                        b"unrelated:\xff",
+                        *(prefix + suffix for suffix in noncanonical_index_suffixes),
+                    ]
+                ),
             ),
             patch(
                 "agent_framework_redis._vector_store.AsyncSearchIndex.from_existing", AsyncMock(return_value=c._index)
-            ),
+            ) as from_existing,
         ):
             assert await store.list_collection_names() == ["one"]
+            assert await store.collection_exists("one")
+            assert not await store.collection_exists("missing")
             await store.ensure_collection_deleted("one")
+            from_existing.assert_awaited_once_with(c.index_name, redis_client=store.redis_client)
             c._index.delete.assert_awaited_once_with(drop=True)
-            assert not c._validated
+
+
+@pytest.mark.parametrize("name", ["one", "\u00e9", "a" * 256, "\u00e9" * 128])
+async def test_store_lists_canonical_unicode_and_boundary_names(name):
+    async with RedisStore() as store:
+        collection = store.get_collection(dict, definition=definition(), collection_name=name)
+        with patch.object(
+            store.redis_client, "execute_command", AsyncMock(return_value=[collection.index_name.encode()])
+        ):
+            assert await store.list_collection_names() == [name]
+
+
+async def test_store_listing_propagates_redis_errors():
+    async with RedisStore() as store:
+        with (
+            patch.object(store.redis_client, "execute_command", AsyncMock(side_effect=ResponseError("denied"))),
+            pytest.raises(ResponseError, match="denied"),
+        ):
+            await store.list_collection_names()
 
 
 async def test_large_batch_codec_without_embedding_calls(collection):
@@ -740,6 +834,77 @@ async def test_live_scores_thresholds_and_paging(live_store, metric, expected):
     other = [r async for r in await c.search(vector=[0.0, 1.0], vector_property_name="other_vector")]
     assert all(r["score"] == 0.0 for r in other)
     assert [r["id"] for r in await c.get(order_by={"number": False}, skip=1, top=1)] == ["two"]
+
+
+@pytest.mark.integration
+async def test_live_store_ignores_noncanonical_indexes(live_store, noncanonical_index_suffixes):
+    c = live_store.get_collection(dict, definition=definition(), collection_name="one")
+    await c.ensure_collection_exists()
+    await c.upsert([record()], generate_vectors=False)
+    prefix = c.index_name.rsplit(":", 1)[0].encode() + b":"
+    foreign_prefix = "af-test-foreign:" + uuid4().hex + ":"
+    foreign_key = foreign_prefix + "one"
+    index_names = [prefix + suffix for suffix in noncanonical_index_suffixes]
+    index_names.append(foreign_prefix.encode() + b"\xff")
+    created = []
+    try:
+        await c.redis_client.hset(foreign_key, mapping={"text": "Foreign"})
+        for index_name in index_names:
+            await c.redis_client.execute_command(
+                "FT.CREATE", index_name, "ON", "HASH", "PREFIX", 1, foreign_prefix, "SCHEMA", "text", "TEXT"
+            )
+            created.append(index_name)
+        assert await live_store.list_collection_names() == ["one"]
+        assert await live_store.collection_exists("one")
+        assert not await live_store.collection_exists("missing")
+        await live_store.ensure_collection_deleted("one")
+        assert await live_store.list_collection_names() == []
+        assert not await live_store.collection_exists("one")
+        assert not await c.redis_client.exists(c.key_prefix + "one")
+        remaining = await c.redis_client.execute_command("FT._LIST")
+        assert set(index_names) <= set(remaining)
+        assert await c.redis_client.hgetall(foreign_key) == {b"text": b"Foreign"}
+    finally:
+        for index_name in created:
+            await c.redis_client.execute_command("FT.DROPINDEX", index_name)
+        await c.redis_client.delete(foreign_key)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("change", ["deleted", "replaced"])
+@pytest.mark.parametrize("operation", ["upsert", "get", "filtered_get", "delete", "search"])
+async def test_live_warm_handle_rechecks_index(live_store, change, operation):
+    c = live_store.get_collection(dict, definition=definition(), collection_name="lifecycle")
+    await c.ensure_collection_exists()
+    await c.upsert([record()], generate_vectors=False)
+    key = c.key_prefix + "one"
+    snapshot = await c.redis_client.dump(key)
+    assert snapshot is not None
+    try:
+        await c.redis_client.ft(c.index_name).dropindex(delete_documents=False)
+        if change == "replaced":
+            replacement = live_store.get_collection(
+                dict, definition=definition(dimensions=3), collection_name="lifecycle"
+            )
+            await replacement.ensure_collection_exists()
+        error = ValueError if change == "replaced" and operation != "delete" else IntegrationException
+        message = "incompatible" if change == "replaced" else "does not exist"
+        with pytest.raises(error, match=message) as exc_info:
+            if operation == "upsert":
+                await c.upsert([record(text="Changed")], generate_vectors=False)
+            elif operation == "get":
+                await c.get(["one"])
+            elif operation == "filtered_get":
+                await c.get(filter=Filter("text", "eq", record()["text"]))
+            elif operation == "delete":
+                await c.delete(["one"])
+            else:
+                await c.search(vector=[1.0, 0.0])
+        if change == "replaced" and operation == "delete":
+            assert isinstance(exc_info.value.__cause__, ValueError)
+        assert await c.redis_client.dump(key) == snapshot
+    finally:
+        await c.redis_client.delete(key)
 
 
 @pytest.mark.integration
