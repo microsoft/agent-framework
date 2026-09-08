@@ -7,8 +7,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from agent_framework import Message
-from chatkit.types import InferenceOptions, UserMessageTextContent
+from agent_framework import Content, Message
+from chatkit.types import InferenceOptions, UserMessageTagContent, UserMessageTextContent
 from pydantic import AnyUrl
 
 from agent_framework_chatkit import ThreadItemConverter, simple_to_agent_input
@@ -109,6 +109,98 @@ class TestThreadItemConverter:
 
         assert len(result) == 1
         assert result[0].text == "Hello world!"
+
+    async def test_to_agent_input_keeps_tag_inline_with_text(self, converter):
+        """Test converting user message tags in their original text position."""
+        from chatkit.types import UserMessageItem
+
+        input_item = UserMessageItem(
+            id="msg_tag",
+            thread_id="thread_1",
+            created_at=datetime.now(),
+            type="user_message",
+            content=[
+                UserMessageTextContent(text="Ask "),
+                UserMessageTagContent(
+                    type="input_tag",
+                    id="tag_1",
+                    text="john",
+                    data={"name": "John Doe"},
+                    interactive=False,
+                ),
+                UserMessageTextContent(text=" about the report."),
+            ],
+            attachments=[],
+            inference_options=InferenceOptions(),
+        )
+
+        result = await converter.to_agent_input(input_item)
+
+        assert len(result) == 1
+        assert result[0].text == "Ask <TAG>Name:John Doe</TAG> about the report."
+
+    async def test_to_agent_input_keeps_tag_only_message(self, converter):
+        """Test that a user message containing only a tag is not discarded."""
+        from chatkit.types import UserMessageItem
+
+        input_item = UserMessageItem(
+            id="msg_tag_only",
+            thread_id="thread_1",
+            created_at=datetime.now(),
+            type="user_message",
+            content=[
+                UserMessageTagContent(
+                    type="input_tag",
+                    id="tag_1",
+                    text="john",
+                    data={"name": "John Doe"},
+                    interactive=False,
+                )
+            ],
+            attachments=[],
+            inference_options=InferenceOptions(),
+        )
+
+        result = await converter.to_agent_input(input_item)
+
+        assert len(result) == 1
+        assert result[0].text == "<TAG>Name:John Doe</TAG>"
+
+    async def test_to_agent_input_preserves_non_text_tag_position(self):
+        """Test that custom non-text tag conversions remain between adjacent text."""
+        from chatkit.types import UserMessageItem
+
+        class UriTagConverter(ThreadItemConverter):
+            def tag_to_message_content(self, tag: UserMessageTagContent) -> Content:
+                return Content.from_uri(uri=f"https://example.com/users/{tag.text}", media_type="text/html")
+
+        input_item = UserMessageItem(
+            id="msg_uri_tag",
+            thread_id="thread_1",
+            created_at=datetime.now(),
+            type="user_message",
+            content=[
+                UserMessageTextContent(text="Ask"),
+                UserMessageTagContent(
+                    type="input_tag",
+                    id="tag_1",
+                    text="john",
+                    data={"name": "John Doe"},
+                    interactive=False,
+                ),
+                UserMessageTextContent(text="about the report."),
+            ],
+            attachments=[],
+            inference_options=InferenceOptions(),
+        )
+
+        result = await UriTagConverter().to_agent_input(input_item)
+
+        assert len(result) == 1
+        assert [content.type for content in result[0].contents] == ["text", "uri", "text"]
+        assert result[0].contents[0].text == "Ask"
+        assert result[0].contents[1].uri == "https://example.com/users/john"
+        assert result[0].contents[2].text == "about the report."
 
     async def test_to_agent_input_with_quoted_text_for_last_message(self, converter):
         """Test quoted text is prepended as context for the last user message."""

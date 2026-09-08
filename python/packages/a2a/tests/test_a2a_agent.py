@@ -2536,3 +2536,37 @@ async def test_input_required_sets_task_id_instead_of_reference(mock_a2a_client:
 
 
 # endregion
+
+
+async def test_context_manager_with_user_supplied_http_client() -> None:
+    """A2AAgent(url=..., http_client=mine) must exit cleanly and must not close it.
+
+    The third construction path (no client, caller-provided http_client) used to
+    leave _close_http_client unset, so __aexit__ raised AttributeError.
+    """
+    mock_http_client = MagicMock()
+    mock_http_client.aclose = AsyncMock()
+
+    agent = A2AAgent(url="http://agent.example", http_client=mock_http_client)
+
+    async with agent:
+        pass
+
+    # the client belongs to the caller; we must not close it
+    mock_http_client.aclose.assert_not_called()
+
+
+async def test_context_manager_closes_self_created_http_client() -> None:
+    """A2AAgent(url=...) builds its own client and closes it on exit."""
+
+    with patch("agent_framework_a2a._agent.httpx.AsyncClient") as cls:
+        mock_http_client = MagicMock()
+        mock_http_client.aclose = AsyncMock()
+        cls.return_value = mock_http_client
+
+        agent = A2AAgent(url="http://agent.example")
+
+        async with agent:
+            pass
+
+        mock_http_client.aclose.assert_called_once()
