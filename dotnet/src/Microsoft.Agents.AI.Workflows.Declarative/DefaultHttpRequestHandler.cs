@@ -150,7 +150,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
             CancellationToken effectiveToken = timeoutCts?.Token ?? cancellationToken;
 
             using HttpResponseMessage httpResponse = await client
-                .SendAsync(httpRequest, HttpCompletionOption.ResponseContentRead, effectiveToken)
+                .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, effectiveToken)
                 .ConfigureAwait(false);
 
             if (TryCreateRedirectRequest(httpResponse, currentRequest, currentUri, out HttpRequestInfo? redirectRequest, out Uri? redirectUri))

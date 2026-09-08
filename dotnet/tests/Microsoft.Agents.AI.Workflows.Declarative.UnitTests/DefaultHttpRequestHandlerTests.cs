@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -486,6 +487,47 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
+    public async Task SendAsyncDoesNotReadRedirectedResponseBodyAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        TrackingContent redirectedContent = new("not returned");
+#pragma warning disable CA2025
+        TestHttpMessageHandler messageHandler = new((req, _) =>
+        {
+            if (req.RequestUri!.AbsolutePath == "/resource")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
+                {
+                    Content = redirectedContent,
+                    Headers = { Location = new Uri("https://api.example.test/next") },
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
+            });
+        });
+#pragma warning restore CA2025
+
+        using HttpClient client = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new(client);
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = TestUrl,
+        };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        Assert.Equal("redirected", result.Body);
+        Assert.False(redirectedContent.WasRead);
+    }
+
+    [Fact]
     public async Task SendAsyncProviderClientRejectsScopedDefaultHeadersAsync()
     {
         // Arrange
@@ -686,6 +728,31 @@ public sealed class DefaultHttpRequestHandlerTests
                 this.LastRequestContentType = request.Content.Headers.ContentType?.MediaType;
             }
             return await this._responseFactory(request, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private sealed class TrackingContent : HttpContent
+    {
+        private readonly string _content;
+
+        public TrackingContent(string content)
+        {
+            this._content = content;
+        }
+
+        public bool WasRead { get; private set; }
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        {
+            this.WasRead = true;
+            byte[] bytes = Encoding.UTF8.GetBytes(this._content);
+            return stream.WriteAsync(bytes, 0, bytes.Length);
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = Encoding.UTF8.GetByteCount(this._content);
+            return true;
         }
     }
 }
