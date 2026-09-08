@@ -2139,7 +2139,7 @@ async def test_endpoint_request_collision_evicts_prior_private_value(streaming_c
 async def test_endpoint_scopes_history_provider_session_ids_by_trusted_snapshot_scope(
     streaming_chat_client_stub,
 ):
-    """Trusted Snapshot Scopes isolate internal history while AG-UI keeps the raw thread id."""
+    """Trusted scopes isolate history from other scopes and the unscoped client-id namespace."""
 
     class RecordingHistoryProvider(HistoryProvider):
         def __init__(self) -> None:
@@ -2197,6 +2197,12 @@ async def test_endpoint_scopes_history_provider_session_ids_by_trusted_snapshot_
         snapshot_scope_resolver=lambda request: cast("dict[str, Any]", request.forwarded_props)["scope"],
         keepalive_seconds=None,
     )
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/unscoped-history",
+        keepalive_seconds=None,
+    )
     client = TestClient(app)
 
     raw_thread_id = "shared-client-thread"
@@ -2221,14 +2227,35 @@ async def test_endpoint_scopes_history_provider_session_ids_by_trusted_snapshot_
     tenant_a_session_id, repeated_tenant_a_session_id, tenant_b_session_id = history.saved_session_ids
     assert tenant_a_session_id == repeated_tenant_a_session_id
     assert tenant_a_session_id != tenant_b_session_id
-    assert set(history.messages_by_session) == {tenant_a_session_id, tenant_b_session_id}
+
+    collision_response = client.post(
+        "/unscoped-history",
+        json={
+            "thread_id": tenant_a_session_id,
+            "messages": [{"role": "user", "content": "unscoped collision attempt"}],
+        },
+    )
+    assert collision_response.status_code == 200
+    unscoped_session_id = history.saved_session_ids[-1]
+    assert unscoped_session_id != tenant_a_session_id
+
+    assert set(history.messages_by_session) == {
+        tenant_a_session_id,
+        tenant_b_session_id,
+        unscoped_session_id,
+    }
     assert all("tenant-b" not in message.text for message in history.messages_by_session[tenant_a_session_id])
     assert all("tenant-a" not in message.text for message in history.messages_by_session[tenant_b_session_id])
+    assert all("unscoped" not in message.text for message in history.messages_by_session[tenant_a_session_id])
+    assert all("tenant-a" not in message.text for message in history.messages_by_session[unscoped_session_id])
 
     for response in responses:
         events = _decode_sse_events(response)
         assert events[0]["threadId"] == raw_thread_id
         assert events[-1]["threadId"] == raw_thread_id
+    collision_events = _decode_sse_events(collision_response)
+    assert collision_events[0]["threadId"] == tenant_a_session_id
+    assert collision_events[-1]["threadId"] == tenant_a_session_id
 
 
 async def test_endpoint_excludes_history_provider_state_from_continuation(streaming_chat_client_stub):

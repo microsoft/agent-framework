@@ -15,10 +15,32 @@ def test_internal_session_id_is_stable_scoped_and_unambiguous() -> None:
 
     assert _session_id_for_thread(scope=None, thread_id=raw_thread_id) == raw_thread_id
     assert scoped_session_id == _session_id_for_thread(scope="tenant-a", thread_id=raw_thread_id)
-    assert scoped_session_id.startswith("ag-ui:v1:")
-    assert len(scoped_session_id.removeprefix("ag-ui:v1:")) == 64
+    assert scoped_session_id.startswith("ag-ui:v1:scoped:")
+    assert len(scoped_session_id.removeprefix("ag-ui:v1:scoped:")) == 64
     assert scoped_session_id != _session_id_for_thread(scope="tenant-b", thread_id=raw_thread_id)
     assert _session_id_for_thread(scope="ab", thread_id="c") != _session_id_for_thread(scope="a", thread_id="bc")
+
+
+def test_internal_session_id_keeps_scoped_and_unscoped_namespaces_disjoint() -> None:
+    """A client cannot use a scoped internal ID as an unscoped raw Thread ID."""
+    scoped_session_id = _session_id_for_thread(scope="tenant-a", thread_id="shared-thread")
+    unscoped_session_id = _session_id_for_thread(scope=None, thread_id=scoped_session_id)
+
+    assert unscoped_session_id.startswith("ag-ui:v1:unscoped:")
+    assert unscoped_session_id != scoped_session_id
+    assert unscoped_session_id == _session_id_for_thread(scope=None, thread_id=scoped_session_id)
+
+
+def test_internal_session_id_supports_deprecated_legacy_mapping() -> None:
+    """The explicit migration escape hatch preserves the legacy raw provider key."""
+    assert (
+        _session_id_for_thread(
+            scope="tenant-a",
+            thread_id="shared-thread",
+            legacy_session_id_from_thread_id=True,
+        )
+        == "shared-thread"
+    )
 
 
 def test_thread_snapshot_model_contains_replayable_and_private_snapshot_fields() -> None:

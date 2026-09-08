@@ -2433,7 +2433,11 @@ async def run_agent_stream(
     thread_id = supplied_thread_id or str(uuid.uuid4())
     run_id = supplied_run_id or str(uuid.uuid4())
     snapshot_scope = cast(str | None, input_data.get(_SNAPSHOT_SCOPE_INPUT_KEY))
-    session_id = _session_id_for_thread(scope=snapshot_scope, thread_id=thread_id)
+    session_id = _session_id_for_thread(
+        scope=snapshot_scope,
+        thread_id=thread_id,
+        legacy_session_id_from_thread_id=config.legacy_session_id_from_thread_id,
+    )
     approval_scope = cast(str | None, input_data.get(_APPROVAL_SCOPE_INPUT_KEY))
     approval_thread_id = approval_state_thread_id(scope=approval_scope, thread_id=thread_id)
     if approval_state_store is None:

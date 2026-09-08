@@ -385,6 +385,12 @@ AG-UI events and snapshot operations. When using `AgentFrameworkWorkflow(workflo
 also scopes the in-memory workflow cache even without a snapshot store; provide it in multi-user deployments so two
 users who submit the same `threadId` do not share a live `Workflow` instance.
 
+Existing applications that need time to migrate provider records from raw Thread-id keys can temporarily wrap the
+agent with `AgentFrameworkAgent(..., legacy_session_id_from_thread_id=True)`. This deprecated compatibility option
+emits a `DeprecationWarning` and disables Snapshot Scope isolation for context-provider state. Remove it after
+migrating only records whose scope provenance can be established; do not merge or fall back to legacy records that
+may already contain data from multiple scopes.
+
 For hosted agents, request Shared State is also available through `AgentSession.state` during that run, whether or
 not snapshot persistence is configured. Request values are untrusted per-run context: they overlay ordinary restored
 values, are not passed through typed session restoration, and are excluded from private Session Continuation State.

@@ -24,19 +24,34 @@ AGUIThreadID: TypeAlias = str
 SnapshotScopeResolver: TypeAlias = Callable[["AGUIRequest"], str | Awaitable[str]]
 """Callable that resolves the trusted Snapshot Scope for an AG-UI endpoint request."""
 
-_SCOPED_SESSION_ID_VERSION = 1
-_SCOPED_SESSION_ID_PREFIX = f"ag-ui:v{_SCOPED_SESSION_ID_VERSION}:"
+_SESSION_ID_VERSION = 1
+_SESSION_ID_PREFIX = f"ag-ui:v{_SESSION_ID_VERSION}:"
+_SCOPED_SESSION_ID_PREFIX = f"{_SESSION_ID_PREFIX}scoped:"
+_UNSCOPED_SESSION_ID_PREFIX = f"{_SESSION_ID_PREFIX}unscoped:"
 
 
-def _session_id_for_thread(*, scope: SnapshotScope | None, thread_id: AGUIThreadID) -> str:
+def _session_id_for_thread(
+    *,
+    scope: SnapshotScope | None,
+    thread_id: AGUIThreadID,
+    legacy_session_id_from_thread_id: bool = False,
+) -> str:
     """Return the scope-isolated internal session ID for an AG-UI thread."""
-    if scope is None:
+    if legacy_session_id_from_thread_id:
         return thread_id
 
-    identity = (_SCOPED_SESSION_ID_VERSION, scope, thread_id)
+    if scope is None and not thread_id.startswith(_SESSION_ID_PREFIX):
+        return thread_id
+
+    identity = (
+        (_SESSION_ID_VERSION, "scoped", scope, thread_id)
+        if scope is not None
+        else (_SESSION_ID_VERSION, "unscoped", thread_id)
+    )
     encoded_identity = json.dumps(identity, ensure_ascii=True, separators=(",", ":")).encode("ascii")
     digest = hashlib.sha256(encoded_identity).hexdigest()
-    return f"{_SCOPED_SESSION_ID_PREFIX}{digest}"
+    prefix = _SCOPED_SESSION_ID_PREFIX if scope is not None else _UNSCOPED_SESSION_ID_PREFIX
+    return f"{prefix}{digest}"
 
 
 _SnapshotKey: TypeAlias = tuple[SnapshotScope, AGUIThreadID]

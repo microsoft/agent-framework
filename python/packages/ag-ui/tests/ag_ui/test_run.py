@@ -2720,6 +2720,33 @@ async def test_scoped_session_id_preserves_service_session_id_thread_compatibili
     assert events[-1].thread_id == "service-thread-789"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
+async def test_scoped_session_id_supports_deprecated_legacy_mapping():
+    """The explicit migration escape hatch warns and preserves the raw internal session id."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    with pytest.warns(DeprecationWarning, match="legacy_session_id_from_thread_id=True is deprecated"):
+        agent = AgentFrameworkAgent(
+            agent=stub,
+            snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+            legacy_session_id_from_thread_id=True,
+        )
+
+    payload = {
+        "thread_id": "legacy-thread",
+        "run_id": "run-legacy-session",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == "legacy-thread"
+
+
 async def test_scoped_session_id_is_used_to_create_service_conversation():
     """Provider-owned conversation creation uses the scope-isolated internal session id."""
     from agent_framework import AgentSession
