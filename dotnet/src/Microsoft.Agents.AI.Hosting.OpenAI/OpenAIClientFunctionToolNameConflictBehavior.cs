@@ -36,30 +36,27 @@ public abstract class OpenAIClientFunctionToolNameConflictBehavior
     /// <returns>The conflict behavior.</returns>
     public static OpenAIClientFunctionToolNameConflictBehavior AllowOverride() => new AllowOverrideBehavior();
 
-    internal abstract OpenAIClientFunctionToolNameConflictBehaviorKind Kind { get; }
+    internal abstract BehaviorKind Kind { get; }
 
     private sealed class RejectBehavior : OpenAIClientFunctionToolNameConflictBehavior
     {
-        internal override OpenAIClientFunctionToolNameConflictBehaviorKind Kind =>
-            OpenAIClientFunctionToolNameConflictBehaviorKind.Reject;
+        internal override BehaviorKind Kind => BehaviorKind.Reject;
     }
 
     private sealed class IgnoreBehavior : OpenAIClientFunctionToolNameConflictBehavior
     {
-        internal override OpenAIClientFunctionToolNameConflictBehaviorKind Kind =>
-            OpenAIClientFunctionToolNameConflictBehaviorKind.Ignore;
+        internal override BehaviorKind Kind => BehaviorKind.Ignore;
     }
 
     private sealed class AllowOverrideBehavior : OpenAIClientFunctionToolNameConflictBehavior
     {
-        internal override OpenAIClientFunctionToolNameConflictBehaviorKind Kind =>
-            OpenAIClientFunctionToolNameConflictBehaviorKind.AllowOverride;
+        internal override BehaviorKind Kind => BehaviorKind.AllowOverride;
     }
-}
 
-internal enum OpenAIClientFunctionToolNameConflictBehaviorKind
-{
-    Reject,
-    Ignore,
-    AllowOverride,
+    internal enum BehaviorKind
+    {
+        Reject,
+        Ignore,
+        AllowOverride,
+    }
 }

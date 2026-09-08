@@ -17,7 +17,7 @@ public sealed class OpenAIClientFunctionToolNameConflictBehaviorTests
 #pragma warning restore MAAI001
 
         // Assert
-        Assert.Equal(OpenAIClientFunctionToolNameConflictBehaviorKind.Reject, behavior.Kind);
+        Assert.Equal(OpenAIClientFunctionToolNameConflictBehavior.BehaviorKind.Reject, behavior.Kind);
     }
 
     [Fact]
@@ -30,7 +30,7 @@ public sealed class OpenAIClientFunctionToolNameConflictBehaviorTests
 #pragma warning restore MAAI001
 
         // Assert
-        Assert.Equal(OpenAIClientFunctionToolNameConflictBehaviorKind.Ignore, behavior.Kind);
+        Assert.Equal(OpenAIClientFunctionToolNameConflictBehavior.BehaviorKind.Ignore, behavior.Kind);
     }
 
     [Fact]
@@ -43,6 +43,6 @@ public sealed class OpenAIClientFunctionToolNameConflictBehaviorTests
 #pragma warning restore MAAI001
 
         // Assert
-        Assert.Equal(OpenAIClientFunctionToolNameConflictBehaviorKind.AllowOverride, behavior.Kind);
+        Assert.Equal(OpenAIClientFunctionToolNameConflictBehavior.BehaviorKind.AllowOverride, behavior.Kind);
     }
 }

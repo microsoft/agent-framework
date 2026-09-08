@@ -110,7 +110,7 @@ public sealed class OpenAIResponsesClientFunctionToolsLiveTests
         OpenAIClientFunctionToolNameConflictBehavior behavior) =>
         new()
         {
-            DangerouslyAllowClientFunctionTools = new(behavior)
+            DangerouslyAllowClientFunctionTools = behavior
         };
 #pragma warning restore MAAI001
 

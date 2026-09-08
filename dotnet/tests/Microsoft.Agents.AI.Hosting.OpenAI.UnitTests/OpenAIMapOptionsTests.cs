@@ -175,7 +175,7 @@ public sealed class OpenAIMapOptionsTests
         var mapOptions = new OpenAIResponsesMapOptions
         {
             DangerouslyAllowClientFunctionTools =
-                new(OpenAIClientFunctionToolNameConflictBehavior.Reject())
+                OpenAIClientFunctionToolNameConflictBehavior.Reject()
         };
 #pragma warning restore MAAI001
         using var app = await CreateResponsesServerAsync("reject-tool-choice-agent", mapOptions);
@@ -211,7 +211,7 @@ public sealed class OpenAIMapOptionsTests
         var mapOptions = new OpenAIResponsesMapOptions
         {
             DangerouslyAllowClientFunctionTools =
-                new(OpenAIClientFunctionToolNameConflictBehavior.Reject())
+                OpenAIClientFunctionToolNameConflictBehavior.Reject()
         };
 #pragma warning restore MAAI001
         using var app = await CreateResponsesServerAsync("reject-hosted-tool-agent", mapOptions);

@@ -954,7 +954,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         var mapOptions = new OpenAIResponsesMapOptions
         {
             DangerouslyAllowClientFunctionTools =
-                new(OpenAIClientFunctionToolNameConflictBehavior.AllowOverride())
+                OpenAIClientFunctionToolNameConflictBehavior.AllowOverride()
         };
 #pragma warning restore MAAI001
 
@@ -1109,7 +1109,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         var mapOptions = new OpenAIResponsesMapOptions
         {
             DangerouslyAllowClientFunctionTools =
-                new(OpenAIClientFunctionToolNameConflictBehavior.AllowOverride())
+                OpenAIClientFunctionToolNameConflictBehavior.AllowOverride()
         };
 #pragma warning restore MAAI001
 
@@ -1145,7 +1145,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         var mapOptions = new OpenAIResponsesMapOptions
         {
             DangerouslyAllowClientFunctionTools =
-                new(OpenAIClientFunctionToolNameConflictBehavior.Reject())
+                OpenAIClientFunctionToolNameConflictBehavior.Reject()
         };
 #pragma warning restore MAAI001
 
@@ -1183,7 +1183,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         var mapOptions = new OpenAIResponsesMapOptions
         {
             DangerouslyAllowClientFunctionTools =
-                new(OpenAIClientFunctionToolNameConflictBehavior.Ignore())
+                OpenAIClientFunctionToolNameConflictBehavior.Ignore()
         };
 #pragma warning restore MAAI001
 
@@ -1229,7 +1229,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         var mapOptions = new OpenAIResponsesMapOptions
         {
             DangerouslyAllowClientFunctionTools =
-                new(OpenAIClientFunctionToolNameConflictBehavior.AllowOverride())
+                OpenAIClientFunctionToolNameConflictBehavior.AllowOverride()
         };
 #pragma warning restore MAAI001
 

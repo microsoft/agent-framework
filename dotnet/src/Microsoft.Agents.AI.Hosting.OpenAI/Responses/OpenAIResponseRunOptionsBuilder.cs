@@ -23,14 +23,16 @@ internal static class OpenAIResponseRunOptionsBuilder
         bool logConflicts = false)
     {
         OpenAIResponseRequestInfo requestInfo = request.ToRequestInfo();
-        OpenAIClientFunctionToolsOptions? clientFunctionOptions = mapOptions.DangerouslyAllowClientFunctionTools;
+        OpenAIClientFunctionToolNameConflictBehavior? clientFunctionBehavior =
+            mapOptions.DangerouslyAllowClientFunctionTools;
 
-        if (clientFunctionOptions is null || requestInfo.Tools is not { Count: > 0 } requestTools)
+        if (clientFunctionBehavior is null || requestInfo.Tools is not { Count: > 0 } requestTools)
         {
             return mapOptions.RunOptionsFactory(requestInfo);
         }
 
-        List<AITool>? clientFunctions = requestTools.ExtractClientFunctionTools(out List<System.Text.Json.JsonElement>? unsupportedTools);
+        (List<AITool>? clientFunctions, List<System.Text.Json.JsonElement>? unsupportedTools) =
+            requestTools.ExtractClientFunctionTools();
         if (clientFunctions is not { Count: > 0 })
         {
             return mapOptions.RunOptionsFactory(requestInfo);
@@ -42,8 +44,8 @@ internal static class OpenAIResponseRunOptionsBuilder
         // configured factory and is rejected by the default factory.
         requestInfo.Tools = unsupportedTools;
         AgentRunOptions? runOptions = mapOptions.RunOptionsFactory(requestInfo);
-        OpenAIClientFunctionToolNameConflictBehaviorKind nameConflictBehavior =
-            clientFunctionOptions.NameConflictBehavior.Kind;
+        OpenAIClientFunctionToolNameConflictBehavior.BehaviorKind nameConflictBehavior =
+            clientFunctionBehavior.Kind;
 
         HashSet<string> hostedToolNames = GetHostedToolNames(agent, runOptions);
         List<string> conflictingNames = clientFunctions
@@ -57,10 +59,10 @@ internal static class OpenAIResponseRunOptionsBuilder
         {
             switch (nameConflictBehavior)
             {
-                case OpenAIClientFunctionToolNameConflictBehaviorKind.Reject:
+                case OpenAIClientFunctionToolNameConflictBehavior.BehaviorKind.Reject:
                     throw CreateNameConflictException(conflictingNames);
 
-                case OpenAIClientFunctionToolNameConflictBehaviorKind.Ignore:
+                case OpenAIClientFunctionToolNameConflictBehavior.BehaviorKind.Ignore:
                     clientFunctions.RemoveAll(tool => hostedToolNames.Contains(tool.Name));
                     if (logConflicts)
                     {
@@ -70,7 +72,7 @@ internal static class OpenAIResponseRunOptionsBuilder
                     }
                     break;
 
-                case OpenAIClientFunctionToolNameConflictBehaviorKind.AllowOverride:
+                case OpenAIClientFunctionToolNameConflictBehavior.BehaviorKind.AllowOverride:
                     break;
             }
         }
@@ -83,7 +85,7 @@ internal static class OpenAIResponseRunOptionsBuilder
     private static ChatClientAgentRunOptions AddClientFunctions(
         AgentRunOptions? runOptions,
         List<AITool> clientFunctions,
-        OpenAIClientFunctionToolNameConflictBehaviorKind nameConflictBehavior,
+        OpenAIClientFunctionToolNameConflictBehavior.BehaviorKind nameConflictBehavior,
         ILogger? logger)
     {
         ChatClientAgentRunOptions chatRunOptions = runOptions switch
@@ -163,13 +165,13 @@ internal static class OpenAIResponseRunOptionsBuilder
 
     private sealed class ClientFunctionToolConflictResolvingChatClient : DelegatingChatClient
     {
-        private readonly OpenAIClientFunctionToolNameConflictBehaviorKind _nameConflictBehavior;
+        private readonly OpenAIClientFunctionToolNameConflictBehavior.BehaviorKind _nameConflictBehavior;
         private readonly ILogger? _logger;
         private bool _loggedIgnoredConflicts;
 
         public ClientFunctionToolConflictResolvingChatClient(
             IChatClient innerClient,
-            OpenAIClientFunctionToolNameConflictBehaviorKind nameConflictBehavior,
+            OpenAIClientFunctionToolNameConflictBehavior.BehaviorKind nameConflictBehavior,
             ILogger? logger)
             : base(innerClient)
         {
@@ -219,14 +221,14 @@ internal static class OpenAIResponseRunOptionsBuilder
                 return options;
             }
 
-            if (this._nameConflictBehavior == OpenAIClientFunctionToolNameConflictBehaviorKind.Reject)
+            if (this._nameConflictBehavior == OpenAIClientFunctionToolNameConflictBehavior.BehaviorKind.Reject)
             {
                 throw CreateNameConflictException(conflictingNames);
             }
 
             var conflictSet = conflictingNames.ToHashSet(StringComparer.Ordinal);
             ChatOptions resolvedOptions = options.Clone();
-            resolvedOptions.Tools = this._nameConflictBehavior == OpenAIClientFunctionToolNameConflictBehaviorKind.Ignore
+            resolvedOptions.Tools = this._nameConflictBehavior == OpenAIClientFunctionToolNameConflictBehavior.BehaviorKind.Ignore
                 ? tools.Where(tool =>
                     tool is not OpenAIResponseRequestInfoBuilder.ClientAIFunctionDeclaration ||
                     !conflictSet.Contains(tool.Name)).ToList()
@@ -235,7 +237,7 @@ internal static class OpenAIResponseRunOptionsBuilder
                     tool is not AIFunctionDeclaration ||
                     !conflictSet.Contains(tool.Name)).ToList();
 
-            if (this._nameConflictBehavior == OpenAIClientFunctionToolNameConflictBehaviorKind.Ignore &&
+            if (this._nameConflictBehavior == OpenAIClientFunctionToolNameConflictBehavior.BehaviorKind.Ignore &&
                 !this._loggedIgnoredConflicts)
             {
                 this._loggedIgnoredConflicts = true;

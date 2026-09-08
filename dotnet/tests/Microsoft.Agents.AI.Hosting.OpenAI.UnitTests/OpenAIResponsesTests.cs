@@ -36,7 +36,7 @@ public class OpenAIResponsesTests
         var mapOptions = new OpenAIResponsesMapOptions
         {
             DangerouslyAllowClientFunctionTools =
-                new(OpenAIClientFunctionToolNameConflictBehavior.Reject())
+                OpenAIClientFunctionToolNameConflictBehavior.Reject()
         };
 #pragma warning restore MAAI001
 
@@ -68,7 +68,7 @@ public class OpenAIResponsesTests
         var mapOptions = new OpenAIResponsesMapOptions
         {
             DangerouslyAllowClientFunctionTools =
-                new(OpenAIClientFunctionToolNameConflictBehavior.Reject())
+                OpenAIClientFunctionToolNameConflictBehavior.Reject()
         };
 #pragma warning restore MAAI001
 

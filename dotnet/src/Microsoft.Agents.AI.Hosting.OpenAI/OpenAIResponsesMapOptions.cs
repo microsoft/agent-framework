@@ -71,7 +71,7 @@ public sealed class OpenAIResponsesMapOptions
     /// </para>
     /// </remarks>
     [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-    public OpenAIClientFunctionToolsOptions? DangerouslyAllowClientFunctionTools { get; set; }
+    public OpenAIClientFunctionToolNameConflictBehavior? DangerouslyAllowClientFunctionTools { get; set; }
 
     /// <summary>
     /// The default <see cref="RunOptionsFactory"/> implementation. Throws a <see cref="NotSupportedException"/>

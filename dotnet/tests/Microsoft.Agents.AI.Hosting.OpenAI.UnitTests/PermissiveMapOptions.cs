@@ -19,7 +19,7 @@ internal static class PermissiveMapOptions
     public static OpenAIResponsesMapOptions Responses() => new()
     {
 #pragma warning disable MAAI001
-        DangerouslyAllowClientFunctionTools = new(OpenAIClientFunctionToolNameConflictBehavior.AllowOverride()),
+        DangerouslyAllowClientFunctionTools = OpenAIClientFunctionToolNameConflictBehavior.AllowOverride(),
 #pragma warning restore MAAI001
         RunOptionsFactory = static request =>
         {

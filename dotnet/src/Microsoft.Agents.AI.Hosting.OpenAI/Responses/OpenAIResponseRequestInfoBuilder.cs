@@ -23,12 +23,11 @@ internal static class OpenAIResponseRequestInfoBuilder
         HasToolChoice = request.ToolChoice is not null,
     };
 
-    internal static List<AITool>? ExtractClientFunctionTools(
-        this IReadOnlyList<JsonElement> tools,
-        out List<JsonElement>? unsupportedTools)
+    internal static (List<AITool>? FunctionTools, List<JsonElement>? UnsupportedTools)
+        ExtractClientFunctionTools(this IReadOnlyList<JsonElement> tools)
     {
         List<AITool>? functionTools = null;
-        unsupportedTools = null;
+        List<JsonElement>? unsupportedTools = null;
 
         foreach (JsonElement tool in tools)
         {
@@ -42,7 +41,7 @@ internal static class OpenAIResponseRequestInfoBuilder
             }
         }
 
-        return functionTools;
+        return (functionTools, unsupportedTools);
     }
 
     private static ClientAIFunctionDeclaration? ToFunctionTool(this JsonElement tool)
