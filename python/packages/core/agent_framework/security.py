@@ -1548,8 +1548,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                     confidentiality=result_confidentiality,
                     metadata={"source": "source_integrity", "function_name": function_name},
                 )
-            elif input_labels:
-                combined = combine_labels(*input_labels)
+            elif argument_labels:
+                combined = combine_labels(*argument_labels)
                 fallback_label = ContentLabel(
                     integrity=combined.integrity,
                     confidentiality=result_confidentiality,
@@ -1562,8 +1562,6 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                     metadata={"source": "default", "function_name": function_name},
                 )
 
-            resolved_labels = self._expand_variable_references_in_context(context)
-            argument_label = combine_labels(*resolved_labels) if resolved_labels else ContentLabel()
             context_label = self._context_label
             context.metadata["context_label"] = context_label
             context.metadata["argument_label"] = argument_label

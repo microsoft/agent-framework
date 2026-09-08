@@ -4801,7 +4801,7 @@ class TestVariableArgumentPolicy:
         assert context.metadata["effective_invocation_label"].confidentiality == ConfidentialityLabel.PRIVATE
         assert policy.get_audit_log()[-1]["subtype"] == "max_allowed_confidentiality"
 
-    async def test_argument_labels_do_not_rewrite_result_labels(self) -> None:
+    async def test_argument_labels_preserve_result_confidentiality(self) -> None:
         tracker = LabelTrackingFunctionMiddleware()
         policy = PolicyEnforcementFunctionMiddleware()
         variable_id = tracker.get_variable_store().store(
@@ -4822,8 +4822,8 @@ class TestVariableArgumentPolicy:
         await FunctionMiddlewarePipeline(tracker, policy).execute(context, execute)
 
         assert context.metadata["result_label"].integrity == IntegrityLabel.TRUSTED
-        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PUBLIC
-        assert tracker.get_context_label().confidentiality == ConfidentialityLabel.PUBLIC
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
+        assert tracker.get_context_label().confidentiality == ConfidentialityLabel.PRIVATE
 
     async def test_policy_approval_allows_exact_resolved_invocation(self) -> None:
         tracker = LabelTrackingFunctionMiddleware()
