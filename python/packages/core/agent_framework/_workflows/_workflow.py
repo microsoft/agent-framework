@@ -544,7 +544,6 @@ class Workflow(DictConvertible):
             OtelAttr.WORKFLOW_RUN_SPAN,
             attributes,
         ) as span:
-            saw_request = False
             emitted_in_progress_pending = False
             try:
                 # Add workflow started event (telemetry + surface state to consumers)
@@ -609,9 +608,6 @@ class Workflow(DictConvertible):
 
                 # All executor executions happen within workflow span
                 async for event in self._runner.run_until_convergence():
-                    # Track request events for final status determination
-                    if event.type == "request_info":
-                        saw_request = True
                     yield event
 
                     if event.type == "request_info" and not emitted_in_progress_pending:
@@ -620,8 +616,11 @@ class Workflow(DictConvertible):
                         with _framework_event_origin():
                             pending_status = WorkflowEvent.status(self._status)
                         yield pending_status
-                # Workflow runs until idle - emit final status based on whether requests are pending
-                if saw_request:
+                # Workflow runs until idle - emit final status based on whether requests are pending.
+                # Continuations such as cancellation may retain an existing sibling request without
+                # re-emitting its request_info event during this run.
+                pending_requests = await self._runner.context.get_pending_request_info_events()
+                if pending_requests:
                     self._status = WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
                     with _framework_event_origin():
                         terminal_status = WorkflowEvent.status(self._status)
