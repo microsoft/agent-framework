@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -14,13 +16,28 @@ if TYPE_CHECKING:
     from ._types import AGUIRequest
 
 SnapshotScope: TypeAlias = str
-"""Application-defined scope for authorizing access to AG-UI Thread Snapshots."""
+"""Application-defined authorization scope for server-side AG-UI Thread state."""
 
 AGUIThreadID: TypeAlias = str
 """AG-UI Thread identifier within a Snapshot Scope."""
 
 SnapshotScopeResolver: TypeAlias = Callable[["AGUIRequest"], str | Awaitable[str]]
-"""Callable that resolves the Snapshot Scope for an AG-UI endpoint request."""
+"""Callable that resolves the trusted Snapshot Scope for an AG-UI endpoint request."""
+
+_SCOPED_SESSION_ID_VERSION = 1
+_SCOPED_SESSION_ID_PREFIX = f"ag-ui:v{_SCOPED_SESSION_ID_VERSION}:"
+
+
+def _session_id_for_thread(*, scope: SnapshotScope | None, thread_id: AGUIThreadID) -> str:
+    """Return the scope-isolated internal session ID for an AG-UI thread."""
+    if scope is None:
+        return thread_id
+
+    identity = (_SCOPED_SESSION_ID_VERSION, scope, thread_id)
+    encoded_identity = json.dumps(identity, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    digest = hashlib.sha256(encoded_identity).hexdigest()
+    return f"{_SCOPED_SESSION_ID_PREFIX}{digest}"
+
 
 _SnapshotKey: TypeAlias = tuple[SnapshotScope, AGUIThreadID]
 

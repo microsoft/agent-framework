@@ -98,6 +98,7 @@ from ._run_common import (
 from ._snapshots import (
     _DEFAULT_STATE_INPUT_KEY,
     _SNAPSHOT_SCOPE_INPUT_KEY,
+    _session_id_for_thread,
     AGUIThreadSnapshot,
 )
 from ._snapshot_session import ThreadSnapshotSession, _event_messages_to_snapshot_dicts
@@ -2432,6 +2433,7 @@ async def run_agent_stream(
     thread_id = supplied_thread_id or str(uuid.uuid4())
     run_id = supplied_run_id or str(uuid.uuid4())
     snapshot_scope = cast(str | None, input_data.get(_SNAPSHOT_SCOPE_INPUT_KEY))
+    session_id = _session_id_for_thread(scope=snapshot_scope, thread_id=thread_id)
     approval_scope = cast(str | None, input_data.get(_APPROVAL_SCOPE_INPUT_KEY))
     approval_thread_id = approval_state_thread_id(scope=approval_scope, thread_id=thread_id)
     if approval_state_store is None:
@@ -2721,7 +2723,7 @@ async def run_agent_stream(
                 "use_service_session=True requires snapshot persistence unless service_session_id_from_thread_id=True."
             )
         service_session_id = supplied_thread_id if config.service_session_id_from_thread_id else None
-        session = AgentSession(session_id=thread_id, service_session_id=service_session_id)
+        session = AgentSession(session_id=session_id, service_session_id=service_session_id)
         stored_service_session_id = (
             stored_snapshot.session_state.get(_PROVIDER_SERVICE_SESSION_ID_STATE_KEY)
             if stored_snapshot is not None and stored_snapshot.session_state is not None
@@ -2733,14 +2735,14 @@ async def run_agent_stream(
             and stored_service_session_id is None
             and callable(create_conversation)
         ):
-            created_session = create_conversation(session_id=thread_id)
+            created_session = create_conversation(session_id=session_id)
             if isinstance(created_session, Awaitable):
                 created_session = await created_session
             if not isinstance(created_session, AgentSession):
                 raise TypeError("agent.create_conversation() must return AgentSession")
             session = created_session
     else:
-        session = AgentSession(session_id=thread_id)
+        session = AgentSession(session_id=session_id)
     _restore_session_continuation_state(
         session,
         stored_snapshot,

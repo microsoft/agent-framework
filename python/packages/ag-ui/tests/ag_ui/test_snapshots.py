@@ -5,6 +5,20 @@
 from dataclasses import fields
 
 from agent_framework_ag_ui import AGUIThreadSnapshot, AGUIThreadSnapshotStore, InMemoryAGUIThreadSnapshotStore
+from agent_framework_ag_ui._snapshots import _session_id_for_thread
+
+
+def test_internal_session_id_is_stable_scoped_and_unambiguous() -> None:
+    """Internal session identity preserves raw IDs only when no trusted scope is present."""
+    raw_thread_id = "shared-thread"
+    scoped_session_id = _session_id_for_thread(scope="tenant-a", thread_id=raw_thread_id)
+
+    assert _session_id_for_thread(scope=None, thread_id=raw_thread_id) == raw_thread_id
+    assert scoped_session_id == _session_id_for_thread(scope="tenant-a", thread_id=raw_thread_id)
+    assert scoped_session_id.startswith("ag-ui:v1:")
+    assert len(scoped_session_id.removeprefix("ag-ui:v1:")) == 64
+    assert scoped_session_id != _session_id_for_thread(scope="tenant-b", thread_id=raw_thread_id)
+    assert _session_id_for_thread(scope="ab", thread_id="c") != _session_id_for_thread(scope="a", thread_id="bc")
 
 
 def test_thread_snapshot_model_contains_replayable_and_private_snapshot_fields() -> None:
