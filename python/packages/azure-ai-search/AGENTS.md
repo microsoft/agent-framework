@@ -64,6 +64,14 @@ unsupported options before I/O. Codec/filter/query helpers precede `_inner_upser
 `_inner_delete`, `_inner_search`, and result extraction. Store administration precedes its close methods.
 Do not migrate/refactor the existing ContextProvider as part of vector connector work.
 
+Write serialization validates all keys and vector elements once before upload. Upload preflight
+accounts for SDK JSON escaping, spacing, action metadata, and the batch envelope, rejecting a
+single oversized document before any batch I/O. It retains batch boundaries, not copies of
+serialized vector payloads. Numeric write validation follows the configured EDM storage type;
+query vectors follow the service's floating-point query contract instead of integer storage limits.
+New vector schemas default to retrievable unless explicitly disabled or unstored. Both constructors
+validate query credentials before resolving connection settings or creating owned clients.
+
 Both constructors create owned clients through `_create_index_client`, reusing `AzureAISearchSettings`
 and the public AF `load_settings` / `SecretString` API with the `AZURE_SEARCH_` prefix. Explicit settings
 override the selected `.env` file, which overrides the process environment. `env_file_path` and

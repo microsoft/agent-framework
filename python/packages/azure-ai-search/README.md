@@ -79,10 +79,24 @@ asyncio.run(main())
 
 Use `ensure_collection_exists()` to create an absent index; it never updates an
 existing index. CRUD methods accept batches and require application-provided string
-keys. Use `generate_vectors=False` when upserting precomputed vectors, or configure
+keys of 1-1,024 ASCII letters, digits, `-`, `_`, or `=`, without a leading `_`.
+Uploads are split by both the 1,000-action and 16 MiB request limits. All keys,
+vector values, and individual document sizes are checked before the first upload;
+service-side batch failures can still partially persist records.
+
+Use `generate_vectors=False` when upserting precomputed vectors, or configure
 an embedding generator. Text queries without a local generator require an integrated
 vectorizer on the index. Search targets one top-level dense vector field at a time;
 binary, sparse, and nested multivector payloads are not supported.
+
+Vector elements must be finite non-boolean numbers within the configured EDM type's
+range; `Edm.SByte` and `Edm.Int16` fields require integers. Query vectors use the
+service's floating-point query contract, not the stored field's integer constraints.
+New vector fields are retrievable by default for `include_vectors=True`. Set
+`retrievable=False`, or `stored=False`, in the field's `azure_ai_search` provider
+annotations to disable vector retrieval. `stored=False` cannot be combined with
+`retrievable=True`. Vector fields cannot be filterable, sortable, facetable, or
+analyzer-backed.
 
 Portable filters execute in Azure Search. Presence/null filters, `ne`, null-valued
 comparisons, empty `contains_all`, date comparisons, and literal
@@ -90,6 +104,7 @@ comparisons, empty `contains_all`, date comparisons, and literal
 be preserved. Use the explicitly tokenized `azure_ai_search.match` filter operator
 for full-text matching. Returned scores are Azure `@search.score`, not raw cosine
 similarity; hybrid scores use reciprocal rank fusion.
+`not_in` excludes null and missing values, matching the portable in-memory behavior.
 
 ## Stable and preview features
 

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import math
 import re
 from collections import Counter
@@ -34,6 +35,7 @@ from agent_framework.exceptions import IntegrationException, IntegrationInvalidR
 from azure.core.credentials import AzureKeyCredential, TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
+from azure.core.serialization import AzureJSONEncoder
 from azure.search.documents import models as query_models
 from azure.search.documents.aio import SearchClient
 from azure.search.documents.indexes.aio import SearchIndexClient
@@ -55,6 +57,16 @@ from ._context_provider import AzureAISearchSettings
 from ._feature_usage import FeatureIndex
 
 _SCALAR_TYPES = {"str": "Edm.String", "bool": "Edm.Boolean", "int": "Edm.Int64", "float": "Edm.Double"}
+_VECTOR_RANGES: dict[str, tuple[int | float, int | float]] = {
+    "Collection(Edm.Single)": (-3.4028234663852886e38, 3.4028234663852886e38),
+    "Collection(Edm.Half)": (-65504.0, 65504.0),
+    "Collection(Edm.Int16)": (-32768, 32767),
+    "Collection(Edm.SByte)": (-128, 127),
+}
+_MAX_BATCH_ACTIONS = 1000
+_MAX_BATCH_BYTES = 16 * 1024 * 1024
+_BATCH_ENVELOPE_BYTES = len('{"value": []}')
+_UPLOAD_ACTION_BYTES = len('"@search.action": "upload", ')
 _PREVIEW_FIELD_OPTIONS = {
     "permission_filter",
     "sensitivity_label_id",
@@ -183,6 +195,20 @@ def _prepare_field_name(name: str) -> str:
     return name
 
 
+def _validate_vector(vector: Any, type_: str) -> None:
+    if not isinstance(vector, Sequence) or isinstance(vector, (str, bytes, bytearray)):
+        raise TypeError("Azure Search vectors must be dense numeric sequences, not source text/binary/sparse data.")
+    minimum, maximum = _VECTOR_RANGES[type_]
+    integral = isinstance(minimum, int)
+    for value in cast(Sequence[object], vector):
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or (integral and not isinstance(value, int)):
+            raise TypeError(
+                f"Azure Search {type_} vectors require non-boolean {'integer' if integral else 'numeric'} values."
+            )
+        if not minimum <= value <= maximum:
+            raise ValueError(f"Azure Search {type_} vector values must be finite and within [{minimum}, {maximum}].")
+
+
 def _prepare_filter_literal(value: Any) -> str:
     if isinstance(value, str):
         return "'" + value.replace("'", "''") + "'"
@@ -274,6 +300,8 @@ class AzureAISearchCollection(BaseVectorCollection[str, ModelT], BaseVectorSearc
             env_file_path: Optional settings file.
             env_file_encoding: Settings file encoding (defaults to UTF-8).
         """
+        if query_source_credential is not None and not callable(getattr(query_source_credential, "get_token", None)):
+            raise TypeError("query_source_credential must be an Azure TokenCredential or AsyncTokenCredential.")
         if (index_client is not None or search_client is not None) and any(
             value is not None for value in (endpoint, credential, api_key, env_file_path, env_file_encoding)
         ):
@@ -347,15 +375,31 @@ class AzureAISearchCollection(BaseVectorCollection[str, ModelT], BaseVectorSearc
             if field.field_type != "vector" and options.get("retrievable") is False:
                 raise ValueError("Key and data fields must be retrievable to reconstruct records.")
             if field.field_type == "vector":
-                if type_ not in (
-                    "Collection(Edm.Single)",
-                    "Collection(Edm.Half)",
-                    "Collection(Edm.Int16)",
-                    "Collection(Edm.SByte)",
-                ):
+                if type_ not in _VECTOR_RANGES:
                     raise NotImplementedError(
                         "Azure Search vector fields require a supported dense numeric collection."
                     )
+                if (
+                    field.is_indexed
+                    or options.get("sortable")
+                    or options.get("facetable")
+                    or options.get("synonym_map_names")
+                    or any(
+                        options.get(option) is not None
+                        for option in (
+                            "analyzer_name",
+                            "search_analyzer_name",
+                            "index_analyzer_name",
+                        )
+                    )
+                ):
+                    raise ValueError(
+                        "Azure Search vector fields cannot be filterable, sortable, facetable, or analyzed."
+                    )
+                if options.get("retrievable") is None:
+                    options["retrievable"] = options.get("stored") is not False
+                if options.get("stored") is False and options["retrievable"] is not False:
+                    raise ValueError("Azure Search vector fields with stored=False require retrievable=False.")
                 if field.index_kind not in ("default", "hnsw", "flat"):
                     raise NotImplementedError(f"Unsupported Azure Search vector index kind '{field.index_kind}'.")
                 if field.distance_function not in _METRICS:
@@ -484,18 +528,17 @@ class AzureAISearchCollection(BaseVectorCollection[str, ModelT], BaseVectorSearc
             self._validate_key(record[self.definition.key_field_storage_name])
             for name in vector_names:
                 value = record.get(name)
-                if value is not None and (
-                    not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray))
-                ):
-                    raise TypeError(
-                        "Azure Search accepts dense numeric vectors or None, not source text/binary/sparse data."
-                    )
+                if value is not None:
+                    _validate_vector(value, self._field_types[name])
         return records
 
     @staticmethod
     def _validate_key(key: Any) -> None:
-        if not isinstance(key, str) or not key:
-            raise ValueError("Azure Search keys must be nonempty strings.")
+        if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_=-]{1,1024}", key) or key.startswith("_"):
+            raise ValueError(
+                "Azure Search keys must contain 1-1024 ASCII letters, digits, '-', '_', or '=', "
+                "and cannot start with '_'."
+            )
 
     def _prepare_filter(self, filter: FilterExpression | None) -> str | None:
         if filter is None:
@@ -605,11 +648,33 @@ class AzureAISearchCollection(BaseVectorCollection[str, ModelT], BaseVectorSearc
     ) -> Sequence[str]:
         self._require_open()
         _validate_operation_options(operation_options, set())
-        keys = [record[self.definition.key_field_storage_name] for record in records]
-        for offset in range(0, len(records), 1000):
-            batch = list(records[offset : offset + 1000])
+        keys: list[str] = []
+        batch_ends: list[int] = []
+        start = 0
+        batch_size = _BATCH_ENVELOPE_BYTES
+        # Match SDK JSON spacing/escaping and action metadata without copying vector payloads.
+        # ensure_ascii=True makes character counts identical to UTF-8 byte counts.
+        for index, record in enumerate(records):
+            action_size = len(json.dumps(record, cls=AzureJSONEncoder, ensure_ascii=True)) + _UPLOAD_ACTION_BYTES
+            if action_size + _BATCH_ENVELOPE_BYTES > _MAX_BATCH_BYTES:
+                raise ValueError(f"Azure Search document at position {index} exceeds the 16 MiB indexing limit.")
+            if (
+                index - start == _MAX_BATCH_ACTIONS
+                or batch_size + action_size + (2 if index > start else 0) > _MAX_BATCH_BYTES
+            ):
+                batch_ends.append(index)
+                start, batch_size = index, _BATCH_ENVELOPE_BYTES
+            batch_size += action_size + (2 if index > start else 0)
+            keys.append(record[self.definition.key_field_storage_name])
+        if records:
+            batch_ends.append(len(records))
+        # Complete size preflight before the first upload, including later oversized documents.
+        start = 0
+        for end in batch_ends:
+            batch = list(records[start:end])
             results = await self.search_client.upload_documents(batch)  # pyright: ignore[reportUnknownMemberType]
-            self._check_batch(results, keys[offset : offset + 1000])
+            self._check_batch(results, keys[start:end])
+            start = end
         return keys
 
     async def _inner_get(
@@ -652,6 +717,8 @@ class AzureAISearchCollection(BaseVectorCollection[str, ModelT], BaseVectorSearc
             raise ValueError("Azure Search skip cannot exceed 100000.")
         order: list[str] = []
         for name, ascending in (order_by or {}).items():
+            if not isinstance(ascending, bool):
+                raise TypeError(f"Order direction for field '{name}' must be a boolean.")
             field = self.definition.try_get_field(name)
             if field is None:
                 raise ValueError(f"Unknown ordering field '{name}'.")
@@ -681,8 +748,8 @@ class AzureAISearchCollection(BaseVectorCollection[str, ModelT], BaseVectorSearc
         _validate_operation_options(operation_options, set())
         for key in keys:
             self._validate_key(key)
-        for offset in range(0, len(keys), 1000):
-            batch = keys[offset : offset + 1000]
+        for offset in range(0, len(keys), _MAX_BATCH_ACTIONS):
+            batch = keys[offset : offset + _MAX_BATCH_ACTIONS]
             results = await self.search_client.delete_documents(  # pyright: ignore[reportUnknownMemberType]
                 [{self.definition.key_field_storage_name: key} for key in batch]
             )
@@ -772,8 +839,7 @@ class AzureAISearchCollection(BaseVectorCollection[str, ModelT], BaseVectorSearc
                 raise ValueError("hybrid_search requires keyword_hybrid and an Azure SDK HybridSearch model.")
             preview_capabilities.append("hybrid_search")
         if vector is not None:
-            if isinstance(vector, (bytes, bytearray, str)) or not isinstance(vector, Sequence):
-                raise TypeError("Azure Search query vectors must be dense numeric sequences.")
+            _validate_vector(vector, "Collection(Edm.Single)")
             query: VectorQuery = VectorizedQuery(
                 vector=list(vector), fields=field.storage_name or field.name, k_nearest_neighbors=k, **query_options
             )
@@ -868,6 +934,8 @@ class AzureAISearchStore(BaseVectorStore):
             env_file_path: Optional settings file.
             env_file_encoding: Settings file encoding (defaults to UTF-8).
         """
+        if query_source_credential is not None and not callable(getattr(query_source_credential, "get_token", None)):
+            raise TypeError("query_source_credential must be an Azure TokenCredential or AsyncTokenCredential.")
         if index_client is not None and any(
             value is not None for value in (endpoint, credential, api_key, env_file_path, env_file_encoding)
         ):

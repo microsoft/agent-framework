@@ -26,6 +26,7 @@ from agent_framework import (
     load_settings,
     vectorstoremodel,
 )
+from agent_framework._in_memory import _evaluate_filter
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException, SettingNotFoundError
 from azure.core.credentials import AccessToken, AzureKeyCredential
 from azure.core.exceptions import HttpResponseError, ResourceExistsError, ResourceNotFoundError
@@ -42,7 +43,7 @@ from azure.search.documents.indexes.models import (
     VectorSearch,
     VectorSearchProfile,
 )
-from azure.search.documents.models import IndexingResult, VectorizableTextQuery
+from azure.search.documents.models import IndexAction, IndexDocumentsBatch, IndexingResult, VectorizableTextQuery
 
 from agent_framework_azure_ai_search import (
     AzureAISearchCollection,
@@ -50,7 +51,7 @@ from agent_framework_azure_ai_search import (
     AzureAISearchSettings,
     AzureAISearchStore,
 )
-from agent_framework_azure_ai_search._vector_store import _require_preview_request
+from agent_framework_azure_ai_search._vector_store import _MAX_BATCH_BYTES, _require_preview_request
 
 
 @pytest.fixture(autouse=True)
@@ -163,7 +164,7 @@ async def test_search_tool_param_without_default_preserves_unset(
 ) -> None:
     param = Param("body", str, required=required)
     assert not param.has_default
-    assert param.default is param.default
+    assert param.default is Param("other", str).default
     assert deepcopy(param) is param
     tool = create_vector_search_tool(
         collection,
@@ -275,6 +276,71 @@ def test_invalid_storage_identifier(client: Mock) -> None:
 
 
 @pytest.mark.parametrize(
+    "options",
+    [
+        {"sortable": True},
+        {"facetable": True},
+        {"analyzer_name": "standard.lucene"},
+        {"analyzer_name": ""},
+        {"search_analyzer_name": "standard.lucene"},
+        {"index_analyzer_name": "standard.lucene"},
+        {"synonym_map_names": ["synonyms"]},
+    ],
+)
+def test_invalid_vector_field_attributes_rejected(client: Mock, options: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="cannot be filterable"):
+        AzureAISearchCollection(
+            dict,
+            definition=definition(provider_annotations={"azure_ai_search": options}),
+            search_client=client,
+        )
+    assert client.mock_calls == []
+
+
+def test_filterable_vector_field_rejected(client: Mock) -> None:
+    with pytest.raises(ValueError, match="cannot be filterable"):
+        AzureAISearchCollection(dict, definition=definition(is_indexed=True), search_client=client)
+
+
+@pytest.mark.parametrize(
+    ("options", "retrievable"),
+    [
+        ({}, True),
+        ({"retrievable": None}, True),
+        ({"retrievable": True}, True),
+        ({"retrievable": False}, False),
+        ({"stored": False}, False),
+        ({"stored": False, "retrievable": False}, False),
+        ({"stored": True, "retrievable": False}, False),
+        ({"sortable": False, "facetable": False, "analyzer_name": None, "synonym_map_names": []}, True),
+    ],
+)
+async def test_vector_retrieval_schema_defaults(client: Mock, options: dict[str, Any], retrievable: bool) -> None:
+    collection = AzureAISearchCollection(
+        dict, definition=definition(provider_annotations={"azure_ai_search": options}), search_client=client
+    )
+    vector_field = next(field for field in collection.build_index().as_dict()["fields"] if field["name"] == "embedding")
+    assert vector_field["retrievable"] is retrievable
+    if "stored" in options:
+        assert vector_field["stored"] is options["stored"]
+    if retrievable:
+        assert (await collection.get(["one"], include_vectors=True))[0]["vector"] == [1, 0, 0]
+    else:
+        with pytest.raises(ValueError, match="retrievable"):
+            await collection.get(["one"], include_vectors=True)
+        client.search.assert_not_called()
+
+
+def test_unstored_retrievable_vector_conflict(client: Mock) -> None:
+    with pytest.raises(ValueError, match="stored=False require retrievable=False"):
+        AzureAISearchCollection(
+            dict,
+            definition=definition(provider_annotations={"azure_ai_search": {"stored": False, "retrievable": True}}),
+            search_client=client,
+        )
+
+
+@pytest.mark.parametrize(
     ("expression", "expected"),
     [
         (Filter("body", "eq", "O'Brien"), "content eq 'O''Brien'"),
@@ -302,6 +368,31 @@ def test_invalid_storage_identifier(client: Mock) -> None:
 )
 def test_prepare_filter(collection: AzureAISearchCollection, expression: Any, expected: str) -> None:
     assert collection._prepare_filter(expression) == expected
+
+
+@pytest.mark.parametrize(
+    ("document", "excluded", "expected"),
+    [
+        ({}, [1], False),
+        ({"price": None}, [1], False),
+        ({"price": 1}, [1], False),
+        ({"price": 2}, [1], True),
+        ({}, [], False),
+        ({"price": None}, [], False),
+        ({"price": 1}, [], True),
+    ],
+)
+def test_not_in_null_and_missing_match_in_memory(
+    collection: AzureAISearchCollection,
+    document: dict[str, Any],
+    excluded: list[int],
+    expected: bool,
+) -> None:
+    expression = Filter("price", "not_in", excluded)
+    assert _evaluate_filter(expression, document, collection.definition) is expected
+    assert collection._prepare_filter(expression) == (
+        "(price ne null and not ((price eq 1)))" if excluded else "(price ne null and not (false))"
+    )
 
 
 async def test_get_and_search_share_prepare_filter(collection: AzureAISearchCollection, client: Mock) -> None:
@@ -384,6 +475,26 @@ async def test_filtered_get_order_and_projection(collection: AzureAISearchCollec
     assert "embedding" not in options["select"]
 
 
+@pytest.mark.parametrize("direction", ["descending", 0, 1, None])
+async def test_order_direction_requires_bool_before_identity(
+    collection: AzureAISearchCollection, client: Mock, direction: Any
+) -> None:
+    identity = Mock()
+    collection.query_source_credential = identity
+    with pytest.raises(TypeError, match="must be a boolean"):
+        await collection.get(order_by={"price": direction})
+    client.search.assert_not_called()
+    identity.get_token.assert_not_called()
+
+
+@pytest.mark.parametrize(("direction", "expected"), [(True, "price asc"), (False, "price desc")])
+async def test_boolean_order_directions(
+    collection: AzureAISearchCollection, client: Mock, direction: bool, expected: str
+) -> None:
+    await collection.get(order_by={"price": direction})
+    assert client.search.call_args.kwargs["order_by"] == [expected]
+
+
 async def test_empty_batches_do_not_call_sdk(collection: AzureAISearchCollection, client: Mock) -> None:
     assert await collection.upsert([], generate_vectors=False) == []
     await collection.delete([])
@@ -396,9 +507,32 @@ async def test_empty_batches_do_not_call_sdk(collection: AzureAISearchCollection
     client.search.assert_not_called()
 
 
-async def test_quote_escaping_in_batch_keys(collection: AzureAISearchCollection, client: Mock) -> None:
-    await collection.get(["a') or true or ('b"])
-    assert client.search.call_args.kwargs["filter"] == "doc_id eq 'a'') or true or (''b'"
+@pytest.mark.parametrize("key", ["", "a') or true or ('b", "a/b", "a b", "\u00e9", "_first", "x" * 1025])
+@pytest.mark.parametrize("operation", ["upsert", "get", "delete"])
+async def test_invalid_late_key_rejected_before_batch_io(
+    collection: AzureAISearchCollection, client: Mock, key: str, operation: str
+) -> None:
+    keys = [str(i) for i in range(1001)] + [key]
+    error_type = IntegrationException if operation == "delete" else ValueError
+    with pytest.raises(error_type, match="1-1024 ASCII"):
+        if operation == "upsert":
+            await collection.upsert([record(item) for item in keys], generate_vectors=False)
+        elif operation == "get":
+            await collection.get(keys)
+        else:
+            await collection.delete(keys)
+    client.search.assert_not_called()
+    client.upload_documents.assert_not_called()
+    client.delete_documents.assert_not_called()
+
+
+@pytest.mark.parametrize("key", ["A0-z_=", "-", "=", "x" * 1024])
+async def test_valid_key_boundaries_roundtrip(collection: AzureAISearchCollection, client: Mock, key: str) -> None:
+    client.search.side_effect = lambda **kwargs: rows([stored(key)])
+    assert await collection.upsert([record(key)], generate_vectors=False) == [key]
+    assert await collection.get([key], include_vectors=True) == [record(key)]
+    await collection.delete([key])
+    assert client.delete_documents.call_args.args[0] == [{"doc_id": key}]
 
 
 @pytest.mark.parametrize("operation", ["upsert", "delete"])
@@ -441,13 +575,17 @@ async def test_indexing_results_matched_by_key_not_response_order(
     assert await collection.upsert([record("one"), record("two")], generate_vectors=False) == ["one", "two"]
 
 
-async def test_large_batch_multiple_1536_vectors(client: Mock) -> None:
+async def test_large_batch_multiple_1536_vectors(client: Mock, monkeypatch: pytest.MonkeyPatch) -> None:
     collection = AzureAISearchCollection(dict, definition=definition(1536), search_client=client)
     first = [float(i % 7) / 7 for i in range(1536)]
     second = [float(i % 11) / 11 for i in range(1536)]
     records = [{**record(str(i)), "vector": first, "other": second} for i in range(1000)]
     assert len(await collection.upsert(records, generate_vectors=False)) == 1000
-    documents = client.upload_documents.call_args.args[0]
+    batches = [call.args[0] for call in client.upload_documents.call_args_list]
+    assert len(batches) > 1
+    assert all(len(batch) <= 1000 for batch in batches)
+    assert all(size <= _MAX_BATCH_BYTES for size in await capture_upload_sizes(monkeypatch, batches))
+    documents = [document for batch in batches for document in batch]
     assert len(documents) == 1000
     assert all(len(d["embedding"]) == len(d["other"]) == 1536 for d in documents)
     assert documents[999]["embedding"] == first and documents[999]["other"] == second
@@ -471,6 +609,107 @@ async def test_unsupported_write_representation_no_side_effects(
     with pytest.raises((ValueError, TypeError)):
         await collection.upsert([record("valid"), {**record("invalid"), "vector": bad_vector}], generate_vectors=False)
     client.upload_documents.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("edm_type", "bad_value"),
+    [
+        ("Collection(Edm.Single)", True),
+        ("Collection(Edm.Single)", "bad"),
+        ("Collection(Edm.Single)", None),
+        ("Collection(Edm.Single)", float("nan")),
+        ("Collection(Edm.Single)", float("inf")),
+        ("Collection(Edm.Single)", -float("inf")),
+        ("Collection(Edm.Single)", 3.402823466385289e38),
+        ("Collection(Edm.Single)", -(10**100)),
+        ("Collection(Edm.Half)", 65505.0),
+        ("Collection(Edm.Half)", -65505.0),
+        ("Collection(Edm.Int16)", 32768),
+        ("Collection(Edm.Int16)", -32769),
+        ("Collection(Edm.Int16)", 1.0),
+        ("Collection(Edm.SByte)", 128),
+        ("Collection(Edm.SByte)", -129),
+        ("Collection(Edm.SByte)", True),
+    ],
+)
+async def test_invalid_late_vector_element_preflight(client: Mock, edm_type: str, bad_value: Any) -> None:
+    collection = AzureAISearchCollection(
+        dict,
+        definition=definition(provider_annotations={"azure_ai_search": {"type": edm_type}}),
+        search_client=client,
+    )
+    records = [{**record(str(i)), "vector": [1, 0, 0]} for i in range(1001)]
+    records.append({**record("bad"), "vector": [bad_value, 0, 0]})
+    with pytest.raises((TypeError, ValueError), match="vector"):
+        await collection.upsert(records, generate_vectors=False)
+    client.upload_documents.assert_not_called()
+
+
+async def test_secondary_vector_elements_validated(collection: AzureAISearchCollection, client: Mock) -> None:
+    with pytest.raises(ValueError, match="finite"):
+        await collection.upsert([record(), {**record("bad"), "other": [float("nan"), 0, 0]}], generate_vectors=False)
+    client.upload_documents.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("edm_type", "vector"),
+    [
+        ("Collection(Edm.Single)", [-3.4028234663852886e38, 0.0, 3.4028234663852886e38]),
+        ("Collection(Edm.Half)", [-65504.0, 0, 65504.0]),
+        ("Collection(Edm.Int16)", [-32768, 0, 32767]),
+        ("Collection(Edm.SByte)", [-128, 0, 127]),
+    ],
+)
+async def test_valid_vector_edm_boundaries(client: Mock, edm_type: str, vector: list[int | float]) -> None:
+    collection = AzureAISearchCollection(
+        dict,
+        definition=definition(provider_annotations={"azure_ai_search": {"type": edm_type}}),
+        search_client=client,
+    )
+    assert await collection.upsert([{**record(), "vector": vector}], generate_vectors=False) == ["one"]
+    assert client.upload_documents.call_args.args[0][0]["embedding"] == vector
+
+
+@pytest.mark.parametrize("bad_value", [True, "bad", None, float("nan"), float("inf"), 3.5e38, -(10**100)])
+async def test_invalid_query_vector_before_identity(
+    collection: AzureAISearchCollection, client: Mock, bad_value: Any
+) -> None:
+    identity = Mock()
+    collection.query_source_credential = identity
+    with pytest.raises((TypeError, ValueError), match="vector"):
+        await collection.search(vector=[bad_value, 0, 0])
+    client.search.assert_not_called()
+    identity.get_token.assert_not_called()
+
+
+@pytest.mark.parametrize("edm_type", ["Collection(Edm.SByte)", "Collection(Edm.Int16)", "Collection(Edm.Half)"])
+async def test_query_float_contract_independent_of_stored_edm(client: Mock, edm_type: str) -> None:
+    collection = AzureAISearchCollection(
+        dict,
+        definition=definition(provider_annotations={"azure_ai_search": {"type": edm_type}}),
+        search_client=client,
+    )
+    vector = [100000.5, -100000.5, 0.0]
+    await collection.search(vector=vector)
+    assert client.search.call_args.kwargs["vector_queries"][0].vector == vector
+    await collection.search("provider-vectorized text")
+    assert isinstance(client.search.call_args.kwargs["vector_queries"][0], VectorizableTextQuery)
+
+
+@pytest.mark.parametrize("operation", ["upsert", "search"])
+async def test_generated_vector_elements_validated(
+    collection: AzureAISearchCollection, client: Mock, operation: str
+) -> None:
+    generator = Mock()
+    generator.get_embeddings = AsyncMock(return_value=GeneratedEmbeddings([Embedding(vector=[float("inf"), 0, 0])]))
+    collection.embedding_generator = generator
+    with pytest.raises(ValueError, match="finite"):
+        if operation == "upsert":
+            await collection.upsert([{**record(), "vector": "source"}], generate_vectors=["vector"])
+        else:
+            await collection.search("source")
+    client.upload_documents.assert_not_called()
+    client.search.assert_not_called()
 
 
 async def test_selected_generation_preserves_other_vectors(collection: AzureAISearchCollection, client: Mock) -> None:
@@ -716,6 +955,41 @@ async def test_secret_settings_and_credential_ownership(monkeypatch: pytest.Monk
 
 
 @pytest.mark.parametrize("kind", ["store", "collection"])
+@pytest.mark.parametrize("identity", [object(), SimpleNamespace(get_token=None), SimpleNamespace(get_token="token")])
+def test_invalid_query_credential_before_settings_and_client_creation(kind: str, identity: Any) -> None:
+    with (
+        patch("agent_framework_azure_ai_search._vector_store.load_settings") as settings_loader,
+        patch("agent_framework_azure_ai_search._vector_store.SearchIndexClient") as factory,
+        pytest.raises(TypeError, match="query_source_credential must be"),
+    ):
+        if kind == "store":
+            AzureAISearchStore(query_source_credential=identity)
+        else:
+            AzureAISearchCollection(dict, definition=definition(), query_source_credential=identity)
+    settings_loader.assert_not_called()
+    factory.assert_not_called()
+
+
+@pytest.mark.parametrize("kind", ["store", "collection"])
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_valid_query_credential_not_called_or_closed_during_construction(
+    client: Mock, kind: str, asynchronous: bool
+) -> None:
+    identity = Mock()
+    identity.get_token = AsyncMock() if asynchronous else Mock()
+    connector = (
+        AzureAISearchStore(index_client=Mock(spec=SearchIndexClient), query_source_credential=identity)
+        if kind == "store"
+        else AzureAISearchCollection(
+            dict, definition=definition(), search_client=client, query_source_credential=identity
+        )
+    )
+    await connector.close()
+    identity.get_token.assert_not_called()
+    identity.close.assert_not_called()
+
+
+@pytest.mark.parametrize("kind", ["store", "collection"])
 @pytest.mark.parametrize("source", ["explicit", "file", "environment"])
 async def test_constructor_settings_precedence_and_encoding(
     monkeypatch: pytest.MonkeyPatch,
@@ -958,6 +1232,56 @@ async def test_store_collections_reuse_resolved_clients_without_settings(
 
 class RequestCaptured(Exception):
     pass
+
+
+async def capture_upload_sizes(monkeypatch: pytest.MonkeyPatch, batches: list[list[dict[str, Any]]]) -> list[int]:
+    sizes: list[int] = []
+    transport = AioHttpTransport()
+
+    async def capture(request: Any, **kwargs: Any) -> None:
+        body = request.body
+        assert isinstance(body, (str, bytes))
+        sizes.append(len(body.encode("utf-8") if isinstance(body, str) else body))
+        raise RequestCaptured
+
+    monkeypatch.setattr(transport, "send", capture)
+    async with SearchClient(
+        endpoint="https://example.search.windows.net",
+        index_name="test-index",
+        credential=AzureKeyCredential("test-key"),
+        transport=transport,
+    ) as sdk:
+        upload_documents = getattr(sdk, "upload_documents", None)
+        assert callable(upload_documents)
+        for batch in batches:
+            with pytest.raises(RequestCaptured):
+                result = upload_documents(batch)
+                assert inspect.isawaitable(result)
+                await result
+    return sizes
+
+
+@pytest.mark.parametrize("mode", ["exact", "split", "oversized"])
+async def test_sdk_wire_payload_limit_and_late_oversize_preflight(
+    collection: AzureAISearchCollection, client: Mock, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    candidate = {**record("tail"), "body": '\u00e9\U0001f600\\"\n'}
+    serialized = await collection.serialize([candidate], generate_vectors=False)
+    batch = IndexDocumentsBatch(actions=[IndexAction({"@search.action": "upload", **serialized[0]})])
+    overhead = len(json.dumps(batch.as_dict()).encode("utf-8"))
+    candidate["body"] += "x" * (_MAX_BATCH_BYTES - overhead + int(mode == "oversized"))
+    records = [candidate] if mode == "exact" else [record(str(i)) for i in range(1001)] + [candidate]
+    if mode == "oversized":
+        with pytest.raises(ValueError, match="16 MiB indexing limit"):
+            await collection.upsert(records, generate_vectors=False)
+        client.upload_documents.assert_not_called()
+        return
+    assert len(await collection.upsert(records, generate_vectors=False)) == len(records)
+    batches = [call.args[0] for call in client.upload_documents.call_args_list]
+    assert [len(part) for part in batches] == ([1] if mode == "exact" else [1000, 1, 1])
+    sizes = await capture_upload_sizes(monkeypatch, batches)
+    assert sizes[-1] == _MAX_BATCH_BYTES
+    assert all(size <= _MAX_BATCH_BYTES for size in sizes)
 
 
 async def test_real_sdk_serializes_vector_query_without_network(monkeypatch: pytest.MonkeyPatch) -> None:
