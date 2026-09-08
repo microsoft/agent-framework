@@ -7,6 +7,7 @@ from collections.abc import AsyncGenerator, Awaitable, MutableSequence
 from typing import Any, cast
 
 import httpx
+import pytest
 from ag_ui.core import Interrupt, ResumeEntry
 from agent_framework import (
     ChatOptions,
@@ -104,6 +105,47 @@ class TestAGUIChatClient:
         assert result_messages[0].text == "Hello"
         assert state == state_data
 
+    async def test_extract_state_from_messages_removes_historical_carriers_and_uses_latest_state(self) -> None:
+        """Historical carriers are removed and the most recent carrier supplies state."""
+        from agent_framework_ag_ui import state_carrier
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        old_carrier = Message(role="user", contents=[state_carrier({"version": "old"})])
+        new_carrier = Message(role="user", contents=[state_carrier({"version": "new"})])
+        messages = [
+            Message(role="user", contents=["Initial prompt"]),
+            old_carrier,
+            Message(role="assistant", contents=["Initial response"]),
+            new_carrier,
+            Message(role="user", contents=["Follow-up prompt"]),
+        ]
+
+        result_messages, state = client.extract_state_from_messages(messages)
+
+        assert result_messages == [messages[0], messages[2], messages[4]]
+        assert state == {"version": "new"}
+
+    async def test_explicit_final_carrier_wins_over_legacy_fallback(self) -> None:
+        """Legacy mode does not reinterpret an earlier document after removing a final carrier."""
+        from agent_framework_ag_ui import state_carrier
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        messages = [
+            Message(
+                role="user",
+                contents=[Content.from_data(b'{"document":"keep"}', media_type="application/json")],
+            ),
+            Message(role="user", contents=[state_carrier({"source": "explicit"})]),
+        ]
+
+        result_messages, state = client._extract_state_from_messages(
+            messages,
+            allow_legacy_state_carrier=True,
+        )
+
+        assert result_messages == messages[:1]
+        assert state == {"source": "explicit"}
+
     async def test_extract_state_from_messages_with_parameterized_data_uri(self) -> None:
         """Test state extraction from JSON data URIs with media type parameters."""
         import base64
@@ -160,7 +202,7 @@ class TestAGUIChatClient:
 
         result_messages, state = client.extract_state_from_messages(messages)
 
-        assert result_messages == messages
+        assert result_messages == []
         assert state is None
 
     async def test_extract_state_invalid_base64(self) -> None:
@@ -183,7 +225,7 @@ class TestAGUIChatClient:
 
         result_messages, state = client.extract_state_from_messages(messages)
 
-        assert result_messages == messages
+        assert result_messages == []
         assert state is None
 
     async def test_convert_messages_to_agui_format(self) -> None:
@@ -347,6 +389,39 @@ class TestAGUIChatClient:
                 ],
             }
         ]
+
+    async def test_sends_legacy_json_state_with_compatibility_option(self) -> None:
+        """The legacy option extracts an unmarked final JSON state during migration."""
+        captured_request: dict[str, Any] = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            captured_request.update(json.loads(request.content))
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=(
+                    b'data: {"type":"RUN_STARTED","threadId":"thread_1","runId":"run_1"}\n\n'
+                    b'data: {"type":"RUN_FINISHED","threadId":"thread_1","runId":"run_1"}\n\n'
+                ),
+            )
+
+        message = Message(
+            role="user",
+            contents=[Content.from_data(b'{"legacy":"keep"}', media_type="application/json")],
+            message_id="msg-legacy-state",
+        )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StubAGUIChatClient(endpoint="http://localhost:8888/", http_client=http_client)
+            with pytest.warns(DeprecationWarning, match="state_carrier"):
+                response = await client.inner_get_response(
+                    messages=[message],
+                    options={"allow_legacy_state_carrier": True},
+                )
+
+        assert response is not None
+        assert captured_request["state"] == {"legacy": "keep"}
+        assert captured_request["messages"] == []
 
     async def test_get_thread_id_from_metadata(self) -> None:
         """Test thread ID extraction from metadata."""

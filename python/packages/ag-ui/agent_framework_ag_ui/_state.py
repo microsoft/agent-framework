@@ -44,13 +44,13 @@ def _serialize_tool_result(value: Any) -> str:  # noqa: ANN401
 
 
 def state_carrier(state: Mapping[str, Any]) -> Content:
-    """Build a dedicated final-message carrier for ``AGUIChatClient`` request state.
+    """Build a dedicated message carrier for ``AGUIChatClient`` request state.
 
-    Add the returned content as the only content in a final user message. The
-    client recognizes its explicit marker, moves the JSON object into the AG-UI
-    request's ``state`` field, and does not send the carrier as a chat message.
-    Ordinary ``application/json`` content without this marker remains a document
-    input.
+    Add the returned content as the only content in a user message. The client
+    recognizes its explicit marker anywhere in client-controlled history, moves
+    the most recent carrier's JSON object into the AG-UI request's ``state``
+    field, and does not send carriers as chat messages. Ordinary
+    ``application/json`` content without this marker remains a document input.
 
     Example:
         .. code-block:: python

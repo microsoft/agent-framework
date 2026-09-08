@@ -245,6 +245,8 @@ Review focus: whether these names are the right stable contract for Python users
 
 Interrupt support is protocol data rather than a separate Agent Framework Python class. Requests accept canonical `availableInterrupts`/`available_interrupts` and `resume` values; `AGUIChatClient` and `AGUIHttpService.post_run(...)` forward those fields with AG-UI wire aliases; agent approval and workflow `request_info` pauses emit `RUN_FINISHED.outcome.interrupts`; `AGUIEventConverter` preserves canonical interrupt outcome metadata on the final `ChatResponseUpdate`; and thread snapshot hydration replays the canonical interrupt outcome when a scoped snapshot stores an unresolved pause.
 
+Use `state_carrier(...)` to mark JSON content that should be sent in the AG-UI request's `state` field rather than as a model-visible document. The client removes explicitly marked carriers from all client-controlled history and uses the most recent carrier. Ordinary `application/json` content remains a document. For migration, pass `allow_legacy_state_carrier=True` in `AGUIChatOptions` to recognize the deprecated final base64 JSON convention; this client-only option emits a `DeprecationWarning` and is not sent to the remote server.
+
 ## Features
 
 This integration supports all 7 AG-UI features:
