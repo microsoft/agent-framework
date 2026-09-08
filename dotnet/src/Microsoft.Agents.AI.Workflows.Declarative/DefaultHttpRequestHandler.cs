@@ -258,7 +258,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
     {
         if (!Uri.TryCreate(requestUri, UriKind.Absolute, out Uri? uri))
         {
-            throw new ArgumentException("Request URL must be an absolute URL.");
+            throw new ArgumentException("Request URL must be an absolute URL.", nameof(requestUri));
         }
 
         return uri;
