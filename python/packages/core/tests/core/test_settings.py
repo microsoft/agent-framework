@@ -7,6 +7,7 @@ import logging
 import os
 import tempfile
 from collections.abc import Callable
+from copy import copy, deepcopy
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
@@ -172,9 +173,11 @@ class TestSecretString:
         secret = SecretString("my-secret")
 
         settings = load_settings(SecretSettings, env_prefix="SECRET_", api_key=secret)
+        resolved_api_key = settings["api_key"]
 
-        assert settings["api_key"] is secret
-        assert settings["api_key"].get_secret_value() == "my-secret"
+        assert resolved_api_key is secret
+        assert isinstance(resolved_api_key, SecretString)
+        assert resolved_api_key.get_secret_value() == "my-secret"
 
     def test_secretstring_from_dotenv(self, tmp_path: Path) -> None:
         env_file = tmp_path / ".env"
@@ -305,6 +308,12 @@ class TestSecretString:
 
         assert secret.get_secret_value() == "my-secret"
         assert secret in secrets
+
+    def test_secretstring_copy_returns_same_immutable_instance(self) -> None:
+        secret = SecretString("my-secret")
+
+        assert copy(secret) is secret
+        assert deepcopy(secret) is secret
 
     def test_secretstring_can_wrap_existing_secret(self) -> None:
         secret = SecretString(SecretString("my-secret"))

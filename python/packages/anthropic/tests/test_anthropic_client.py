@@ -174,9 +174,10 @@ def test_anthropic_client_init_auto_create_client(
         model=anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"],
     )
 
-    assert client.anthropic_client is not None
-    assert type(client.anthropic_client.api_key) is str
-    assert client.anthropic_client.api_key == anthropic_unit_test_env["ANTHROPIC_API_KEY"]
+    anthropic_client = client.anthropic_client
+    assert isinstance(anthropic_client, anthropic_sdk.AsyncAnthropic)
+    assert type(anthropic_client.api_key) is str
+    assert anthropic_client.api_key == anthropic_unit_test_env["ANTHROPIC_API_KEY"]
     assert client.model == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"]
 
 

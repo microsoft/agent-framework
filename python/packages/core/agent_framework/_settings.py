@@ -91,6 +91,14 @@ class SecretString:
         """Reject mutation after construction."""
         raise AttributeError("SecretString is immutable.")
 
+    def __copy__(self) -> SecretString:
+        """Return this immutable instance for shallow copies."""
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> SecretString:
+        """Return this immutable instance for deep copies."""
+        return self
+
     def __str__(self) -> str:
         """Return a masked string to prevent secret exposure."""
         return "**********"

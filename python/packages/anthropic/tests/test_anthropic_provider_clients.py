@@ -211,7 +211,10 @@ def test_raw_anthropic_bedrock_client_creates_sdk_client_from_arguments(
         assert type(factory.call_args.kwargs[key]) is str
 
 
-def test_raw_anthropic_vertex_client_creates_sdk_client_from_arguments() -> None:
+@pytest.mark.parametrize("access_token", ["access-token", SecretString("access-token")], ids=["str", "secret"])
+def test_raw_anthropic_vertex_client_creates_sdk_client_from_arguments(
+    access_token: str | SecretString,
+) -> None:
     mock_transport = _create_mock_transport("https://us-central1-aiplatform.googleapis.com/v1")
 
     with patch("agent_framework_anthropic._vertex_client.AsyncAnthropicVertex", return_value=mock_transport) as factory:
@@ -219,6 +222,7 @@ def test_raw_anthropic_vertex_client_creates_sdk_client_from_arguments() -> None
             model="claude-vertex-test",
             region="us-central1",
             project_id="test-project",
+            access_token=access_token,
         )
 
     assert client.model == "claude-vertex-test"
@@ -226,8 +230,9 @@ def test_raw_anthropic_vertex_client_creates_sdk_client_from_arguments() -> None
     factory.assert_called_once_with(
         region="us-central1",
         project_id="test-project",
-        access_token=None,
+        access_token="access-token",
         credentials=None,
         base_url=None,
         default_headers={"User-Agent": get_user_agent()},
     )
+    assert type(factory.call_args.kwargs["access_token"]) is str
