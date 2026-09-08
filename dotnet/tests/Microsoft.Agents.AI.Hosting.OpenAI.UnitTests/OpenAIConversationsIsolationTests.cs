@@ -252,20 +252,22 @@ public sealed class OpenAIConversationsIsolationTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task IsolationKeysContainingSeparators_DoNotCollideAsync()
+    public void IsolationKeysContainingSeparators_DoNotCollide()
     {
-        // Arrange - "a" + "::b" would collide with "a::" + "b" if the key were not escaped.
-        HttpClient client = await this.CreateTestServerAsync();
-        const string FirstUser = "a";
-        const string SecondUser = "a::b";
-
-        string firstConversationId = await CreateConversationAsync(client, FirstUser);
+        // Arrange
+        const string FirstKey = "a";
+        const string FirstId = "::b";
+        const string SecondKey = "a::";
+        const string SecondId = "b";
 
         // Act
-        using HttpResponseMessage secondUserGet = await SendAsync(client, HttpMethod.Get, SecondUser, $"/v1/conversations/{firstConversationId}");
+        string firstScopedId = IsolationKeyResolver.ScopeId(FirstId, FirstKey);
+        string secondScopedId = IsolationKeyResolver.ScopeId(SecondId, SecondKey);
 
         // Assert
-        Assert.Equal(HttpStatusCode.NotFound, secondUserGet.StatusCode);
+        Assert.NotEqual(firstScopedId, secondScopedId);
+        Assert.Equal(FirstId, IsolationKeyResolver.UnscopeId(firstScopedId, FirstKey));
+        Assert.Equal(SecondId, IsolationKeyResolver.UnscopeId(secondScopedId, SecondKey));
     }
 
     [Fact]

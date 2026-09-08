@@ -1,9 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.Models;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Conversations;
 
@@ -27,8 +27,8 @@ internal sealed class IsolationKeyScopedAgentConversationIndex : IAgentConversat
     /// <param name="resolver">The resolver used to scope agent identifiers.</param>
     public IsolationKeyScopedAgentConversationIndex(IAgentConversationIndex innerIndex, IsolationKeyResolver resolver)
     {
-        this._innerIndex = innerIndex ?? throw new ArgumentNullException(nameof(innerIndex));
-        this._resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
+        this._innerIndex = Throw.IfNull(innerIndex);
+        this._resolver = Throw.IfNull(resolver);
     }
 
     /// <inheritdoc />

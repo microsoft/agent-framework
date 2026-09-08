@@ -1,12 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.Conversations.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Models;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Conversations;
 
@@ -30,14 +30,14 @@ internal sealed class IsolationKeyScopedConversationStorage : IConversationStora
     /// <param name="resolver">The resolver used to scope conversation identifiers.</param>
     public IsolationKeyScopedConversationStorage(IConversationStorage innerStorage, IsolationKeyResolver resolver)
     {
-        this._innerStorage = innerStorage ?? throw new ArgumentNullException(nameof(innerStorage));
-        this._resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
+        this._innerStorage = Throw.IfNull(innerStorage);
+        this._resolver = Throw.IfNull(resolver);
     }
 
     /// <inheritdoc />
     public async Task<Conversation> CreateConversationAsync(Conversation conversation, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(conversation);
+        _ = Throw.IfNull(conversation);
 
         var key = await this._resolver.GetKeyAsync(cancellationToken).ConfigureAwait(false);
 
@@ -59,7 +59,7 @@ internal sealed class IsolationKeyScopedConversationStorage : IConversationStora
     /// <inheritdoc />
     public async Task<Conversation?> UpdateConversationAsync(Conversation conversation, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(conversation);
+        _ = Throw.IfNull(conversation);
 
         var key = await this._resolver.GetKeyAsync(cancellationToken).ConfigureAwait(false);
 
