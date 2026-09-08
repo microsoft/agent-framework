@@ -45,12 +45,12 @@ from ._filesystem import (
 )
 from ._middleware import ChatContext, ChatMiddleware
 from ._telemetry import FeatureIndex, mark_feature_used
+from ._tools import _index_approval_occurrences  # pyright: ignore[reportPrivateUsage]
 from ._types import (
     AgentResponse,
     AgentRunInputs,
     ChatResponse,
     ChatResponseUpdate,
-    Content,
     Message,
     ResponseStream,
     _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
@@ -830,75 +830,42 @@ class ContextProvider:
         """
 
 
-def _is_approval_placeholder_result(content: Content) -> bool:
-    result = getattr(content, "result", None)
-    return isinstance(result, str) and "[APPROVAL_PENDING]" in result
-
-
 def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
-    request_positions: dict[str, tuple[int, int]] = {}
-    response_ids: set[str] = set()
-    resolving_events: list[tuple[int, int, str]] = []
-
-    for msg_idx, message in enumerate(messages):
-        for content_idx, content in enumerate(message.contents):
-            if content.type == "function_approval_request":
-                if content.id is not None:
-                    request_positions[content.id] = (msg_idx, content_idx)
-            elif content.type == "function_approval_response":
-                if content.id is not None:
-                    response_ids.add(content.id)
-            elif content.call_id is not None:
-                is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
-                is_follow_up_request = content.user_input_request and content.type not in {
-                    "function_approval_request",
-                    "function_approval_response",
-                }
-                if is_terminal_result or is_follow_up_request:
-                    resolving_events.append((msg_idx, content_idx, content.call_id))
-
+    idx = _index_approval_occurrences(messages)
     keep_ids: set[int] = set()
+
+    response_ids = {r.content.id for r in idx.responses if r.content.id is not None}
+
+    request_pos_by_id: dict[str, tuple[int, int]] = {
+        req.content.id: (req.msg_idx, req.content_idx) for req in idx.requests if req.content.id is not None
+    }
+
     seen_request_ids: set[str] = set()
+    for req in idx.requests:
+        if req.content.id is None or req.content.id in seen_request_ids:
+            continue
+        req_pos = (req.msg_idx, req.content_idx)
+        is_resolved = req.content.id in response_ids
+        if not is_resolved:
+            is_resolved = any(
+                (r.msg_idx, r.content_idx) >= req_pos and r.call_id == req.call_id
+                for r in (*idx.terminal_results, *idx.follow_ups)
+            )
+        if not is_resolved:
+            keep_ids.add(id(req.content))
+            seen_request_ids.add(req.content.id)
 
-    for msg_idx, message in enumerate(messages):
-        for content_idx, content in enumerate(message.contents):
-            if content.type == "function_approval_request":
-                if content.id is None or content.function_call is None or content.function_call.call_id is None:
-                    continue
-                if content.id in seen_request_ids:
-                    continue
-
-                req_pos = (msg_idx, content_idx)
-                call_id = content.function_call.call_id
-
-                is_resolved = content.id in response_ids
-                if not is_resolved:
-                    for res_msg_idx, res_content_idx, res_call_id in resolving_events:
-                        if res_call_id == call_id and (res_msg_idx, res_content_idx) >= req_pos:
-                            is_resolved = True
-                            break
-                if not is_resolved:
-                    keep_ids.add(id(content))
-                    seen_request_ids.add(content.id)
-
-            elif content.type == "function_approval_response":
-                function_call = content.function_call
-                if content.id is None or function_call is None or function_call.call_id is None:
-                    continue
-                if function_call.additional_properties.get("server_label"):
-                    continue
-
-                call_id = function_call.call_id
-                resp_pos = (msg_idx, content_idx)
-                ref_pos = request_positions.get(content.id, resp_pos)
-
-                is_resolved = False
-                for res_msg_idx, res_content_idx, res_call_id in resolving_events:
-                    if res_call_id == call_id and (res_msg_idx, res_content_idx) >= ref_pos:
-                        is_resolved = True
-                        break
-                if not is_resolved:
-                    keep_ids.add(id(content))
+    for resp in idx.responses:
+        if resp.content.id is None:
+            continue
+        resp_pos = (resp.msg_idx, resp.content_idx)
+        ref_pos = request_pos_by_id.get(resp.content.id, resp_pos)
+        is_resolved = any(
+            (r.msg_idx, r.content_idx) >= ref_pos and r.call_id == resp.call_id
+            for r in (*idx.terminal_results, *idx.follow_ups)
+        )
+        if not is_resolved:
+            keep_ids.add(id(resp.content))
 
     return keep_ids
 

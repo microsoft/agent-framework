@@ -2522,106 +2522,119 @@ def _pop_already_approved_approval_responses(
     return responses
 
 
-def _collect_approval_responses(messages: list[Message]) -> dict[str, Content]:
-    requests: list[tuple[int, int, str]] = []
-    resolving_events: list[tuple[int, int, str]] = []
+@dataclass(frozen=True)
+class _ApprovalOccurrence:
+    msg_idx: int
+    content_idx: int
+    call_id: str
+    content: Content
 
+
+@dataclass(frozen=True)
+class _ApprovalIndex:
+    requests: list[_ApprovalOccurrence]
+    responses: list[_ApprovalOccurrence]
+    hosted_responses: list[_ApprovalOccurrence]
+    terminal_results: list[_ApprovalOccurrence]
+    follow_ups: list[_ApprovalOccurrence]
+
+
+def _is_approval_placeholder_result(content: Content) -> bool:
+    """Whether a function_result is the stand-in emitted while approval is pending."""
+    result = getattr(content, "result", None)
+    return isinstance(result, str) and "[APPROVAL_PENDING]" in result
+
+
+def _index_approval_occurrences(messages: Sequence[Message]) -> _ApprovalIndex:
+    requests: list[_ApprovalOccurrence] = []
+    responses: list[_ApprovalOccurrence] = []
+    hosted: list[_ApprovalOccurrence] = []
+    results: list[_ApprovalOccurrence] = []
+    follow_ups: list[_ApprovalOccurrence] = []
     for msg_idx, message in enumerate(messages):
         for content_idx, content in enumerate(message.contents):
             if content.type == "function_approval_request":
-                if content.function_call is not None and content.function_call.call_id is not None:
-                    requests.append((msg_idx, content_idx, content.function_call.call_id))
-            elif content.call_id is not None:
-                is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
-                is_follow_up_request = content.user_input_request and content.type not in {
-                    "function_approval_request",
-                    "function_approval_response",
-                }
-                if is_terminal_result or is_follow_up_request:
-                    resolving_events.append((msg_idx, content_idx, content.call_id))
-
-    unresolved_responses: dict[str, Content] = {}
-    for msg_idx, message in enumerate(messages):
-        for content_idx, content in enumerate(message.contents):
-            if content.type == "function_approval_response" and not _is_hosted_tool_approval(content):
-                if content.id is None or content.function_call is None or content.function_call.call_id is None:
+                fc = content.function_call
+                if content.id is not None and fc is not None and fc.call_id is not None:
+                    requests.append(_ApprovalOccurrence(msg_idx, content_idx, fc.call_id, content))
+                continue
+            if content.type == "function_approval_response":
+                fc = content.function_call
+                if content.id is None or fc is None or fc.call_id is None:
                     continue
+                bucket = hosted if _is_hosted_tool_approval(content) else responses
+                bucket.append(_ApprovalOccurrence(msg_idx, content_idx, fc.call_id, content))
+                continue
+            if content.call_id is None:
+                continue
+            is_terminal = content.type == "function_result" and not _is_approval_placeholder_result(content)
+            is_follow_up = content.user_input_request and content.type not in {
+                "function_approval_request",
+                "function_approval_response",
+            }
+            if is_terminal:
+                results.append(_ApprovalOccurrence(msg_idx, content_idx, content.call_id, content))
+            elif is_follow_up:
+                follow_ups.append(_ApprovalOccurrence(msg_idx, content_idx, content.call_id, content))
+    return _ApprovalIndex(requests, responses, hosted, results, follow_ups)
 
-                call_id = content.function_call.call_id
-                resp_pos = (msg_idx, content_idx)
 
-                latest_req_pos = None
-                for r_msg, r_cidx, r_call in requests:
-                    if (
-                        r_call == call_id
-                        and (r_msg, r_cidx) < resp_pos
-                        and (latest_req_pos is None or (r_msg, r_cidx) > latest_req_pos)
-                    ):
-                        latest_req_pos = (r_msg, r_cidx)
+def _is_trusted_resolver(
+    res: _ApprovalOccurrence,
+    resp_pos: tuple[int, int],
+    latest_req: _ApprovalOccurrence | None,
+) -> bool:
+    """Check if a result or follow-up resolves an approval response."""
+    res_pos = (res.msg_idx, res.content_idx)
+    if res_pos[0] == resp_pos[0]:
+        return latest_req is None
+    return res_pos > resp_pos or (latest_req is not None and res_pos > (latest_req.msg_idx, latest_req.content_idx))
 
-                is_resolved = False
-                for res_msg_idx, res_content_idx, res_call_id in resolving_events:
-                    if res_call_id == call_id:
-                        res_pos = (res_msg_idx, res_content_idx)
-                        if latest_req_pos is not None:
-                            if res_pos > latest_req_pos or res_pos[0] == resp_pos[0]:
-                                is_resolved = True
-                                break
-                        else:
-                            if res_pos >= resp_pos or res_pos[0] == resp_pos[0]:
-                                is_resolved = True
-                                break
 
-                if not is_resolved:
-                    unresolved_responses[content.id] = content
+def _collect_approval_responses(messages: list[Message]) -> dict[str, Content]:
+    idx = _index_approval_occurrences(messages)
+    unresolved: dict[str, Content] = {}
 
-    return unresolved_responses
+    for resp in idx.responses:
+        call_id = resp.call_id
+        resp_pos = (resp.msg_idx, resp.content_idx)
+
+        latest_req = max(
+            (r for r in idx.requests if r.call_id == call_id and (r.msg_idx, r.content_idx) < resp_pos),
+            key=lambda r: (r.msg_idx, r.content_idx),
+            default=None,
+        )
+
+        is_resolved = any(
+            _is_trusted_resolver(r, resp_pos, latest_req) for r in idx.terminal_results if r.call_id == call_id
+        ) or any(_is_trusted_resolver(r, resp_pos, latest_req) for r in idx.follow_ups if r.call_id == call_id)
+
+        if not is_resolved and resp.content.id is not None:
+            unresolved[resp.content.id] = resp.content
+
+    return unresolved
 
 
 def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[Content]:
-    responses: set[str] = set()
-    resolving_events: list[tuple[int, int, str]] = []
-
-    for msg_idx, message in enumerate(messages):
-        for content_idx, content in enumerate(message.contents):
-            if content.type == "function_approval_response":
-                if content.id is not None:
-                    responses.add(content.id)
-            elif content.call_id is not None:
-                is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
-                is_follow_up_request = content.user_input_request and content.type not in {
-                    "function_approval_request",
-                    "function_approval_response",
-                }
-                if is_terminal_result or is_follow_up_request:
-                    resolving_events.append((msg_idx, content_idx, content.call_id))
-
-    unanswered_requests: list[Content] = []
-    seen_request_ids: set[str] = set()
-
-    for msg_idx, message in enumerate(messages):
-        for content_idx, content in enumerate(message.contents):
-            if content.type == "function_approval_request" and not _is_hosted_tool_approval(content):
-                if content.id is None or content.function_call is None or content.function_call.call_id is None:
-                    continue
-                if content.id in seen_request_ids:
-                    continue
-
-                req_pos = (msg_idx, content_idx)
-                call_id = content.function_call.call_id
-
-                is_answered = content.id in responses
-                if not is_answered:
-                    for res_msg_idx, res_content_idx, res_call_id in resolving_events:
-                        if res_call_id == call_id and (res_msg_idx, res_content_idx) > req_pos:
-                            is_answered = True
-                            break
-
-                if not is_answered:
-                    unanswered_requests.append(content)
-                    seen_request_ids.add(content.id)
-
-    return unanswered_requests
+    idx = _index_approval_occurrences(messages)
+    answered_ids: set[str] = {r.content.id for r in idx.responses if r.content.id is not None}
+    for req in idx.requests:
+        req_pos = (req.msg_idx, req.content_idx)
+        for bucket in (idx.terminal_results, idx.follow_ups):
+            if any(r.call_id == req.call_id and (r.msg_idx, r.content_idx) > req_pos for r in bucket):
+                if req.content.id is not None:
+                    answered_ids.add(req.content.id)
+                break
+    seen: set[str] = set()
+    unanswered: list[Content] = []
+    for req in idx.requests:
+        if _is_hosted_tool_approval(req.content) or req.content.id is None:
+            continue
+        if req.content.id in seen or req.content.id in answered_ids:
+            continue
+        seen.add(req.content.id)
+        unanswered.append(req.content)
+    return unanswered
 
 
 def _remove_unanswered_approval_batches_from_model_input(messages: list[Message]) -> None:
@@ -2633,37 +2646,25 @@ def _remove_unanswered_approval_batches_from_model_input(messages: list[Message]
         if request.function_call is not None and request.function_call.call_id is not None
     }
 
+    idx = _index_approval_occurrences(messages)
     resolved_response_ids: set[int] = set()
-    request_positions: dict[str, tuple[int, int]] = {}
-    resolving_events: list[tuple[int, int, str]] = []
 
-    for msg_idx, message in enumerate(messages):
-        for content_idx, content in enumerate(message.contents):
-            if content.type == "function_approval_request":
-                if content.id is not None:
-                    request_positions[content.id] = (msg_idx, content_idx)
-            elif content.call_id is not None:
-                is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
-                is_follow_up_request = content.user_input_request and content.type not in {
-                    "function_approval_request",
-                    "function_approval_response",
-                }
-                if is_terminal_result or is_follow_up_request:
-                    resolving_events.append((msg_idx, content_idx, content.call_id))
+    request_pos_by_id = {
+        req.content.id: (req.msg_idx, req.content_idx) for req in idx.requests if req.content.id is not None
+    }
 
-    for msg_idx, message in enumerate(messages):
-        for content_idx, content in enumerate(message.contents):
-            if content.type == "function_approval_response" and not _is_hosted_tool_approval(content):
-                if content.id is None or content.function_call is None or content.function_call.call_id is None:
-                    continue
-                call_id = content.function_call.call_id
-                resp_pos = (msg_idx, content_idx)
-                ref_pos = request_positions.get(content.id, resp_pos)
+    for resp in idx.responses:
+        if resp.content.id is None:
+            continue
+        call_id = resp.call_id
+        resp_pos = (resp.msg_idx, resp.content_idx)
+        ref_pos = request_pos_by_id.get(resp.content.id, resp_pos)
 
-                for res_msg_idx, res_content_idx, res_call_id in resolving_events:
-                    if res_call_id == call_id and (res_msg_idx, res_content_idx) >= ref_pos:
-                        resolved_response_ids.add(id(content))
-                        break
+        if any(
+            (r.msg_idx, r.content_idx) >= ref_pos and r.call_id == call_id
+            for r in (*idx.terminal_results, *idx.follow_ups)
+        ):
+            resolved_response_ids.add(id(resp.content))
 
     open_calls_by_id: dict[str, deque[tuple[Content, int]]] = {}
     bound_call_content_ids: set[int] = set()
@@ -2752,12 +2753,6 @@ def _remove_unanswered_approval_batches_from_model_input(messages: list[Message]
         message.contents = filtered_contents
         filtered_messages.append(message)
     messages[:] = filtered_messages
-
-
-def _is_approval_placeholder_result(content: Content) -> bool:
-    """Whether a function_result is the stand-in emitted while approval is pending."""
-    result = getattr(content, "result", None)
-    return isinstance(result, str) and "[APPROVAL_PENDING]" in result
 
 
 @dataclass

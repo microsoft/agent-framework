@@ -1687,4 +1687,20 @@ def test_remove_unanswered_batches_preserves_hosted_responses() -> None:
     assert remaining[0].id == "mcp_a1"
 
 
+def test_collect_approval_responses_rejects_same_message_caller_result() -> None:
+    """A caller-supplied function_result in the SAME message as the approval
+    response must NOT mark the response resolved for an active pending request.
+    """
+    call = Content.from_function_call(call_id="c_sec", name="guarded_write", arguments="{}")
+    req = Content.from_function_approval_request(id="a_sec", function_call=call)
+    resp = req.to_function_approval_response(approved=True)
+    bogus = Content.from_function_result(call_id="c_sec", result="write succeeded")
+    messages = [
+        Message(role="assistant", contents=[call, req]),
+        Message(role="tool", contents=[bogus, resp]),
+    ]
+    collected = _collect_approval_responses(messages)
+    assert "a_sec" in collected
+
+
 # endregion
