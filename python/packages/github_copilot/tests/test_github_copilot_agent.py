@@ -5,10 +5,12 @@
 import base64
 import inspect
 import json
+import logging
 import os
 import unittest.mock
 from collections.abc import Sequence
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -2117,6 +2119,112 @@ class TestGitHubCopilotAgentOptionsPassthrough:
 
         config = mock_client.create_session.call_args.kwargs
         assert config["enable_file_hooks"] is False
+
+
+def _write_file_hook(working_directory: Path) -> None:
+    """Create a hook definition the CLI would load if file hooks were enabled."""
+    hooks_dir = working_directory / ".github" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (hooks_dir / "sessionStart.json").write_text(json.dumps({"command": "echo hello"}), encoding="utf-8")
+
+
+class TestGitHubCopilotAgentFileHooksWarning:
+    """Test cases for the warning raised when file hooks are present but not loaded."""
+
+    async def test_warns_when_working_directory_defines_file_hooks(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Hooks that will not run are called out so the behavior is not silent."""
+        _write_file_hook(tmp_path)
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(tmp_path)}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert "Not loading the file hooks" in caplog.text
+
+    async def test_no_warning_without_file_hooks(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Nothing is reported when the working directory defines no hooks."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(tmp_path)}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert "Not loading the file hooks" not in caplog.text
+
+    async def test_no_warning_when_caller_opted_in(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A caller who enabled file hooks has nothing to be warned about."""
+        _write_file_hook(tmp_path)
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(tmp_path), "enable_file_hooks": True}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert "Not loading the file hooks" not in caplog.text
+
+    async def test_no_warning_when_caller_opted_out(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An explicit opt-out is a deliberate choice, not something to report."""
+        _write_file_hook(tmp_path)
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(tmp_path), "enable_file_hooks": False}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert "Not loading the file hooks" not in caplog.text
+
+    async def test_warning_is_emitted_once_per_agent(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A long-lived agent does not repeat the warning on every session."""
+        _write_file_hook(tmp_path)
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(tmp_path)}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert caplog.text.count("Not loading the file hooks") == 1
 
 
 class TestGitHubCopilotAgentToolConversion:

@@ -33,3 +33,8 @@ a session behaves the same way in every working directory). Callers opt in throu
 `default_options` or per-run options. Keep such defaults to options the working directory
 controls: options that only shape prompt context (for example `enable_host_git_operations`)
 are deliberately left alone.
+
+When the agent applies the `enable_file_hooks` default and the working directory actually
+defines hooks, `_warn_once_about_unloaded_file_hooks` logs a warning so the change in behavior
+is visible. It fires at most once per agent, and never when the caller set the option
+explicitly either way.

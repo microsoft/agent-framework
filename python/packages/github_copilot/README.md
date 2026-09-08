@@ -110,3 +110,9 @@ agent = GitHubCopilotAgent(
 
 Only enable these for a working directory whose contents you trust to act on the host.
 
+To make the default visible rather than silent, the agent logs a warning through the
+`agent_framework.github_copilot` logger the first time it starts a session in a working
+directory that defines hooks it is not loading. See
+[`github_copilot_with_file_hooks.py`](../../samples/02-agents/providers/github_copilot/github_copilot_with_file_hooks.py)
+for a runnable example.
+

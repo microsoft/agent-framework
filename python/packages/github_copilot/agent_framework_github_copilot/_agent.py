@@ -10,6 +10,7 @@ import logging
 import sys
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
+from pathlib import Path
 from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
 from urllib.parse import urlparse
 
@@ -394,6 +395,21 @@ def _parse_telemetry_config(raw: str) -> TelemetryConfig | None:
     return cast(TelemetryConfig, parsed)
 
 
+def _working_directory_has_file_hooks(working_directory: str | None) -> bool:
+    """Return whether ``.github/hooks/`` holds hook definitions the CLI would otherwise load.
+
+    ``working_directory`` mirrors the SDK: the session's working directory when one is
+    configured, and the process working directory when it is not.
+    """
+    base = Path(working_directory) if working_directory else Path.cwd()
+    try:
+        return any((base / ".github" / "hooks").iterdir())
+    except OSError:
+        # Missing directory, unreadable path, or a file where the directory would be:
+        # there is nothing the caller needs to know about.
+        return False
+
+
 class GitHubCopilotSettings(TypedDict, total=False):
     """GitHub Copilot model settings.
 
@@ -688,6 +704,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         # are forwarded verbatim to the Copilot SDK by _build_session_kwargs.
         self._default_options = opts
         self._started = False
+        self._file_hooks_warning_emitted = False
 
     async def __aenter__(self) -> Self:
         """Start the agent when entering async context."""
@@ -1467,6 +1484,24 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         except Exception as ex:
             raise AgentException(f"Failed to create GitHub Copilot session: {ex}") from ex
 
+    def _warn_once_about_unloaded_file_hooks(self, working_directory: str | None) -> None:
+        """Warn once when the working directory defines file hooks that will not run.
+
+        Without this the default is silent: hooks simply stop running, with nothing to
+        point at the cause. The warning fires at most once per agent so a long-lived agent
+        does not repeat it on every run.
+        """
+        if self._file_hooks_warning_emitted or not _working_directory_has_file_hooks(working_directory):
+            return
+        self._file_hooks_warning_emitted = True
+        logger.warning(
+            "Not loading the file hooks defined in '%s': GitHubCopilotAgent leaves "
+            "enable_file_hooks off so a session behaves the same way in every working "
+            "directory. Set enable_file_hooks=True in default_options (or in per-run "
+            "options) to run them.",
+            Path(working_directory or Path.cwd()) / ".github" / "hooks",
+        )
+
     def _build_session_kwargs(
         self,
         streaming: bool,
@@ -1478,12 +1513,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         ``runtime_options`` which override them. Every key is forwarded verbatim to
         the Copilot SDK, so any ``create_session`` parameter is supported without a
         dedicated mapping here (an unknown name surfaces as a ``TypeError`` from the
-        SDK). A few keys are handled specially because they need a specific default
-        (``on_permission_request`` defaults to denying all requests and
-        ``enable_file_hooks`` defaults to off, and is wrapped so
-        under-specified ``approve-for-session`` decisions are scoped to the request that
-        triggered them) or transforming: ``tools`` are merged with the agent's tools and
-        converted to SDK tools, and approval callbacks are turned into ``hooks``.
+        SDK). A few keys are handled specially because they need a specific default or
+        transforming: ``on_permission_request`` defaults to denying all requests and is
+        wrapped so under-specified ``approve-for-session`` decisions are scoped to the
+        request that triggered them, ``enable_file_hooks`` defaults to off, ``tools`` are
+        merged with the agent's tools and converted to SDK tools, and approval callbacks
+        are turned into ``hooks``.
 
         Args:
             streaming: Whether to enable streaming for the session.
@@ -1521,6 +1556,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         # checkout. Callers opt in through ``default_options`` or per-run options.
         if kwargs.get("enable_file_hooks") is None:
             kwargs["enable_file_hooks"] = False
+            self._warn_once_about_unloaded_file_hooks(kwargs.get("working_directory"))
         kwargs["hooks"] = self._build_session_hooks(all_tools, kwargs)
 
         # Strip agent-internal and client-level keys that are consumed here or in the
