@@ -20,6 +20,7 @@ from agent_framework import (
     VectorStoreCollectionDefinition,
     VectorStoreField,
     create_vector_search_tool,
+    register_vectorstoremodel,
     vectorstoremodel,
 )
 from agent_framework.exceptions import IntegrationException
@@ -316,12 +317,14 @@ async def test_settings_resolved_owned_connections(
         ("hnsw", {"postgres.vector_type": "halfvec"}),
     ],
 )
+@pytest.mark.parametrize("approximate_options", [{}, {"exact": False}])
 async def test_ann_indexes_creation_filtered_query_and_exact_override(
     database,
     definition_factory,
     record_factory,
     index_kind,
     annotations,
+    approximate_options,
 ):
     connection, schema = database
     collection = PostgresCollection(
@@ -346,26 +349,70 @@ async def test_ann_indexes_creation_filtered_query_and_exact_override(
     if annotations.get("postgres.vector_type") == "halfvec":
         assert (await collection.get(["0"], include_vectors=True))[0]["embedding"] == [1, 0, 0]
     options = {"hnsw_ef_search": 100} if index_kind == "hnsw" else {"ivfflat_probes": 1}
-    results = [
-        item
-        async for item in await collection.search(
-            vector=[1, 0, 0],
-            filter=Filter("number", "gte", 90),
-            top=3,
-            operation_options=options,
-        )
-    ]
+    search_results = await collection.search(
+        vector=(1, 0, 0),
+        filter=Filter("number", "gte", 90),
+        top=3,
+        operation_options={**options, **approximate_options},
+    )
+    assert search_results.metadata is not None
+    assert search_results.metadata["approximate"] is True
+    results = [item async for item in search_results]
     assert [item["record"]["id"] for item in results] == ["90", "91", "92"]
-    results = [
-        item
-        async for item in await collection.search(
-            vector=[1, 0, 0],
-            filter=Filter("number", "gte", 90),
-            top=3,
-            operation_options={"exact": True},
-        )
-    ]
+    search_results = await collection.search(
+        vector=(1, 0, 0),
+        filter=Filter("number", "gte", 90),
+        top=3,
+        operation_options={"exact": True},
+    )
+    assert search_results.metadata is not None
+    assert search_results.metadata["approximate"] is False
+    results = [item async for item in search_results]
     assert [item["record"]["id"] for item in results] == ["90", "91", "92"]
+
+
+@pytest.mark.parametrize(
+    "vector_type,annotations",
+    [
+        ("float", None),
+        ("float32", None),
+        ("float16", None),
+        ("float", {"postgres.vector_type": "halfvec"}),
+        ("float32", {"postgres.vector_type": "halfvec"}),
+        ("float16", {"postgres.vector_type": "vector"}),
+    ],
+)
+async def test_floating_vector_types_preserve_typed_roundtrips(database, vector_type, annotations):
+    @dataclass
+    class FloatingRecord:
+        id: str
+        embedding: list[float] | None = None
+
+    register_vectorstoremodel(
+        FloatingRecord,
+        definition=VectorStoreCollectionDefinition(
+            [
+                VectorStoreField("key", name="id", type_="str"),
+                VectorStoreField(
+                    "vector", name="embedding", dimensions=3, type_=vector_type, provider_annotations=annotations
+                ),
+            ],
+            collection_name="floating_vectors",
+        ),
+    )
+    connection, schema = database
+    collection = PostgresCollection(FloatingRecord, client=connection, schema=schema)
+    await collection.ensure_collection_exists()
+    await collection.upsert([FloatingRecord("one", [0.1, 1, 0])], generate_vectors=False)
+    records = await collection.get(["one"], include_vectors=True)
+    assert len(records) == 1
+    assert isinstance(records[0], FloatingRecord)
+    assert records[0].embedding == pytest.approx([0.1, 1, 0], rel=1e-3)
+    results = [item async for item in await collection.search(vector=(0.1, 1, 0), include_vectors=True)]
+    assert len(results) == 1
+    assert results[0]["record"] == records[0]
+    results = [item async for item in await collection.search(vector=range(3))]
+    assert [item["record"].id for item in results] == ["one"]
 
 
 async def test_missing_schema_is_not_created(database, definition_factory):

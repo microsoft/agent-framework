@@ -199,6 +199,8 @@ def _prepare_value(field: VectorStoreField, value: Any) -> Any:
     if field.field_type == "vector":
         if isinstance(value, (str, bytes, bytearray)):
             raise TypeError(f"Vector field '{field.name}' requires a dense numeric vector, not text or bytes.")
+        if isinstance(value, Sequence) and not isinstance(value, list):
+            value = list(cast(Sequence[float | int], value))
         return HalfVector(value) if _prepare_vector_type(field) == "halfvec" else PgVector(value)
     kind = field.type_
     if kind == "UUID":
@@ -398,7 +400,7 @@ class PostgresCollection(
     """
 
     supported_key_types: ClassVar[set[str] | None] = {"str", "int", "UUID"}
-    supported_vector_types: ClassVar[set[str] | None] = {"float", "float16", "float32", "float64", "int"}
+    supported_vector_types: ClassVar[set[str] | None] = {"float", "float16", "float32"}
     supported_search_types: ClassVar[set[SearchType]] = {"vector"}
 
     def __init__(
@@ -663,7 +665,7 @@ class PostgresCollection(
             connection.cursor(row_factory=tuple_row) as cursor,
         ):
             # Group adjacent row shapes only, preserving both input order and repeated-key semantics.
-            for names, group in groupby(prepared, key=lambda row: tuple(row)):
+            for names, group in groupby(prepared, key=tuple):
                 rows = list(group)
                 if names:
                     statement = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
@@ -781,6 +783,8 @@ class PostgresCollection(
         exact = options.get("exact", field.index_kind in ("flat", "default"))
         if not isinstance(exact, bool):
             raise TypeError("exact must be a boolean.")
+        if not exact and field.index_kind not in ("hnsw", "ivf_flat"):
+            raise ValueError("Approximate search requires an HNSW or IVFFlat vector field.")
         settings: list[tuple[str, str]] = []
         if "hnsw_ef_search" in options:
             if exact or field.index_kind != "hnsw":

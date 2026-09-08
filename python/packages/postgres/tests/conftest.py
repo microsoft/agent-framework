@@ -17,6 +17,7 @@ def definition_factory():
         key_type="str",
         generated=False,
         dimensions=3,
+        vector_type="float",
         index_kind="flat",
         distance_function="DEFAULT",
         annotations=None,
@@ -31,7 +32,7 @@ def definition_factory():
             VectorStoreField(
                 "vector",
                 name="embedding",
-                type_="float",
+                type_=vector_type,
                 storage_name="dense vector",
                 dimensions=dimensions,
                 index_kind=index_kind,

@@ -98,9 +98,18 @@ keys), multiple nullable vector columns, storage aliases, and database-side
 filters and paging. Batch writes are transactional; an existing transaction on
 an injected connection remains under the caller's commit control.
 
+Vector fields support `float`, `float32`, and `float16` declarations. PostgreSQL
+`vector` storage uses 32-bit floats; `float16` defaults to 16-bit `halfvec`.
+The `postgres.vector_type` provider annotation explicitly selects either storage
+type. Ordinary Python floats and integer-valued elements are accepted and rounded
+to the selected precision; declared `int` and `float64` vector fields are rejected.
+
 Exact search is the default. HNSW and IVFFlat are optional approximate indexes;
 selective filters can reduce their recall. Use
 `operation_options={"exact": True}` when complete recall is required.
+`exact=False` requires an HNSW or IVFFlat field. Result metadata's `approximate`
+flag identifies ANN-permitted query mode, not proof that PostgreSQL used an ANN
+index.
 IVFFlat needs data before index creation: first call
 `ensure_collection_exists(operation_options={"create_indexes": False})`, load
 records, then call `ensure_collection_exists()` again.

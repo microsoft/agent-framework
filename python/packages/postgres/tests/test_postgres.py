@@ -20,6 +20,8 @@ from agent_framework import (
     vectorstoremodel,
 )
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
+from pgvector import HalfVector
+from pgvector import Vector as PgVector
 from psycopg import AsyncConnection, OperationalError
 from psycopg_pool import AsyncConnectionPool
 
@@ -28,8 +30,10 @@ from agent_framework_postgres._vector_store import _Client, _prepare_identifier,
 
 
 @pytest.fixture
-def collection(definition_factory):
-    return PostgresCollection(dict, definition=definition_factory(), connection_string="host=unused")
+def collection(definition_factory, request):
+    return PostgresCollection(
+        dict, definition=definition_factory(**getattr(request, "param", {})), connection_string="host=unused"
+    )
 
 
 @pytest.fixture
@@ -206,6 +210,33 @@ def test_model_capabilities_rejected_before_io(definition_factory, options):
         PostgresCollection(dict, definition=definition_factory(**options), connection_string="host=unused")
 
 
+@pytest.mark.parametrize("vector_type", ["int", "float64"])
+@pytest.mark.parametrize("annotations", [None, {"postgres.vector_type": "vector"}, {"postgres.vector_type": "halfvec"}])
+def test_vector_type_capabilities_rejected_before_client_creation(definition_factory, vector_type, annotations):
+    definition = definition_factory(vector_type=vector_type, annotations=annotations)
+    with (
+        patch("agent_framework_postgres._vector_store.AsyncConnectionPool") as create_pool,
+        pytest.raises(ValueError, match=vector_type),
+    ):
+        PostgresCollection(dict, definition=definition, connection_string="host=unused")
+    create_pool.assert_not_called()
+
+
+def test_inferred_integer_vectors_rejected_before_client_creation():
+    @vectorstoremodel(collection_name="integers")
+    @dataclass
+    class IntegerRecord:
+        id: Annotated[str, VectorStoreField("key")]
+        embedding: Annotated[list[int] | None, VectorStoreField("vector", dimensions=3)] = None
+
+    with (
+        patch("agent_framework_postgres._vector_store.AsyncConnectionPool") as create_pool,
+        pytest.raises(ValueError, match="got 'int'"),
+    ):
+        PostgresCollection(IntegerRecord, connection_string="host=unused")
+    create_pool.assert_not_called()
+
+
 def test_annotations_are_snapshotted_without_copying_generator(definition_factory):
     definition = definition_factory(index_kind="hnsw", annotations={"postgres.m": 12})
     collection = PostgresCollection(dict, definition=definition, connection_string="host=unused")
@@ -267,15 +298,52 @@ async def test_vectors_excluded_from_projection(collection, mock_database):
     assert '"dense vector"' in cursor.execute.call_args.args[0].as_string()
 
 
-async def test_search_threshold_before_paging_and_alias_collision(collection, mock_database):
+@pytest.mark.parametrize("collection", [{"index_kind": "flat"}, {"index_kind": "default"}], indirect=True)
+@pytest.mark.parametrize("options", [None, {"exact": True}])
+async def test_search_threshold_before_paging_and_alias_collision(collection, mock_database, options):
     _, cursor, _ = mock_database
-    await collection.search(vector=[1, 0, 0], filter=Filter("number", "gt", 3), score_threshold=0.2, top=2, skip=1)
+    results = await collection.search(
+        vector=[1, 0, 0],
+        filter=Filter("number", "gt", 3),
+        score_threshold=0.2,
+        top=2,
+        skip=1,
+        operation_options=options,
+    )
+    assert results.metadata is not None
+    assert results.metadata["approximate"] is False
     query, params = cursor.execute.call_args.args
     text = query.as_string()
     assert text.index("<= %s") < text.index("ORDER BY") < text.index("LIMIT %s OFFSET %s")
     assert " + 0 ASC" in text  # Exact mode deliberately avoids ANN scans.
     assert params[1] == 3 and params[-2:] == [2, 1]
     assert '"dense vector"' not in text.split(" FROM ")[0].split(",")[0]
+
+
+@pytest.mark.parametrize(
+    "collection,adapter",
+    [
+        ({"annotations": {"postgres.vector_type": "vector"}}, PgVector),
+        ({"annotations": {"postgres.vector_type": "halfvec"}}, HalfVector),
+    ],
+    indirect=["collection"],
+)
+@pytest.mark.parametrize("vector", [[0, 1, 2], (0, 1, 2), range(3)], ids=["list", "tuple", "range"])
+async def test_numeric_sequences_adapted_for_storage_and_search(
+    collection, mock_database, record_factory, adapter, vector
+):
+    adapted = _prepare_value(collection.definition.vector_fields[0], vector)
+    assert isinstance(adapted, adapter)
+    assert adapted.to_list() == [0.0, 1.0, 2.0]
+    await collection.search(vector=vector)
+    _, cursor, _ = mock_database
+    query_vector = cursor.execute.call_args.args[1][0]
+    assert isinstance(query_vector, adapter)
+    assert query_vector.to_list() == [0.0, 1.0, 2.0]
+    await collection.upsert([record_factory(embedding=tuple(vector))], generate_vectors=False)
+    stored_vector = cursor.executemany.call_args.args[1][0][-1]
+    assert isinstance(stored_vector, adapter)
+    assert stored_vector.to_list() == [0.0, 1.0, 2.0]
 
 
 async def test_get_and_search_share_filter_preparation(collection, mock_database):
@@ -304,7 +372,7 @@ async def test_closed_collection_rejects_empty_batches(collection, mock_database
 async def test_search_tool_param_without_default(collection, mock_database, required):
     parameter = Param("text", str, required=required)
     assert not parameter.has_default
-    assert parameter.default is parameter.default
+    assert parameter.default is Param("other", str).default
     collection.embedding_generator = MagicMock(
         get_embeddings=AsyncMock(return_value=GeneratedEmbeddings([Embedding(vector=[1, 0, 0])]))
     )
@@ -332,10 +400,12 @@ async def test_search_tool_param_without_default(collection, mock_database, requ
     [
         ({"typo": 1}, NotImplementedError),
         ({"exact": "yes"}, TypeError),
+        ({"exact": False}, ValueError),
         ({"hnsw_ef_search": 10}, ValueError),
         ({"ivfflat_probes": 2}, ValueError),
     ],
 )
+@pytest.mark.parametrize("collection", [{"index_kind": "flat"}, {"index_kind": "default"}], indirect=True)
 async def test_unknown_or_inapplicable_search_options(collection, mock_database, options, error):
     with pytest.raises(error):
         await collection.search(vector=[1, 0, 0], operation_options=options)
@@ -426,3 +496,17 @@ def test_decorated_model_infers_key_type():
     collection = PostgresCollection(TypedRecord, collection_name="typed", connection_string="host=unused")
     assert collection.definition.key_field.type_ == "UUID"
     assert isinstance(collection._client.client, AsyncConnectionPool)
+
+
+def test_normal_float_vectors_restore_typed_models():
+    collection = PostgresCollection(TypedRecord, collection_name="typed", connection_string="host=unused")
+    field = collection.definition.vector_fields[0]
+    assert field.type_ == "float"
+    record = collection.deserialize({
+        "id": UUID(int=1),
+        "value": "text",
+        "embedding": _prepare_value(field, [0.1, 1, 0]),
+    })
+    assert isinstance(record, TypedRecord)
+    assert record.id == UUID(int=1)
+    assert record.embedding == pytest.approx([0.1, 1, 0])
