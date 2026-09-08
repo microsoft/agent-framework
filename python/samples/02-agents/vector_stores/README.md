@@ -8,12 +8,17 @@ explicit definition and codecs. Dictionaries use a collection-specific
 definition; DataFrames and other containers can convert to row dictionaries
 before calling the batch API.
 
-No database or credentials are needed for these examples.
+No database is needed for these examples. The model, format, and direct
+in-memory filter samples need no credentials. The search-tool sample loads the
+existing Azure AI Search hotel dataset and uses OpenAI for embeddings and the
+agent; set `OPENAI_API_KEY` before running it.
 
 | File | Demonstrates |
 |------|--------------|
 | [`vector_store_models.py`](vector_store_models.py) | Choosing among owned models, third-party model registration, and loose dictionary definitions. |
 | [`optimized_data_formats.py`](optimized_data_formats.py) | Keeping NumPy vector fields and adapting pandas DataFrames to the batch record API. |
+| [`in_memory_filters.py`](in_memory_filters.py) | Direct vector search with `Filter` and `FilterGroup`. |
+| [`in_memory_search_tool.py`](in_memory_search_tool.py) | Model-set filter values with native typed `Param` declarations. |
 
 The first section shows the two equivalent custom-codec registration forms.
 `@vectorstoremodel` derives the definition from annotations and registers it;
@@ -53,4 +58,6 @@ Run the sample from the `python` directory:
 ```bash
 uv run samples/02-agents/vector_stores/vector_store_models.py
 uv run samples/02-agents/vector_stores/optimized_data_formats.py
+uv run samples/02-agents/vector_stores/in_memory_filters.py
+uv run samples/02-agents/vector_stores/in_memory_search_tool.py
 ```

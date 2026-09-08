@@ -23,7 +23,7 @@ from agent_framework import (
     SupportsChatGetResponse,
     tool,
 )
-from agent_framework._settings import load_settings
+from agent_framework._settings import SecretString, load_settings
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from agent_framework.exceptions import (
     ChatClientException,
@@ -101,17 +101,20 @@ def test_anthropic_settings_init(anthropic_unit_test_env: dict[str, str]) -> Non
     assert settings["chat_model"] == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"]
 
 
-def test_anthropic_settings_init_with_explicit_values() -> None:
+@pytest.mark.parametrize("api_key", ["custom-api-key", SecretString("custom-api-key")], ids=["str", "secret"])
+def test_anthropic_settings_init_with_explicit_values(api_key: str | SecretString) -> None:
     """Test AnthropicSettings initialization with explicit values."""
     settings = load_settings(
         AnthropicSettings,
         env_prefix="ANTHROPIC_",
-        api_key="custom-api-key",
+        api_key=api_key,
         chat_model="claude-3-opus-20240229",
     )
 
-    assert settings["api_key"] is not None
+    assert isinstance(settings["api_key"], SecretString)
     assert settings["api_key"].get_secret_value() == "custom-api-key"
+    assert "custom-api-key" not in str(settings["api_key"])
+    assert "custom-api-key" not in repr(settings)
     assert settings["chat_model"] == "claude-3-opus-20240229"
 
 
@@ -160,16 +163,21 @@ def test_agent_accepts_anthropic_clients() -> None:
     assert agent.client is client
 
 
+@pytest.mark.parametrize("secret_type", [str, SecretString], ids=["str", "secret"])
 def test_anthropic_client_init_auto_create_client(
     anthropic_unit_test_env: dict[str, str],
+    secret_type: type[str] | type[SecretString],
 ) -> None:
     """Test AnthropicClient initialization with auto-created anthropic_client."""
     client = AnthropicClient(
-        api_key=anthropic_unit_test_env["ANTHROPIC_API_KEY"],
+        api_key=secret_type(anthropic_unit_test_env["ANTHROPIC_API_KEY"]),
         model=anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"],
     )
 
-    assert client.anthropic_client is not None
+    anthropic_client = client.anthropic_client
+    assert isinstance(anthropic_client, anthropic_sdk.AsyncAnthropic)
+    assert type(anthropic_client.api_key) is str
+    assert anthropic_client.api_key == anthropic_unit_test_env["ANTHROPIC_API_KEY"]
     assert client.model == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"]
 
 
