@@ -27,8 +27,6 @@ import uuid
 import warnings
 import weakref
 from abc import abstractmethod
-from collections import deque
-from base64 import urlsafe_b64encode
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Iterable, Mapping, Sequence
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
