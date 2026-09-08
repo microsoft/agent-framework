@@ -2,7 +2,10 @@
 
 """Tests for _run_common.py edge cases."""
 
+import json
 import logging
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from ag_ui.core import EventType, StateSnapshotEvent
@@ -11,9 +14,15 @@ from ag_ui.core.events import (
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
 )
-from agent_framework import Content
+from agent_framework import Content, Message
 
 from agent_framework_ag_ui import state_update
+from agent_framework_ag_ui._agent_run import (
+    _build_messages_snapshot,
+    _make_approval_tool_result_events,
+    _merge_resolved_approval_results_into_snapshot,
+    _resolved_tool_result_snapshot_messages,
+)
 from agent_framework_ag_ui._predictive_state import PredictiveStateHandler
 from agent_framework_ag_ui._run_common import (
     FlowState,
@@ -29,6 +38,16 @@ from agent_framework_ag_ui._run_common import (
     _strict_resume_entries,
 )
 from agent_framework_ag_ui._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
+from agent_framework_ag_ui._utils import (
+    _AGUI_HOST_PAYLOAD_OMITTED_KEY,
+    _AGUI_MCP_TOOL_RESULT_KEY,
+    _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY,
+    _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY,
+    _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY,
+    _host_payload_history_size,
+    _mcp_tool_result_host_payload_key,
+    _persistable_host_payload_history,
+)
 
 
 class TestNormalizeResumeInterrupts:
@@ -454,6 +473,331 @@ class TestEmitToolResultWithState:
         assert result_events[0].content == "plain result"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert flow.tool_results[-1]["content"] == "plain result"
 
+    def test_plain_tool_result_bypasses_replay_serialization(self):
+        """Ordinary cyclic provider metadata is never traversed by MCP replay handling."""
+        cyclic_properties: dict[str, object] = {}
+        cyclic_properties["self"] = cyclic_properties
+        tool_return = Content.from_text("plain result", additional_properties=cyclic_properties)
+        content = Content.from_function_result(call_id="plain-1", result=[tool_return])
+        flow = FlowState()
+
+        events = _emit_tool_result(content, flow)
+
+        result_event = next(event for event in events if event.type == EventType.TOOL_CALL_RESULT)
+        assert result_event.content == "plain result"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert flow.tool_results[-1]["content"] == "plain result"
+        assert _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY not in flow.tool_results[-1]
+
+    def test_mcp_host_payload_has_live_snapshot_and_approval_parity(self):
+        """The complete Host result is projected without replacing the model result."""
+        host_payload = {
+            "content": [{"type": "text", "text": "Summary"}],
+            "structuredContent": {"image_url": "https://example.test/widget.png"},
+            "isError": False,
+        }
+        tool_return = Content.from_text(
+            "Summary",
+            additional_properties={
+                _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY: {"structuredContent": {"stale": "legacy item marker"}},
+                "_meta": {"server": "model-visible-before-sidecar"},
+            },
+        )
+        content = Content.from_function_result(
+            call_id="mcp-1",
+            result=[tool_return],
+            additional_properties={_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY: host_payload},
+        )
+        flow = FlowState()
+
+        events = _emit_tool_result(content, flow)
+        result_event = next(event for event in events if event.type == EventType.TOOL_CALL_RESULT)
+        snapshot = _build_messages_snapshot(flow, [])
+        snapshot_message = snapshot.messages[-1].model_dump(by_alias=True, exclude_none=True)
+
+        assert content.result == "Summary"
+        assert json.loads(result_event.content) == host_payload  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert json.loads(snapshot_message["content"]) == host_payload
+        assert snapshot_message[_AGUI_MCP_TOOL_RESULT_KEY] is True
+        assert snapshot_message[_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY] == [{"type": "text", "text": "Summary"}]
+        assert flow.tool_results[-1]["content"] == "Summary"
+        assert json.loads(flow.tool_results[-1][_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY]) == host_payload
+
+        approval_event = _make_approval_tool_result_events([content])[0]
+        approval_snapshot = _resolved_tool_result_snapshot_messages(
+            [Message(role="tool", contents=[content], message_id="approval-result")]
+        )["mcp-1"]
+        assert json.loads(approval_event.content) == host_payload
+        assert approval_snapshot["content"] == "Summary"
+        assert json.loads(approval_snapshot[_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY]) == host_payload
+        assert approval_snapshot[_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY] == [{"type": "text", "text": "Summary"}]
+
+    def test_empty_mcp_model_projection_remains_empty_across_live_snapshot_and_approval(self):
+        """An explicitly empty custom-parser result is not replaced with Host or synthetic text."""
+        host_payload = {
+            "content": [{"type": "text", "text": "Server-only text"}],
+            "structuredContent": {"widget": "complete"},
+            "isError": False,
+        }
+        content = Content.from_function_result(
+            call_id="mcp-empty",
+            result=[],
+            additional_properties={_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY: host_payload},
+        )
+        flow = FlowState()
+
+        result_event = next(
+            event for event in _emit_tool_result(content, flow) if event.type == EventType.TOOL_CALL_RESULT
+        )
+        snapshot = _build_messages_snapshot(flow, []).messages[-1].model_dump(by_alias=True, exclude_none=True)
+        approval_event = _make_approval_tool_result_events([content])[0]
+        approval_snapshot = _resolved_tool_result_snapshot_messages([Message(role="tool", contents=[content])])[
+            "mcp-empty"
+        ]
+
+        assert getattr(result_event, _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY) == []
+        assert flow.tool_results[-1]["content"] == ""
+        assert flow.tool_results[-1][_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY] == []
+        assert json.loads(snapshot["content"]) == host_payload
+        assert snapshot[_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY] == []
+        assert getattr(approval_event, _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY) == []
+        assert approval_snapshot["content"] == ""
+        assert approval_snapshot[_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY] == []
+        assert _persistable_host_payload_history([flow.tool_results[-1]])[0]["content"] == ""
+
+    def test_explicit_display_payload_wins_over_mcp_host_projection(self):
+        """A standalone display marker remains authoritative when both markers exist."""
+        host_payload = {
+            "content": [{"type": "text", "text": "Summary"}],
+            "structuredContent": {"source": "mcp"},
+            "isError": False,
+        }
+        display_payload = {"source": "application", "rows": [1, 2]}
+        tool_return = Content.from_text(
+            "Summary",
+            additional_properties={TOOL_RESULT_DISPLAY_KEY: display_payload},
+        )
+        content = Content.from_function_result(
+            call_id="mcp-display",
+            result=[tool_return],
+            additional_properties={_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY: host_payload},
+        )
+        flow = FlowState()
+
+        result_event = next(
+            event for event in _emit_tool_result(content, flow) if event.type == EventType.TOOL_CALL_RESULT
+        )
+        approval_event = _make_approval_tool_result_events([content])[0]
+        approval_snapshot = _resolved_tool_result_snapshot_messages([Message(role="tool", contents=[content])])[
+            "mcp-display"
+        ]
+
+        assert json.loads(result_event.content) == display_payload  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert flow.tool_results[-1]["content"] == "Summary"
+        assert json.loads(flow.tool_results[-1][_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY]) == display_payload
+        assert json.loads(approval_event.content) == display_payload
+        assert approval_snapshot["content"] == "Summary"
+        assert json.loads(approval_snapshot[_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY]) == display_payload
+        assert content.result == "Summary"
+
+    def test_complete_snapshot_bounds_host_and_sidecar_bytes(self, monkeypatch: pytest.MonkeyPatch):
+        """The fixed history budget charges both retained representations and keeps the newest."""
+        host_contents = [json.dumps({"structuredContent": {"index": index, "data": "x" * 40}}) for index in range(2)]
+        messages = [
+            {
+                "id": f"result-{index}",
+                "role": "tool",
+                "toolCallId": f"mcp-{index}",
+                "content": f"Summary {index}",
+                _AGUI_MCP_TOOL_RESULT_KEY: True,
+                _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY: host_contents[index],
+                _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: [
+                    {"type": "text", "text": f"Summary {index}", "additional_properties": {"provider": "visible"}}
+                ],
+            }
+            for index in range(2)
+        ]
+        newest_size = _host_payload_history_size(messages[1])
+        assert newest_size < sum(_host_payload_history_size(message) for message in messages)
+        monkeypatch.setattr(
+            "agent_framework_ag_ui._utils._MAX_MCP_HOST_PAYLOAD_HISTORY_SIZE_BYTES",
+            newest_size,
+        )
+
+        snapshot = _build_messages_snapshot(FlowState(tool_results=messages), [])
+        bounded = [message.model_dump(by_alias=True, exclude_none=True) for message in snapshot.messages]
+
+        assert bounded[0]["content"] == "Summary 0"
+        assert bounded[0][_AGUI_HOST_PAYLOAD_OMITTED_KEY] is True
+        assert _AGUI_MCP_TOOL_RESULT_KEY not in bounded[0]
+        assert _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY not in bounded[0]
+        assert bounded[1]["content"] == host_contents[1]
+        assert _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY not in bounded[1]
+        assert bounded[1][_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY] == messages[1][_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY]
+        assert _host_payload_history_size(bounded[1]) == newest_size
+
+    def test_complete_snapshot_charges_non_string_host_payloads(self, monkeypatch: pytest.MonkeyPatch):
+        """Dictionary and list Host projections cannot bypass aggregate retention accounting."""
+        host_payloads: list[object] = [
+            {"structuredContent": {"index": 0, "data": "x" * 80}},
+            [{"type": "resource", "resource": {"uri": "https://example.test/newest", "text": "y" * 80}}],
+        ]
+        messages = [
+            {
+                "id": f"result-{index}",
+                "role": "tool",
+                "toolCallId": f"mcp-{index}",
+                "content": f"Summary {index}",
+                _AGUI_MCP_TOOL_RESULT_KEY: True,
+                _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY: host_payload,
+                _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: [{"type": "text", "text": f"Summary {index}"}],
+            }
+            for index, host_payload in enumerate(host_payloads)
+        ]
+        persisted = _persistable_host_payload_history(messages)
+        newest_size = _host_payload_history_size(persisted[1])
+        assert _host_payload_history_size(messages[0]) > len(json.dumps(messages[0]["content"]).encode("utf-8"))
+        monkeypatch.setattr(
+            "agent_framework_ag_ui._utils._MAX_MCP_HOST_PAYLOAD_HISTORY_SIZE_BYTES",
+            newest_size,
+        )
+
+        snapshot = _build_messages_snapshot(FlowState(tool_results=messages), [])
+        bounded = [message.model_dump(by_alias=True, exclude_none=True) for message in snapshot.messages]
+
+        assert bounded[0]["content"] == "Summary 0"
+        assert bounded[0][_AGUI_HOST_PAYLOAD_OMITTED_KEY] is True
+        assert json.loads(bounded[1]["content"]) == host_payloads[1]
+        assert _host_payload_history_size(bounded[1]) == newest_size
+
+    def test_persisted_host_history_keeps_canonical_content_model_safe(self):
+        """Older readers that ignore private fields see only the model-facing result."""
+        message = {
+            "id": "result",
+            "role": "tool",
+            "toolCallId": "mcp",
+            "content": json.dumps({"accepted": True, "structuredContent": {"host": "only"}}),
+            _AGUI_MCP_TOOL_RESULT_KEY: True,
+            _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: [{"type": "text", "text": '{"accepted": true}'}],
+        }
+
+        persisted = _persistable_host_payload_history([message])[0]
+
+        assert persisted["content"] == '{"accepted": true}'
+        assert persisted[_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY] == message["content"]
+
+    def test_mcp_replay_serialization_falls_back_on_cyclic_provider_metadata(self):
+        """A cyclic provider value cannot suppress the terminal result after tool execution."""
+        cyclic_properties: dict[str, object] = {}
+        cyclic_properties["self"] = cyclic_properties
+        host_payload = {"content": [{"type": "text", "text": "Summary"}], "isError": False}
+        content = Content.from_function_result(
+            call_id="mcp-cyclic",
+            result=[Content.from_text("Summary", additional_properties=cyclic_properties)],
+            additional_properties={_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY: host_payload},
+        )
+
+        events = _emit_tool_result(content, FlowState())
+        result_event = next(event for event in events if event.type == EventType.TOOL_CALL_RESULT)
+
+        assert json.loads(result_event.content) == host_payload  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert getattr(result_event, _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY) == [{"type": "text", "text": "Summary"}]
+
+    def test_mcp_replay_serialization_makes_provider_metadata_json_safe(self):
+        """Provider-visible sidecar values are JSON-safe before live or snapshot serialization."""
+        host_payload = {"content": [{"type": "text", "text": "Summary"}], "isError": False}
+        content = Content.from_function_result(
+            call_id="mcp-provider-object",
+            result=[
+                Content.from_text(
+                    "Summary",
+                    additional_properties={"provider_visible": SimpleNamespace(value="kept")},
+                )
+            ],
+            additional_properties={_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY: host_payload},
+        )
+        flow = FlowState()
+
+        result_event = next(
+            event for event in _emit_tool_result(content, flow) if event.type == EventType.TOOL_CALL_RESULT
+        )
+        serialized_items = getattr(result_event, _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY)
+
+        assert serialized_items[0]["additional_properties"]["provider_visible"] == {"value": "kept"}
+        json.dumps(result_event.model_dump(by_alias=True, exclude_none=True))
+        json.dumps(flow.tool_results[-1])
+
+    def test_older_core_marker_name_falls_back_to_literal(self):
+        """AG-UI can import alongside core versions that do not publish the private constant."""
+        assert _mcp_tool_result_host_payload_key(SimpleNamespace()) == "_mcp_tool_result_host_payload"
+
+    def test_older_core_inner_marker_remains_supported(self):
+        """Older core results with only an item marker still project the complete Host payload."""
+        host_payload = {"content": [{"type": "text", "text": "Legacy Host"}], "isError": False}
+        content = Content.from_function_result(
+            call_id="mcp-legacy",
+            result=[
+                Content.from_text(
+                    "Legacy model",
+                    additional_properties={_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY: host_payload},
+                )
+            ],
+        )
+
+        result_event = next(
+            event for event in _emit_tool_result(content, FlowState()) if event.type == EventType.TOOL_CALL_RESULT
+        )
+
+        assert json.loads(result_event.content) == host_payload  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    def test_approval_merge_preserves_earlier_marked_mcp_snapshot_result(self):
+        """Resolving a later approval cannot replace an earlier Host result with model-only replay."""
+        existing_host = '{"structuredContent":{"widget":"earlier"}}'
+        snapshot_messages: list[dict[str, Any]] = [
+            {
+                "id": "assistant-a",
+                "role": "assistant",
+                "tool_calls": [{"id": "call-a", "type": "function", "function": {"name": "a", "arguments": "{}"}}],
+            },
+            {
+                "id": "result-a",
+                "role": "tool",
+                "toolCallId": "call-a",
+                "content": "Earlier model result",
+                _AGUI_MCP_TOOL_RESULT_KEY: True,
+                _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY: existing_host,
+                _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: [{"type": "text", "text": "Earlier model result"}],
+            },
+            {
+                "id": "assistant-b",
+                "role": "assistant",
+                "tool_calls": [{"id": "call-b", "type": "function", "function": {"name": "b", "arguments": "{}"}}],
+            },
+            {
+                "id": "approval-b",
+                "role": "user",
+                "content": "",
+                "function_approvals": [{"id": "approval-b", "toolCallId": "call-b"}],
+            },
+        ]
+        resolved_messages = [
+            Message(
+                role="tool",
+                contents=[
+                    Content.from_function_result(call_id="call-a", result="Earlier model result"),
+                    Content.from_function_result(call_id="call-b", result="Approved result"),
+                ],
+            )
+        ]
+
+        _merge_resolved_approval_results_into_snapshot(snapshot_messages, resolved_messages)
+
+        tool_messages = [message for message in snapshot_messages if message.get("role") == "tool"]
+        assert [message["toolCallId"] for message in tool_messages] == ["call-a", "call-b"]
+        assert tool_messages[0][_AGUI_MCP_TOOL_RESULT_KEY] is True
+        assert tool_messages[0][_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY] == existing_host
+        assert tool_messages[1]["content"] == "Approved result"
+        assert not any(message.get("function_approvals") for message in snapshot_messages)
+
     def test_display_only_payload_falls_back_to_llm_content(self):
         """When text is empty, both channels receive the serialized display payload."""
         tool_return = state_update(tool_result={"temp": 14})
@@ -587,6 +931,37 @@ class TestEmitMcpToolResultWithDisplay:
         assert _json.loads(result_events[0].content) == display_payload  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         # LLM-side accumulator keeps the short text.
         assert flow.tool_results[-1]["content"] == "2 rows returned"
+
+    def test_hosted_mcp_result_uses_complete_host_payload(self):
+        """Hosted-MCP compatibility preserves rich output items for model replay."""
+        host_payload = {
+            "content": [{"type": "text", "text": "Hosted summary"}],
+            "structuredContent": {"rows": [1, 2]},
+            "isError": False,
+        }
+        content = Content.from_mcp_server_tool_result(
+            call_id="mcp-hosted",
+            output=[
+                Content.from_text(
+                    "Hosted summary",
+                    additional_properties={"_meta": {"server_only": True}, "provider_visible": "kept"},
+                ),
+                Content.from_data(b"image", media_type="image/png"),
+            ],
+            additional_properties={_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY: host_payload},
+        )
+        flow = FlowState()
+
+        result_event = next(
+            event for event in _emit_mcp_tool_result(content, flow) if event.type == EventType.TOOL_CALL_RESULT
+        )
+
+        assert json.loads(result_event.content) == host_payload  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert flow.tool_results[-1]["content"] != result_event.content  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert json.loads(flow.tool_results[-1][_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY]) == host_payload
+        model_items = flow.tool_results[-1][_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY]
+        assert [item["type"] for item in model_items] == ["text", "data"]
+        assert model_items[0]["additional_properties"] == {"provider_visible": "kept"}
 
 
 class TestReasoningCoalescing:

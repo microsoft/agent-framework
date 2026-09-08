@@ -147,15 +147,34 @@ class _MCPHostPayloadCapture:
 
     max_size_bytes: int | None
     aggregate_budget: _FunctionResultPayloadBudget | None
+    apply_server_meta_to_model_items: bool
     host_payload: dict[str, Any] | None = None
     meta: dict[str, Any] | None = None
     recorded: bool = False
     meta_prepared: bool = False
 
     def prepare_meta(self, mcp_type: Any) -> dict[str, Any] | None:
-        if not self.meta_prepared:
-            self.meta = _mcp_tool_result_meta(mcp_type, max_size_bytes=self.max_size_bytes)
-            self.meta_prepared = True
+        if self.meta_prepared:
+            return self.meta
+        self.meta_prepared = True
+
+        effective_limit = self.max_size_bytes
+        if self.aggregate_budget is not None:
+            remaining = self.aggregate_budget.remaining(self.max_size_bytes)
+            if remaining == 0:
+                logger.warning("Omitting MCP result _meta because the request retention budget is exhausted.")
+                return None
+            if remaining is not None:
+                effective_limit = min(effective_limit, remaining) if effective_limit is not None else remaining
+
+        meta = _mcp_tool_result_meta(mcp_type, max_size_bytes=effective_limit)
+        if meta is None:
+            return None
+        encoded_size = len(json.dumps(meta).encode("utf-8"))
+        if self.aggregate_budget is not None and not self.aggregate_budget.reserve(encoded_size, self.max_size_bytes):
+            logger.warning("Omitting MCP result _meta because the request retention budget is exhausted.")
+            return None
+        self.meta = meta
         return self.meta
 
     def record(self, mcp_type: Any) -> None:
@@ -188,9 +207,12 @@ class _MCPHostPayloadCapture:
             additional_properties["_meta"] = self.meta
         if self.host_payload is not None:
             additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY] = self.host_payload
+        item_additional_properties = (
+            {"_meta": self.meta} if self.apply_server_meta_to_model_items and self.meta is not None else {}
+        )
         return _FunctionResultCarrier(
             additional_properties=additional_properties,
-            item_additional_properties={"_meta": self.meta} if self.meta is not None else {},
+            item_additional_properties=item_additional_properties,
             exclusive_outer_keys=frozenset({_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY}),
             exclusive_item_keys=frozenset({"_meta"}),
             result_already_parsed=True,
@@ -203,10 +225,9 @@ class _MCPHostPayloadCapture:
             updated_item = copy(item)
             updated_item.additional_properties = dict(updated_item.additional_properties)
             updated_item.additional_properties.pop(_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY, None)
-            if self.meta is not None:
+            updated_item.additional_properties.pop("_meta", None)
+            if self.apply_server_meta_to_model_items and self.meta is not None:
                 updated_item.additional_properties["_meta"] = self.meta
-            else:
-                updated_item.additional_properties.pop("_meta", None)
             items[index] = updated_item
         return items
 
@@ -560,6 +581,7 @@ def _make_mcp_tool_caller(
         capture = _MCPHostPayloadCapture(
             max_size_bytes=mcp_tool.max_host_payload_size_bytes,
             aggregate_budget=raw_budget if isinstance(raw_budget, _FunctionResultPayloadBudget) else None,
+            apply_server_meta_to_model_items=mcp_tool.parse_tool_results is None,
         )
         token = _mcp_host_payload_capture.set(capture)
         try:
@@ -2559,9 +2581,9 @@ class MCPTool:
         for attempt in range(2):
             try:
                 result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=meta)  # type: ignore
+                _capture_mcp_tool_result(result)
                 if result.isError:
                     parsed = parser(result)
-                    _capture_mcp_tool_result(result)
                     text = (
                         "\n".join(c.text for c in parsed if c.type == "text" and c.text)
                         if isinstance(parsed, list)
@@ -2571,9 +2593,7 @@ class MCPTool:
                     if span.is_recording():
                         set_mcp_span_error(span, "tool_error", text or str(parsed))
                     raise ToolExecutionException(text or str(parsed))
-                parsed = parser(result)
-                _capture_mcp_tool_result(result)
-                return parsed
+                return parser(result)
             except ToolExecutionException:
                 raise
             except (ClosedResourceError, McpError) as call_ex:
@@ -2722,18 +2742,16 @@ class MCPTool:
 
         # Server returned a CallToolResult (no task created) or fell back to plain tools/call.
         if fallback_result is not None:
+            _capture_mcp_tool_result(fallback_result)
             if fallback_result.isError:
                 parsed = parser(fallback_result)
-                _capture_mcp_tool_result(fallback_result)
                 text = (
                     "\n".join(c.text for c in parsed if c.type == "text" and c.text)
                     if isinstance(parsed, list)
                     else str(parsed)
                 )
                 raise ToolExecutionException(text or str(parsed))
-            parsed = parser(fallback_result)
-            _capture_mcp_tool_result(fallback_result)
-            return parsed
+            return parser(fallback_result)
 
         if task_id is None:
             raise ToolExecutionException(f"MCP server did not return a task_id or fallback result for '{tool_name}'.")
@@ -2924,18 +2942,16 @@ class MCPTool:
         status = snapshot.status
         if status == "completed":
             payload = await self._fetch_task_result(task_id)
+            _capture_mcp_tool_result(payload)
             if payload.isError:
                 parsed = parser(payload)
-                _capture_mcp_tool_result(payload)
                 text = (
                     "\n".join(c.text for c in parsed if c.type == "text" and c.text)
                     if isinstance(parsed, list)
                     else str(parsed)
                 )
                 raise ToolExecutionException(text or str(parsed))
-            parsed = parser(payload)
-            _capture_mcp_tool_result(payload)
-            return parsed
+            return parser(payload)
 
         # Non-completed terminal statuses surface as ToolExecutionException so the
         # function-calling loop sees a normal failure for tool_name.
