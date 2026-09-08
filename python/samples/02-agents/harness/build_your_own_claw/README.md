@@ -78,7 +78,8 @@ Teaches the assistant to work with *your* data safely.
 
   > ⚠️ **Security — avoid tool-name collisions:** `read_only_tools_auto_approval_rule`
   > approves local file-access tools by tool name only (`file_access_read`,
-  > `file_access_ls`, `file_access_grep`). Auto-approval rules may match by name,
+  > `file_access_read_lines`, `file_access_ls`, `file_access_grep`). Auto-approval
+  > rules may match by name,
   > so any other local tool registered under one of these names — for example a
   > tool with a caller-configurable name such as the shell tool — may also be
   > auto-approved, bypassing the human approval boundary. Ensure no other tool

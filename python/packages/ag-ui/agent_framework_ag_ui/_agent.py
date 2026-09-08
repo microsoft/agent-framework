@@ -27,6 +27,7 @@ class AgentConfig:
         snapshot_store: AGUIThreadSnapshotStore | None = None,
         a2ui_config: dict[str, Any] | None = None,
         service_session_id_from_thread_id: bool = False,
+        emit_messages_snapshot: bool = True,
     ):
         """Initialize agent configuration.
 
@@ -45,6 +46,9 @@ class AgentConfig:
             require_confirmation: Whether predictive updates require user confirmation before applying
             a2ui_config: Optional backend A2UI config consumed by auto-injection
                 (``forwardedProps.injectA2UITool``). See ``plan_a2ui_injection``.
+            emit_messages_snapshot: Whether to emit a terminal MessagesSnapshotEvent at the end of runs.
+                Defaults to True for backward compatibility. Set to False when using HistoryProvider
+                to prevent redundant full-transcript rewrites on the client.
         """
         self.state_schema = self._normalize_state_schema(state_schema)
         self.predict_state_config = predict_state_config or {}
@@ -53,6 +57,7 @@ class AgentConfig:
         self.require_confirmation = require_confirmation
         self.snapshot_store = snapshot_store
         self.a2ui_config = a2ui_config
+        self.emit_messages_snapshot = emit_messages_snapshot
 
     @staticmethod
     def _normalize_state_schema(state_schema: Any | None) -> dict[str, Any]:
@@ -101,6 +106,7 @@ class AgentFrameworkAgent:
         snapshot_store: AGUIThreadSnapshotStore | None = None,
         a2ui_config: dict[str, Any] | None = None,
         service_session_id_from_thread_id: bool = False,
+        emit_messages_snapshot: bool = True,
     ):
         """Initialize the AG-UI compatible agent wrapper.
 
@@ -120,6 +126,8 @@ class AgentFrameworkAgent:
             snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence remains inactive unless
                 endpoint setup also provides an explicit Snapshot Scope resolver.
             a2ui_config: Optional backend A2UI config consumed by auto-injection.
+            emit_messages_snapshot: Whether to emit a terminal MessagesSnapshotEvent at the end of runs.
+                Defaults to True. Set to False when using HistoryProvider.
         """
         self.agent = agent
         self.name = name or getattr(agent, "name", "agent")
@@ -133,6 +141,7 @@ class AgentFrameworkAgent:
             require_confirmation=require_confirmation,
             snapshot_store=snapshot_store,
             a2ui_config=a2ui_config,
+            emit_messages_snapshot=emit_messages_snapshot,
         )
 
         # Server-side Approval State. Populated when approval requests are emitted

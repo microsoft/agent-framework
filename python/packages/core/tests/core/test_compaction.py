@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 from typing import Any
 
 import pytest
@@ -36,6 +37,7 @@ from agent_framework import (
     included_token_count,
 )
 from agent_framework._compaction import (
+    _format_summary_message,
     _select_summary_input_groups,
     _serialize_message,
     append_compaction_message,
@@ -914,6 +916,35 @@ async def test_summarization_strategy_bounds_summary_input_to_complete_groups() 
     assert oversized_message.message_id not in summarized_message_ids
 
 
+async def test_summarization_strategy_preserves_tool_trajectory_in_summary_input() -> None:
+    summarizer = _RecordingSummarizer()
+    messages = [
+        Message(role="user", contents=["use the tool"]),
+        _assistant_function_call("call_1"),
+        _tool_result("call_1", "ok"),
+        Message(role="assistant", contents=["tool completed"]),
+        Message(role="user", contents=["what next"]),
+        Message(role="assistant", contents=["here is the follow-up"]),
+    ]
+    strategy = SummarizationStrategy(
+        client=summarizer,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        target_count=2,
+        threshold=0,
+    )
+    annotate_message_groups(messages)
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    assert len(summarizer.requests) == 1
+    summary_request_text = summarizer.requests[0][1].text
+    assert summary_request_text is not None
+    assert "tool" in summary_request_text
+    assert '{"value":"x"}' in summary_request_text
+    assert "[call_id=call_1]" in summary_request_text
+    assert "ok" in summary_request_text
+
+
 async def test_summarization_strategy_skips_oversized_first_group() -> None:
     summarizer = _RecordingSummarizer()
     messages = [
@@ -970,6 +1001,313 @@ def test_summary_input_selection_does_not_retokenize_selected_transcript() -> No
         ])
         not in tokenizer.seen_texts
     )
+
+
+def test_format_summary_message_includes_function_call_details() -> None:
+    message = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"city":"Seattle"}')],
+    )
+
+    rendered = _format_summary_message(1, message)
+
+    assert "get_weather" in rendered
+    assert '{"city":"Seattle"}' in rendered
+    assert "[call_id=call_1]" in rendered
+
+
+def test_format_summary_message_includes_function_result_and_exception() -> None:
+    message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id="call_1", result="42", exception="ValueError")],
+    )
+
+    rendered = _format_summary_message(2, message)
+
+    assert "function_result" in rendered
+    assert "42" in rendered
+    assert "error(ValueError)" in rendered
+    assert "[call_id=call_1]" in rendered
+
+
+def test_format_summary_message_renders_function_result_without_call_id() -> None:
+    message = Message(
+        role="tool",
+        contents=[Content("function_result", call_id=None, result="done")],
+    )
+
+    rendered = _format_summary_message(3, message)
+
+    assert "done" in rendered
+    assert "call_id" not in rendered
+
+
+def test_format_summary_message_combines_tool_calls_with_text() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            "I'll check the weather.",
+            Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"city":"Seattle"}'),
+        ],
+    )
+
+    rendered = _format_summary_message(4, message)
+
+    assert "I'll check the weather." in rendered
+    assert "get_weather" in rendered
+
+
+def test_format_summary_message_preserves_text_only_messages() -> None:
+    message = Message(role="user", contents=["hello world"])
+
+    rendered = _format_summary_message(5, message)
+
+    assert rendered == "5. [user] hello world"
+
+
+def test_format_summary_message_includes_mcp_tool_details() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_mcp_server_tool_call(
+                call_id="mcp_1",
+                tool_name="search",
+                server_name="test_server",
+                arguments='{"query":"x"}',
+            ),
+            Content.from_mcp_server_tool_result(
+                call_id="mcp_1",
+                output=[Content.from_text("found")],
+            ),
+        ],
+    )
+
+    rendered = _format_summary_message(6, message)
+
+    assert "search" in rendered
+    assert '{"query":"x"}' in rendered
+    assert "[call_id=mcp_1]" in rendered
+    assert "found" in rendered
+
+
+def test_format_summary_message_includes_approval_request() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_approval_request(
+                id="approval_1",
+                function_call=Content.from_function_call(
+                    call_id="call_1", name="send_email", arguments='{"to":"a@b.c"}'
+                ),
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(7, message)
+
+    assert "approval_request" in rendered
+    assert "send_email" in rendered
+    assert "[id=approval_1]" in rendered
+
+
+def test_format_summary_message_includes_approval_response() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_approval_response(
+                approved=True,
+                id="approval_1",
+                function_call=Content.from_function_call(
+                    call_id="call_1", name="send_email", arguments='{"to":"a@b.c"}'
+                ),
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(8, message)
+
+    assert "approval_response" in rendered
+    assert "approved=True" in rendered
+
+
+def test_format_summary_message_stringifies_non_json_mcp_result_without_crash() -> None:
+    message = Message(
+        role="tool",
+        contents=[Content("mcp_server_tool_result", call_id="mcp_1", output={"when": date(2026, 1, 1)})],
+    )
+
+    rendered = _format_summary_message(9, message)
+
+    assert "2026" in rendered
+    assert "[call_id=mcp_1]" in rendered
+
+
+def test_format_summary_message_preserves_time_order_for_mixed_contents() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            "I'll check the weather.",
+            Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"city":"Seattle"}'),
+            "Please wait.",
+        ],
+    )
+
+    rendered = _format_summary_message(10, message)
+
+    assert rendered.index("I'll check the weather.") < rendered.index("function_call")
+    assert rendered.index("function_call") < rendered.index("Please wait.")
+
+
+def test_format_summary_message_uses_tool_name_for_mcp_approval() -> None:
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_approval_request(
+                id="approval_mcp_1",
+                function_call=Content.from_mcp_server_tool_call(
+                    call_id="mcp_1",
+                    tool_name="search",
+                    server_name="test_server",
+                    arguments='{"query":"x"}',
+                ),
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(11, message)
+
+    assert "approval_request" in rendered
+    assert "search" in rendered
+    assert "[id=approval_mcp_1]" in rendered
+
+
+def test_format_summary_message_renders_error_items_for_rich_results() -> None:
+    message = Message(
+        role="tool",
+        contents=[
+            Content(
+                "function_result",
+                call_id="call_err_1",
+                result="",
+                items=[Content.from_error(message="Execution error", error_details="ValueError: boom")],
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(12, message)
+
+    assert "Execution error" in rendered
+    assert "ValueError: boom" in rendered
+    assert "[call_id=call_err_1]" in rendered
+
+
+def test_format_summary_message_falls_back_to_result_when_items_render_empty() -> None:
+    message = Message(
+        role="tool",
+        contents=[
+            Content(
+                "function_result",
+                call_id="call_fb_1",
+                result="fallback result",
+                items=[Content.from_error()],
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(13, message)
+
+    assert "fallback result" in rendered
+    assert "[call_id=call_fb_1]" in rendered
+
+
+def test_format_summary_message_renders_mixed_text_and_error_items() -> None:
+    message = Message(
+        role="tool",
+        contents=[
+            Content(
+                "function_result",
+                call_id="call_mix_1",
+                result="",
+                items=[
+                    Content.from_text("partial output"),
+                    Content.from_error(message="Execution error", error_details="sandbox timed out"),
+                ],
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(14, message)
+
+    assert "partial output" in rendered
+    assert "Execution error" in rendered
+    assert "sandbox timed out" in rendered
+
+
+def test_format_summary_message_renders_metadata_for_data_items() -> None:
+    data_item = Content.from_data(
+        b"some bytes",
+        media_type="application/octet-stream",
+        additional_properties={"path": "/output/result.png"},
+    )
+    message = Message(
+        role="tool",
+        contents=[
+            Content(
+                "function_result",
+                call_id="call_data_1",
+                result="",
+                items=[data_item],
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(15, message)
+
+    assert "data content" in rendered
+    assert "media_type=application/octet-stream" in rendered
+    assert "path=/output/result.png" in rendered
+    assert data_item.uri is not None
+    assert data_item.uri not in rendered
+
+
+def test_format_summary_message_renders_metadata_for_uri_items() -> None:
+    message = Message(
+        role="tool",
+        contents=[
+            Content(
+                "function_result",
+                call_id="call_uri_1",
+                result="",
+                items=[Content.from_uri("https://example.com/result.png", media_type="image/png")],
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(16, message)
+
+    assert "uri content" in rendered
+    assert "uri=https://example.com/result.png" in rendered
+    assert "media_type=image/png" in rendered
+
+
+def test_format_summary_message_renders_metadata_for_hosted_file_items() -> None:
+    message = Message(
+        role="tool",
+        contents=[
+            Content(
+                "function_result",
+                call_id="call_file_1",
+                result="",
+                items=[Content.from_hosted_file(file_id="file_1", media_type="text/plain", name="out.txt")],
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(17, message)
+
+    assert "hosted_file content" in rendered
+    assert "file_id=file_1" in rendered
+    assert "name=out.txt" in rendered
 
 
 async def test_summarization_strategy_returns_false_when_summary_generation_fails(

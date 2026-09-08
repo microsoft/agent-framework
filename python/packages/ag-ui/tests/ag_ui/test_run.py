@@ -1888,6 +1888,44 @@ async def test_run_agent_stream_accumulates_multiple_confirm_interrupts():
     assert interrupt_tool_names == {"generate_tasks", "generate_notes"}
 
 
+async def test_run_agent_stream_suppresses_messages_snapshot_if_configured():
+    """When emit_messages_snapshot=False, no terminal MessagesSnapshotEvent is yielded."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    updates = [
+        AgentResponseUpdate(contents=[Content.from_text("Hello")], role="assistant"),
+    ]
+
+    stub = StubAgent(updates=updates)
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        emit_messages_snapshot=False,
+    )
+
+    payload = {
+        "thread_id": "thread-1",
+        "run_id": "run-1",
+        "messages": [{"role": "user", "content": "Hi"}],
+    }
+
+    events = [event async for event in agent.run(payload)]
+
+    # We should have TextMessageStart/Delta/End, but no MessagesSnapshot
+    snapshot_events = [e for e in events if getattr(e, "type", None) == "MESSAGES_SNAPSHOT"]
+    assert len(snapshot_events) == 0, "MessagesSnapshotEvent should be suppressed"
+
+    # Still finishes normally
+    finished_events = [
+        e
+        for e in events
+        if getattr(e, "type", None) == "RUN_FINISHED"
+        or getattr(getattr(e, "type", None), "value", None) == "RUN_FINISHED"
+    ]
+    assert len(finished_events) == 1
+
+
 def test_emit_oauth_consent_request():
     """Test that oauth_consent_request content emits a CustomEvent."""
     content = Content.from_oauth_consent_request(

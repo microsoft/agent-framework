@@ -186,7 +186,7 @@ public static class A2AServerServiceCollectionExtensions
         if (agentHandler is null)
         {
             var agentSessionStore = serviceProvider.GetKeyedService<AgentSessionStore>(agent.Name);
-            var runMode = options?.AgentRunMode ?? AgentRunMode.DisallowBackground;
+            var runMode = options?.AgentRunMode ?? AgentRunMode.ReturnMessage;
 
             // Ensure that we have an IsolationKeyScopedAgentSessionStore registered.
             if (agentSessionStore?.GetService<IsolationKeyScopedAgentSessionStore>() is null)

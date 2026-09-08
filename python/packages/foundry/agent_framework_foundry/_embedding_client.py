@@ -14,6 +14,7 @@ from agent_framework import (
     Embedding,
     EmbeddingGenerationOptions,
     GeneratedEmbeddings,
+    SecretString,
     UsageDetails,
     load_settings,
 )
@@ -83,7 +84,7 @@ class FoundryEmbeddingSettings(TypedDict, total=False):
     """Foundry inference embedding settings."""
 
     models_endpoint: str | None
-    models_api_key: str | None
+    models_api_key: SecretString | None
     embedding_model: str | None
     image_embedding_model: str | None
 
@@ -123,7 +124,7 @@ class RawFoundryEmbeddingClient(
         model: str | None = None,
         image_model: str | None = None,
         endpoint: str | None = None,
-        api_key: str | None = None,
+        api_key: str | SecretString | None = None,
         text_client: EmbeddingsClient | None = None,
         image_client: ImageEmbeddingsClient | None = None,
         credential: AzureKeyCredential | None = None,
@@ -148,8 +149,8 @@ class RawFoundryEmbeddingClient(
         self.image_model: str = settings.get("image_embedding_model") or self.model  # type: ignore[assignment]
         resolved_endpoint = settings["models_endpoint"]  # type: ignore[reportTypedDictNotRequiredAccess]
 
-        if credential is None and settings.get("models_api_key"):
-            credential = AzureKeyCredential(settings["models_api_key"])  # type: ignore[arg-type]
+        if credential is None and (models_api_key := settings.get("models_api_key")):
+            credential = AzureKeyCredential(models_api_key.get_secret_value())
 
         if credential is None and text_client is None and image_client is None:
             raise ValueError("Either 'api_key', 'credential', or pre-configured client(s) must be provided.")
@@ -381,7 +382,7 @@ class FoundryEmbeddingClient(
         model: str | None = None,
         image_model: str | None = None,
         endpoint: str | None = None,
-        api_key: str | None = None,
+        api_key: str | SecretString | None = None,
         text_client: EmbeddingsClient | None = None,
         image_client: ImageEmbeddingsClient | None = None,
         credential: AzureKeyCredential | None = None,
