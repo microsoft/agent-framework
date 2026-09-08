@@ -371,6 +371,14 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         int requestCount = 0;
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.TemporaryRedirect)
+        {
+            Headers = { Location = new Uri("https://api.example.test/next") },
+        };
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("ok", Encoding.UTF8, "text/plain"),
+        };
         TestHttpMessageHandler messageHandler = new(async (req, ct) =>
         {
             requestCount++;
@@ -378,16 +386,10 @@ public sealed class DefaultHttpRequestHandlerTests
 
             if (requestCount == 1)
             {
-                return new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
-                {
-                    Headers = { Location = new Uri("https://api.example.test/next") },
-                };
+                return redirectResponse;
             }
 
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("ok", Encoding.UTF8, "text/plain"),
-            };
+            return okResponse;
         });
 
         using HttpClient client = new(messageHandler);
@@ -434,22 +436,24 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         List<bool> requestsWithHeader = [];
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.TemporaryRedirect)
+        {
+            Headers = { Location = new Uri("https://api.example.test/next") },
+        };
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
+        };
 #pragma warning disable CA2025
         TestHttpMessageHandler messageHandler = new((req, _) =>
         {
             requestsWithHeader.Add(req.Headers.Contains("X-Trace-Id"));
             if (requestsWithHeader.Count == 1)
             {
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
-                {
-                    Headers = { Location = new Uri("https://api.example.test/next") },
-                });
+                return Task.FromResult(redirectResponse);
             }
 
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
-            });
+            return Task.FromResult(okResponse);
         });
 #pragma warning restore CA2025
 
@@ -479,22 +483,24 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         List<bool> requestsWithHeader = [];
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.TemporaryRedirect)
+        {
+            Headers = { Location = new Uri("https://secondary.example.test/next") },
+        };
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
+        };
 #pragma warning disable CA2025
         TestHttpMessageHandler primaryMessageHandler = new((req, _) =>
         {
             requestsWithHeader.Add(req.Headers.Contains("X-Trace-Id"));
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
-            {
-                Headers = { Location = new Uri("https://secondary.example.test/next") },
-            });
+            return Task.FromResult(redirectResponse);
         });
         TestHttpMessageHandler secondaryMessageHandler = new((req, _) =>
         {
             requestsWithHeader.Add(req.Headers.Contains("X-Trace-Id"));
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
-            });
+            return Task.FromResult(okResponse);
         });
 #pragma warning restore CA2025
 
@@ -534,22 +540,24 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         TrackingContent redirectedContent = new("not returned");
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.TemporaryRedirect)
+        {
+            Content = redirectedContent,
+            Headers = { Location = new Uri("https://api.example.test/next") },
+        };
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
+        };
 #pragma warning disable CA2025
         TestHttpMessageHandler messageHandler = new((req, _) =>
         {
             if (req.RequestUri!.AbsolutePath == "/resource")
             {
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
-                {
-                    Content = redirectedContent,
-                    Headers = { Location = new Uri("https://api.example.test/next") },
-                });
+                return Task.FromResult(redirectResponse);
             }
 
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
-            });
+            return Task.FromResult(okResponse);
         });
 #pragma warning restore CA2025
 
@@ -575,14 +583,15 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         int requestCount = 0;
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.TemporaryRedirect)
+        {
+            Headers = { Location = new Uri("http://api.example.test/next") },
+        };
 #pragma warning disable CA2025
         TestHttpMessageHandler messageHandler = new((req, _) =>
         {
             requestCount++;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
-            {
-                Headers = { Location = new Uri("http://api.example.test/next") },
-            });
+            return Task.FromResult(redirectResponse);
         });
 #pragma warning restore CA2025
 
@@ -610,11 +619,14 @@ public sealed class DefaultHttpRequestHandlerTests
     {
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("ok", Encoding.UTF8, "text/plain"),
+        };
+#pragma warning disable CA2025
         TestHttpMessageHandler messageHandler = new((req, _) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("ok", Encoding.UTF8, "text/plain"),
-            }));
+            Task.FromResult(okResponse));
+#pragma warning restore CA2025
         using HttpClient providerClient = new(messageHandler);
         providerClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Client-Token", "provider-header-value");
 
@@ -646,11 +658,14 @@ public sealed class DefaultHttpRequestHandlerTests
     {
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.TemporaryRedirect)
+        {
+            Headers = { Location = new Uri("https://secondary.example.test/next") },
+        };
+#pragma warning disable CA2025
         TestHttpMessageHandler primaryMessageHandler = new((req, _) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
-            {
-                Headers = { Location = new Uri("https://secondary.example.test/next") },
-            }));
+            Task.FromResult(redirectResponse));
+#pragma warning restore CA2025
         using HttpClient primaryClient = new(primaryMessageHandler);
         using HttpClient secondaryClient = new();
         secondaryClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Client-Token", "provider-header-value");
@@ -687,19 +702,19 @@ public sealed class DefaultHttpRequestHandlerTests
     {
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.TemporaryRedirect)
+        {
+            Headers = { Location = new Uri("https://secondary.example.test/next") },
+        };
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
+        };
 #pragma warning disable CA2025
         TestHttpMessageHandler primaryMessageHandler = new((req, _) =>
-        {
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
-            {
-                Headers = { Location = new Uri("https://secondary.example.test/next") },
-            });
-        });
+            Task.FromResult(redirectResponse));
         TestHttpMessageHandler secondaryMessageHandler = new((req, _) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
-            }));
+            Task.FromResult(okResponse));
 #pragma warning restore CA2025
 
         using HttpClient primaryClient = new(primaryMessageHandler);
