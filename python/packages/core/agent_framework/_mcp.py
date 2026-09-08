@@ -576,7 +576,8 @@ class MCPTool:
                 MCP prompt results to a string. If you need per-function result parsing,
             access the ``.functions`` list after connecting and set ``result_parser`` on
             individual ``FunctionTool`` instances.
-            session: An existing MCP client session to use.
+            session: An existing MCP client session to use. The caller retains ownership;
+                closing or resetting this wrapper does not close or replace that session.
             request_timeout: Timeout in seconds for MCP requests.
             client: A chat client for sampling callbacks.
             sampling_approval_callback: Optional gate invoked before each server-initiated
@@ -634,9 +635,12 @@ class MCPTool:
         self._lifecycle_lock = asyncio.Lock()
         self._lifecycle_request_lock = asyncio.Lock()
         self._function_load_lock = asyncio.Lock()
-        self._lifecycle_queue: asyncio.Queue[tuple[str, bool, bool, asyncio.Future[None]]] | None = None
+        self._lifecycle_queue: (
+            asyncio.Queue[tuple[str, bool, bool, asyncio.Future[None], asyncio.Future[bool]]] | None
+        ) = None
         self._lifecycle_owner_task: asyncio.Task[None] | None = None
         self.session = session
+        self._owns_session = session is None
         self.request_timeout = request_timeout
         self.client = client
         self.sampling_approval_callback = sampling_approval_callback
@@ -1248,11 +1252,30 @@ class MCPTool:
         stop_error: BaseException | None = None
         try:
             while True:
-                action, reset, load_configured, future = await queue.get()
+                action, reset, load_configured, future, acknowledged = await queue.get()
+                if action == "connect" and future.cancelled():
+                    if not self.is_connected and queue.empty():
+                        return
+                    continue
 
                 try:
                     if action == "connect":
+                        previous_session = self.session
+                        previously_connected = self.is_connected
                         await self._connect_on_owner(reset=reset, load_configured=load_configured)
+                        new_connection = not previously_connected or self.session is not previous_session
+                        accepted = False
+                        try:
+                            if not future.done():
+                                future.set_result(None)
+                            # A completed result future cannot tell us that its waiter was
+                            # cancelled before consuming it. Await explicit caller acceptance.
+                            accepted = await acknowledged
+                        finally:
+                            if not accepted and new_connection:
+                                await self._close_on_owner()
+                        if not accepted and new_connection and queue.empty():
+                            return
                     elif action == "close":
                         await self._close_on_owner()
                     else:
@@ -1265,6 +1288,10 @@ class MCPTool:
                 except Exception as ex:
                     if not future.done():
                         future.set_exception(ex)
+                    else:
+                        logger.warning(
+                            "MCP lifecycle action %s failed after its caller stopped waiting.", action, exc_info=ex
+                        )
                 else:
                     if not future.done():
                         future.set_result(None)
@@ -1277,7 +1304,7 @@ class MCPTool:
         finally:
             while True:
                 try:
-                    _, _, _, future = queue.get_nowait()
+                    _, _, _, future, _ = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
                 if not future.done():
@@ -1313,8 +1340,15 @@ class MCPTool:
             raise RuntimeError("MCP lifecycle owner is not available.")
 
         future = asyncio.get_running_loop().create_future()
-        await queue.put((action, reset, load_configured, future))
-        await future
+        acknowledged: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        await queue.put((action, reset, load_configured, future, acknowledged))
+        accepted = False
+        try:
+            await future
+            accepted = True
+        finally:
+            if not acknowledged.done():
+                acknowledged.set_result(accepted)
 
     async def _safe_close_exit_stack(self) -> BaseException | None:
         """Safely close the exit stack, handling unexpected cleanup failures.
@@ -1414,7 +1448,8 @@ class MCPTool:
         """
         if reset:
             await self._safe_close_exit_stack()
-            self.session = None
+            if self._owns_session:
+                self.session = None
             self.is_connected = False
             self._reset_session_state()
             self._exit_stack = AsyncExitStack()
@@ -1501,6 +1536,7 @@ class MCPTool:
                     logger.debug(error_msg, exc_info=True)
                 raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
             self.session = session
+            self._owns_session = True
         else:
             try:
                 if self.session._request_id == 0:  # type: ignore[attr-defined]
@@ -2073,7 +2109,8 @@ class MCPTool:
 
         await self._safe_close_exit_stack()
         self._exit_stack = AsyncExitStack()
-        self.session = None
+        if self._owns_session:
+            self.session = None
         self.is_connected = False
         self._reset_session_state()
 
@@ -2924,7 +2961,8 @@ class MCPStdioTool(MCPTool):
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
             request_timeout: The default timeout in seconds for all requests.
-            session: The session to use for the MCP connection.
+            session: An existing MCP client session to use. The caller retains ownership;
+                closing or resetting this wrapper does not close or replace that session.
             description: The description of the tool.
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.
@@ -3122,7 +3160,8 @@ class MCPStreamableHTTPTool(MCPTool):
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
             request_timeout: The default timeout in seconds for all requests.
-            session: The session to use for the MCP connection.
+            session: An existing MCP client session to use. The caller retains ownership;
+                closing or resetting this wrapper does not close or replace that session.
             description: The description of the tool.
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.
@@ -3492,7 +3531,8 @@ class MCPWebsocketTool(MCPTool):
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
             request_timeout: The default timeout in seconds for all requests.
-            session: The session to use for the MCP connection.
+            session: An existing MCP client session to use. The caller retains ownership;
+                closing or resetting this wrapper does not close or replace that session.
             description: The description of the tool.
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.

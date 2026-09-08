@@ -8,7 +8,7 @@ import json
 import sys
 from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any, Literal, TypeAlias
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
@@ -465,3 +465,270 @@ async def test_discovery_failure_retry_starts_a_fresh_session(
         await tool.close()
         for client in clients:
             await client.aclose()
+
+
+@pytest.mark.parametrize("blocked_method", ["initialize", "tools/list", "prompts/list"])
+@pytest.mark.parametrize("entry_method", ["connect", "context_manager"])
+@pytest.mark.parametrize("owned_client", [False, True])
+async def test_cancelled_connect_caller_releases_abandoned_resources(
+    mcp_http_server: MCPHTTPServer, blocked_method: str, entry_method: str, owned_client: bool
+) -> None:
+    client, requests, _ = mcp_http_server
+    setup_started = asyncio.Event()
+    release_setup = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+
+    async def block_setup(request: httpx.Request) -> None:
+        if request.method == "POST" and json.loads(request.content).get("method") == blocked_method:
+            setup_started.set()
+            await release_setup.wait()
+
+    client.event_hooks["request"].append(block_setup)
+    original_hooks = list(client.event_hooks["request"])
+    tool = MCPStreamableHTTPTool(
+        name="cancelled-caller",
+        url="https://mcp.example/mcp",
+        http_client=None if owned_client else client,
+        header_provider=lambda _: {"Authorization": "token-a"},
+    )
+    close_on_owner = tool._close_on_owner
+
+    async def record_cleanup() -> None:
+        await close_on_owner()
+        cleanup_finished.set()
+
+    async def enter() -> None:
+        if entry_method == "connect":
+            await tool.connect()
+        else:
+            async with tool:
+                pytest.fail("Cancelled setup must not enter the context manager")
+
+    with patch("httpx.AsyncClient", return_value=client), patch.object(tool, "_close_on_owner", record_cleanup):
+        caller = asyncio.create_task(enter())
+        try:
+            await asyncio.wait_for(setup_started.wait(), timeout=5)
+            caller.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await caller
+            assert not client.is_closed
+            assert tool._lifecycle_owner_task is not None
+            assert not tool._lifecycle_owner_task.done()
+
+            release_setup.set()
+            await asyncio.wait_for(cleanup_finished.wait(), timeout=5)
+            assert not tool.is_connected
+            assert tool.session is None
+            assert tool._lifecycle_owner_task is None
+            assert client.event_hooks["request"] == original_hooks
+            assert client.is_closed is owned_client
+            assert any(
+                request.method == "DELETE" and request.headers.get("Authorization") == "token-a" for request in requests
+            )
+        finally:
+            release_setup.set()
+            await tool.close()
+
+
+async def test_cancelled_queued_connect_does_not_start_transport(mcp_http_server: MCPHTTPServer) -> None:
+    client, requests, _ = mcp_http_server
+    tool = _tool(client, "token-a")
+    caller = asyncio.create_task(tool.connect())
+    # This runs before the lifecycle owner created by connect() gets its first turn.
+    asyncio.get_running_loop().call_soon(caller.cancel, None)
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    assert tool._lifecycle_owner_task is None
+    await tool.close()
+    assert requests == []
+
+
+async def test_connect_cancelled_during_result_delivery_releases_session(mcp_http_server: MCPHTTPServer) -> None:
+    client, _, _ = mcp_http_server
+    original_hooks = list(client.event_hooks["request"])
+    tool = _tool(client, "token-a")
+    cleanup_finished = asyncio.Event()
+    connect_on_owner = tool._connect_on_owner
+    close_on_owner = tool._close_on_owner
+
+    async def cancel_before_delivery(*, reset: bool = False, load_configured: bool = True) -> None:
+        await connect_on_owner(reset=reset, load_configured=load_configured)
+        # Setup succeeds, then the caller is cancelled before consuming the completed future.
+        asyncio.get_running_loop().call_soon(caller.cancel, None)
+
+    async def record_cleanup() -> None:
+        await close_on_owner()
+        cleanup_finished.set()
+
+    with (
+        patch.object(tool, "_connect_on_owner", cancel_before_delivery),
+        patch.object(tool, "_close_on_owner", record_cleanup),
+    ):
+        caller = asyncio.create_task(tool.connect())
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await caller
+            await asyncio.wait_for(cleanup_finished.wait(), timeout=5)
+            assert tool.session is None
+            assert not tool.is_connected
+            assert tool._lifecycle_owner_task is None
+            assert client.event_hooks["request"] == original_hooks
+        finally:
+            await tool.close()
+
+
+async def test_abandoned_connect_is_cleaned_before_next_caller(mcp_http_server: MCPHTTPServer) -> None:
+    client, requests, _ = mcp_http_server
+    setup_started = asyncio.Event()
+    release_setup = asyncio.Event()
+
+    async def block_setup(request: httpx.Request) -> None:
+        if request.method == "POST" and json.loads(request.content).get("method") == "tools/list":
+            setup_started.set()
+            await release_setup.wait()
+
+    client.event_hooks["request"].append(block_setup)
+    original_hooks = list(client.event_hooks["request"])
+    tool = _tool(client, "token-a")
+    caller = asyncio.create_task(tool.connect())
+    try:
+        await asyncio.wait_for(setup_started.wait(), timeout=5)
+        abandoned_session = tool.session
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        retry = asyncio.create_task(tool.connect())
+        release_setup.set()
+        await asyncio.wait_for(retry, timeout=5)
+        assert tool.is_connected
+        assert tool.session is not abandoned_session
+        assert (
+            sum(
+                request.method == "POST" and json.loads(request.content).get("method") == "initialize"
+                for request in requests
+            )
+            == 2
+        )
+        assert len(client.event_hooks["request"]) == len(original_hooks) + 1
+    finally:
+        release_setup.set()
+        await tool.close()
+
+
+@pytest.mark.parametrize("discovery_method", ["load_tools", "load_prompts"])
+@pytest.mark.parametrize("entry_method", ["connect", "context_manager"])
+@pytest.mark.parametrize("failure_type", [ToolExecutionException, RuntimeError, asyncio.CancelledError])
+async def test_failed_discovery_preserves_caller_supplied_session(
+    mcp_http_server: MCPHTTPServer,
+    discovery_method: str,
+    entry_method: str,
+    failure_type: type[Exception] | type[asyncio.CancelledError],
+) -> None:
+    client, _, _ = mcp_http_server
+    async with _tool(client, "token-a") as source:
+        supplied_session = source.session
+        assert supplied_session is not None
+        original_hooks = list(client.event_hooks["request"])
+        borrowed = MCPStreamableHTTPTool(
+            name="borrowed", url="https://must-not-connect.example/mcp", session=supplied_session
+        )
+        failure = failure_type("discovery failed")
+        expected_error = (
+            ToolExecutionException
+            if entry_method == "context_manager" and failure_type is RuntimeError
+            else failure_type
+        )
+        with patch.object(
+            borrowed, "get_mcp_client", Mock(side_effect=AssertionError("Unexpected transport"))
+        ) as transport:
+            try:
+                with (
+                    patch.object(borrowed, discovery_method, AsyncMock(side_effect=failure)),
+                    pytest.raises(expected_error),
+                ):
+                    if entry_method == "connect":
+                        await borrowed.connect()
+                    else:
+                        async with borrowed:
+                            pytest.fail("Failed discovery must not enter the context manager")
+                assert borrowed.session is supplied_session
+                assert not borrowed.is_connected
+                assert client.event_hooks["request"] == original_hooks
+                assert not client.is_closed
+                await supplied_session.send_ping()
+
+                await borrowed.connect()
+                assert borrowed.is_connected
+                assert borrowed.session is supplied_session
+                await borrowed.connect(reset=True)
+                assert borrowed.session is supplied_session
+                transport.assert_not_called()
+            finally:
+                await borrowed.close()
+        assert borrowed.session is supplied_session
+        await supplied_session.send_ping()
+
+
+async def test_cancelled_redundant_connect_keeps_existing_session(mcp_http_server: MCPHTTPServer) -> None:
+    client, _, _ = mcp_http_server
+    async with _tool(client, "token-a") as tool:
+        existing_session = tool.session
+        original_hooks = list(client.event_hooks["request"])
+        connect_on_owner = tool._connect_on_owner
+
+        async def cancel_before_delivery(*, reset: bool = False, load_configured: bool = True) -> None:
+            await connect_on_owner(reset=reset, load_configured=load_configured)
+            asyncio.get_running_loop().call_soon(caller.cancel, None)
+
+        with patch.object(tool, "_connect_on_owner", cancel_before_delivery):
+            caller = asyncio.create_task(tool.connect())
+            with pytest.raises(asyncio.CancelledError):
+                await caller
+        # A subsequent request also confirms that the abandoned action finished processing.
+        await tool.connect()
+        assert tool.is_connected
+        assert tool.session is existing_session
+        assert client.event_hooks["request"] == original_hooks
+        result = await tool.call_tool("record")
+        assert isinstance(result, list)
+        assert result[0].text == "token-a"
+
+
+async def test_cancelled_borrowed_session_caller_can_retry(mcp_http_server: MCPHTTPServer) -> None:
+    client, _, _ = mcp_http_server
+    async with _tool(client, "token-a") as source:
+        supplied_session = source.session
+        assert supplied_session is not None
+        borrowed = MCPStreamableHTTPTool(
+            name="borrowed", url="https://must-not-connect.example/mcp", session=supplied_session
+        )
+        setup_started = asyncio.Event()
+        release_setup = asyncio.Event()
+        load_tools = borrowed.load_tools
+
+        async def block_discovery() -> None:
+            setup_started.set()
+            await release_setup.wait()
+            await load_tools()
+
+        with (
+            patch.object(borrowed, "load_tools", block_discovery),
+            patch.object(
+                borrowed, "get_mcp_client", Mock(side_effect=AssertionError("Unexpected transport"))
+            ) as transport,
+        ):
+            caller = asyncio.create_task(borrowed.connect())
+            try:
+                await asyncio.wait_for(setup_started.wait(), timeout=5)
+                caller.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await caller
+                release_setup.set()
+                await borrowed.connect()
+                assert borrowed.is_connected
+                assert borrowed.session is supplied_session
+                transport.assert_not_called()
+                await supplied_session.send_ping()
+            finally:
+                release_setup.set()
+                await borrowed.close()
