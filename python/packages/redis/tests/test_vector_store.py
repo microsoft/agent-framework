@@ -115,7 +115,9 @@ async def test_binary_vectors_both_storage_types(storage_type):
     ) as c:
         raw = np.asarray([1.0, 0.0], dtype="<f4").tobytes()
         native = await c.serialize([record(vector=raw)], generate_vectors=False)
-        assert c.deserialize(native)[0]["vector"] == raw
+        deserialized = c.deserialize(native)
+        assert deserialized is not None
+        assert deserialized[0]["vector"] == raw
         with pytest.raises(ValueError, match="byte length"):
             await c.serialize([record(vector=b"bad")], generate_vectors=False)
 
@@ -302,11 +304,13 @@ async def test_owned_and_borrowed_client_lifecycle():
         await another.collection_exists()
     with pytest.raises(RuntimeError, match="closed"):
         store.get_collection(dict, definition=definition(), collection_name="late")
-    async with RedisStore() as owned:
-        owned.redis_client.aclose = AsyncMock()
-    owned.redis_client.aclose.assert_awaited_once()
-    await owned.close()
-    owned.redis_client.aclose.assert_awaited_once()
+    owned = RedisStore()
+    with patch.object(owned.redis_client, "aclose", new_callable=AsyncMock) as owned_close:
+        async with owned:
+            pass
+        owned_close.assert_awaited_once()
+        await owned.close()
+        owned_close.assert_awaited_once()
 
 
 @pytest.mark.parametrize("kwargs", [{"decode_responses": True}, {"protocol": 3}])
@@ -541,7 +545,9 @@ async def test_large_batch_codec_without_embedding_calls(collection):
             [record(str(i), vector=vector, other_vector=vector) for i in range(1000)], generate_vectors=False
         )
         assert len(native) == 1000
-        assert len(c.deserialize([native[999]])[0]["other_vector"]) == 1536
+        deserialized = c.deserialize([native[999]])
+        assert deserialized is not None
+        assert len(deserialized[0]["other_vector"]) == 1536
         assert len(native[0]["embedding"]) == (1536 * 4 if c.storage_type == "hash" else 1536)
         generator.get_embeddings.assert_not_awaited()
 
@@ -584,8 +590,8 @@ async def test_decorated_model_roundtrip_and_generated_keys(storage_type):
         definition=VectorStoreCollectionDefinition(
             fields=[VectorStoreField("key", name="id", type_="str", is_auto_generated=True)]
         ),
-    ) as c:
-        native = await c.serialize([{}, {}], generate_vectors=False)
+    ) as generated:
+        native = await generated.serialize([{}, {}], generate_vectors=False)
         assert native[0]["id"] != native[1]["id"]
 
 
