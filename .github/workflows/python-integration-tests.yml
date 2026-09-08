@@ -38,6 +38,52 @@ env:
   UV_PYTHON: "3.13"
 
 jobs:
+  python-tests-qdrant:
+    name: Python Integration Tests - Qdrant
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.16.2
+        env:
+          QDRANT__TELEMETRY_DISABLED: "true"
+        ports:
+          - 6333:6333
+    env:
+      QDRANT_TEST_URL: "http://localhost:6333"
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Wait for Qdrant
+        run: |
+          for i in {1..60}; do
+            if curl --fail --silent http://localhost:6333/readyz > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Qdrant did not become ready in time." >&2
+          exit 1
+      - name: Test with pytest (Qdrant integration)
+        run: uv run --directory packages/qdrant poe test-integration --junitxml=${{ github.workspace }}/python/pytest.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-qdrant
+          path: ./python/pytest.xml
+          if-no-files-found: ignore
+
   # Unit tests: all non-integration tests across all packages
   python-tests-unit:
     name: Python Integration Tests - Unit
@@ -490,6 +536,7 @@ jobs:
         python-tests-foundry,
         python-tests-foundry-hosting,
         python-tests-cosmos,
+        python-tests-qdrant,
         python-tests-github-copilot,
       ]
     runs-on: ubuntu-latest
@@ -554,6 +601,7 @@ jobs:
         python-tests-foundry,
         python-tests-foundry-hosting,
         python-tests-cosmos,
+        python-tests-qdrant,
         python-tests-github-copilot
       ]
     steps:

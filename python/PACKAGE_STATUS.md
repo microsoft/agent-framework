@@ -48,6 +48,7 @@ Status is grouped into these buckets:
 | `agent-framework-openai` | `python/packages/openai` | `released` |
 | `agent-framework-orchestrations` | `python/packages/orchestrations` | `released` |
 | `agent-framework-purview` | `python/packages/purview` | `beta` |
+| `agent-framework-qdrant` | `python/packages/qdrant` | `alpha` |
 | `agent-framework-redis` | `python/packages/redis` | `beta` |
 | `agent-framework-tools` | `python/packages/tools` | `beta` |
 
