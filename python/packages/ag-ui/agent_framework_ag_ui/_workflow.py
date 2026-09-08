@@ -447,9 +447,11 @@ class AgentFrameworkWorkflow:
         builder_seed_messages = raw_messages
         if resume_payload is not None or (checkpoint_id is not None and not raw_messages):
             # Resume / checkpoint-only requests need stored history. Prefer the
-            # overlap reconstructor when a snapshot exists so client-replayed
-            # transcripts are not duplicated (#8140); otherwise prepend stored.
-            if stored_snapshot is not None:
+            # overlap reconstructor when a snapshot exists and the client sent a
+            # (possibly replayed) transcript so it is not duplicated (#8140).
+            # Empty input must keep resume_seeded_messages — the reconstructor
+            # returns [] unchanged and would otherwise wipe stored history.
+            if stored_snapshot is not None and builder_seed_messages:
                 builder_seed_messages = _reconstruct_messages_from_thread_snapshot(
                     stored_messages=stored_snapshot.messages,
                     incoming_messages=builder_seed_messages,

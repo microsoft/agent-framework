@@ -2485,11 +2485,16 @@ async def run_agent_stream(
             if not config.use_service_session:
                 # Use the same overlap/reconstructor as non-resume turns so a client
                 # that replays its transcript on resume is not double-persisted (#8140).
-                raw_messages = _reconstruct_messages_from_thread_snapshot(
-                    stored_messages=stored_snapshot.messages,
-                    incoming_messages=raw_messages,
-                    stored_interrupt=stored_snapshot.interrupt,
-                )
+                # Empty messages (interrupt-only / approval resume) still need the
+                # stored history prepended — the reconstructor returns [] unchanged.
+                if raw_messages:
+                    raw_messages = _reconstruct_messages_from_thread_snapshot(
+                        stored_messages=stored_snapshot.messages,
+                        incoming_messages=raw_messages,
+                        stored_interrupt=stored_snapshot.interrupt,
+                    )
+                else:
+                    raw_messages = snapshot_session.resume_seeded_messages(raw_messages)
             else:
                 provider_suffix, snapshot_seed_messages = _split_service_session_input(
                     stored_snapshot_messages=stored_snapshot.messages,
