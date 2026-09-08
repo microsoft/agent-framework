@@ -1205,6 +1205,28 @@ def _tool_result_text(value: Any) -> str:
     return str(cast(object, value))
 
 
+def _format_summary_item_metadata(item: Content) -> str:
+    """Render safe metadata for non-text rich result items.
+
+    Never embeds binary payloads: data contents carry their bytes as a
+    base64 data URI and are represented by media type and path only.
+    """
+    details: list[str] = []
+    if item.media_type:
+        details.append(f"media_type={item.media_type}")
+    if item.type == "uri" and item.uri:
+        details.append(f"uri={item.uri}")
+    if item.type == "data":
+        path = item.additional_properties.get("path")
+        if isinstance(path, str) and path:
+            details.append(f"path={path}")
+    if item.file_id:
+        details.append(f"file_id={item.file_id}")
+    if item.name:
+        details.append(f"name={item.name}")
+    return f"{item.type} content" + (f" ({', '.join(details)})" if details else "")
+
+
 def _format_summary_result_items(items: Sequence[Content]) -> str:
     """Render function_result items (text and error contents) for the summarizer transcript.
 
@@ -1223,6 +1245,10 @@ def _format_summary_result_items(items: Sequence[Content]) -> str:
                 label = f"{label}: {item.error_details}" if label else item.error_details
             if item.error_code:
                 label = f"error({item.error_code}): {label}"
+            if label:
+                parts.append(label)
+        else:
+            label = _format_summary_item_metadata(item)
             if label:
                 parts.append(label)
     return "\n".join(parts)

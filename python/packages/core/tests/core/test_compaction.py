@@ -1243,6 +1243,73 @@ def test_format_summary_message_renders_mixed_text_and_error_items() -> None:
     assert "sandbox timed out" in rendered
 
 
+def test_format_summary_message_renders_metadata_for_data_items() -> None:
+    data_item = Content.from_data(
+        b"some bytes",
+        media_type="application/octet-stream",
+        additional_properties={"path": "/output/result.png"},
+    )
+    message = Message(
+        role="tool",
+        contents=[
+            Content(
+                "function_result",
+                call_id="call_data_1",
+                result="",
+                items=[data_item],
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(15, message)
+
+    assert "data content" in rendered
+    assert "media_type=application/octet-stream" in rendered
+    assert "path=/output/result.png" in rendered
+    assert data_item.uri is not None
+    assert data_item.uri not in rendered
+
+
+def test_format_summary_message_renders_metadata_for_uri_items() -> None:
+    message = Message(
+        role="tool",
+        contents=[
+            Content(
+                "function_result",
+                call_id="call_uri_1",
+                result="",
+                items=[Content.from_uri("https://example.com/result.png", media_type="image/png")],
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(16, message)
+
+    assert "uri content" in rendered
+    assert "uri=https://example.com/result.png" in rendered
+    assert "media_type=image/png" in rendered
+
+
+def test_format_summary_message_renders_metadata_for_hosted_file_items() -> None:
+    message = Message(
+        role="tool",
+        contents=[
+            Content(
+                "function_result",
+                call_id="call_file_1",
+                result="",
+                items=[Content.from_hosted_file(file_id="file_1", media_type="text/plain", name="out.txt")],
+            )
+        ],
+    )
+
+    rendered = _format_summary_message(17, message)
+
+    assert "hosted_file content" in rendered
+    assert "file_id=file_1" in rendered
+    assert "name=out.txt" in rendered
+
+
 async def test_summarization_strategy_returns_false_when_summary_generation_fails(
     caplog: Any,
 ) -> None:
