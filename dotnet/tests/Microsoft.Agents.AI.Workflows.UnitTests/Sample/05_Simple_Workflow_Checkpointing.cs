@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.InProc;
 
 namespace Microsoft.Agents.AI.Workflows.Sample;
@@ -33,8 +32,8 @@ internal static class Step5EntryPoint
 
         string? result = await RunStreamToHaltOrMaxStepAsync(maxStep: 6).ConfigureAwait(false);
 
-        result.Should().BeNull();
-        checkpoints.Should().HaveCount(6, "we should have two checkpoints, one for each step");
+        Assert.Null(result);
+        Assert.Equal(6, checkpoints.Count);
 
         CheckpointInfo targetCheckpoint = checkpoints[2];
 
@@ -60,12 +59,12 @@ internal static class Step5EntryPoint
         checkpoints.Clear();
         result = await RunStreamToHaltOrMaxStepAsync().ConfigureAwait(false);
 
-        result.Should().NotBeNull();
+        Assert.NotNull(result);
 
         // Depending on the timing of the response with respect to the underlying workflow
         // we may end up with an extra superstep in between.
-        checkpoints.Should().HaveCountGreaterThanOrEqualTo(6)
-                        .And.HaveCountLessThanOrEqualTo(7);
+        Assert.True(checkpoints.Count >= 6);
+        Assert.True(checkpoints.Count <= 7);
 
         cancellationSource.Dispose();
 

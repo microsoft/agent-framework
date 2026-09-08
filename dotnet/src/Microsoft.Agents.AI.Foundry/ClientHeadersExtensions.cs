@@ -26,7 +26,7 @@ namespace Microsoft.Agents.AI.Foundry;
 /// Headers are only delivered to the wire when:
 /// <list type="number">
 /// <item><description>the agent has been wrapped with <see cref="UseClientHeaders(AIAgentBuilder)"/> (or built via a Foundry factory that pre-wires it), and</description></item>
-/// <item><description>the underlying <see cref="IChatClient"/> exposes the experimental MEAI 10.5.1 <see cref="OpenAIRequestPolicies"/> service (true for OpenAI-backed clients).</description></item>
+/// <item><description>the underlying <see cref="IChatClient"/> exposes the experimental MEAI 10.9.0 <see cref="OpenAIRequestPolicies"/> service (true for OpenAI-backed clients).</description></item>
 /// </list>
 /// When either condition is not met the call is a silent no-op.
 /// </para>

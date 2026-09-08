@@ -25,6 +25,17 @@ The primary implementation is in `python/packages/core/agent_framework/_tools.py
 `python/packages/core/agent_framework/_sessions.py`, provider serializers, hosting packages, and UI transports are
 part of the same contract when they carry function-call loop content.
 
+## Maintenance policy
+
+This document is the stable cross-package contract for the function-calling loop, not a per-PR changelog. Every change
+in scope must be reviewed against it, but most such PRs should not edit it. Update only the smallest affected sections
+when a change intentionally alters normative behavior, the scenario inventory, an acknowledged coverage gap, or the
+authoritative scenario-to-test mapping.
+
+Do not add implementation narration, temporary debugging guidance, or tests that merely preserve an already documented
+contract. Temporary compatibility behavior belongs here only when it is itself part of the user-visible contract; its
+later removal requires another deliberate contract update.
+
 ## Change sensitivity
 
 This code is high risk. Small changes can produce duplicate side effects, orphaned calls or results, invalid
@@ -228,8 +239,29 @@ the tool-call group, and provider adapters serialize or reconstruct the provider
 
 ### Approval correlation, replay, and reused ids
 
-`call_id` is not globally unique forever. The normalizer therefore tracks open logical occurrences in transcript
-order instead of keeping one global result per id.
+`call_id` is the provider/service correlation identifier and is not globally unique forever. `Content.id` on a
+`function_call` is the Agent Framework identity for one locally actionable occurrence. New actionable calls receive
+that occurrence id once and preserve it through streaming aggregation, serialization, and replay; existing ids are
+never regenerated. Deserializing a legacy stored call without `Content.id` does not manufacture a new identity.
+
+New local approval requests use the function call occurrence id as their request id. Provider-issued hosted approval
+request ids remain unchanged and continue to follow the hosted service protocol. A response carrying the occurrence
+id can bind without embedding a function call because the trusted pending snapshot is authoritative. For an
+occurrence-aware local snapshot, a missing or mismatched occurrence identity fails closed without consuming the
+pending request; matching a nested provider `call_id` is not a compatibility alias.
+
+Legacy stored local pending snapshots whose function call lacks `Content.id` retain their exact request-id binding for
+one resume. Taking that compatibility path emits a migration warning and consumes the matching request once. The
+warning marks the staged path for removal after stored legacy approvals have drained. An empty provider `call_id` may
+fall back to the generated occurrence id only when the framework is about to correlate a local actionable call; this
+also warns so provider adapters can supply a real service id. Deserialization itself never warns or rewrites either id.
+
+Pending approval state is a trusted session-state boundary: hosts must authorize and tenant-scope the session store and
+must prevent untrusted callers from replacing snapshots. Consume-on-bind prevents replay within one authoritative
+session state, but it is not a durable exactly-once guarantee across crashes or concurrent workers without external
+transactional coordination.
+
+The normalizer tracks open logical occurrences in transcript order instead of keeping one global result per id.
 
 ```mermaid
 flowchart TD
@@ -338,7 +370,11 @@ that manually replay messages own the equivalent rule: do not resend an approval
   discarded either way and never reaches the transcript, the model, or history. Middleware must not catch
   `MiddlewareFailure` — swallowing it converts a fail-closed abort back into a running, possibly unguarded loop.
 - Parallel calls retain model order in the returned transcript.
+- `call_id` remains the provider/service correlation id; a locally actionable `function_call` also carries a stable
+  Agent Framework occurrence identity in `Content.id`.
 - Reused `call_id` values are correlated by logical occurrence, not one global value per id.
+- Existing `Content.id` values survive aggregation and replay and are never regenerated; legacy deserialization does
+  not invent one.
 - A completed function call/result pair is inert on later turns.
 - Informational-only and declaration-only calls are not executed as local tools.
 
@@ -361,14 +397,22 @@ that manually replay messages own the equivalent rule: do not resend an approval
 - A tool that requires approval does not execute before an approved response.
 - With an `AgentSession`, every surfaced local or hosted approval request is stored as an immutable snapshot in one
   active model batch. A new surfaced batch replaces an abandoned batch instead of accumulating session state.
-- Approval request IDs use the provider function `call_id`, whose conversation-level uniqueness is required for
-  function-call/result correlation. Duplicate request IDs within one batch are rejected as malformed.
-- An inbound response is honored only when its request id matches the pending server-held snapshot.
+- New local approval request IDs use the recorded `function_call.id` occurrence identity. Provider-issued hosted
+  approval request IDs remain unchanged. Duplicate request IDs within one batch are rejected as malformed.
+- An inbound response is honored only when its occurrence identity matches the pending server-held snapshot. A new
+  local response may omit its embedded function call because the snapshot is authoritative; a mismatched embedded
+  occurrence identity fails closed.
+- Legacy stored local snapshots without `function_call.id` retain exact request-id matching for one consume-on-bind
+  resume and emit a migration warning. Deserialization does not rewrite the snapshot or emit that warning.
 - Approval requests replayed in inbound message history do not create, replace, or resurrect approval authority.
 - The executable call id, tool name, arguments, and local or hosted tool metadata are sourced from the recorded
   request, never from the response payload.
 - A matched approval response consumes its pending entry once. Unmatched, duplicate, and replayed responses do not
   reach local execution.
+- Unmatched occurrence-aware responses leave the pending request intact for a corrected retry and produce an
+  observable warning/log. A nested `call_id` is never accepted as an occurrence-identity alias.
+- Session-backed pending snapshots are trusted host state and require tenant-scoped, authorized storage. Consume-on-bind
+  does not claim durable exactly-once behavior across crashes or concurrent workers.
 - Tool lookup uses the recorded name against the current registry. A same-name implementation upgrade is allowed;
   removing the name prevents local execution.
 - Only the strict boolean `True` grants approval. Missing decisions and non-boolean values are rejection, not consent.
@@ -434,6 +478,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | String input | Flexible string input follows the same loop behavior. | `test_base_client_with_function_calling_string_input` |
 | Multiple sequential rounds | Each round retains one call/result pair. | `test_base_client_with_function_calling_resets` |
 | Streaming call | Call chunks, one result update, and final text are emitted in order. | `test_base_client_with_streaming_function_calling` |
+| Function-call occurrence identity | Actionable calls gain one stable `Content.id`; a safe local empty-`call_id` fallback uses that id with a migration warning, and streaming aggregation preserves provider-assigned occurrence ids across interleaved fragments. OpenAI Chat Completions scopes fragment correlation to each request and `(choice.index, tool.index)`. | `test_actionable_function_call_gets_stable_occurrence_identity`, `test_actionable_function_call_uses_occurrence_identity_for_empty_call_id`, `test_streaming_empty_call_id_keeps_occurrence_identity_through_approval`, `test_streaming_empty_call_id_delta_reuses_opening_call_identity`, `test_streaming_interleaved_indexed_call_fragments_coalesce_by_occurrence`, `packages/core/tests/core/test_types.py::test_function_call_occurrence_id_roundtrips_without_regeneration`, `packages/openai/tests/openai/test_openai_chat_completion_client.py::test_streaming_tool_call_identity_is_request_local_and_scoped_by_choice_index` |
 | Reasoning-bound call | Finalized output retains reasoning, function call, function result, and final text. | `test_streaming_function_calling_response_includes_reasoning_and_tool_results` |
 | Calls across response messages | Every actionable call is executed once. | `test_base_client_executes_function_calls_across_multiple_response_messages` |
 | Parallel calls | Results retain the corresponding call ids and execution count. | `test_max_function_calls_limits_parallel_invocations`, `test_streaming_multiple_function_calls_parallel_execution` |
@@ -460,6 +505,9 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Approval re-entry after iteration budget | Pending approved calls resolve once even when prior model calls consumed `max_iterations`. | `packages/core/tests/core/test_harness_tool_approval.py::test_auto_approval_resolves_after_iteration_budget_is_exhausted` |
 | Approval resume with reasoning | Model-bound resume history retains reasoning before the call and terminal result in both modes. | `packages/core/tests/core/test_harness_tool_approval.py::test_approval_resume_replays_reasoning_with_function_call_group` |
 | Session-bound substituted response | A response is rebound to the immutable recorded call and cannot replace its call id, tool name, or arguments. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_binding_rebinds_consumes_and_rejects_duplicates` |
+| Occurrence-aware local binding | New local requests use `function_call.id`; missing, mismatched, or stale occurrence ids do not execute or consume pending state, while the canonical occurrence id binds without an embedded call. | `test_occurrence_aware_approval_rejects_stale_reused_call_id_response`, `test_occurrence_aware_approval_mismatched_identity_does_not_consume_pending`, `test_occurrence_aware_approval_binds_without_embedded_function_call` |
+| Legacy stored approval | A serialized pending request without `function_call.id` retains exact request-id binding once and warns only when resumed. | `test_legacy_serialized_pending_approval_resumes_once_with_migration_warning`, `packages/core/tests/core/test_types.py::test_legacy_function_call_deserialization_does_not_generate_an_occurrence_id` |
+| Hosted approval identity | Provider-issued hosted approval request ids are unchanged by local occurrence correlation. | `test_hosted_approval_keeps_provider_issued_request_id` |
 | Truthy non-boolean decision | Strings, integers, null, and other non-booleans do not authorize execution. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_binding_treats_truthy_non_boolean_as_rejection`, `packages/core/tests/core/test_types.py::test_function_approval_response_deserialization_rejects_non_boolean_decisions`, `packages/ag-ui/tests/ag_ui/test_message_adapters.py::test_function_approval_requires_real_boolean`, `packages/ag-ui/tests/ag_ui/test_approval_result_event.py::test_resolve_approval_responses_treats_non_boolean_decision_as_rejection` |
 | Active batch replacement | A newly surfaced model batch replaces abandoned approval authority instead of growing session state. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_binding_replaces_abandoned_batch` |
 | Duplicate request id | Ambiguous request IDs within one active batch fail explicitly. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_batch_rejects_duplicate_request_ids` |

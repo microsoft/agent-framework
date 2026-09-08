@@ -70,9 +70,8 @@ listed below.
   `create_agent_hooks_middleware_from_emitter` from `agent_framework/_agent_hooks.py`,
   the AGENT-HOOKS-0.1 enforcement middleware bundle, and the `MiddlewareBundle`
   container from `agent_framework/_middleware.py` that both factories produce
-  (`MiddlewareBundle` itself needs no extra). Requires the opt-in
-  `agent-framework-core[agent-hooks]` extra (`agent-hooks-sdk`), which is deliberately
-  not part of `agent-framework-core[all]`. Known limitation: service-side (hosted) tool
+  (`MiddlewareBundle` itself needs no optional dependency). Requires installing the
+  `agent-hooks-sdk` package separately. Known limitation: service-side (hosted) tool
   execution never passes through the framework's function-invocation seam, so the
   `pre_tool_call`/`post_tool_call` points cannot intercept it; hosted tool calls and
   outputs are surfaced in the `post_model_call` content projection instead.

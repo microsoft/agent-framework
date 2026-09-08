@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.Specialized;
@@ -27,11 +26,12 @@ public class EdgeMapSmokeTests
         ExternalResponse responseMessage = new(staticPort.ToPortInfo(), "Request1", new(12));
 
         DeliveryMapping? mapping = await edgeMap.PrepareDeliveryForResponseAsync(responseMessage);
-        mapping.Should().NotBeNull();
+        Assert.NotNull(mapping);
 
         List<MessageDelivery> deliveries = mapping.Deliveries.ToList();
-        deliveries.Should().HaveCount(1).And.AllSatisfy(delivery => delivery.TargetId.Should().Be(executor.Id));
-        deliveries[0].Envelope.Message.Should().Be(responseMessage);
+        MessageDelivery delivery = Assert.Single(deliveries);
+        Assert.Equal(executor.Id, delivery.TargetId);
+        Assert.Equal(responseMessage, delivery.Envelope.Message);
     }
 
     [Fact]
@@ -53,11 +53,12 @@ public class EdgeMapSmokeTests
             ExternalResponse responseMessage = new(binding.Port.ToPortInfo(), $"RequestFor[{portId}]", new(10));
 
             DeliveryMapping? mapping = await edgeMap.PrepareDeliveryForResponseAsync(responseMessage);
-            mapping.Should().NotBeNull();
+            Assert.NotNull(mapping);
 
             List<MessageDelivery> deliveries = mapping.Deliveries.ToList();
-            deliveries.Should().HaveCount(1).And.AllSatisfy(delivery => delivery.TargetId.Should().Be(executor.Id));
-            deliveries[0].Envelope.Message.Should().Be(responseMessage);
+            MessageDelivery delivery = Assert.Single(deliveries);
+            Assert.Equal(executor.Id, delivery.TargetId);
+            Assert.Equal(responseMessage, delivery.Envelope.Message);
         }
     }
 
@@ -81,8 +82,8 @@ public class EdgeMapSmokeTests
 
             ExternalResponse responseMessage = new(fakePort.ToPortInfo(), $"RequestFor[{portId}]", new(10));
 
-            Func<Task<DeliveryMapping?>> mappingTask = async () => await edgeMap.PrepareDeliveryForResponseAsync(responseMessage);
-            await mappingTask.Should().ThrowAsync<InvalidOperationException>();
+            async Task<DeliveryMapping?> mappingTaskAsync() => await edgeMap.PrepareDeliveryForResponseAsync(responseMessage);
+            await Assert.ThrowsAsync<InvalidOperationException>((Func<Task<DeliveryMapping?>>)mappingTaskAsync);
         }
     }
 
@@ -107,18 +108,20 @@ public class EdgeMapSmokeTests
             ], edgeMap);
 
         DeliveryMapping? mapping = await edgeMap.PrepareDeliveryForEdgeAsync(fanInEdge, new("part1", "executor1"));
-        mapping.Should().BeNull();
+        Assert.Null(mapping);
 
         mapping = await edgeMap.PrepareDeliveryForEdgeAsync(fanInEdge, new("part2", "executor2"));
-        mapping.Should().NotBeNull();
+        Assert.NotNull(mapping);
         List<MessageDelivery> deliveries = mapping.Deliveries.ToList();
 
-        deliveries.Should().HaveCount(2).And.AllSatisfy(delivery => delivery.TargetId.Should().Be("executor3"));
+        Assert.Equal(2, deliveries.Count);
+        Assert.All(deliveries!, delivery => Assert.Equal("executor3", delivery.TargetId));
 
         HashSet<string> expectedMessages = ["part1", "part2"];
         foreach (MessageDelivery delivery in deliveries)
         {
-            string message = delivery.Envelope.As<string>()!;
+            string? message = Assert.IsType<PortableValue>(delivery.Envelope.Message).As<string>();
+            Assert.NotNull(message);
             expectedMessages.Remove(message);
         }
     }

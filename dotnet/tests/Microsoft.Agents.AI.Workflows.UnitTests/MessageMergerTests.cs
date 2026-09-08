@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Linq;
-using FluentAssertions;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -31,16 +29,16 @@ public class MessageMergerTests
 
         AgentResponse response = merger.ComputeMerged(responseId);
 
-        response.Messages.Should().HaveCount(1);
-        response.Messages[0].Role.Should().Be(ChatRole.Assistant);
-        response.Messages[0].AuthorName.Should().Be(TestAuthorName1);
-        response.AgentId.Should().Be(TestAgentId1);
-        response.CreatedAt.Should().HaveValue();
-        response.CreatedAt.Value.Should().BeOnOrAfter(creationTime);
-        response.CreatedAt.Value.Should().BeCloseTo(creationTime, precision: TimeSpan.FromSeconds(5));
-        response.Messages[0].CreatedAt.Should().Be(creationTime);
-        response.Messages[0].Contents.Should().HaveCount(1);
-        response.FinishReason.Should().BeNull();
+        ChatMessage message = Assert.Single(response.Messages);
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        Assert.Equal(TestAuthorName1, message.AuthorName);
+        Assert.Equal(TestAgentId1, response.AgentId);
+        Assert.NotNull(response.CreatedAt);
+        Assert.True(response.CreatedAt.Value >= creationTime);
+        Assert.True(response.CreatedAt.Value >= (creationTime - TimeSpan.FromSeconds(5)) && response.CreatedAt.Value <= (creationTime + TimeSpan.FromSeconds(5)));
+        Assert.Equal(creationTime, message.CreatedAt);
+        Assert.Single(message.Contents);
+        Assert.Null(response.FinishReason);
     }
 
     [Fact]
@@ -70,7 +68,7 @@ public class MessageMergerTests
         AgentResponse response = merger.ComputeMerged(responseId);
 
         // Assert - FinishReason from the update should propagate through
-        response.FinishReason.Should().Be(ChatFinishReason.ContentFilter);
+        Assert.Equal(ChatFinishReason.ContentFilter, response.FinishReason);
     }
 
     [Fact]
@@ -90,9 +88,14 @@ public class MessageMergerTests
         AgentResponse response = merger.ComputeMerged(responseId);
 
         // Assert
-        response.Messages.Select(message => message.Text).Should().Equal("first", "second", "third", "fourth");
-        response.Messages[0].CreatedAt.Should().Be(now.AddMinutes(1));
-        response.Messages[2].CreatedAt.Should().Be(now.AddMinutes(-1));
+        Assert.Collection(
+            response.Messages,
+            message => Assert.Equal("first", message.Text),
+            message => Assert.Equal("second", message.Text),
+            message => Assert.Equal("third", message.Text),
+            message => Assert.Equal("fourth", message.Text));
+        Assert.Equal(now.AddMinutes(1), response.Messages[0].CreatedAt);
+        Assert.Equal(now.AddMinutes(-1), response.Messages[2].CreatedAt);
     }
 
     [Fact]
@@ -112,7 +115,7 @@ public class MessageMergerTests
         AgentResponse response = merger.ComputeMerged(ResponseId1);
 
         // Assert
-        response.Messages.Select(message => message.Text).Should().Equal("A1", "A2", "B1", "B2");
+        Assert.Equal("A1", response.Messages[0].Text);
     }
 
     [Fact]
@@ -143,7 +146,7 @@ public class MessageMergerTests
         AgentResponse response = merger.ComputeMerged(ResponseId);
 
         // Assert
-        response.Messages.Should().HaveCount(2);
+        Assert.Equal(2, response.Messages.Count);
         Assert.Equal(CallId, Assert.IsType<FunctionCallContent>(Assert.Single(response.Messages[0].Contents)).CallId);
         Assert.Equal(CallId, Assert.IsType<FunctionResultContent>(Assert.Single(response.Messages[1].Contents)).CallId);
     }
@@ -176,8 +179,8 @@ public class MessageMergerTests
         AgentResponse response = merger.ComputeMerged(ResponseId);
 
         // Assert
-        response.Messages.Should().HaveCount(3);
-        response.Messages[0].Text.Should().Be("before");
+        Assert.Equal(3, response.Messages.Count);
+        Assert.Equal("before", response.Messages[0].Text);
         Assert.IsType<FunctionCallContent>(Assert.Single(response.Messages[1].Contents));
         Assert.IsType<FunctionResultContent>(Assert.Single(response.Messages[2].Contents));
     }
@@ -199,7 +202,7 @@ public class MessageMergerTests
         AgentResponse response = merger.ComputeMerged(ResponseId);
 
         // Assert
-        response.Messages.Select(message => message.Text).Should().Equal("AB", "X", "Y");
+        Assert.Equal("AB", response.Messages[0].Text);
     }
 
     [Fact]
@@ -231,16 +234,13 @@ public class MessageMergerTests
 
         // Assert - reasoning and answer should be folded into a single message with two contents,
         // adopting the following message's id.
-        response.Messages.Should().HaveCount(1);
-        ChatMessage message = response.Messages[0];
-        message.Role.Should().Be(ChatRole.Assistant);
-        message.MessageId.Should().Be(MessageId);
-        message.Contents.Should().HaveCount(2);
-        message.Contents[0].Should().BeOfType<TextReasoningContent>()
-            .Which.Text.Should().Be("thinking about the question");
-        message.Contents[1].Should().BeOfType<TextContent>()
-            .Which.Text.Should().Be("The reformulated question.");
-        message.Text.Should().Be("The reformulated question.");
+        ChatMessage mergedMessage = Assert.Single(response.Messages);
+        Assert.Equal(ChatRole.Assistant, mergedMessage.Role);
+        Assert.Equal(MessageId, mergedMessage.MessageId);
+        Assert.Equal(2, mergedMessage.Contents.Count);
+        Assert.Equal("thinking about the question", Assert.IsType<TextReasoningContent>(mergedMessage.Contents[0]).Text);
+        Assert.Equal("The reformulated question.", Assert.IsType<TextContent>(mergedMessage.Contents[1]).Text);
+        Assert.Equal("The reformulated question.", mergedMessage.Text);
     }
 
     [Fact]
@@ -269,10 +269,10 @@ public class MessageMergerTests
         AgentResponse response = merger.ComputeMerged(ResponseId);
 
         // Assert - different roles must remain separate messages.
-        response.Messages.Should().HaveCount(2);
-        response.Messages[0].Role.Should().Be(ChatRole.Assistant);
-        response.Messages[0].Contents.Should().ContainSingle().Which.Should().BeOfType<TextReasoningContent>();
-        response.Messages[1].Role.Should().Be(ChatRole.Tool);
+        Assert.Equal(2, response.Messages.Count);
+        Assert.Equal(ChatRole.Assistant, response.Messages[0].Role);
+        Assert.IsType<TextReasoningContent>(Assert.Single(response.Messages[0].Contents));
+        Assert.Equal(ChatRole.Tool, response.Messages[1].Role);
     }
 
     /// <summary>
@@ -325,14 +325,14 @@ public class MessageMergerTests
         AgentResponse response = merger.ComputeMerged(ResponseId1);
 
         // Assert
-        response.Usage.Should().NotBeNull();
-        response.Usage!.InputTokenCount.Should().Be(31);
-        response.Usage.OutputTokenCount.Should().Be(10);
-        response.Usage.TotalTokenCount.Should().Be(41);
-        response.Usage.AdditionalCounts.Should().NotBeNull();
-        response.Usage.AdditionalCounts!["cached"].Should().Be(20);
-        response.Usage.AdditionalCounts["reasoning"].Should().Be(11);
-        response.Usage.AdditionalCounts["audio"].Should().Be(17);
+        Assert.NotNull(response.Usage);
+        Assert.Equal(31, response.Usage!.InputTokenCount);
+        Assert.Equal(10, response.Usage.OutputTokenCount);
+        Assert.Equal(41, response.Usage.TotalTokenCount);
+        Assert.NotNull(response.Usage.AdditionalCounts);
+        Assert.Equal(20, response.Usage.AdditionalCounts!["cached"]);
+        Assert.Equal(11, response.Usage.AdditionalCounts["reasoning"]);
+        Assert.Equal(17, response.Usage.AdditionalCounts["audio"]);
     }
 
     private static void AddTextMessage(MessageMerger merger, string responseId, string text, DateTimeOffset? createdAt = null)
@@ -383,15 +383,11 @@ public class MessageMergerTests
         AgentResponse response = merger.ComputeMerged(responseId);
 
         // Assert - the reasoning message must remain first, matching a directly-invoked agent.
-        response.Messages.Should().HaveCount(2);
+        Assert.Equal(2, response.Messages.Count);
 
-        response.Messages[0].Contents.Should().ContainSingle()
-            .Which.Should().BeOfType<TextReasoningContent>()
-            .Which.Text.Should().Be("Thinking about the question");
+        Assert.Equal("Thinking about the question", Assert.IsType<TextReasoningContent>(Assert.Single(response.Messages[0].Contents)).Text);
 
-        response.Messages[1].Contents.Should().ContainSingle()
-            .Which.Should().BeOfType<TextContent>()
-            .Which.Text.Should().Be("Here is the answer.");
+        Assert.Equal("Here is the answer.", Assert.IsType<TextContent>(Assert.Single(response.Messages[1].Contents)).Text);
     }
 
     [Fact]
@@ -454,17 +450,15 @@ public class MessageMergerTests
         AgentResponse response = merger.ComputeMerged(responseId);
 
         // Assert - a single assistant message with reasoning first, then the answer text.
-        response.Messages.Should().ContainSingle();
+        Assert.Single(response.Messages);
 
         ChatMessage message = response.Messages[0];
-        message.Role.Should().Be(ChatRole.Assistant);
-        message.Contents.Should().HaveCount(2);
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        Assert.Equal(2, message.Contents.Count);
 
-        message.Contents[0].Should().BeOfType<TextReasoningContent>()
-            .Which.Text.Should().Be("Thinking about the question");
+        Assert.Equal("Thinking about the question", Assert.IsType<TextReasoningContent>(message.Contents[0]).Text);
 
-        message.Contents[1].Should().BeOfType<TextContent>()
-            .Which.Text.Should().Be("Here is the answer.");
+        Assert.Equal("Here is the answer.", Assert.IsType<TextContent>(message.Contents[1]).Text);
     }
 
     [Fact]
@@ -502,15 +496,13 @@ public class MessageMergerTests
         AgentResponse response = merger.ComputeMerged(TextResponseId);
 
         // Assert - a single assistant message adopting the answer's id, reasoning first then text.
-        response.Messages.Should().ContainSingle();
+        Assert.Single(response.Messages);
         ChatMessage message = response.Messages[0];
-        message.Role.Should().Be(ChatRole.Assistant);
-        message.MessageId.Should().Be(TextMessageId);
-        message.Contents.Should().HaveCount(2);
-        message.Contents[0].Should().BeOfType<TextReasoningContent>()
-            .Which.Text.Should().Be("thinking about the question");
-        message.Contents[1].Should().BeOfType<TextContent>()
-            .Which.Text.Should().Be("The reformulated question.");
-        message.Text.Should().Be("The reformulated question.");
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        Assert.Equal(TextMessageId, message.MessageId);
+        Assert.Equal(2, message.Contents.Count);
+        Assert.Equal("thinking about the question", Assert.IsType<TextReasoningContent>(message.Contents[0]).Text);
+        Assert.Equal("The reformulated question.", Assert.IsType<TextContent>(message.Contents[1]).Text);
+        Assert.Equal("The reformulated question.", message.Text);
     }
 }

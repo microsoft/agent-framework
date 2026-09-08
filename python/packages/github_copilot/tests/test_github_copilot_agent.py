@@ -9,6 +9,7 @@ import os
 import unittest.mock
 from collections.abc import Sequence
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -24,11 +25,12 @@ from agent_framework import (
     Content,
     ContextProvider,
     HistoryProvider,
+    MCPStdioTool,
     Message,
     tool,
 )
 from agent_framework.exceptions import AgentException
-from copilot.session import PermissionHandler, PreToolUseHookInput
+from copilot.session import PermissionHandler, PermissionInvocation, PreToolUseHookInput
 from copilot.session_events import (
     AssistantUsageData,
     Data,
@@ -1329,7 +1331,7 @@ class TestGitHubCopilotAgentSessionManagement:
         from copilot.session import PermissionDecisionApproveOnce, PermissionRequestResult
         from copilot.session_events import PermissionRequest
 
-        def my_handler(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+        def my_handler(request: PermissionRequest, context: PermissionInvocation) -> PermissionRequestResult:
             return PermissionDecisionApproveOnce()
 
         def my_tool(arg: str) -> str:
@@ -1939,6 +1941,48 @@ class TestGitHubCopilotAgentOptionsPassthrough:
         config = mock_client.create_session.call_args.kwargs
         assert config["reasoning_effort"] == "high"
         assert config["context_tier"] == "large"
+
+    async def test_mcp_tool_is_rejected_with_the_native_configuration(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """An MCP server cannot keep its framework behavior here, so it is refused, not dropped."""
+        with pytest.raises(TypeError, match="mcp_servers"):
+            GitHubCopilotAgent(client=mock_client, tools=[MCPStdioTool(name="weather", command="python")])
+
+    async def test_mcp_tool_in_a_tuple_is_rejected(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """``tools`` takes any sequence, so a tuple must not slip past the refusal."""
+        with pytest.raises(TypeError, match="mcp_servers"):
+            GitHubCopilotAgent(client=mock_client, tools=(MCPStdioTool(name="weather", command="python"),))
+
+    async def test_mcp_tool_from_default_options_is_rejected(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Tools reach the SDK from the options too, so the refusal cannot live in the constructor alone."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"tools": [MCPStdioTool(name="weather", command="python")]}),
+        )
+        await agent.start()
+
+        with pytest.raises(AgentException, match="mcp_servers"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+    async def test_mcp_tool_inside_a_tool_collection_from_options_is_rejected(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Option-supplied tools are normalized too, so a wrapper cannot hide an MCP server."""
+        toolbox = SimpleNamespace(tools=[MCPStdioTool(name="weather", command="python")])
+        agent = GitHubCopilotAgent(client=mock_client, default_options=cast(Any, {"tools": [toolbox]}))
+        await agent.start()
+
+        with pytest.raises(AgentException, match="mcp_servers"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
 
     async def test_tools_from_default_options_are_honored(
         self,
@@ -2603,7 +2647,7 @@ class TestGitHubCopilotAgentPermissions:
         from copilot.session import PermissionDecisionApproveOnce, PermissionRequestResult
         from copilot.session_events import PermissionRequest
 
-        def approve_shell(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+        def approve_shell(request: PermissionRequest, context: PermissionInvocation) -> PermissionRequestResult:
             if request.kind == "shell":
                 return PermissionDecisionApproveOnce()
             return PermissionDecisionDeniedInteractivelyByUser()
@@ -2621,7 +2665,7 @@ class TestGitHubCopilotAgentPermissions:
         from copilot.session import PermissionDecisionApproveOnce, PermissionRequestResult
         from copilot.session_events import PermissionRequest
 
-        def approve_shell_read(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+        def approve_shell_read(request: PermissionRequest, context: PermissionInvocation) -> PermissionRequestResult:
             if request.kind in ("shell", "read"):
                 return PermissionDecisionApproveOnce()
             return PermissionDecisionDeniedInteractivelyByUser()
@@ -2942,6 +2986,24 @@ class TestNormalizeApproveForSession:
 
         assert isinstance(result, PermissionDecisionApproveForSession)
         assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalCommands)
+
+    async def test_legacy_dict_permission_handlers_are_supported(self) -> None:
+        """The wrapper continues to support handlers typed for the legacy dictionary context."""
+        from copilot.generated.rpc import PermissionDecisionApproveOnce
+        from copilot.session_events import PermissionRequest
+
+        received_context: dict[str, str] = {}
+
+        def legacy_handler(request: PermissionRequest, context: dict[str, str]) -> Any:
+            received_context.update(context)
+            return PermissionDecisionApproveOnce()
+
+        from agent_framework_github_copilot._agent import _with_normalized_permission_decisions
+
+        handler = _with_normalized_permission_decisions(legacy_handler)  # type: ignore[arg-type]
+        await handler(shell_request(["ls"]), {"session_id": "test-session"})
+
+        assert received_context == {"session_id": "test-session"}
 
     async def test_handler_exceptions_propagate(self) -> None:
         """Handler failures must keep reaching the SDK, which denies the request."""

@@ -10,6 +10,7 @@ import json
 import logging
 import sys
 import typing
+import warnings
 from collections import deque
 from collections.abc import (
     AsyncIterable,
@@ -38,6 +39,7 @@ from typing import (
     get_origin,
     overload,
 )
+from uuid import uuid4
 
 from opentelemetry.metrics import Histogram, NoOpHistogram
 from pydantic import BaseModel, Field, ValidationError, create_model
@@ -92,6 +94,11 @@ else:
 logger = logging.getLogger("agent_framework")
 
 
+def _generate_function_call_occurrence_id() -> str:
+    """Generate an Agent Framework identity for one function-call occurrence."""
+    return f"af-call-{uuid4().hex}"
+
+
 DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
@@ -99,6 +106,9 @@ _TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
 _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY: Final[str] = "already_approved_approval_request_groups"
 _PENDING_APPROVAL_REQUESTS_KEY: Final[str] = "pending_approval_requests"
 _FUNCTION_INVOCATION_BUDGET_STATE_KEY: Final[str] = "_function_invocation_budget_state"
+_FUNCTION_RESULT_CARRIER_CONTEXT_KEY: Final[str] = "_function_result_carrier"
+_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY: Final[str] = "_function_result_payload_budget"
+_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY: Final[str] = "_function_result_payload_budget"
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
 )
@@ -106,6 +116,40 @@ _USER_VISIBLE_CONTENT_TYPES: Final[set[str]] = {"data", "uri", "error", "hosted_
 ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+
+
+@dataclass
+class _FunctionResultCarrier:
+    """Host-only properties retained independently of model-facing tool output."""
+
+    additional_properties: dict[str, Any]
+    item_additional_properties: dict[str, Any]
+    exclusive_outer_keys: frozenset[str] = frozenset()
+    exclusive_item_keys: frozenset[str] = frozenset()
+    result_already_parsed: bool = False
+
+
+@dataclass
+class _FunctionResultPayloadBudget:
+    """Bound retained Host payloads across one function-invocation request."""
+
+    limit_bytes: int = 0
+    retained_bytes: int = 0
+
+    def remaining(self, per_result_limit: int | None) -> int | None:
+        if per_result_limit is None:
+            return None
+        self.limit_bytes = max(self.limit_bytes, per_result_limit)
+        return max(self.limit_bytes - self.retained_bytes, 0)
+
+    def reserve(self, size_bytes: int, per_result_limit: int | None) -> bool:
+        if per_result_limit is None:
+            return True
+        remaining = self.remaining(per_result_limit)
+        if remaining is None or size_bytes > remaining:
+            return False
+        self.retained_bytes += size_bytes
+        return True
 
 
 class _SkipParsingSentinel:
@@ -715,11 +759,21 @@ class FunctionTool(SerializationMixin):
                 logger.info(f"Function {self.name} succeeded.")
                 logger.debug(f"Function result: {type(result).__name__}")
                 return result
-            try:
-                parsed = parser(result)
-            except Exception:
-                logger.warning(f"Function {self.name}: result parser failed, falling back to str().")
-                parsed = [Content.from_text(str(result))]
+            carrier = (
+                effective_context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY) if effective_context else None
+            )
+            if (
+                isinstance(carrier, _FunctionResultCarrier)
+                and carrier.result_already_parsed
+                and configured_parser is None
+            ):
+                parsed = result
+            else:
+                try:
+                    parsed = parser(result)
+                except Exception:
+                    logger.warning(f"Function {self.name}: result parser failed, falling back to str().")
+                    parsed = [Content.from_text(str(result))]
             if isinstance(parsed, str):
                 parsed = [Content.from_text(parsed)]
             logger.info(f"Function {self.name} succeeded.")
@@ -780,11 +834,21 @@ class FunctionTool(SerializationMixin):
                         if emit_tool_call_attrs:
                             span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
                     return result
-                try:
-                    parsed = parser(result)
-                except Exception:
-                    logger.warning(f"Function {self.name}: result parser failed, falling back to str().")
-                    parsed = [Content.from_text(str(result))]
+                carrier = (
+                    effective_context.metadata.get(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY) if effective_context else None
+                )
+                if (
+                    isinstance(carrier, _FunctionResultCarrier)
+                    and carrier.result_already_parsed
+                    and configured_parser is None
+                ):
+                    parsed = result
+                else:
+                    try:
+                        parsed = parser(result)
+                    except Exception:
+                        logger.warning(f"Function {self.name}: result parser failed, falling back to str().")
+                        parsed = [Content.from_text(str(result))]
                 if isinstance(parsed, str):
                     parsed = [Content.from_text(parsed)]
                 logger.info(f"Function {self.name} succeeded.")
@@ -1349,6 +1413,17 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
       parallel tool calls completes, not before. If the model requests 20
       parallel calls in a single iteration and the limit is 10, all 20 will
       execute before the loop stops.
+    - ``max_duration_seconds``: Wall-clock time budget (in seconds) for the
+      entire function-invocation loop, measured cumulatively across approval
+      round-trips. When exceeded, the loop disables further tool calls and
+      forces the model to produce a text response, reusing the same
+      graceful-degradation path as ``max_function_calls``. Default is
+      ``None`` (no time limit).
+
+      This is a **best-effort** limit: the clock is checked *after* each batch
+      of tool calls completes. The budget includes time spent waiting for human
+      approval responses — this is intentional so that long-running unattended
+      sessions are always bounded, even if individual approval steps are slow.
     - ``max_consecutive_errors_per_request``: How many consecutive errors
       before abandoning the tool loop for this request.
     - ``terminate_on_unknown_calls``: Whether to raise an error when the model
@@ -1359,11 +1434,13 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
       function result returned to the model.
 
     Note:
-        ``max_iterations`` and ``max_function_calls`` serve complementary purposes.
-        ``max_iterations`` caps the number of model round-trips regardless of how
-        many tools are called per trip. ``max_function_calls`` caps the cumulative
-        number of individual tool executions regardless of how they are distributed
-        across iterations.
+        ``max_iterations``, ``max_function_calls``, and ``max_duration_seconds``
+        are complementary limits. ``max_iterations`` caps the number of model
+        round-trips, ``max_function_calls`` caps the cumulative number of
+        individual tool executions, and ``max_duration_seconds`` caps cumulative
+        elapsed wall time. When multiple limits trigger in the same batch, the
+        stop reason is assigned to whichever condition is detected first in
+        execution order (duration is checked before the call-count check).
 
     Example:
         .. code-block:: python
@@ -1372,14 +1449,17 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
 
             client = OpenAIChatClient(api_key="your_api_key")
 
-            # Limit to 5 LLM roundtrips and 20 total function executions
+            # Limit to 5 LLM roundtrips, 20 total function executions,
+            # and a 30-second wall-clock budget.
             client.function_invocation_configuration["max_iterations"] = 5
             client.function_invocation_configuration["max_function_calls"] = 20
+            client.function_invocation_configuration["max_duration_seconds"] = 30.0
     """
 
     enabled: bool
     max_iterations: int
     max_function_calls: int | None
+    max_duration_seconds: float | None
     max_consecutive_errors_per_request: int
     terminate_on_unknown_calls: bool
     additional_tools: Sequence[FunctionTool]
@@ -1393,6 +1473,7 @@ def normalize_function_invocation_configuration(
         "enabled": True,
         "max_iterations": DEFAULT_MAX_ITERATIONS,
         "max_function_calls": None,
+        "max_duration_seconds": None,
         "max_consecutive_errors_per_request": DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST,
         "terminate_on_unknown_calls": False,
         "additional_tools": [],
@@ -1404,6 +1485,8 @@ def normalize_function_invocation_configuration(
         raise ValueError("max_iterations must be at least 1.")
     if normalized["max_function_calls"] is not None and normalized["max_function_calls"] < 1:
         raise ValueError("max_function_calls must be at least 1 or None.")
+    if normalized["max_duration_seconds"] is not None and not (normalized["max_duration_seconds"] > 0):
+        raise ValueError("max_duration_seconds must be greater than 0 or None.")
     if normalized["max_consecutive_errors_per_request"] < 0:
         raise ValueError("max_consecutive_errors_per_request must be 0 or more.")
     return normalized
@@ -1414,9 +1497,8 @@ def _function_execution_error_result(
     tool_name: str,
     exception: Exception,
     config: FunctionInvocationConfiguration,
+    context: FunctionInvocationContext | None = None,
 ) -> Content:
-    from ._types import Content
-
     logger.warning(
         "Function '%s' raised an exception; returning an error result to the model. "
         "Set include_detailed_errors=True for the full detail. Exception: %r",
@@ -1426,12 +1508,57 @@ def _function_execution_error_result(
     message = "Error: Function failed."
     if config.get("include_detailed_errors", False):
         message = f"{message} Exception: {exception}"
-    return Content.from_function_result(
+    return _finalize_function_result(
         call_id=function_call.call_id,  # type: ignore[arg-type]
         result=message,
         exception=str(exception),
-        additional_properties=function_call.additional_properties,
+        base_additional_properties=function_call.additional_properties,
+        context=context,
     )
+
+
+def _finalize_function_result(
+    *,
+    call_id: str,
+    result: Any,
+    base_additional_properties: Mapping[str, Any] | None = None,
+    exception: str | None = None,
+    context: FunctionInvocationContext | None = None,
+) -> Content:
+    """Build the stable function-result wrapper and apply private Host metadata."""
+    from ._types import Content
+
+    carrier: _FunctionResultCarrier | None = None
+    if context is not None:
+        raw_carrier = context.metadata.pop(_FUNCTION_RESULT_CARRIER_CONTEXT_KEY, None)
+        if isinstance(raw_carrier, _FunctionResultCarrier):
+            carrier = raw_carrier
+
+    additional_properties = dict(base_additional_properties or {})
+    if carrier is not None:
+        for key in carrier.exclusive_outer_keys:
+            additional_properties.pop(key, None)
+        additional_properties.update(carrier.additional_properties)
+
+    function_result = Content.from_function_result(
+        call_id=call_id,
+        result=result,
+        exception=exception,
+        additional_properties=additional_properties,
+    )
+    if carrier is None or function_result.items is None:
+        return function_result
+
+    updated_items = list(function_result.items)
+    for index, item in enumerate(updated_items):
+        updated_item = copy.copy(item)
+        updated_item.additional_properties = dict(updated_item.additional_properties)
+        for key in carrier.exclusive_outer_keys | carrier.exclusive_item_keys:
+            updated_item.additional_properties.pop(key, None)
+        updated_item.additional_properties.update(carrier.item_additional_properties)
+        updated_items[index] = updated_item
+    function_result.items = updated_items
+    return function_result
 
 
 async def _auto_invoke_function(
@@ -1443,6 +1570,7 @@ async def _auto_invoke_function(
     invocation_session: AgentSession | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     live_tools: list[ToolTypes] | None = None,
+    host_payload_budget: _FunctionResultPayloadBudget | None = None,
 ) -> Content:
     """Invoke a function call requested by the agent, applying middleware that is defined.
 
@@ -1457,6 +1585,7 @@ async def _auto_invoke_function(
         middleware_pipeline: Optional middleware pipeline to apply during execution.
         live_tools: The live, mutable tools list for the current agent run, exposed on
             the FunctionInvocationContext so tools can add/remove tools at runtime.
+        host_payload_budget: Shared request budget for retained Host-only function result payloads.
 
     Returns:
         The function result content.
@@ -1546,8 +1675,8 @@ async def _auto_invoke_function(
 
     if middleware_pipeline is None or not middleware_pipeline.has_middlewares:
         # No middleware - execute directly
+        direct_context = None
         try:
-            direct_context = None
             if getattr(tool, "_context_parameter_name", None):
                 direct_context = FunctionInvocationContext(
                     function=tool,
@@ -1556,22 +1685,25 @@ async def _auto_invoke_function(
                     kwargs=runtime_kwargs.copy(),
                     tools=live_tools,
                 )
+                if host_payload_budget is not None:
+                    direct_context.metadata[_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY] = host_payload_budget
             function_result = await tool.invoke(
                 arguments=args,
                 context=direct_context,
                 tool_call_id=function_call_content.call_id,
             )
-            return Content.from_function_result(
+            return _finalize_function_result(
                 call_id=function_call_content.call_id,  # type: ignore[arg-type]
                 result=function_result,
-                additional_properties=function_call_content.additional_properties,
+                base_additional_properties=function_call_content.additional_properties,
+                context=direct_context,
             )
         except (MiddlewareFailure, UserInputRequiredException):
             # Explicit control-flow signals escape the loop; only ordinary exceptions
             # are absorbed into tool-error results below.
             raise
         except Exception as exc:
-            return _function_execution_error_result(function_call_content, tool.name, exc, config)
+            return _function_execution_error_result(function_call_content, tool.name, exc, config, direct_context)
     # Execute through middleware pipeline if available
     middleware_context = FunctionInvocationContext(
         function=tool,
@@ -1580,13 +1712,17 @@ async def _auto_invoke_function(
         kwargs=runtime_kwargs.copy(),
         tools=live_tools,
     )
+    if host_payload_budget is not None:
+        middleware_context.metadata[_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY] = host_payload_budget
 
     call_id = function_call_content.call_id
     if call_id is None:
         raise KeyError(f'Function "{function_call_content.name}" is missing call_id.')
 
-    # Always pass call_id to middleware for policy violation approval flow
+    # Pass both provider correlation and framework occurrence identity to middleware.
     middleware_context.metadata["call_id"] = call_id
+    if function_call_content.id is not None:
+        middleware_context.metadata["function_call_occurrence_id"] = function_call_content.id
 
     # Pass through the original approval response so middleware can decide whether
     # this replay corresponds to a middleware-specific approval flow.
@@ -1613,7 +1749,12 @@ async def _auto_invoke_function(
         if isinstance(function_result, Content) and function_result.type == "function_approval_request":
             return function_result
 
-        return Content.from_function_result(call_id=call_id, result=function_result)
+        return _finalize_function_result(
+            call_id=call_id,
+            result=function_result,
+            base_additional_properties=function_call_content.additional_properties,
+            context=middleware_context,
+        )
     except MiddlewareTermination as term_exc:
         # Re-raise to signal loop termination, but first capture any result set by middleware
         if middleware_context.result is not None:
@@ -1626,10 +1767,11 @@ async def _auto_invoke_function(
                 term_exc.result = middleware_context.result
             else:
                 # Store result in exception for caller to extract
-                term_exc.result = Content.from_function_result(
+                term_exc.result = _finalize_function_result(
                     call_id=call_id,
                     result=middleware_context.result,
-                    additional_properties=function_call_content.additional_properties,
+                    base_additional_properties=function_call_content.additional_properties,
+                    context=middleware_context,
                 )
         raise
     except (MiddlewareFailure, UserInputRequiredException):
@@ -1638,7 +1780,7 @@ async def _auto_invoke_function(
         # relying on the tool-error conversion below, and it propagates to the caller.
         raise
     except Exception as exc:
-        return _function_execution_error_result(function_call_content, tool.name, exc, config)
+        return _function_execution_error_result(function_call_content, tool.name, exc, config, middleware_context)
 
 
 def _get_tool_map(
@@ -1670,6 +1812,7 @@ async def _execute_single_function_call(
     invocation_session: AgentSession | None,
     middleware_pipeline: FunctionMiddlewarePipeline | None,
     live_tools: list[ToolTypes] | None,
+    host_payload_budget: _FunctionResultPayloadBudget | None,
 ) -> tuple[list[Content], bool]:
     from ._middleware import MiddlewareTermination
     from ._sessions import _suspend_run_persistence_gate  # pyright: ignore[reportPrivateUsage]
@@ -1691,6 +1834,7 @@ async def _execute_single_function_call(
                 middleware_pipeline=middleware_pipeline,
                 config=config,
                 live_tools=live_tools,
+                host_payload_budget=host_payload_budget,
             )
         return [result], False
     except MiddlewareTermination as exc:
@@ -1729,6 +1873,7 @@ async def _try_execute_function_call_groups(
     config: FunctionInvocationConfiguration,
     invocation_session: AgentSession | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
+    host_payload_budget: _FunctionResultPayloadBudget | None = None,
 ) -> tuple[list[list[Content]], bool]:
     """Execute multiple function calls concurrently while preserving per-call result groups.
 
@@ -1739,6 +1884,7 @@ async def _try_execute_function_call_groups(
         config: Configuration for function invocation.
         invocation_session: The agent session for this invocation, if any.
         middleware_pipeline: Optional middleware pipeline to apply during execution.
+        host_payload_budget: Shared request budget for retained Host-only function result payloads.
 
     Returns:
         A tuple of:
@@ -1803,7 +1949,7 @@ async def _try_execute_function_call_groups(
             if function_call.type != "function_call":
                 continue
             approval_request = Content.from_function_approval_request(
-                id=function_call.call_id,  # type: ignore[arg-type]
+                id=function_call.id or function_call.call_id,  # type: ignore[arg-type]
                 function_call=function_call,
             )
             tool_name = function_call.name
@@ -1838,7 +1984,8 @@ async def _try_execute_function_call_groups(
         for function_call in function_calls:
             if function_call.type == "function_call":
                 function_call.user_input_request = True
-                function_call.id = function_call.call_id
+                if function_call.id is None:
+                    function_call.id = function_call.call_id
                 declaration_only_calls.append(function_call)
         return [[function_call] for function_call in declaration_only_calls], False
 
@@ -1856,6 +2003,7 @@ async def _try_execute_function_call_groups(
                 invocation_session=invocation_session,
                 middleware_pipeline=middleware_pipeline,
                 live_tools=live_tools,
+                host_payload_budget=host_payload_budget,
             ),
         )
         for function_call in function_calls
@@ -1892,6 +2040,22 @@ class _FunctionExecutionBatch:
         return [content for result_group in self.result_groups for content in result_group]
 
     @property
+    def executed_call_count(self) -> int:
+        """Count of result groups that were actually invoked.
+
+        Excludes groups still deferred on an approval request (the tool body never ran,
+        unlike a ``UserInputRequiredException`` raised mid-execution, which did run and
+        still counts) or left as a bare declaration because the batch as a whole was
+        deferred, so a call is only charged against ``max_function_calls`` once it
+        actually executes, rather than again when it was merely requested.
+        """
+        return sum(
+            1
+            for result_group in self.result_groups
+            if not any(content.type in {"function_approval_request", "function_call"} for content in result_group)
+        )
+
+    @property
     def had_errors(self) -> bool:
         """Whether any execution produced an error result."""
         return any(
@@ -1910,6 +2074,7 @@ async def _execute_function_calls(
     config: FunctionInvocationConfiguration,
     invocation_session: AgentSession | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
+    host_payload_budget: _FunctionResultPayloadBudget | None = None,
 ) -> _FunctionExecutionBatch:
     tools = _extract_tools(options)
     if not tools:
@@ -1921,6 +2086,7 @@ async def _execute_function_calls(
         invocation_session=invocation_session,
         middleware_pipeline=middleware_pipeline,
         config=config,
+        host_payload_budget=host_payload_budget,
     )
     return _FunctionExecutionBatch(
         result_groups=result_groups,
@@ -2190,25 +2356,69 @@ def _bind_approval_response_to_pending_request(
 
     if invocation_session is None:
         return response
-    if response.id is None:
-        return None
     pending = _load_pending_approval_requests(invocation_session)
-    request = pending.get(response.id)
-    if request is None or request.function_call is None:
+    request_key = response.id
+    request = pending.get(request_key) if request_key is not None else None
+
+    # During the staged migration, accept the occurrence id even if an intermediate
+    # producer still stored the provider call_id as the request id. This is not a
+    # call_id alias: the lookup uses the stored function_call.id only.
+    if request is None and response.id is not None:
+        matching_occurrences = [
+            (pending_id, candidate)
+            for pending_id, candidate in pending.items()
+            if not _is_hosted_tool_approval(candidate)
+            and candidate.function_call is not None
+            and candidate.function_call.id == response.id
+        ]
+        if len(matching_occurrences) == 1:
+            request_key, request = matching_occurrences[0]
+
+    if request is None or request.function_call is None or request_key is None:
         return None
-    rebound_call = _content_from_state(request.function_call.to_dict())
+
+    stored_call = request.function_call
+    is_hosted = _is_hosted_tool_approval(request)
+    occurrence_id = stored_call.id
+    if not is_hosted and occurrence_id is not None:
+        embedded_call = response.function_call
+        uses_occurrence_id = response.id == occurrence_id
+        uses_legacy_request_id = response.id == request.id
+        if not uses_occurrence_id:
+            if not (uses_legacy_request_id and embedded_call is not None and embedded_call.id == occurrence_id):
+                return None
+            warnings.warn(
+                "An occurrence-aware approval used the legacy provider call_id request binding. "
+                "Return function_call.id as the approval response id; legacy request-id binding will be removed "
+                "in a future release.",
+                FutureWarning,
+                stacklevel=3,
+            )
+        elif embedded_call is not None and embedded_call.id != occurrence_id:
+            return None
+    elif not is_hosted:
+        warnings.warn(
+            "Resuming a legacy stored approval whose function_call has no Content.id. This exact request-id "
+            "compatibility path is deprecated; complete the pending approval and store occurrence-aware snapshots "
+            "before support is removed in a future release.",
+            FutureWarning,
+            stacklevel=3,
+        )
+
+    rebound_call = _content_from_state(stored_call.to_dict())
     if rebound_call is None:
         return None
+    rebound_id = occurrence_id if not is_hosted and occurrence_id is not None else response.id
     rebound = Content.from_function_approval_response(
         approved=_is_approval_granted(response.approved),
-        id=response.id,
+        id=rebound_id,  # type: ignore[arg-type]
         function_call=rebound_call,
         annotations=response.annotations,
         additional_properties=copy.deepcopy(response.additional_properties),
         raw_representation=response.raw_representation,
     )
     if consume:
-        pending.pop(response.id, None)
+        pending.pop(request_key, None)
         _save_pending_approval_requests(invocation_session, pending)
     return rebound
 
@@ -2235,7 +2445,8 @@ def _bind_approval_responses_to_pending_requests(
             )
             if rebound is None:
                 logger.warning(
-                    "Ignored an approval response with request id %r because no pending approval request exists.",
+                    "Ignored an approval response with id %r because it did not match the active approval "
+                    "occurrence identity; the pending request was retained for retry.",
                     content.id,
                 )
                 continue
@@ -2673,26 +2884,35 @@ def _replace_approval_contents_with_results(
 
 
 def _extract_function_calls(response: ChatResponse) -> list[Content]:
-    completed_call_ids: set[str] = set()
-    seen_call_ids: set[str] = set()
+    completed_occurrence_ids: set[str] = set()
+    open_occurrence_ids_by_call_id: dict[str, deque[str]] = {}
+    seen_occurrence_ids: set[str] = set()
     candidate_calls: list[Content] = []
     for message in response.messages:
         for item in message.contents:
             if item.type == "function_result" and item.call_id:
-                completed_call_ids.add(item.call_id)
+                if open_occurrence_ids := open_occurrence_ids_by_call_id.get(item.call_id):
+                    completed_occurrence_ids.add(open_occurrence_ids.popleft())
                 continue
             if not _is_actionable_function_call(item):
                 continue
-            if item.call_id and item.call_id in seen_call_ids:
+            if item.id is None:
+                item.id = _generate_function_call_occurrence_id()
+            if not item.call_id:
+                item.call_id = item.id
+                warnings.warn(
+                    "An actionable function_call had an empty call_id. Agent Framework used its generated "
+                    "Content.id for local correlation. Providers should supply and preserve their service call_id; "
+                    "this fallback will be removed in a future release.",
+                    FutureWarning,
+                    stacklevel=3,
+                )
+            if item.id in seen_occurrence_ids:
                 continue
-            if item.call_id:
-                seen_call_ids.add(item.call_id)
+            seen_occurrence_ids.add(item.id)
             candidate_calls.append(item)
-    return [
-        function_call
-        for function_call in candidate_calls
-        if not function_call.call_id or function_call.call_id not in completed_call_ids
-    ]
+            open_occurrence_ids_by_call_id.setdefault(item.call_id, deque()).append(item.id)
+    return [function_call for function_call in candidate_calls if function_call.id not in completed_occurrence_ids]
 
 
 def _prepend_function_call_messages(response: ChatResponse, function_call_messages: list[Message]) -> None:
@@ -2737,15 +2957,65 @@ def _disable_tools_at_function_call_limit(
     options: dict[str, Any],
     total_function_calls: int,
     max_function_calls: int | None,
-) -> None:
+) -> bool:
     if not _function_call_limit_reached(total_function_calls, max_function_calls):
-        return
+        return False
     logger.info(
         "Maximum function calls reached (%d/%d). Stopping further function calls for this request.",
         total_function_calls,
         max_function_calls,
     )
     options["tool_choice"] = "none"
+    return True
+
+
+def _clear_budget_state_from_session(invocation_session: AgentSession | None) -> None:
+    """Remove the per-invocation budget state from session.state once a run fully completes.
+
+    The budget key is left in session.state across approval round-trips so that
+    cumulative elapsed time is measured correctly.  It must be removed on all
+    terminal exits that are *not* an approval pause (i.e. when no approval
+    requests are pending), so that a subsequent independent invocation starts
+    with a clean slate.
+    """
+    if invocation_session is None:
+        return
+    # Only remove the budget if there are no approval requests still pending.
+    tool_state = cast("dict[str, Any]", invocation_session.state.get(_TOOL_APPROVAL_STATE_KEY))
+    if isinstance(tool_state, dict):
+        pending = tool_state.get(_PENDING_APPROVAL_REQUESTS_KEY)
+        if pending:
+            return
+    invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
+
+
+def _apply_batch_limit_decision(
+    action: Literal["continue", "return", "stop"],
+    options: dict[str, Any],
+    budget_state: dict[str, Any],
+    total_function_calls: int,
+    max_function_calls: int | None,
+    max_duration_seconds: float | None = None,
+) -> None:
+    if action != "continue" and action != "stop":
+        return
+    if max_duration_seconds is not None:
+        elapsed = perf_counter() - budget_state["start_time"]
+        if elapsed >= max_duration_seconds:
+            logger.info(
+                "Maximum duration reached (%.2fs / %.2fs). Stopping further function calls for this request.",
+                elapsed,
+                max_duration_seconds,
+            )
+            options["tool_choice"] = "none"
+            budget_state["truncated"] = True
+
+    if action == "stop":
+        options["tool_choice"] = "none"
+        budget_state["truncated"] = True
+    else:
+        if _disable_tools_at_function_call_limit(options, total_function_calls, max_function_calls):
+            budget_state["truncated"] = True
 
 
 def _record_function_calls(
@@ -2918,7 +3188,7 @@ async def _resolve_approval_responses(
     execution_result_groups: list[list[Content]] = []
     should_terminate = False
     reached_error_limit = False
-    if responses_to_execute:
+    if responses_to_execute and not (options and options.get("tool_choice") == "none"):
         try:
             execution = await execute_function_calls(
                 function_calls=responses_to_execute,
@@ -3005,7 +3275,7 @@ async def _process_model_function_calls(
     processing_result = _handle_function_call_results(
         response=response,
         execution_results=execution.contents,
-        function_call_count=len(execution.result_groups),
+        function_call_count=execution.executed_call_count,
         function_call_messages=function_call_messages,
         errors_in_a_row=errors_in_a_row,
         had_errors=execution.had_errors,
@@ -3192,6 +3462,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         errors_in_a_row = 0
         total_function_calls = int(budget_state.get("total_function_calls", 0) or 0)
         max_function_calls = self.function_invocation_configuration.get("max_function_calls")
+        max_duration_seconds = self.function_invocation_configuration.get("max_duration_seconds")
         prepared_messages = _copy_messages_for_function_invocation(messages)
         function_call_messages: list[Message] = []
         response: ChatResponse[Any] | None = None
@@ -3209,6 +3480,16 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 tokenizer=tokenizer,
                 invocation_session=invocation_session,
             )
+
+        # Apply limit decisions early to prevent execution during replay if limits are already breached.
+        _apply_batch_limit_decision(
+            "continue",
+            options,
+            budget_state,
+            total_function_calls,
+            max_function_calls,
+            max_duration_seconds,
+        )
 
         # Phase 1: resolve inbound approvals before consuming another model iteration.
         approval_processing = await _resolve_approval_responses(
@@ -3230,11 +3511,18 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         if approval_processing.action == "return":
             response = ChatResponse(messages=list(function_call_messages))
             response.usage_details = aggregated_usage
+            _clear_budget_state_from_session(invocation_session)
             return _clear_internal_conversation_id(response)
-        if approval_processing.action == "stop":
-            options["tool_choice"] = "none"
-        else:
-            _disable_tools_at_function_call_limit(options, total_function_calls, max_function_calls)
+
+        if options.get("tool_choice") != "none":
+            _apply_batch_limit_decision(
+                approval_processing.action,
+                options,
+                budget_state,
+                total_function_calls,
+                max_function_calls,
+                max_duration_seconds,
+            )
 
         # Phase 2: alternate model turns and local execution until a terminal response or safety limit is reached.
         for attempt_idx in range(attempt_start, max_iterations):
@@ -3250,9 +3538,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     client_kwargs=request_kwargs,
                 ),
             )
-            if options.get("tool_choice") == "none" and _function_call_limit_reached(
-                total_function_calls, max_function_calls
-            ):
+            if options.get("tool_choice") == "none" and budget_state.get("truncated"):
                 _ensure_function_invocation_limit_fallback_response(response)
             aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
             self._update_function_invocation_continuation_state(
@@ -3295,11 +3581,16 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             )
             if function_processing.action == "return":
                 response.usage_details = aggregated_usage
+                _clear_budget_state_from_session(invocation_session)
                 return _clear_internal_conversation_id(response)
-            if function_processing.action == "stop":
-                options["tool_choice"] = "none"
-            else:
-                _disable_tools_at_function_call_limit(options, total_function_calls, max_function_calls)
+            _apply_batch_limit_decision(
+                function_processing.action,
+                options,
+                budget_state,
+                total_function_calls,
+                max_function_calls,
+                max_duration_seconds,
+            )
             errors_in_a_row = function_processing.errors_in_a_row
             _reset_required_tool_choice(options)
             _prepare_messages_for_next_iteration(prepared_messages, response)
@@ -3332,6 +3623,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
         response.usage_details = aggregated_usage
         _prepend_function_call_messages(response, function_call_messages)
+        _clear_budget_state_from_session(invocation_session)
         return _clear_internal_conversation_id(response)
 
     async def _stream_response_with_function_invocation(
@@ -3354,6 +3646,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         errors_in_a_row = 0
         total_function_calls = int(budget_state.get("total_function_calls", 0) or 0)
         max_function_calls = self.function_invocation_configuration.get("max_function_calls")
+        max_duration_seconds = self.function_invocation_configuration.get("max_duration_seconds")
         prepared_messages = _copy_messages_for_function_invocation(messages)
         response: ChatResponse[Any] | None = None
         max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
@@ -3369,6 +3662,16 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 tokenizer=tokenizer,
                 invocation_session=invocation_session,
             )
+
+        # Apply limit decisions early to prevent execution during replay if limits are already breached.
+        _apply_batch_limit_decision(
+            "continue",
+            options,
+            budget_state,
+            total_function_calls,
+            max_function_calls,
+            max_duration_seconds,
+        )
 
         # Phase 1: resolve and emit inbound approval outcomes before opening another provider stream.
         approval_processing = await _resolve_approval_responses(
@@ -3390,10 +3693,16 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             yield update
         if approval_processing.action == "return":
             return
-        if approval_processing.action == "stop":
-            options["tool_choice"] = "none"
-        else:
-            _disable_tools_at_function_call_limit(options, total_function_calls, max_function_calls)
+
+        if options.get("tool_choice") != "none":
+            _apply_batch_limit_decision(
+                approval_processing.action,
+                options,
+                budget_state,
+                total_function_calls,
+                max_function_calls,
+                max_duration_seconds,
+            )
 
         # Phase 2: stream each model turn, finalize it, execute its calls, then advance the transcript.
         for attempt_idx in range(attempt_start, max_iterations):
@@ -3410,11 +3719,62 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 ),
             )
             await inner_stream
-            drop_unexecutable_calls = options.get("tool_choice") == "none" and _function_call_limit_reached(
-                total_function_calls,
-                max_function_calls,
-            )
+            drop_unexecutable_calls = options.get("tool_choice") == "none" and budget_state.get("truncated")
+            streamed_identities_by_call_id: dict[str, tuple[str, str]] = {}
+            streamed_names_by_call_id: dict[str, str] = {}
+            last_streamed_identity: tuple[str, str] | None = None
+            warned_empty_call_ids: set[str] = set()
             async for update in inner_stream:
+                for content in update.contents:
+                    if content.type != "function_call":
+                        continue
+                    if not _is_actionable_function_call(content):
+                        continue
+                    had_occurrence_id = content.id is not None
+                    provider_call_id = content.call_id
+                    identity = streamed_identities_by_call_id.get(provider_call_id) if provider_call_id else None
+                    if (
+                        identity is not None
+                        and provider_call_id is not None
+                        and content.id is None
+                        and content.name
+                        and (
+                            streamed_names_by_call_id.get(provider_call_id) != content.name
+                            or isinstance(content.arguments, Mapping)
+                        )
+                    ):
+                        identity = None
+                    if identity is None and not provider_call_id and not content.name:
+                        identity = last_streamed_identity
+
+                    if identity is None:
+                        occurrence_id = content.id or _generate_function_call_occurrence_id()
+                        effective_call_id = provider_call_id or ("" if had_occurrence_id else occurrence_id)
+                    else:
+                        occurrence_id, effective_call_id = identity
+                    if content.id is not None:
+                        occurrence_id = content.id
+                    if provider_call_id:
+                        effective_call_id = provider_call_id
+
+                    content.id = occurrence_id
+                    if not content.call_id and not had_occurrence_id:
+                        content.call_id = effective_call_id
+                        if identity is None and occurrence_id not in warned_empty_call_ids:
+                            warnings.warn(
+                                "An actionable function_call had an empty call_id. Agent Framework used its generated "
+                                "Content.id for local correlation. Providers should supply and preserve their service "
+                                "call_id; this fallback will be removed in a future release.",
+                                FutureWarning,
+                                stacklevel=3,
+                            )
+                            warned_empty_call_ids.add(occurrence_id)
+                    identity = (occurrence_id, effective_call_id)
+                    if effective_call_id:
+                        streamed_identities_by_call_id[effective_call_id] = identity
+                        if content.name:
+                            streamed_names_by_call_id[effective_call_id] = content.name
+                    last_streamed_identity = identity
                 if drop_unexecutable_calls:
                     update = _drop_unexecutable_tool_contents_from_update(update)
                     if update is None:
@@ -3422,11 +3782,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 yield update
 
             response = await inner_stream.get_final_response()
-            function_call_limit_reached = options.get("tool_choice") == "none" and _function_call_limit_reached(
-                total_function_calls, max_function_calls
-            )
             fallback_added = False
-            if function_call_limit_reached:
+            if options.get("tool_choice") == "none" and budget_state.get("truncated"):
                 fallback_added = _ensure_function_invocation_limit_fallback_response(response)
             self._update_function_invocation_continuation_state(
                 request_kwargs,
@@ -3442,6 +3799,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             ):
                 if fallback_added:
                     yield _function_invocation_limit_fallback_update()
+                _clear_budget_state_from_session(invocation_session)
                 return
 
             try:
@@ -3477,12 +3835,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             )
             for update in function_processing.streaming_updates:
                 yield update
-            if function_processing.action == "stop":
-                options["tool_choice"] = "none"
-            elif function_processing.action != "continue":
+            if function_processing.action != "continue" and function_processing.action != "stop":
+                # "return" action: model produced a terminal response.
                 return
-            else:
-                _disable_tools_at_function_call_limit(options, total_function_calls, max_function_calls)
+            _apply_batch_limit_decision(
+                function_processing.action,
+                options,
+                budget_state,
+                total_function_calls,
+                max_function_calls,
+                max_duration_seconds,
+            )
             _reset_required_tool_choice(options)
             _prepare_messages_for_next_iteration(prepared_messages, response)
 
@@ -3520,6 +3883,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
         if fallback_added:
             yield _function_invocation_limit_fallback_update()
+        _clear_budget_state_from_session(invocation_session)
 
     @overload
     def get_response(
@@ -3611,9 +3975,21 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         budget_state: dict[str, Any] = (
             cast(dict[str, Any], raw_budget_state) if isinstance(raw_budget_state, dict) else {}
         )
+        # Record the start time once for the full logical run (including approval round-trips).
+        # setdefault preserves the original timestamp across approval re-entries so that
+        # max_duration_seconds measures cumulative elapsed time, not just the current segment.
+        budget_state.setdefault("start_time", perf_counter())
+        raw_host_payload_budget = budget_state.get(_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY)
+        host_payload_budget = (
+            raw_host_payload_budget
+            if isinstance(raw_host_payload_budget, _FunctionResultPayloadBudget)
+            else _FunctionResultPayloadBudget()
+        )
+        budget_state[_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY] = host_payload_budget
         max_errors = self.function_invocation_configuration.get(
             "max_consecutive_errors_per_request", DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST
         )
+
         additional_function_arguments = (
             dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
         )
@@ -3631,6 +4007,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             config=self.function_invocation_configuration,
             invocation_session=invocation_session,
             middleware_pipeline=function_middleware_pipeline,
+            host_payload_budget=host_payload_budget,
         )
 
         # Give the loop private mutable options and one shared run-local tool list for progressive tool changes.
@@ -3673,6 +4050,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             )
 
         response_format = mutable_options.get("response_format")
+
         return ResponseStream(
             self._stream_response_with_function_invocation(
                 super_get_response=super_get_response,

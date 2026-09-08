@@ -29,7 +29,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// hosted form so the wire never carries both forms simultaneously, preserving Python parity.
 /// </para>
 /// <para>
-/// This policy is added at hosted-agent resolution time via the MEAI 10.5.1
+/// This policy is added at hosted-agent resolution time via the MEAI 10.9.0
 /// <see cref="OpenAIRequestPolicies"/> hook on the agent's underlying chat client. It is only
 /// registered when an agent is resolved by the Foundry hosting layer.
 /// </para>

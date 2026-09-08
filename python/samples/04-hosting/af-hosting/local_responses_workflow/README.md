@@ -9,7 +9,7 @@ This sample shows the helper-first hosting shape for a local workflow:
   `response_id -> checkpoint_id` cursor used to continue from a previous
   response.
 - Continuation is intentionally limited to `previous_response_id`; this sample
-  rejects `conversation_id` continuity with HTTP 400.
+  rejects `conversation` continuity with HTTP 400.
 
 The workflow writes a slogan with one Foundry-backed writer agent and a small
 deterministic formatter executor. That keeps the sample focused on native
@@ -60,8 +60,8 @@ uv run python call_server.py '{"topic": "electric SUV", "style": "playful", "aud
 
 The script sends a follow-up using the first response id as
 `previous_response_id`, so the workflow restores the prior checkpoint before
-running the next turn. It deliberately does not send `conversation_id`, because
-this sample rejects `conversation_id` continuation.
+running the next turn. It deliberately does not send `conversation`, because
+this sample rejects `conversation` continuation.
 
 > This sample uses local file storage under `storage/` for both workflow
 > checkpoints and checkpoint cursors. The checkpoint bucket names are hashed

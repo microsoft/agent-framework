@@ -159,7 +159,7 @@ internal static class AgentMcpSkillArchiveExtractor
                 throw new InvalidDataException($"Skill archive exceeds the maximum allowed file count ({maxFileCount}).");
             }
 
-            string? destination = ResolveDestination(fullTarget, entry.FullName);
+            string? destination = ResolveDestination(fullTarget, entry.FullName); // CodeQL [SM02729] ResolveDestination rejects paths outside fullTarget.
             if (destination is null)
             {
                 continue;

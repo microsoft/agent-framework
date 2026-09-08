@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 # pyright: reportPrivateUsage=false
 
+import asyncio
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -11,6 +12,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from agent_framework import Content, Message
 from agent_framework._sessions import AgentSession, SessionContext
+from agent_framework._settings import SecretString
 from agent_framework.exceptions import SettingNotFoundError
 from azure.core.credentials import AzureKeyCredential
 from azure.core.pipeline.transport import AioHttpTransport
@@ -204,6 +206,9 @@ class TestInitSemantic:
             provider = AzureAISearchContextProvider(source_id="env-test")
             assert provider.endpoint == "https://env.search.windows.net"
             assert provider.index_name == "env-index"
+            assert isinstance(provider.credential, AzureKeyCredential)
+            assert type(provider.credential.key) is str
+            assert provider.credential.key == "env-key"
 
     def test_top_k_and_semantic_config(self) -> None:
         provider = _make_provider(top_k=10, semantic_configuration_name="my-config")
@@ -233,6 +238,18 @@ class TestInitSemantic:
 
 class TestInitCredentialResolution:
     """Tests for credential resolution paths."""
+
+    @pytest.mark.parametrize("api_key", ["test-key", SecretString("test-key")], ids=["str", "secret"])
+    def test_api_key_unwrapped(self, api_key: str | SecretString, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AZURE_SEARCH_API_KEY", "env-key")
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="idx",
+            api_key=api_key,
+        )
+        assert isinstance(provider.credential, AzureKeyCredential)
+        assert type(provider.credential.key) is str
+        assert provider.credential.key == "test-key"
 
     def test_token_credential_used(self) -> None:
         mock_cred = AsyncMock()
@@ -1205,6 +1222,27 @@ class TestEnsureKnowledgeBase:
             await provider._ensure_knowledge_base()
             assert provider._knowledge_base_initialized is True
 
+    async def test_close_then_existing_kb_reuse_clears_source_params(self) -> None:
+        provider = _make_provider(mode="agentic", index_name=None, knowledge_base_name="old-kb")
+        provider._knowledge_source_params = [
+            _context_provider.KnowledgeSourceParams(
+                knowledge_source_name="old-source",
+                include_reference_source_data=True,
+                kind="searchIndex",
+            )
+        ]
+
+        provider._index_client = AsyncMock()
+        provider._retrieval_client = AsyncMock()
+        await provider.close()
+        provider.knowledge_base_name = "new-kb"
+
+        with patch("agent_framework_azure_ai_search._context_provider.KnowledgeBaseRetrievalClient") as mock_cls:
+            mock_cls.return_value = AsyncMock()
+            await provider._ensure_knowledge_base()
+
+        assert provider._knowledge_source_params == []
+
     async def test_missing_index_client_raises(self) -> None:
         provider = _make_provider()
         provider._knowledge_base_initialized = False
@@ -1251,10 +1289,11 @@ class TestEnsureKnowledgeBase:
         with pytest.raises(ValueError, match="index_name is required"):
             await provider._ensure_knowledge_base()
 
-    async def test_creates_knowledge_source_when_not_found(self) -> None:
+    @pytest.mark.parametrize("api_key", [None, "aoai-key", SecretString("aoai-key")], ids=["none", "str", "secret"])
+    async def test_creates_knowledge_source_when_not_found(self, api_key: str | SecretString | None) -> None:
         from azure.core.exceptions import ResourceNotFoundError
 
-        provider = _make_provider()
+        provider = _make_provider(azure_openai_api_key=api_key)
         provider._knowledge_base_initialized = False
         provider._use_existing_knowledge_base = False
         provider.knowledge_base_name = "test-kb"
@@ -1274,6 +1313,16 @@ class TestEnsureKnowledgeBase:
 
         mock_index_client.create_knowledge_source.assert_awaited_once()
         mock_index_client.create_or_update_knowledge_base.assert_awaited_once()
+        knowledge_base = mock_index_client.create_or_update_knowledge_base.call_args.args[0]
+        sdk_api_key = knowledge_base.models[0].azure_open_ai_parameters.api_key
+        if api_key is None:
+            assert sdk_api_key is None
+        else:
+            assert type(sdk_api_key) is str
+            assert sdk_api_key == "aoai-key"
+        if isinstance(api_key, SecretString):
+            assert provider.azure_openai_api_key is api_key
+            assert "aoai-key" not in repr(provider.azure_openai_api_key)
         assert provider._knowledge_base_initialized is True
 
     async def test_uses_existing_knowledge_source(self) -> None:
@@ -1547,7 +1596,13 @@ class TestAgenticSearch:
         provider._knowledge_base_initialized = True
         provider.knowledge_base_name = "kb"
         provider.retrieval_reasoning_effort = "minimal"
-        provider._knowledge_source_names = ["test-index-source"]
+        provider._knowledge_source_params = [
+            _context_provider.KnowledgeSourceParams(
+                knowledge_source_name="test-index-source",
+                include_reference_source_data=True,
+                kind="searchIndex",
+            )
+        ]
 
         mock_result = Mock()
         mock_result.response = []
@@ -1568,13 +1623,13 @@ class TestAgenticSearch:
         assert params[0].include_reference_source_data is True
 
     async def test_no_source_params_when_no_sources(self) -> None:
-        # When no knowledge source names are resolved, the request must not
+        # When no knowledge source parameters are resolved, the request must not
         # carry an empty/placeholder knowledge_source_params list.
         provider = _make_provider()
         provider._knowledge_base_initialized = True
         provider.knowledge_base_name = "kb"
         provider.retrieval_reasoning_effort = "minimal"
-        provider._knowledge_source_names = []
+        provider._knowledge_source_params = []
 
         mock_result = Mock()
         mock_result.response = []
@@ -1588,6 +1643,68 @@ class TestAgenticSearch:
 
         request = mock_retrieval.retrieve.call_args.kwargs["retrieval_request"]
         assert request.knowledge_source_params is None
+
+    async def test_existing_mixed_source_kb_preserves_source_kinds(self) -> None:
+        provider = _make_provider(mode="agentic", index_name=None, knowledge_base_name="kb")
+        provider.retrieval_reasoning_effort = "minimal"
+
+        provider._index_client = AsyncMock()
+        provider._index_client.get_knowledge_base.return_value = SimpleNamespace(
+            knowledge_sources=[
+                SimpleNamespace(name="web-source"),
+                SimpleNamespace(name="index-source"),
+                SimpleNamespace(name="unknown-source"),
+            ]
+        )
+        provider._index_client.get_knowledge_source.side_effect = [
+            SimpleNamespace(kind="web"),
+            SimpleNamespace(kind="searchIndex"),
+            SimpleNamespace(kind="futureKind"),
+        ]
+
+        mock_result = Mock(response=[], references=None)
+        provider._retrieval_client = AsyncMock()
+        provider._retrieval_client.retrieve.return_value = mock_result
+
+        await provider._agentic_search([Message(role="user", contents=["query"])])
+
+        request = provider._retrieval_client.retrieve.call_args.kwargs["retrieval_request"]
+        assert [(param.knowledge_source_name, param.kind) for param in request.knowledge_source_params] == [
+            ("web-source", "web"),
+            ("index-source", "searchIndex"),
+            ("unknown-source", "futureKind"),
+        ]
+
+    async def test_concurrent_existing_kb_initialization_publishes_complete_source_params(self) -> None:
+        provider = _make_provider(mode="agentic", index_name=None, knowledge_base_name="kb")
+        provider._retrieval_client = AsyncMock()
+
+        both_knowledge_base_reads_started = asyncio.Event()
+        knowledge_base_read_count = 0
+
+        async def get_knowledge_base(_: str) -> SimpleNamespace:
+            nonlocal knowledge_base_read_count
+            knowledge_base_read_count += 1
+            if knowledge_base_read_count == 2:
+                both_knowledge_base_reads_started.set()
+            await asyncio.wait_for(both_knowledge_base_reads_started.wait(), timeout=1)
+            return SimpleNamespace(
+                knowledge_sources=[SimpleNamespace(name="web-source"), SimpleNamespace(name="index-source")]
+            )
+
+        async def get_knowledge_source(name: str) -> SimpleNamespace:
+            return SimpleNamespace(kind="web" if name == "web-source" else "searchIndex")
+
+        provider._index_client = AsyncMock()
+        provider._index_client.get_knowledge_base.side_effect = get_knowledge_base
+        provider._index_client.get_knowledge_source.side_effect = get_knowledge_source
+
+        await asyncio.gather(provider._ensure_knowledge_base(), provider._ensure_knowledge_base())
+
+        assert [(param.knowledge_source_name, param.kind) for param in provider._knowledge_source_params] == [
+            ("web-source", "web"),
+            ("index-source", "searchIndex"),
+        ]
 
 
 # -- before_run: agentic mode --------------------------------------------------

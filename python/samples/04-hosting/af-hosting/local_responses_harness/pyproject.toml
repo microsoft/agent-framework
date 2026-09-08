@@ -9,7 +9,7 @@ dependencies = [
     "agent-framework-hosting-responses",
     "azure-identity",
     "aiohttp>=3.13.5",
-    "fastapi>=0.115.0,<0.138.1",
+    "fastapi>=0.115.0,<0.142.0",
     "hypercorn>=0.17",
 ]
 

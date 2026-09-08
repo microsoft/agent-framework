@@ -250,6 +250,7 @@ internal static class AgentResponseUpdateExtensions
                 Error = null,
                 Id = context.ResponseId,
                 Instructions = request.Instructions,
+                Logprobs = request.Logprobs,
                 MaxOutputTokens = request.MaxOutputTokens,
                 MaxToolCalls = request.MaxToolCalls,
                 Metadata = request.Metadata != null ? new Dictionary<string, string>(request.Metadata) : [],

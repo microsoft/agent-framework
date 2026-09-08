@@ -3,12 +3,14 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 public class StreamingAggregatorsTests
 {
+    private static readonly int[] s_expectedUnion = [1, 2, 3];
+    private static readonly int[] s_expectedAppendedUnion = [1, 2, 3, 4, 5];
+
     private static TResult? ApplyStreamingAggregator<TInput, TResult>(
         Func<TResult?, TInput, TResult?> aggregator,
         IEnumerable<TInput> inputs,
@@ -29,12 +31,11 @@ public class StreamingAggregatorsTests
         Func<int?, int?, int?> aggregator = StreamingAggregators.First<int?>();
 
         int? runningResult = ApplyStreamingAggregator(aggregator, inputs);
-        runningResult.Should().Be(1);
+        Assert.Equal(1, runningResult);
+        int runningValue = runningResult.GetValueOrDefault();
 
         // Ensure that subsequent inputs do not change the result
-        ApplyStreamingAggregator(aggregator, inputs.Skip(1), runningResult.Value)
-            .Should()
-            .Be(1, "subsequent inputs should not change the result of First aggregator");
+        Assert.Equal(1, ApplyStreamingAggregator(aggregator, inputs.Skip(1), runningValue));
     }
 
     [Fact]
@@ -44,12 +45,11 @@ public class StreamingAggregatorsTests
         Func<int?, int?, int?> aggregator = StreamingAggregators.First<int?, int?>(input => input / 2);
 
         int? runningResult = ApplyStreamingAggregator(aggregator, inputs);
-        runningResult.Should().Be(1);
+        Assert.Equal(1, runningResult);
+        int runningValue = runningResult.GetValueOrDefault();
 
         // Ensure that subsequent inputs do not change the result
-        ApplyStreamingAggregator(aggregator, inputs.Skip(1), runningResult.Value)
-            .Should()
-            .Be(1, "subsequent inputs should not change the result of First aggregator with conversion");
+        Assert.Equal(1, ApplyStreamingAggregator(aggregator, inputs.Skip(1), runningValue));
     }
 
     [Fact]
@@ -59,12 +59,10 @@ public class StreamingAggregatorsTests
         Func<int, int, int> aggregator = StreamingAggregators.Last<int>();
 
         int? runningResult = ApplyStreamingAggregator(aggregator, inputs);
-        runningResult.Should().Be(3);
+        Assert.Equal(3, runningResult);
 
         // Ensure that subsequent inputs do change the result
-        ApplyStreamingAggregator(aggregator, inputs.Take(2), runningResult.Value)
-            .Should()
-            .Be(2, "subsequent inputs should change the result of Last aggregator");
+        Assert.Equal(2, ApplyStreamingAggregator(aggregator, inputs.Take(2), runningResult.Value));
     }
 
     [Fact]
@@ -74,12 +72,10 @@ public class StreamingAggregatorsTests
         Func<int, int, int> aggregator = StreamingAggregators.Last<int, int>(input => input / 2);
 
         int? runningResult = ApplyStreamingAggregator(aggregator, inputs);
-        runningResult.Should().Be(3);
+        Assert.Equal(3, runningResult);
 
         // Ensure that subsequent inputs do change the result
-        ApplyStreamingAggregator(aggregator, inputs.Take(2), runningResult.Value)
-            .Should()
-            .Be(2, "subsequent inputs should change the result of Last aggregator");
+        Assert.Equal(2, ApplyStreamingAggregator(aggregator, inputs.Take(2), runningResult.Value));
     }
 
     [Fact]
@@ -89,14 +85,12 @@ public class StreamingAggregatorsTests
         Func<IEnumerable<int>?, int, IEnumerable<int>?> aggregator = StreamingAggregators.Union<int>();
 
         IEnumerable<int>? runningResult = ApplyStreamingAggregator(aggregator, inputs);
-        runningResult.Should().BeEquivalentTo([1, 2, 3], "Union should accumulate all inputs in order");
+        Assert.Equivalent(s_expectedUnion, runningResult);
 
         // Ensure that subsequent inputs concatenate to the existing results
         inputs = [4, 5];
 
-        ApplyStreamingAggregator(aggregator, inputs, runningResult)
-            .Should()
-            .BeEquivalentTo([1, 2, 3, 4, 5], "Union should accumulate all inputs in order including subsequent inputs");
+        Assert.Equivalent(s_expectedAppendedUnion, ApplyStreamingAggregator(aggregator, inputs, runningResult));
     }
 
     [Fact]
@@ -106,14 +100,10 @@ public class StreamingAggregatorsTests
         Func<IEnumerable<int>?, int, IEnumerable<int>?> aggregator = StreamingAggregators.Union<int, int>(input => input / 2);
 
         IEnumerable<int>? runningResult = ApplyStreamingAggregator(aggregator, inputs);
-        runningResult.Should().BeEquivalentTo([1, 2, 3],
-            "Union with conversion should accumulate all converted inputs in order");
+        Assert.Equivalent(s_expectedUnion, runningResult);
 
         // Ensure that subsequent inputs concatenate to the existing results
         inputs = [8, 10];
-        ApplyStreamingAggregator(aggregator, inputs, runningResult)
-            .Should()
-            .BeEquivalentTo([1, 2, 3, 4, 5],
-                "Union with conversion should accumulate all converted inputs in order including subsequent inputs");
+        Assert.Equivalent(s_expectedAppendedUnion, ApplyStreamingAggregator(aggregator, inputs, runningResult));
     }
 }

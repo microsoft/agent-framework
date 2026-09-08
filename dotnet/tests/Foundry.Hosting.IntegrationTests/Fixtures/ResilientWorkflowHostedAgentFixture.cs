@@ -18,6 +18,7 @@ public sealed class ResilientWorkflowHostedAgentFixture : HostedAgentFixture
     protected override void ConfigureEnvironment(IDictionary<string, string> environment)
     {
         environment["IT_LONG_RUNNING_DELAY_SECONDS"] = "20";
+        environment["IT_CRASH_DELAY_SECONDS"] = "5";
         environment["IT_COUNTDOWN_DELAY_MILLISECONDS"] = "250";
         environment["IT_COUNTDOWN_CRASH_DELAY_SECONDS"] = "5";
     }

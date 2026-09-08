@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -30,10 +29,8 @@ public class MagenticWorkflowBuilderTests
 
         Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
 
-        designations.Where(kvp => kvp.Value.Count == 0)
-            .Should().ContainSingle("the Magentic orchestrator is the sole terminal output by default");
-        designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))
-            .Should().HaveCount(2, "every team member is designated intermediate by default");
+        Assert.Single(designations, kvp => kvp.Value.Count == 0);
+        Assert.Equal(2, designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))?.Count());
     }
 
     [Fact]
@@ -52,12 +49,9 @@ public class MagenticWorkflowBuilderTests
 
         Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
 
-        designations.Should().HaveCount(2,
-            "only the user-specified designations land on the inner builder; the orchestrator default is suppressed");
-        designations.Values.Where(tags => tags.Count == 0)
-            .Should().ContainSingle("member1 is the only terminal designation");
-        designations.Values.Where(tags => tags.Contains(OutputTag.Intermediate))
-            .Should().ContainSingle("member2 is the only intermediate designation");
+        Assert.Equal(2, designations.Count);
+        Assert.Single(designations.Values, tags => tags.Count == 0);
+        Assert.Single(designations.Values, tags => tags.Contains(OutputTag.Intermediate));
     }
 
     [Fact]
@@ -72,8 +66,8 @@ public class MagenticWorkflowBuilderTests
             .RequirePlanSignoff(false)
             .WithIntermediateOutputFrom([stranger]);
 
-        Action build = () => builder.Build();
-        build.Should().Throw<InvalidOperationException>().WithMessage("*Stranger*");
+        void build() => builder.Build();
+        Assert.Contains("Stranger", Assert.Throws<InvalidOperationException>(build).Message);
     }
 
     [Fact]
@@ -87,7 +81,7 @@ public class MagenticWorkflowBuilderTests
         MagenticWorkflowBuilder chained = builder.WithResponseLanguage("English");
 
         // Assert
-        chained.Should().BeSameAs(builder);
+        Assert.Same(builder, chained);
     }
 
     [Fact]
@@ -101,7 +95,7 @@ public class MagenticWorkflowBuilderTests
         MagenticWorkflowBuilder chained = builder.WithPromptOverrides(new MagenticPromptOverrides { FinalAnswerPrompt = "custom {task}" });
 
         // Assert
-        chained.Should().BeSameAs(builder);
+        Assert.Same(builder, chained);
     }
 
     [Fact]
@@ -117,10 +111,10 @@ public class MagenticWorkflowBuilderTests
             .WithPromptOverrides(new MagenticPromptOverrides { ProgressLedgerPrompt = "Answer for {task} with no schema placeholder" });
 
         // Act
-        Action build = () => builder.Build();
+        void build() => builder.Build();
 
         // Assert
-        build.Should().Throw<InvalidOperationException>().WithMessage("*{schema}*");
+        Assert.Contains("{schema}", Assert.Throws<InvalidOperationException>(build).Message);
     }
 
     [Fact]
@@ -136,10 +130,10 @@ public class MagenticWorkflowBuilderTests
             .WithPromptOverrides(new MagenticPromptOverrides { ProgressLedgerPrompt = "Answer for {task}\n{schema}" });
 
         // Act
-        Action build = () => builder.Build();
+        void build() => builder.Build();
 
         // Assert
-        build.Should().NotThrow();
+        Assert.Null(Record.Exception(build));
     }
 }
 #pragma warning restore MAAIW001

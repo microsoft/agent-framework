@@ -5,9 +5,11 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+#pragma warning disable IDE0005 // Required by Windows builds for Roslyn APIs.
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+#pragma warning restore IDE0005
 
 namespace Microsoft.Agents.AI.FeatureRegistry.UnitTests;
 
@@ -431,5 +433,5 @@ public sealed class FeatureRegistryTests
 
     private sealed record RegistryEntry(int Index, string Id);
 
-    private sealed record FeatureDeclaration(string Owner, string MemberName, int Index, string FilePath);
+    private readonly record struct FeatureDeclaration(string Owner, string MemberName, int Index, string FilePath);
 }

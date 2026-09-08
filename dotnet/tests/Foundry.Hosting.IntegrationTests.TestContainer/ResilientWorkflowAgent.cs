@@ -92,6 +92,9 @@ internal static class ResilientWorkflowAgent
             {
                 if (TryCreateCrashMarker(token, out string crashedProcessIncarnation))
                 {
+                    await Task.Delay(
+                        TimeSpan.FromSeconds(GetCrashDelaySeconds()),
+                        cancellationToken).ConfigureAwait(false);
                     Console.Out.Flush();
                     Console.Error.Flush();
                     Environment.Exit(70);
@@ -114,6 +117,21 @@ internal static class ResilientWorkflowAgent
             const int DefaultDelaySeconds = 20;
             string? value = Environment.GetEnvironmentVariable("IT_LONG_RUNNING_DELAY_SECONDS");
             return int.TryParse(value, out int seconds) && seconds > 0 ? seconds : DefaultDelaySeconds;
+        }
+
+        private static int GetCrashDelaySeconds()
+        {
+            const int DefaultDelaySeconds = 5;
+            string? value = Environment.GetEnvironmentVariable(
+                "IT_CRASH_DELAY_SECONDS");
+            return int.TryParse(
+                value,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out int seconds)
+                && seconds >= 0
+                    ? seconds
+                    : DefaultDelaySeconds;
         }
     }
 

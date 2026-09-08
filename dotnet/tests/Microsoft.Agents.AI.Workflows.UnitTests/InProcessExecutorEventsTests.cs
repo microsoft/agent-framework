@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.InProc;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -104,14 +103,14 @@ public class InProcessExecutorEventsTests
         await streamingRun.RunToCompletionAsync(ThrowOnError);
 
         // Assert
-        fixture.StartingExecutor.DeliveryStartingCalls.Should().Be(1);
-        fixture.StartingExecutor.DeliveryFinishedCalls.Should().Be(1);
+        Assert.Equal(1, fixture.StartingExecutor.DeliveryStartingCalls);
+        Assert.Equal(1, fixture.StartingExecutor.DeliveryFinishedCalls);
 
-        fixture.ReceivesMessage.DeliveryStartingCalls.Should().Be(1);
-        fixture.ReceivesMessage.DeliveryFinishedCalls.Should().Be(1);
+        Assert.Equal(1, fixture.ReceivesMessage.DeliveryStartingCalls);
+        Assert.Equal(1, fixture.ReceivesMessage.DeliveryFinishedCalls);
 
-        fixture.UninvokedExecutor.DeliveryStartingCalls.Should().Be(0);
-        fixture.UninvokedExecutor.DeliveryFinishedCalls.Should().Be(0);
+        Assert.Equal(0, fixture.UninvokedExecutor.DeliveryStartingCalls);
+        Assert.Equal(0, fixture.UninvokedExecutor.DeliveryFinishedCalls);
 
         ExternalResponse? ThrowOnError(WorkflowEvent workflowEvent)
         {
@@ -152,23 +151,23 @@ public class InProcessExecutorEventsTests
         await using Run run = await executionEnvironment.RunAsync<string[]>(fixture.Workflow, ["Message"], sessionId);
 
         // Assert
-        run.OutgoingEvents.OfType<WorkflowErrorEvent>().Should().BeEmpty();
-        run.OutgoingEvents.OfType<ExecutorFailedEvent>().Should().BeEmpty();
+        Assert.Empty(run.OutgoingEvents.OfType<WorkflowErrorEvent>() ?? []);
+        Assert.Empty(run.OutgoingEvents.OfType<ExecutorFailedEvent>() ?? []);
 
         const int ExpectedSteps = TestFixture.StepsPerInputBatch;
-        run.OutgoingEvents.OfType<SuperStepCompletedEvent>().Should().HaveCount(ExpectedSteps);
+        Assert.Equal(ExpectedSteps, run.OutgoingEvents.OfType<SuperStepCompletedEvent>()?.Count());
 
         int expectedCheckpoints = useCheckpointing ? ExpectedSteps : 0;
-        run.Checkpoints.Should().HaveCount(expectedCheckpoints);
+        Assert.Equal(expectedCheckpoints, run.Checkpoints.Count);
 
-        fixture.StartingExecutor.CheckpointingCalls.Should().Be(expectedCheckpoints);
-        fixture.StartingExecutor.CheckpointRestoredCalls.Should().Be(0);
+        Assert.Equal(expectedCheckpoints, fixture.StartingExecutor.CheckpointingCalls);
+        Assert.Equal(0, fixture.StartingExecutor.CheckpointRestoredCalls);
 
-        fixture.ReceivesMessage.CheckpointingCalls.Should().Be(expectedCheckpoints);
-        fixture.ReceivesMessage.CheckpointRestoredCalls.Should().Be(0);
+        Assert.Equal(expectedCheckpoints, fixture.ReceivesMessage.CheckpointingCalls);
+        Assert.Equal(0, fixture.ReceivesMessage.CheckpointRestoredCalls);
 
-        fixture.UninvokedExecutor.CheckpointingCalls.Should().Be(0); // Uninvoked executors don't get "instantiated" in the workflow context
-        fixture.UninvokedExecutor.CheckpointRestoredCalls.Should().Be(0);
+        Assert.Equal(0, fixture.UninvokedExecutor.CheckpointingCalls); // Uninvoked executors don't get "instantiated" in the workflow context
+        Assert.Equal(0, fixture.UninvokedExecutor.CheckpointRestoredCalls);
     }
 
     [Theory]
@@ -186,8 +185,8 @@ public class InProcessExecutorEventsTests
         Run run = await executionEnvironment.RunAsync<string[]>(runFixture.Workflow, ["Message"], sessionId);
 
         // Assert
-        run.OutgoingEvents.OfType<WorkflowErrorEvent>().Should().BeEmpty();
-        run.OutgoingEvents.OfType<ExecutorFailedEvent>().Should().BeEmpty();
+        Assert.Empty(run.OutgoingEvents.OfType<WorkflowErrorEvent>() ?? []);
+        Assert.Empty(run.OutgoingEvents.OfType<ExecutorFailedEvent>() ?? []);
 
         TestFixture validateFixture = runFixture;
 
@@ -199,7 +198,7 @@ public class InProcessExecutorEventsTests
             expectedCheckpoints--; // We are restoring from the first one, so skip one
 
             validateFixture = new();
-            run.Checkpoints.Should().HaveCount(TestFixture.StepsPerInputBatch);
+            Assert.Equal(TestFixture.StepsPerInputBatch, run.Checkpoints.Count);
 
             CheckpointInfo firstCheckpoint = run.Checkpoints[0];
 
@@ -211,20 +210,20 @@ public class InProcessExecutorEventsTests
         if (restoreCheckpoint)
         {
             // Make sure the second run did not have failures
-            run.OutgoingEvents.OfType<WorkflowErrorEvent>().Should().BeEmpty();
-            run.OutgoingEvents.OfType<ExecutorFailedEvent>().Should().BeEmpty();
+            Assert.Empty(run.OutgoingEvents.OfType<WorkflowErrorEvent>() ?? []);
+            Assert.Empty(run.OutgoingEvents.OfType<ExecutorFailedEvent>() ?? []);
         }
 
         int expectedRestoreCalls = restoreCheckpoint ? 1 : 0;
 
-        validateFixture.StartingExecutor.CheckpointingCalls.Should().Be(expectedCheckpoints);
-        validateFixture.StartingExecutor.CheckpointRestoredCalls.Should().Be(expectedRestoreCalls);
+        Assert.Equal(expectedCheckpoints, validateFixture.StartingExecutor.CheckpointingCalls);
+        Assert.Equal(expectedRestoreCalls, validateFixture.StartingExecutor.CheckpointRestoredCalls);
 
-        validateFixture.ReceivesMessage.CheckpointingCalls.Should().Be(expectedCheckpoints);
-        validateFixture.ReceivesMessage.CheckpointRestoredCalls.Should().Be(expectedRestoreCalls);
+        Assert.Equal(expectedCheckpoints, validateFixture.ReceivesMessage.CheckpointingCalls);
+        Assert.Equal(expectedRestoreCalls, validateFixture.ReceivesMessage.CheckpointRestoredCalls);
 
-        validateFixture.UninvokedExecutor.CheckpointingCalls.Should().Be(0); // Uninvoked executors don't get "instantiated" in the workflow context
-        validateFixture.UninvokedExecutor.CheckpointRestoredCalls.Should().Be(0);
+        Assert.Equal(0, validateFixture.UninvokedExecutor.CheckpointingCalls); // Uninvoked executors don't get "instantiated" in the workflow context
+        Assert.Equal(0, validateFixture.UninvokedExecutor.CheckpointRestoredCalls);
 
         // Cleanup
         await run.DisposeAsync();

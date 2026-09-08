@@ -44,7 +44,8 @@ class AGUIThreadSnapshot:
         messages: Replayable AG-UI message snapshots.
         state: Optional AG-UI Shared State snapshot.
         interrupt: Optional interruption state from ``RUN_FINISHED.outcome.interrupts``.
-        session_state: Optional private serialized ``AgentSession.state`` payload.
+        session_state: Optional private serialized ``AgentSession.state`` payload,
+            including provider continuation metadata when service-session mode is active.
     """
 
     messages: list[dict[str, Any]] = field(default_factory=list)

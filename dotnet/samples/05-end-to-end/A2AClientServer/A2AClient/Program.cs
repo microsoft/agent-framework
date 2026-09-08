@@ -1,77 +1,41 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.CommandLine;
-using System.Reflection;
+// This sample shows how to discover and invoke an agent hosted by an A2A server.
+
+using A2A;
 using Microsoft.Agents.AI;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
 
-namespace A2A;
+// Initialize an A2ACardResolver to discover the policy agent.
+var agentUrl = Environment.GetEnvironmentVariable("A2A_AGENT_URL") ?? "http://localhost:5000/";
+var agentCardResolver = new A2ACardResolver(new Uri(agentUrl));
 
-public static class Program
+// Create an AIAgent from the A2A agent card.
+AIAgent policyAgent = await agentCardResolver.GetAIAgentAsync();
+
+// Create a session so requests share the same A2A protocol context.
+AgentSession session = await policyAgent.CreateSessionAsync();
+
+while (true)
 {
-    public static async Task<int> Main(string[] args)
-    {
-        // Create root command with options
-        var rootCommand = new RootCommand("A2AClient");
-        rootCommand.SetAction((_, ct) => HandleCommandsAsync(ct));
+    // Read the next request from the console.
+    Console.Write("\nUser (:q or quit to exit): ");
+    string? message = Console.ReadLine();
 
-        // Run the command
-        return await rootCommand.Parse(args).InvokeAsync();
+    if (string.IsNullOrWhiteSpace(message))
+    {
+        Console.WriteLine("Request cannot be empty.");
+        continue;
     }
 
-    private static async Task HandleCommandsAsync(CancellationToken cancellationToken)
+    if (message is ":q" or "quit")
     {
-        // Set up the logging
-        using var loggerFactory = LoggerFactory.Create(builder =>
-        {
-            builder.AddConsole();
-            builder.SetMinimumLevel(LogLevel.Information);
-        });
-        var logger = loggerFactory.CreateLogger("A2AClient");
-
-        // Retrieve configuration settings
-        IConfigurationRoot configRoot = new ConfigurationBuilder()
-            .AddEnvironmentVariables()
-            .AddUserSecrets(Assembly.GetExecutingAssembly())
-            .Build();
-        var apiKey = configRoot["A2AClient:ApiKey"] ?? throw new ArgumentException("A2AClient:ApiKey must be provided");
-        var modelId = configRoot["A2AClient:ModelId"] ?? "gpt-5.4-mini";
-        var agentUrls = configRoot["A2AClient:AgentUrls"] ?? "http://localhost:5000/;http://localhost:5001/;http://localhost:5002/";
-
-        // Create the Host agent
-        var hostAgent = new HostClientAgent(loggerFactory);
-        await hostAgent.InitializeAgentAsync(modelId, apiKey, agentUrls!.Split(";"));
-        AgentSession session = await hostAgent.Agent!.CreateSessionAsync(cancellationToken);
-        try
-        {
-            while (true)
-            {
-                // Get user message
-                Console.Write("\nUser (:q or quit to exit): ");
-                string? message = Console.ReadLine();
-                if (string.IsNullOrWhiteSpace(message))
-                {
-                    Console.WriteLine("Request cannot be empty.");
-                    continue;
-                }
-
-                if (message is ":q" or "quit")
-                {
-                    break;
-                }
-
-                var agentResponse = await hostAgent.Agent!.RunAsync(message, session, cancellationToken: cancellationToken);
-
-                Console.ForegroundColor = ConsoleColor.Cyan;
-                Console.WriteLine($"\nAgent: {agentResponse.Text}");
-                Console.ResetColor();
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "An error occurred while running the A2AClient");
-            return;
-        }
+        break;
     }
+
+    // Invoke the remote policy agent over A2A and display its response.
+    AgentResponse response = await policyAgent.RunAsync(message, session);
+
+    Console.ForegroundColor = ConsoleColor.Cyan;
+    Console.WriteLine($"\nPolicy agent: {response.Text}");
+    Console.ResetColor();
 }

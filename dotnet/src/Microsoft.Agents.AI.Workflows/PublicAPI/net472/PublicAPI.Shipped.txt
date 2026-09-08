@@ -1,0 +1,998 @@
+﻿#nullable enable
+Microsoft.Agents.AI.Workflows.AIAgentBinding
+Microsoft.Agents.AI.Workflows.AIAgentBinding.AIAgentBinding(Microsoft.Agents.AI.AIAgent! Agent, Microsoft.Agents.AI.Workflows.AIAgentHostOptions? Options = null) -> void
+Microsoft.Agents.AI.Workflows.AIAgentBinding.AIAgentBinding(Microsoft.Agents.AI.AIAgent! agent, bool emitEvents = false) -> void
+Microsoft.Agents.AI.Workflows.AIAgentBinding.AIAgentBinding(Microsoft.Agents.AI.Workflows.AIAgentBinding! original) -> void
+Microsoft.Agents.AI.Workflows.AIAgentBinding.Agent.get -> Microsoft.Agents.AI.AIAgent!
+Microsoft.Agents.AI.Workflows.AIAgentBinding.Agent.init -> void
+Microsoft.Agents.AI.Workflows.AIAgentBinding.Deconstruct(out Microsoft.Agents.AI.AIAgent! Agent, out Microsoft.Agents.AI.Workflows.AIAgentHostOptions? Options) -> void
+Microsoft.Agents.AI.Workflows.AIAgentBinding.Options.get -> Microsoft.Agents.AI.Workflows.AIAgentHostOptions?
+Microsoft.Agents.AI.Workflows.AIAgentBinding.Options.init -> void
+Microsoft.Agents.AI.Workflows.AIAgentHostOptions
+Microsoft.Agents.AI.Workflows.AIAgentHostOptions.AIAgentHostOptions() -> void
+Microsoft.Agents.AI.Workflows.AIAgentHostOptions.EmitAgentResponseEvents.get -> bool
+Microsoft.Agents.AI.Workflows.AIAgentHostOptions.EmitAgentResponseEvents.set -> void
+Microsoft.Agents.AI.Workflows.AIAgentHostOptions.EmitAgentUpdateEvents.get -> bool?
+Microsoft.Agents.AI.Workflows.AIAgentHostOptions.EmitAgentUpdateEvents.set -> void
+Microsoft.Agents.AI.Workflows.AIAgentHostOptions.ForwardIncomingMessages.get -> bool
+Microsoft.Agents.AI.Workflows.AIAgentHostOptions.ForwardIncomingMessages.set -> void
+Microsoft.Agents.AI.Workflows.AIAgentHostOptions.InterceptUnterminatedFunctionCalls.get -> bool
+Microsoft.Agents.AI.Workflows.AIAgentHostOptions.InterceptUnterminatedFunctionCalls.set -> void
+Microsoft.Agents.AI.Workflows.AIAgentHostOptions.InterceptUserInputRequests.get -> bool
+Microsoft.Agents.AI.Workflows.AIAgentHostOptions.InterceptUserInputRequests.set -> void
+Microsoft.Agents.AI.Workflows.AIAgentHostOptions.ReassignOtherAgentsAsUsers.get -> bool
+Microsoft.Agents.AI.Workflows.AIAgentHostOptions.ReassignOtherAgentsAsUsers.set -> void
+Microsoft.Agents.AI.Workflows.AgentResponseEvent
+Microsoft.Agents.AI.Workflows.AgentResponseEvent.AgentResponseEvent(string! executorId, Microsoft.Agents.AI.AgentResponse! response) -> void
+Microsoft.Agents.AI.Workflows.AgentResponseEvent.AgentResponseEvent(string! executorId, Microsoft.Agents.AI.AgentResponse! response, Microsoft.Agents.AI.Workflows.OutputTag tag) -> void
+Microsoft.Agents.AI.Workflows.AgentResponseEvent.AgentResponseEvent(string! executorId, Microsoft.Agents.AI.AgentResponse! response, System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.OutputTag>? tags) -> void
+Microsoft.Agents.AI.Workflows.AgentResponseEvent.Response.get -> Microsoft.Agents.AI.AgentResponse!
+Microsoft.Agents.AI.Workflows.AgentResponseUpdateEvent
+Microsoft.Agents.AI.Workflows.AgentResponseUpdateEvent.AgentResponseUpdateEvent(string! executorId, Microsoft.Agents.AI.AgentResponseUpdate! update) -> void
+Microsoft.Agents.AI.Workflows.AgentResponseUpdateEvent.AgentResponseUpdateEvent(string! executorId, Microsoft.Agents.AI.AgentResponseUpdate! update, Microsoft.Agents.AI.Workflows.OutputTag tag) -> void
+Microsoft.Agents.AI.Workflows.AgentResponseUpdateEvent.AgentResponseUpdateEvent(string! executorId, Microsoft.Agents.AI.AgentResponseUpdate! update, System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.OutputTag>? tags) -> void
+Microsoft.Agents.AI.Workflows.AgentResponseUpdateEvent.AsResponse() -> Microsoft.Agents.AI.AgentResponse!
+Microsoft.Agents.AI.Workflows.AgentResponseUpdateEvent.Update.get -> Microsoft.Agents.AI.AgentResponseUpdate!
+Microsoft.Agents.AI.Workflows.AgentWorkflowBuilder
+Microsoft.Agents.AI.Workflows.AggregatingExecutor<TInput, TAggregate>
+Microsoft.Agents.AI.Workflows.AggregatingExecutor<TInput, TAggregate>.AggregatingExecutor(string! id, System.Func<TAggregate?, TInput, TAggregate?>! aggregator, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool declareCrossRunShareable = false) -> void
+Microsoft.Agents.AI.Workflows.ChatForwardingExecutor
+Microsoft.Agents.AI.Workflows.ChatForwardingExecutor.ChatForwardingExecutor(string! id, Microsoft.Agents.AI.Workflows.ChatForwardingExecutorOptions? options = null) -> void
+Microsoft.Agents.AI.Workflows.ChatForwardingExecutor.ResetAsync() -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.ChatForwardingExecutorOptions
+Microsoft.Agents.AI.Workflows.ChatForwardingExecutorOptions.ChatForwardingExecutorOptions() -> void
+Microsoft.Agents.AI.Workflows.ChatForwardingExecutorOptions.StringMessageChatRole.get -> Microsoft.Extensions.AI.ChatRole?
+Microsoft.Agents.AI.Workflows.ChatForwardingExecutorOptions.StringMessageChatRole.set -> void
+Microsoft.Agents.AI.Workflows.ChatProtocolExecutor
+Microsoft.Agents.AI.Workflows.ChatProtocolExecutor.AddMessageAsync(Microsoft.Extensions.AI.ChatMessage! message, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.ChatProtocolExecutor.AddMessagesAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.ChatProtocolExecutor.AutoSendTurnToken.get -> bool
+Microsoft.Agents.AI.Workflows.ChatProtocolExecutor.ChatProtocolExecutor(string! id, Microsoft.Agents.AI.Workflows.ChatProtocolExecutorOptions? options = null, bool declareCrossRunShareable = false) -> void
+Microsoft.Agents.AI.Workflows.ChatProtocolExecutor.ProcessTurnMessagesAsync(System.Func<System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>!, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>?>>! processFunc, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.ChatProtocolExecutor.StringMessageChatRole.get -> Microsoft.Extensions.AI.ChatRole?
+Microsoft.Agents.AI.Workflows.ChatProtocolExecutor.SupportsStringMessage.get -> bool
+Microsoft.Agents.AI.Workflows.ChatProtocolExecutor.TakeTurnAsync(Microsoft.Agents.AI.Workflows.TurnToken! token, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.ChatProtocolExecutorOptions
+Microsoft.Agents.AI.Workflows.ChatProtocolExecutorOptions.AutoSendTurnToken.get -> bool
+Microsoft.Agents.AI.Workflows.ChatProtocolExecutorOptions.AutoSendTurnToken.set -> void
+Microsoft.Agents.AI.Workflows.ChatProtocolExecutorOptions.ChatProtocolExecutorOptions() -> void
+Microsoft.Agents.AI.Workflows.ChatProtocolExecutorOptions.StringMessageChatRole.get -> Microsoft.Extensions.AI.ChatRole?
+Microsoft.Agents.AI.Workflows.ChatProtocolExecutorOptions.StringMessageChatRole.set -> void
+Microsoft.Agents.AI.Workflows.ChatProtocolExtensions
+Microsoft.Agents.AI.Workflows.CheckpointInfo
+Microsoft.Agents.AI.Workflows.CheckpointInfo.CheckpointId.get -> string!
+Microsoft.Agents.AI.Workflows.CheckpointInfo.CheckpointInfo(string! sessionId, string! checkpointId) -> void
+Microsoft.Agents.AI.Workflows.CheckpointInfo.Equals(Microsoft.Agents.AI.Workflows.CheckpointInfo? other) -> bool
+Microsoft.Agents.AI.Workflows.CheckpointInfo.SessionId.get -> string!
+Microsoft.Agents.AI.Workflows.CheckpointManager
+Microsoft.Agents.AI.Workflows.CheckpointManager.GetLatestCheckpointAsync(string! sessionId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.CheckpointInfo?>
+Microsoft.Agents.AI.Workflows.CheckpointableRunBase
+Microsoft.Agents.AI.Workflows.CheckpointableRunBase.Checkpoints.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.Workflows.CheckpointInfo!>!
+Microsoft.Agents.AI.Workflows.CheckpointableRunBase.IsCheckpointingEnabled.get -> bool
+Microsoft.Agents.AI.Workflows.CheckpointableRunBase.LastCheckpoint.get -> Microsoft.Agents.AI.Workflows.CheckpointInfo?
+Microsoft.Agents.AI.Workflows.CheckpointableRunBase.RestoreCheckpointAsync(Microsoft.Agents.AI.Workflows.CheckpointInfo! checkpointInfo, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.Checkpointing.DirectEdgeInfo
+Microsoft.Agents.AI.Workflows.Checkpointing.DirectEdgeInfo.HasCondition.get -> bool
+Microsoft.Agents.AI.Workflows.Checkpointing.EdgeInfo
+Microsoft.Agents.AI.Workflows.Checkpointing.EdgeInfo.Connection.get -> Microsoft.Agents.AI.Workflows.Execution.EdgeConnection!
+Microsoft.Agents.AI.Workflows.Checkpointing.EdgeInfo.Kind.get -> Microsoft.Agents.AI.Workflows.EdgeKind
+Microsoft.Agents.AI.Workflows.Checkpointing.FanInEdgeInfo
+Microsoft.Agents.AI.Workflows.Checkpointing.FanOutEdgeInfo
+Microsoft.Agents.AI.Workflows.Checkpointing.FanOutEdgeInfo.HasAssigner.get -> bool
+Microsoft.Agents.AI.Workflows.Checkpointing.FileSystemJsonCheckpointStore
+Microsoft.Agents.AI.Workflows.Checkpointing.FileSystemJsonCheckpointStore.Dispose() -> void
+Microsoft.Agents.AI.Workflows.Checkpointing.FileSystemJsonCheckpointStore.FileSystemJsonCheckpointStore(System.IO.DirectoryInfo! directory) -> void
+Microsoft.Agents.AI.Workflows.Checkpointing.ICheckpointStore<TStoreObject>
+Microsoft.Agents.AI.Workflows.Checkpointing.ICheckpointStore<TStoreObject>.CreateCheckpointAsync(string! sessionId, TStoreObject value, Microsoft.Agents.AI.Workflows.CheckpointInfo? parent = null) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.CheckpointInfo!>
+Microsoft.Agents.AI.Workflows.Checkpointing.ICheckpointStore<TStoreObject>.RetrieveCheckpointAsync(string! sessionId, Microsoft.Agents.AI.Workflows.CheckpointInfo! key) -> System.Threading.Tasks.ValueTask<TStoreObject>
+Microsoft.Agents.AI.Workflows.Checkpointing.ICheckpointStore<TStoreObject>.RetrieveIndexAsync(string! sessionId, Microsoft.Agents.AI.Workflows.CheckpointInfo? withParent = null) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.CheckpointInfo!>!>
+Microsoft.Agents.AI.Workflows.Checkpointing.IWireMarshaller<TWireContainer>
+Microsoft.Agents.AI.Workflows.Checkpointing.IWireMarshaller<TWireContainer>.Marshal(System.Type! targetType, TWireContainer data) -> object!
+Microsoft.Agents.AI.Workflows.Checkpointing.IWireMarshaller<TWireContainer>.Marshal(object! value, System.Type! type) -> TWireContainer
+Microsoft.Agents.AI.Workflows.Checkpointing.IWireMarshaller<TWireContainer>.Marshal<TValue>(TValue value) -> TWireContainer
+Microsoft.Agents.AI.Workflows.Checkpointing.IWireMarshaller<TWireContainer>.Marshal<TValue>(TWireContainer data) -> TValue
+Microsoft.Agents.AI.Workflows.Checkpointing.JsonCheckpointStore
+Microsoft.Agents.AI.Workflows.Checkpointing.JsonCheckpointStore.JsonCheckpointStore() -> void
+Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo
+Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.Deconstruct(out Microsoft.Agents.AI.Workflows.Checkpointing.TypeId! RequestType, out Microsoft.Agents.AI.Workflows.Checkpointing.TypeId! ResponseType, out string! PortId) -> void
+Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.PortId.get -> string!
+Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.PortId.init -> void
+Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.RequestPortInfo(Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo! original) -> void
+Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.RequestPortInfo(Microsoft.Agents.AI.Workflows.Checkpointing.TypeId! RequestType, Microsoft.Agents.AI.Workflows.Checkpointing.TypeId! ResponseType, string! PortId) -> void
+Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.RequestType.get -> Microsoft.Agents.AI.Workflows.Checkpointing.TypeId!
+Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.RequestType.init -> void
+Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.ResponseType.get -> Microsoft.Agents.AI.Workflows.Checkpointing.TypeId!
+Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.ResponseType.init -> void
+Microsoft.Agents.AI.Workflows.Checkpointing.TypeId
+Microsoft.Agents.AI.Workflows.Checkpointing.TypeId.AssemblyName.get -> string!
+Microsoft.Agents.AI.Workflows.Checkpointing.TypeId.Equals(Microsoft.Agents.AI.Workflows.Checkpointing.TypeId? other) -> bool
+Microsoft.Agents.AI.Workflows.Checkpointing.TypeId.IsMatch(System.Type! type) -> bool
+Microsoft.Agents.AI.Workflows.Checkpointing.TypeId.IsMatch<T>() -> bool
+Microsoft.Agents.AI.Workflows.Checkpointing.TypeId.IsMatchPolymorphic(System.Type! type) -> bool
+Microsoft.Agents.AI.Workflows.Checkpointing.TypeId.TypeId(System.Type! type) -> void
+Microsoft.Agents.AI.Workflows.Checkpointing.TypeId.TypeId(string! assemblyName, string! typeName) -> void
+Microsoft.Agents.AI.Workflows.Checkpointing.TypeId.TypeName.get -> string!
+Microsoft.Agents.AI.Workflows.ConcurrentWorkflowBuilder
+Microsoft.Agents.AI.Workflows.ConcurrentWorkflowBuilder.Build() -> Microsoft.Agents.AI.Workflows.Workflow!
+Microsoft.Agents.AI.Workflows.ConcurrentWorkflowBuilder.ConcurrentWorkflowBuilder(params System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! agents) -> void
+Microsoft.Agents.AI.Workflows.ConcurrentWorkflowBuilder.WithAggregator(System.Func<System.Collections.Generic.IList<System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>!>!, System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>!>! aggregator) -> Microsoft.Agents.AI.Workflows.ConcurrentWorkflowBuilder!
+Microsoft.Agents.AI.Workflows.DirectEdgeData
+Microsoft.Agents.AI.Workflows.DirectEdgeData.Condition.get -> System.Func<object?, bool>?
+Microsoft.Agents.AI.Workflows.DirectEdgeData.SinkId.get -> string!
+Microsoft.Agents.AI.Workflows.DirectEdgeData.SourceId.get -> string!
+Microsoft.Agents.AI.Workflows.Edge
+Microsoft.Agents.AI.Workflows.Edge.Data.get -> Microsoft.Agents.AI.Workflows.EdgeData!
+Microsoft.Agents.AI.Workflows.Edge.Data.init -> void
+Microsoft.Agents.AI.Workflows.Edge.Kind.get -> Microsoft.Agents.AI.Workflows.EdgeKind
+Microsoft.Agents.AI.Workflows.Edge.Kind.init -> void
+Microsoft.Agents.AI.Workflows.EdgeData
+Microsoft.Agents.AI.Workflows.EdgeData.Label.get -> string?
+Microsoft.Agents.AI.Workflows.EdgeId
+Microsoft.Agents.AI.Workflows.EdgeId.EdgeId() -> void
+Microsoft.Agents.AI.Workflows.EdgeId.Equals(Microsoft.Agents.AI.Workflows.EdgeId other) -> bool
+Microsoft.Agents.AI.Workflows.EdgeKind
+Microsoft.Agents.AI.Workflows.EdgeKind.Direct = 0 -> Microsoft.Agents.AI.Workflows.EdgeKind
+Microsoft.Agents.AI.Workflows.EdgeKind.FanIn = 2 -> Microsoft.Agents.AI.Workflows.EdgeKind
+Microsoft.Agents.AI.Workflows.EdgeKind.FanOut = 1 -> Microsoft.Agents.AI.Workflows.EdgeKind
+Microsoft.Agents.AI.Workflows.Execution.EdgeConnection
+Microsoft.Agents.AI.Workflows.Execution.EdgeConnection.EdgeConnection(System.Collections.Generic.List<string!>! sourceIds, System.Collections.Generic.List<string!>! sinkIds) -> void
+Microsoft.Agents.AI.Workflows.Execution.EdgeConnection.Equals(Microsoft.Agents.AI.Workflows.Execution.EdgeConnection? other) -> bool
+Microsoft.Agents.AI.Workflows.Execution.EdgeConnection.SinkIds.get -> System.Collections.Generic.List<string!>!
+Microsoft.Agents.AI.Workflows.Execution.EdgeConnection.SourceIds.get -> System.Collections.Generic.List<string!>!
+Microsoft.Agents.AI.Workflows.Executor
+Microsoft.Agents.AI.Workflows.Executor.CanHandle(System.Type! messageType) -> bool
+Microsoft.Agents.AI.Workflows.Executor.DescribeProtocol() -> Microsoft.Agents.AI.Workflows.ProtocolDescriptor!
+Microsoft.Agents.AI.Workflows.Executor.ExecuteCoreAsync(object! message, Microsoft.Agents.AI.Workflows.Checkpointing.TypeId! messageType, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<object?>
+Microsoft.Agents.AI.Workflows.Executor.Executor(string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool declareCrossRunShareable = false) -> void
+Microsoft.Agents.AI.Workflows.Executor.Id.get -> string!
+Microsoft.Agents.AI.Workflows.Executor.InputTypes.get -> System.Collections.Generic.ISet<System.Type!>!
+Microsoft.Agents.AI.Workflows.Executor.Options.get -> Microsoft.Agents.AI.Workflows.ExecutorOptions!
+Microsoft.Agents.AI.Workflows.Executor.OutputTypes.get -> System.Collections.Generic.ISet<System.Type!>!
+Microsoft.Agents.AI.Workflows.Executor<TInput, TOutput>
+Microsoft.Agents.AI.Workflows.Executor<TInput, TOutput>.Executor(string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool declareCrossRunShareable = false) -> void
+Microsoft.Agents.AI.Workflows.Executor<TInput>
+Microsoft.Agents.AI.Workflows.Executor<TInput>.Executor(string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool declareCrossRunShareable = false) -> void
+Microsoft.Agents.AI.Workflows.ExecutorBinding
+Microsoft.Agents.AI.Workflows.ExecutorBinding.Deconstruct(out string! Id, out System.Func<string!, System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Executor!>>? FactoryAsync, out System.Type! ExecutorType, out object? RawValue) -> void
+Microsoft.Agents.AI.Workflows.ExecutorBinding.Equals(Microsoft.Agents.AI.Workflows.IIdentified? other) -> bool
+Microsoft.Agents.AI.Workflows.ExecutorBinding.Equals(string? other) -> bool
+Microsoft.Agents.AI.Workflows.ExecutorBinding.ExecutorBinding(Microsoft.Agents.AI.Workflows.ExecutorBinding! original) -> void
+Microsoft.Agents.AI.Workflows.ExecutorBinding.ExecutorBinding(string! Id, System.Func<string!, System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Executor!>>? FactoryAsync, System.Type! ExecutorType, object? RawValue = null) -> void
+Microsoft.Agents.AI.Workflows.ExecutorBinding.ExecutorType.get -> System.Type!
+Microsoft.Agents.AI.Workflows.ExecutorBinding.ExecutorType.init -> void
+Microsoft.Agents.AI.Workflows.ExecutorBinding.FactoryAsync.get -> System.Func<string!, System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Executor!>>?
+Microsoft.Agents.AI.Workflows.ExecutorBinding.FactoryAsync.init -> void
+Microsoft.Agents.AI.Workflows.ExecutorBinding.Id.get -> string!
+Microsoft.Agents.AI.Workflows.ExecutorBinding.Id.init -> void
+Microsoft.Agents.AI.Workflows.ExecutorBinding.IsPlaceholder.get -> bool
+Microsoft.Agents.AI.Workflows.ExecutorBinding.RawValue.get -> object?
+Microsoft.Agents.AI.Workflows.ExecutorBinding.RawValue.init -> void
+Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions
+Microsoft.Agents.AI.Workflows.ExecutorCompletedEvent
+Microsoft.Agents.AI.Workflows.ExecutorCompletedEvent.ExecutorCompletedEvent(string! executorId, object? result) -> void
+Microsoft.Agents.AI.Workflows.ExecutorConfig
+Microsoft.Agents.AI.Workflows.ExecutorConfig.ExecutorConfig(string! id) -> void
+Microsoft.Agents.AI.Workflows.ExecutorConfig.Id.get -> string!
+Microsoft.Agents.AI.Workflows.ExecutorConfig<TOptions>
+Microsoft.Agents.AI.Workflows.ExecutorConfig<TOptions>.ExecutorConfig(string! id, TOptions? options = default(TOptions?)) -> void
+Microsoft.Agents.AI.Workflows.ExecutorConfig<TOptions>.Options.get -> TOptions?
+Microsoft.Agents.AI.Workflows.ExecutorEvent
+Microsoft.Agents.AI.Workflows.ExecutorEvent.ExecutorEvent(string! executorId, object? data) -> void
+Microsoft.Agents.AI.Workflows.ExecutorEvent.ExecutorId.get -> string!
+Microsoft.Agents.AI.Workflows.ExecutorFailedEvent
+Microsoft.Agents.AI.Workflows.ExecutorFailedEvent.Data.get -> System.Exception?
+Microsoft.Agents.AI.Workflows.ExecutorFailedEvent.ExecutorFailedEvent(string! executorId, System.Exception? err) -> void
+Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding
+Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.Deconstruct(out Microsoft.Agents.AI.Workflows.Executor! ExecutorInstance) -> void
+Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.ExecutorInstance.get -> Microsoft.Agents.AI.Workflows.Executor!
+Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.ExecutorInstance.init -> void
+Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.ExecutorInstanceBinding(Microsoft.Agents.AI.Workflows.Executor! ExecutorInstance) -> void
+Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.ExecutorInstanceBinding(Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding! original) -> void
+Microsoft.Agents.AI.Workflows.ExecutorInvokedEvent
+Microsoft.Agents.AI.Workflows.ExecutorInvokedEvent.ExecutorInvokedEvent(string! executorId, object! message) -> void
+Microsoft.Agents.AI.Workflows.ExecutorOptions
+Microsoft.Agents.AI.Workflows.ExecutorOptions.AutoSendMessageHandlerResultObject.get -> bool
+Microsoft.Agents.AI.Workflows.ExecutorOptions.AutoSendMessageHandlerResultObject.set -> void
+Microsoft.Agents.AI.Workflows.ExecutorOptions.AutoYieldOutputHandlerResultObject.get -> bool
+Microsoft.Agents.AI.Workflows.ExecutorOptions.AutoYieldOutputHandlerResultObject.set -> void
+Microsoft.Agents.AI.Workflows.ExecutorPlaceholder
+Microsoft.Agents.AI.Workflows.ExecutorPlaceholder.Deconstruct(out string! Id) -> void
+Microsoft.Agents.AI.Workflows.ExecutorPlaceholder.ExecutorPlaceholder(Microsoft.Agents.AI.Workflows.ExecutorPlaceholder! original) -> void
+Microsoft.Agents.AI.Workflows.ExecutorPlaceholder.ExecutorPlaceholder(string! Id) -> void
+Microsoft.Agents.AI.Workflows.ExternalRequest
+Microsoft.Agents.AI.Workflows.ExternalRequest.CreateResponse(object! data) -> Microsoft.Agents.AI.Workflows.ExternalResponse!
+Microsoft.Agents.AI.Workflows.ExternalRequest.CreateResponse<T>(T data) -> Microsoft.Agents.AI.Workflows.ExternalResponse!
+Microsoft.Agents.AI.Workflows.ExternalRequest.Data.get -> Microsoft.Agents.AI.Workflows.PortableValue!
+Microsoft.Agents.AI.Workflows.ExternalRequest.Data.init -> void
+Microsoft.Agents.AI.Workflows.ExternalRequest.Deconstruct(out Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo! PortInfo, out string! RequestId, out Microsoft.Agents.AI.Workflows.PortableValue! Data) -> void
+Microsoft.Agents.AI.Workflows.ExternalRequest.ExternalRequest(Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo! PortInfo, string! RequestId, Microsoft.Agents.AI.Workflows.PortableValue! Data) -> void
+Microsoft.Agents.AI.Workflows.ExternalRequest.ExternalRequest(Microsoft.Agents.AI.Workflows.ExternalRequest! original) -> void
+Microsoft.Agents.AI.Workflows.ExternalRequest.IsDataOfType<TValue>() -> bool
+Microsoft.Agents.AI.Workflows.ExternalRequest.PortInfo.get -> Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo!
+Microsoft.Agents.AI.Workflows.ExternalRequest.PortInfo.init -> void
+Microsoft.Agents.AI.Workflows.ExternalRequest.RequestId.get -> string!
+Microsoft.Agents.AI.Workflows.ExternalRequest.RequestId.init -> void
+Microsoft.Agents.AI.Workflows.ExternalRequest.TryGetDataAs(System.Type! targetType, out object? value) -> bool
+Microsoft.Agents.AI.Workflows.ExternalRequest.TryGetDataAs<TValue>(out TValue? value) -> bool
+Microsoft.Agents.AI.Workflows.ExternalResponse
+Microsoft.Agents.AI.Workflows.ExternalResponse.Data.get -> Microsoft.Agents.AI.Workflows.PortableValue!
+Microsoft.Agents.AI.Workflows.ExternalResponse.Data.init -> void
+Microsoft.Agents.AI.Workflows.ExternalResponse.Deconstruct(out Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo! PortInfo, out string! RequestId, out Microsoft.Agents.AI.Workflows.PortableValue! Data) -> void
+Microsoft.Agents.AI.Workflows.ExternalResponse.ExternalResponse(Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo! PortInfo, string! RequestId, Microsoft.Agents.AI.Workflows.PortableValue! Data) -> void
+Microsoft.Agents.AI.Workflows.ExternalResponse.ExternalResponse(Microsoft.Agents.AI.Workflows.ExternalResponse! original) -> void
+Microsoft.Agents.AI.Workflows.ExternalResponse.IsDataOfType<TValue>() -> bool
+Microsoft.Agents.AI.Workflows.ExternalResponse.PortInfo.get -> Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo!
+Microsoft.Agents.AI.Workflows.ExternalResponse.PortInfo.init -> void
+Microsoft.Agents.AI.Workflows.ExternalResponse.RequestId.get -> string!
+Microsoft.Agents.AI.Workflows.ExternalResponse.RequestId.init -> void
+Microsoft.Agents.AI.Workflows.ExternalResponse.TryGetDataAs(System.Type! targetType, out object? value) -> bool
+Microsoft.Agents.AI.Workflows.ExternalResponse.TryGetDataAs<TValue>(out TValue? value) -> bool
+Microsoft.Agents.AI.Workflows.FunctionExecutor<TInput, TOutput>
+Microsoft.Agents.AI.Workflows.FunctionExecutor<TInput, TOutput>.FunctionExecutor(string! id, System.Func<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<TOutput>>! handlerAsync, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, System.Collections.Generic.IEnumerable<System.Type!>? sentMessageTypes = null, System.Collections.Generic.IEnumerable<System.Type!>? outputTypes = null, bool declareCrossRunShareable = false) -> void
+Microsoft.Agents.AI.Workflows.FunctionExecutor<TInput, TOutput>.FunctionExecutor(string! id, System.Func<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, TOutput>! handlerSync, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, System.Collections.Generic.IEnumerable<System.Type!>? sentMessageTypes = null, System.Collections.Generic.IEnumerable<System.Type!>? outputTypes = null, bool declareCrossRunShareable = false) -> void
+Microsoft.Agents.AI.Workflows.FunctionExecutor<TInput>
+Microsoft.Agents.AI.Workflows.FunctionExecutor<TInput>.FunctionExecutor(string! id, System.Action<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken>! handlerSync, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, System.Collections.Generic.IEnumerable<System.Type!>? sentMessageTypes = null, System.Collections.Generic.IEnumerable<System.Type!>? outputTypes = null, bool declareCrossRunShareable = false) -> void
+Microsoft.Agents.AI.Workflows.FunctionExecutor<TInput>.FunctionExecutor(string! id, System.Func<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! handlerAsync, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, System.Collections.Generic.IEnumerable<System.Type!>? sentMessageTypes = null, System.Collections.Generic.IEnumerable<System.Type!>? outputTypes = null, bool declareCrossRunShareable = false) -> void
+Microsoft.Agents.AI.Workflows.Futures
+Microsoft.Agents.AI.Workflows.GroupChatManager
+Microsoft.Agents.AI.Workflows.GroupChatManager.GroupChatManager() -> void
+Microsoft.Agents.AI.Workflows.GroupChatManager.IterationCount.get -> int
+Microsoft.Agents.AI.Workflows.GroupChatManager.MaximumIterationCount.get -> int
+Microsoft.Agents.AI.Workflows.GroupChatManager.MaximumIterationCount.set -> void
+Microsoft.Agents.AI.Workflows.GroupChatWorkflowBuilder
+Microsoft.Agents.AI.Workflows.GroupChatWorkflowBuilder.AddParticipants(params System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! agents) -> Microsoft.Agents.AI.Workflows.GroupChatWorkflowBuilder!
+Microsoft.Agents.AI.Workflows.GroupChatWorkflowBuilder.Build() -> Microsoft.Agents.AI.Workflows.Workflow!
+Microsoft.Agents.AI.Workflows.HandoffToolCallFilteringBehavior
+Microsoft.Agents.AI.Workflows.HandoffToolCallFilteringBehavior.All = 2 -> Microsoft.Agents.AI.Workflows.HandoffToolCallFilteringBehavior
+Microsoft.Agents.AI.Workflows.HandoffToolCallFilteringBehavior.HandoffOnly = 1 -> Microsoft.Agents.AI.Workflows.HandoffToolCallFilteringBehavior
+Microsoft.Agents.AI.Workflows.HandoffToolCallFilteringBehavior.None = 0 -> Microsoft.Agents.AI.Workflows.HandoffToolCallFilteringBehavior
+Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilder
+Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilder.HandoffWorkflowBuilder(Microsoft.Agents.AI.AIAgent! initialAgent) -> void
+Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilderCore<TBuilder>
+Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilderCore<TBuilder>.AddParticipants(params System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! agents) -> TBuilder!
+Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilderCore<TBuilder>.Build() -> Microsoft.Agents.AI.Workflows.Workflow!
+Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilderCore<TBuilder>.EmitAgentResponseEvents(bool emitAgentResponseEvents = true) -> TBuilder!
+Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilderCore<TBuilder>.EmitAgentResponseUpdateEvents(bool emitAgentResponseUpdateEvents = true) -> TBuilder!
+Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilderCore<TBuilder>.EnableReturnToPrevious() -> TBuilder!
+Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilderCore<TBuilder>.HandoffInstructions.get -> string?
+Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilderCore<TBuilder>.WithAutonomousMode(int? turnLimit = null, string? continuationPrompt = null, System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>? agents = null, System.Collections.Generic.IReadOnlyDictionary<Microsoft.Agents.AI.AIAgent!, int>? agentTurnLimits = null, System.Collections.Generic.IReadOnlyDictionary<Microsoft.Agents.AI.AIAgent!, string!>? agentContinuationPrompts = null) -> TBuilder!
+Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilderCore<TBuilder>.WithHandoff(Microsoft.Agents.AI.AIAgent! from, Microsoft.Agents.AI.AIAgent! to, string? handoffReason = null) -> TBuilder!
+Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilderCore<TBuilder>.WithHandoffInstructions(string? instructions) -> TBuilder!
+Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilderCore<TBuilder>.WithHandoffs(Microsoft.Agents.AI.AIAgent! from, System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! to) -> TBuilder!
+Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilderCore<TBuilder>.WithHandoffs(System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! from, Microsoft.Agents.AI.AIAgent! to, string? handoffReason = null) -> TBuilder!
+Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilderCore<TBuilder>.WithTerminationCondition(System.Func<System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>!, System.Threading.Tasks.ValueTask<bool>>! terminationCondition) -> TBuilder!
+Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilderCore<TBuilder>.WithTerminationCondition(System.Func<System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>!, bool>! terminationCondition) -> TBuilder!
+Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilderCore<TBuilder>.WithToolCallFilteringBehavior(Microsoft.Agents.AI.Workflows.HandoffToolCallFilteringBehavior behavior) -> TBuilder!
+Microsoft.Agents.AI.Workflows.HandoffsWorkflowBuilder
+Microsoft.Agents.AI.Workflows.HandoffsWorkflowBuilder.HandoffsWorkflowBuilder(Microsoft.Agents.AI.AIAgent! initialAgent) -> void
+Microsoft.Agents.AI.Workflows.IExternalRequestEnvelope
+Microsoft.Agents.AI.Workflows.IExternalRequestEnvelope.CreateResponse(System.Collections.Generic.IList<Microsoft.Extensions.AI.ChatMessage!>! messages) -> object!
+Microsoft.Agents.AI.Workflows.IExternalRequestEnvelope.GetInnerRequestContent() -> Microsoft.Extensions.AI.AIContent?
+Microsoft.Agents.AI.Workflows.IIdentified
+Microsoft.Agents.AI.Workflows.IIdentified.Id.get -> string!
+Microsoft.Agents.AI.Workflows.IResettableExecutor
+Microsoft.Agents.AI.Workflows.IResettableExecutor.ResetAsync() -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.IWorkflowContext
+Microsoft.Agents.AI.Workflows.IWorkflowContext.AddEventAsync(Microsoft.Agents.AI.Workflows.WorkflowEvent! workflowEvent, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.IWorkflowContext.ConcurrentRunsEnabled.get -> bool
+Microsoft.Agents.AI.Workflows.IWorkflowContext.QueueClearScopeAsync(string? scopeName = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.IWorkflowContext.QueueStateUpdateAsync<T>(string! key, T? value, string? scopeName = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.IWorkflowContext.ReadOrInitStateAsync<T>(string! key, System.Func<T>! initialStateFactory, string? scopeName = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<T>
+Microsoft.Agents.AI.Workflows.IWorkflowContext.ReadStateAsync<T>(string! key, string? scopeName = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<T?>
+Microsoft.Agents.AI.Workflows.IWorkflowContext.ReadStateKeysAsync(string? scopeName = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.HashSet<string!>!>
+Microsoft.Agents.AI.Workflows.IWorkflowContext.RequestHaltAsync() -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.IWorkflowContext.SendMessageAsync(object! message, string? targetId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.IWorkflowContext.TraceContext.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>?
+Microsoft.Agents.AI.Workflows.IWorkflowContext.YieldOutputAsync(object! output, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.IWorkflowContextExtensions
+Microsoft.Agents.AI.Workflows.IWorkflowExecutionEnvironment
+Microsoft.Agents.AI.Workflows.IWorkflowExecutionEnvironment.IsCheckpointingEnabled.get -> bool
+Microsoft.Agents.AI.Workflows.IWorkflowExecutionEnvironment.OpenStreamingAsync(Microsoft.Agents.AI.Workflows.Workflow! workflow, string? sessionId = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.StreamingRun!>
+Microsoft.Agents.AI.Workflows.IWorkflowExecutionEnvironment.ResumeAsync(Microsoft.Agents.AI.Workflows.Workflow! workflow, Microsoft.Agents.AI.Workflows.CheckpointInfo! fromCheckpoint, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Run!>
+Microsoft.Agents.AI.Workflows.IWorkflowExecutionEnvironment.ResumeStreamingAsync(Microsoft.Agents.AI.Workflows.Workflow! workflow, Microsoft.Agents.AI.Workflows.CheckpointInfo! fromCheckpoint, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.StreamingRun!>
+Microsoft.Agents.AI.Workflows.IWorkflowExecutionEnvironment.RunAsync<TInput>(Microsoft.Agents.AI.Workflows.Workflow! workflow, TInput input, string? sessionId = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Run!>
+Microsoft.Agents.AI.Workflows.IWorkflowExecutionEnvironment.RunStreamingAsync<TInput>(Microsoft.Agents.AI.Workflows.Workflow! workflow, TInput input, string? sessionId = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.StreamingRun!>
+Microsoft.Agents.AI.Workflows.InProc.InProcessExecutionEnvironment
+Microsoft.Agents.AI.Workflows.InProc.InProcessExecutionEnvironment.IsCheckpointingEnabled.get -> bool
+Microsoft.Agents.AI.Workflows.InProc.InProcessExecutionEnvironment.OpenStreamingAsync(Microsoft.Agents.AI.Workflows.Workflow! workflow, string? sessionId = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.StreamingRun!>
+Microsoft.Agents.AI.Workflows.InProc.InProcessExecutionEnvironment.ResumeAsync(Microsoft.Agents.AI.Workflows.Workflow! workflow, Microsoft.Agents.AI.Workflows.CheckpointInfo! fromCheckpoint, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Run!>
+Microsoft.Agents.AI.Workflows.InProc.InProcessExecutionEnvironment.ResumeStreamingAsync(Microsoft.Agents.AI.Workflows.Workflow! workflow, Microsoft.Agents.AI.Workflows.CheckpointInfo! fromCheckpoint, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.StreamingRun!>
+Microsoft.Agents.AI.Workflows.InProc.InProcessExecutionEnvironment.RunAsync<TInput>(Microsoft.Agents.AI.Workflows.Workflow! workflow, TInput input, string? sessionId = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Run!>
+Microsoft.Agents.AI.Workflows.InProc.InProcessExecutionEnvironment.RunStreamingAsync<TInput>(Microsoft.Agents.AI.Workflows.Workflow! workflow, TInput input, string? sessionId = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.StreamingRun!>
+Microsoft.Agents.AI.Workflows.InProc.InProcessExecutionEnvironment.WithCheckpointing(Microsoft.Agents.AI.Workflows.CheckpointManager? checkpointManager) -> Microsoft.Agents.AI.Workflows.InProc.InProcessExecutionEnvironment!
+Microsoft.Agents.AI.Workflows.InProcessExecution
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.Approve() -> Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse!
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.CurrentProgress.get -> Microsoft.Agents.AI.Workflows.MagenticProgressLedger?
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.CurrentProgress.init -> void
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.Deconstruct(out Microsoft.Extensions.AI.ChatMessage! Plan, out Microsoft.Agents.AI.Workflows.MagenticProgressLedger? CurrentProgress, out bool IsStalled) -> void
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.IsStalled.get -> bool
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.IsStalled.init -> void
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.MagenticPlanReviewRequest(Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest! original) -> void
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.MagenticPlanReviewRequest(Microsoft.Extensions.AI.ChatMessage! Plan, Microsoft.Agents.AI.Workflows.MagenticProgressLedger? CurrentProgress, bool IsStalled) -> void
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.Plan.get -> Microsoft.Extensions.AI.ChatMessage!
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.Plan.init -> void
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.Revise(Microsoft.Extensions.AI.ChatMessage! message) -> Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse!
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.Revise(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages) -> Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse!
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.Revise(string! message) -> Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse!
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse.Deconstruct(out System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>! Review) -> void
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse.MagenticPlanReviewResponse(Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse! original) -> void
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse.MagenticPlanReviewResponse(System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>! Review) -> void
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse.Review.get -> System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>!
+Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse.Review.init -> void
+Microsoft.Agents.AI.Workflows.MagenticProgressLedger
+Microsoft.Agents.AI.Workflows.MagenticProgressLedger.InstructionOrQuestion.get -> string!
+Microsoft.Agents.AI.Workflows.MagenticProgressLedger.IsInLoop.get -> bool
+Microsoft.Agents.AI.Workflows.MagenticProgressLedger.IsProgressBeingMade.get -> bool
+Microsoft.Agents.AI.Workflows.MagenticProgressLedger.IsRequestSatisfied.get -> bool
+Microsoft.Agents.AI.Workflows.MagenticProgressLedger.IsStarted.get -> bool
+Microsoft.Agents.AI.Workflows.MagenticProgressLedger.NextSpeaker.get -> string!
+Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder
+Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder.AddParticipants(params System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! agents) -> Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder!
+Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder.Build() -> Microsoft.Agents.AI.Workflows.Workflow!
+Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder.MagenticWorkflowBuilder(Microsoft.Agents.AI.AIAgent! managerAgent) -> void
+Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder.RequirePlanSignoff(bool requirePlanSignoff = true) -> Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder!
+Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder.WithMaxResets(int? maxResets = null) -> Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder!
+Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder.WithMaxRounds(int? maxRounds = null) -> Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder!
+Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder.WithMaxStalls(int maxStalls = 3) -> Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder!
+Microsoft.Agents.AI.Workflows.MessageHandlerAttribute
+Microsoft.Agents.AI.Workflows.MessageHandlerAttribute.MessageHandlerAttribute() -> void
+Microsoft.Agents.AI.Workflows.MessageHandlerAttribute.Send.get -> System.Type![]?
+Microsoft.Agents.AI.Workflows.MessageHandlerAttribute.Send.set -> void
+Microsoft.Agents.AI.Workflows.MessageHandlerAttribute.Yield.get -> System.Type![]?
+Microsoft.Agents.AI.Workflows.MessageHandlerAttribute.Yield.set -> void
+Microsoft.Agents.AI.Workflows.Observability.WorkflowTelemetryOptions
+Microsoft.Agents.AI.Workflows.Observability.WorkflowTelemetryOptions.DisableEdgeGroupProcess.get -> bool
+Microsoft.Agents.AI.Workflows.Observability.WorkflowTelemetryOptions.DisableEdgeGroupProcess.set -> void
+Microsoft.Agents.AI.Workflows.Observability.WorkflowTelemetryOptions.DisableExecutorProcess.get -> bool
+Microsoft.Agents.AI.Workflows.Observability.WorkflowTelemetryOptions.DisableExecutorProcess.set -> void
+Microsoft.Agents.AI.Workflows.Observability.WorkflowTelemetryOptions.DisableMessageSend.get -> bool
+Microsoft.Agents.AI.Workflows.Observability.WorkflowTelemetryOptions.DisableMessageSend.set -> void
+Microsoft.Agents.AI.Workflows.Observability.WorkflowTelemetryOptions.DisableWorkflowBuild.get -> bool
+Microsoft.Agents.AI.Workflows.Observability.WorkflowTelemetryOptions.DisableWorkflowBuild.set -> void
+Microsoft.Agents.AI.Workflows.Observability.WorkflowTelemetryOptions.DisableWorkflowRun.get -> bool
+Microsoft.Agents.AI.Workflows.Observability.WorkflowTelemetryOptions.DisableWorkflowRun.set -> void
+Microsoft.Agents.AI.Workflows.Observability.WorkflowTelemetryOptions.EnableSensitiveData.get -> bool
+Microsoft.Agents.AI.Workflows.Observability.WorkflowTelemetryOptions.EnableSensitiveData.set -> void
+Microsoft.Agents.AI.Workflows.Observability.WorkflowTelemetryOptions.WorkflowTelemetryOptions() -> void
+Microsoft.Agents.AI.Workflows.OpenTelemetryWorkflowBuilderExtensions
+Microsoft.Agents.AI.Workflows.OrchestrationBuilderBase<TBuilder>
+Microsoft.Agents.AI.Workflows.OrchestrationBuilderBase<TBuilder>.ApplyMetadata(Microsoft.Agents.AI.Workflows.WorkflowBuilder! builder) -> void
+Microsoft.Agents.AI.Workflows.OrchestrationBuilderBase<TBuilder>.ApplyOutputDesignations(Microsoft.Agents.AI.Workflows.WorkflowBuilder! builder, System.Collections.Generic.IReadOnlyDictionary<Microsoft.Agents.AI.AIAgent!, Microsoft.Agents.AI.Workflows.ExecutorBinding!>! agentMap, string! orchestrationKind, System.Action! applyDefaults) -> void
+Microsoft.Agents.AI.Workflows.OrchestrationBuilderBase<TBuilder>.Description.get -> string?
+Microsoft.Agents.AI.Workflows.OrchestrationBuilderBase<TBuilder>.Name.get -> string?
+Microsoft.Agents.AI.Workflows.OrchestrationBuilderBase<TBuilder>.OrchestrationBuilderBase() -> void
+Microsoft.Agents.AI.Workflows.OrchestrationBuilderBase<TBuilder>.OutputDesignations.get -> System.Collections.Generic.Dictionary<Microsoft.Agents.AI.AIAgent!, System.Collections.Generic.HashSet<Microsoft.Agents.AI.Workflows.OutputTag>!>?
+Microsoft.Agents.AI.Workflows.OrchestrationBuilderBase<TBuilder>.WithDescription(string! description) -> TBuilder!
+Microsoft.Agents.AI.Workflows.OrchestrationBuilderBase<TBuilder>.WithIntermediateOutputFrom(System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! agents) -> TBuilder!
+Microsoft.Agents.AI.Workflows.OrchestrationBuilderBase<TBuilder>.WithName(string! name) -> TBuilder!
+Microsoft.Agents.AI.Workflows.OrchestrationBuilderBase<TBuilder>.WithOutputFrom(params System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! agents) -> TBuilder!
+Microsoft.Agents.AI.Workflows.OutputTag
+Microsoft.Agents.AI.Workflows.OutputTag.Equals(Microsoft.Agents.AI.Workflows.OutputTag other) -> bool
+Microsoft.Agents.AI.Workflows.OutputTag.OutputTag() -> void
+Microsoft.Agents.AI.Workflows.OutputTag.Value.get -> string?
+Microsoft.Agents.AI.Workflows.PortableValue
+Microsoft.Agents.AI.Workflows.PortableValue.As<TValue>() -> TValue?
+Microsoft.Agents.AI.Workflows.PortableValue.AsType(System.Type! targetType) -> object?
+Microsoft.Agents.AI.Workflows.PortableValue.Is<TValue>() -> bool
+Microsoft.Agents.AI.Workflows.PortableValue.Is<TValue>(out TValue? value) -> bool
+Microsoft.Agents.AI.Workflows.PortableValue.IsType(System.Type! targetType) -> bool
+Microsoft.Agents.AI.Workflows.PortableValue.IsType(System.Type! targetType, out object? value) -> bool
+Microsoft.Agents.AI.Workflows.PortableValue.PortableValue(object! value) -> void
+Microsoft.Agents.AI.Workflows.PortableValue.TypeId.get -> Microsoft.Agents.AI.Workflows.Checkpointing.TypeId!
+Microsoft.Agents.AI.Workflows.ProtocolBuilder
+Microsoft.Agents.AI.Workflows.ProtocolBuilder.AddClassAttributeTypes(System.Type! executorType) -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+Microsoft.Agents.AI.Workflows.ProtocolBuilder.AddDelegateAttributeTypes(System.Delegate! delegate) -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+Microsoft.Agents.AI.Workflows.ProtocolBuilder.AddMethodAttributeTypes(System.Reflection.MethodInfo! method) -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+Microsoft.Agents.AI.Workflows.ProtocolBuilder.ConfigureRoutes(System.Action<Microsoft.Agents.AI.Workflows.RouteBuilder!>! configureAction) -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+Microsoft.Agents.AI.Workflows.ProtocolBuilder.RouteBuilder.get -> Microsoft.Agents.AI.Workflows.RouteBuilder!
+Microsoft.Agents.AI.Workflows.ProtocolBuilder.SendsMessage<TMessage>() -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+Microsoft.Agents.AI.Workflows.ProtocolBuilder.SendsMessageType(System.Type! messageType) -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+Microsoft.Agents.AI.Workflows.ProtocolBuilder.SendsMessageTypes(System.Collections.Generic.IEnumerable<System.Type!>! messageTypes) -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+Microsoft.Agents.AI.Workflows.ProtocolBuilder.YieldsOutput<TOutput>() -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+Microsoft.Agents.AI.Workflows.ProtocolBuilder.YieldsOutputType(System.Type! outputType) -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+Microsoft.Agents.AI.Workflows.ProtocolBuilder.YieldsOutputTypes(System.Collections.Generic.IEnumerable<System.Type!>! yieldedTypes) -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+Microsoft.Agents.AI.Workflows.ProtocolDescriptor
+Microsoft.Agents.AI.Workflows.ProtocolDescriptor.Accepts.get -> System.Collections.Generic.IEnumerable<System.Type!>!
+Microsoft.Agents.AI.Workflows.ProtocolDescriptor.AcceptsAll.get -> bool
+Microsoft.Agents.AI.Workflows.ProtocolDescriptor.AcceptsAll.set -> void
+Microsoft.Agents.AI.Workflows.ProtocolDescriptor.Sends.get -> System.Collections.Generic.IEnumerable<System.Type!>!
+Microsoft.Agents.AI.Workflows.ProtocolDescriptor.Yields.get -> System.Collections.Generic.IEnumerable<System.Type!>!
+Microsoft.Agents.AI.Workflows.Reflection.IMessageHandler<TMessage, TResult>
+Microsoft.Agents.AI.Workflows.Reflection.IMessageHandler<TMessage, TResult>.HandleAsync(TMessage message, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<TResult>
+Microsoft.Agents.AI.Workflows.Reflection.IMessageHandler<TMessage>
+Microsoft.Agents.AI.Workflows.Reflection.IMessageHandler<TMessage>.HandleAsync(TMessage message, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.Reflection.ReflectingExecutor<TExecutor>
+Microsoft.Agents.AI.Workflows.Reflection.ReflectingExecutor<TExecutor>.ReflectingExecutor(string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool declareCrossRunShareable = false) -> void
+Microsoft.Agents.AI.Workflows.RequestInfoEvent
+Microsoft.Agents.AI.Workflows.RequestInfoEvent.Request.get -> Microsoft.Agents.AI.Workflows.ExternalRequest!
+Microsoft.Agents.AI.Workflows.RequestInfoEvent.RequestInfoEvent(Microsoft.Agents.AI.Workflows.ExternalRequest! request) -> void
+Microsoft.Agents.AI.Workflows.RequestPort
+Microsoft.Agents.AI.Workflows.RequestPort.Deconstruct(out string! Id, out System.Type! Request, out System.Type! Response) -> void
+Microsoft.Agents.AI.Workflows.RequestPort.Id.get -> string!
+Microsoft.Agents.AI.Workflows.RequestPort.Id.init -> void
+Microsoft.Agents.AI.Workflows.RequestPort.Request.get -> System.Type!
+Microsoft.Agents.AI.Workflows.RequestPort.Request.init -> void
+Microsoft.Agents.AI.Workflows.RequestPort.RequestPort(Microsoft.Agents.AI.Workflows.RequestPort! original) -> void
+Microsoft.Agents.AI.Workflows.RequestPort.RequestPort(string! Id, System.Type! Request, System.Type! Response) -> void
+Microsoft.Agents.AI.Workflows.RequestPort.Response.get -> System.Type!
+Microsoft.Agents.AI.Workflows.RequestPort.Response.init -> void
+Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>
+Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>.AllowWrapped.get -> bool
+Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>.AllowWrapped.init -> void
+Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>.Deconstruct(out string! Id, out System.Type! Request, out System.Type! Response, out bool AllowWrapped) -> void
+Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>.Equals(Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>? other) -> bool
+Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>.RequestPort(string! Id, System.Type! Request, System.Type! Response, bool AllowWrapped = false) -> void
+Microsoft.Agents.AI.Workflows.RequestPortBinding
+Microsoft.Agents.AI.Workflows.RequestPortBinding.AllowWrapped.get -> bool
+Microsoft.Agents.AI.Workflows.RequestPortBinding.AllowWrapped.init -> void
+Microsoft.Agents.AI.Workflows.RequestPortBinding.Deconstruct(out Microsoft.Agents.AI.Workflows.RequestPort! Port, out bool AllowWrapped) -> void
+Microsoft.Agents.AI.Workflows.RequestPortBinding.Port.get -> Microsoft.Agents.AI.Workflows.RequestPort!
+Microsoft.Agents.AI.Workflows.RequestPortBinding.Port.init -> void
+Microsoft.Agents.AI.Workflows.RequestPortBinding.RequestPortBinding(Microsoft.Agents.AI.Workflows.RequestPort! Port, bool AllowWrapped = true) -> void
+Microsoft.Agents.AI.Workflows.RequestPortBinding.RequestPortBinding(Microsoft.Agents.AI.Workflows.RequestPortBinding! original) -> void
+Microsoft.Agents.AI.Workflows.ResetChatSignal
+Microsoft.Agents.AI.Workflows.ResetChatSignal.<Clone>$() -> Microsoft.Agents.AI.Workflows.ResetChatSignal!
+Microsoft.Agents.AI.Workflows.ResetChatSignal.Equals(Microsoft.Agents.AI.Workflows.ResetChatSignal? other) -> bool
+Microsoft.Agents.AI.Workflows.ResetChatSignal.ResetChatSignal() -> void
+Microsoft.Agents.AI.Workflows.RoundRobinGroupChatManager
+Microsoft.Agents.AI.Workflows.RoundRobinGroupChatManager.RoundRobinGroupChatManager(System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.AIAgent!>! agents, System.Func<Microsoft.Agents.AI.Workflows.RoundRobinGroupChatManager!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>>? shouldTerminateFunc = null) -> void
+Microsoft.Agents.AI.Workflows.RouteBuilder
+Microsoft.Agents.AI.Workflows.RouteBuilder.AddCatchAll(System.Action<Microsoft.Agents.AI.Workflows.PortableValue!, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken>! handler, bool overwrite = false) -> Microsoft.Agents.AI.Workflows.RouteBuilder!
+Microsoft.Agents.AI.Workflows.RouteBuilder.AddCatchAll(System.Action<Microsoft.Agents.AI.Workflows.PortableValue!, Microsoft.Agents.AI.Workflows.IWorkflowContext!>! handler, bool overwrite = false) -> Microsoft.Agents.AI.Workflows.RouteBuilder!
+Microsoft.Agents.AI.Workflows.RouteBuilder.AddCatchAll(System.Func<Microsoft.Agents.AI.Workflows.PortableValue!, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! handler, bool overwrite = false) -> Microsoft.Agents.AI.Workflows.RouteBuilder!
+Microsoft.Agents.AI.Workflows.RouteBuilder.AddCatchAll(System.Func<Microsoft.Agents.AI.Workflows.PortableValue!, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.Tasks.ValueTask>! handler, bool overwrite = false) -> Microsoft.Agents.AI.Workflows.RouteBuilder!
+Microsoft.Agents.AI.Workflows.RouteBuilder.AddCatchAll<TResult>(System.Func<Microsoft.Agents.AI.Workflows.PortableValue!, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<TResult>>! handler, bool overwrite = false) -> Microsoft.Agents.AI.Workflows.RouteBuilder!
+Microsoft.Agents.AI.Workflows.RouteBuilder.AddCatchAll<TResult>(System.Func<Microsoft.Agents.AI.Workflows.PortableValue!, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, TResult>! handler, bool overwrite = false) -> Microsoft.Agents.AI.Workflows.RouteBuilder!
+Microsoft.Agents.AI.Workflows.RouteBuilder.AddCatchAll<TResult>(System.Func<Microsoft.Agents.AI.Workflows.PortableValue!, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.Tasks.ValueTask<TResult>>! handler, bool overwrite = false) -> Microsoft.Agents.AI.Workflows.RouteBuilder!
+Microsoft.Agents.AI.Workflows.RouteBuilder.AddCatchAll<TResult>(System.Func<Microsoft.Agents.AI.Workflows.PortableValue!, Microsoft.Agents.AI.Workflows.IWorkflowContext!, TResult>! handler, bool overwrite = false) -> Microsoft.Agents.AI.Workflows.RouteBuilder!
+Microsoft.Agents.AI.Workflows.RouteBuilder.AddHandler<TInput, TResult>(System.Func<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<TResult>>! handler, bool overwrite = false) -> Microsoft.Agents.AI.Workflows.RouteBuilder!
+Microsoft.Agents.AI.Workflows.RouteBuilder.AddHandler<TInput, TResult>(System.Func<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, TResult>! handler, bool overwrite = false) -> Microsoft.Agents.AI.Workflows.RouteBuilder!
+Microsoft.Agents.AI.Workflows.RouteBuilder.AddHandler<TInput, TResult>(System.Func<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.Tasks.ValueTask<TResult>>! handler, bool overwrite = false) -> Microsoft.Agents.AI.Workflows.RouteBuilder!
+Microsoft.Agents.AI.Workflows.RouteBuilder.AddHandler<TInput, TResult>(System.Func<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, TResult>! handler, bool overwrite = false) -> Microsoft.Agents.AI.Workflows.RouteBuilder!
+Microsoft.Agents.AI.Workflows.RouteBuilder.AddHandler<TInput>(System.Action<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken>! handler, bool overwrite = false) -> Microsoft.Agents.AI.Workflows.RouteBuilder!
+Microsoft.Agents.AI.Workflows.RouteBuilder.AddHandler<TInput>(System.Action<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!>! handler, bool overwrite = false) -> Microsoft.Agents.AI.Workflows.RouteBuilder!
+Microsoft.Agents.AI.Workflows.RouteBuilder.AddHandler<TInput>(System.Func<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! handler, bool overwrite = false) -> Microsoft.Agents.AI.Workflows.RouteBuilder!
+Microsoft.Agents.AI.Workflows.RouteBuilder.AddHandler<TInput>(System.Func<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.Tasks.ValueTask>! handler, bool overwrite = false) -> Microsoft.Agents.AI.Workflows.RouteBuilder!
+Microsoft.Agents.AI.Workflows.Run
+Microsoft.Agents.AI.Workflows.Run.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.Run.GetStatusAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.RunStatus>
+Microsoft.Agents.AI.Workflows.Run.NewEventCount.get -> int
+Microsoft.Agents.AI.Workflows.Run.NewEvents.get -> System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.WorkflowEvent!>!
+Microsoft.Agents.AI.Workflows.Run.OutgoingEvents.get -> System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.WorkflowEvent!>!
+Microsoft.Agents.AI.Workflows.Run.ResumeAsync(System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.ExternalResponse!>! responses, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+Microsoft.Agents.AI.Workflows.Run.ResumeAsync<T>(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken), params System.Collections.Generic.IEnumerable<T>! messages) -> System.Threading.Tasks.ValueTask<bool>
+Microsoft.Agents.AI.Workflows.Run.SessionId.get -> string!
+Microsoft.Agents.AI.Workflows.RunStatus
+Microsoft.Agents.AI.Workflows.RunStatus.Ended = 3 -> Microsoft.Agents.AI.Workflows.RunStatus
+Microsoft.Agents.AI.Workflows.RunStatus.Idle = 1 -> Microsoft.Agents.AI.Workflows.RunStatus
+Microsoft.Agents.AI.Workflows.RunStatus.NotStarted = 0 -> Microsoft.Agents.AI.Workflows.RunStatus
+Microsoft.Agents.AI.Workflows.RunStatus.PendingRequests = 2 -> Microsoft.Agents.AI.Workflows.RunStatus
+Microsoft.Agents.AI.Workflows.RunStatus.Running = 4 -> Microsoft.Agents.AI.Workflows.RunStatus
+Microsoft.Agents.AI.Workflows.ScopeId
+Microsoft.Agents.AI.Workflows.ScopeId.ExecutorId.get -> string!
+Microsoft.Agents.AI.Workflows.ScopeId.ScopeId(string! executorId, string? scopeName = null) -> void
+Microsoft.Agents.AI.Workflows.ScopeId.ScopeName.get -> string?
+Microsoft.Agents.AI.Workflows.ScopeKey
+Microsoft.Agents.AI.Workflows.ScopeKey.Key.get -> string!
+Microsoft.Agents.AI.Workflows.ScopeKey.ScopeId.get -> Microsoft.Agents.AI.Workflows.ScopeId!
+Microsoft.Agents.AI.Workflows.ScopeKey.ScopeKey(Microsoft.Agents.AI.Workflows.ScopeId! scopeId, string! key) -> void
+Microsoft.Agents.AI.Workflows.ScopeKey.ScopeKey(string! executorId, string? scopeName, string! key) -> void
+Microsoft.Agents.AI.Workflows.SendsMessageAttribute
+Microsoft.Agents.AI.Workflows.SendsMessageAttribute.SendsMessageAttribute(System.Type! type) -> void
+Microsoft.Agents.AI.Workflows.SendsMessageAttribute.Type.get -> System.Type!
+Microsoft.Agents.AI.Workflows.SequentialWorkflowBuilder
+Microsoft.Agents.AI.Workflows.SequentialWorkflowBuilder.Build() -> Microsoft.Agents.AI.Workflows.Workflow!
+Microsoft.Agents.AI.Workflows.SequentialWorkflowBuilder.SequentialWorkflowBuilder(params System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! agents) -> void
+Microsoft.Agents.AI.Workflows.SequentialWorkflowBuilder.WithChainOnlyAgentResponses(bool enabled = true) -> Microsoft.Agents.AI.Workflows.SequentialWorkflowBuilder!
+Microsoft.Agents.AI.Workflows.Specialized.Magentic.MagenticOrchestratorEvent
+Microsoft.Agents.AI.Workflows.Specialized.Magentic.MagenticOrchestratorEvent.MagenticOrchestratorEvent(object? data) -> void
+Microsoft.Agents.AI.Workflows.Specialized.Magentic.MagenticPlanCreatedEvent
+Microsoft.Agents.AI.Workflows.Specialized.Magentic.MagenticPlanCreatedEvent.FullTaskLedger.get -> Microsoft.Extensions.AI.ChatMessage!
+Microsoft.Agents.AI.Workflows.Specialized.Magentic.MagenticPlanCreatedEvent.MagenticPlanCreatedEvent(Microsoft.Extensions.AI.ChatMessage! fullTaskLeger) -> void
+Microsoft.Agents.AI.Workflows.Specialized.Magentic.MagenticProgressLedgerUpdatedEvent
+Microsoft.Agents.AI.Workflows.Specialized.Magentic.MagenticProgressLedgerUpdatedEvent.MagenticProgressLedgerUpdatedEvent(Microsoft.Agents.AI.Workflows.MagenticProgressLedger! progressLedger) -> void
+Microsoft.Agents.AI.Workflows.Specialized.Magentic.MagenticProgressLedgerUpdatedEvent.ProgressLedger.get -> Microsoft.Agents.AI.Workflows.MagenticProgressLedger!
+Microsoft.Agents.AI.Workflows.Specialized.Magentic.MagenticReplannedEvent
+Microsoft.Agents.AI.Workflows.Specialized.Magentic.MagenticReplannedEvent.FullTaskLedger.get -> Microsoft.Extensions.AI.ChatMessage!
+Microsoft.Agents.AI.Workflows.Specialized.Magentic.MagenticReplannedEvent.MagenticReplannedEvent(Microsoft.Extensions.AI.ChatMessage! fullTaskLeger) -> void
+Microsoft.Agents.AI.Workflows.StatefulExecutor<TState, TInput, TOutput>
+Microsoft.Agents.AI.Workflows.StatefulExecutor<TState, TInput, TOutput>.StatefulExecutor(string! id, System.Func<TState>! initialStateFactory, Microsoft.Agents.AI.Workflows.StatefulExecutorOptions? options = null, System.Collections.Generic.IEnumerable<System.Type!>? sentMessageTypes = null, System.Collections.Generic.IEnumerable<System.Type!>? outputTypes = null, bool declareCrossRunShareable = false) -> void
+Microsoft.Agents.AI.Workflows.StatefulExecutor<TState, TInput>
+Microsoft.Agents.AI.Workflows.StatefulExecutor<TState, TInput>.StatefulExecutor(string! id, System.Func<TState>! initialStateFactory, Microsoft.Agents.AI.Workflows.StatefulExecutorOptions? options = null, System.Collections.Generic.IEnumerable<System.Type!>? sentMessageTypes = null, System.Collections.Generic.IEnumerable<System.Type!>? outputTypes = null, bool declareCrossRunShareable = false) -> void
+Microsoft.Agents.AI.Workflows.StatefulExecutor<TState>
+Microsoft.Agents.AI.Workflows.StatefulExecutor<TState>.InvokeWithStateAsync(System.Func<TState, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<TState?>>! invocation, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, bool skipCache = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.StatefulExecutor<TState>.Options.get -> Microsoft.Agents.AI.Workflows.StatefulExecutorOptions!
+Microsoft.Agents.AI.Workflows.StatefulExecutor<TState>.QueueStateUpdateAsync(TState state, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.StatefulExecutor<TState>.ReadStateAsync(Microsoft.Agents.AI.Workflows.IWorkflowContext! context, bool skipCache = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<TState>
+Microsoft.Agents.AI.Workflows.StatefulExecutor<TState>.StateKey.get -> string!
+Microsoft.Agents.AI.Workflows.StatefulExecutor<TState>.StatefulExecutor(string! id, System.Func<TState>! initialStateFactory, Microsoft.Agents.AI.Workflows.StatefulExecutorOptions? options = null, bool declareCrossRunShareable = false) -> void
+Microsoft.Agents.AI.Workflows.StatefulExecutorOptions
+Microsoft.Agents.AI.Workflows.StatefulExecutorOptions.ScopeName.get -> string?
+Microsoft.Agents.AI.Workflows.StatefulExecutorOptions.ScopeName.set -> void
+Microsoft.Agents.AI.Workflows.StatefulExecutorOptions.StateKey.get -> string?
+Microsoft.Agents.AI.Workflows.StatefulExecutorOptions.StateKey.set -> void
+Microsoft.Agents.AI.Workflows.StatefulExecutorOptions.StatefulExecutorOptions() -> void
+Microsoft.Agents.AI.Workflows.StreamingAggregators
+Microsoft.Agents.AI.Workflows.StreamingRun
+Microsoft.Agents.AI.Workflows.StreamingRun.CancelRunAsync() -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.StreamingRun.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.StreamingRun.GetStatusAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.RunStatus>
+Microsoft.Agents.AI.Workflows.StreamingRun.SendResponseAsync(Microsoft.Agents.AI.Workflows.ExternalResponse! response) -> System.Threading.Tasks.ValueTask
+Microsoft.Agents.AI.Workflows.StreamingRun.SessionId.get -> string!
+Microsoft.Agents.AI.Workflows.StreamingRun.TrySendMessageAsync<TMessage>(TMessage message) -> System.Threading.Tasks.ValueTask<bool>
+Microsoft.Agents.AI.Workflows.StreamingRun.WatchStreamAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Agents.AI.Workflows.WorkflowEvent!>!
+Microsoft.Agents.AI.Workflows.StreamingRun.WatchStreamAsync(bool blockOnPendingRequest, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Agents.AI.Workflows.WorkflowEvent!>!
+Microsoft.Agents.AI.Workflows.StreamingRunExtensions
+Microsoft.Agents.AI.Workflows.StreamsMessageAttribute
+Microsoft.Agents.AI.Workflows.StreamsMessageAttribute.StreamsMessageAttribute(System.Type! type) -> void
+Microsoft.Agents.AI.Workflows.StreamsMessageAttribute.Type.get -> System.Type!
+Microsoft.Agents.AI.Workflows.SubworkflowBinding
+Microsoft.Agents.AI.Workflows.SubworkflowBinding.Deconstruct(out Microsoft.Agents.AI.Workflows.Workflow! WorkflowInstance, out string! Id, out Microsoft.Agents.AI.Workflows.ExecutorOptions? ExecutorOptions) -> void
+Microsoft.Agents.AI.Workflows.SubworkflowBinding.ExecutorOptions.get -> Microsoft.Agents.AI.Workflows.ExecutorOptions?
+Microsoft.Agents.AI.Workflows.SubworkflowBinding.ExecutorOptions.init -> void
+Microsoft.Agents.AI.Workflows.SubworkflowBinding.SubworkflowBinding(Microsoft.Agents.AI.Workflows.SubworkflowBinding! original) -> void
+Microsoft.Agents.AI.Workflows.SubworkflowBinding.SubworkflowBinding(Microsoft.Agents.AI.Workflows.Workflow! WorkflowInstance, string! Id, Microsoft.Agents.AI.Workflows.ExecutorOptions? ExecutorOptions = null) -> void
+Microsoft.Agents.AI.Workflows.SubworkflowBinding.WorkflowInstance.get -> Microsoft.Agents.AI.Workflows.Workflow!
+Microsoft.Agents.AI.Workflows.SubworkflowBinding.WorkflowInstance.init -> void
+Microsoft.Agents.AI.Workflows.SubworkflowErrorEvent
+Microsoft.Agents.AI.Workflows.SubworkflowErrorEvent.SubworkflowErrorEvent(string! subworkflowId, System.Exception? e) -> void
+Microsoft.Agents.AI.Workflows.SubworkflowErrorEvent.SubworkflowId.get -> string!
+Microsoft.Agents.AI.Workflows.SubworkflowWarningEvent
+Microsoft.Agents.AI.Workflows.SubworkflowWarningEvent.SubWorkflowId.get -> string!
+Microsoft.Agents.AI.Workflows.SubworkflowWarningEvent.SubworkflowWarningEvent(string! message, string! subWorkflowId) -> void
+Microsoft.Agents.AI.Workflows.SuperStepCompletedEvent
+Microsoft.Agents.AI.Workflows.SuperStepCompletedEvent.CompletionInfo.get -> Microsoft.Agents.AI.Workflows.SuperStepCompletionInfo?
+Microsoft.Agents.AI.Workflows.SuperStepCompletedEvent.SuperStepCompletedEvent(int stepNumber, Microsoft.Agents.AI.Workflows.SuperStepCompletionInfo? completionInfo = null) -> void
+Microsoft.Agents.AI.Workflows.SuperStepCompletionInfo
+Microsoft.Agents.AI.Workflows.SuperStepCompletionInfo.ActivatedExecutors.get -> System.Collections.Generic.HashSet<string!>!
+Microsoft.Agents.AI.Workflows.SuperStepCompletionInfo.Checkpoint.get -> Microsoft.Agents.AI.Workflows.CheckpointInfo?
+Microsoft.Agents.AI.Workflows.SuperStepCompletionInfo.Checkpoint.init -> void
+Microsoft.Agents.AI.Workflows.SuperStepCompletionInfo.HasPendingMessages.get -> bool
+Microsoft.Agents.AI.Workflows.SuperStepCompletionInfo.HasPendingMessages.init -> void
+Microsoft.Agents.AI.Workflows.SuperStepCompletionInfo.HasPendingRequests.get -> bool
+Microsoft.Agents.AI.Workflows.SuperStepCompletionInfo.HasPendingRequests.init -> void
+Microsoft.Agents.AI.Workflows.SuperStepCompletionInfo.InstantiatedExecutors.get -> System.Collections.Generic.HashSet<string!>!
+Microsoft.Agents.AI.Workflows.SuperStepCompletionInfo.StateUpdated.get -> bool
+Microsoft.Agents.AI.Workflows.SuperStepCompletionInfo.StateUpdated.init -> void
+Microsoft.Agents.AI.Workflows.SuperStepCompletionInfo.SuperStepCompletionInfo(System.Collections.Generic.IEnumerable<string!>! activatedExecutors, System.Collections.Generic.IEnumerable<string!>? instantiatedExecutors = null) -> void
+Microsoft.Agents.AI.Workflows.SuperStepEvent
+Microsoft.Agents.AI.Workflows.SuperStepEvent.StepNumber.get -> int
+Microsoft.Agents.AI.Workflows.SuperStepEvent.SuperStepEvent(int stepNumber, object? data = null) -> void
+Microsoft.Agents.AI.Workflows.SuperStepStartInfo
+Microsoft.Agents.AI.Workflows.SuperStepStartInfo.HasExternalMessages.get -> bool
+Microsoft.Agents.AI.Workflows.SuperStepStartInfo.HasExternalMessages.init -> void
+Microsoft.Agents.AI.Workflows.SuperStepStartInfo.SendingExecutors.get -> System.Collections.Generic.HashSet<string!>!
+Microsoft.Agents.AI.Workflows.SuperStepStartInfo.SuperStepStartInfo(System.Collections.Generic.HashSet<string!>? sendingExecutors = null) -> void
+Microsoft.Agents.AI.Workflows.SuperStepStartedEvent
+Microsoft.Agents.AI.Workflows.SuperStepStartedEvent.StartInfo.get -> Microsoft.Agents.AI.Workflows.SuperStepStartInfo?
+Microsoft.Agents.AI.Workflows.SuperStepStartedEvent.SuperStepStartedEvent(int stepNumber, Microsoft.Agents.AI.Workflows.SuperStepStartInfo? startInfo = null) -> void
+Microsoft.Agents.AI.Workflows.SwitchBuilder
+Microsoft.Agents.AI.Workflows.SwitchBuilder.AddCase<T>(System.Func<T?, bool>! predicate, params System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.ExecutorBinding!>! executors) -> Microsoft.Agents.AI.Workflows.SwitchBuilder!
+Microsoft.Agents.AI.Workflows.SwitchBuilder.SwitchBuilder() -> void
+Microsoft.Agents.AI.Workflows.SwitchBuilder.WithDefault(params System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.ExecutorBinding!>! executors) -> Microsoft.Agents.AI.Workflows.SwitchBuilder!
+Microsoft.Agents.AI.Workflows.TurnToken
+Microsoft.Agents.AI.Workflows.TurnToken.EmitEvents.get -> bool?
+Microsoft.Agents.AI.Workflows.TurnToken.TurnToken(bool? emitEvents = null) -> void
+Microsoft.Agents.AI.Workflows.Workflow
+Microsoft.Agents.AI.Workflows.Workflow.DescribeProtocolAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.ProtocolDescriptor!>
+Microsoft.Agents.AI.Workflows.Workflow.Description.get -> string?
+Microsoft.Agents.AI.Workflows.Workflow.Name.get -> string?
+Microsoft.Agents.AI.Workflows.Workflow.ReflectEdges() -> System.Collections.Generic.Dictionary<string!, System.Collections.Generic.HashSet<Microsoft.Agents.AI.Workflows.Checkpointing.EdgeInfo!>!>!
+Microsoft.Agents.AI.Workflows.Workflow.ReflectExecutors() -> System.Collections.Generic.Dictionary<string!, Microsoft.Agents.AI.Workflows.ExecutorBinding!>!
+Microsoft.Agents.AI.Workflows.Workflow.ReflectPorts() -> System.Collections.Generic.Dictionary<string!, Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo!>!
+Microsoft.Agents.AI.Workflows.Workflow.StartExecutorId.get -> string!
+Microsoft.Agents.AI.Workflows.WorkflowAgentMetadata
+Microsoft.Agents.AI.Workflows.WorkflowAgentMetadata.UsesOwnCheckpointStorage.get -> bool
+Microsoft.Agents.AI.Workflows.WorkflowAgentMetadata.WorkflowAgentMetadata(bool usesOwnCheckpointStorage) -> void
+Microsoft.Agents.AI.Workflows.WorkflowBuilder
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.AddEdge(Microsoft.Agents.AI.Workflows.ExecutorBinding! source, Microsoft.Agents.AI.Workflows.ExecutorBinding! target) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.AddEdge(Microsoft.Agents.AI.Workflows.ExecutorBinding! source, Microsoft.Agents.AI.Workflows.ExecutorBinding! target, bool idempotent = false) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.AddEdge(Microsoft.Agents.AI.Workflows.ExecutorBinding! source, Microsoft.Agents.AI.Workflows.ExecutorBinding! target, string? label = null, bool idempotent = false) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.AddEdge<T>(Microsoft.Agents.AI.Workflows.ExecutorBinding! source, Microsoft.Agents.AI.Workflows.ExecutorBinding! target, System.Func<T?, bool>? condition = null) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.AddEdge<T>(Microsoft.Agents.AI.Workflows.ExecutorBinding! source, Microsoft.Agents.AI.Workflows.ExecutorBinding! target, System.Func<T?, bool>? condition = null, bool idempotent = false) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.AddEdge<T>(Microsoft.Agents.AI.Workflows.ExecutorBinding! source, Microsoft.Agents.AI.Workflows.ExecutorBinding! target, System.Func<T?, bool>? condition = null, string? label = null, bool idempotent = false) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.AddFanInBarrierEdge(Microsoft.Agents.AI.Workflows.ExecutorBinding! target, params System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.ExecutorBinding!>! sources) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.AddFanInBarrierEdge(System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.ExecutorBinding!>! sources, Microsoft.Agents.AI.Workflows.ExecutorBinding! target) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.AddFanInBarrierEdge(System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.ExecutorBinding!>! sources, Microsoft.Agents.AI.Workflows.ExecutorBinding! target, string? label = null) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.AddFanOutEdge(Microsoft.Agents.AI.Workflows.ExecutorBinding! source, System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.ExecutorBinding!>! targets) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.AddFanOutEdge(Microsoft.Agents.AI.Workflows.ExecutorBinding! source, System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.ExecutorBinding!>! targets, string! label) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.AddFanOutEdge<T>(Microsoft.Agents.AI.Workflows.ExecutorBinding! source, System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.ExecutorBinding!>! targets, System.Func<T?, int, System.Collections.Generic.IEnumerable<int>!>? targetSelector = null) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.AddFanOutEdge<T>(Microsoft.Agents.AI.Workflows.ExecutorBinding! source, System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.ExecutorBinding!>! targets, System.Func<T?, int, System.Collections.Generic.IEnumerable<int>!>? targetSelector = null, string? label = null) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.BindExecutor(Microsoft.Agents.AI.Workflows.ExecutorBinding! registration) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.Build(bool validateOrphans = true) -> Microsoft.Agents.AI.Workflows.Workflow!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.WithDescription(string! description) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.WithName(string! name) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.WithOutputFrom(Microsoft.Agents.AI.Workflows.ExecutorBinding! executor, Microsoft.Agents.AI.Workflows.OutputTag tag) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.WithOutputFrom(System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.ExecutorBinding!>! executors, Microsoft.Agents.AI.Workflows.OutputTag tag) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.WithOutputFrom(params Microsoft.Agents.AI.Workflows.ExecutorBinding![]! executors) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+Microsoft.Agents.AI.Workflows.WorkflowBuilder.WorkflowBuilder(Microsoft.Agents.AI.Workflows.ExecutorBinding! start) -> void
+Microsoft.Agents.AI.Workflows.WorkflowBuilderExtensions
+Microsoft.Agents.AI.Workflows.WorkflowErrorEvent
+Microsoft.Agents.AI.Workflows.WorkflowErrorEvent.Exception.get -> System.Exception?
+Microsoft.Agents.AI.Workflows.WorkflowErrorEvent.WorkflowErrorEvent(System.Exception? e) -> void
+Microsoft.Agents.AI.Workflows.WorkflowEvent
+Microsoft.Agents.AI.Workflows.WorkflowEvent.Data.get -> object?
+Microsoft.Agents.AI.Workflows.WorkflowEvent.WorkflowEvent(object? data = null) -> void
+Microsoft.Agents.AI.Workflows.WorkflowHostingExtensions
+Microsoft.Agents.AI.Workflows.WorkflowOutputEvent
+Microsoft.Agents.AI.Workflows.WorkflowOutputEvent.As<T>() -> T?
+Microsoft.Agents.AI.Workflows.WorkflowOutputEvent.AsType(System.Type! type) -> object?
+Microsoft.Agents.AI.Workflows.WorkflowOutputEvent.ExecutorId.get -> string!
+Microsoft.Agents.AI.Workflows.WorkflowOutputEvent.HasTag(Microsoft.Agents.AI.Workflows.OutputTag tag) -> bool
+Microsoft.Agents.AI.Workflows.WorkflowOutputEvent.Is<T>() -> bool
+Microsoft.Agents.AI.Workflows.WorkflowOutputEvent.Is<T>(out T? maybeValue) -> bool
+Microsoft.Agents.AI.Workflows.WorkflowOutputEvent.IsType(System.Type! type) -> bool
+Microsoft.Agents.AI.Workflows.WorkflowOutputEvent.SourceId.get -> string!
+Microsoft.Agents.AI.Workflows.WorkflowOutputEvent.Tags.get -> System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.OutputTag>!
+Microsoft.Agents.AI.Workflows.WorkflowOutputEvent.WorkflowOutputEvent(object! data, string! executorId) -> void
+Microsoft.Agents.AI.Workflows.WorkflowOutputEvent.WorkflowOutputEvent(object! data, string! executorId, Microsoft.Agents.AI.Workflows.OutputTag tag) -> void
+Microsoft.Agents.AI.Workflows.WorkflowOutputEvent.WorkflowOutputEvent(object! data, string! executorId, System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.OutputTag>? tags) -> void
+Microsoft.Agents.AI.Workflows.WorkflowOutputEventExtensions
+Microsoft.Agents.AI.Workflows.WorkflowStartedEvent
+Microsoft.Agents.AI.Workflows.WorkflowStartedEvent.WorkflowStartedEvent(object? message = null) -> void
+Microsoft.Agents.AI.Workflows.WorkflowVisualizer
+Microsoft.Agents.AI.Workflows.WorkflowWarningEvent
+Microsoft.Agents.AI.Workflows.WorkflowWarningEvent.WorkflowWarningEvent(string! message) -> void
+Microsoft.Agents.AI.Workflows.YieldsMessageAttribute
+Microsoft.Agents.AI.Workflows.YieldsMessageAttribute.Type.get -> System.Type!
+Microsoft.Agents.AI.Workflows.YieldsMessageAttribute.YieldsMessageAttribute(System.Type! type) -> void
+Microsoft.Agents.AI.Workflows.YieldsOutputAttribute
+Microsoft.Agents.AI.Workflows.YieldsOutputAttribute.Type.get -> System.Type!
+Microsoft.Agents.AI.Workflows.YieldsOutputAttribute.YieldsOutputAttribute(System.Type! type) -> void
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticDefaultPrompts
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.<Clone>$() -> Microsoft.Agents.AI.Workflows.MagenticPromptOverrides!
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.Equals(Microsoft.Agents.AI.Workflows.MagenticPromptOverrides? other) -> bool
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.FinalAnswerPrompt.get -> string?
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.FinalAnswerPrompt.init -> void
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.MagenticPromptOverrides() -> void
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.ProgressLedgerPrompt.get -> string?
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.ProgressLedgerPrompt.init -> void
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.TaskLedgerFactsPrompt.get -> string?
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.TaskLedgerFactsPrompt.init -> void
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.TaskLedgerFactsUpdatePrompt.get -> string?
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.TaskLedgerFactsUpdatePrompt.init -> void
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.TaskLedgerFullPrompt.get -> string?
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.TaskLedgerFullPrompt.init -> void
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.TaskLedgerPlanPrompt.get -> string?
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.TaskLedgerPlanPrompt.init -> void
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.TaskLedgerPlanUpdatePrompt.get -> string?
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.TaskLedgerPlanUpdatePrompt.init -> void
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder.WithPromptOverrides(Microsoft.Agents.AI.Workflows.MagenticPromptOverrides? promptOverrides = null) -> Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder!
+[MAAI001]Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder.WithResponseLanguage(string? responseLanguage = null) -> Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder!
+[MAAI001]Microsoft.Agents.AI.Workflows.WorkflowSessionCheckpointRecovery
+[MAAI001]Microsoft.Agents.AI.Workflows.WorkflowSessionCheckpointRecovery.CurrentCheckpoint.get -> Microsoft.Agents.AI.Workflows.CheckpointInfo?
+[MAAI001]Microsoft.Agents.AI.Workflows.WorkflowSessionCheckpointRecovery.TryPrepare(string? checkpointId = null) -> bool
+[MAAI001]override Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.Equals(object? obj) -> bool
+[MAAI001]override Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.GetHashCode() -> int
+[MAAI001]override Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.ToString() -> string!
+[MAAI001]static Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.operator !=(Microsoft.Agents.AI.Workflows.MagenticPromptOverrides? left, Microsoft.Agents.AI.Workflows.MagenticPromptOverrides? right) -> bool
+[MAAI001]static Microsoft.Agents.AI.Workflows.MagenticPromptOverrides.operator ==(Microsoft.Agents.AI.Workflows.MagenticPromptOverrides? left, Microsoft.Agents.AI.Workflows.MagenticPromptOverrides? right) -> bool
+[MAAI001]static readonly Microsoft.Agents.AI.Workflows.MagenticDefaultPrompts.FinalAnswerPrompt -> string!
+[MAAI001]static readonly Microsoft.Agents.AI.Workflows.MagenticDefaultPrompts.ProgressLedgerPrompt -> string!
+[MAAI001]static readonly Microsoft.Agents.AI.Workflows.MagenticDefaultPrompts.TaskLedgerFactsPrompt -> string!
+[MAAI001]static readonly Microsoft.Agents.AI.Workflows.MagenticDefaultPrompts.TaskLedgerFactsUpdatePrompt -> string!
+[MAAI001]static readonly Microsoft.Agents.AI.Workflows.MagenticDefaultPrompts.TaskLedgerFullPrompt -> string!
+[MAAI001]static readonly Microsoft.Agents.AI.Workflows.MagenticDefaultPrompts.TaskLedgerPlanPrompt -> string!
+[MAAI001]static readonly Microsoft.Agents.AI.Workflows.MagenticDefaultPrompts.TaskLedgerPlanUpdatePrompt -> string!
+abstract Microsoft.Agents.AI.Workflows.ChatProtocolExecutor.TakeTurnAsync(System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, bool? emitEvents, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+abstract Microsoft.Agents.AI.Workflows.Checkpointing.JsonCheckpointStore.CreateCheckpointAsync(string! sessionId, System.Text.Json.JsonElement value, Microsoft.Agents.AI.Workflows.CheckpointInfo? parent = null) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.CheckpointInfo!>
+abstract Microsoft.Agents.AI.Workflows.Checkpointing.JsonCheckpointStore.RetrieveCheckpointAsync(string! sessionId, Microsoft.Agents.AI.Workflows.CheckpointInfo! key) -> System.Threading.Tasks.ValueTask<System.Text.Json.JsonElement>
+abstract Microsoft.Agents.AI.Workflows.Checkpointing.JsonCheckpointStore.RetrieveIndexAsync(string! sessionId, Microsoft.Agents.AI.Workflows.CheckpointInfo? withParent = null) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.CheckpointInfo!>!>
+abstract Microsoft.Agents.AI.Workflows.Executor.ConfigureProtocol(Microsoft.Agents.AI.Workflows.ProtocolBuilder! protocolBuilder) -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+abstract Microsoft.Agents.AI.Workflows.Executor<TInput, TOutput>.HandleAsync(TInput message, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<TOutput>
+abstract Microsoft.Agents.AI.Workflows.Executor<TInput>.HandleAsync(TInput message, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+abstract Microsoft.Agents.AI.Workflows.ExecutorBinding.<Clone>$() -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+abstract Microsoft.Agents.AI.Workflows.ExecutorBinding.IsSharedInstance.get -> bool
+abstract Microsoft.Agents.AI.Workflows.ExecutorBinding.SupportsConcurrentSharedExecution.get -> bool
+abstract Microsoft.Agents.AI.Workflows.ExecutorBinding.SupportsResetting.get -> bool
+abstract Microsoft.Agents.AI.Workflows.GroupChatManager.SelectNextAgentAsync(System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>! history, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIAgent!>
+abstract Microsoft.Agents.AI.Workflows.StatefulExecutor<TState, TInput, TOutput>.HandleAsync(TInput message, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<TOutput>
+abstract Microsoft.Agents.AI.Workflows.StatefulExecutor<TState, TInput>.HandleAsync(TInput message, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+const Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilderCore<TBuilder>.FunctionPrefix = "handoff_to_" -> string!
+override Microsoft.Agents.AI.Workflows.AIAgentBinding.<Clone>$() -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+override Microsoft.Agents.AI.Workflows.AIAgentBinding.EqualityContract.get -> System.Type!
+override Microsoft.Agents.AI.Workflows.AIAgentBinding.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.AIAgentBinding.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.AIAgentBinding.IsSharedInstance.get -> bool
+override Microsoft.Agents.AI.Workflows.AIAgentBinding.PrintMembers(System.Text.StringBuilder! builder) -> bool
+override Microsoft.Agents.AI.Workflows.AIAgentBinding.SupportsConcurrentSharedExecution.get -> bool
+override Microsoft.Agents.AI.Workflows.AIAgentBinding.SupportsResetting.get -> bool
+override Microsoft.Agents.AI.Workflows.AIAgentBinding.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.AggregatingExecutor<TInput, TAggregate>.HandleAsync(TInput message, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<TAggregate?>
+override Microsoft.Agents.AI.Workflows.ChatProtocolExecutor.ConfigureProtocol(Microsoft.Agents.AI.Workflows.ProtocolBuilder! protocolBuilder) -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+override Microsoft.Agents.AI.Workflows.CheckpointInfo.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.CheckpointInfo.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.CheckpointInfo.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.Checkpointing.FileSystemJsonCheckpointStore.CreateCheckpointAsync(string! sessionId, System.Text.Json.JsonElement value, Microsoft.Agents.AI.Workflows.CheckpointInfo? parent = null) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.CheckpointInfo!>
+override Microsoft.Agents.AI.Workflows.Checkpointing.FileSystemJsonCheckpointStore.RetrieveCheckpointAsync(string! sessionId, Microsoft.Agents.AI.Workflows.CheckpointInfo! key) -> System.Threading.Tasks.ValueTask<System.Text.Json.JsonElement>
+override Microsoft.Agents.AI.Workflows.Checkpointing.FileSystemJsonCheckpointStore.RetrieveIndexAsync(string! sessionId, Microsoft.Agents.AI.Workflows.CheckpointInfo? withParent = null) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.CheckpointInfo!>!>
+override Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.Checkpointing.TypeId.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.Checkpointing.TypeId.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.Checkpointing.TypeId.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.EdgeId.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.EdgeId.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.EdgeId.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.Execution.EdgeConnection.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.Execution.EdgeConnection.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.Execution.EdgeConnection.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.Executor<TInput, TOutput>.ConfigureProtocol(Microsoft.Agents.AI.Workflows.ProtocolBuilder! protocolBuilder) -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+override Microsoft.Agents.AI.Workflows.Executor<TInput>.ConfigureProtocol(Microsoft.Agents.AI.Workflows.ProtocolBuilder! protocolBuilder) -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+override Microsoft.Agents.AI.Workflows.ExecutorBinding.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.ExecutorBinding.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.ExecutorBinding.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.ExecutorEvent.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.<Clone>$() -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+override Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.EqualityContract.get -> System.Type!
+override Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.IsSharedInstance.get -> bool
+override Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.PrintMembers(System.Text.StringBuilder! builder) -> bool
+override Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.ResetCoreAsync() -> System.Threading.Tasks.ValueTask<bool>
+override Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.SupportsConcurrentSharedExecution.get -> bool
+override Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.SupportsResetting.get -> bool
+override Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.ExecutorPlaceholder.<Clone>$() -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+override Microsoft.Agents.AI.Workflows.ExecutorPlaceholder.EqualityContract.get -> System.Type!
+override Microsoft.Agents.AI.Workflows.ExecutorPlaceholder.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.ExecutorPlaceholder.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.ExecutorPlaceholder.IsSharedInstance.get -> bool
+override Microsoft.Agents.AI.Workflows.ExecutorPlaceholder.PrintMembers(System.Text.StringBuilder! builder) -> bool
+override Microsoft.Agents.AI.Workflows.ExecutorPlaceholder.SupportsConcurrentSharedExecution.get -> bool
+override Microsoft.Agents.AI.Workflows.ExecutorPlaceholder.SupportsResetting.get -> bool
+override Microsoft.Agents.AI.Workflows.ExecutorPlaceholder.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.ExternalRequest.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.ExternalRequest.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.ExternalRequest.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.ExternalResponse.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.ExternalResponse.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.ExternalResponse.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.FunctionExecutor<TInput, TOutput>.ConfigureProtocol(Microsoft.Agents.AI.Workflows.ProtocolBuilder! protocolBuilder) -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+override Microsoft.Agents.AI.Workflows.FunctionExecutor<TInput, TOutput>.HandleAsync(TInput message, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<TOutput>
+override Microsoft.Agents.AI.Workflows.FunctionExecutor<TInput>.ConfigureProtocol(Microsoft.Agents.AI.Workflows.ProtocolBuilder! protocolBuilder) -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+override Microsoft.Agents.AI.Workflows.FunctionExecutor<TInput>.HandleAsync(TInput message, Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask
+override Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.OutputTag.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.OutputTag.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.OutputTag.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.PortableValue.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.PortableValue.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.Reflection.ReflectingExecutor<TExecutor>.ConfigureProtocol(Microsoft.Agents.AI.Workflows.ProtocolBuilder! protocolBuilder) -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+override Microsoft.Agents.AI.Workflows.RequestPort.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.RequestPort.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.RequestPort.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>.<Clone>$() -> Microsoft.Agents.AI.Workflows.RequestPort!
+override Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.RequestPortBinding.<Clone>$() -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+override Microsoft.Agents.AI.Workflows.RequestPortBinding.EqualityContract.get -> System.Type!
+override Microsoft.Agents.AI.Workflows.RequestPortBinding.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.RequestPortBinding.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.RequestPortBinding.IsSharedInstance.get -> bool
+override Microsoft.Agents.AI.Workflows.RequestPortBinding.PrintMembers(System.Text.StringBuilder! builder) -> bool
+override Microsoft.Agents.AI.Workflows.RequestPortBinding.SupportsConcurrentSharedExecution.get -> bool
+override Microsoft.Agents.AI.Workflows.RequestPortBinding.SupportsResetting.get -> bool
+override Microsoft.Agents.AI.Workflows.RequestPortBinding.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.ResetChatSignal.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.ResetChatSignal.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.ResetChatSignal.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.RoundRobinGroupChatManager.OnCheckpointRestoredAsync(Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+override Microsoft.Agents.AI.Workflows.RoundRobinGroupChatManager.OnCheckpointingAsync(Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+override Microsoft.Agents.AI.Workflows.RoundRobinGroupChatManager.Reset() -> void
+override Microsoft.Agents.AI.Workflows.RoundRobinGroupChatManager.SelectNextAgentAsync(System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>! history, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AIAgent!>
+override Microsoft.Agents.AI.Workflows.RoundRobinGroupChatManager.ShouldTerminateAsync(System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>! history, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+override Microsoft.Agents.AI.Workflows.ScopeId.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.ScopeId.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.ScopeId.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.ScopeKey.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.ScopeKey.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.ScopeKey.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.StatefulExecutor<TState, TInput, TOutput>.ConfigureProtocol(Microsoft.Agents.AI.Workflows.ProtocolBuilder! protocolBuilder) -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+override Microsoft.Agents.AI.Workflows.StatefulExecutor<TState, TInput>.ConfigureProtocol(Microsoft.Agents.AI.Workflows.ProtocolBuilder! protocolBuilder) -> Microsoft.Agents.AI.Workflows.ProtocolBuilder!
+override Microsoft.Agents.AI.Workflows.SubworkflowBinding.<Clone>$() -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+override Microsoft.Agents.AI.Workflows.SubworkflowBinding.EqualityContract.get -> System.Type!
+override Microsoft.Agents.AI.Workflows.SubworkflowBinding.Equals(object? obj) -> bool
+override Microsoft.Agents.AI.Workflows.SubworkflowBinding.GetHashCode() -> int
+override Microsoft.Agents.AI.Workflows.SubworkflowBinding.IsSharedInstance.get -> bool
+override Microsoft.Agents.AI.Workflows.SubworkflowBinding.PrintMembers(System.Text.StringBuilder! builder) -> bool
+override Microsoft.Agents.AI.Workflows.SubworkflowBinding.SupportsConcurrentSharedExecution.get -> bool
+override Microsoft.Agents.AI.Workflows.SubworkflowBinding.SupportsResetting.get -> bool
+override Microsoft.Agents.AI.Workflows.SubworkflowBinding.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.SuperStepEvent.ToString() -> string!
+override Microsoft.Agents.AI.Workflows.WorkflowEvent.ToString() -> string!
+override sealed Microsoft.Agents.AI.Workflows.AIAgentBinding.Equals(Microsoft.Agents.AI.Workflows.ExecutorBinding? other) -> bool
+override sealed Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.Equals(Microsoft.Agents.AI.Workflows.ExecutorBinding? other) -> bool
+override sealed Microsoft.Agents.AI.Workflows.ExecutorPlaceholder.Equals(Microsoft.Agents.AI.Workflows.ExecutorBinding? other) -> bool
+override sealed Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>.Equals(Microsoft.Agents.AI.Workflows.RequestPort? other) -> bool
+override sealed Microsoft.Agents.AI.Workflows.RequestPortBinding.Equals(Microsoft.Agents.AI.Workflows.ExecutorBinding? other) -> bool
+override sealed Microsoft.Agents.AI.Workflows.SubworkflowBinding.Equals(Microsoft.Agents.AI.Workflows.ExecutorBinding? other) -> bool
+static Microsoft.Agents.AI.Workflows.AIAgentBinding.operator !=(Microsoft.Agents.AI.Workflows.AIAgentBinding? left, Microsoft.Agents.AI.Workflows.AIAgentBinding? right) -> bool
+static Microsoft.Agents.AI.Workflows.AIAgentBinding.operator ==(Microsoft.Agents.AI.Workflows.AIAgentBinding? left, Microsoft.Agents.AI.Workflows.AIAgentBinding? right) -> bool
+static Microsoft.Agents.AI.Workflows.AgentWorkflowBuilder.BuildConcurrent(System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! agents, System.Func<System.Collections.Generic.IList<System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>!>!, System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>!>? aggregator = null) -> Microsoft.Agents.AI.Workflows.Workflow!
+static Microsoft.Agents.AI.Workflows.AgentWorkflowBuilder.BuildConcurrent(string! workflowName, System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! agents, System.Func<System.Collections.Generic.IList<System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>!>!, System.Collections.Generic.List<Microsoft.Extensions.AI.ChatMessage!>!>? aggregator = null) -> Microsoft.Agents.AI.Workflows.Workflow!
+static Microsoft.Agents.AI.Workflows.AgentWorkflowBuilder.BuildSequential(bool chainOnlyAgentResponses, params System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! agents) -> Microsoft.Agents.AI.Workflows.Workflow!
+static Microsoft.Agents.AI.Workflows.AgentWorkflowBuilder.BuildSequential(params System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! agents) -> Microsoft.Agents.AI.Workflows.Workflow!
+static Microsoft.Agents.AI.Workflows.AgentWorkflowBuilder.BuildSequential(string! workflowName, bool chainOnlyAgentResponses, params System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! agents) -> Microsoft.Agents.AI.Workflows.Workflow!
+static Microsoft.Agents.AI.Workflows.AgentWorkflowBuilder.BuildSequential(string! workflowName, params System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! agents) -> Microsoft.Agents.AI.Workflows.Workflow!
+static Microsoft.Agents.AI.Workflows.AgentWorkflowBuilder.CreateConcurrentBuilderWith(params System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! agents) -> Microsoft.Agents.AI.Workflows.ConcurrentWorkflowBuilder!
+static Microsoft.Agents.AI.Workflows.AgentWorkflowBuilder.CreateGroupChatBuilderWith(System.Func<System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.AIAgent!>!, Microsoft.Agents.AI.Workflows.GroupChatManager!>! managerFactory) -> Microsoft.Agents.AI.Workflows.GroupChatWorkflowBuilder!
+static Microsoft.Agents.AI.Workflows.AgentWorkflowBuilder.CreateHandoffBuilderWith(Microsoft.Agents.AI.AIAgent! initialAgent) -> Microsoft.Agents.AI.Workflows.HandoffWorkflowBuilder!
+static Microsoft.Agents.AI.Workflows.AgentWorkflowBuilder.CreateMagenticBuilderWith(Microsoft.Agents.AI.AIAgent! managerAgent) -> Microsoft.Agents.AI.Workflows.MagenticWorkflowBuilder!
+static Microsoft.Agents.AI.Workflows.AgentWorkflowBuilder.CreateSequentialBuilderWith(params System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! agents) -> Microsoft.Agents.AI.Workflows.SequentialWorkflowBuilder!
+static Microsoft.Agents.AI.Workflows.ChatProtocolExtensions.IsChatProtocol(this Microsoft.Agents.AI.Workflows.ProtocolDescriptor! descriptor, bool allowCatchAll = false) -> bool
+static Microsoft.Agents.AI.Workflows.ChatProtocolExtensions.ThrowIfNotChatProtocol(this Microsoft.Agents.AI.Workflows.ProtocolDescriptor! descriptor, bool allowCatchAll = false) -> void
+static Microsoft.Agents.AI.Workflows.CheckpointManager.CreateInMemory() -> Microsoft.Agents.AI.Workflows.CheckpointManager!
+static Microsoft.Agents.AI.Workflows.CheckpointManager.CreateJson(Microsoft.Agents.AI.Workflows.Checkpointing.ICheckpointStore<System.Text.Json.JsonElement>! store, System.Text.Json.JsonSerializerOptions? customOptions = null) -> Microsoft.Agents.AI.Workflows.CheckpointManager!
+static Microsoft.Agents.AI.Workflows.CheckpointManager.Default.get -> Microsoft.Agents.AI.Workflows.CheckpointManager!
+static Microsoft.Agents.AI.Workflows.Checkpointing.JsonCheckpointStore.KeyTypeInfo.get -> System.Text.Json.Serialization.Metadata.JsonTypeInfo<Microsoft.Agents.AI.Workflows.CheckpointInfo!>!
+static Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.operator !=(Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo? left, Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo? right) -> bool
+static Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.operator ==(Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo? left, Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo? right) -> bool
+static Microsoft.Agents.AI.Workflows.Checkpointing.TypeId.operator !=(Microsoft.Agents.AI.Workflows.Checkpointing.TypeId? left, Microsoft.Agents.AI.Workflows.Checkpointing.TypeId? right) -> bool
+static Microsoft.Agents.AI.Workflows.Checkpointing.TypeId.operator ==(Microsoft.Agents.AI.Workflows.Checkpointing.TypeId? left, Microsoft.Agents.AI.Workflows.Checkpointing.TypeId? right) -> bool
+static Microsoft.Agents.AI.Workflows.EdgeId.operator !=(Microsoft.Agents.AI.Workflows.EdgeId left, Microsoft.Agents.AI.Workflows.EdgeId right) -> bool
+static Microsoft.Agents.AI.Workflows.EdgeId.operator ==(Microsoft.Agents.AI.Workflows.EdgeId left, Microsoft.Agents.AI.Workflows.EdgeId right) -> bool
+static Microsoft.Agents.AI.Workflows.Execution.EdgeConnection.CreateChecked(System.Collections.Generic.List<string!>! sourceIds, System.Collections.Generic.List<string!>! sinkIds) -> Microsoft.Agents.AI.Workflows.Execution.EdgeConnection!
+static Microsoft.Agents.AI.Workflows.Execution.EdgeConnection.operator !=(Microsoft.Agents.AI.Workflows.Execution.EdgeConnection? left, Microsoft.Agents.AI.Workflows.Execution.EdgeConnection? right) -> bool
+static Microsoft.Agents.AI.Workflows.Execution.EdgeConnection.operator ==(Microsoft.Agents.AI.Workflows.Execution.EdgeConnection? left, Microsoft.Agents.AI.Workflows.Execution.EdgeConnection? right) -> bool
+static Microsoft.Agents.AI.Workflows.ExecutorBinding.implicit operator Microsoft.Agents.AI.Workflows.ExecutorBinding!(Microsoft.Agents.AI.AIAgent! agent) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBinding.implicit operator Microsoft.Agents.AI.Workflows.ExecutorBinding!(Microsoft.Agents.AI.Workflows.Executor! executor) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBinding.implicit operator Microsoft.Agents.AI.Workflows.ExecutorBinding!(Microsoft.Agents.AI.Workflows.RequestPort! port) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBinding.implicit operator Microsoft.Agents.AI.Workflows.ExecutorBinding!(string! id) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBinding.operator !=(Microsoft.Agents.AI.Workflows.ExecutorBinding? left, Microsoft.Agents.AI.Workflows.ExecutorBinding? right) -> bool
+static Microsoft.Agents.AI.Workflows.ExecutorBinding.operator ==(Microsoft.Agents.AI.Workflows.ExecutorBinding? left, Microsoft.Agents.AI.Workflows.ExecutorBinding? right) -> bool
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor(this Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.Workflows.AIAgentHostOptions? options = null) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor(this Microsoft.Agents.AI.AIAgent! agent, bool emitEvents) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor(this Microsoft.Agents.AI.Workflows.RequestPort! port, bool allowWrappedRequests = true) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor(this Microsoft.Agents.AI.Workflows.Workflow! workflow, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor<TInput, TAccumulate>(this System.Func<TAccumulate?, TInput, TAccumulate?>! aggregatorFunc, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool threadsafe = false) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor<TInput, TOutput>(this System.Func<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<TOutput>>! messageHandlerAsync, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool threadsafe = false) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor<TInput, TOutput>(this System.Func<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, TOutput>! messageHandler, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool threadsafe = false) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor<TInput, TOutput>(this System.Func<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.Tasks.ValueTask<TOutput>>! messageHandlerAsync, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool threadsafe = false) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor<TInput, TOutput>(this System.Func<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, TOutput>! messageHandler, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool threadsafe = false) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor<TInput, TOutput>(this System.Func<TInput, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<TOutput>>! messageHandlerAsync, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool threadsafe = false) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor<TInput, TOutput>(this System.Func<TInput, System.Threading.CancellationToken, TOutput>! messageHandler, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool threadsafe = false) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor<TInput, TOutput>(this System.Func<TInput, System.Threading.Tasks.ValueTask<TOutput>>! messageHandlerAsync, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool threadsafe = false) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor<TInput, TOutput>(this System.Func<TInput, TOutput>! messageHandler, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool threadsafe = false) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor<TInput>(this System.Action<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken>! messageHandler, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool threadsafe = false) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor<TInput>(this System.Action<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!>! messageHandler, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool threadsafe = false) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor<TInput>(this System.Action<TInput, System.Threading.CancellationToken>! messageHandler, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool threadsafe = false) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor<TInput>(this System.Action<TInput>! messageHandler, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool threadsafe = false) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor<TInput>(this System.Func<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! messageHandlerAsync, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool threadsafe = false) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor<TInput>(this System.Func<TInput, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.Tasks.ValueTask>! messageHandlerAsync, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool threadsafe = false) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor<TInput>(this System.Func<TInput, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>! messageHandlerAsync, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool threadsafe = false) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindAsExecutor<TInput>(this System.Func<TInput, System.Threading.Tasks.ValueTask>! messageHandlerAsync, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null, bool threadsafe = false) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindExecutor(this Microsoft.Agents.AI.Workflows.Executor! executor) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindExecutor<TExecutor, TOptions>(this System.Func<Microsoft.Agents.AI.Workflows.ExecutorConfig<TOptions!>!, string!, System.Threading.Tasks.ValueTask<TExecutor!>>! factoryAsync, string! id, TOptions? options = null) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindExecutor<TExecutor>(this System.Func<string!, string!, System.Threading.Tasks.ValueTask<TExecutor!>>! factoryAsync) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.BindExecutor<TExecutor>(this System.Func<string!, string!, System.Threading.Tasks.ValueTask<TExecutor!>>! factoryAsync, string! id) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.ConfigureFactory<TExecutor, TOptions>(this System.Func<Microsoft.Agents.AI.Workflows.ExecutorConfig<TOptions!>!, string!, System.Threading.Tasks.ValueTask<TExecutor!>>! factoryAsync, string! id, TOptions? options = null) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.ConfigureFactory<TExecutor>(this System.Func<string!, string!, System.Threading.Tasks.ValueTask<TExecutor!>>! factoryAsync) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.ConfigureFactory<TExecutor>(this System.Func<string!, string!, System.Threading.Tasks.ValueTask<TExecutor!>>! factoryAsync, string! id) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorBindingExtensions.ConfigureSubWorkflow(this Microsoft.Agents.AI.Workflows.Workflow! workflow, string! id, Microsoft.Agents.AI.Workflows.ExecutorOptions? options = null) -> Microsoft.Agents.AI.Workflows.ExecutorBinding!
+static Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.operator !=(Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding? left, Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding? right) -> bool
+static Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.operator ==(Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding? left, Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding? right) -> bool
+static Microsoft.Agents.AI.Workflows.ExecutorOptions.Default.get -> Microsoft.Agents.AI.Workflows.ExecutorOptions!
+static Microsoft.Agents.AI.Workflows.ExecutorPlaceholder.operator !=(Microsoft.Agents.AI.Workflows.ExecutorPlaceholder? left, Microsoft.Agents.AI.Workflows.ExecutorPlaceholder? right) -> bool
+static Microsoft.Agents.AI.Workflows.ExecutorPlaceholder.operator ==(Microsoft.Agents.AI.Workflows.ExecutorPlaceholder? left, Microsoft.Agents.AI.Workflows.ExecutorPlaceholder? right) -> bool
+static Microsoft.Agents.AI.Workflows.ExternalRequest.Create(Microsoft.Agents.AI.Workflows.RequestPort! port, object! data, string? requestId = null) -> Microsoft.Agents.AI.Workflows.ExternalRequest!
+static Microsoft.Agents.AI.Workflows.ExternalRequest.Create<T>(Microsoft.Agents.AI.Workflows.RequestPort! port, T data, string? requestId = null) -> Microsoft.Agents.AI.Workflows.ExternalRequest!
+static Microsoft.Agents.AI.Workflows.ExternalRequest.operator !=(Microsoft.Agents.AI.Workflows.ExternalRequest? left, Microsoft.Agents.AI.Workflows.ExternalRequest? right) -> bool
+static Microsoft.Agents.AI.Workflows.ExternalRequest.operator ==(Microsoft.Agents.AI.Workflows.ExternalRequest? left, Microsoft.Agents.AI.Workflows.ExternalRequest? right) -> bool
+static Microsoft.Agents.AI.Workflows.ExternalResponse.operator !=(Microsoft.Agents.AI.Workflows.ExternalResponse? left, Microsoft.Agents.AI.Workflows.ExternalResponse? right) -> bool
+static Microsoft.Agents.AI.Workflows.ExternalResponse.operator ==(Microsoft.Agents.AI.Workflows.ExternalResponse? left, Microsoft.Agents.AI.Workflows.ExternalResponse? right) -> bool
+static Microsoft.Agents.AI.Workflows.Futures.EnableAgentResponseOutputTaggingAndFiltering.get -> bool
+static Microsoft.Agents.AI.Workflows.Futures.EnableAgentResponseOutputTaggingAndFiltering.set -> void
+static Microsoft.Agents.AI.Workflows.IWorkflowContextExtensions.InvokeWithStateAsync<TState>(this Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Func<TState, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<TState?>>! invocation, string! key, System.Func<TState>! initialStateFactory, string? scopeName = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+static Microsoft.Agents.AI.Workflows.IWorkflowContextExtensions.InvokeWithStateAsync<TState>(this Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Func<TState?, Microsoft.Agents.AI.Workflows.IWorkflowContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<TState?>>! invocation, string! key, string? scopeName = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+static Microsoft.Agents.AI.Workflows.IWorkflowContextExtensions.SendMessageAsync(this Microsoft.Agents.AI.Workflows.IWorkflowContext! context, object! message, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+static Microsoft.Agents.AI.Workflows.InProcessExecution.Concurrent.get -> Microsoft.Agents.AI.Workflows.InProc.InProcessExecutionEnvironment!
+static Microsoft.Agents.AI.Workflows.InProcessExecution.Default.get -> Microsoft.Agents.AI.Workflows.InProc.InProcessExecutionEnvironment!
+static Microsoft.Agents.AI.Workflows.InProcessExecution.Lockstep.get -> Microsoft.Agents.AI.Workflows.InProc.InProcessExecutionEnvironment!
+static Microsoft.Agents.AI.Workflows.InProcessExecution.OffThread.get -> Microsoft.Agents.AI.Workflows.InProc.InProcessExecutionEnvironment!
+static Microsoft.Agents.AI.Workflows.InProcessExecution.OpenStreamingAsync(Microsoft.Agents.AI.Workflows.Workflow! workflow, Microsoft.Agents.AI.Workflows.CheckpointManager! checkpointManager, string? sessionId = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.StreamingRun!>
+static Microsoft.Agents.AI.Workflows.InProcessExecution.OpenStreamingAsync(Microsoft.Agents.AI.Workflows.Workflow! workflow, string? sessionId = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.StreamingRun!>
+static Microsoft.Agents.AI.Workflows.InProcessExecution.ResumeAsync(Microsoft.Agents.AI.Workflows.Workflow! workflow, Microsoft.Agents.AI.Workflows.CheckpointInfo! fromCheckpoint, Microsoft.Agents.AI.Workflows.CheckpointManager! checkpointManager, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Run!>
+static Microsoft.Agents.AI.Workflows.InProcessExecution.ResumeStreamingAsync(Microsoft.Agents.AI.Workflows.Workflow! workflow, Microsoft.Agents.AI.Workflows.CheckpointInfo! fromCheckpoint, Microsoft.Agents.AI.Workflows.CheckpointManager! checkpointManager, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.StreamingRun!>
+static Microsoft.Agents.AI.Workflows.InProcessExecution.RunAsync<TInput>(Microsoft.Agents.AI.Workflows.Workflow! workflow, TInput input, Microsoft.Agents.AI.Workflows.CheckpointManager! checkpointManager, string? sessionId = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Run!>
+static Microsoft.Agents.AI.Workflows.InProcessExecution.RunAsync<TInput>(Microsoft.Agents.AI.Workflows.Workflow! workflow, TInput input, string? sessionId = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.Run!>
+static Microsoft.Agents.AI.Workflows.InProcessExecution.RunStreamingAsync<TInput>(Microsoft.Agents.AI.Workflows.Workflow! workflow, TInput input, Microsoft.Agents.AI.Workflows.CheckpointManager! checkpointManager, string? sessionId = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.StreamingRun!>
+static Microsoft.Agents.AI.Workflows.InProcessExecution.RunStreamingAsync<TInput>(Microsoft.Agents.AI.Workflows.Workflow! workflow, TInput input, string? sessionId = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.Workflows.StreamingRun!>
+static Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.operator !=(Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest? left, Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest? right) -> bool
+static Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.operator ==(Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest? left, Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest? right) -> bool
+static Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse.operator !=(Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse? left, Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse? right) -> bool
+static Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse.operator ==(Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse? left, Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse? right) -> bool
+static Microsoft.Agents.AI.Workflows.OpenTelemetryWorkflowBuilderExtensions.WithOpenTelemetry(this Microsoft.Agents.AI.Workflows.WorkflowBuilder! builder, System.Action<Microsoft.Agents.AI.Workflows.Observability.WorkflowTelemetryOptions!>? configure = null, System.Diagnostics.ActivitySource? activitySource = null) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+static Microsoft.Agents.AI.Workflows.OutputTag.Intermediate.get -> Microsoft.Agents.AI.Workflows.OutputTag
+static Microsoft.Agents.AI.Workflows.OutputTag.operator !=(Microsoft.Agents.AI.Workflows.OutputTag left, Microsoft.Agents.AI.Workflows.OutputTag right) -> bool
+static Microsoft.Agents.AI.Workflows.OutputTag.operator ==(Microsoft.Agents.AI.Workflows.OutputTag left, Microsoft.Agents.AI.Workflows.OutputTag right) -> bool
+static Microsoft.Agents.AI.Workflows.PortableValue.operator !=(Microsoft.Agents.AI.Workflows.PortableValue? left, Microsoft.Agents.AI.Workflows.PortableValue? right) -> bool
+static Microsoft.Agents.AI.Workflows.PortableValue.operator ==(Microsoft.Agents.AI.Workflows.PortableValue? left, Microsoft.Agents.AI.Workflows.PortableValue? right) -> bool
+static Microsoft.Agents.AI.Workflows.RequestPort.Create<TRequest, TResponse>(string! id) -> Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>!
+static Microsoft.Agents.AI.Workflows.RequestPort.operator !=(Microsoft.Agents.AI.Workflows.RequestPort? left, Microsoft.Agents.AI.Workflows.RequestPort? right) -> bool
+static Microsoft.Agents.AI.Workflows.RequestPort.operator ==(Microsoft.Agents.AI.Workflows.RequestPort? left, Microsoft.Agents.AI.Workflows.RequestPort? right) -> bool
+static Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>.operator !=(Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>? left, Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>? right) -> bool
+static Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>.operator ==(Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>? left, Microsoft.Agents.AI.Workflows.RequestPort<TRequest, TResponse>? right) -> bool
+static Microsoft.Agents.AI.Workflows.RequestPortBinding.operator !=(Microsoft.Agents.AI.Workflows.RequestPortBinding? left, Microsoft.Agents.AI.Workflows.RequestPortBinding? right) -> bool
+static Microsoft.Agents.AI.Workflows.RequestPortBinding.operator ==(Microsoft.Agents.AI.Workflows.RequestPortBinding? left, Microsoft.Agents.AI.Workflows.RequestPortBinding? right) -> bool
+static Microsoft.Agents.AI.Workflows.ResetChatSignal.operator !=(Microsoft.Agents.AI.Workflows.ResetChatSignal? left, Microsoft.Agents.AI.Workflows.ResetChatSignal? right) -> bool
+static Microsoft.Agents.AI.Workflows.ResetChatSignal.operator ==(Microsoft.Agents.AI.Workflows.ResetChatSignal? left, Microsoft.Agents.AI.Workflows.ResetChatSignal? right) -> bool
+static Microsoft.Agents.AI.Workflows.ScopeId.operator !=(Microsoft.Agents.AI.Workflows.ScopeId? left, Microsoft.Agents.AI.Workflows.ScopeId? right) -> bool
+static Microsoft.Agents.AI.Workflows.ScopeId.operator ==(Microsoft.Agents.AI.Workflows.ScopeId? left, Microsoft.Agents.AI.Workflows.ScopeId? right) -> bool
+static Microsoft.Agents.AI.Workflows.StreamingAggregators.First<TInput, TResult>(System.Func<TInput, TResult>! conversion) -> System.Func<TResult?, TInput, TResult?>!
+static Microsoft.Agents.AI.Workflows.StreamingAggregators.First<TInput>() -> System.Func<TInput?, TInput, TInput?>!
+static Microsoft.Agents.AI.Workflows.StreamingAggregators.Last<TInput, TResult>(System.Func<TInput, TResult>! conversion) -> System.Func<TResult?, TInput, TResult?>!
+static Microsoft.Agents.AI.Workflows.StreamingAggregators.Last<TInput>() -> System.Func<TInput?, TInput, TInput?>!
+static Microsoft.Agents.AI.Workflows.StreamingAggregators.Union<TInput, TResult>(System.Func<TInput, TResult>! conversion) -> System.Func<System.Collections.Generic.IEnumerable<TResult>?, TInput, System.Collections.Generic.IEnumerable<TResult>?>!
+static Microsoft.Agents.AI.Workflows.StreamingAggregators.Union<TInput>() -> System.Func<System.Collections.Generic.IEnumerable<TInput>?, TInput, System.Collections.Generic.IEnumerable<TInput>?>!
+static Microsoft.Agents.AI.Workflows.StreamingRunExtensions.RunToCompletionAsync(this Microsoft.Agents.AI.Workflows.StreamingRun! handle, System.Func<Microsoft.Agents.AI.Workflows.WorkflowEvent!, Microsoft.Agents.AI.Workflows.ExternalResponse?>? eventCallback = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+static Microsoft.Agents.AI.Workflows.SubworkflowBinding.operator !=(Microsoft.Agents.AI.Workflows.SubworkflowBinding? left, Microsoft.Agents.AI.Workflows.SubworkflowBinding? right) -> bool
+static Microsoft.Agents.AI.Workflows.SubworkflowBinding.operator ==(Microsoft.Agents.AI.Workflows.SubworkflowBinding? left, Microsoft.Agents.AI.Workflows.SubworkflowBinding? right) -> bool
+static Microsoft.Agents.AI.Workflows.WorkflowBuilderExtensions.AddChain(this Microsoft.Agents.AI.Workflows.WorkflowBuilder! builder, Microsoft.Agents.AI.Workflows.ExecutorBinding! source, System.Collections.Generic.IList<Microsoft.Agents.AI.Workflows.ExecutorBinding!>! executors, bool allowRepetition = false) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+static Microsoft.Agents.AI.Workflows.WorkflowBuilderExtensions.AddExternalCall<TRequest, TResponse>(this Microsoft.Agents.AI.Workflows.WorkflowBuilder! builder, Microsoft.Agents.AI.Workflows.ExecutorBinding! source, string! portId) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+static Microsoft.Agents.AI.Workflows.WorkflowBuilderExtensions.AddSwitch(this Microsoft.Agents.AI.Workflows.WorkflowBuilder! builder, Microsoft.Agents.AI.Workflows.ExecutorBinding! source, System.Action<Microsoft.Agents.AI.Workflows.SwitchBuilder!>! configureSwitch) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+static Microsoft.Agents.AI.Workflows.WorkflowBuilderExtensions.ForwardExcept<TMessage>(this Microsoft.Agents.AI.Workflows.WorkflowBuilder! builder, Microsoft.Agents.AI.Workflows.ExecutorBinding! source, Microsoft.Agents.AI.Workflows.ExecutorBinding! target) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+static Microsoft.Agents.AI.Workflows.WorkflowBuilderExtensions.ForwardExcept<TMessage>(this Microsoft.Agents.AI.Workflows.WorkflowBuilder! builder, Microsoft.Agents.AI.Workflows.ExecutorBinding! source, System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.ExecutorBinding!>! targets) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+static Microsoft.Agents.AI.Workflows.WorkflowBuilderExtensions.ForwardMessage<TMessage>(this Microsoft.Agents.AI.Workflows.WorkflowBuilder! builder, Microsoft.Agents.AI.Workflows.ExecutorBinding! source, Microsoft.Agents.AI.Workflows.ExecutorBinding! target) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+static Microsoft.Agents.AI.Workflows.WorkflowBuilderExtensions.ForwardMessage<TMessage>(this Microsoft.Agents.AI.Workflows.WorkflowBuilder! builder, Microsoft.Agents.AI.Workflows.ExecutorBinding! source, System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.ExecutorBinding!>! targets) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+static Microsoft.Agents.AI.Workflows.WorkflowBuilderExtensions.ForwardMessage<TMessage>(this Microsoft.Agents.AI.Workflows.WorkflowBuilder! builder, Microsoft.Agents.AI.Workflows.ExecutorBinding! source, System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.ExecutorBinding!>! targets, System.Func<TMessage, bool>? condition = null) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+static Microsoft.Agents.AI.Workflows.WorkflowBuilderExtensions.WithIntermediateOutputFrom(this Microsoft.Agents.AI.Workflows.WorkflowBuilder! builder, System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Workflows.ExecutorBinding!>! executors) -> Microsoft.Agents.AI.Workflows.WorkflowBuilder!
+static Microsoft.Agents.AI.Workflows.WorkflowHostingExtensions.AsAIAgent(this Microsoft.Agents.AI.Workflows.Workflow! workflow, string? id = null, string? name = null, string? description = null, Microsoft.Agents.AI.Workflows.IWorkflowExecutionEnvironment? executionEnvironment = null, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false) -> Microsoft.Agents.AI.AIAgent!
+static Microsoft.Agents.AI.Workflows.WorkflowHostingExtensions.WithCheckpointing(this Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.Workflows.CheckpointManager! checkpointManager) -> Microsoft.Agents.AI.AIAgent!
+static Microsoft.Agents.AI.Workflows.WorkflowOutputEventExtensions.IsIntermediate(this Microsoft.Agents.AI.Workflows.WorkflowOutputEvent! evt) -> bool
+static Microsoft.Agents.AI.Workflows.WorkflowVisualizer.ToDotString(this Microsoft.Agents.AI.Workflows.Workflow! workflow) -> string!
+static Microsoft.Agents.AI.Workflows.WorkflowVisualizer.ToMermaidString(this Microsoft.Agents.AI.Workflows.Workflow! workflow) -> string!
+virtual Microsoft.Agents.AI.Workflows.AIAgentBinding.Equals(Microsoft.Agents.AI.Workflows.AIAgentBinding? other) -> bool
+virtual Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.<Clone>$() -> Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo!
+virtual Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.EqualityContract.get -> System.Type!
+virtual Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.Equals(Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo? other) -> bool
+virtual Microsoft.Agents.AI.Workflows.Checkpointing.RequestPortInfo.PrintMembers(System.Text.StringBuilder! builder) -> bool
+virtual Microsoft.Agents.AI.Workflows.Executor.InitializeAsync(Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+virtual Microsoft.Agents.AI.Workflows.Executor.OnCheckpointRestoredAsync(Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+virtual Microsoft.Agents.AI.Workflows.Executor.OnCheckpointingAsync(Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+virtual Microsoft.Agents.AI.Workflows.Executor.OnMessageDeliveryFinishedAsync(Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+virtual Microsoft.Agents.AI.Workflows.Executor.OnMessageDeliveryStartingAsync(Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+virtual Microsoft.Agents.AI.Workflows.ExecutorBinding.EqualityContract.get -> System.Type!
+virtual Microsoft.Agents.AI.Workflows.ExecutorBinding.Equals(Microsoft.Agents.AI.Workflows.ExecutorBinding? other) -> bool
+virtual Microsoft.Agents.AI.Workflows.ExecutorBinding.PrintMembers(System.Text.StringBuilder! builder) -> bool
+virtual Microsoft.Agents.AI.Workflows.ExecutorBinding.ResetCoreAsync() -> System.Threading.Tasks.ValueTask<bool>
+virtual Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding.Equals(Microsoft.Agents.AI.Workflows.ExecutorInstanceBinding? other) -> bool
+virtual Microsoft.Agents.AI.Workflows.ExecutorPlaceholder.Equals(Microsoft.Agents.AI.Workflows.ExecutorPlaceholder? other) -> bool
+virtual Microsoft.Agents.AI.Workflows.ExternalRequest.<Clone>$() -> Microsoft.Agents.AI.Workflows.ExternalRequest!
+virtual Microsoft.Agents.AI.Workflows.ExternalRequest.EqualityContract.get -> System.Type!
+virtual Microsoft.Agents.AI.Workflows.ExternalRequest.Equals(Microsoft.Agents.AI.Workflows.ExternalRequest? other) -> bool
+virtual Microsoft.Agents.AI.Workflows.ExternalRequest.PrintMembers(System.Text.StringBuilder! builder) -> bool
+virtual Microsoft.Agents.AI.Workflows.ExternalResponse.<Clone>$() -> Microsoft.Agents.AI.Workflows.ExternalResponse!
+virtual Microsoft.Agents.AI.Workflows.ExternalResponse.EqualityContract.get -> System.Type!
+virtual Microsoft.Agents.AI.Workflows.ExternalResponse.Equals(Microsoft.Agents.AI.Workflows.ExternalResponse? other) -> bool
+virtual Microsoft.Agents.AI.Workflows.ExternalResponse.PrintMembers(System.Text.StringBuilder! builder) -> bool
+virtual Microsoft.Agents.AI.Workflows.GroupChatManager.OnCheckpointRestoredAsync(Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+virtual Microsoft.Agents.AI.Workflows.GroupChatManager.OnCheckpointingAsync(Microsoft.Agents.AI.Workflows.IWorkflowContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+virtual Microsoft.Agents.AI.Workflows.GroupChatManager.Reset() -> void
+virtual Microsoft.Agents.AI.Workflows.GroupChatManager.ShouldTerminateAsync(System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>! history, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+virtual Microsoft.Agents.AI.Workflows.GroupChatManager.UpdateHistoryAsync(System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>! history, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>
+virtual Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.<Clone>$() -> Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest!
+virtual Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.EqualityContract.get -> System.Type!
+virtual Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.Equals(Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest? other) -> bool
+virtual Microsoft.Agents.AI.Workflows.MagenticPlanReviewRequest.PrintMembers(System.Text.StringBuilder! builder) -> bool
+virtual Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse.<Clone>$() -> Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse!
+virtual Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse.EqualityContract.get -> System.Type!
+virtual Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse.Equals(Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse? other) -> bool
+virtual Microsoft.Agents.AI.Workflows.MagenticPlanReviewResponse.PrintMembers(System.Text.StringBuilder! builder) -> bool
+virtual Microsoft.Agents.AI.Workflows.RequestPort.<Clone>$() -> Microsoft.Agents.AI.Workflows.RequestPort!
+virtual Microsoft.Agents.AI.Workflows.RequestPort.EqualityContract.get -> System.Type!
+virtual Microsoft.Agents.AI.Workflows.RequestPort.Equals(Microsoft.Agents.AI.Workflows.RequestPort? other) -> bool
+virtual Microsoft.Agents.AI.Workflows.RequestPort.PrintMembers(System.Text.StringBuilder! builder) -> bool
+virtual Microsoft.Agents.AI.Workflows.RequestPortBinding.Equals(Microsoft.Agents.AI.Workflows.RequestPortBinding? other) -> bool
+virtual Microsoft.Agents.AI.Workflows.StatefulExecutor<TState>.ResetAsync() -> System.Threading.Tasks.ValueTask
+virtual Microsoft.Agents.AI.Workflows.SubworkflowBinding.Equals(Microsoft.Agents.AI.Workflows.SubworkflowBinding? other) -> bool
