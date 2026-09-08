@@ -90,7 +90,7 @@ internal static class Program
         {
             var agents = new List<IHostedAgentBuilder>() { assistantBuilder, reviewerBuilder }.Select(ab => sp.GetRequiredKeyedService<AIAgent>(ab.Name));
             return AgentWorkflowBuilder.BuildSequential(workflowName: key, agents: agents);
-        }).AddAsAIAgent();
+        }).AddAsAIAgent(includeWorkflowOutputsInResponse: true);
 
         builder.Services.AddOpenAIResponses();
         builder.Services.AddOpenAIConversations();
