@@ -411,13 +411,14 @@ async def test_partial_batch_failure_is_not_success(
     if operation == "upsert":
         client.upload_documents.side_effect = None
         client.upload_documents.return_value = response
-        call = collection.upsert([record()], generate_vectors=False)
     else:
         client.delete_documents.side_effect = None
         client.delete_documents.return_value = response
-        call = collection.delete(["one"])
     with pytest.raises(IntegrationException, match="not atomic") as error:
-        await call
+        if operation == "upsert":
+            await collection.upsert([record()], generate_vectors=False)
+        else:
+            await collection.delete(["one"])
     assert "sensitive body" not in str(error.value)
 
 
@@ -765,7 +766,7 @@ async def test_constructor_settings_precedence_and_encoding(
 @pytest.mark.parametrize("masked", [False, True])
 async def test_constructor_api_key_settings_use_secret_string(kind: str, masked: bool, client: Mock) -> None:
     key = SecretString("explicit-key") if masked else "explicit-key"
-    options = {"endpoint": "https://example.search.windows.net", "api_key": key}
+    endpoint = "https://example.search.windows.net"
     index_client = Mock(spec=SearchIndexClient)
     index_client.get_search_client.return_value = client
     resolved_settings: list[AzureAISearchSettings] = []
@@ -780,9 +781,9 @@ async def test_constructor_api_key_settings_use_secret_string(kind: str, masked:
         patch("agent_framework_azure_ai_search._vector_store.SearchIndexClient", return_value=index_client) as factory,
     ):
         connector = (
-            AzureAISearchStore(**options)
+            AzureAISearchStore(endpoint=endpoint, api_key=key)
             if kind == "store"
-            else AzureAISearchCollection(dict, definition=definition(), **options)
+            else AzureAISearchCollection(dict, definition=definition(), endpoint=endpoint, api_key=key)
         )
         await connector.close()
     assert isinstance(resolved_settings[0]["api_key"], SecretString)
@@ -839,15 +840,16 @@ def test_constructor_settings_failures_match(
 
 @pytest.mark.parametrize("kind", ["store", "collection"])
 def test_constructor_rejects_credential_and_key_before_settings(kind: str) -> None:
-    options = {"credential": AzureKeyCredential("credential-key"), "api_key": SecretString("explicit-key")}
+    credential = AzureKeyCredential("credential-key")
+    api_key = SecretString("explicit-key")
     with (
         patch("agent_framework_azure_ai_search._vector_store.load_settings") as settings_loader,
         pytest.raises(ValueError, match="credential or api_key"),
     ):
         if kind == "store":
-            AzureAISearchStore(**options)
+            AzureAISearchStore(credential=credential, api_key=api_key)
         else:
-            AzureAISearchCollection(dict, definition=definition(), **options)
+            AzureAISearchCollection(dict, definition=definition(), credential=credential, api_key=api_key)
     settings_loader.assert_not_called()
 
 
@@ -863,6 +865,7 @@ async def test_injected_clients_bypass_settings_and_preserve_ownership(
     monkeypatch.setenv("AZURE_SEARCH_API_KEY", "ignored-ambient-key")
     index_client = Mock(spec=SearchIndexClient)
     index_client.get_search_client.return_value = client
+    connector: AzureAISearchStore | AzureAISearchCollection[dict[str, Any]]
     with patch("agent_framework_azure_ai_search._vector_store.load_settings") as settings_loader:
         if kind == "store":
             connector = AzureAISearchStore(index_client=index_client, managed_client=managed)
@@ -967,7 +970,10 @@ async def test_real_sdk_serializes_vector_query_without_network(monkeypatch: pyt
 
     monkeypatch.setattr(transport, "send", capture)
     async with SearchClient(
-        "https://example.search.windows.net", "test-index", AzureKeyCredential("test-key"), transport=transport
+        endpoint="https://example.search.windows.net",
+        index_name="test-index",
+        credential=AzureKeyCredential("test-key"),
+        transport=transport,
     ) as client:
         collection = AzureAISearchCollection(dict, definition=definition(), search_client=client)
         with pytest.raises(IntegrationException):
@@ -1000,9 +1006,9 @@ async def test_injected_unsupported_api_fails_before_network(
     identity = Mock()
     identity.get_token.return_value = AccessToken("caller-token", 9999999999)
     async with SearchClient(
-        "https://example.search.windows.net",
-        "test-index",
-        AzureKeyCredential("test-key"),
+        endpoint="https://example.search.windows.net",
+        index_name="test-index",
+        credential=AzureKeyCredential("test-key"),
         api_version=api_version,
         transport=transport,
     ) as client:
@@ -1212,9 +1218,9 @@ async def test_real_preview_sdk_threshold_identity_and_recall_wire(monkeypatch: 
     identity = Mock()
     identity.get_token.return_value = AccessToken("caller-identity-token", 9999999999)
     async with SearchClient(
-        "https://example.search.windows.net",
-        "test-index",
-        AzureKeyCredential("test-key"),
+        endpoint="https://example.search.windows.net",
+        index_name="test-index",
+        credential=AzureKeyCredential("test-key"),
         transport=transport,
     ) as client:
         collection = AzureAISearchCollection(
@@ -1245,8 +1251,11 @@ async def test_real_preview_sdk_threshold_identity_and_recall_wire(monkeypatch: 
     assert "filterOverride" not in payload["vectorQueries"][0]
 
 
+_list_index_names = getattr(SearchIndexClient, "list_index_names", None)
+
+
 @pytest.mark.skipif(
-    "page_size" not in inspect.signature(SearchIndexClient.list_index_names).parameters,
+    not callable(_list_index_names) or "page_size" not in inspect.signature(_list_index_names).parameters,
     reason="Requires cursor-listing SDK support",
 )
 async def test_preview_cursor_listing_options() -> None:

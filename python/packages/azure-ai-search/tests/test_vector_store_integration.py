@@ -55,6 +55,8 @@ async def test_disposable_index_1000_records_two_1536_vectors() -> None:
         }
         for i in range(1000)
     ]
+    query_vector = records[0]["vector"]
+    assert isinstance(query_vector, list)
     async with (
         SearchIndexClient(
             os.environ["AZURE_SEARCH_VECTOR_TEST_ENDPOINT"],
@@ -80,7 +82,7 @@ async def test_disposable_index_1000_records_two_1536_vectors() -> None:
             results = [
                 r
                 async for r in await collection.search(
-                    vector=records[0]["vector"], top=2, skip=1, operation_options={"exhaustive": True}
+                    vector=query_vector, top=2, skip=1, operation_options={"exhaustive": True}
                 )
             ]
             assert [r["record"]["key"] for r in results] == ["1", "2"]
@@ -88,7 +90,7 @@ async def test_disposable_index_1000_records_two_1536_vectors() -> None:
                 r
                 async for r in await collection.search(
                     "hotel",
-                    vector=records[0]["vector"],
+                    vector=query_vector,
                     search_type="keyword_hybrid",
                     additional_property_name="text",
                     filter=Filter("ordinal", "lt", 3),
