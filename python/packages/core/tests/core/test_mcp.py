@@ -20,6 +20,7 @@ from mcp.shared.exceptions import McpError
 from pydantic import AnyUrl, BaseModel
 
 from agent_framework import (
+    Agent,
     Content,
     FunctionInvocationContext,
     FunctionMiddleware,
@@ -28,6 +29,7 @@ from agent_framework import (
     MCPStreamableHTTPTool,
     MCPWebsocketTool,
     Message,
+    SupportsChatGetResponse,
 )
 from agent_framework._feature_stage import _WARNED_FEATURES, ExperimentalFeature, ExperimentalWarning
 from agent_framework._mcp import (
@@ -6792,6 +6794,80 @@ async def test_mcp_streamable_http_tool_header_provider_via_invoke_with_context(
         server.session.call_tool.assert_called_once()  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         call_args = server.session.call_tool.call_args  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         assert call_args.kwargs.get("arguments", {}).get("name") == "Alice"
+
+
+async def test_agent_run_supplies_mcp_connect_headers(
+    client: SupportsChatGetResponse,
+) -> None:
+    """Run-time credentials should authenticate implicit MCP initialization.
+
+    The agent receives function_invocation_kwargs before connecting the MCP tool
+    supplied to run(). This test exercises the real MCP transport against an
+    in-process mock HTTP endpoint and asserts that header_provider can use those
+    credentials on the initialize request, before any tool invocation occurs.
+    """
+    import httpx
+
+    captured_requests: list[tuple[str, str, dict[str, str]]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            return httpx.Response(200)
+        if request.method == "GET":
+            return httpx.Response(405)
+        body = json.loads(request.content.decode())
+        method = body.get("method", "")
+        captured_requests.append((request.method, method, {k.lower(): v for k, v in request.headers.items()}))
+        if method == "initialize":
+            result = {
+                "protocolVersion": body["params"]["protocolVersion"],
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "mock-server", "version": "1.0.0"},
+            }
+            return httpx.Response(
+                200,
+                headers={"mcp-session-id": "test-session"},
+                json={"jsonrpc": "2.0", "id": body["id"], "result": result},
+            )
+        if method == "tools/list":
+            result = {
+                "tools": [
+                    {
+                        "name": "greet",
+                        "description": "Says hello",
+                        "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}},
+                    }
+                ]
+            }
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+        if method == "tools/call":
+            result = {"content": [{"type": "text", "text": "Hello!"}], "isError": False}
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+        if "id" in body:
+            # Any other request (e.g. ping) gets an empty result so the session doesn't block on it.
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {}})
+        # Notifications (e.g. notifications/initialized)
+        return httpx.Response(202)
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://127.0.0.1:8000/mcp",
+        load_prompts=False,
+        http_client=http_client,
+        header_provider=lambda kw: {"x-api-key": kw["api_key"]},  # failing scenario
+        # header_provider=lambda _: {"x-api-key": "connect-token"} # working scenario (no lambda)
+    )
+    try:
+        async with Agent(client=client) as agent:
+            # placement of tools, matters as we defer the resolution until the agent calls `run`
+            await agent.run("Hello", tools=[tool], function_invocation_kwargs={"api_key": "connect-token"})
+    finally:
+        await http_client.aclose()
+
+    initialize_headers = [headers for _, method, headers in captured_requests if method == "initialize"]
+    assert len(initialize_headers) == 1
+    assert initialize_headers[0].get("x-api-key") == "connect-token"
 
 
 async def test_mcp_streamable_http_tool_header_provider_applies_across_transport_tasks():
