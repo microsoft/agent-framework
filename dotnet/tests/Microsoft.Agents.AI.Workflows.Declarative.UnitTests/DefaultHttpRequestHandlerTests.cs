@@ -366,6 +366,48 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
+    public async Task SendAsyncTimeoutAppliesAcrossRedirectsAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        int requestCount = 0;
+        TestHttpMessageHandler messageHandler = new(async (req, ct) =>
+        {
+            requestCount++;
+            await Task.Delay(TimeSpan.FromMilliseconds(200), ct).ConfigureAwait(false);
+
+            if (requestCount == 1)
+            {
+                return new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
+                {
+                    Headers = { Location = new Uri("https://api.example.test/next") },
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("ok", Encoding.UTF8, "text/plain"),
+            };
+        });
+
+        using HttpClient client = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new(client);
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = TestUrl,
+            Timeout = TimeSpan.FromMilliseconds(300),
+        };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(actAsync);
+        Assert.Equal(2, requestCount);
+    }
+
+    [Fact]
     public async Task SendAsyncFallsBackToOwnedClientWhenProviderReturnsNullAsync()
     {
         // Arrange

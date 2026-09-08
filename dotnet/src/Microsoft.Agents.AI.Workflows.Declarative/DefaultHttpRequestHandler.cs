@@ -124,12 +124,20 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
         HttpRequestInfo currentRequest = request;
         Uri currentUri = CreateAbsoluteUri(ResolveRequestUri(request));
 
+        using CancellationTokenSource? timeoutCts = request.Timeout is { } timeout && timeout > TimeSpan.Zero
+            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+            : null;
+
+        timeoutCts?.CancelAfter(request.Timeout!.Value);
+
+        CancellationToken effectiveToken = timeoutCts?.Token ?? cancellationToken;
+
         for (int redirectCount = 0; redirectCount <= MaxAutomaticRedirections; redirectCount++)
         {
             HttpClient? providedClient = null;
             if (this._httpClientProvider is not null)
             {
-                providedClient = await this._httpClientProvider(currentRequest, cancellationToken).ConfigureAwait(false);
+                providedClient = await this._httpClientProvider(currentRequest, effectiveToken).ConfigureAwait(false);
             }
 
             if (providedClient is not null)
@@ -140,14 +148,6 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
             HttpClient client = providedClient ?? this._ownedHttpClient.Value;
 
             using HttpRequestMessage httpRequest = BuildHttpRequestMessage(currentRequest);
-
-            using CancellationTokenSource? timeoutCts = currentRequest.Timeout is { } timeout && timeout > TimeSpan.Zero
-                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
-                : null;
-
-            timeoutCts?.CancelAfter(currentRequest.Timeout!.Value);
-
-            CancellationToken effectiveToken = timeoutCts?.Token ?? cancellationToken;
 
             using HttpResponseMessage httpResponse = await client
                 .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, effectiveToken)
