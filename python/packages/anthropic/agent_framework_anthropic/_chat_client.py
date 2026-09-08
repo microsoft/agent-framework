@@ -297,7 +297,7 @@ class RawAnthropicClient(
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretString | None = None,
         model: str | None = None,
         base_url: str | None = None,
         anthropic_client: AnthropicAsyncClient | None = None,
@@ -1671,7 +1671,7 @@ class AnthropicClient(
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretString | None = None,
         model: str | None = None,
         base_url: str | None = None,
         anthropic_client: AnthropicAsyncClient | None = None,

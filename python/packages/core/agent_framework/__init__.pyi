@@ -123,6 +123,7 @@ from ._harness._tool_approval import (
     create_always_approve_tool_response,
     create_always_approve_tool_with_arguments_response,
 )
+from ._in_memory import InMemoryCollection, InMemoryStore
 from ._mcp import (
     MCPStdioTool,
     MCPStreamableHTTPTool,
@@ -250,6 +251,7 @@ from ._types import (
     validate_tool_mode,
     validate_tools,
 )
+from ._vector_filters import Filter, FilterGroup, FilterGroupOperator, FilterOperator, Param
 from ._vectors import (
     DISTANCE_FUNCTION_DIRECTION_HELPER,
     BaseVectorCollection,
@@ -257,6 +259,7 @@ from ._vectors import (
     BaseVectorStore,
     DistanceFunction,
     FieldTypes,
+    GenerateVectors,
     IndexKind,
     SearchResponse,
     SearchResults,
@@ -457,6 +460,10 @@ __all__ = [
     "FileSkillsSource",
     "FileStoreEntry",
     "FileSystemAgentFileStore",
+    "Filter",
+    "FilterGroup",
+    "FilterGroupOperator",
+    "FilterOperator",
     "FilteringSkillsSource",
     "FinalT",
     "FinishReason",
@@ -471,13 +478,16 @@ __all__ = [
     "FunctionalWorkflow",
     "FunctionalWorkflowAgent",
     "FunctionalWorkflowDefinition",
+    "GenerateVectors",
     "GeneratedEmbeddings",
     "GraphConnectivityError",
     "HistoryProvider",
     "InMemoryAgentFileStore",
     "InMemoryCheckpointStorage",
+    "InMemoryCollection",
     "InMemoryHistoryProvider",
     "InMemorySkillsSource",
+    "InMemoryStore",
     "InProcRunnerContext",
     "IndexKind",
     "InlineSkill",
@@ -507,6 +517,7 @@ __all__ = [
     "MiddlewareTypes",
     "OuterFinalT",
     "OuterUpdateT",
+    "Param",
     "RawAgent",
     "ReleaseCandidateFeature",
     "ResponseStream",

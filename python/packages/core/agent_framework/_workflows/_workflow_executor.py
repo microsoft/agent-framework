@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
 import logging
 import sys
 import types
@@ -17,6 +16,7 @@ from ._const import (
     RAW_FUNCTION_INVOCATION_KWARGS_KEY,
     WORKFLOW_RUN_KWARGS_KEY,
 )
+from ._edge_runner import gather_cancelling_siblings_on_error
 from ._events import (
     WorkflowEvent,
     WorkflowRunState,
@@ -505,10 +505,12 @@ class WorkflowExecutor(Executor):
                         self.id,
                         execution_context.execution_id,
                     )
-        await asyncio.gather(*[
-            self.workflow._runner_context.add_request_info_event(event)  # pyright: ignore[reportPrivateUsage]
-            for event in request_info_events
-        ])
+        await gather_cancelling_siblings_on_error(
+            *(
+                self.workflow._runner_context.add_request_info_event(event)  # pyright: ignore[reportPrivateUsage]
+                for event in request_info_events
+            )
+        )
 
     async def _process_workflow_result(
         self,
@@ -539,9 +541,9 @@ class WorkflowExecutor(Executor):
         # Process outputs
         if self.allow_direct_output:
             # Note that the executor is allowed to continue its own execution after yielding outputs.
-            await asyncio.gather(*[ctx.yield_output(output) for output in outputs])
+            await gather_cancelling_siblings_on_error(*(ctx.yield_output(output) for output in outputs))
         else:
-            await asyncio.gather(*[ctx.send_message(output) for output in outputs])
+            await gather_cancelling_siblings_on_error(*(ctx.send_message(output) for output in outputs))
 
         # Pipe sub-workflow intermediate emissions up through the parent's event stream.
         # Bypasses the parent's yield-output classifier so the 'intermediate' label is preserved
@@ -554,7 +556,9 @@ class WorkflowExecutor(Executor):
                     event = WorkflowEvent("intermediate", executor_id=self.id, data=output)
                 await ctx.add_event(event)
 
-            await asyncio.gather(*[_forward_intermediate_output(output) for output in intermediate_outputs])
+            await gather_cancelling_siblings_on_error(
+                *(_forward_intermediate_output(output) for output in intermediate_outputs)
+            )
 
         # Process request info events
         for event in request_info_events:
