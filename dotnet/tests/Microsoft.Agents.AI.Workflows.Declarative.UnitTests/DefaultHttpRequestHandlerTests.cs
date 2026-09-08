@@ -570,6 +570,42 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
+    public async Task SendAsyncRejectsHttpsToHttpRedirectAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        int requestCount = 0;
+#pragma warning disable CA2025
+        TestHttpMessageHandler messageHandler = new((req, _) =>
+        {
+            requestCount++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
+            {
+                Headers = { Location = new Uri("http://api.example.test/next") },
+            });
+        });
+#pragma warning restore CA2025
+
+        using HttpClient client = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new(client);
+        HttpRequestInfo request = new()
+        {
+            Method = "POST",
+            Url = TestUrl,
+            Body = "request-body",
+            BodyContentType = "text/plain",
+        };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Contains("HTTPS to HTTP", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(1, requestCount);
+    }
+
+    [Fact]
     public async Task SendAsyncProviderClientRejectsScopedDefaultHeadersAsync()
     {
         // Arrange

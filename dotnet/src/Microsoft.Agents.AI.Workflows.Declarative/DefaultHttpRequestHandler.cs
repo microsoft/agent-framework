@@ -284,6 +284,11 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
             ? response.Headers.Location
             : new Uri(currentUri, response.Headers.Location);
 
+        if (IsHttpsToHttpRedirect(currentUri, redirectUri))
+        {
+            throw new HttpRequestException("Redirects from HTTPS to HTTP are not allowed.");
+        }
+
         bool rewriteToGet = ShouldRewriteRedirectMethodToGet(response.StatusCode, currentRequest.Method);
 
         redirectRequest = new HttpRequestInfo
@@ -311,6 +316,10 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
         int code = (int)statusCode;
         return code == 303 || ((code == 301 || code == 302) && string.Equals(normalized, "POST", StringComparison.Ordinal));
     }
+
+    private static bool IsHttpsToHttpRedirect(Uri currentUri, Uri redirectUri) =>
+        string.Equals(currentUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(redirectUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase);
 
     private static void ThrowIfUnsafeProvidedClientHeaders(HttpClient providedClient, HttpRequestInfo request)
     {
