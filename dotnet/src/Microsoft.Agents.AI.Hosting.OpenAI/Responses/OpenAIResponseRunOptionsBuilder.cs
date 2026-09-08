@@ -135,12 +135,9 @@ internal static class OpenAIResponseRunOptionsBuilder
             return;
         }
 
-        foreach (AITool tool in tools)
+        foreach (AITool tool in tools.Where(tool => tool is AIFunctionDeclaration && !string.IsNullOrEmpty(tool.Name)))
         {
-            if (tool is AIFunctionDeclaration && !string.IsNullOrEmpty(tool.Name))
-            {
-                names.Add(tool.Name);
-            }
+            names.Add(tool.Name);
         }
     }
 
