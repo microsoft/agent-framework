@@ -90,6 +90,18 @@ def _get_additional_properties(obj: Any) -> dict[str, Any]:
     return cast(dict[str, Any], props) if isinstance(props, dict) else {}
 
 
+def _is_quarantine_payload(payload: dict[str, Any]) -> bool:
+    """Return whether a mapping has the internal quarantined LLM result shape."""
+    return (
+        payload.get("quarantined") is True
+        and "response" in payload
+        and isinstance(payload.get("security_label"), MutableMapping)
+        and isinstance(payload.get("metadata"), MutableMapping)
+        and isinstance(payload.get("variables_processed"), list)
+        and isinstance(payload.get("content_summary"), list)
+    )
+
+
 # =============================================================================
 # Core Security Primitives
 # =============================================================================
@@ -1267,20 +1279,9 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         primary response they would have seen without variable indirection. Ordinary
         mappings or JSON text that happen to contain a ``response`` key remain intact.
         """
-
-        def is_quarantine_payload(payload: dict[str, Any]) -> bool:
-            return (
-                payload.get("quarantined") is True
-                and "response" in payload
-                and isinstance(payload.get("security_label"), MutableMapping)
-                and isinstance(payload.get("metadata"), MutableMapping)
-                and isinstance(payload.get("variables_processed"), list)
-                and isinstance(payload.get("content_summary"), list)
-            )
-
         if isinstance(expanded_content, dict):
             content_map = cast(dict[str, Any], expanded_content)
-            if is_quarantine_payload(content_map):
+            if _is_quarantine_payload(content_map):
                 return content_map["response"]
             return content_map
 
@@ -1291,7 +1292,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                     parsed = json.loads(stripped)
                     if isinstance(parsed, dict):
                         parsed_map = cast(dict[str, Any], parsed)
-                        if is_quarantine_payload(parsed_map):
+                        if _is_quarantine_payload(parsed_map):
                             return parsed_map["response"]
 
         return expanded_content
