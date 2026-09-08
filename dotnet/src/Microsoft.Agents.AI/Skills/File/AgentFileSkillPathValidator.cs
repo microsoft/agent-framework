@@ -12,16 +12,13 @@ namespace Microsoft.Agents.AI;
 internal static class AgentFileSkillPathValidator
 {
     /// <summary>
-    /// Revalidates a discovered file against its trusted skill directory immediately before use.
+    /// Revalidates a discovered file against its trusted path scope immediately before use.
     /// </summary>
-    internal static string ValidateForUse(string fullPath, string skillDirectoryFullPath, string fileKind, string fileName)
+    internal static string ValidateForUse(string fullPath, AgentFileSkillPathScope scope, string fileKind, string fileName)
     {
-        string trustedBasePath = Path.GetFullPath(skillDirectoryFullPath)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
         string resolvedFilePath = Path.GetFullPath(fullPath);
 
-        if (!resolvedFilePath.StartsWith(trustedBasePath, StringComparison.OrdinalIgnoreCase))
+        if (!resolvedFilePath.StartsWith(scope.SkillDirectoryPrefix, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException($"{fileKind} file '{fileName}' references a path outside the skill directory.");
         }
@@ -31,7 +28,10 @@ internal static class AgentFileSkillPathValidator
             throw new FileNotFoundException($"{fileKind} file '{fileName}' was not found in the skill directory.", resolvedFilePath);
         }
 
-        if (HasLinkOrReparsePointInPath(resolvedFilePath, trustedBasePath))
+        // Scan from the configured discovery root rather than from the skill directory, so that a
+        // skill directory - or any directory between it and the root - that was replaced with a
+        // link after discovery is rejected as well.
+        if (HasLinkOrReparsePointInPath(resolvedFilePath, scope.TrustedRootPrefix))
         {
             throw new InvalidOperationException(
                 $"{fileKind} file '{fileName}' has a symbolic link or reparse point in its path; links and reparse points are not allowed.");

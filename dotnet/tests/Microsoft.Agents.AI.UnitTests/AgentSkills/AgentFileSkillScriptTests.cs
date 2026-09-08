@@ -315,19 +315,14 @@ public sealed class AgentFileSkillScriptTests : IDisposable
     }
 
     /// <summary>
-    /// Helper to create an <see cref="AgentFileSkillScript"/> via reflection since the constructor is internal.
+    /// Helper to create an <see cref="AgentFileSkillScript"/> rooted in the test directory.
     /// </summary>
     private AgentFileSkillScript CreateScript(string name, string fullPath, AgentFileSkillScriptRunner? runner)
     {
         string resolvedPath = Path.Combine(this._testRoot, Path.GetFileName(fullPath));
         File.WriteAllText(resolvedPath, string.Empty);
-        var ctor = typeof(AgentFileSkillScript).GetConstructor(
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
-            null,
-            [typeof(string), typeof(string), typeof(string), typeof(AgentFileSkillScriptRunner)],
-            null) ?? throw new InvalidOperationException("Could not find internal constructor.");
 
-        return (AgentFileSkillScript)ctor.Invoke([name, resolvedPath, this._testRoot, runner]);
+        return new AgentFileSkillScript(name, resolvedPath, new AgentFileSkillPathScope(this._testRoot, this._testRoot), runner);
     }
 
     /// <summary>

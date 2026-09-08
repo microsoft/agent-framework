@@ -656,6 +656,32 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
             () => script!.RunAsync(skills[0], null, null));
         Assert.False(runnerCalled);
     }
+
+    [Fact]
+    public async Task ReadSkillResourceAsync_SkillDirectoryReplacedWithSymlink_ThrowsAsync()
+    {
+        // Arrange — a skill whose directory sits below the configured root
+        string skillDir = this.CreateSkillDirectory("swapped-skill", "A skill", "See docs.");
+        string resourcePath = Path.Combine(skillDir, "doc.md");
+        File.WriteAllText(resourcePath, "Safe content.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+        var resource = skills[0].GetTestResources()!.Single(r => r.Name == "doc.md");
+
+        // Replace the whole skill directory with a link to an attacker-controlled directory
+        // that mirrors the discovered layout.
+        string decoyDir = Path.Combine(this._testRoot, "decoy");
+        Directory.CreateDirectory(decoyDir);
+        File.WriteAllText(Path.Combine(decoyDir, "doc.md"), "Attacker content.");
+        Directory.Delete(skillDir, recursive: true);
+        if (!TryCreateDirectorySymbolicLink(skillDir, decoyDir) && !TryCreateDirectoryJunction(skillDir, decoyDir))
+        {
+            Assert.Skip("Directory links are not supported in this environment.");
+        }
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => resource.ReadAsync());
+    }
 #endif
 
     [Fact]

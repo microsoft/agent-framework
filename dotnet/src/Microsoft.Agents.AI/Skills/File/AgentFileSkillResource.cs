@@ -14,19 +14,19 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 internal sealed class AgentFileSkillResource : AgentSkillResource
 {
-    private readonly string _skillDirectoryFullPath;
+    private readonly AgentFileSkillPathScope _scope;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentFileSkillResource"/> class.
     /// </summary>
     /// <param name="name">The resource name (relative path within the skill directory).</param>
     /// <param name="fullPath">The absolute file path to the resource.</param>
-    /// <param name="skillDirectoryFullPath">The trusted skill directory containing the resource.</param>
-    public AgentFileSkillResource(string name, string fullPath, string skillDirectoryFullPath)
+    /// <param name="scope">The trusted path scope the resource was discovered in.</param>
+    public AgentFileSkillResource(string name, string fullPath, AgentFileSkillPathScope scope)
         : base(name)
     {
         this.FullPath = Throw.IfNullOrWhitespace(fullPath);
-        this._skillDirectoryFullPath = Throw.IfNullOrWhitespace(skillDirectoryFullPath);
+        this._scope = Throw.IfNull(scope);
     }
 
     /// <summary>
@@ -37,7 +37,7 @@ internal sealed class AgentFileSkillResource : AgentSkillResource
     /// <inheritdoc/>
     public override async Task<object?> ReadAsync(IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default)
     {
-        string validatedPath = AgentFileSkillPathValidator.ValidateForUse(this.FullPath, this._skillDirectoryFullPath, "Resource", this.Name);
+        string validatedPath = AgentFileSkillPathValidator.ValidateForUse(this.FullPath, this._scope, "Resource", this.Name);
 
 #if NET8_0_OR_GREATER
         return await File.ReadAllTextAsync(validatedPath, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
