@@ -75,6 +75,15 @@ internal sealed class IsolationKeyResolver
         => key is null ? id : $"{EscapeIsolationKey(key)}::{id}";
 
     /// <summary>
+    /// Determines whether an identifier belongs to the supplied isolation key.
+    /// </summary>
+    /// <param name="scopedId">The scoped identifier.</param>
+    /// <param name="key">The isolation key, or <see langword="null"/> when isolation is not configured.</param>
+    /// <returns><see langword="true"/> when the identifier belongs to the supplied isolation key; otherwise, <see langword="false"/>.</returns>
+    public static bool IsInScope(string scopedId, string? key)
+        => key is null || scopedId.StartsWith(GetPrefix(key), StringComparison.Ordinal);
+
+    /// <summary>
     /// Strips the isolation key prefix from a scoped identifier, or returns it unchanged when the prefix is absent.
     /// </summary>
     /// <param name="scopedId">The scoped identifier.</param>
@@ -87,12 +96,14 @@ internal sealed class IsolationKeyResolver
             return scopedId;
         }
 
-        string prefix = $"{EscapeIsolationKey(key)}::";
+        string prefix = GetPrefix(key);
 
         return scopedId.StartsWith(prefix, StringComparison.Ordinal)
             ? scopedId.Substring(prefix.Length)
             : scopedId;
     }
+
+    private static string GetPrefix(string key) => $"{EscapeIsolationKey(key)}::";
 
     /// <summary>
     /// Escapes special characters in the isolation key so that scoped identifiers remain unambiguous.

@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.Conversations;
+using Microsoft.Agents.AI.Hosting.OpenAI.Models;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Http;
@@ -52,7 +53,37 @@ public sealed class OpenAIConversationsIsolationTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task AgentConversationIndex_RemoveConversation_UsesTheScopedAgentIdAsync()
+    public async Task AgentConversationIndex_UsesOneAgentEntryForMultipleCallersAsync()
+    {
+        // Arrange
+        using var innerIndex = new InMemoryAgentConversationIndex(new InMemoryStorageOptions { SizeLimit = 1 });
+        var aliceIndex = new IsolationKeyScopedAgentConversationIndex(
+            innerIndex,
+            new IsolationKeyResolver(new StaticAgentIsolationKeyProvider(Alice), strict: true));
+        var bobIndex = new IsolationKeyScopedAgentConversationIndex(
+            innerIndex,
+            new IsolationKeyResolver(new StaticAgentIsolationKeyProvider(Bob), strict: true));
+        const string AliceConversationId = "conv_alice";
+        const string BobConversationId = "conv_bob";
+
+        // Act
+        await aliceIndex.AddConversationAsync(AgentName, AliceConversationId);
+        await bobIndex.AddConversationAsync(AgentName, BobConversationId);
+
+        ListResponse<string> aliceConversations = await aliceIndex.GetConversationIdsAsync(AgentName);
+        ListResponse<string> bobConversations = await bobIndex.GetConversationIdsAsync(AgentName);
+        ListResponse<string> indexedConversations = await innerIndex.GetConversationIdsAsync(AgentName);
+
+        // Assert
+        Assert.Equal([AliceConversationId], aliceConversations.Data);
+        Assert.Equal([BobConversationId], bobConversations.Data);
+        Assert.Equal(2, indexedConversations.Data.Count);
+        Assert.Contains($"{Alice}::{AliceConversationId}", indexedConversations.Data);
+        Assert.Contains($"{Bob}::{BobConversationId}", indexedConversations.Data);
+    }
+
+    [Fact]
+    public async Task AgentConversationIndex_RemoveConversation_UsesTheScopedConversationIdAsync()
     {
         // Arrange
         using var innerIndex = new InMemoryAgentConversationIndex();
@@ -63,16 +94,11 @@ public sealed class OpenAIConversationsIsolationTests : IAsyncDisposable
         const string ConversationId = "conv_123";
         await index.AddConversationAsync(AgentName, ConversationId);
 
-        var unscopedEntry = await innerIndex.GetConversationIdsAsync(AgentName);
-        var scopedEntry = await innerIndex.GetConversationIdsAsync($"{Alice}::{AgentName}");
-        Assert.Empty(unscopedEntry.Data);
-        Assert.Equal([ConversationId], scopedEntry.Data);
-
         // Act
         await index.RemoveConversationAsync(AgentName, ConversationId);
 
         // Assert
-        var remainingEntry = await innerIndex.GetConversationIdsAsync($"{Alice}::{AgentName}");
+        ListResponse<string> remainingEntry = await innerIndex.GetConversationIdsAsync(AgentName);
         Assert.Empty(remainingEntry.Data);
     }
 
