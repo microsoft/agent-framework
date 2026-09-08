@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
-using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -387,48 +386,6 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
-    public async Task SendAsyncOwnedClientDoesNotForwardRequestHeadersToRedirectedEndpointAsync()
-    {
-        // Arrange
-        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
-        const string HeaderValue = "request-header-value";
-        List<string> forwardedHeaderValues = [];
-        await using LoopbackServer secondaryEndpoint = await LoopbackServer.StartAsync(async (context, ct) =>
-        {
-            forwardedHeaderValues.AddRange(context.Request.Headers.GetValues("X-Request-Token") ?? []);
-            await WriteResponseAsync(context, HttpStatusCode.OK, "redirect-ok", ct);
-        }, cancellationToken);
-
-        await using LoopbackServer primaryEndpoint = await LoopbackServer.StartAsync((context, _) =>
-        {
-            context.Response.StatusCode = (int)HttpStatusCode.TemporaryRedirect;
-            context.Response.RedirectLocation = new Uri(secondaryEndpoint.BaseUri, "next").ToString();
-            context.Response.Close();
-            return Task.CompletedTask;
-        }, cancellationToken);
-
-        await using DefaultHttpRequestHandler handler = new();
-        HttpRequestInfo request = new()
-        {
-            Method = "GET",
-            Url = new Uri(primaryEndpoint.BaseUri, "redirect").ToString(),
-            Headers = new Dictionary<string, string>
-            {
-                ["X-Request-Token"] = HeaderValue,
-            },
-        };
-
-        // Act
-        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
-        await Task.WhenAll(primaryEndpoint.Completion, secondaryEndpoint.Completion);
-
-        // Assert
-        Assert.Equal(200, result.StatusCode);
-        Assert.Equal("redirect-ok", result.Body);
-        Assert.Empty(forwardedHeaderValues);
-    }
-
-    [Fact]
     public async Task SendAsyncDoesNotApplyRequestHeadersToRedirectedEndpointAsync()
     {
         // Arrange
@@ -454,6 +411,60 @@ public sealed class DefaultHttpRequestHandlerTests
 
         using HttpClient client = new(messageHandler);
         await using DefaultHttpRequestHandler handler = new(client);
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = TestUrl,
+            Headers = new Dictionary<string, string>
+            {
+                ["X-Trace-Id"] = "trace-1",
+            },
+        };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        Assert.Equal("redirected", result.Body);
+        Assert.Equal([true, false], requestsWithHeader);
+    }
+
+    [Fact]
+    public async Task SendAsyncDoesNotApplyRequestHeadersToDifferentRedirectedEndpointAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        List<bool> requestsWithHeader = [];
+#pragma warning disable CA2025
+        TestHttpMessageHandler primaryMessageHandler = new((req, _) =>
+        {
+            requestsWithHeader.Add(req.Headers.Contains("X-Trace-Id"));
+            HttpResponseMessage response = new(HttpStatusCode.TemporaryRedirect);
+            response.Headers.Location = new Uri("https://secondary.example.test/next");
+            return Task.FromResult(response);
+        });
+        TestHttpMessageHandler secondaryMessageHandler = new((req, _) =>
+        {
+            requestsWithHeader.Add(req.Headers.Contains("X-Trace-Id"));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
+            });
+        });
+#pragma warning restore CA2025
+
+        using HttpClient primaryClient = new(primaryMessageHandler);
+        using HttpClient secondaryClient = new(secondaryMessageHandler);
+#pragma warning disable CA2025
+        await using DefaultHttpRequestHandler handler = new((info, _) =>
+        {
+            HttpClient client = info.Url.StartsWith("https://api.example.test/", StringComparison.Ordinal)
+                ? primaryClient
+                : secondaryClient;
+            return Task.FromResult<HttpClient?>(client);
+        });
+#pragma warning restore CA2025
+
         HttpRequestInfo request = new()
         {
             Method = "GET",
@@ -673,89 +684,5 @@ public sealed class DefaultHttpRequestHandlerTests
             }
             return await this._responseFactory(request, cancellationToken).ConfigureAwait(false);
         }
-    }
-
-    private sealed class LoopbackServer : IAsyncDisposable
-    {
-        private readonly HttpListener _listener;
-
-        private LoopbackServer(HttpListener listener, Uri baseUri, Task completion)
-        {
-            this._listener = listener;
-            this.BaseUri = baseUri;
-            this.Completion = completion;
-        }
-
-        public Uri BaseUri { get; }
-
-        public Task Completion { get; }
-
-        public static Task<LoopbackServer> StartAsync(
-            Func<HttpListenerContext, CancellationToken, Task> handler,
-            CancellationToken cancellationToken)
-        {
-            int port = GetAvailablePort();
-            Uri baseUri = new($"http://127.0.0.1:{port}/");
-            HttpListener listener = new();
-            listener.Prefixes.Add(baseUri.ToString());
-            listener.Start();
-            Task completion = HandleSingleRequestAsync(listener, handler, cancellationToken);
-            return Task.FromResult(new LoopbackServer(listener, baseUri, completion));
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            this._listener.Close();
-
-            try
-            {
-                await this.Completion.ConfigureAwait(false);
-            }
-            catch (HttpListenerException)
-            {
-            }
-            catch (ObjectDisposedException)
-            {
-            }
-        }
-
-        private static async Task HandleSingleRequestAsync(
-            HttpListener listener,
-            Func<HttpListenerContext, CancellationToken, Task> handler,
-            CancellationToken cancellationToken)
-        {
-            using CancellationTokenRegistration registration = cancellationToken.Register(
-                static state => ((HttpListener)state!).Close(),
-                listener);
-            HttpListenerContext context = await listener.GetContextAsync().ConfigureAwait(false);
-            await handler(context, cancellationToken).ConfigureAwait(false);
-        }
-
-        private static int GetAvailablePort()
-        {
-            TcpListener listener = new(IPAddress.Loopback, 0);
-            listener.Start();
-            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
-            listener.Stop();
-            return port;
-        }
-    }
-
-    private static async Task WriteResponseAsync(
-        HttpListenerContext context,
-        HttpStatusCode statusCode,
-        string body,
-        CancellationToken cancellationToken)
-    {
-        byte[] bytes = Encoding.UTF8.GetBytes(body);
-        context.Response.StatusCode = (int)statusCode;
-        context.Response.ContentType = "text/plain";
-        context.Response.ContentLength64 = bytes.Length;
-#if NET
-        await context.Response.OutputStream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
-#else
-        await context.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length, cancellationToken).ConfigureAwait(false);
-#endif
-        context.Response.Close();
     }
 }
