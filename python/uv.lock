@@ -267,12 +267,14 @@ version = "1.0.0b260827"
 source = { editable = "packages/azure-ai-search" }
 dependencies = [
     { name = "agent-framework-core" },
+    { name = "aiohttp" },
     { name = "azure-search-documents" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
+    { name = "aiohttp", specifier = ">=3.11.11,<4" },
     { name = "azure-search-documents", specifier = ">=12.0.0,<13" },
 ]
 
