@@ -576,7 +576,8 @@ class MCPTool:
                 MCP prompt results to a string. If you need per-function result parsing,
             access the ``.functions`` list after connecting and set ``result_parser`` on
             individual ``FunctionTool`` instances.
-            session: An existing MCP client session to use.
+            session: An existing MCP client session to use. The caller retains ownership;
+                closing or resetting this wrapper does not close or replace that session.
             request_timeout: Timeout in seconds for MCP requests.
             client: A chat client for sampling callbacks.
             sampling_approval_callback: Optional gate invoked before each server-initiated
@@ -634,9 +635,12 @@ class MCPTool:
         self._lifecycle_lock = asyncio.Lock()
         self._lifecycle_request_lock = asyncio.Lock()
         self._function_load_lock = asyncio.Lock()
-        self._lifecycle_queue: asyncio.Queue[tuple[str, bool, bool, asyncio.Future[None]]] | None = None
+        self._lifecycle_queue: (
+            asyncio.Queue[tuple[str, bool, bool, asyncio.Future[None], asyncio.Future[bool]]] | None
+        ) = None
         self._lifecycle_owner_task: asyncio.Task[None] | None = None
         self.session = session
+        self._owns_session = session is None
         self.request_timeout = request_timeout
         self.client = client
         self.sampling_approval_callback = sampling_approval_callback
@@ -1248,11 +1252,30 @@ class MCPTool:
         stop_error: BaseException | None = None
         try:
             while True:
-                action, reset, load_configured, future = await queue.get()
+                action, reset, load_configured, future, acknowledged = await queue.get()
+                if action == "connect" and future.cancelled():
+                    if not self.is_connected and queue.empty():
+                        return
+                    continue
 
                 try:
                     if action == "connect":
+                        previous_session = self.session
+                        previously_connected = self.is_connected
                         await self._connect_on_owner(reset=reset, load_configured=load_configured)
+                        new_connection = not previously_connected or self.session is not previous_session
+                        accepted = False
+                        try:
+                            if not future.done():
+                                future.set_result(None)
+                            # A completed result future cannot tell us that its waiter was
+                            # cancelled before consuming it. Await explicit caller acceptance.
+                            accepted = await acknowledged
+                        finally:
+                            if not accepted and new_connection:
+                                await self._close_on_owner()
+                        if not accepted and new_connection and queue.empty():
+                            return
                     elif action == "close":
                         await self._close_on_owner()
                     else:
@@ -1265,6 +1288,10 @@ class MCPTool:
                 except Exception as ex:
                     if not future.done():
                         future.set_exception(ex)
+                    else:
+                        logger.warning(
+                            "MCP lifecycle action %s failed after its caller stopped waiting.", action, exc_info=ex
+                        )
                 else:
                     if not future.done():
                         future.set_result(None)
@@ -1277,7 +1304,7 @@ class MCPTool:
         finally:
             while True:
                 try:
-                    _, _, _, future = queue.get_nowait()
+                    _, _, _, future, _ = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
                 if not future.done():
@@ -1313,8 +1340,15 @@ class MCPTool:
             raise RuntimeError("MCP lifecycle owner is not available.")
 
         future = asyncio.get_running_loop().create_future()
-        await queue.put((action, reset, load_configured, future))
-        await future
+        acknowledged: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        await queue.put((action, reset, load_configured, future, acknowledged))
+        accepted = False
+        try:
+            await future
+            accepted = True
+        finally:
+            if not acknowledged.done():
+                acknowledged.set_result(accepted)
 
     async def _safe_close_exit_stack(self) -> BaseException | None:
         """Safely close the exit stack, handling unexpected cleanup failures.
@@ -1363,6 +1397,8 @@ class MCPTool:
 
     def _reset_session_state(self) -> None:
         self._server_capabilities = None
+        self._tools_loaded = False
+        self._prompts_loaded = False
         self._supports_tools = True
         self._supports_prompts = True
         self._supports_logging = None
@@ -1412,7 +1448,8 @@ class MCPTool:
         """
         if reset:
             await self._safe_close_exit_stack()
-            self.session = None
+            if self._owns_session:
+                self.session = None
             self.is_connected = False
             self._reset_session_state()
             self._exit_stack = AsyncExitStack()
@@ -1499,33 +1536,53 @@ class MCPTool:
                     logger.debug(error_msg, exc_info=True)
                 raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
             self.session = session
-        elif self.session._request_id == 0:  # type: ignore[attr-defined]
-            # If the session is not initialized, we need to reinitialize it
-            with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
-                initialize_result = await self.session.initialize()
-                init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocolVersion)
-                self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
-        elif self._server_capabilities is None:
-            self._set_server_capabilities(getattr(self.session, "_server_capabilities", None))
-        logger.debug("Connected to MCP server: %s", self.session)
-        self.is_connected = True
-        if load_configured and self.load_tools_flag:
-            if self._supports_tools:
-                await self.load_tools()
-            self._tools_loaded = True
-        if load_configured and self.load_prompts_flag:
-            if self._supports_prompts:
-                await self.load_prompts()
-            self._prompts_loaded = True
-
-        if logger.level != logging.NOTSET and self._supports_logging is not False:
+            self._owns_session = True
+        else:
             try:
-                level_name = cast(
-                    Any, next(level for level, value in LOG_LEVEL_MAPPING.items() if value == logger.level)
-                )
-                await self.session.set_logging_level(level_name)
-            except Exception as exc:
-                logger.warning("Failed to set log level to %s", logger.level, exc_info=exc)
+                if self.session._request_id == 0:  # type: ignore[attr-defined]
+                    # If the session is not initialized, we need to reinitialize it
+                    with create_mcp_client_span("initialize", attributes=self._mcp_base_span_attributes()) as init_span:
+                        initialize_result = await self.session.initialize()
+                        init_span.set_attribute(OtelAttr.MCP_PROTOCOL_VERSION, initialize_result.protocolVersion)
+                        self._set_server_capabilities(getattr(initialize_result, "capabilities", None))
+                elif self._server_capabilities is None:
+                    self._set_server_capabilities(getattr(self.session, "_server_capabilities", None))
+            except (Exception, asyncio.CancelledError):
+                await self._close_on_owner()
+                raise
+        functions_before_discovery = self._functions.copy()
+        call_meta_before_discovery = self._tool_call_meta_by_name
+        task_support_before_discovery = self._tool_task_support_by_name
+        param_names_before_discovery = self._tool_param_names_by_name
+        try:
+            logger.debug("Connected to MCP server: %s", self.session)
+            self.is_connected = True
+            if load_configured and self.load_tools_flag:
+                if self._supports_tools:
+                    await self.load_tools()
+                self._tools_loaded = True
+            if load_configured and self.load_prompts_flag:
+                if self._supports_prompts:
+                    await self.load_prompts()
+                self._prompts_loaded = True
+
+            if logger.level != logging.NOTSET and self._supports_logging is not False:
+                try:
+                    level_name = cast(
+                        Any, next(level for level, value in LOG_LEVEL_MAPPING.items() if value == logger.level)
+                    )
+                    await self.session.set_logging_level(level_name)
+                except Exception as exc:
+                    logger.warning("Failed to set log level to %s", logger.level, exc_info=exc)
+        except (Exception, asyncio.CancelledError):
+            try:
+                await self._close_on_owner()
+            finally:
+                self._functions[:] = functions_before_discovery
+                self._tool_call_meta_by_name = call_meta_before_discovery
+                self._tool_task_support_by_name = task_support_before_discovery
+                self._tool_param_names_by_name = param_names_before_discovery
+            raise
 
     async def _sampling_request_approved(self, params: types.CreateMessageRequestParams) -> bool:
         """Run the configured sampling approval gate.
@@ -2052,7 +2109,8 @@ class MCPTool:
 
         await self._safe_close_exit_stack()
         self._exit_stack = AsyncExitStack()
-        self.session = None
+        if self._owns_session:
+            self.session = None
         self.is_connected = False
         self._reset_session_state()
 
@@ -2903,7 +2961,8 @@ class MCPStdioTool(MCPTool):
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
             request_timeout: The default timeout in seconds for all requests.
-            session: The session to use for the MCP connection.
+            session: An existing MCP client session to use. The caller retains ownership;
+                closing or resetting this wrapper does not close or replace that session.
             description: The description of the tool.
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.
@@ -3101,7 +3160,8 @@ class MCPStreamableHTTPTool(MCPTool):
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
             request_timeout: The default timeout in seconds for all requests.
-            session: The session to use for the MCP connection.
+            session: An existing MCP client session to use. The caller retains ownership;
+                closing or resetting this wrapper does not close or replace that session.
             description: The description of the tool.
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.
@@ -3265,6 +3325,7 @@ class MCPStreamableHTTPTool(MCPTool):
                     timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
                 )
                 self._httpx_client = http_client
+                self._exit_stack.push_async_callback(self._close_owned_http_client, http_client)
 
             if not hasattr(self, "_inject_headers_hook"):
 
@@ -3321,6 +3382,9 @@ class MCPStreamableHTTPTool(MCPTool):
                 self._header_hook_client = http_client
             if self._inject_headers_hook not in http_client.event_hooks["request"]:
                 http_client.event_hooks["request"].append(self._inject_headers_hook)
+                # Register before transport entry so failed connections clean up too,
+                # while successful sessions keep the hook through transport shutdown.
+                self._exit_stack.callback(self._remove_header_hook)
 
         transport_http_client = (
             _MCPHeaderScopedClient(http_client, self._header_request_owner) if http_client is not None else None
@@ -3331,6 +3395,14 @@ class MCPStreamableHTTPTool(MCPTool):
             http_client=transport_http_client,
             terminate_on_close=self.terminate_on_close if self.terminate_on_close is not None else True,
         )
+
+    async def _close_owned_http_client(self, http_client: AsyncClient) -> None:
+        """Release a framework-created client without retaining it for reconnect."""
+        try:
+            await http_client.aclose()
+        finally:
+            if self._httpx_client is http_client:
+                self._httpx_client = None
 
     def _remove_header_hook(self) -> None:
         """Detach this tool's request hook from its HTTP client."""
@@ -3459,7 +3531,8 @@ class MCPWebsocketTool(MCPTool):
                 access the ``.functions`` list after connecting and set ``result_parser`` on
                 individual ``FunctionTool`` instances.
             request_timeout: The default timeout in seconds for all requests.
-            session: The session to use for the MCP connection.
+            session: An existing MCP client session to use. The caller retains ownership;
+                closing or resetting this wrapper does not close or replace that session.
             description: The description of the tool.
             approval_mode: The approval mode for the tool. This can be:
                 - "always_require": The tool always requires approval before use.
