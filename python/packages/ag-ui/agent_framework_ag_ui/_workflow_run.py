@@ -127,7 +127,12 @@ def _workflow_interrupt_value(request_data: Any) -> Any:
     return {"data": safe_request_data}
 
 
-def _workflow_interrupt_metadata(request_payload: dict[str, Any], value: Any) -> dict[str, Any]:
+def _workflow_interrupt_metadata(
+    request_payload: dict[str, Any],
+    value: Any,
+    *,
+    checkpoint_id: str | None = None,
+) -> dict[str, Any]:
     """Build Agent Framework metadata for workflow request_info interrupts."""
     agent_framework_metadata = {
         key: make_json_safe(value)
@@ -139,10 +144,87 @@ def _workflow_interrupt_metadata(request_payload: dict[str, Any], value: Any) ->
             "response_type": request_payload.get("response_type"),
             "data": request_payload.get("data"),
             "value": value,
+            "checkpoint_id": checkpoint_id,
         }.items()
         if value is not None
     }
     return {"agent_framework": agent_framework_metadata}
+
+
+def _attach_checkpoint_id_to_interrupts(
+    interrupts: list[dict[str, Any]],
+    checkpoint_id: str | None,
+) -> list[dict[str, Any]]:
+    """Attach ``checkpoint_id`` to each interrupt's ``metadata.agent_framework`` (issue #8150).
+
+    Multi-worker hosts need the pause checkpoint on the wire so the next resume can pass
+    ``forwardedProps.checkpoint_id`` without a side-channel lookup. No-op when checkpointing
+    is inactive or the id is already present.
+    """
+    if not checkpoint_id or not interrupts:
+        return interrupts
+
+    attached: list[dict[str, Any]] = []
+    for interrupt in interrupts:
+        entry = dict(interrupt)
+        metadata = entry.get("metadata")
+        if isinstance(metadata, dict):
+            metadata = dict(metadata)
+        else:
+            metadata = {}
+        agent_framework = metadata.get("agent_framework")
+        if isinstance(agent_framework, dict):
+            agent_framework = dict(agent_framework)
+        else:
+            agent_framework = {}
+        agent_framework.setdefault("checkpoint_id", checkpoint_id)
+        metadata["agent_framework"] = agent_framework
+        entry["metadata"] = metadata
+        attached.append(entry)
+    return attached
+
+
+async def _latest_checkpoint_id_for_workflow(
+    workflow: Workflow,
+    checkpoint_storage: CheckpointStorage | None,
+) -> str | None:
+    """Best-effort latest checkpoint id for the workflow when storage is configured."""
+    if checkpoint_storage is None:
+        return None
+    get_latest = getattr(checkpoint_storage, "get_latest", None)
+    if get_latest is None:
+        return None
+    try:
+        latest = await get_latest(workflow_name=workflow.name)
+    except Exception:  # pragma: no cover - defensive for storage drift
+        logger.warning("Could not resolve latest workflow checkpoint id for interrupt metadata", exc_info=True)
+        return None
+    if latest is None:
+        return None
+    checkpoint_id = getattr(latest, "checkpoint_id", None)
+    return str(checkpoint_id) if checkpoint_id is not None else None
+
+
+async def _build_run_finished_with_checkpointed_interrupts(
+    *,
+    run_id: str,
+    thread_id: str,
+    interrupts: list[dict[str, Any]],
+    workflow: Workflow,
+    checkpoint_storage: CheckpointStorage | None,
+    known_checkpoint_id: str | None = None,
+) -> Any:
+    """Build RUN_FINISHED, attaching the pause checkpoint id to interrupt metadata when available."""
+    # Prefer the latest persisted checkpoint (the pause boundary). Fall back to an
+    # explicitly known id (e.g. cold replay short-circuit) when storage has nothing newer.
+    pause_checkpoint_id = await _latest_checkpoint_id_for_workflow(workflow, checkpoint_storage)
+    if pause_checkpoint_id is None:
+        pause_checkpoint_id = known_checkpoint_id
+    return _build_run_finished_event(
+        run_id=run_id,
+        thread_id=thread_id,
+        interrupts=_attach_checkpoint_id_to_interrupts(interrupts, pause_checkpoint_id),
+    )
 
 
 async def _pending_request_events(workflow: Workflow) -> dict[str, Any]:
@@ -1133,12 +1215,26 @@ async def run_workflow_stream(
             interrupt_event_value = _workflow_interrupt_event_value(request_payload)
             if interrupt_event_value is not None:
                 yield CustomEvent(name=_INTERRUPT_CARD_EVENT_NAME, value=interrupt_event_value)
-        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=pending_interrupts)
+        yield await _build_run_finished_with_checkpointed_interrupts(
+            run_id=run_id,
+            thread_id=thread_id,
+            interrupts=pending_interrupts,
+            workflow=workflow,
+            checkpoint_storage=checkpoint_storage,
+            known_checkpoint_id=checkpoint_id,
+        )
         return
 
     if checkpoint_id is None and not responses and not messages:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=pending_interrupts)
+        yield await _build_run_finished_with_checkpointed_interrupts(
+            run_id=run_id,
+            thread_id=thread_id,
+            interrupts=pending_interrupts,
+            workflow=workflow,
+            checkpoint_storage=checkpoint_storage,
+            known_checkpoint_id=checkpoint_id,
+        )
         return
 
     def _drain_open_message() -> list[TextMessageEndEvent]:
@@ -1244,7 +1340,14 @@ async def run_workflow_stream(
                         yield end_event
                     if not interrupts:
                         interrupts.extend(_interrupts_from_pending_requests(await _pending_request_events(workflow)))
-                    yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=interrupts)
+                    yield await _build_run_finished_with_checkpointed_interrupts(
+                        run_id=run_id,
+                        thread_id=thread_id,
+                        interrupts=interrupts,
+                        workflow=workflow,
+                        checkpoint_storage=checkpoint_storage,
+                        known_checkpoint_id=checkpoint_id,
+                    )
                     terminal_emitted = True
                 elif state_value not in _TERMINAL_STATES:
                     yield CustomEvent(name="status", value={"state": state_value})
@@ -1391,4 +1494,11 @@ async def run_workflow_stream(
     if not terminal_emitted and not run_error_emitted:
         if not interrupts:
             interrupts.extend(_interrupts_from_pending_requests(await _pending_request_events(workflow)))
-        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=interrupts)
+        yield await _build_run_finished_with_checkpointed_interrupts(
+            run_id=run_id,
+            thread_id=thread_id,
+            interrupts=interrupts,
+            workflow=workflow,
+            checkpoint_storage=checkpoint_storage,
+            known_checkpoint_id=checkpoint_id,
+        )

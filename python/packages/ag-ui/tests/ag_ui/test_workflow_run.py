@@ -95,6 +95,24 @@ def _interrupt_metadata_value(interrupt: dict[str, Any]) -> dict[str, Any]:
     return cast(dict[str, Any], value)
 
 
+def test_attach_checkpoint_id_to_interrupts_setdefault() -> None:
+    """Issue #8150: attach pause checkpoint_id without overwriting an existing one."""
+    from agent_framework_ag_ui._workflow_run import _attach_checkpoint_id_to_interrupts
+
+    empty = _attach_checkpoint_id_to_interrupts([{"id": "r1"}], None)
+    assert empty == [{"id": "r1"}]
+
+    attached = _attach_checkpoint_id_to_interrupts(
+        [{"id": "r1", "metadata": {"agent_framework": {"type": "workflow_request_info"}}}],
+        "cp-123",
+    )
+    assert attached[0]["metadata"]["agent_framework"]["checkpoint_id"] == "cp-123"
+    assert attached[0]["metadata"]["agent_framework"]["type"] == "workflow_request_info"
+
+    preserved = _attach_checkpoint_id_to_interrupts(attached, "cp-other")
+    assert preserved[0]["metadata"]["agent_framework"]["checkpoint_id"] == "cp-123"
+
+
 async def test_workflow_run_maps_custom_and_text_events():
     """Custom workflow events and yielded text are mapped to AG-UI events."""
 
@@ -682,6 +700,8 @@ async def test_workflow_run_resume_content_response_after_checkpoint_restore() -
     )
     assert checkpoints, "expected the interrupted run to create a checkpoint"
     resume_checkpoint_id = checkpoints[-1].checkpoint_id
+    # Issue #8150: interrupt metadata must carry the pause checkpoint for multi-worker resume.
+    assert interrupt_payload[0]["metadata"]["agent_framework"]["checkpoint_id"] == resume_checkpoint_id
 
     # Resume on a FRESH workflow instance so no pending requests exist in memory until
     # the checkpoint is restored -- a cold restore, as after a process restart.
