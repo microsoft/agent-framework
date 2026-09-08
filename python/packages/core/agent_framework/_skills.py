@@ -285,7 +285,7 @@ class _FileSkillResource(SkillResource):
         def read_validated_resource() -> str:
             validated_path = self.full_path
             if self._skill_dir is not None:
-                validated_path = FileSkillsSource._validate_file_path_for_use(
+                validated_path = FileSkillsSource._validate_file_path_for_use(  # pyright: ignore[reportPrivateUsage]
                     self._skill_dir,
                     self.full_path,
                     self.name,
@@ -553,7 +553,7 @@ class FileSkillScript(SkillScript):
             raise ValueError(f"Script '{self.name}' requires a runner. Provide a script_runner for file-based scripts.")
         if self._skill_dir is not None:
             await asyncio.to_thread(
-                FileSkillsSource._validate_file_path_for_use,
+                FileSkillsSource._validate_file_path_for_use,  # pyright: ignore[reportPrivateUsage]
                 self._skill_dir,
                 self.full_path,
                 self.name,
