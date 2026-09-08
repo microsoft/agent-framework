@@ -52,8 +52,8 @@
 /python/packages/a2a/                                           @chetantoshniwal @giles17 @eavanvalkenburg @moonbox3
 /python/packages/ag-ui/                                         @chetantoshniwal @eavanvalkenburg @moonbox3 @giles17
 /python/packages/anthropic/                                     @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
-/python/packages/azure-ai-search/                               @chetantoshniwal @eavanvalkenburg @giles17
-/python/packages/azure-contentunderstanding/                    @chetantoshniwal @giles17 @eavanvalkenburg
+/python/packages/azure-ai-search/                               @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
+/python/packages/azure-contentunderstanding/                    @chetantoshniwal @giles17 @eavanvalkenburg @moonbox3
 /python/packages/azure-cosmos/                                  @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
 /python/packages/azure-cosmos-memory/                           @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
 /python/packages/bedrock/                                       @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
