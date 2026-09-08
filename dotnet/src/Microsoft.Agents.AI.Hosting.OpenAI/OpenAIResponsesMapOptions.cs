@@ -52,6 +52,11 @@ public sealed class OpenAIResponsesMapOptions
     /// server, but matching function calls are returned to the client for execution.
     /// </para>
     /// <para>
+    /// A client function may cause the model to choose it instead of a function configured by the
+    /// hosted agent developer, even when their names do not conflict. Function arguments and any data
+    /// included in those arguments are then returned to the client.
+    /// </para>
+    /// <para>
     /// The default is <see langword="null"/>, which leaves client-provided tools subject to
     /// <see cref="RejectRequestSettings"/>. Enabling this setting requires an explicit
     /// <see cref="OpenAIClientFunctionToolNameConflictBehavior"/>. The request's
