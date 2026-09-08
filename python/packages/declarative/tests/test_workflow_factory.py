@@ -186,8 +186,10 @@ actions:
         first = await workflow.run(Message(role="user", contents=["first-secret"]), checkpoint_storage=first_storage)
         first_request_id = first.get_request_info_events()[0].request_id
         checkpoints = await first_storage.list_checkpoints(workflow_name=workflow.name)
-        checkpoint = max(checkpoints, key=lambda item: item.timestamp)
-        assert checkpoint.pending_request_info_events
+        # Wall-clock timestamps can tie on Windows. Select the checkpoint
+        # that actually contains this run's pending question, not an earlier step.
+        checkpoint = next(item for item in checkpoints if first_request_id in item.pending_request_info_events)
+        assert first_request_id in checkpoint.pending_request_info_events
         first_state = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert isinstance(first_state, dict)
         first_conversation_id = first_state["System"]["ConversationId"]
