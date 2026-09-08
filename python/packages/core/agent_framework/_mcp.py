@@ -1584,6 +1584,10 @@ class MCPTool:
                 self._tool_param_names_by_name = param_names_before_discovery
             raise
 
+    def _seed_connection_kwargs(self, kwargs: Mapping[str, Any]) -> None:
+        """Offer run-scoped kwargs to connection-lifetime header resolution."""
+        return
+
     async def _sampling_request_approved(self, params: types.CreateMessageRequestParams) -> bool:
         """Run the configured sampling approval gate.
 
@@ -3286,6 +3290,7 @@ class MCPStreamableHTTPTool(MCPTool):
         # when a header_provider is set: parallel invocations on the same instance would
         # otherwise overwrite each other's snapshot and attach the wrong per-call headers.
         self._active_call_headers: dict[str, str] | None = None
+        self._connection_kwargs: dict[str, Any] = {}
         self._call_headers_lock = asyncio.Lock()
         self._header_request_owner = object()
         self._header_hook_client: AsyncClient | None = None
@@ -3358,7 +3363,7 @@ class MCPStreamableHTTPTool(MCPTool):
                         if self._header_provider is None:
                             raise RuntimeError("Header injection hook invoked without a header_provider.")
                         try:
-                            headers = self._header_provider({})
+                            headers = self._header_provider(self._connection_kwargs)
                         except KeyError:
                             # A kwargs-dependent provider raises on every ambient request
                             # (initialize, discovery, and recurring pings).
@@ -3421,6 +3426,11 @@ class MCPStreamableHTTPTool(MCPTool):
             await super()._close_on_owner()
         finally:
             self._remove_header_hook()
+
+    def _seed_connection_kwargs(self, kwargs: Mapping[str, Any]) -> None:
+        if self._header_provider is None or self.is_connected:
+            return
+        self._connection_kwargs = dict(kwargs)
 
     async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call a tool, injecting headers from the header_provider if configured.
