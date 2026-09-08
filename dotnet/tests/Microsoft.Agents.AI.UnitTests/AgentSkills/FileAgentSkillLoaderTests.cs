@@ -597,6 +597,67 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Equal("Document content here.", content);
     }
 
+#if NET
+    [Fact]
+    public async Task ReadSkillResourceAsync_ResourceReplacedWithSymlink_ThrowsAsync()
+    {
+        // Arrange
+        string skillDir = this.CreateSkillDirectory("read-symlink-skill", "A skill", "See docs.");
+        string refsDir = Path.Combine(skillDir, "references");
+        Directory.CreateDirectory(refsDir);
+        string resourcePath = Path.Combine(refsDir, "doc.md");
+        File.WriteAllText(resourcePath, "Safe content.");
+        string outsidePath = Path.Combine(this._testRoot, "secret.md");
+        File.WriteAllText(outsidePath, "Secret content.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+        var resource = skills[0].GetTestResources()!.Single(r => r.Name == "references/doc.md");
+
+        File.Delete(resourcePath);
+        if (!TryCreateFileSymbolicLink(resourcePath, outsidePath))
+        {
+            Assert.Skip("Symbolic links are not supported in this environment.");
+        }
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => resource.ReadAsync());
+    }
+
+    [Fact]
+    public async Task RunSkillScriptAsync_ScriptReplacedWithSymlink_DoesNotInvokeRunnerAsync()
+    {
+        // Arrange
+        string skillDir = this.CreateSkillDirectory("run-symlink-skill", "A skill", "Run scripts.");
+        string scriptsDir = Path.Combine(skillDir, "scripts");
+        Directory.CreateDirectory(scriptsDir);
+        string scriptPath = Path.Combine(scriptsDir, "run.py");
+        File.WriteAllText(scriptPath, "print('safe')");
+        string outsidePath = Path.Combine(this._testRoot, "outside.py");
+        File.WriteAllText(outsidePath, "print('outside')");
+        bool runnerCalled = false;
+        var source = new AgentFileSkillsSource(
+            this._testRoot,
+            (skill, script, args, serviceProvider, cancellationToken) =>
+            {
+                runnerCalled = true;
+                return Task.FromResult<object?>(null);
+            });
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+        var script = await skills[0].GetScriptAsync("scripts/run.py");
+
+        File.Delete(scriptPath);
+        if (!TryCreateFileSymbolicLink(scriptPath, outsidePath))
+        {
+            Assert.Skip("Symbolic links are not supported in this environment.");
+        }
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => script!.RunAsync(skills[0], null, null));
+        Assert.False(runnerCalled);
+    }
+#endif
+
     [Fact]
     public async Task GetSkillsAsync_NameExceedsMaxLength_ExcludesSkillAsync()
     {

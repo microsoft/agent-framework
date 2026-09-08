@@ -979,6 +979,25 @@ class TestSymlinkDetection:
         assert "references/leak.md" not in resource_names
         assert "references/safe.md" in resource_names
 
+    async def test_read_rejects_resource_replaced_with_symlink(self, tmp_path: Path) -> None:
+        """A resource replaced after discovery must be revalidated before reading."""
+        skill_dir = _write_skill(
+            tmp_path,
+            "my-skill",
+            resources={"references/guide.md": "safe content"},
+        )
+        outside_file = tmp_path / "secret.md"
+        outside_file.write_text("secret content", encoding="utf-8")
+        skills = await _discover_file_skills_for_test([str(tmp_path)])
+        resource = next(r for r in skills["my-skill"]._resources if r.name == "references/guide.md")
+
+        resource_path = skill_dir / "references" / "guide.md"
+        resource_path.unlink()
+        resource_path.symlink_to(outside_file)
+
+        with pytest.raises(ValueError, match="symbolic link or reparse point"):
+            await resource.read()
+
     def test_discover_resource_files_rejects_symlinked_resource(self, tmp_path: Path) -> None:
         """_discover_resource_files should exclude a symlinked resource file."""
         skill_dir = tmp_path / "skill"
@@ -1013,6 +1032,31 @@ class TestSymlinkDetection:
         discovered = _discover_scripts(str(skill_dir))
         assert "scripts/safe.py" in discovered
         assert "scripts/leak.py" not in discovered
+
+    async def test_run_rejects_script_replaced_with_symlink(self, tmp_path: Path) -> None:
+        """A script replaced after discovery must be revalidated before its runner is invoked."""
+        skill_dir = _write_skill(tmp_path, "my-skill")
+        script_path = skill_dir / "scripts" / "run.py"
+        script_path.parent.mkdir()
+        script_path.write_text("print('safe')", encoding="utf-8")
+        outside_script = tmp_path / "outside.py"
+        outside_script.write_text("print('outside')", encoding="utf-8")
+        runner_called = False
+
+        def runner(skill: Skill, script: SkillScript, args: dict[str, Any] | list[str] | None = None) -> None:
+            nonlocal runner_called
+            runner_called = True
+
+        skills = await _discover_file_skills_for_test([str(tmp_path)], script_runner=runner)
+        skill = skills["my-skill"]
+        script = next(s for s in skill._scripts if s.name == "scripts/run.py")
+
+        script_path.unlink()
+        script_path.symlink_to(outside_script)
+
+        with pytest.raises(ValueError, match="symbolic link or reparse point"):
+            await script.run(skill)
+        assert runner_called is False
 
     async def test_discover_skips_symlinked_skill_directory(self, tmp_path: Path) -> None:
         """A symlinked directory below a configured root must not become a skill root."""

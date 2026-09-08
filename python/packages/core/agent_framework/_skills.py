@@ -248,6 +248,7 @@ class _FileSkillResource(SkillResource):
         name: str,
         full_path: str,
         description: str | None = None,
+        skill_dir: str | None = None,
     ) -> None:
         """Initialize a _FileSkillResource.
 
@@ -255,6 +256,7 @@ class _FileSkillResource(SkillResource):
             name: Relative path of the resource within the skill directory.
             full_path: Absolute path to the resource file.
             description: Optional human-readable summary.
+            skill_dir: Trusted skill directory used to revalidate discovered resources before reading.
 
         Raises:
             ValueError: If ``full_path`` is empty.
@@ -265,6 +267,7 @@ class _FileSkillResource(SkillResource):
             raise ValueError("full_path cannot be empty.")
 
         self.full_path = full_path
+        self._skill_dir = skill_dir
 
     async def read(self, **kwargs: Any) -> Any:
         """Read the resource content from disk.
@@ -278,11 +281,23 @@ class _FileSkillResource(SkillResource):
         Raises:
             ValueError: If the resource file does not exist.
         """
-        if not await asyncio.to_thread(Path(self.full_path).is_file):
-            raise ValueError(f"Resource file '{self.name}' not found at '{self.full_path}'.")
 
-        logger.info("Reading resource '%s' from '%s'", self.name, self.full_path)
-        return await asyncio.to_thread(Path(self.full_path).read_text, encoding="utf-8")
+        def read_validated_resource() -> str:
+            validated_path = self.full_path
+            if self._skill_dir is not None:
+                validated_path = FileSkillsSource._validate_file_path_for_use(
+                    self._skill_dir,
+                    self.full_path,
+                    self.name,
+                    "Resource",
+                )
+            elif not Path(self.full_path).is_file():
+                raise ValueError(f"Resource file '{self.name}' not found at '{self.full_path}'.")
+
+            logger.info("Reading resource '%s' from '%s'", self.name, self.full_path)
+            return Path(validated_path).read_text(encoding="utf-8")
+
+        return await asyncio.to_thread(read_validated_resource)
 
 
 class SkillScript(ABC):
@@ -478,6 +493,7 @@ class FileSkillScript(SkillScript):
         description: str | None = None,
         full_path: str,
         runner: SkillScriptRunner | None = None,
+        skill_dir: str | None = None,
     ) -> None:
         """Initialize a FileSkillScript.
 
@@ -487,6 +503,7 @@ class FileSkillScript(SkillScript):
             full_path: Absolute path to the script file.
             runner: Strategy for running file-based scripts.  Required for
                 execution; an error is raised from :meth:`run` if not provided.
+            skill_dir: Trusted skill directory used to revalidate discovered scripts before execution.
 
         Raises:
             ValueError: If ``full_path`` is empty or not an absolute path.
@@ -500,6 +517,7 @@ class FileSkillScript(SkillScript):
 
         self.full_path = full_path
         self._runner = runner
+        self._skill_dir = skill_dir
 
     @property
     def parameters_schema(self) -> dict[str, Any] | None:
@@ -533,6 +551,14 @@ class FileSkillScript(SkillScript):
             )
         if self._runner is None:
             raise ValueError(f"Script '{self.name}' requires a runner. Provide a script_runner for file-based scripts.")
+        if self._skill_dir is not None:
+            await asyncio.to_thread(
+                FileSkillsSource._validate_file_path_for_use,
+                self._skill_dir,
+                self.full_path,
+                self.name,
+                "Script",
+            )
         result = self._runner(skill, self, args)
         if inspect.isawaitable(result):
             return await result
@@ -2934,13 +2960,20 @@ class FileSkillsSource(SkillsSource):
             resources: list[SkillResource] = []
             for rn in self._discover_resource_files(skill_path, frontmatter.name):
                 resource_full_path = FileSkillsSource._get_validated_resource_path(skill_path, rn)
-                resources.append(_FileSkillResource(name=rn, full_path=resource_full_path))
+                resources.append(_FileSkillResource(name=rn, full_path=resource_full_path, skill_dir=skill_path))
 
             # Discover file-based scripts
             scripts: list[SkillScript] = []
             for sn in self._discover_script_files(skill_path, frontmatter.name):
                 script_full_path = os.path.normpath(os.path.join(skill_path, sn))  # ruff:ignore[blocking-path-method-in-async-function]
-                scripts.append(FileSkillScript(name=sn, full_path=script_full_path, runner=self._script_runner))
+                scripts.append(
+                    FileSkillScript(
+                        name=sn,
+                        full_path=script_full_path,
+                        runner=self._script_runner,
+                        skill_dir=skill_path,
+                    )
+                )
 
             file_skill = FileSkill(
                 frontmatter=frontmatter,
@@ -3356,27 +3389,42 @@ class FileSkillsSource(SkillsSource):
                 escapes the skill directory, the file does not exist, or a symlink
                 is detected in the path.
         """
+        resource_name = FileSkillsSource._normalize_resource_path(resource_name)
+        resource_full_path = os.path.normpath(Path(skill_dir) / resource_name)
+        return FileSkillsSource._validate_file_path_for_use(
+            skill_dir,
+            resource_full_path,
+            resource_name,
+            "Resource",
+        )
+
+    @staticmethod
+    def _validate_file_path_for_use(skill_dir: str, full_path: str, file_name: str, file_kind: str) -> str:
+        """Validate a discovered file immediately before it is read or executed."""
+        # Require an anchored trust boundary, e.g. "/skills/weather", not "skills/weather".
         if not os.path.isabs(skill_dir):
             raise ValueError(f"skill_dir must be an absolute path, got: '{skill_dir}'")
 
-        resource_name = FileSkillsSource._normalize_resource_path(resource_name)
-
-        resource_full_path = os.path.normpath(Path(skill_dir) / resource_name)
+        # Collapse lexical segments, e.g. "/skills/weather/refs/../guide.md" -> "/skills/weather/guide.md".
+        normalized_full_path = os.path.normpath(full_path)
         root_directory_path = os.path.normpath(skill_dir)
 
-        if not FileSkillsSource._is_path_within_directory(resource_full_path, root_directory_path):
-            raise ValueError(f"Resource file '{resource_name}' references a path outside the skill directory.")
+        # Reject lexical escapes, e.g. "/skills/weather/../secret.md" resolves outside the skill root.
+        if not FileSkillsSource._is_path_within_directory(normalized_full_path, root_directory_path):
+            raise ValueError(f"{file_kind} file '{file_name}' references a path outside the skill directory.")
 
-        if not Path(resource_full_path).is_file():
-            raise ValueError(f"Resource file '{resource_name}' not found in skill directory '{skill_dir}'.")
+        # Reject files deleted or replaced with non-files after discovery.
+        if not Path(normalized_full_path).is_file():
+            raise ValueError(f"{file_kind} file '{file_name}' not found in skill directory '{skill_dir}'.")
 
-        if FileSkillsSource._has_link_or_reparse_point_in_path(resource_full_path, root_directory_path):
+        # Reject links in any child segment, e.g. "refs" in "/skills/weather/refs/guide.md".
+        if FileSkillsSource._has_link_or_reparse_point_in_path(normalized_full_path, root_directory_path):
             raise ValueError(
-                f"Resource file '{resource_name}' has a symbolic link or reparse point in its path; "
+                f"{file_kind} file '{file_name}' has a symbolic link or reparse point in its path; "
                 "links and reparse points are not allowed."
             )
 
-        return resource_full_path
+        return normalized_full_path
 
     @staticmethod
     def _validate_skill_metadata(

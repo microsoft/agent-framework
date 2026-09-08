@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
-using System.Security;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -26,6 +25,7 @@ namespace Microsoft.Agents.AI;
 /// Each file is validated for YAML frontmatter. Resource and script files are discovered by scanning the skill
 /// directory for files with matching extensions. Invalid resources are skipped with logged warnings.
 /// Resource and script paths are checked against path traversal and symlink escape attacks.
+/// Discovered files are revalidated against their trusted skill directory immediately before use.
 /// </remarks>
 public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 {
@@ -166,7 +166,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         string skillFilePath = Path.Combine(directory, SkillFileName);
         if (File.Exists(skillFilePath))
         {
-            if (IsLinkOrReparsePointOrInaccessible(skillFilePath))
+            if (AgentFileSkillPathValidator.IsLinkOrReparsePointOrInaccessible(skillFilePath))
             {
                 LogUnsafeSkillDiscoveryPath(this._logger, SanitizePathForLog(skillFilePath));
                 return;
@@ -185,7 +185,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
         foreach (string subdirectory in this.SafeEnumerateDirectories(directory, attributesToSkip: 0))
         {
-            if (IsLinkOrReparsePointOrInaccessible(subdirectory))
+            if (AgentFileSkillPathValidator.IsLinkOrReparsePointOrInaccessible(subdirectory))
             {
                 LogUnsafeSkillDiscoveryPath(this._logger, SanitizePathForLog(subdirectory));
                 continue;
@@ -345,7 +345,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         // segment) is a reparse point or cannot be inspected. The root directory is excluded —
         // it's a caller-supplied trusted path, and the security boundary guards files within it,
         // not the path itself.
-        if (!isRootDirectory && HasSymlinkInPath(targetDirectory, skillDirectoryFullPath))
+        if (!isRootDirectory && AgentFileSkillPathValidator.HasLinkOrReparsePointInPath(targetDirectory, skillDirectoryFullPath))
         {
             if (this._logger.IsEnabled(LogLevel.Warning))
             {
@@ -407,7 +407,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
             // Per-file symlink check: detects if the file (or any intermediate segment)
             // is a reparse point or cannot be inspected.
             // e.g. "references/secret.md" → symlink to "/etc/shadow"
-            if (HasSymlinkInPath(resolvedFilePath, skillDirectoryFullPath))
+            if (AgentFileSkillPathValidator.HasLinkOrReparsePointInPath(resolvedFilePath, skillDirectoryFullPath))
             {
                 if (this._logger.IsEnabled(LogLevel.Warning))
                 {
@@ -427,7 +427,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
                 continue;
             }
 
-            resources.Add(new AgentFileSkillResource(relativePath, resolvedFilePath));
+            resources.Add(new AgentFileSkillResource(relativePath, resolvedFilePath, skillDirectoryFullPath));
         }
 
         // Recurse into subdirectories if within depth limit
@@ -471,7 +471,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         // segment) is a reparse point or cannot be inspected. The root directory is excluded —
         // it's a caller-supplied trusted path, and the security boundary guards files within it,
         // not the path itself.
-        if (!isRootDirectory && HasSymlinkInPath(targetDirectory, skillDirectoryFullPath))
+        if (!isRootDirectory && AgentFileSkillPathValidator.HasLinkOrReparsePointInPath(targetDirectory, skillDirectoryFullPath))
         {
             if (this._logger.IsEnabled(LogLevel.Warning))
             {
@@ -520,7 +520,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
             // Per-file symlink check: detects if the file (or any intermediate segment)
             // is a reparse point or cannot be inspected.
             // e.g. "scripts/run.py" → symlink to "/etc/shadow"
-            if (HasSymlinkInPath(resolvedFilePath, skillDirectoryFullPath))
+            if (AgentFileSkillPathValidator.HasLinkOrReparsePointInPath(resolvedFilePath, skillDirectoryFullPath))
             {
                 if (this._logger.IsEnabled(LogLevel.Warning))
                 {
@@ -540,7 +540,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
                 continue;
             }
 
-            scripts.Add(new AgentFileSkillScript(relativePath, resolvedFilePath, this._scriptRunner));
+            scripts.Add(new AgentFileSkillScript(relativePath, resolvedFilePath, skillDirectoryFullPath, this._scriptRunner));
         }
 
         // Recurse into subdirectories if within depth limit
@@ -551,49 +551,6 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
                 this.ScanDirectoryForScripts(subdirectory, skillDirectoryFullPath, skillName, scripts, currentDepth + 1);
             }
         }
-    }
-
-    /// <summary>
-    /// Checks whether any segment in the path (relative to the directory) is a symlink,
-    /// reparse point, or cannot be inspected.
-    /// </summary>
-    private static bool HasSymlinkInPath(string pathToCheck, string trustedBasePath)
-    {
-        string relativePath = pathToCheck.Substring(trustedBasePath.Length);
-        string[] segments = relativePath.Split(
-            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
-            StringSplitOptions.RemoveEmptyEntries);
-
-        string currentPath = trustedBasePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-
-        foreach (string segment in segments)
-        {
-            currentPath = Path.Combine(currentPath, segment);
-
-            if (IsLinkOrReparsePointOrInaccessible(currentPath))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool IsLinkOrReparsePointOrInaccessible(string path)
-    {
-        try
-        {
-            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
-        }
-        catch (Exception ex) when (IsFileSystemInspectionFailure(ex))
-        {
-            return true;
-        }
-    }
-
-    private static bool IsFileSystemInspectionFailure(Exception exception)
-    {
-        return exception is IOException or UnauthorizedAccessException or SecurityException;
     }
 
     /// <summary>
@@ -619,7 +576,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
             return Directory.GetDirectories(path);
 #endif
         }
-        catch (Exception ex) when (IsFileSystemInspectionFailure(ex))
+        catch (Exception ex) when (AgentFileSkillPathValidator.IsFileSystemInspectionFailure(ex))
         {
             if (this._logger.IsEnabled(LogLevel.Warning))
             {
