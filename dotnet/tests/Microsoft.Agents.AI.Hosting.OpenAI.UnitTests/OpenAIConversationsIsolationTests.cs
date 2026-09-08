@@ -3,18 +3,23 @@
 using System;
 using System.Net;
 using System.Net.Http;
+using System.Security.Claims;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.Conversations;
 using Microsoft.Agents.AI.Hosting.OpenAI.Models;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Primitives;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 
@@ -26,6 +31,8 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 public sealed class OpenAIConversationsIsolationTests : IAsyncDisposable
 {
     private const string AgentName = "test-agent";
+    private const string AuthenticatedWithoutUserHeader = "X-Test-Authenticated-Without-User";
+    private const string TestAuthenticationScheme = "Test";
     private const string UserHeader = "X-Test-User";
     private const string Alice = "alice";
     private const string Bob = "bob";
@@ -329,15 +336,35 @@ public sealed class OpenAIConversationsIsolationTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task WhenIsolationIsConfiguredButNoKeyResolves_TheRequestFailsAsync()
+    public async Task WhenIsolationIsConfiguredButCallerIsUnauthenticated_TheRequestFailsAsync()
     {
         // Arrange
         HttpClient client = await this.CreateTestServerAsync();
 
-        // Act & Assert - no principal header means no isolation key, so the request must not fall back to a shared namespace.
+        // Act & Assert
         await Assert.ThrowsAnyAsync<Exception>(async () =>
         {
             using HttpResponseMessage response = await SendAsync(client, HttpMethod.Post, principal: null, "/v1/conversations", "{}");
+            response.EnsureSuccessStatusCode();
+        });
+    }
+
+    [Fact]
+    public async Task WhenIsolationIsConfiguredButNameIdentifierIsMissing_TheRequestFailsAsync()
+    {
+        // Arrange
+        HttpClient client = await this.CreateTestServerAsync();
+
+        // Act & Assert
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+        {
+            using HttpResponseMessage response = await SendAsync(
+                client,
+                HttpMethod.Post,
+                principal: null,
+                "/v1/conversations",
+                "{}",
+                authenticateWithoutUser: true);
             response.EnsureSuccessStatusCode();
         });
     }
@@ -360,13 +387,24 @@ public sealed class OpenAIConversationsIsolationTests : IAsyncDisposable
         return JsonDocument.Parse(await response.Content.ReadAsStringAsync());
     }
 
-    private static async Task<HttpResponseMessage> SendAsync(HttpClient client, HttpMethod method, string? principal, string path, string? body = null)
+    private static async Task<HttpResponseMessage> SendAsync(
+        HttpClient client,
+        HttpMethod method,
+        string? principal,
+        string path,
+        string? body = null,
+        bool authenticateWithoutUser = false)
     {
         using var request = new HttpRequestMessage(method, new Uri(path, UriKind.Relative));
 
         if (principal is not null)
         {
             request.Headers.Add(UserHeader, principal);
+        }
+
+        if (authenticateWithoutUser)
+        {
+            request.Headers.Add(AuthenticatedWithoutUserHeader, "true");
         }
 
         if (body is not null)
@@ -385,12 +423,20 @@ public sealed class OpenAIConversationsIsolationTests : IAsyncDisposable
         if (withIsolation)
         {
             builder.Services.AddHttpContextAccessor();
-            builder.Services.AddSingleton<AgentIsolationKeyProvider, HeaderAgentIsolationKeyProvider>();
+            builder.Services
+                .AddAuthentication(TestAuthenticationScheme)
+                .AddScheme<AuthenticationSchemeOptions, TestAuthenticationHandler>(TestAuthenticationScheme, _ => { });
+            builder.Services.UseClaimsBasedAgentIsolation();
         }
 
         builder.AddOpenAIConversations();
 
         this._app = builder.Build();
+
+        if (withIsolation)
+        {
+            this._app.UseAuthentication();
+        }
 
         this._app.MapOpenAIConversations();
 
@@ -415,23 +461,39 @@ public sealed class OpenAIConversationsIsolationTests : IAsyncDisposable
         GC.SuppressFinalize(this);
     }
 
-    /// <summary>
-    /// Resolves the isolation key from a request header, standing in for a claims-based provider.
-    /// </summary>
-    private sealed class HeaderAgentIsolationKeyProvider : AgentIsolationKeyProvider
+    private sealed class TestAuthenticationHandler : AuthenticationHandler<AuthenticationSchemeOptions>
     {
-        private readonly IHttpContextAccessor _httpContextAccessor;
-
-        public HeaderAgentIsolationKeyProvider(IHttpContextAccessor httpContextAccessor)
+        public TestAuthenticationHandler(
+            IOptionsMonitor<AuthenticationSchemeOptions> options,
+            ILoggerFactory logger,
+            UrlEncoder encoder)
+            : base(options, logger, encoder)
         {
-            this._httpContextAccessor = httpContextAccessor;
         }
 
-        public override ValueTask<string?> GetIsolationKeyAsync(CancellationToken cancellationToken = default)
+        protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
-            string? key = this._httpContextAccessor.HttpContext?.Request.Headers[UserHeader].ToString();
+            if (this.Request.Headers.TryGetValue(UserHeader, out StringValues userHeader) &&
+                !StringValues.IsNullOrEmpty(userHeader))
+            {
+                Claim[] claims = [new(ClaimTypes.NameIdentifier, userHeader.ToString())];
+                var identity = new ClaimsIdentity(claims, this.Scheme.Name);
+                var principal = new ClaimsPrincipal(identity);
+                var ticket = new AuthenticationTicket(principal, this.Scheme.Name);
 
-            return new ValueTask<string?>(string.IsNullOrEmpty(key) ? null : key);
+                return Task.FromResult(AuthenticateResult.Success(ticket));
+            }
+
+            if (this.Request.Headers.ContainsKey(AuthenticatedWithoutUserHeader))
+            {
+                var identity = new ClaimsIdentity(authenticationType: this.Scheme.Name);
+                var principal = new ClaimsPrincipal(identity);
+                var ticket = new AuthenticationTicket(principal, this.Scheme.Name);
+
+                return Task.FromResult(AuthenticateResult.Success(ticket));
+            }
+
+            return Task.FromResult(AuthenticateResult.NoResult());
         }
     }
 
