@@ -237,6 +237,54 @@ class TestAGUIChatClient:
             }
         ]
 
+    async def test_sends_mixed_json_attachment_in_request_instead_of_extracting_state(self) -> None:
+        """A prompt with a JSON attachment is not consumed as a state carrier."""
+        captured_request: dict[str, Any] = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            captured_request.update(json.loads(request.content))
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=(
+                    b'data: {"type":"RUN_STARTED","threadId":"thread_1","runId":"run_1"}\n\n'
+                    b'data: {"type":"RUN_FINISHED","threadId":"thread_1","runId":"run_1"}\n\n'
+                ),
+            )
+
+        message = Message(
+            role="user",
+            contents=[
+                Content.from_text("summarize the attached JSON document"),
+                Content.from_data(b'{"document":"keep me"}', media_type="application/json"),
+            ],
+            message_id="msg-json-document",
+        )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StubAGUIChatClient(endpoint="http://localhost:8888/", http_client=http_client)
+            response = await client.inner_get_response(messages=[message], options={})
+
+        assert response is not None
+        assert "state" not in captured_request
+        assert captured_request["messages"] == [
+            {
+                "id": "msg-json-document",
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "summarize the attached JSON document"},
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "data",
+                            "value": "eyJkb2N1bWVudCI6ImtlZXAgbWUifQ==",
+                            "mimeType": "application/json",
+                        },
+                    },
+                ],
+            }
+        ]
+
     async def test_get_thread_id_from_metadata(self) -> None:
         """Test thread ID extraction from metadata."""
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")

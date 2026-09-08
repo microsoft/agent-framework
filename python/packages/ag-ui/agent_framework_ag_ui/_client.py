@@ -293,22 +293,30 @@ class AGUIChatClient(
 
         last_message = messages[-1]
 
-        for content in last_message.contents:
-            if isinstance(content, Content) and content.type == "data" and content.media_type == "application/json":
-                try:
-                    uri = content.uri
-                    prefix, _, encoded_data = uri.partition(",")  # type: ignore[union-attr]
-                    media_type, *parameters = prefix[5:].split(";")
-                    if prefix.startswith("data:") and media_type == "application/json" and "base64" in parameters:
-                        import base64
+        # A state carrier is a dedicated final message. Mixed messages must remain
+        # intact so ordinary JSON attachments and their accompanying text reach the
+        # normal AG-UI message converter.
+        if len(last_message.contents) != 1:
+            return list(messages), None
 
-                        decoded_bytes = base64.b64decode(encoded_data, validate=True)
-                        state = json.loads(decoded_bytes.decode("utf-8"))
+        content = last_message.contents[0]
+        if not (isinstance(content, Content) and content.type == "data" and content.media_type == "application/json"):
+            return list(messages), None
 
-                        messages_without_state = list(messages[:-1]) if len(messages) > 1 else []
-                        return messages_without_state, state
-                except (BinasciiError, json.JSONDecodeError, ValueError, KeyError) as e:
-                    logger.warning(f"Failed to extract state from message: {e}")
+        try:
+            uri = content.uri
+            prefix, _, encoded_data = uri.partition(",")  # type: ignore[union-attr]
+            media_type, *parameters = prefix[5:].split(";")
+            if prefix.startswith("data:") and media_type == "application/json" and "base64" in parameters:
+                import base64
+
+                decoded_bytes = base64.b64decode(encoded_data, validate=True)
+                state = json.loads(decoded_bytes.decode("utf-8"))
+
+                messages_without_state = list(messages[:-1]) if len(messages) > 1 else []
+                return messages_without_state, state
+        except (BinasciiError, json.JSONDecodeError, ValueError, KeyError) as e:
+            logger.warning(f"Failed to extract state from message: {e}")
 
         return list(messages), None
 
