@@ -8,6 +8,7 @@ import re
 import pytest
 
 from agent_framework import (
+    AgentFileStore,
     AgentSession,
     Content,
     FileMemoryProvider,
@@ -26,10 +27,10 @@ from agent_framework._harness._file_memory import (
 from agent_framework._sessions import SessionContext
 
 
-def _tool_by_name(tools: list[object], name: str) -> object:
+def _tool_by_name(tools: list[object], name: str) -> FunctionTool:
     """Return the tool with the requested name from a prepared tool list."""
     for tool in tools:
-        if getattr(tool, "name", None) == name:
+        if isinstance(tool, FunctionTool) and tool.name == name:
             return tool
     raise AssertionError(f"Tool {name!r} was not found.")
 
@@ -478,3 +479,46 @@ async def test_memory_replace_lines() -> None:
         }
     )
     assert "Duplicate" in _text(dup)
+
+
+# region file-memory guards
+
+
+async def _memory_tools(store: AgentFileStore) -> list[object]:
+    """Prepare a FileMemoryProvider and return its registered tools."""
+    provider = FileMemoryProvider(store=store, scope="scope-1")
+    session = AgentSession(session_id="session-1")
+    context = SessionContext(input_messages=[])
+    await provider.before_run(agent=None, session=session, context=context, state={})
+    return list(context.tools)
+
+
+async def test_file_memory_replace_lines_honours_expected_line() -> None:
+    """The write guard must work in the memory provider too, where nothing asks for approval."""
+    store = InMemoryAgentFileStore()
+    tools = await _memory_tools(store)
+    write = _tool_by_name(tools, "file_memory_write")
+    replace = _tool_by_name(tools, "file_memory_replace_lines")
+
+    await write.invoke(arguments={"file_name": "notes.md", "content": "one\ntwo\nthree\n"})
+
+    refused = _text(
+        await replace.invoke(
+            arguments={
+                "file_name": "notes.md",
+                "edits": [{"line_number": 3, "new_line": "X\n", "expected_line": "two"}],
+            }
+        )
+    )
+    assert "does not match the expected text" in refused
+
+    await replace.invoke(
+        arguments={
+            "file_name": "notes.md",
+            "edits": [{"line_number": 2, "new_line": "TWO\n", "expected_line": "two"}],
+        }
+    )
+    assert await store.read("scope-1/notes.md") == "one\nTWO\nthree\n"
+
+
+# endregion

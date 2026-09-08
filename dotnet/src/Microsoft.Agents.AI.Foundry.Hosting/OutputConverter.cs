@@ -15,8 +15,26 @@ using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
+using OpenAIContainerFileCitationMessageAnnotation = OpenAI.Responses.ContainerFileCitationMessageAnnotation;
+using OpenAIFileCitationMessageAnnotation = OpenAI.Responses.FileCitationMessageAnnotation;
+using OpenAIFilePathMessageAnnotation = OpenAI.Responses.FilePathMessageAnnotation;
+using OpenAIMessageResponseItem = OpenAI.Responses.MessageResponseItem;
+using OpenAIStreamingResponseOutputItemAddedUpdate = OpenAI.Responses.StreamingResponseOutputItemAddedUpdate;
+using OpenAIStreamingResponseOutputItemDoneUpdate = OpenAI.Responses.StreamingResponseOutputItemDoneUpdate;
+using OpenAIStreamingResponseOutputTextAnnotationAddedUpdate = OpenAI.Responses.StreamingResponseOutputTextAnnotationAddedUpdate;
+using OpenAIStreamingResponseOutputTextDeltaUpdate = OpenAI.Responses.StreamingResponseOutputTextDeltaUpdate;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
+
+internal abstract record OutputConverterItem
+{
+    public sealed record ResponseEvent(ResponseStreamEvent Event) : OutputConverterItem;
+
+    public sealed record WorkflowCheckpoint(CheckpointInfo Checkpoint) : OutputConverterItem;
+
+    public static implicit operator OutputConverterItem(ResponseStreamEvent value) =>
+        new ResponseEvent(value);
+}
 
 /// <summary>
 /// Converts agent-framework <see cref="AgentResponseUpdate"/> streams into
@@ -32,18 +50,44 @@ internal static class OutputConverter
     /// <param name="updates">The agent response updates to convert.</param>
     /// <param name="stream">The SDK event stream builder.</param>
     /// <param name="stateBag">Optional session state bag used to persist tool-approval id mappings across turns.</param>
-    /// <param name="persistWorkflowCheckpointHandler">
-    /// Optional callback invoked after all output from a completed workflow superstep has been closed.
-    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>An async enumerable of SDK response stream events (excluding lifecycle events).</returns>
-    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing function call arguments dictionary.")]
-    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing function call arguments dictionary.")]
+    /// <returns>
+    /// An async enumerable of SDK response stream events. Workflow checkpoint boundaries are omitted.
+    /// </returns>
     public static async IAsyncEnumerable<ResponseStreamEvent> ConvertUpdatesToEventsAsync(
         IAsyncEnumerable<AgentResponseUpdate> updates,
         ResponseEventStream stream,
         AgentSessionStateBag? stateBag = null,
-        Func<CheckpointInfo, CancellationToken, ValueTask<ResponseStreamEvent?>>? persistWorkflowCheckpointHandler = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (OutputConverterItem item in ConvertUpdatesToItemsAsync(
+            updates,
+            stream,
+            stateBag,
+            cancellationToken).ConfigureAwait(false))
+        {
+            if (item is OutputConverterItem.ResponseEvent responseEvent)
+            {
+                yield return responseEvent.Event;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Converts a stream of <see cref="AgentResponseUpdate"/> into response events and workflow
+    /// checkpoint boundaries.
+    /// </summary>
+    /// <param name="updates">The agent response updates to convert.</param>
+    /// <param name="stream">The SDK event stream builder.</param>
+    /// <param name="stateBag">Optional session state bag used to persist tool-approval id mappings across turns.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Converted response events and workflow checkpoint boundaries in source order.</returns>
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing function call arguments dictionary.")]
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing function call arguments dictionary.")]
+    public static async IAsyncEnumerable<OutputConverterItem> ConvertUpdatesToItemsAsync(
+        IAsyncEnumerable<AgentResponseUpdate> updates,
+        ResponseEventStream stream,
+        AgentSessionStateBag? stateBag = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ResponseUsage? accumulatedUsage = null;
@@ -82,31 +126,25 @@ internal static class OutputConverter
                     yield return evt;
                 }
 
-                if (workflowEvent is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } checkpoint }
-                    && persistWorkflowCheckpointHandler is not null)
-                {
-                    ResponseStreamEvent? checkpointStateEvent =
-                        await persistWorkflowCheckpointHandler(checkpoint, cancellationToken).ConfigureAwait(false);
-                    if (checkpointStateEvent is not null)
+                if (workflowEvent is SuperStepCompletedEvent
                     {
-                        // AgentServer persists its orchestrator-owned response snapshot. Emit the
-                        // updated response state first so internal metadata becomes part of that
-                        // authoritative snapshot, then persist it with the control event.
-                        yield return checkpointStateEvent;
-                        yield return stream.Checkpoint();
-                    }
+                        CompletionInfo.Checkpoint: { } checkpoint
+                    })
+                {
+                    yield return new OutputConverterItem.WorkflowCheckpoint(checkpoint);
                 }
 
                 continue;
             }
 
+            string? currentMessageId = ResolveMessageId(update);
             foreach (var content in update.Contents)
             {
                 switch (content)
                 {
                     case MeaiTextContent textContent:
                     {
-                        if (!IsSameMessage(update.MessageId, previousMessageId) && currentMessageBuilder is not null)
+                        if (!IsSameMessage(currentMessageId, previousMessageId) && currentMessageBuilder is not null)
                         {
                             foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                             {
@@ -119,7 +157,10 @@ internal static class OutputConverter
                             accumulatedAnnotations = null;
                         }
 
-                        previousMessageId = update.MessageId;
+                        if (currentMessageId is { Length: > 0 })
+                        {
+                            previousMessageId = currentMessageId;
+                        }
 
                         if (currentMessageBuilder is null)
                         {
@@ -136,14 +177,6 @@ internal static class OutputConverter
                         {
                             accumulatedText!.Append(textContent.Text);
                             yield return currentTextBuilder!.EmitDelta(textContent.Text);
-                        }
-
-                        if (textContent.Annotations is { Count: > 0 })
-                        {
-                            foreach (var sdkAnnotation in ConvertToSdkAnnotations(textContent.Annotations))
-                            {
-                                (accumulatedAnnotations ??= []).Add(sdkAnnotation);
-                            }
                         }
 
                         break;
@@ -336,6 +369,27 @@ internal static class OutputConverter
                     default:
                         break;
                 }
+
+                var isTextContent = content is MeaiTextContent;
+                var isAnnotationOnlyContentForCurrentMessage =
+                    content.GetType() == typeof(AIContent) &&
+                    IsSameAnnotationMessage(currentMessageId, previousMessageId);
+
+                // MEAI OpenAI sends streaming citations in a separate annotation-only AIContent after
+                // the text deltas. Accumulate them because AgentServer emits annotations only after
+                // output_text.done, and de-duplicate providers that report the same citation twice.
+                if ((isTextContent || isAnnotationOnlyContentForCurrentMessage)
+                    && content.Annotations is { Count: > 0 }
+                    && currentMessageBuilder is not null)
+                {
+                    foreach (var sdkAnnotation in ConvertToSdkAnnotations(content.Annotations))
+                    {
+                        if (accumulatedAnnotations?.Any(existing => AreEquivalentAnnotations(existing, sdkAnnotation)) is not true)
+                        {
+                            (accumulatedAnnotations ??= []).Add(sdkAnnotation);
+                        }
+                    }
+                }
             }
         }
 
@@ -385,16 +439,93 @@ internal static class OutputConverter
     private static bool IsSameMessage(string? currentId, string? previousId) =>
         currentId is not { Length: > 0 } || previousId is not { Length: > 0 } || currentId == previousId;
 
+    private static bool IsSameAnnotationMessage(string? currentId, string? previousId) =>
+        currentId is { Length: > 0 }
+            ? currentId == previousId
+            : previousId is not { Length: > 0 };
+
+    private static string? ResolveMessageId(AgentResponseUpdate update)
+    {
+        if (update.MessageId is { Length: > 0 })
+        {
+            return update.MessageId;
+        }
+
+        object? rawRepresentation = update.RawRepresentation is ChatResponseUpdate chatUpdate
+            ? chatUpdate.RawRepresentation
+            : update.RawRepresentation;
+
+        return rawRepresentation switch
+        {
+            OpenAIStreamingResponseOutputTextAnnotationAddedUpdate annotationAdded => annotationAdded.ItemId,
+            OpenAIStreamingResponseOutputTextDeltaUpdate textDelta => textDelta.ItemId,
+            OpenAIStreamingResponseOutputItemAddedUpdate { Item: OpenAIMessageResponseItem message } => message.Id,
+            OpenAIStreamingResponseOutputItemDoneUpdate { Item: OpenAIMessageResponseItem message } => message.Id,
+            _ => null,
+        };
+    }
+
+    private static bool AreEquivalentAnnotations(Annotation left, Annotation right) =>
+        (left, right) switch
+        {
+            (UrlCitationBody leftUrl, UrlCitationBody rightUrl) =>
+                leftUrl.Url == rightUrl.Url &&
+                leftUrl.StartIndex == rightUrl.StartIndex &&
+                leftUrl.EndIndex == rightUrl.EndIndex &&
+                leftUrl.Title == rightUrl.Title,
+            (FileCitationBody leftFile, FileCitationBody rightFile) =>
+                leftFile.FileId == rightFile.FileId &&
+                leftFile.Index == rightFile.Index &&
+                leftFile.Filename == rightFile.Filename,
+            (ContainerFileCitationBody leftContainerFile, ContainerFileCitationBody rightContainerFile) =>
+                leftContainerFile.ContainerId == rightContainerFile.ContainerId &&
+                leftContainerFile.FileId == rightContainerFile.FileId &&
+                leftContainerFile.StartIndex == rightContainerFile.StartIndex &&
+                leftContainerFile.EndIndex == rightContainerFile.EndIndex &&
+                leftContainerFile.Filename == rightContainerFile.Filename,
+            (FilePath leftFilePath, FilePath rightFilePath) =>
+                leftFilePath.FileId == rightFilePath.FileId &&
+                leftFilePath.Index == rightFilePath.Index,
+            _ => false,
+        };
+
     /// <summary>
     /// Converts MEAI <see cref="AIAnnotation"/> instances to Responses SDK <see cref="Annotation"/> objects.
-    /// Only <see cref="CitationAnnotation"/> with a URL and at least one <see cref="TextSpanAnnotatedRegion"/>
-    /// with explicit start/end indices is converted; all other shapes are skipped.
+    /// Only supported <see cref="CitationAnnotation"/> shapes are converted; all others are skipped.
     /// </summary>
     private static IEnumerable<Annotation> ConvertToSdkAnnotations(IList<AIAnnotation> annotations)
     {
         foreach (var ann in annotations)
         {
-            if (ann is not CitationAnnotation citation || citation.Url is null)
+            if (ann is not CitationAnnotation citation)
+            {
+                continue;
+            }
+
+            if (citation.RawRepresentation is OpenAIContainerFileCitationMessageAnnotation containerFileCitation)
+            {
+                yield return new ContainerFileCitationBody(
+                    containerFileCitation.ContainerId,
+                    containerFileCitation.FileId,
+                    containerFileCitation.StartIndex,
+                    containerFileCitation.EndIndex,
+                    containerFileCitation.Filename);
+                continue;
+            }
+
+            if (citation.RawRepresentation is OpenAIFileCitationMessageAnnotation fileCitation)
+            {
+                yield return new FileCitationBody(fileCitation.FileId, fileCitation.Index, fileCitation.Filename);
+                continue;
+            }
+
+            if (citation.RawRepresentation is OpenAIFilePathMessageAnnotation filePath)
+            {
+                yield return new FilePath(filePath.FileId, filePath.Index);
+                continue;
+            }
+
+            if (citation.Url is null)
             {
                 continue;
             }

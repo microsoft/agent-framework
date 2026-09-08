@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import pickle
-
 from collections.abc import AsyncIterable, Awaitable
 from typing import Any, Literal, overload
 
@@ -338,9 +337,6 @@ class _NonCopyableRaw:
     def __deepcopy__(self, memo: dict) -> Any:
         raise TypeError("Cannot deepcopy this object")
 
-    def __reduce__(self) -> Any:
-        raise TypeError("Cannot pickle this object")
-
 
 class _AgentWithRawRepr(BaseAgent):
     """Agent that returns responses with a non-copyable raw_representation."""
@@ -390,20 +386,6 @@ async def test_agent_executor_workflow_with_non_copyable_raw_representation() ->
     assert len(agent_responses) > 0
     assert agent_responses[0].text == "reply from AgentA"
     assert agent_responses[0].raw_representation is raw
-
-
-def test_serialization_mixin_omits_non_pickleable_raw_representation() -> None:
-    """Pickling framework objects should not include runtime-only raw representations."""
-    raw = _NonCopyableRaw()
-    response = AgentResponse(
-        messages=[Message("assistant", [Content.from_text(text="reply", raw_representation=raw)])],
-        raw_representation=raw,
-    )
-
-    restored = pickle.loads(pickle.dumps(response))
-
-    assert restored.raw_representation is None
-    assert restored.messages[0].contents[0].raw_representation is None
 
 
 # ---------------------------------------------------------------------------
@@ -641,15 +623,15 @@ async def test_resolve_executor_kwargs_returns_none_for_none_input() -> None:
     assert result is None
 
 
-async def test_resolve_executor_kwargs_prefers_executor_id_over_global() -> None:
-    """_resolve_executor_kwargs prefers executor-specific entry over __global__."""
+async def test_resolve_executor_kwargs_merges_executor_id_over_global() -> None:
+    """_resolve_executor_kwargs merges executor-specific entries over __global__."""
     agent = _CountingAgent(id="a", name="A")
     executor = AgentExecutor(agent, id="exec_a")
 
     # Dict has both a per-executor entry and a global entry
     resolved = {"exec_a": {"specific": True}, GLOBAL_KWARGS_KEY: {"global": True}}
     result = executor._resolve_executor_kwargs(resolved)  # pyright: ignore[reportPrivateUsage]
-    assert result == {"specific": True}
+    assert result == {"global": True, "specific": True}
 
 
 async def test_prepare_agent_run_args_extracts_function_invocation_kwargs() -> None:
@@ -708,16 +690,15 @@ async def test_prepare_agent_run_args_per_executor_no_match() -> None:
     assert fi_kwargs is None
 
 
-async def test_resolve_executor_kwargs_empty_per_executor_does_not_fallback_to_global() -> None:
-    """An explicit empty per-executor dict should not fall through to global kwargs."""
+async def test_resolve_executor_kwargs_empty_per_executor_keeps_global_kwargs() -> None:
+    """An explicit empty per-executor dict keeps the global kwargs."""
     agent = _CountingAgent(id="a", name="A")
     executor = AgentExecutor(agent, id="exec_a")
 
-    # Per-executor entry for exec_a is empty, but global has values.
-    # The empty dict should be honoured (no fallback to global).
+    # Per-executor entry for exec_a is empty, so only global values apply.
     resolved = {"exec_a": {}, GLOBAL_KWARGS_KEY: {"global_key": "global_val"}}  # type: ignore[var-annotated]
     result = executor._resolve_executor_kwargs(resolved)  # pyright: ignore[reportPrivateUsage]
-    assert result == {}
+    assert result == {"global_key": "global_val"}
 
 
 # region Tool approval emission

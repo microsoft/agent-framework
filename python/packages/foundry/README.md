@@ -2,6 +2,32 @@
 
 This package contains the Microsoft Foundry integrations for Microsoft Agent Framework, including Foundry chat clients, preconfigured Foundry agents, Foundry embedding clients, and Foundry memory providers.
 
+## Evaluations
+
+`FoundryEvals` implements the provider-neutral `Evaluator` protocol with
+Microsoft Foundry's built-in and generated evaluators. Core owns `EvalItem`,
+local evaluation, and the `evaluate_agent()` / `evaluate_workflow()`
+orchestration functions; this package owns the Foundry Evals data mappings,
+wire serialization, submission, polling, and result parsing.
+
+Use `evaluate_agent()` for the common run-and-evaluate path:
+
+```python
+from agent_framework import evaluate_agent
+from agent_framework.foundry import FoundryEvals
+
+results = await evaluate_agent(
+    agent=agent,
+    queries=["What's the weather in Seattle?"],
+    evaluators=FoundryEvals(),
+)
+```
+
+For manual control, construct public `EvalItem` instances and pass them to
+`FoundryEvals.evaluate()`. The Foundry wire format is private to this package.
+`evaluate_traces()` and `evaluate_foundry_target()` provide Foundry-specific
+entry points for existing traces, response IDs, and registered targets.
+
 ## Concurrent reuse
 
 A `FoundryChatClient` instance can be shared by concurrent asynchronous calls on the same event loop. Streaming,

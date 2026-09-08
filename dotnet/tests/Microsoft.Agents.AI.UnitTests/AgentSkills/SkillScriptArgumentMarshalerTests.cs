@@ -99,6 +99,7 @@ public sealed class SkillScriptArgumentMarshalerTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => script.RunAsync(skill, element, null, CancellationToken.None));
         Assert.Contains("String", ex.Message);
+        Assert.Contains("custom argument marshaler", ex.Message);
     }
 
     [Fact]

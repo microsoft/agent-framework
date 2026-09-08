@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import Agent, Content, FunctionTool, Message
+from agent_framework._settings import SecretString
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidAuthException,
@@ -227,7 +228,10 @@ def test_client_created_from_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     assert client.model == "gemini-2.5-flash"
 
 
-def test_client_created_from_google_api_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("api_key", [None, "explicit-key", SecretString("explicit-key")], ids=["env", "str", "secret"])
+def test_client_created_from_google_api_key_env(
+    monkeypatch: pytest.MonkeyPatch, api_key: str | SecretString | None
+) -> None:
     """Initialises successfully when the SDK-standard Google API key environment variable is set."""
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
@@ -243,9 +247,10 @@ def test_client_created_from_google_api_key_env(monkeypatch: pytest.MonkeyPatch)
 
     with patch("agent_framework_gemini._chat_client.genai.Client") as client_factory:
         client_factory.return_value = mock_client
-        client = GeminiChatClient()
+        client = GeminiChatClient(api_key=api_key)
 
-    assert client_factory.call_args.kwargs["api_key"] == "test-key-123"
+    assert type(client_factory.call_args.kwargs["api_key"]) is str
+    assert client_factory.call_args.kwargs["api_key"] == ("test-key-123" if api_key is None else "explicit-key")
     assert "vertexai" not in client_factory.call_args.kwargs
     assert client.model == "gemini-2.5-flash-lite"
     assert client.service_url() == "https://generativelanguage.googleapis.com"
@@ -311,7 +316,10 @@ def test_missing_api_key_raises_when_no_client_injected(monkeypatch: pytest.Monk
         GeminiChatClient(model="gemini-2.5-flash")
 
 
-def test_vertex_ai_express_mode_uses_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("api_key", [None, "explicit-key", SecretString("explicit-key")], ids=["env", "str", "secret"])
+def test_vertex_ai_express_mode_uses_api_key(
+    monkeypatch: pytest.MonkeyPatch, api_key: str | SecretString | None
+) -> None:
     """Passes the API key in Vertex AI express mode when no project/location pair is configured."""
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
@@ -325,10 +333,11 @@ def test_vertex_ai_express_mode_uses_api_key(monkeypatch: pytest.MonkeyPatch) ->
     mock_client._api_client._http_options.base_url = "https://aiplatform.googleapis.com/"
 
     with patch("agent_framework_gemini._chat_client.genai.Client", return_value=mock_client) as client_factory:
-        client = GeminiChatClient(model="gemini-2.5-flash-lite")
+        client = GeminiChatClient(model="gemini-2.5-flash-lite", api_key=api_key)
 
     assert client_factory.call_args.kwargs["vertexai"] is True
-    assert client_factory.call_args.kwargs["api_key"] == "test-key-123"
+    assert type(client_factory.call_args.kwargs["api_key"]) is str
+    assert client_factory.call_args.kwargs["api_key"] == ("test-key-123" if api_key is None else "explicit-key")
     assert "project" not in client_factory.call_args.kwargs
     assert "location" not in client_factory.call_args.kwargs
     assert client.service_url() == "https://aiplatform.googleapis.com"
