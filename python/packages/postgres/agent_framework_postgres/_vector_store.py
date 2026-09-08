@@ -199,7 +199,9 @@ def _prepare_value(field: VectorStoreField, value: Any) -> Any:
     if field.field_type == "vector":
         if isinstance(value, (str, bytes, bytearray)):
             raise TypeError(f"Vector field '{field.name}' requires a dense numeric vector, not text or bytes.")
-        if isinstance(value, Sequence) and not isinstance(value, list):
+        if isinstance(value, list):
+            value = cast(list[float | int], value)
+        elif isinstance(value, Sequence):
             value = list(cast(Sequence[float | int], value))
         return HalfVector(value) if _prepare_vector_type(field) == "halfvec" else PgVector(value)
     kind = field.type_
