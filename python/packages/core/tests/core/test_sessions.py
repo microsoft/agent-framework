@@ -27,6 +27,7 @@ from agent_framework import (
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
+    SecretString,
     SessionContext,
     SessionStore,
     agent_middleware,
@@ -883,6 +884,18 @@ class TestSessionStore:
         reread = await store.get("session-1")
         assert reread is not None
         assert reread.state["nested"]["values"] == ["original"]
+
+    async def test_set_and_get_preserves_immutable_secret_string(self) -> None:
+        store = SessionStore()
+        secret = SecretString("my-secret")
+        session = AgentSession(session_id="session-1")
+        session.state["secret"] = secret
+
+        await store.set("session-1", session)
+
+        stored = await store.get("session-1")
+        assert stored is not None
+        assert stored.state["secret"] is secret
 
     async def test_set_stores_independent_snapshot(self) -> None:
         store = SessionStore()

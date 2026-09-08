@@ -30,7 +30,7 @@ dependencies = [
 
 [dependency-groups]
 test = [
-    "fastapi>=0.115.0,<0.138.1",
+    "fastapi>=0.115.0,<0.142.0",
     "httpx>=0.28.1",
 ]
 

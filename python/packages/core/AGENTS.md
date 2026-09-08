@@ -13,6 +13,7 @@ agent_framework/
 ├── _clients.py          # Chat client base classes and protocols
 ├── _types.py            # Core types (Message, ChatResponse, Content, etc.)
 ├── _tools.py            # Tool definitions and function invocation
+├── _vectors.py          # Vector store models, CRUD/search abstractions, and protocols
 ├── _middleware.py       # Middleware system for request/response interception
 ├── _sessions.py         # AgentSession and context provider abstractions
 ├── _skills.py           # Agent Skills system (models, executors, provider)
@@ -36,6 +37,14 @@ agent_framework/
   and editors and does not replace runtime exports.
 - Public deprecation behavior for a lazy export belongs in the owning module. The root package should delegate via
   the normal lazy export map instead of carrying one-off branches.
+
+### Settings (`_settings.py`)
+
+- **`SecretString`** is a non-`str` wrapper: string conversion, representation, formatting, and concatenation
+  display a mask. String-only APIs such as `str.join()` and JSON encoding reject it unless callers explicitly
+  convert it. Use `get_secret_value()` when passing credentials to provider SDKs; `str(secret)` returns the mask.
+- **`load_settings`** accepts plain string overrides for `SecretString` fields and wraps them, as it does for
+  environment and `.env` values. Existing `SecretString` overrides are preserved.
 
 ### Agents (`_agents.py`)
 
@@ -63,6 +72,52 @@ agent_framework/
 - **`FunctionTool`** - Wraps Python functions as tools with JSON schema generation
 - **`@tool`** decorator - Converts functions to tools
 - **`use_function_invocation()`** - Decorator to add automatic function calling to chat clients
+
+### Vector stores
+
+The vector store API is experimental under the shared `VECTOR_STORES` feature ID.
+
+- **`@vectorstoremodel`** - Declares key, data, and vector fields on dataclasses, Pydantic models, and plain classes
+- **`register_vectorstoremodel`** - Registers one definition and msgspec-backed codec pair per model type
+- **`VectorStoreField`** - Frozen core key/data/vector metadata; common index and distance values remain open to
+  provider-defined strings, key fields can be store-generated, and copied `provider_annotations` remains mutable for
+  connector-specific configuration
+- **`Filter` / `FilterGroup`** - Mutable data-only filter inputs shared by local and remote vector stores; collection
+  operations bound structural traversal before copying and pass an independent snapshot to connectors. Parameter
+  detection includes collection members and mapping keys; string operators require string operands after resolution
+- **`Param`** - Native typed search-tool parameter reference embedded in filter values or paging options
+  - Defaults and supplied mutable values are copied per filter invocation, including for definition-less search tools
+  - Filter parameters may opt into null omission with a nullable type and explicit `default=None`, such as
+    `Param("text", str | None, default=None, omit_if_none=True)`; absent/null arguments remove that leaf, while
+    remaining AND/OR children still apply. Empty groups (including NOT with an omitted child) are removed
+    recursively; removing the whole tree means no filter. Paging parameters do not support null omission.
+- **`BaseVectorCollection`** - Base class for collection lifecycle and msgspec-backed record CRUD operations;
+  upserts generate embeddings by default, retrieval excludes vectors by default, and filtered retrieval is an
+  alternate mode to key lookup
+- **Embedding generation selection** - `generate_vectors=True` regenerates every vector field, `False` preserves all
+  values, and a list or tuple of logical vector field names generates only those fields so connectors can combine
+  local, precomputed, and provider-side vectorization
+- **Vector payloads** - Shared dense query/generated vectors accept numeric sequences and binary bytes; connectors
+  declare supported element/representation types. Sparse vectors remain provider-native through codecs or
+  `search(values=...)`, not a core sparse type.
+- **Vector dimensions** - Final dense sequence lengths are checked after optional generation for the whole write
+  batch before connector conversion or writes, and for the selected query field before search dispatch. In-memory
+  queries also check their normalized numeric sequence, including array-like inputs and empty collections. These
+  are length checks, not element validation; null vectors, source text, binary payloads, and non-sequence
+  provider-native representations remain connector-owned.
+- **`BaseVectorStore`** - Base class for stores that create collection clients
+- **`BaseVectorSearch`** - Base class for vector and keyword-hybrid search; core validates portable requests and
+  deserializes results without interpreting thresholds or re-filtering returned scores. Connectors own scoring,
+  filter execution, score thresholds (including provider-defined/default metrics), and paging. Use native backend
+  execution where available, otherwise an explicit connector-local fallback or reject unsupported options
+- **`create_vector_search_tool`** - Creates an agent tool from any `SupportsVectorSearch` implementation
+- **`InMemoryCollection` / `InMemoryStore`** - Dependency-free, process-local development and test implementation;
+  cosine scoring scales finite inputs, all metrics reject non-finite scores, and unsupported distance functions
+  fail before record scanning. Hamming scores/thresholds use the fraction of unequal dimensions, not a count.
+  Scoring, filtering, and thresholds run locally before paging; `DEFAULT` means cosine distance and uses a maximum
+  distance threshold.
+  Shared serialization normalizes stored data; codecs and connector overrides remain trusted Python code
+- **`SupportsVectorUpsert`** / **`SupportsVectorSearch`** - Structural protocols for vector store capabilities
 
 ### Middleware (`_middleware.py`)
 
@@ -107,6 +162,8 @@ agent_framework/
 - **`allowed_tools`** (constructor arg on all `MCPTool` subclasses) - Restricts exposed MCP tools by raw remote MCP tool identity. Prefixed local names remain accepted only when the raw remote name already matches its normalized form; normalized/local aliases do not authorize a different raw remote name. If multiple raw remote tool names map to the same local function name, tool loading raises `ToolExecutionException` instead of first-one-wins shadowing.
 - **Progressive MCP disclosure** (`use_progressive_disclosure`, `always_load`) - When enabled on any `MCPTool` subclass, the initial model-facing surface is loader tools (`list_mcp_tools` / `load_tool` / `unload_tool`, prefixed by `tool_name_prefix` when configured) plus allowed tools selected by `always_load` and tools loaded earlier on the same `MCPTool` instance. `list_mcp_tools` only reports tools that pass `allowed_tools`; filtered tools are not listed or loadable. Loader tool names are reserved in progressive mode: remote MCP tools whose local generated name collides with a loader name are omitted from the initial/listed surface, and explicit `load_tool` calls return a model-visible message pointing callers to `tool_name_prefix` or excluding the colliding tool. `load_tool` accepts one tool name or a list of tool names and uses `FunctionInvocationContext.add_tools(...)` so the selected generated MCP `FunctionTool`s become available on the next function-calling iteration while keeping existing approval mode, argument filtering, header-provider runtime kwargs, result parsing, OTel, and task behavior. `unload_tool` accepts one dynamically loaded tool name or a list of names and removes them from the live tool list and persisted progressive surface, but it does not remove tools configured in `always_load`. Invalid `always_load` entries are ignored like unmatched `allowed_tools` entries.
 - **`additional_tool_argument_names`** (constructor arg on all `MCPTool` subclasses) - Opt extra argument names back into the allowlist. Accepts a `Sequence[str]` (applied to every tool) or a `Mapping[str, Sequence[str]]` keyed by **remote tool name**, where the reserved key `"*"` denotes global extras. It is configured only in user code at construction; there is **no per-call/runtime override**, so a model-issued tool call cannot change which names pass through — but note this constrains the *model*, not the *server*, which still widens the effective allowlist through its schema. To use a server that accepts `additionalProperties: true`, list the extra names here and then either (1) manually extend that tool's `inputSchema` (via the `.functions` list after connecting) so the model is prompted to supply them, or (2) supply the values yourself via `function_invocation_kwargs`. If a normal forwarded argument name is supplied by both the model and `function_invocation_kwargs`, the model-supplied value wins; `_meta` is the exception and only trusted runtime/caller metadata is used.
+- **`header_provider` request scoping** - When sharing an `http_client`, keep provider processing scoped to the originating `MCPStreamableHTTPTool` and strip injected headers from cross-origin redirects. The session exit stack removes its request hook after transport shutdown, including failed initialization or discovery, and closes framework-created HTTP clients. Failed discovery resets the connection and discovery flags and rolls back partial function/metadata additions. Framework-created sessions are discarded; constructor-supplied sessions remain caller-owned and reusable across cleanup, close, and reset.
+- **MCP lifecycle caller cancellation** - The lifecycle owner skips cancelled queued connect requests and waits for the caller to acknowledge successful setup. If the caller cancels before accepting a newly established connection, the owner tears it down before processing the next request. Cancelling a close waiter does not interrupt teardown, and cancelling a redundant connect does not discard a previously established session.
 - **`function_invocation_kwargs` and MCP servers** - That dict is shared across every tool in the run, including every attached `MCPTool`, and any name in it reaches a server that declares a matching `inputSchema` property. `header_provider` does not mitigate this — it reads the kwargs without consuming them. To keep a credential out of tool arguments, source it outside `function_invocation_kwargs`: read a `ContextVar` inside the provider (this still allows a different value per request), configure a custom `http_client`, or use `env` for `MCPStdioTool`.
 - **Sampling guardrails** (`sampling_callback`) - Passing `client=` advertises `SamplingCapability` so the server can send `sampling/createMessage`. Because remote servers are untrusted (confused-deputy risk), the default `sampling_callback` is **deny-by-default** and applies, in order: a per-session rate limit (`sampling_max_requests`, default `_DEFAULT_SAMPLING_MAX_REQUESTS`), an approval gate (`sampling_approval_callback`), and a `maxTokens` cap (`sampling_max_tokens`, default `_DEFAULT_SAMPLING_MAX_TOKENS`). The approval callback (constructor arg on all subclasses; exported type alias `SamplingApprovalCallback`) receives the raw `CreateMessageRequestParams`, may be sync or async, and must return truthy to approve. When it is `None` (the default) every sampling request is denied; pass `lambda params: True` to restore legacy auto-approve as an explicit opt-in. Requests and denials are logged at WARNING (content is not logged). The per-session counter resets in `_reset_session_state`.
 - **`MCPTaskOptions`** (experimental, `MCP_LONG_RUNNING_TASKS` feature, **frozen**) - Per-tool-instance options controlling the SEP-2663 long-running task lifecycle. When the server advertises a tool with `execution.taskSupport == "required"`, `MCPTool.call_tool` transparently routes through `call_tool_as_task`, which sends an augmented `tools/call`, polls `tasks/get` until terminal, and reinterprets `tasks/result` as a normal `CallToolResult`. Instances are immutable; replace via `MCPTool.task_options = MCPTaskOptions(...)`. Fields:
@@ -120,12 +177,12 @@ agent_framework/
 
 ### File Access Harness (`_harness/_file_access.py`)
 
-- **`AgentFileStore`** - Abstract async store backing the file-access harness. Implementations expose `write`, `read`, `delete`, `list_children`, `file_exists`, `search`, and `create_directory` over forward-slash relative paths. `list_children` returns the direct children (files and subdirectories, subdirectories first) as `FileStoreEntry` instances; `search` accepts a keyword-only `recursive` flag (default `False`) and, when `recursive=True`, walks all descendants and returns `file_name` values relative to the search directory.
+- **`AgentFileStore`** - Abstract async store backing the file-access harness. Implementations expose `write`, `read`, `delete`, `list_children`, `file_exists`, `search`, and `create_directory` over forward-slash relative paths. `list_children` returns the direct children (files and subdirectories, subdirectories first) as `FileStoreEntry` instances; `search` accepts a keyword-only `recursive` flag (default `False`) and, when `recursive=True`, walks all descendants and returns `file_name` values relative to the search directory. The line-numbering contract lives on the base class: `split_lines` publishes the `\n`-only keepends split that every `line_number` addresses, `scan_content` is the numbering primitive both shipped stores report through, and `search` is now **concrete** — it asks the overridable `find_matching_files` hook which files to consider (superset semantics; a backend with a native index overrides it and prunes server-side) and then reads and numbers them itself. A store may still override `search` outright, but then it owns numbering: it must report `line_number` as a 1-based coordinate into `split_lines` of the content `read` returns. Nothing checks that at run time, so a store that numbers differently makes a later edit land on the wrong line silently.
 - **`InMemoryAgentFileStore`** - Dict-backed store suitable for tests and lightweight scenarios.
 - **`FileSystemAgentFileStore`** - Disk-backed store rooted under a configurable directory. Enforces relative-path normalization, root containment, and rejects symlink/reparse-point segments to prevent escape.
-- **`FileSearchResult`** / **`FileSearchMatch`** - `SerializationMixin` DTOs returned by `search`, carrying the matching file name, a context snippet, and the matching lines with 1-based line numbers.
+- **`FileSearchResult`** / **`FileSearchMatch`** - `SerializationMixin` DTOs returned by `search`, carrying the matching file name, a context snippet, and the matching lines with 1-based line numbers. Implementers should report each matching line verbatim, including its own terminator, so it can be reused as a `file_access_replace_lines` `new_line`; the pattern itself is matched against the line with its whole terminator removed, so `^`/`$` anchor to the line's text on a CRLF file as they already did on an LF one. A custom store populates these DTOs from its own `search`; the verbatim text is a recommendation, but the line number is not — it must address `split_lines`.
 - **`FileStoreEntry`** - `SerializationMixin` DTO returned by `list_children`, carrying an entry `name` and `type` (`"file"` or `"directory"`).
-- **`FileAccessProvider`** - `ContextProvider` that adds shared file-access tools (`file_access_write`, `file_access_read`, `file_access_delete`, `file_access_ls`, `file_access_grep`, `file_access_replace`, `file_access_replace_lines`) plus default usage instructions to each invocation. `file_access_ls` enumerates direct children (both files and subdirectories) as `{name, type}` entries with an optional `glob_pattern`, so the agent can walk the tree level by level; `file_access_grep` searches recursively from an optional base `directory` and returns relative `file_name` paths, scoped via an `fnmatch` `glob_pattern` (where `*` crosses `/`, e.g. `*.md`, `reports/*`). `file_access_replace` substitutes `old_string` with `new_string` (failing if not found, or if multiple matches and `replace_all` is false); `file_access_replace_lines` replaces whole 1-based lines with literal text (each `new_line` includes its own trailing newline; an empty `new_line` deletes the line, including its line break). All tools are registered with `approval_mode="always_require"` by default, so every file operation needs host approval. Pass `disable_write_tools=True` to advertise only the read-only tools. To run unattended you can disable approval at the source with `disable_readonly_tool_approval=True` (read, ls, grep) and/or `disable_write_tool_approval=True` (write, delete, replace, replace_lines), which register the affected tools with `approval_mode="never_require"`; alternatively, keep approval on and pass one of the static auto-approval rules to `ToolApprovalMiddleware` (via `auto_approval_rules`): `FileAccessProvider.read_only_tools_auto_approval_rule` approves only the read-only tools (read, ls, grep), while `FileAccessProvider.all_tools_auto_approval_rule` approves every file-access tool including the write tools. Both rules reject any call carrying a `server_label` so they stay scoped to this provider's local tools and never auto-approve a same-named hosted tool. The tool names are also exposed as class constants (`WRITE_TOOL_NAME`, `READ_TOOL_NAME`, `DELETE_TOOL_NAME`, `LS_TOOL_NAME`, `GREP_TOOL_NAME`, `REPLACE_TOOL_NAME`, `REPLACE_LINES_TOOL_NAME`). Unlike `MemoryContextProvider`, the store is intentionally shared across sessions and agents.
+- **`FileAccessProvider`** - `ContextProvider` that adds shared file-access tools (`file_access_write`, `file_access_read`, `file_access_read_lines`, `file_access_delete`, `file_access_ls`, `file_access_grep`, `file_access_replace`, `file_access_replace_lines`) plus default usage instructions to each invocation. `file_access_ls` enumerates direct children (both files and subdirectories) as `{name, type}` entries with an optional `glob_pattern`, so the agent can walk the tree level by level; `file_access_grep` searches recursively from an optional base `directory` and returns relative `file_name` paths, scoped via an `fnmatch` `glob_pattern` (where `*` crosses `/`, e.g. `*.md`, `reports/*`). `file_access_replace` substitutes `old_string` with `new_string` (failing if not found, or if multiple matches and `replace_all` is false); `file_access_replace_lines` replaces whole 1-based lines with literal text (each `new_line` includes its own trailing newline; an empty `new_line` deletes the line, including its line break). `file_access_read_lines` returns a 1-based inclusive line range, one line per row as `<line_number>\t<line>`; `end_line` may be omitted to read to the end of the file, and an `end_line` past the last line clamps to it. Everything after the tab is verbatim, including the line's own terminator (which therefore doubles as the row separator), so a row's text can be fed straight back as a `file_access_replace_lines` `new_line` without losing a `\r\n`. Its line numbering comes from the same `_split_lines_keepends` split as `file_access_replace_lines` and as the stores in this package, so with one of those a number reported by grep addresses the same line in all three tools, including the trailing empty line of a newline-terminated file; grep itself runs through `AgentFileStore.search`, which must number by the same split but does not inherit it, so a store overriding `search` owns its numbering and nothing verifies it at run time. All tools are registered with `approval_mode="always_require"` by default, so every file operation needs host approval. Pass `disable_write_tools=True` to advertise only the read-only tools. To run unattended you can disable approval at the source with `disable_readonly_tool_approval=True` (read, read_lines, ls, grep) and/or `disable_write_tool_approval=True` (write, delete, replace, replace_lines), which register the affected tools with `approval_mode="never_require"`; alternatively, keep approval on and pass one of the static auto-approval rules to `ToolApprovalMiddleware` (via `auto_approval_rules`): `FileAccessProvider.read_only_tools_auto_approval_rule` approves only the read-only tools (read, read_lines, ls, grep), while `FileAccessProvider.all_tools_auto_approval_rule` approves every file-access tool including the write tools. Both rules reject any call carrying a `server_label` so they stay scoped to this provider's local tools and never auto-approve a same-named hosted tool. The tool names are also exposed as class constants (`WRITE_TOOL_NAME`, `READ_TOOL_NAME`, `READ_LINES_TOOL_NAME`, `DELETE_TOOL_NAME`, `LS_TOOL_NAME`, `GREP_TOOL_NAME`, `REPLACE_TOOL_NAME`, `REPLACE_LINES_TOOL_NAME`). Unlike `MemoryContextProvider`, the store is intentionally shared across sessions and agents.
 
 ### File Memory Harness (`_harness/_file_memory.py`)
 
@@ -216,6 +273,17 @@ agent_framework/
   to that caller/session. Pass a caller-scoped checkpoint storage to `build(checkpoint_storage=...)` when needed;
   hosts remain responsible for authorizing and tenant-scoping access to any shared checkpoint adapter.
 - **Orchestrators**: `SequentialOrchestrator`, `ConcurrentOrchestrator`, `GroupChatOrchestrator`, `MagenticOrchestrator`, `HandoffOrchestrator`
+
+## Evaluation (`_evaluation.py`)
+
+- Core owns provider-neutral evaluation types, local evaluators and checks, `EvalItem` construction, and the
+  `evaluate_agent` / `evaluate_workflow` orchestration functions.
+- Provider packages own their service-specific evaluator implementations and wire serialization. Core evaluation
+  code must not emit a provider's request schema. The deprecated `AgentEvalConverter` remains as a temporary
+  compatibility shim for released Foundry packages whose declared core range still imports it; new code must not use
+  the shim.
+- Core orchestration builds `EvalItem` instances through private helpers; callers needing manual control construct
+  the public `EvalItem` directly.
 
 ## Built-in Providers
 

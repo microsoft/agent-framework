@@ -455,11 +455,11 @@ def create_harness_agent(
             file access tools. When set, a FileAccessProvider is added, giving the agent shared
             read/write file tools backed by the supplied store.
         file_access_disable_write_tools: When True, the FileAccessProvider advertises only its
-            read-only tools (read, ls, grep); the write tools (write, delete, replace,
+            read-only tools (read, read_lines, ls, grep); the write tools (write, delete, replace,
             replace_lines) are hidden. When False (default), all tools are advertised. Only
             used when file_access_store is set.
         file_access_disable_readonly_tool_approval: When True, the FileAccessProvider's read-only
-            tools (read, ls, grep) are registered with ``approval_mode="never_require"`` so they
+            tools (read, read_lines, ls, grep) are registered with ``approval_mode="never_require"`` so they
             run without host approval. When False (default), they require approval. Only used when
             file_access_store is set.
         file_access_disable_write_tool_approval: When True, the FileAccessProvider's write tools

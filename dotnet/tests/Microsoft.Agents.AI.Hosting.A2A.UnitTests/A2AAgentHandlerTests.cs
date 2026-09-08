@@ -24,10 +24,10 @@ public sealed class A2AAgentHandlerTests
     private const string ConfigurationPropertyKey = "a2a.configuration";
 
     /// <summary>
-    /// Verifies that when there is no request data to forward, null options are passed to RunStreamingAsync.
+    /// Verifies that when there is no request data to forward, empty options are passed to RunStreamingAsync.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_WhenMetadataIsNull_PassesNullOptionsToRunStreamingAsync()
+    public async Task ExecuteAsync_WhenMetadataIsNull_PassesEmptyOptionsToRunStreamingAsync()
     {
         // Arrange
         AgentRunOptions? capturedOptions = null;
@@ -40,7 +40,9 @@ public sealed class A2AAgentHandlerTests
         });
 
         // Assert
-        Assert.Null(capturedOptions);
+        Assert.NotNull(capturedOptions);
+        Assert.Null(capturedOptions.AllowBackgroundResponses);
+        Assert.Null(capturedOptions.AdditionalProperties);
     }
 
     /// <summary>
@@ -146,7 +148,7 @@ public sealed class A2AAgentHandlerTests
         AgentRunOptions? capturedOptions = null;
         A2AAgentHandler handler = CreateHandler(
             CreateAgentMock(options => capturedOptions = options),
-            runMode: AgentRunMode.DisallowBackground);
+            runMode: AgentRunMode.ReturnMessage);
 
         // Act
         await InvokeExecuteAsync(handler, new RequestContext
@@ -250,7 +252,7 @@ public sealed class A2AAgentHandlerTests
         // Arrange
         A2AAgentHandler handler = CreateHandler(
             CreateAgentMock(_ => { }),
-            runMode: AgentRunMode.AllowBackgroundWhen((_, _) => ValueTask.FromResult(false)));
+            runMode: AgentRunMode.ReturnTaskWhen((_, _) => ValueTask.FromResult(false)));
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -272,7 +274,7 @@ public sealed class A2AAgentHandlerTests
         // Arrange
         A2AAgentHandler handler = CreateHandler(
             CreateAgentMock(_ => { }),
-            runMode: AgentRunMode.AllowBackgroundWhen((_, _) => ValueTask.FromResult(true)));
+            runMode: AgentRunMode.ReturnTaskWhen((_, _) => ValueTask.FromResult(true)));
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -288,10 +290,10 @@ public sealed class A2AAgentHandlerTests
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
     /// <summary>
-    /// Verifies that an immediate request emits the initial task and streams subsequent updates when background responses are allowed.
+    /// Verifies that an immediate request emits the initial task and streams subsequent updates in ReturnTask mode.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_WhenBackgroundResponsesAllowedAndReturnImmediatelyTrue_StreamsTaskUpdatesAsync()
+    public async Task ExecuteAsync_WhenReturnTaskModeAndReturnImmediatelyTrue_StreamsTaskUpdatesAsync()
     {
         // Arrange
         AgentResponseUpdate[] updates =
@@ -306,7 +308,7 @@ public sealed class A2AAgentHandlerTests
         ];
         A2AAgentHandler handler = CreateHandler(
             CreateStreamingAgentMock(updates),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
+            runMode: AgentRunMode.ReturnTask);
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -592,7 +594,7 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
-    /// Verifies that the dynamic AllowBackgroundWhen delegate receives the correct RequestContext.
+    /// Verifies that the dynamic ReturnTaskWhen delegate receives the correct RequestContext.
     /// </summary>
     [Fact]
     public async Task ExecuteAsync_DynamicMode_DelegateReceivesRequestContextAsync()
@@ -601,7 +603,7 @@ public sealed class A2AAgentHandlerTests
         A2ARunDecisionContext? capturedContext = null;
         A2AAgentHandler handler = CreateHandler(
             CreateAgentMock(_ => { }),
-            runMode: AgentRunMode.AllowBackgroundWhen((ctx, _) =>
+            runMode: AgentRunMode.ReturnTaskWhen((ctx, _) =>
             {
                 capturedContext = ctx;
                 return ValueTask.FromResult(false);
@@ -698,10 +700,10 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
-    /// Verifies that allowing background responses emits a task lifecycle in streaming mode.
+    /// Verifies that ReturnTask mode emits a task lifecycle in streaming mode.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_Streaming_WhenBackgroundResponsesAllowed_StreamsTaskUpdatesAsync()
+    public async Task ExecuteAsync_Streaming_WhenReturnTaskMode_StreamsTaskUpdatesAsync()
     {
         // Arrange
         AgentResponseUpdate[] updates =
@@ -730,7 +732,7 @@ public sealed class A2AAgentHandlerTests
         ];
         A2AAgentHandler handler = CreateHandler(
             CreateStreamingAgentMock(updates),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
+            runMode: AgentRunMode.ReturnTask);
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -782,7 +784,7 @@ public sealed class A2AAgentHandlerTests
     /// Verifies that a non-immediate request aggregates all updates into a completed task.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_WhenBackgroundResponsesAllowedAndReturnImmediatelyFalse_ReturnsCompletedTaskAsync()
+    public async Task ExecuteAsync_WhenReturnTaskModeAndReturnImmediatelyFalse_ReturnsCompletedTaskAsync()
     {
         // Arrange
         AgentResponseUpdate[] updates =
@@ -792,7 +794,7 @@ public sealed class A2AAgentHandlerTests
         ];
         A2AAgentHandler handler = CreateHandler(
             CreateStreamingAgentMock(updates),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
+            runMode: AgentRunMode.ReturnTask);
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -831,7 +833,7 @@ public sealed class A2AAgentHandlerTests
         ];
         A2AAgentHandler handler = CreateHandler(
             CreateStreamingAgentMock(updates),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
+            runMode: AgentRunMode.ReturnTask);
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -869,7 +871,7 @@ public sealed class A2AAgentHandlerTests
         ];
         A2AAgentHandler handler = CreateHandler(
             CreateStreamingAgentMock(updates),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
+            runMode: AgentRunMode.ReturnTask);
         var events = new EventCollector();
         var eventQueue = new AgentEventQueue();
         var readerTask = ReadEventsAsync(eventQueue, events);
@@ -917,7 +919,7 @@ public sealed class A2AAgentHandlerTests
         ];
         A2AAgentHandler handler = CreateHandler(
             CreateStreamingAgentMock(updates),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
+            runMode: AgentRunMode.ReturnTask);
 
         // Act
         var events = await CollectEventsForThrowingExecuteAsync<InvalidOperationException>(handler, new RequestContext
@@ -940,10 +942,10 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
-    /// Verifies that an immediate request returns one aggregated message when background responses are disabled.
+    /// Verifies that an immediate request returns one aggregated message in ReturnMessage mode.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_WhenBackgroundResponsesDisallowedAndReturnImmediatelyTrue_ReturnsMessageAsync()
+    public async Task ExecuteAsync_WhenReturnMessageModeAndReturnImmediatelyTrue_ReturnsMessageAsync()
     {
         // Arrange
         AgentResponseUpdate[] updates =
@@ -953,7 +955,7 @@ public sealed class A2AAgentHandlerTests
         ];
         A2AAgentHandler handler = CreateHandler(
             CreateStreamingAgentMock(updates),
-            runMode: AgentRunMode.DisallowBackground);
+            runMode: AgentRunMode.ReturnMessage);
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -973,10 +975,10 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
-    /// Verifies that a non-immediate request aggregates all updates into one message when background responses are disabled.
+    /// Verifies that a non-immediate request aggregates all updates into one message in ReturnMessage mode.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_WhenBackgroundResponsesDisallowedAndReturnImmediatelyFalse_ReturnsMessageAsync()
+    public async Task ExecuteAsync_WhenReturnMessageModeAndReturnImmediatelyFalse_ReturnsMessageAsync()
     {
         // Arrange
         AgentResponseUpdate[] updates =
@@ -986,7 +988,7 @@ public sealed class A2AAgentHandlerTests
         ];
         A2AAgentHandler handler = CreateHandler(
             CreateStreamingAgentMock(updates),
-            runMode: AgentRunMode.DisallowBackground);
+            runMode: AgentRunMode.ReturnMessage);
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -1021,7 +1023,7 @@ public sealed class A2AAgentHandlerTests
         ];
         A2AAgentHandler handler = CreateHandler(
             CreateStreamingAgentMock(updates),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
+            runMode: AgentRunMode.ReturnTask);
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -1063,7 +1065,7 @@ public sealed class A2AAgentHandlerTests
         ];
         A2AAgentHandler handler = CreateHandler(
             CreateStreamingAgentMock(updates),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
+            runMode: AgentRunMode.ReturnTask);
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -1106,7 +1108,7 @@ public sealed class A2AAgentHandlerTests
         ];
         A2AAgentHandler handler = CreateHandler(
             CreateStreamingAgentMock(updates),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
+            runMode: AgentRunMode.ReturnTask);
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -1156,7 +1158,7 @@ public sealed class A2AAgentHandlerTests
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
             .Returns(() => ToCancelingAsyncEnumerableAsync(cts));
-        A2AAgentHandler handler = CreateHandler(agentMock, runMode: AgentRunMode.AllowBackgroundIfSupported);
+        A2AAgentHandler handler = CreateHandler(agentMock, runMode: AgentRunMode.ReturnTask);
         var events = new EventCollector();
         var eventQueue = new AgentEventQueue();
         var readerTask = ReadEventsAsync(eventQueue, events);
@@ -1199,7 +1201,7 @@ public sealed class A2AAgentHandlerTests
             CreateThrowingStreamingAgentMock(
                 [new AgentResponseUpdate(ChatRole.Assistant, "chunk 1") { ResponseId = "r1", MessageId = "m1" }],
                 new InvalidOperationException("Stream failed")),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
+            runMode: AgentRunMode.ReturnTask);
 
         // Act
         var events = await CollectEventsForThrowingExecuteAsync<InvalidOperationException>(handler, new RequestContext
@@ -1245,7 +1247,7 @@ public sealed class A2AAgentHandlerTests
         ];
         A2AAgentHandler handler = CreateHandler(
             CreateThrowingStreamingAgentMock(updates, new InvalidOperationException("Stream failed")),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
+            runMode: AgentRunMode.ReturnTask);
 
         // Act
         var events = await CollectEventsForThrowingExecuteAsync<InvalidOperationException>(handler, new RequestContext
@@ -1291,7 +1293,7 @@ public sealed class A2AAgentHandlerTests
         ];
         A2AAgentHandler handler = CreateHandler(
             CreateStreamingAgentMock(updates),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
+            runMode: AgentRunMode.ReturnTask);
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -1345,7 +1347,7 @@ public sealed class A2AAgentHandlerTests
         // Arrange
         A2AAgentHandler handler = CreateHandler(
             CreateThrowingStreamingAgentMock([], new OperationCanceledException("Agent gave up")),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
+            runMode: AgentRunMode.ReturnTask);
 
         // Act
         var events = await CollectEventsForThrowingExecuteAsync<OperationCanceledException>(handler, new RequestContext
@@ -1369,7 +1371,7 @@ public sealed class A2AAgentHandlerTests
         // Arrange
         A2AAgentHandler handler = CreateHandler(
             CreateStreamingAgentMock([]),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
+            runMode: AgentRunMode.ReturnTask);
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -1404,7 +1406,7 @@ public sealed class A2AAgentHandlerTests
         ];
         A2AAgentHandler handler = CreateHandler(
             CreateStreamingAgentMock(updates),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
+            runMode: AgentRunMode.ReturnTask);
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -1435,7 +1437,7 @@ public sealed class A2AAgentHandlerTests
         ];
         A2AAgentHandler handler = CreateHandler(
             CreateStreamingAgentMock(updates),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
+            runMode: AgentRunMode.ReturnTask);
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -1500,10 +1502,10 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
-    /// Verifies that streaming mode passes null options when metadata is null.
+    /// Verifies that streaming mode passes empty options when metadata is null.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_Streaming_WithNullMetadata_PassesNullOptionsAsync()
+    public async Task ExecuteAsync_Streaming_WithNullMetadata_PassesEmptyOptionsAsync()
     {
         // Arrange
         AgentRunOptions? capturedOptions = null;
@@ -1522,7 +1524,9 @@ public sealed class A2AAgentHandlerTests
 
         // Assert
         Assert.True(optionsCaptured);
-        Assert.Null(capturedOptions);
+        Assert.NotNull(capturedOptions);
+        Assert.Null(capturedOptions.AllowBackgroundResponses);
+        Assert.Null(capturedOptions.AdditionalProperties);
     }
 
     /// <summary>
@@ -2072,7 +2076,7 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
-    /// Verifies that when the AllowBackgroundWhen delegate throws, the exception propagates
+    /// Verifies that when the ReturnTaskWhen delegate throws, the exception propagates
     /// and the agent is not invoked.
     /// </summary>
     [Fact]
@@ -2082,7 +2086,7 @@ public sealed class A2AAgentHandlerTests
         bool agentInvoked = false;
         A2AAgentHandler handler = CreateHandler(
             CreateAgentMock(_ => agentInvoked = true),
-            runMode: AgentRunMode.AllowBackgroundWhen((_, _) =>
+            runMode: AgentRunMode.ReturnTaskWhen((_, _) =>
                 throw new InvalidOperationException("Callback failed")));
 
         // Act & Assert
@@ -2096,7 +2100,7 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
-    /// Verifies that the CancellationToken is propagated to the AllowBackgroundWhen delegate.
+    /// Verifies that the CancellationToken is propagated to the ReturnTaskWhen delegate.
     /// </summary>
     [Fact]
     public async Task ExecuteAsync_DynamicMode_CancellationTokenIsPropagatedToCallbackAsync()
@@ -2106,7 +2110,7 @@ public sealed class A2AAgentHandlerTests
         using var cts = new CancellationTokenSource();
         A2AAgentHandler handler = CreateHandler(
             CreateAgentMock(_ => { }),
-            runMode: AgentRunMode.AllowBackgroundWhen((_, ct) =>
+            runMode: AgentRunMode.ReturnTaskWhen((_, ct) =>
             {
                 capturedToken = ct;
                 return ValueTask.FromResult(false);
@@ -2128,17 +2132,20 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
-    /// Verifies that the agent run mode is applied on the continuation/task-update path,
-    /// not just the new message path.
+    /// Verifies that the ReturnTaskWhen delegate is not invoked when updating an existing task.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_OnContinuation_RunModeIsAppliedAsync()
+    public async Task ExecuteAsync_OnContinuation_DoesNotInvokeDynamicModeCallbackAsync()
     {
         // Arrange
-        AgentRunOptions? capturedOptions = null;
+        bool callbackInvoked = false;
         A2AAgentHandler handler = CreateHandler(
-            CreateAgentMock(options => capturedOptions = options),
-            runMode: AgentRunMode.AllowBackgroundIfSupported);
+            CreateAgentMock(_ => { }),
+            runMode: AgentRunMode.ReturnTaskWhen((_, _) =>
+            {
+                callbackInvoked = true;
+                return ValueTask.FromResult(false);
+            }));
 
         // Act
         await InvokeExecuteAsync(handler, new RequestContext
@@ -2147,13 +2154,11 @@ public sealed class A2AAgentHandlerTests
             TaskId = "task-1",
             ContextId = "ctx-1",
             Message = new Message { MessageId = "empty", Role = Role.User, Parts = [] },
-
             Task = new AgentTask { Id = "task-1", ContextId = "ctx-1", History = [new Message { Role = Role.User, Parts = [new Part { Text = "Hello" }] }] }
         });
 
         // Assert
-        Assert.NotNull(capturedOptions);
-        Assert.True(capturedOptions.AllowBackgroundResponses);
+        Assert.False(callbackInvoked);
     }
 
     /// <summary>
@@ -2463,7 +2468,7 @@ public sealed class A2AAgentHandlerTests
         AgentRunMode? runMode = null,
         AgentSessionStore? agentSessionStore = null)
     {
-        runMode ??= AgentRunMode.DisallowBackground;
+        runMode ??= AgentRunMode.ReturnMessage;
 
         var hostAgent = new AIHostAgent(
             innerAgent: agentMock.Object,

@@ -627,7 +627,7 @@ public sealed class ScopedContentProcessorTests
 
         this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
             It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ProtectionScopesResponse { Scopes = [] });
+            .ReturnsAsync(CreateApplicableProtectionScopesResponse());
         this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
             It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProcessContentResponse { PolicyActions = [] });
@@ -668,7 +668,7 @@ public sealed class ScopedContentProcessorTests
 
         this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
             It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ProtectionScopesResponse { Scopes = [] });
+            .ReturnsAsync(CreateApplicableProtectionScopesResponse());
         this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
             It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProcessContentResponse { PolicyActions = [] });
@@ -703,6 +703,9 @@ public sealed class ScopedContentProcessorTests
             It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProtectionScopesResponse?)null);
 
+        this._mockPurviewClient.Setup(x => x.GetProtectionScopesAsync(
+            It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateApplicableProtectionScopesResponse());
         this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
             It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProcessContentResponse { PolicyActions = [] });
@@ -750,7 +753,7 @@ public sealed class ScopedContentProcessorTests
     }
 
     [Fact]
-    public async Task ProcessMessagesAsync_CacheMiss_QueuesScopeRetrievalJobAndCallsProcessContentAsync()
+    public async Task ProcessMessagesAsync_CacheMiss_CallsProcessContentInlineAndQueuesScopeRetrievalAsync()
     {
         // Arrange
         var messages = new List<ChatMessage>
@@ -767,19 +770,26 @@ public sealed class ScopedContentProcessorTests
             .ReturnsAsync((ProtectionScopesResponse?)null);
 
         this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
-            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()))
+            It.Is<ProcessContentRequest>(request =>
+                request.ScopeIdentifier == null &&
+                request.ProcessInline),
+            It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProcessContentResponse());
 
         // Act
         await this._processor.ProcessMessagesAsync(
             messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
 
-        // Assert: ProcessContent runs in the foreground; GetProtectionScopes is queued as a background job.
+        // Assert
         this._mockPurviewClient.Verify(x => x.ProcessContentAsync(
-            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+            It.Is<ProcessContentRequest>(request =>
+                request.ScopeIdentifier == null &&
+                request.ProcessInline),
+            It.IsAny<CancellationToken>()), Times.Once);
         this._mockPurviewClient.Verify(x => x.GetProtectionScopesAsync(
             It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-        this._mockChannelHandler.Verify(x => x.QueueJob(It.IsAny<ScopeRetrievalJob>()), Times.Once);
+        this._mockChannelHandler.Verify(x => x.QueueJob(
+            It.Is<ScopeRetrievalJob>(job => job.ProcessContentRequest.ProcessInline)), Times.Once);
     }
 
     [Fact]
@@ -799,17 +809,16 @@ public sealed class ScopedContentProcessorTests
             It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProtectionScopesResponse?)null);
 
-        var pcResponse = new ProcessContentResponse
-        {
-            PolicyActions =
-            [
-                new() { Action = DlpAction.BlockAccess }
-            ]
-        };
-
         this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
-            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(pcResponse);
+            It.Is<ProcessContentRequest>(request => request.ProcessInline),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProcessContentResponse
+            {
+                PolicyActions =
+                [
+                    new() { Action = DlpAction.BlockAccess }
+                ]
+            });
 
         // Act
         var result = await this._processor.ProcessMessagesAsync(
@@ -817,11 +826,13 @@ public sealed class ScopedContentProcessorTests
 
         // Assert
         Assert.True(result.shouldBlock);
-        this._mockChannelHandler.Verify(x => x.QueueJob(It.IsAny<ScopeRetrievalJob>()), Times.Once);
+        this._mockPurviewClient.Verify(x => x.ProcessContentAsync(
+            It.Is<ProcessContentRequest>(request => request.ProcessInline),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task ProcessMessagesAsync_CacheMiss_StillCallsProcessContentWhenScopeJobCannotQueueAsync()
+    public async Task ProcessMessagesAsync_CacheMiss_WhenScopeRetrievalCannotQueue_CallsProcessContentInlineAsync()
     {
         // Arrange
         var messages = new List<ChatMessage>
@@ -841,17 +852,19 @@ public sealed class ScopedContentProcessorTests
             .Throws(new PurviewJobException("queue unavailable"));
 
         this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
-            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()))
+            It.Is<ProcessContentRequest>(request => request.ProcessInline),
+            It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProcessContentResponse());
 
         // Act
         await this._processor.ProcessMessagesAsync(
             messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
 
-        // Assert: scope warmup is attempted, and ProcessContent still runs when it can't be queued.
+        // Assert
         this._mockChannelHandler.Verify(x => x.QueueJob(It.IsAny<ScopeRetrievalJob>()), Times.Once);
         this._mockPurviewClient.Verify(x => x.ProcessContentAsync(
-            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()), Times.Once);
+            It.Is<ProcessContentRequest>(request => request.ProcessInline),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -878,11 +891,11 @@ public sealed class ScopedContentProcessorTests
 
         this._mockPurviewClient.Verify(x => x.ProcessContentAsync(
             It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()), Times.Never);
-        this._mockChannelHandler.Verify(x => x.QueueJob(It.IsAny<ScopeRetrievalJob>()), Times.Never);
+        this._mockChannelHandler.Verify(x => x.QueueJob(It.IsAny<BackgroundJobBase>()), Times.Never);
     }
 
     [Fact]
-    public async Task BackgroundJobRunner_ScopeRetrievalPaymentRequired_CachesForSubsequentCallsAsync()
+    public async Task BackgroundJobRunner_ScopeRetrievalNoApplicableScopes_CachesAndQueuesContentActivityAsync()
     {
         // Arrange
         Func<Channel<BackgroundJobBase>, Task>? runner = null;
@@ -890,40 +903,65 @@ public sealed class ScopedContentProcessorTests
         Mock<IPurviewClient> purviewClient = new();
         Mock<ICacheProvider> cacheProvider = new();
         PurviewSettings settings = new("TestApp") { MaxConcurrentJobConsumers = 1 };
-        ProtectionScopesRequest request = new("user-123", "tenant-123")
-        {
-            Activities = ProtectionScopeActivities.UploadText,
-            Locations =
-            [
-                new("microsoft.graph.policyLocationApplication", "app-123")
-            ]
-        };
+        ProtectionScopesRequest request = CreateProtectionScopesRequest();
         ProtectionScopesCacheKey cacheKey = new(request);
+        ScopeRetrievalJob job = new(request, cacheKey, CreateProcessContentRequest());
+        ProtectionScopesResponse response = new() { ScopeIdentifier = "scope-123", Scopes = [] };
         Channel<BackgroundJobBase> channel = Channel.CreateUnbounded<BackgroundJobBase>();
 
         channelHandler.Setup(x => x.AddRunner(It.IsAny<Func<Channel<BackgroundJobBase>, Task>>()))
             .Callback<Func<Channel<BackgroundJobBase>, Task>>(callback => runner = callback);
-
         purviewClient.Setup(x => x.GetProtectionScopesAsync(It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new PurviewPaymentRequiredException("Payment required"));
+            .ReturnsAsync(response);
 
         _ = new BackgroundJobRunner(channelHandler.Object, purviewClient.Object, cacheProvider.Object, NullLogger.Instance, settings);
 
         // Act
         Assert.NotNull(runner);
-        await channel.Writer.WriteAsync(new ScopeRetrievalJob(request, cacheKey, CreateProcessContentRequest()));
+        await channel.Writer.WriteAsync(job);
         channel.Writer.Complete();
         await runner(channel);
 
         // Assert
-        cacheProvider.Verify(x => x.SetAsync(
-            It.Is<PaymentRequiredCacheKey>(key => key.TenantId == "tenant-123"),
-            It.Is<PaymentRequiredCacheEntry>(entry => entry.Message == "Payment required"),
-            It.IsAny<CancellationToken>()), Times.Once);
+        cacheProvider.Verify(x => x.SetAsync(cacheKey, response, It.IsAny<CancellationToken>()), Times.Once);
+        channelHandler.Verify(x => x.QueueJob(It.IsAny<ContentActivityJob>()), Times.Once);
     }
 
     [Fact]
-    public async Task BackgroundJobRunner_ScopeRetrievalNoApplicableScopes_QueuesContentActivityJobAsync()
+    public async Task BackgroundJobRunner_ScopeRetrievalApplicableScope_CachesWithoutContentActivityAsync()
+    {
+        // Arrange
+        Func<Channel<BackgroundJobBase>, Task>? runner = null;
+        Mock<IChannelHandler> channelHandler = new();
+        Mock<IPurviewClient> purviewClient = new();
+        Mock<ICacheProvider> cacheProvider = new();
+        PurviewSettings settings = new("TestApp") { MaxConcurrentJobConsumers = 1 };
+        ProtectionScopesRequest request = CreateProtectionScopesRequest();
+        ProtectionScopesCacheKey cacheKey = new(request);
+        ScopeRetrievalJob job = new(request, cacheKey, CreateProcessContentRequest());
+        ProtectionScopesResponse response = CreateApplicableProtectionScopesResponse();
+        Channel<BackgroundJobBase> channel = Channel.CreateUnbounded<BackgroundJobBase>();
+
+        channelHandler.Setup(x => x.AddRunner(It.IsAny<Func<Channel<BackgroundJobBase>, Task>>()))
+            .Callback<Func<Channel<BackgroundJobBase>, Task>>(callback => runner = callback);
+        purviewClient.Setup(x => x.GetProtectionScopesAsync(It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        _ = new BackgroundJobRunner(channelHandler.Object, purviewClient.Object, cacheProvider.Object, NullLogger.Instance, settings);
+
+        // Act
+        Assert.NotNull(runner);
+        await channel.Writer.WriteAsync(job);
+        channel.Writer.Complete();
+        await runner(channel);
+
+        // Assert
+        cacheProvider.Verify(x => x.SetAsync(cacheKey, response, It.IsAny<CancellationToken>()), Times.Once);
+        channelHandler.Verify(x => x.QueueJob(It.IsAny<ContentActivityJob>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task BackgroundJobRunner_ScopeRetrievalPaymentRequired_CachesForSubsequentCallsAsync()
     {
         // Arrange
         Func<Channel<BackgroundJobBase>, Task>? runner = null;
@@ -937,9 +975,8 @@ public sealed class ScopedContentProcessorTests
 
         channelHandler.Setup(x => x.AddRunner(It.IsAny<Func<Channel<BackgroundJobBase>, Task>>()))
             .Callback<Func<Channel<BackgroundJobBase>, Task>>(callback => runner = callback);
-
         purviewClient.Setup(x => x.GetProtectionScopesAsync(It.IsAny<ProtectionScopesRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ProtectionScopesResponse { Scopes = [] });
+            .ThrowsAsync(new PurviewPaymentRequiredException("Payment required"));
 
         _ = new BackgroundJobRunner(channelHandler.Object, purviewClient.Object, cacheProvider.Object, NullLogger.Instance, settings);
 
@@ -950,7 +987,10 @@ public sealed class ScopedContentProcessorTests
         await runner(channel);
 
         // Assert
-        channelHandler.Verify(x => x.QueueJob(It.IsAny<ContentActivityJob>()), Times.Once);
+        cacheProvider.Verify(x => x.SetAsync(
+            It.Is<PaymentRequiredCacheKey>(key => key.TenantId == "tenant-123"),
+            It.Is<PaymentRequiredCacheEntry>(entry => entry.Message == "Payment required"),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion
@@ -965,6 +1005,26 @@ public sealed class ScopedContentProcessorTests
             Locations =
             [
                 new("microsoft.graph.policyLocationApplication", "app-123")
+            ]
+        };
+    }
+
+    private static ProtectionScopesResponse CreateApplicableProtectionScopesResponse(ExecutionMode executionMode = ExecutionMode.EvaluateInline)
+    {
+        return new ProtectionScopesResponse
+        {
+            ScopeIdentifier = "scope-123",
+            Scopes =
+            [
+                new()
+                {
+                    Activities = ProtectionScopeActivities.UploadText,
+                    Locations =
+                    [
+                        new("microsoft.graph.policyLocationApplication", "app-123")
+                    ],
+                    ExecutionMode = executionMode
+                }
             ]
         };
     }
