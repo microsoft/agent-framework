@@ -397,9 +397,10 @@ public sealed class DefaultHttpRequestHandlerTests
             requestsWithHeader.Add(req.Headers.Contains("X-Trace-Id"));
             if (requestsWithHeader.Count == 1)
             {
-                HttpResponseMessage response = new(HttpStatusCode.TemporaryRedirect);
-                response.Headers.Location = new Uri("https://api.example.test/next");
-                return Task.FromResult(response);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
+                {
+                    Headers = { Location = new Uri("https://api.example.test/next") },
+                });
             }
 
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
@@ -439,9 +440,10 @@ public sealed class DefaultHttpRequestHandlerTests
         TestHttpMessageHandler primaryMessageHandler = new((req, _) =>
         {
             requestsWithHeader.Add(req.Headers.Contains("X-Trace-Id"));
-            HttpResponseMessage response = new(HttpStatusCode.TemporaryRedirect);
-            response.Headers.Location = new Uri("https://secondary.example.test/next");
-            return Task.FromResult(response);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
+            {
+                Headers = { Location = new Uri("https://secondary.example.test/next") },
+            });
         });
         TestHttpMessageHandler secondaryMessageHandler = new((req, _) =>
         {
@@ -523,9 +525,10 @@ public sealed class DefaultHttpRequestHandlerTests
 #pragma warning disable CA2025
         TestHttpMessageHandler primaryMessageHandler = new((req, _) =>
         {
-            HttpResponseMessage response = new(HttpStatusCode.TemporaryRedirect);
-            response.Headers.Location = new Uri("https://secondary.example.test/next");
-            return Task.FromResult(response);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
+            {
+                Headers = { Location = new Uri("https://secondary.example.test/next") },
+            });
         });
         TestHttpMessageHandler secondaryMessageHandler = new((req, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
