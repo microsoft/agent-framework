@@ -16,6 +16,22 @@ updates:
         patterns:
           - "AgentMemory"
           - "AgentMemory.AgentFramework"
+      aspire:
+        patterns:
+          - "Aspire.*"
+          - "CommunityToolkit.Aspire.*"
+      azure-ai-agentserver:
+        patterns:
+          - "Azure.AI.AgentServer.*"
+      agui:
+        patterns:
+          - "AGUI.*"
+      communitytoolkit-vectordata:
+        patterns:
+          - "CommunityToolkit.VectorData.*"
+      anthropic:
+        patterns:
+          - "Anthropic*"
     ignore:
       # For all System.* and Microsoft.Extensions/Bcl.* packages, ignore all major version updates
       - dependency-name: "System.*"
@@ -39,6 +55,28 @@ updates:
     schedule:
       interval: "weekly"
       day: "thursday"
+    groups:
+      basics:
+        patterns:
+          - "uv"
+          - "ruff"
+          - "prek"
+          - "poethepoet"
+          - "tomli"
+          - "rich"
+      pytest:
+        patterns:
+          - "pytest*"
+      flit:
+        patterns:
+          - "flit*"
+      python-type-checkers:
+        patterns:
+          - "mypy"
+          - "pyright"
+          - "pyrefly"
+          - "ty"
+          - "zuban"
     labels:
       - "python"
       - "dependencies"
@@ -50,6 +88,28 @@ updates:
     schedule:
       interval: "weekly"
       day: "thursday"
+    groups:
+      basics:
+        patterns:
+          - "uv"
+          - "ruff"
+          - "prek"
+          - "poethepoet"
+          - "tomli"
+          - "rich"
+      pytest:
+        patterns:
+          - "pytest*"
+      flit:
+        patterns:
+          - "flit*"
+      python-type-checkers:
+        patterns:
+          - "mypy"
+          - "pyright"
+          - "pyrefly"
+          - "ty"
+          - "zuban"
     labels:
       - "python"
       - "dependencies"
@@ -67,6 +127,14 @@ updates:
     directories:
       - "/"
       - "/.github/actions/*"
+    groups:
+      codeql-actions:
+        patterns:
+          - "github/codeql-action/*"
+      artifact-actions:
+        patterns:
+          - "actions/upload-artifact"
+          - "actions/download-artifact"
     schedule:
       interval: "weekly"
       day: "sunday"
