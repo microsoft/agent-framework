@@ -87,12 +87,11 @@ class _OwnedWorkflowCheckpointStorage:
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         """Save a checkpoint with ownership for any pending request occurrences."""
-        if checkpoint.pending_request_info_events:
-            checkpoint.metadata = dict(checkpoint.metadata)
-            checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] = {
-                "snapshot_scope": self._owner[0],
-                "thread_id": self._owner[1],
-            }
+        checkpoint.metadata = dict(checkpoint.metadata)
+        checkpoint.metadata[_CHECKPOINT_REQUEST_OWNER_KEY] = {
+            "snapshot_scope": self._owner[0],
+            "thread_id": self._owner[1],
+        }
         return await self._storage.save(checkpoint)
 
     async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
@@ -398,9 +397,8 @@ class AgentFrameworkWorkflow:
                     code="WORKFLOW_CHECKPOINT_LOAD_FAILED",
                 )
                 return
-            checkpoint_pending_ids = {str(request_id) for request_id in checkpoint.pending_request_info_events}
             checkpoint_owner = _checkpoint_request_owner(checkpoint.metadata)
-            if checkpoint_pending_ids and checkpoint_owner != request_owner:
+            if checkpoint_owner is not None and checkpoint_owner != request_owner:
                 yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
                 yield RunErrorEvent(
                     message=f"No pending interrupt found for checkpointId '{checkpoint_id}'.",

@@ -16,6 +16,7 @@ This folder contains examples demonstrating how to use Anthropic's Claude models
 | File | Description |
 |------|-------------|
 | [`anthropic_claude_basic.py`](anthropic_claude_basic.py) | Basic usage of ClaudeAgent with streaming, non-streaming, and custom tools. |
+| [`anthropic_claude_sequential_agents.py`](anthropic_claude_sequential_agents.py) | Uses SequentialBuilder to pass JSON-encoded conversation history with original message roles from a grammar inspector to a second Claude agent. |
 | [`anthropic_claude_with_tools.py`](anthropic_claude_with_tools.py) | Using built-in tools (Read, Glob, Grep, etc.). |
 | [`anthropic_claude_with_shell.py`](anthropic_claude_with_shell.py) | Shell command execution with interactive permission handling. |
 | [`anthropic_claude_with_multiple_permissions.py`](anthropic_claude_with_multiple_permissions.py) | Combining multiple tools (Bash, Read, Write) with permission prompts. |

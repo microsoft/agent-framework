@@ -14,7 +14,7 @@ from agent_framework._sessions import AgentSession, SessionContext
 
 from agent_framework_redis._context_provider import RedisContextProvider
 from agent_framework_redis._feature_usage import FeatureIndex
-from agent_framework_redis._history_provider import RedisHistoryProvider
+from agent_framework_redis._history_provider import RedisHistoryProvider, _redis_result
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -454,6 +454,30 @@ class TestRedisHistoryProviderGetMessages:
 
         messages = await provider.get_messages("s1")
         assert messages == []
+
+    async def test_returns_messages_when_lrange_is_synchronous(self, mock_redis_client: MagicMock):
+        """redis-py types several commands as returning a value or an awaitable; handle both."""
+        msg = Message(role="user", contents=["Hello"])
+        mock_redis_client.lrange = MagicMock(return_value=[json.dumps(msg.to_dict())])
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379")
+
+        messages = await provider.get_messages("s1")
+        assert len(messages) == 1
+        assert messages[0].text == "Hello"
+
+
+class TestRedisResultHelper:
+    async def test_awaits_an_awaitable_result(self):
+        async def _coro() -> int:
+            return 7
+
+        assert await _redis_result(_coro()) == 7
+
+    async def test_passes_through_a_plain_result(self):
+        assert await _redis_result(7) == 7
 
 
 class TestRedisHistoryProviderSaveMessages:

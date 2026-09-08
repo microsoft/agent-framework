@@ -2,7 +2,6 @@
 
 using System;
 using System.Text.Json;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Specialized.Magentic;
 using Microsoft.Extensions.AI;
 
@@ -32,8 +31,8 @@ public class MagenticProgressLedgerTests
         // Assert
         KVPair? result = element.Deserialize<KVPair>();
 
-        result.Should().NotBeNull();
-        result.key.Should().Be("value");
+        Assert.NotNull(result);
+        Assert.Equal("value", result.key);
     }
 
     [Fact]
@@ -54,8 +53,8 @@ public class MagenticProgressLedgerTests
         // Assert
         KVPair? result = element.Deserialize<KVPair>();
 
-        result.Should().NotBeNull();
-        result.key.Should().Be("value");
+        Assert.NotNull(result);
+        Assert.Equal("value", result.key);
     }
 
     [Fact]
@@ -71,10 +70,10 @@ public class MagenticProgressLedgerTests
 """);
 
         // Act
-        Func<JsonElement> action = () => message.ExtractJson();
+        void action() => _ = message.ExtractJson();
 
         // Assert
-        action.Should().Throw();
+        Assert.ThrowsAny<Exception>(action);
     }
 
     [Fact]
@@ -87,10 +86,10 @@ public class MagenticProgressLedgerTests
 """);
 
         // Act
-        Func<JsonElement> action = () => message.ExtractJson();
+        void action() => _ = message.ExtractJson();
 
         // Assert
-        action.Should().Throw();
+        Assert.ThrowsAny<Exception>(action);
     }
 
     [Fact]
@@ -108,9 +107,9 @@ public class MagenticProgressLedgerTests
         // Assert
         AnswerReasonPair? result = element.Deserialize<AnswerReasonPair>();
 
-        result.Should().NotBeNull();
-        result.reason.Should().Be("the output contained }");
-        result.answer.Should().BeFalse();
+        Assert.NotNull(result);
+        Assert.Equal("the output contained }", result.reason);
+        Assert.False(result.answer);
     }
 
     public static readonly string TestTeamNames = string.Join(", ", ["CodingAgent", "CodeExecutor", "WebSurferAgent", "FileSurferAgent"]);
@@ -122,11 +121,11 @@ public class MagenticProgressLedgerTests
         MagenticProgressLedger ledger = new(TestTeamNames, []);
 
         // Assert
-        ledger.State.Should().BeNull();
-        ledger.IsStarted.Should().BeFalse();
+        Assert.Null(ledger.State);
+        Assert.False(ledger.IsStarted);
 
-        ledger.TryGetCurrentSlotValue(TestProgressLedgerState.CustomSlot1, out _).Should().BeFalse();
-        ledger.TryGetCurrentSlotValue(TestProgressLedgerState.CustomSlot2, out _).Should().BeFalse();
+        Assert.False(ledger.TryGetCurrentSlotValue(TestProgressLedgerState.CustomSlot1, out _));
+        Assert.False(ledger.TryGetCurrentSlotValue(TestProgressLedgerState.CustomSlot2, out _));
     }
 
     [Theory]
@@ -142,7 +141,7 @@ public class MagenticProgressLedgerTests
         MagenticProgressLedger ledger = new(TestTeamNames, [], element);
 
         // Assert
-        ledger.State.Should().Be(element);
+        Assert.Equal(element, ledger.State);
         state.Validate(ledger);
     }
 
@@ -155,13 +154,13 @@ public class MagenticProgressLedgerTests
         MagenticProgressLedger ledger = new(TestTeamNames, []);
         TestProgressLedgerState targetState = TestProgressLedgerState.Working[caseIndex];
         JsonElement element = targetState.ToJson();
-        ledger.State.Should().BeNull();
+        Assert.Null(ledger.State);
 
         // Act
-        ledger.TryUpdateState(element).Should().BeTrue();
+        Assert.True(ledger.TryUpdateState(element));
 
         // Assert
-        ledger.State.Should().Be(element);
+        Assert.Equal(element, ledger.State);
         targetState.Validate(ledger);
     }
 
@@ -177,11 +176,11 @@ public class MagenticProgressLedgerTests
         MagenticProgressLedger ledger = new(TestTeamNames, []);
         TestProgressLedgerState targetState = TestProgressLedgerState.MissingRequired[caseIndex];
         JsonElement element = targetState.ToJson();
-        ledger.State.Should().BeNull();
+        Assert.Null(ledger.State);
 
         // Act
-        ledger.TryUpdateState(element).Should().BeFalse();
-        ledger.State.Should().BeNull();
+        Assert.False(ledger.TryUpdateState(element));
+        Assert.Null(ledger.State);
     }
 
     [Theory]
@@ -201,13 +200,13 @@ public class MagenticProgressLedgerTests
         {
             // Best-efforts validation: I do not want to make it super-brittle and check for 1:1: with the template
             // since that is effectively checking that string formatting works right to some extent.
-            questionBlock.Should().Contain(slot.Question);
-            answerSchema.Should().Contain(slot.Key);
-            answerSchema.Should().Contain(slot.SchemaType);
+            Assert.Contains(slot.Question, questionBlock);
+            Assert.Contains(slot.Key, answerSchema);
+            Assert.Contains(slot.SchemaType, answerSchema);
 
             if (!string.IsNullOrWhiteSpace(slot.SchemaTypeSuffix))
             {
-                answerSchema.Should().Contain(slot.SchemaTypeSuffix);
+                Assert.Contains(slot.SchemaTypeSuffix, answerSchema);
             }
         }
     }

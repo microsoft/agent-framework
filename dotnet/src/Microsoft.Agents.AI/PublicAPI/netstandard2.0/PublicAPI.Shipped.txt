@@ -1,0 +1,790 @@
+﻿#nullable enable
+Microsoft.Agents.AI.AIAgentBuilder
+Microsoft.Agents.AI.AIAgentBuilder.AIAgentBuilder(Microsoft.Agents.AI.AIAgent! innerAgent) -> void
+Microsoft.Agents.AI.AIAgentBuilder.AIAgentBuilder(System.Func<System.IServiceProvider!, Microsoft.Agents.AI.AIAgent!>! innerAgentFactory) -> void
+Microsoft.Agents.AI.AIAgentBuilder.Build(System.IServiceProvider? services = null) -> Microsoft.Agents.AI.AIAgent!
+Microsoft.Agents.AI.AIAgentBuilder.Use(System.Func<Microsoft.Agents.AI.AIAgent!, Microsoft.Agents.AI.AIAgent!>! agentFactory) -> Microsoft.Agents.AI.AIAgentBuilder!
+Microsoft.Agents.AI.AIAgentBuilder.Use(System.Func<Microsoft.Agents.AI.AIAgent!, System.IServiceProvider!, Microsoft.Agents.AI.AIAgent!>! agentFactory) -> Microsoft.Agents.AI.AIAgentBuilder!
+Microsoft.Agents.AI.AIAgentBuilder.Use(System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, Microsoft.Agents.AI.AgentSession?, Microsoft.Agents.AI.AgentRunOptions?, Microsoft.Agents.AI.AIAgent!, System.Threading.CancellationToken, System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse!>!>? runFunc, System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, Microsoft.Agents.AI.AgentSession?, Microsoft.Agents.AI.AgentRunOptions?, Microsoft.Agents.AI.AIAgent!, System.Threading.CancellationToken, System.Collections.Generic.IAsyncEnumerable<Microsoft.Agents.AI.AgentResponseUpdate!>!>? runStreamingFunc) -> Microsoft.Agents.AI.AIAgentBuilder!
+Microsoft.Agents.AI.AIAgentBuilder.Use(System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, Microsoft.Agents.AI.AgentSession?, Microsoft.Agents.AI.AgentRunOptions?, System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, Microsoft.Agents.AI.AgentSession?, Microsoft.Agents.AI.AgentRunOptions?, System.Threading.CancellationToken, System.Threading.Tasks.Task!>!, System.Threading.CancellationToken, System.Threading.Tasks.Task!>! sharedFunc) -> Microsoft.Agents.AI.AIAgentBuilder!
+Microsoft.Agents.AI.AIAgentBuilder.UseAIContextProviders(params Microsoft.Agents.AI.MessageAIContextProvider![]! providers) -> Microsoft.Agents.AI.AIAgentBuilder!
+Microsoft.Agents.AI.AIAgentExtensions
+Microsoft.Agents.AI.AgentClassSkill<TSelf>
+Microsoft.Agents.AI.AgentClassSkill<TSelf>.AgentClassSkill(System.Func<System.Text.Json.JsonElement?, Microsoft.Extensions.AI.AIFunctionArguments!>? argumentMarshaler = null) -> void
+Microsoft.Agents.AI.AgentClassSkill<TSelf>.CreateResource(string! name, System.Delegate! method, string? description = null, System.Text.Json.JsonSerializerOptions? serializerOptions = null) -> Microsoft.Agents.AI.AgentSkillResource!
+Microsoft.Agents.AI.AgentClassSkill<TSelf>.CreateResource(string! name, object! value, string? description = null) -> Microsoft.Agents.AI.AgentSkillResource!
+Microsoft.Agents.AI.AgentClassSkill<TSelf>.CreateScript(string! name, System.Delegate! method, string? description = null, System.Text.Json.JsonSerializerOptions? serializerOptions = null) -> Microsoft.Agents.AI.AgentSkillScript!
+Microsoft.Agents.AI.AgentFileSkill
+Microsoft.Agents.AI.AgentFileSkill.Path.get -> string!
+Microsoft.Agents.AI.AgentFileSkillFilterContext
+Microsoft.Agents.AI.AgentFileSkillFilterContext.RelativeFilePath.get -> string!
+Microsoft.Agents.AI.AgentFileSkillFilterContext.SkillName.get -> string!
+Microsoft.Agents.AI.AgentFileSkillScript
+Microsoft.Agents.AI.AgentFileSkillScript.FullPath.get -> string!
+Microsoft.Agents.AI.AgentFileSkillScriptRunner
+Microsoft.Agents.AI.AgentFileSkillsSource
+Microsoft.Agents.AI.AgentFileSkillsSource.AgentFileSkillsSource(System.Collections.Generic.IEnumerable<string!>! skillPaths, Microsoft.Agents.AI.AgentFileSkillScriptRunner? scriptRunner = null, Microsoft.Agents.AI.AgentFileSkillsSourceOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> void
+Microsoft.Agents.AI.AgentFileSkillsSource.AgentFileSkillsSource(string! skillPath, Microsoft.Agents.AI.AgentFileSkillScriptRunner? scriptRunner = null, Microsoft.Agents.AI.AgentFileSkillsSourceOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> void
+Microsoft.Agents.AI.AgentFileSkillsSourceOptions
+Microsoft.Agents.AI.AgentFileSkillsSourceOptions.AgentFileSkillsSourceOptions() -> void
+Microsoft.Agents.AI.AgentFileSkillsSourceOptions.AllowedResourceExtensions.get -> System.Collections.Generic.IEnumerable<string!>?
+Microsoft.Agents.AI.AgentFileSkillsSourceOptions.AllowedResourceExtensions.set -> void
+Microsoft.Agents.AI.AgentFileSkillsSourceOptions.AllowedScriptExtensions.get -> System.Collections.Generic.IEnumerable<string!>?
+Microsoft.Agents.AI.AgentFileSkillsSourceOptions.AllowedScriptExtensions.set -> void
+Microsoft.Agents.AI.AgentFileSkillsSourceOptions.ResourceFilter.get -> System.Func<Microsoft.Agents.AI.AgentFileSkillFilterContext!, bool>?
+Microsoft.Agents.AI.AgentFileSkillsSourceOptions.ResourceFilter.set -> void
+Microsoft.Agents.AI.AgentFileSkillsSourceOptions.ScriptFilter.get -> System.Func<Microsoft.Agents.AI.AgentFileSkillFilterContext!, bool>?
+Microsoft.Agents.AI.AgentFileSkillsSourceOptions.ScriptFilter.set -> void
+Microsoft.Agents.AI.AgentFileSkillsSourceOptions.SearchDepth.get -> int?
+Microsoft.Agents.AI.AgentFileSkillsSourceOptions.SearchDepth.set -> void
+Microsoft.Agents.AI.AgentInMemorySkillsSource
+Microsoft.Agents.AI.AgentInMemorySkillsSource.AgentInMemorySkillsSource(System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AgentSkill!>! skills) -> void
+Microsoft.Agents.AI.AgentInlineSkill
+Microsoft.Agents.AI.AgentInlineSkill.AddResource(string! name, System.Delegate! method, string? description = null, System.Text.Json.JsonSerializerOptions? serializerOptions = null) -> Microsoft.Agents.AI.AgentInlineSkill!
+Microsoft.Agents.AI.AgentInlineSkill.AddResource(string! name, object! value, string? description = null) -> Microsoft.Agents.AI.AgentInlineSkill!
+Microsoft.Agents.AI.AgentInlineSkill.AddScript(string! name, System.Delegate! method, string? description = null, System.Text.Json.JsonSerializerOptions? serializerOptions = null) -> Microsoft.Agents.AI.AgentInlineSkill!
+Microsoft.Agents.AI.AgentInlineSkill.AgentInlineSkill(Microsoft.Agents.AI.AgentSkillFrontmatter! frontmatter, string! instructions, System.Text.Json.JsonSerializerOptions? serializerOptions = null, System.Func<System.Text.Json.JsonElement?, Microsoft.Extensions.AI.AIFunctionArguments!>? argumentMarshaler = null) -> void
+Microsoft.Agents.AI.AgentInlineSkill.AgentInlineSkill(string! name, string! description, string! instructions, string? license = null, string? compatibility = null, string? allowedTools = null, Microsoft.Extensions.AI.AdditionalPropertiesDictionary? metadata = null, System.Text.Json.JsonSerializerOptions? serializerOptions = null, System.Func<System.Text.Json.JsonElement?, Microsoft.Extensions.AI.AIFunctionArguments!>? argumentMarshaler = null) -> void
+Microsoft.Agents.AI.AgentModeProvider
+Microsoft.Agents.AI.AgentModeProvider.AgentModeProvider(Microsoft.Agents.AI.AgentModeProviderOptions? options = null) -> void
+Microsoft.Agents.AI.AgentModeProvider.Dispose() -> void
+Microsoft.Agents.AI.AgentModeProvider.GetModeAsync(Microsoft.Agents.AI.AgentSession! session, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<string!>!
+Microsoft.Agents.AI.AgentModeProvider.SetModeAsync(Microsoft.Agents.AI.AgentSession! session, string! mode, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Microsoft.Agents.AI.AgentModeProviderOptions
+Microsoft.Agents.AI.AgentModeProviderOptions.AgentMode
+Microsoft.Agents.AI.AgentModeProviderOptions.AgentMode.AgentMode(string! name, string! instructions) -> void
+Microsoft.Agents.AI.AgentModeProviderOptions.AgentMode.Instructions.get -> string!
+Microsoft.Agents.AI.AgentModeProviderOptions.AgentMode.Name.get -> string!
+Microsoft.Agents.AI.AgentModeProviderOptions.AgentModeProviderOptions() -> void
+Microsoft.Agents.AI.AgentModeProviderOptions.DefaultMode.get -> string?
+Microsoft.Agents.AI.AgentModeProviderOptions.DefaultMode.set -> void
+Microsoft.Agents.AI.AgentModeProviderOptions.Instructions.get -> string?
+Microsoft.Agents.AI.AgentModeProviderOptions.Instructions.set -> void
+Microsoft.Agents.AI.AgentModeProviderOptions.Modes.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.AgentModeProviderOptions.AgentMode!>?
+Microsoft.Agents.AI.AgentModeProviderOptions.Modes.set -> void
+Microsoft.Agents.AI.AgentSkill
+Microsoft.Agents.AI.AgentSkill.AgentSkill() -> void
+Microsoft.Agents.AI.AgentSkillFrontmatter
+Microsoft.Agents.AI.AgentSkillFrontmatter.AgentSkillFrontmatter(string! name, string! description, string? compatibility = null) -> void
+Microsoft.Agents.AI.AgentSkillFrontmatter.AllowedTools.get -> string?
+Microsoft.Agents.AI.AgentSkillFrontmatter.AllowedTools.set -> void
+Microsoft.Agents.AI.AgentSkillFrontmatter.Compatibility.get -> string?
+Microsoft.Agents.AI.AgentSkillFrontmatter.Compatibility.set -> void
+Microsoft.Agents.AI.AgentSkillFrontmatter.Description.get -> string!
+Microsoft.Agents.AI.AgentSkillFrontmatter.License.get -> string?
+Microsoft.Agents.AI.AgentSkillFrontmatter.License.set -> void
+Microsoft.Agents.AI.AgentSkillFrontmatter.Metadata.get -> Microsoft.Extensions.AI.AdditionalPropertiesDictionary?
+Microsoft.Agents.AI.AgentSkillFrontmatter.Metadata.set -> void
+Microsoft.Agents.AI.AgentSkillFrontmatter.Name.get -> string!
+Microsoft.Agents.AI.AgentSkillResource
+Microsoft.Agents.AI.AgentSkillResource.AgentSkillResource(string! name, string? description = null) -> void
+Microsoft.Agents.AI.AgentSkillResource.Description.get -> string?
+Microsoft.Agents.AI.AgentSkillResource.Name.get -> string!
+Microsoft.Agents.AI.AgentSkillResourceAttribute
+Microsoft.Agents.AI.AgentSkillResourceAttribute.AgentSkillResourceAttribute() -> void
+Microsoft.Agents.AI.AgentSkillResourceAttribute.AgentSkillResourceAttribute(string! name) -> void
+Microsoft.Agents.AI.AgentSkillResourceAttribute.Name.get -> string?
+Microsoft.Agents.AI.AgentSkillScript
+Microsoft.Agents.AI.AgentSkillScript.AgentSkillScript(string! name, string? description = null) -> void
+Microsoft.Agents.AI.AgentSkillScript.Description.get -> string?
+Microsoft.Agents.AI.AgentSkillScript.Name.get -> string!
+Microsoft.Agents.AI.AgentSkillScriptAttribute
+Microsoft.Agents.AI.AgentSkillScriptAttribute.AgentSkillScriptAttribute() -> void
+Microsoft.Agents.AI.AgentSkillScriptAttribute.AgentSkillScriptAttribute(string! name) -> void
+Microsoft.Agents.AI.AgentSkillScriptAttribute.Name.get -> string?
+Microsoft.Agents.AI.AgentSkillsProvider
+Microsoft.Agents.AI.AgentSkillsProvider.AgentSkillsProvider(Microsoft.Agents.AI.AgentSkillsSource! source, Microsoft.Agents.AI.AgentSkillsProviderOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, bool ownsSource = false) -> void
+Microsoft.Agents.AI.AgentSkillsProvider.AgentSkillsProvider(System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AgentSkill!>! skills, Microsoft.Agents.AI.AgentSkillsProviderOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> void
+Microsoft.Agents.AI.AgentSkillsProvider.AgentSkillsProvider(System.Collections.Generic.IEnumerable<string!>! skillPaths, Microsoft.Agents.AI.AgentFileSkillScriptRunner? scriptRunner = null, Microsoft.Agents.AI.AgentFileSkillsSourceOptions? fileOptions = null, Microsoft.Agents.AI.AgentSkillsProviderOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> void
+Microsoft.Agents.AI.AgentSkillsProvider.AgentSkillsProvider(params Microsoft.Agents.AI.AgentSkill![]! skills) -> void
+Microsoft.Agents.AI.AgentSkillsProvider.AgentSkillsProvider(string! skillPath, Microsoft.Agents.AI.AgentFileSkillScriptRunner? scriptRunner = null, Microsoft.Agents.AI.AgentFileSkillsSourceOptions? fileOptions = null, Microsoft.Agents.AI.AgentSkillsProviderOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> void
+Microsoft.Agents.AI.AgentSkillsProvider.Dispose() -> void
+Microsoft.Agents.AI.AgentSkillsProviderBuilder
+Microsoft.Agents.AI.AgentSkillsProviderBuilder.AgentSkillsProviderBuilder() -> void
+Microsoft.Agents.AI.AgentSkillsProviderBuilder.Build() -> Microsoft.Agents.AI.AgentSkillsProvider!
+Microsoft.Agents.AI.AgentSkillsProviderBuilder.DisableCaching() -> Microsoft.Agents.AI.AgentSkillsProviderBuilder!
+Microsoft.Agents.AI.AgentSkillsProviderBuilder.UseCachingOptions(System.Action<Microsoft.Agents.AI.CachingAgentSkillsSourceOptions!>! configure) -> Microsoft.Agents.AI.AgentSkillsProviderBuilder!
+Microsoft.Agents.AI.AgentSkillsProviderBuilder.UseFileScriptRunner(Microsoft.Agents.AI.AgentFileSkillScriptRunner! runner) -> Microsoft.Agents.AI.AgentSkillsProviderBuilder!
+Microsoft.Agents.AI.AgentSkillsProviderBuilder.UseFileSkill(string! skillPath, Microsoft.Agents.AI.AgentFileSkillsSourceOptions? options = null, Microsoft.Agents.AI.AgentFileSkillScriptRunner? scriptRunner = null) -> Microsoft.Agents.AI.AgentSkillsProviderBuilder!
+Microsoft.Agents.AI.AgentSkillsProviderBuilder.UseFileSkills(System.Collections.Generic.IEnumerable<string!>! skillPaths, Microsoft.Agents.AI.AgentFileSkillsSourceOptions? options = null, Microsoft.Agents.AI.AgentFileSkillScriptRunner? scriptRunner = null) -> Microsoft.Agents.AI.AgentSkillsProviderBuilder!
+Microsoft.Agents.AI.AgentSkillsProviderBuilder.UseFilter(System.Func<Microsoft.Agents.AI.AgentSkill!, Microsoft.Agents.AI.AgentSkillsSourceContext!, bool>! predicate) -> Microsoft.Agents.AI.AgentSkillsProviderBuilder!
+Microsoft.Agents.AI.AgentSkillsProviderBuilder.UseLoggerFactory(Microsoft.Extensions.Logging.ILoggerFactory! loggerFactory) -> Microsoft.Agents.AI.AgentSkillsProviderBuilder!
+Microsoft.Agents.AI.AgentSkillsProviderBuilder.UseOptions(System.Action<Microsoft.Agents.AI.AgentSkillsProviderOptions!>! configure) -> Microsoft.Agents.AI.AgentSkillsProviderBuilder!
+Microsoft.Agents.AI.AgentSkillsProviderBuilder.UsePromptTemplate(string! promptTemplate) -> Microsoft.Agents.AI.AgentSkillsProviderBuilder!
+Microsoft.Agents.AI.AgentSkillsProviderBuilder.UseSkill(Microsoft.Agents.AI.AgentSkill! skill) -> Microsoft.Agents.AI.AgentSkillsProviderBuilder!
+Microsoft.Agents.AI.AgentSkillsProviderBuilder.UseSkills(System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AgentSkill!>! skills) -> Microsoft.Agents.AI.AgentSkillsProviderBuilder!
+Microsoft.Agents.AI.AgentSkillsProviderBuilder.UseSkills(params Microsoft.Agents.AI.AgentSkill![]! skills) -> Microsoft.Agents.AI.AgentSkillsProviderBuilder!
+Microsoft.Agents.AI.AgentSkillsProviderBuilder.UseSource(Microsoft.Agents.AI.AgentSkillsSource! source) -> Microsoft.Agents.AI.AgentSkillsProviderBuilder!
+Microsoft.Agents.AI.AgentSkillsProviderBuilder.UseSource(System.Func<Microsoft.Extensions.Logging.ILoggerFactory?, Microsoft.Agents.AI.AgentSkillsSource!>! factory) -> Microsoft.Agents.AI.AgentSkillsProviderBuilder!
+Microsoft.Agents.AI.AgentSkillsProviderOptions
+Microsoft.Agents.AI.AgentSkillsProviderOptions.AgentSkillsProviderOptions() -> void
+Microsoft.Agents.AI.AgentSkillsProviderOptions.DisableLoadSkillApproval.get -> bool
+Microsoft.Agents.AI.AgentSkillsProviderOptions.DisableLoadSkillApproval.set -> void
+Microsoft.Agents.AI.AgentSkillsProviderOptions.DisableReadSkillResourceApproval.get -> bool
+Microsoft.Agents.AI.AgentSkillsProviderOptions.DisableReadSkillResourceApproval.set -> void
+Microsoft.Agents.AI.AgentSkillsProviderOptions.DisableRunSkillScriptApproval.get -> bool
+Microsoft.Agents.AI.AgentSkillsProviderOptions.DisableRunSkillScriptApproval.set -> void
+Microsoft.Agents.AI.AgentSkillsProviderOptions.IncludeDetailedErrors.get -> bool
+Microsoft.Agents.AI.AgentSkillsProviderOptions.IncludeDetailedErrors.set -> void
+Microsoft.Agents.AI.AgentSkillsProviderOptions.SkillsInstructionPrompt.get -> string?
+Microsoft.Agents.AI.AgentSkillsProviderOptions.SkillsInstructionPrompt.set -> void
+Microsoft.Agents.AI.AgentSkillsSource
+Microsoft.Agents.AI.AgentSkillsSource.AgentSkillsSource() -> void
+Microsoft.Agents.AI.AgentSkillsSource.Dispose() -> void
+Microsoft.Agents.AI.AgentSkillsSourceContext
+Microsoft.Agents.AI.AgentSkillsSourceContext.Agent.get -> Microsoft.Agents.AI.AIAgent!
+Microsoft.Agents.AI.AgentSkillsSourceContext.AgentSkillsSourceContext(Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.AgentSession? session) -> void
+Microsoft.Agents.AI.AgentSkillsSourceContext.Session.get -> Microsoft.Agents.AI.AgentSession?
+Microsoft.Agents.AI.AggregatingAgentSkillsSource
+Microsoft.Agents.AI.AggregatingAgentSkillsSource.AggregatingAgentSkillsSource(System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AgentSkillsSource!>! sources) -> void
+Microsoft.Agents.AI.AlwaysApproveToolApprovalResponseContent
+Microsoft.Agents.AI.AlwaysApproveToolApprovalResponseContent.AlwaysApproveTool.get -> bool
+Microsoft.Agents.AI.AlwaysApproveToolApprovalResponseContent.AlwaysApproveToolWithArguments.get -> bool
+Microsoft.Agents.AI.AlwaysApproveToolApprovalResponseContent.InnerResponse.get -> Microsoft.Extensions.AI.ToolApprovalResponseContent!
+Microsoft.Agents.AI.CachingAgentSkillsSource
+Microsoft.Agents.AI.CachingAgentSkillsSource.CachingAgentSkillsSource(Microsoft.Agents.AI.AgentSkillsSource! innerSource, Microsoft.Agents.AI.CachingAgentSkillsSourceOptions? options = null) -> void
+Microsoft.Agents.AI.CachingAgentSkillsSourceOptions
+Microsoft.Agents.AI.CachingAgentSkillsSourceOptions.CacheIsolationKeySelector.get -> System.Func<Microsoft.Agents.AI.AgentSkillsSourceContext!, string?>?
+Microsoft.Agents.AI.CachingAgentSkillsSourceOptions.CacheIsolationKeySelector.set -> void
+Microsoft.Agents.AI.CachingAgentSkillsSourceOptions.CachingAgentSkillsSourceOptions() -> void
+Microsoft.Agents.AI.CachingAgentSkillsSourceOptions.RefreshInterval.get -> System.TimeSpan?
+Microsoft.Agents.AI.CachingAgentSkillsSourceOptions.RefreshInterval.set -> void
+Microsoft.Agents.AI.ChatClientAgent
+Microsoft.Agents.AI.ChatClientAgent.AIContextProviders.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.AIContextProvider!>?
+Microsoft.Agents.AI.ChatClientAgent.ChatClient.get -> Microsoft.Extensions.AI.IChatClient!
+Microsoft.Agents.AI.ChatClientAgent.ChatClientAgent(Microsoft.Extensions.AI.IChatClient! chatClient, Microsoft.Agents.AI.ChatClientAgentOptions? options, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, System.IServiceProvider? services = null) -> void
+Microsoft.Agents.AI.ChatClientAgent.ChatClientAgent(Microsoft.Extensions.AI.IChatClient! chatClient, string? instructions = null, string? name = null, string? description = null, System.Collections.Generic.IList<Microsoft.Extensions.AI.AITool!>? tools = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, System.IServiceProvider? services = null) -> void
+Microsoft.Agents.AI.ChatClientAgent.ChatHistoryProvider.get -> Microsoft.Agents.AI.ChatHistoryProvider?
+Microsoft.Agents.AI.ChatClientAgent.CreateSessionAsync(string! conversationId, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSession!>
+Microsoft.Agents.AI.ChatClientAgent.Instructions.get -> string?
+Microsoft.Agents.AI.ChatClientAgent.RunAsync(Microsoft.Agents.AI.AgentSession? session, Microsoft.Agents.AI.ChatClientAgentRunOptions? options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse!>!
+Microsoft.Agents.AI.ChatClientAgent.RunAsync(Microsoft.Extensions.AI.ChatMessage! message, Microsoft.Agents.AI.AgentSession? session, Microsoft.Agents.AI.ChatClientAgentRunOptions? options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse!>!
+Microsoft.Agents.AI.ChatClientAgent.RunAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Agents.AI.AgentSession? session, Microsoft.Agents.AI.ChatClientAgentRunOptions? options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse!>!
+Microsoft.Agents.AI.ChatClientAgent.RunAsync(string! message, Microsoft.Agents.AI.AgentSession? session, Microsoft.Agents.AI.ChatClientAgentRunOptions? options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse!>!
+Microsoft.Agents.AI.ChatClientAgent.RunAsync<T>(Microsoft.Agents.AI.AgentSession? session, System.Text.Json.JsonSerializerOptions? serializerOptions, Microsoft.Agents.AI.ChatClientAgentRunOptions? options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse<T>!>!
+Microsoft.Agents.AI.ChatClientAgent.RunAsync<T>(Microsoft.Extensions.AI.ChatMessage! message, Microsoft.Agents.AI.AgentSession? session, System.Text.Json.JsonSerializerOptions? serializerOptions, Microsoft.Agents.AI.ChatClientAgentRunOptions? options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse<T>!>!
+Microsoft.Agents.AI.ChatClientAgent.RunAsync<T>(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Agents.AI.AgentSession? session, System.Text.Json.JsonSerializerOptions? serializerOptions, Microsoft.Agents.AI.ChatClientAgentRunOptions? options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse<T>!>!
+Microsoft.Agents.AI.ChatClientAgent.RunAsync<T>(string! message, Microsoft.Agents.AI.AgentSession? session, System.Text.Json.JsonSerializerOptions? serializerOptions, Microsoft.Agents.AI.ChatClientAgentRunOptions? options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Agents.AI.AgentResponse<T>!>!
+Microsoft.Agents.AI.ChatClientAgent.RunStreamingAsync(Microsoft.Agents.AI.AgentSession? session, Microsoft.Agents.AI.ChatClientAgentRunOptions? options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Agents.AI.AgentResponseUpdate!>!
+Microsoft.Agents.AI.ChatClientAgent.RunStreamingAsync(Microsoft.Extensions.AI.ChatMessage! message, Microsoft.Agents.AI.AgentSession? session, Microsoft.Agents.AI.ChatClientAgentRunOptions? options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Agents.AI.AgentResponseUpdate!>!
+Microsoft.Agents.AI.ChatClientAgent.RunStreamingAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Agents.AI.AgentSession? session, Microsoft.Agents.AI.ChatClientAgentRunOptions? options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Agents.AI.AgentResponseUpdate!>!
+Microsoft.Agents.AI.ChatClientAgent.RunStreamingAsync(string! message, Microsoft.Agents.AI.AgentSession? session, Microsoft.Agents.AI.ChatClientAgentRunOptions? options, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Agents.AI.AgentResponseUpdate!>!
+Microsoft.Agents.AI.ChatClientAgentOptions
+Microsoft.Agents.AI.ChatClientAgentOptions.AIContextProviders.get -> System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIContextProvider!>?
+Microsoft.Agents.AI.ChatClientAgentOptions.AIContextProviders.set -> void
+Microsoft.Agents.AI.ChatClientAgentOptions.AllowConcurrentInvocation.get -> bool
+Microsoft.Agents.AI.ChatClientAgentOptions.AllowConcurrentInvocation.set -> void
+Microsoft.Agents.AI.ChatClientAgentOptions.ChatClientAgentOptions() -> void
+Microsoft.Agents.AI.ChatClientAgentOptions.ChatHistoryProvider.get -> Microsoft.Agents.AI.ChatHistoryProvider?
+Microsoft.Agents.AI.ChatClientAgentOptions.ChatHistoryProvider.set -> void
+Microsoft.Agents.AI.ChatClientAgentOptions.ChatOptions.get -> Microsoft.Extensions.AI.ChatOptions?
+Microsoft.Agents.AI.ChatClientAgentOptions.ChatOptions.set -> void
+Microsoft.Agents.AI.ChatClientAgentOptions.ClearOnChatHistoryProviderConflict.get -> bool
+Microsoft.Agents.AI.ChatClientAgentOptions.ClearOnChatHistoryProviderConflict.set -> void
+Microsoft.Agents.AI.ChatClientAgentOptions.Clone() -> Microsoft.Agents.AI.ChatClientAgentOptions!
+Microsoft.Agents.AI.ChatClientAgentOptions.Description.get -> string?
+Microsoft.Agents.AI.ChatClientAgentOptions.Description.set -> void
+Microsoft.Agents.AI.ChatClientAgentOptions.DisableApprovalNotRequiredFunctionBypassing.get -> bool
+Microsoft.Agents.AI.ChatClientAgentOptions.DisableApprovalNotRequiredFunctionBypassing.set -> void
+Microsoft.Agents.AI.ChatClientAgentOptions.DisableApprovalResponseBinding.get -> bool
+Microsoft.Agents.AI.ChatClientAgentOptions.DisableApprovalResponseBinding.set -> void
+Microsoft.Agents.AI.ChatClientAgentOptions.EnableMessageInjection.get -> bool
+Microsoft.Agents.AI.ChatClientAgentOptions.EnableMessageInjection.set -> void
+Microsoft.Agents.AI.ChatClientAgentOptions.Id.get -> string?
+Microsoft.Agents.AI.ChatClientAgentOptions.Id.set -> void
+Microsoft.Agents.AI.ChatClientAgentOptions.Name.get -> string?
+Microsoft.Agents.AI.ChatClientAgentOptions.Name.set -> void
+Microsoft.Agents.AI.ChatClientAgentOptions.RequirePerServiceCallChatHistoryPersistence.get -> bool
+Microsoft.Agents.AI.ChatClientAgentOptions.RequirePerServiceCallChatHistoryPersistence.set -> void
+Microsoft.Agents.AI.ChatClientAgentOptions.ThrowOnChatHistoryProviderConflict.get -> bool
+Microsoft.Agents.AI.ChatClientAgentOptions.ThrowOnChatHistoryProviderConflict.set -> void
+Microsoft.Agents.AI.ChatClientAgentOptions.UseProvidedChatClientAsIs.get -> bool
+Microsoft.Agents.AI.ChatClientAgentOptions.UseProvidedChatClientAsIs.set -> void
+Microsoft.Agents.AI.ChatClientAgentOptions.WarnOnChatHistoryProviderConflict.get -> bool
+Microsoft.Agents.AI.ChatClientAgentOptions.WarnOnChatHistoryProviderConflict.set -> void
+Microsoft.Agents.AI.ChatClientAgentRunOptions
+Microsoft.Agents.AI.ChatClientAgentRunOptions.ChatClientAgentRunOptions(Microsoft.Extensions.AI.ChatOptions? chatOptions = null) -> void
+Microsoft.Agents.AI.ChatClientAgentRunOptions.ChatClientFactory.get -> System.Func<Microsoft.Extensions.AI.IChatClient!, Microsoft.Extensions.AI.IChatClient!>?
+Microsoft.Agents.AI.ChatClientAgentRunOptions.ChatClientFactory.set -> void
+Microsoft.Agents.AI.ChatClientAgentRunOptions.ChatOptions.get -> Microsoft.Extensions.AI.ChatOptions?
+Microsoft.Agents.AI.ChatClientAgentRunOptions.ChatOptions.set -> void
+Microsoft.Agents.AI.ChatClientAgentSession
+Microsoft.Agents.AI.ChatClientAgentSession.ConversationId.get -> string?
+Microsoft.Agents.AI.ChatHistoryMemoryProvider
+Microsoft.Agents.AI.ChatHistoryMemoryProvider.ChatHistoryMemoryProvider(Microsoft.Extensions.VectorData.VectorStore! vectorStore, string! collectionName, int vectorDimensions, System.Func<Microsoft.Agents.AI.AgentSession?, Microsoft.Agents.AI.ChatHistoryMemoryProvider.State!>! stateInitializer, Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProvider.Dispose() -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProvider.State
+Microsoft.Agents.AI.ChatHistoryMemoryProvider.State.SearchScope.get -> Microsoft.Agents.AI.ChatHistoryMemoryProviderScope!
+Microsoft.Agents.AI.ChatHistoryMemoryProvider.State.State(Microsoft.Agents.AI.ChatHistoryMemoryProviderScope! storageScope, Microsoft.Agents.AI.ChatHistoryMemoryProviderScope? searchScope = null) -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProvider.State.StorageScope.get -> Microsoft.Agents.AI.ChatHistoryMemoryProviderScope!
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.ChatHistoryMemoryProviderOptions() -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.ContextPrompt.get -> string?
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.ContextPrompt.set -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.EnableSensitiveTelemetryData.get -> bool
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.EnableSensitiveTelemetryData.set -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.FunctionToolDescription.get -> string?
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.FunctionToolDescription.set -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.FunctionToolName.get -> string?
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.FunctionToolName.set -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.MaxResults.get -> int?
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.MaxResults.set -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.Redactor.get -> Microsoft.Extensions.Compliance.Redaction.Redactor?
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.Redactor.set -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.SearchBehavior
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke = 0 -> Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.SearchBehavior
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.SearchBehavior.OnDemandFunctionCalling = 1 -> Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.SearchBehavior
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.SearchInputMessageFilter.get -> System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>?
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.SearchInputMessageFilter.set -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.SearchTime.get -> Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.SearchBehavior
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.SearchTime.set -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.StateKey.get -> string?
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.StateKey.set -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.StorageInputRequestMessageFilter.get -> System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>?
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.StorageInputRequestMessageFilter.set -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.StorageInputResponseMessageFilter.get -> System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>?
+Microsoft.Agents.AI.ChatHistoryMemoryProviderOptions.StorageInputResponseMessageFilter.set -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProviderScope
+Microsoft.Agents.AI.ChatHistoryMemoryProviderScope.AgentId.get -> string?
+Microsoft.Agents.AI.ChatHistoryMemoryProviderScope.AgentId.set -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProviderScope.ApplicationId.get -> string?
+Microsoft.Agents.AI.ChatHistoryMemoryProviderScope.ApplicationId.set -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProviderScope.ChatHistoryMemoryProviderScope() -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProviderScope.ChatHistoryMemoryProviderScope(Microsoft.Agents.AI.ChatHistoryMemoryProviderScope! sourceScope) -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProviderScope.SessionId.get -> string?
+Microsoft.Agents.AI.ChatHistoryMemoryProviderScope.SessionId.set -> void
+Microsoft.Agents.AI.ChatHistoryMemoryProviderScope.UserId.get -> string?
+Microsoft.Agents.AI.ChatHistoryMemoryProviderScope.UserId.set -> void
+Microsoft.Agents.AI.DeduplicatingAgentSkillsSource
+Microsoft.Agents.AI.DeduplicatingAgentSkillsSource.DeduplicatingAgentSkillsSource(Microsoft.Agents.AI.AgentSkillsSource! innerSource, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> void
+Microsoft.Agents.AI.DelegatingAgentSkillsSource
+Microsoft.Agents.AI.DelegatingAgentSkillsSource.DelegatingAgentSkillsSource(Microsoft.Agents.AI.AgentSkillsSource! innerSource) -> void
+Microsoft.Agents.AI.DelegatingAgentSkillsSource.InnerSource.get -> Microsoft.Agents.AI.AgentSkillsSource!
+Microsoft.Agents.AI.FileListEntry
+Microsoft.Agents.AI.FileListEntry.Description.get -> string?
+Microsoft.Agents.AI.FileListEntry.Description.set -> void
+Microsoft.Agents.AI.FileListEntry.FileListEntry() -> void
+Microsoft.Agents.AI.FileListEntry.Name.get -> string!
+Microsoft.Agents.AI.FileListEntry.Name.set -> void
+Microsoft.Agents.AI.FileListEntry.Type.get -> string!
+Microsoft.Agents.AI.FileListEntry.Type.set -> void
+Microsoft.Agents.AI.FileMemoryProvider
+Microsoft.Agents.AI.FileMemoryProvider.Dispose() -> void
+Microsoft.Agents.AI.FileMemoryProvider.FileMemoryProvider(Microsoft.Agents.AI.AgentFileStore! fileStore, System.Func<Microsoft.Agents.AI.AgentSession?, Microsoft.Agents.AI.FileMemoryState!>? stateInitializer = null, Microsoft.Agents.AI.FileMemoryProviderOptions? options = null) -> void
+Microsoft.Agents.AI.FileMemoryProviderOptions
+Microsoft.Agents.AI.FileMemoryProviderOptions.FileMemoryProviderOptions() -> void
+Microsoft.Agents.AI.FileMemoryProviderOptions.Instructions.get -> string?
+Microsoft.Agents.AI.FileMemoryProviderOptions.Instructions.set -> void
+Microsoft.Agents.AI.FileMemoryState
+Microsoft.Agents.AI.FileMemoryState.FileMemoryState() -> void
+Microsoft.Agents.AI.FileMemoryState.WorkingFolder.get -> string!
+Microsoft.Agents.AI.FileMemoryState.WorkingFolder.set -> void
+Microsoft.Agents.AI.FilteringAgentSkillsSource
+Microsoft.Agents.AI.FilteringAgentSkillsSource.FilteringAgentSkillsSource(Microsoft.Agents.AI.AgentSkillsSource! innerSource, System.Func<Microsoft.Agents.AI.AgentSkill!, Microsoft.Agents.AI.AgentSkillsSourceContext!, bool>! predicate, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> void
+Microsoft.Agents.AI.FunctionInvocationDelegatingAgentBuilderExtensions
+Microsoft.Agents.AI.LoggingAgent
+Microsoft.Agents.AI.LoggingAgent.JsonSerializerOptions.get -> System.Text.Json.JsonSerializerOptions!
+Microsoft.Agents.AI.LoggingAgent.JsonSerializerOptions.set -> void
+Microsoft.Agents.AI.LoggingAgent.LoggingAgent(Microsoft.Agents.AI.AIAgent! innerAgent, Microsoft.Extensions.Logging.ILogger! logger) -> void
+Microsoft.Agents.AI.LoggingAgentBuilderExtensions
+Microsoft.Agents.AI.MessageInjectingChatClient
+Microsoft.Agents.AI.MessageInjectingChatClient.EnqueueMessagesAsync(Microsoft.Agents.AI.AgentSession! session, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Microsoft.Agents.AI.MessageInjectingChatClient.GetPendingMessagesAsync(Microsoft.Agents.AI.AgentSession! session, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>!>!
+Microsoft.Agents.AI.MessageInjectingChatClient.MessageInjectingChatClient(Microsoft.Extensions.AI.IChatClient! innerClient) -> void
+Microsoft.Agents.AI.OpenTelemetryAgent
+Microsoft.Agents.AI.OpenTelemetryAgent.Dispose() -> void
+Microsoft.Agents.AI.OpenTelemetryAgent.EnableSensitiveData.get -> bool
+Microsoft.Agents.AI.OpenTelemetryAgent.EnableSensitiveData.set -> void
+Microsoft.Agents.AI.OpenTelemetryAgent.OpenTelemetryAgent(Microsoft.Agents.AI.AIAgent! innerAgent, string? sourceName = null) -> void
+Microsoft.Agents.AI.OpenTelemetryAgentBuilderExtensions
+Microsoft.Agents.AI.TextSearchProvider
+Microsoft.Agents.AI.TextSearchProvider.TextSearchProvider(System.Func<string!, System.Threading.CancellationToken, System.Threading.Tasks.Task<System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.TextSearchProvider.TextSearchResult!>!>!>! searchAsync, Microsoft.Agents.AI.TextSearchProviderOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> void
+Microsoft.Agents.AI.TextSearchProvider.TextSearchProviderState
+Microsoft.Agents.AI.TextSearchProvider.TextSearchProviderState.RecentMessagesText.get -> System.Collections.Generic.List<string!>?
+Microsoft.Agents.AI.TextSearchProvider.TextSearchProviderState.RecentMessagesText.set -> void
+Microsoft.Agents.AI.TextSearchProvider.TextSearchProviderState.TextSearchProviderState() -> void
+Microsoft.Agents.AI.TextSearchProvider.TextSearchResult
+Microsoft.Agents.AI.TextSearchProvider.TextSearchResult.RawRepresentation.get -> object?
+Microsoft.Agents.AI.TextSearchProvider.TextSearchResult.RawRepresentation.set -> void
+Microsoft.Agents.AI.TextSearchProvider.TextSearchResult.SourceLink.get -> string?
+Microsoft.Agents.AI.TextSearchProvider.TextSearchResult.SourceLink.set -> void
+Microsoft.Agents.AI.TextSearchProvider.TextSearchResult.SourceName.get -> string?
+Microsoft.Agents.AI.TextSearchProvider.TextSearchResult.SourceName.set -> void
+Microsoft.Agents.AI.TextSearchProvider.TextSearchResult.Text.get -> string!
+Microsoft.Agents.AI.TextSearchProvider.TextSearchResult.Text.set -> void
+Microsoft.Agents.AI.TextSearchProvider.TextSearchResult.TextSearchResult() -> void
+Microsoft.Agents.AI.TextSearchProviderOptions
+Microsoft.Agents.AI.TextSearchProviderOptions.CitationsPrompt.get -> string?
+Microsoft.Agents.AI.TextSearchProviderOptions.CitationsPrompt.set -> void
+Microsoft.Agents.AI.TextSearchProviderOptions.ContextFormatter.get -> System.Func<System.Collections.Generic.IList<Microsoft.Agents.AI.TextSearchProvider.TextSearchResult!>!, string!>?
+Microsoft.Agents.AI.TextSearchProviderOptions.ContextFormatter.set -> void
+Microsoft.Agents.AI.TextSearchProviderOptions.ContextPrompt.get -> string?
+Microsoft.Agents.AI.TextSearchProviderOptions.ContextPrompt.set -> void
+Microsoft.Agents.AI.TextSearchProviderOptions.EnableSensitiveTelemetryData.get -> bool
+Microsoft.Agents.AI.TextSearchProviderOptions.EnableSensitiveTelemetryData.set -> void
+Microsoft.Agents.AI.TextSearchProviderOptions.FunctionToolDescription.get -> string?
+Microsoft.Agents.AI.TextSearchProviderOptions.FunctionToolDescription.set -> void
+Microsoft.Agents.AI.TextSearchProviderOptions.FunctionToolName.get -> string?
+Microsoft.Agents.AI.TextSearchProviderOptions.FunctionToolName.set -> void
+Microsoft.Agents.AI.TextSearchProviderOptions.RecentMessageMemoryLimit.get -> int
+Microsoft.Agents.AI.TextSearchProviderOptions.RecentMessageMemoryLimit.set -> void
+Microsoft.Agents.AI.TextSearchProviderOptions.RecentMessageRolesIncluded.get -> System.Collections.Generic.List<Microsoft.Extensions.AI.ChatRole>?
+Microsoft.Agents.AI.TextSearchProviderOptions.RecentMessageRolesIncluded.set -> void
+Microsoft.Agents.AI.TextSearchProviderOptions.Redactor.get -> Microsoft.Extensions.Compliance.Redaction.Redactor?
+Microsoft.Agents.AI.TextSearchProviderOptions.Redactor.set -> void
+Microsoft.Agents.AI.TextSearchProviderOptions.SearchInputMessageFilter.get -> System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>?
+Microsoft.Agents.AI.TextSearchProviderOptions.SearchInputMessageFilter.set -> void
+Microsoft.Agents.AI.TextSearchProviderOptions.SearchTime.get -> Microsoft.Agents.AI.TextSearchProviderOptions.TextSearchBehavior
+Microsoft.Agents.AI.TextSearchProviderOptions.SearchTime.set -> void
+Microsoft.Agents.AI.TextSearchProviderOptions.StateKey.get -> string?
+Microsoft.Agents.AI.TextSearchProviderOptions.StateKey.set -> void
+Microsoft.Agents.AI.TextSearchProviderOptions.StorageInputRequestMessageFilter.get -> System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>?
+Microsoft.Agents.AI.TextSearchProviderOptions.StorageInputRequestMessageFilter.set -> void
+Microsoft.Agents.AI.TextSearchProviderOptions.StorageInputResponseMessageFilter.get -> System.Func<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>?
+Microsoft.Agents.AI.TextSearchProviderOptions.StorageInputResponseMessageFilter.set -> void
+Microsoft.Agents.AI.TextSearchProviderOptions.TextSearchBehavior
+Microsoft.Agents.AI.TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke = 0 -> Microsoft.Agents.AI.TextSearchProviderOptions.TextSearchBehavior
+Microsoft.Agents.AI.TextSearchProviderOptions.TextSearchBehavior.OnDemandFunctionCalling = 1 -> Microsoft.Agents.AI.TextSearchProviderOptions.TextSearchBehavior
+Microsoft.Agents.AI.TextSearchProviderOptions.TextSearchProviderOptions() -> void
+Microsoft.Agents.AI.TodoItem
+Microsoft.Agents.AI.TodoItem.Description.get -> string?
+Microsoft.Agents.AI.TodoItem.Description.set -> void
+Microsoft.Agents.AI.TodoItem.Id.get -> int
+Microsoft.Agents.AI.TodoItem.Id.set -> void
+Microsoft.Agents.AI.TodoItem.IsComplete.get -> bool
+Microsoft.Agents.AI.TodoItem.IsComplete.set -> void
+Microsoft.Agents.AI.TodoItem.Title.get -> string!
+Microsoft.Agents.AI.TodoItem.Title.set -> void
+Microsoft.Agents.AI.TodoItem.TodoItem() -> void
+Microsoft.Agents.AI.TodoProvider
+Microsoft.Agents.AI.TodoProvider.Dispose() -> void
+Microsoft.Agents.AI.TodoProvider.GetAllTodosAsync(Microsoft.Agents.AI.AgentSession! session, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.TodoItem!>!>!
+Microsoft.Agents.AI.TodoProvider.GetRemainingTodosAsync(Microsoft.Agents.AI.AgentSession! session, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.List<Microsoft.Agents.AI.TodoItem!>!>!
+Microsoft.Agents.AI.TodoProvider.TodoProvider(Microsoft.Agents.AI.TodoProviderOptions? options = null) -> void
+Microsoft.Agents.AI.TodoProviderOptions
+Microsoft.Agents.AI.TodoProviderOptions.Instructions.get -> string?
+Microsoft.Agents.AI.TodoProviderOptions.Instructions.set -> void
+Microsoft.Agents.AI.TodoProviderOptions.SuppressTodoListMessage.get -> bool
+Microsoft.Agents.AI.TodoProviderOptions.SuppressTodoListMessage.set -> void
+Microsoft.Agents.AI.TodoProviderOptions.TodoListMessageBuilder.get -> System.Func<System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.TodoItem!>!, string!>?
+Microsoft.Agents.AI.TodoProviderOptions.TodoListMessageBuilder.set -> void
+Microsoft.Agents.AI.TodoProviderOptions.TodoProviderOptions() -> void
+Microsoft.Agents.AI.ToolApprovalAgent
+Microsoft.Agents.AI.ToolApprovalAgent.ToolApprovalAgent(Microsoft.Agents.AI.AIAgent! innerAgent, Microsoft.Agents.AI.ToolApprovalAgentOptions? options = null) -> void
+Microsoft.Agents.AI.ToolApprovalAgentBuilderExtensions
+Microsoft.Agents.AI.ToolApprovalAgentOptions
+Microsoft.Agents.AI.ToolApprovalAgentOptions.AutoApprovalRules.get -> System.Collections.Generic.IEnumerable<System.Func<Microsoft.Agents.AI.ToolAutoApprovalRuleContext!, System.Threading.Tasks.ValueTask<bool>>!>?
+Microsoft.Agents.AI.ToolApprovalAgentOptions.AutoApprovalRules.set -> void
+Microsoft.Agents.AI.ToolApprovalAgentOptions.JsonSerializerOptions.get -> System.Text.Json.JsonSerializerOptions?
+Microsoft.Agents.AI.ToolApprovalAgentOptions.JsonSerializerOptions.set -> void
+Microsoft.Agents.AI.ToolApprovalAgentOptions.MaxAutoApprovalIterations.get -> int?
+Microsoft.Agents.AI.ToolApprovalAgentOptions.MaxAutoApprovalIterations.set -> void
+Microsoft.Agents.AI.ToolApprovalAgentOptions.ToolApprovalAgentOptions() -> void
+Microsoft.Agents.AI.ToolApprovalRequestContentExtensions
+Microsoft.Agents.AI.ToolAutoApprovalRuleContext
+Microsoft.Agents.AI.ToolAutoApprovalRuleContext.Agent.get -> Microsoft.Agents.AI.AIAgent!
+Microsoft.Agents.AI.ToolAutoApprovalRuleContext.FunctionCallContent.get -> Microsoft.Extensions.AI.FunctionCallContent!
+Microsoft.Agents.AI.ToolAutoApprovalRuleContext.RequestMessages.get -> System.Collections.Generic.IReadOnlyCollection<Microsoft.Extensions.AI.ChatMessage!>!
+Microsoft.Agents.AI.ToolAutoApprovalRuleContext.RunOptions.get -> Microsoft.Agents.AI.AgentRunOptions?
+Microsoft.Agents.AI.ToolAutoApprovalRuleContext.Session.get -> Microsoft.Agents.AI.AgentSession?
+Microsoft.Agents.AI.ToolAutoApprovalRuleContext.ToolAutoApprovalRuleContext(Microsoft.Extensions.AI.FunctionCallContent! functionCallContent, Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.AgentSession? session, System.Collections.Generic.IReadOnlyCollection<Microsoft.Extensions.AI.ChatMessage!>! requestMessages, Microsoft.Agents.AI.AgentRunOptions? agentRunOptions) -> void
+Microsoft.Extensions.AI.AIContextProviderChatClientBuilderExtensions
+Microsoft.Extensions.AI.ChatClientBuilderExtensions
+Microsoft.Extensions.AI.ChatClientExtensions
+[MAAI001]Microsoft.Agents.AI.AIJudgeLoopEvaluator
+[MAAI001]Microsoft.Agents.AI.AIJudgeLoopEvaluator.AIJudgeLoopEvaluator(Microsoft.Extensions.AI.IChatClient! judgeClient, Microsoft.Agents.AI.AIJudgeLoopEvaluatorOptions? options = null) -> void
+[MAAI001]Microsoft.Agents.AI.AIJudgeLoopEvaluatorOptions
+[MAAI001]Microsoft.Agents.AI.AIJudgeLoopEvaluatorOptions.AIJudgeLoopEvaluatorOptions() -> void
+[MAAI001]Microsoft.Agents.AI.AIJudgeLoopEvaluatorOptions.Criteria.get -> System.Collections.Generic.IEnumerable<string!>?
+[MAAI001]Microsoft.Agents.AI.AIJudgeLoopEvaluatorOptions.Criteria.set -> void
+[MAAI001]Microsoft.Agents.AI.AIJudgeLoopEvaluatorOptions.FeedbackMessageTemplate.get -> string?
+[MAAI001]Microsoft.Agents.AI.AIJudgeLoopEvaluatorOptions.FeedbackMessageTemplate.set -> void
+[MAAI001]Microsoft.Agents.AI.AIJudgeLoopEvaluatorOptions.Instructions.get -> string?
+[MAAI001]Microsoft.Agents.AI.AIJudgeLoopEvaluatorOptions.Instructions.set -> void
+[MAAI001]Microsoft.Agents.AI.AgentFileStore
+[MAAI001]Microsoft.Agents.AI.AgentFileStore.AgentFileStore() -> void
+[MAAI001]Microsoft.Agents.AI.BackgroundAgentsProvider
+[MAAI001]Microsoft.Agents.AI.BackgroundAgentsProvider.BackgroundAgentsProvider(System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.AIAgent!>! agents, Microsoft.Agents.AI.BackgroundAgentsProviderOptions? options = null) -> void
+[MAAI001]Microsoft.Agents.AI.BackgroundAgentsProvider.GetIncompleteTasks(Microsoft.Agents.AI.AgentSession? session) -> System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.BackgroundTaskInfo!>!
+[MAAI001]Microsoft.Agents.AI.BackgroundAgentsProvider.ReleaseSessionAsync(Microsoft.Agents.AI.AgentSession! session, bool cancelRunning = true, System.TimeSpan? timeout = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+[MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions
+[MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.AgentListBuilder.get -> System.Func<System.Collections.Generic.IReadOnlyDictionary<string!, Microsoft.Agents.AI.AIAgent!>!, string!>?
+[MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.AgentListBuilder.set -> void
+[MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.BackgroundAgentsProviderOptions() -> void
+[MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.Instructions.get -> string?
+[MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.Instructions.set -> void
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluator
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluator.BackgroundTaskCompletionLoopEvaluator(Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluatorOptions? options = null) -> void
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluatorOptions
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluatorOptions.BackgroundTaskCompletionLoopEvaluatorOptions() -> void
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluatorOptions.FeedbackMessageTemplate.get -> string?
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluatorOptions.FeedbackMessageTemplate.set -> void
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskInfo
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskInfo.AgentName.get -> string!
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskInfo.AgentName.set -> void
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskInfo.BackgroundTaskInfo() -> void
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskInfo.Description.get -> string!
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskInfo.Description.set -> void
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskInfo.ErrorText.get -> string?
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskInfo.ErrorText.set -> void
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskInfo.Id.get -> int
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskInfo.Id.set -> void
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskInfo.ResultText.get -> string?
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskInfo.ResultText.set -> void
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskInfo.Status.get -> Microsoft.Agents.AI.BackgroundTaskStatus
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskInfo.Status.set -> void
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskStatus
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskStatus.Completed = 1 -> Microsoft.Agents.AI.BackgroundTaskStatus
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskStatus.Failed = 2 -> Microsoft.Agents.AI.BackgroundTaskStatus
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskStatus.Lost = 3 -> Microsoft.Agents.AI.BackgroundTaskStatus
+[MAAI001]Microsoft.Agents.AI.BackgroundTaskStatus.Running = 0 -> Microsoft.Agents.AI.BackgroundTaskStatus
+[MAAI001]Microsoft.Agents.AI.ChatClientAgentOptions.EnableInvocableFunctionBypassing.get -> bool
+[MAAI001]Microsoft.Agents.AI.ChatClientAgentOptions.EnableInvocableFunctionBypassing.set -> void
+[MAAI001]Microsoft.Agents.AI.Compaction.ChatReducerCompactionStrategy
+[MAAI001]Microsoft.Agents.AI.Compaction.ChatReducerCompactionStrategy.ChatReducer.get -> Microsoft.Extensions.AI.IChatReducer!
+[MAAI001]Microsoft.Agents.AI.Compaction.ChatReducerCompactionStrategy.ChatReducerCompactionStrategy(Microsoft.Extensions.AI.IChatReducer! chatReducer, Microsoft.Agents.AI.Compaction.CompactionTrigger! trigger) -> void
+[MAAI001]Microsoft.Agents.AI.Compaction.ChatStrategyExtensions
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionGroupKind
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionGroupKind.AssistantText = 2 -> Microsoft.Agents.AI.Compaction.CompactionGroupKind
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionGroupKind.Summary = 4 -> Microsoft.Agents.AI.Compaction.CompactionGroupKind
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionGroupKind.System = 0 -> Microsoft.Agents.AI.Compaction.CompactionGroupKind
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionGroupKind.ToolCall = 3 -> Microsoft.Agents.AI.Compaction.CompactionGroupKind
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionGroupKind.User = 1 -> Microsoft.Agents.AI.Compaction.CompactionGroupKind
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageGroup
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageGroup.ByteCount.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageGroup.ExcludeReason.get -> string?
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageGroup.ExcludeReason.set -> void
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageGroup.IsExcluded.get -> bool
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageGroup.IsExcluded.set -> void
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageGroup.Kind.get -> Microsoft.Agents.AI.Compaction.CompactionGroupKind
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageGroup.MessageCount.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageGroup.Messages.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>!
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageGroup.TokenCount.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageGroup.TurnIndex.get -> int?
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.AddGroup(Microsoft.Agents.AI.Compaction.CompactionGroupKind kind, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>! messages, int? turnIndex = null) -> Microsoft.Agents.AI.Compaction.CompactionMessageGroup!
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.CompactionMessageIndex(System.Collections.Generic.IList<Microsoft.Agents.AI.Compaction.CompactionMessageGroup!>! groups, Microsoft.ML.Tokenizers.Tokenizer? tokenizer = null) -> void
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.GetAllMessages() -> System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.GetIncludedMessages() -> System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.GetTurnGroups(int turnIndex) -> System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Compaction.CompactionMessageGroup!>!
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.Groups.get -> System.Collections.Generic.IList<Microsoft.Agents.AI.Compaction.CompactionMessageGroup!>!
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.IncludedByteCount.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.IncludedGroupCount.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.IncludedMessageCount.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.IncludedNonSystemGroupCount.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.IncludedTokenCount.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.IncludedTurnCount.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.InsertGroup(int index, Microsoft.Agents.AI.Compaction.CompactionGroupKind kind, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>! messages, int? turnIndex = null) -> Microsoft.Agents.AI.Compaction.CompactionMessageGroup!
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.RawMessageCount.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.Tokenizer.get -> Microsoft.ML.Tokenizers.Tokenizer?
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.TotalByteCount.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.TotalGroupCount.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.TotalMessageCount.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.TotalTokenCount.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionMessageIndex.TotalTurnCount.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionProvider
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionProvider.CompactionProvider(Microsoft.Agents.AI.Compaction.CompactionStrategy! compactionStrategy, string? stateKey = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> void
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionStrategy
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionStrategy.CompactAsync(Microsoft.Agents.AI.Compaction.CompactionMessageIndex! index, Microsoft.Extensions.Logging.ILogger? logger = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionStrategy.CompactionStrategy(Microsoft.Agents.AI.Compaction.CompactionTrigger! trigger, Microsoft.Agents.AI.Compaction.CompactionTrigger? target = null) -> void
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionStrategy.Target.get -> Microsoft.Agents.AI.Compaction.CompactionTrigger!
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionStrategy.Trigger.get -> Microsoft.Agents.AI.Compaction.CompactionTrigger!
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionTrigger
+[MAAI001]Microsoft.Agents.AI.Compaction.CompactionTriggers
+[MAAI001]Microsoft.Agents.AI.Compaction.ContextWindowCompactionStrategy
+[MAAI001]Microsoft.Agents.AI.Compaction.ContextWindowCompactionStrategy.ContextWindowCompactionStrategy(int maxContextWindowTokens, int maxOutputTokens, double toolEvictionThreshold = 0.5, double truncationThreshold = 0.8) -> void
+[MAAI001]Microsoft.Agents.AI.Compaction.ContextWindowCompactionStrategy.InputBudgetTokens.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.ContextWindowCompactionStrategy.MaxContextWindowTokens.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.ContextWindowCompactionStrategy.MaxOutputTokens.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.ContextWindowCompactionStrategy.ToolEvictionThreshold.get -> double
+[MAAI001]Microsoft.Agents.AI.Compaction.ContextWindowCompactionStrategy.TruncationThreshold.get -> double
+[MAAI001]Microsoft.Agents.AI.Compaction.PipelineCompactionStrategy
+[MAAI001]Microsoft.Agents.AI.Compaction.PipelineCompactionStrategy.PipelineCompactionStrategy(params System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.Compaction.CompactionStrategy!>! strategies) -> void
+[MAAI001]Microsoft.Agents.AI.Compaction.PipelineCompactionStrategy.Strategies.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.Compaction.CompactionStrategy!>!
+[MAAI001]Microsoft.Agents.AI.Compaction.SlidingWindowCompactionStrategy
+[MAAI001]Microsoft.Agents.AI.Compaction.SlidingWindowCompactionStrategy.MinimumPreservedTurns.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.SlidingWindowCompactionStrategy.SlidingWindowCompactionStrategy(Microsoft.Agents.AI.Compaction.CompactionTrigger! trigger, int minimumPreservedTurns = 1, Microsoft.Agents.AI.Compaction.CompactionTrigger? target = null) -> void
+[MAAI001]Microsoft.Agents.AI.Compaction.SummarizationCompactionStrategy
+[MAAI001]Microsoft.Agents.AI.Compaction.SummarizationCompactionStrategy.ChatClient.get -> Microsoft.Extensions.AI.IChatClient!
+[MAAI001]Microsoft.Agents.AI.Compaction.SummarizationCompactionStrategy.MinimumPreservedGroups.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.SummarizationCompactionStrategy.SummarizationCompactionStrategy(Microsoft.Extensions.AI.IChatClient! chatClient, Microsoft.Agents.AI.Compaction.CompactionTrigger! trigger, int minimumPreservedGroups = 8, string? summarizationPrompt = null, Microsoft.Agents.AI.Compaction.CompactionTrigger? target = null) -> void
+[MAAI001]Microsoft.Agents.AI.Compaction.SummarizationCompactionStrategy.SummarizationPrompt.get -> string!
+[MAAI001]Microsoft.Agents.AI.Compaction.ToolResultCompactionStrategy
+[MAAI001]Microsoft.Agents.AI.Compaction.ToolResultCompactionStrategy.MinimumPreservedGroups.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.ToolResultCompactionStrategy.ToolCallFormatter.get -> System.Func<Microsoft.Agents.AI.Compaction.CompactionMessageGroup!, string!>?
+[MAAI001]Microsoft.Agents.AI.Compaction.ToolResultCompactionStrategy.ToolCallFormatter.init -> void
+[MAAI001]Microsoft.Agents.AI.Compaction.ToolResultCompactionStrategy.ToolResultCompactionStrategy(Microsoft.Agents.AI.Compaction.CompactionTrigger! trigger, int minimumPreservedGroups = 16, Microsoft.Agents.AI.Compaction.CompactionTrigger? target = null) -> void
+[MAAI001]Microsoft.Agents.AI.Compaction.TruncationCompactionStrategy
+[MAAI001]Microsoft.Agents.AI.Compaction.TruncationCompactionStrategy.MinimumPreservedGroups.get -> int
+[MAAI001]Microsoft.Agents.AI.Compaction.TruncationCompactionStrategy.TruncationCompactionStrategy(Microsoft.Agents.AI.Compaction.CompactionTrigger! trigger, int minimumPreservedGroups = 32, Microsoft.Agents.AI.Compaction.CompactionTrigger? target = null) -> void
+[MAAI001]Microsoft.Agents.AI.CompletionMarkerLoopEvaluator
+[MAAI001]Microsoft.Agents.AI.CompletionMarkerLoopEvaluator.CompletionMarkerLoopEvaluator(string! completionMarker, Microsoft.Agents.AI.CompletionMarkerLoopEvaluatorOptions? options = null) -> void
+[MAAI001]Microsoft.Agents.AI.CompletionMarkerLoopEvaluatorOptions
+[MAAI001]Microsoft.Agents.AI.CompletionMarkerLoopEvaluatorOptions.CompletionMarkerLoopEvaluatorOptions() -> void
+[MAAI001]Microsoft.Agents.AI.CompletionMarkerLoopEvaluatorOptions.FeedbackMessageTemplate.get -> string?
+[MAAI001]Microsoft.Agents.AI.CompletionMarkerLoopEvaluatorOptions.FeedbackMessageTemplate.set -> void
+[MAAI001]Microsoft.Agents.AI.DelegateLoopEvaluator
+[MAAI001]Microsoft.Agents.AI.DelegateLoopEvaluator.DelegateLoopEvaluator(System.Func<Microsoft.Agents.AI.LoopContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.LoopEvaluation!>>! evaluate) -> void
+[MAAI001]Microsoft.Agents.AI.FileAccessProvider
+[MAAI001]Microsoft.Agents.AI.FileAccessProvider.Dispose() -> void
+[MAAI001]Microsoft.Agents.AI.FileAccessProvider.FileAccessProvider(Microsoft.Agents.AI.AgentFileStore! fileStore, Microsoft.Agents.AI.FileAccessProviderOptions? options = null) -> void
+[MAAI001]Microsoft.Agents.AI.FileAccessProviderOptions
+[MAAI001]Microsoft.Agents.AI.FileAccessProviderOptions.DisableReadOnlyToolApproval.get -> bool
+[MAAI001]Microsoft.Agents.AI.FileAccessProviderOptions.DisableReadOnlyToolApproval.set -> void
+[MAAI001]Microsoft.Agents.AI.FileAccessProviderOptions.DisableWriteToolApproval.get -> bool
+[MAAI001]Microsoft.Agents.AI.FileAccessProviderOptions.DisableWriteToolApproval.set -> void
+[MAAI001]Microsoft.Agents.AI.FileAccessProviderOptions.DisableWriteTools.get -> bool
+[MAAI001]Microsoft.Agents.AI.FileAccessProviderOptions.DisableWriteTools.set -> void
+[MAAI001]Microsoft.Agents.AI.FileAccessProviderOptions.FileAccessProviderOptions() -> void
+[MAAI001]Microsoft.Agents.AI.FileAccessProviderOptions.Instructions.get -> string?
+[MAAI001]Microsoft.Agents.AI.FileAccessProviderOptions.Instructions.set -> void
+[MAAI001]Microsoft.Agents.AI.FileLineEdit
+[MAAI001]Microsoft.Agents.AI.FileLineEdit.FileLineEdit() -> void
+[MAAI001]Microsoft.Agents.AI.FileLineEdit.LineNumber.get -> int
+[MAAI001]Microsoft.Agents.AI.FileLineEdit.LineNumber.set -> void
+[MAAI001]Microsoft.Agents.AI.FileLineEdit.NewLine.get -> string!
+[MAAI001]Microsoft.Agents.AI.FileLineEdit.NewLine.set -> void
+[MAAI001]Microsoft.Agents.AI.FileSearchMatch
+[MAAI001]Microsoft.Agents.AI.FileSearchMatch.FileSearchMatch() -> void
+[MAAI001]Microsoft.Agents.AI.FileSearchMatch.Line.get -> string!
+[MAAI001]Microsoft.Agents.AI.FileSearchMatch.Line.set -> void
+[MAAI001]Microsoft.Agents.AI.FileSearchMatch.LineNumber.get -> int
+[MAAI001]Microsoft.Agents.AI.FileSearchMatch.LineNumber.set -> void
+[MAAI001]Microsoft.Agents.AI.FileSearchResult
+[MAAI001]Microsoft.Agents.AI.FileSearchResult.FileName.get -> string!
+[MAAI001]Microsoft.Agents.AI.FileSearchResult.FileName.set -> void
+[MAAI001]Microsoft.Agents.AI.FileSearchResult.FileSearchResult() -> void
+[MAAI001]Microsoft.Agents.AI.FileSearchResult.MatchingLines.get -> System.Collections.Generic.List<Microsoft.Agents.AI.FileSearchMatch!>!
+[MAAI001]Microsoft.Agents.AI.FileSearchResult.MatchingLines.set -> void
+[MAAI001]Microsoft.Agents.AI.FileSearchResult.Snippet.get -> string!
+[MAAI001]Microsoft.Agents.AI.FileSearchResult.Snippet.set -> void
+[MAAI001]Microsoft.Agents.AI.FileStoreEntry
+[MAAI001]Microsoft.Agents.AI.FileStoreEntry.FileStoreEntry() -> void
+[MAAI001]Microsoft.Agents.AI.FileStoreEntry.FileStoreEntry(string! name, string! type) -> void
+[MAAI001]Microsoft.Agents.AI.FileStoreEntry.Name.get -> string!
+[MAAI001]Microsoft.Agents.AI.FileStoreEntry.Name.set -> void
+[MAAI001]Microsoft.Agents.AI.FileStoreEntry.Type.get -> string!
+[MAAI001]Microsoft.Agents.AI.FileStoreEntry.Type.set -> void
+[MAAI001]Microsoft.Agents.AI.FileSystemAgentFileStore
+[MAAI001]Microsoft.Agents.AI.FileSystemAgentFileStore.FileSystemAgentFileStore(string! rootDirectory) -> void
+[MAAI001]Microsoft.Agents.AI.InMemoryAgentFileStore
+[MAAI001]Microsoft.Agents.AI.InMemoryAgentFileStore.InMemoryAgentFileStore() -> void
+[MAAI001]Microsoft.Agents.AI.LoopAgent
+[MAAI001]Microsoft.Agents.AI.LoopAgent.LoopAgent(Microsoft.Agents.AI.AIAgent! innerAgent, Microsoft.Agents.AI.LoopEvaluator! evaluator, Microsoft.Agents.AI.LoopAgentOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> void
+[MAAI001]Microsoft.Agents.AI.LoopAgent.LoopAgent(Microsoft.Agents.AI.AIAgent! innerAgent, System.Collections.Generic.IEnumerable<Microsoft.Agents.AI.LoopEvaluator!>! evaluators, Microsoft.Agents.AI.LoopAgentOptions? options = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> void
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.ExcludeOnBehalfOfMessages.get -> bool
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.ExcludeOnBehalfOfMessages.set -> void
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.FreshContextPerIteration.get -> bool
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.FreshContextPerIteration.set -> void
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.LoopAgentOptions() -> void
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.MaxIterations.get -> int?
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.MaxIterations.set -> void
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.NonStreamingReturnsLastResponseOnly.get -> bool
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.NonStreamingReturnsLastResponseOnly.set -> void
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.OnBehalfOfAuthorName.get -> string?
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.OnBehalfOfAuthorName.set -> void
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.SessionCreatedCallback.get -> System.Func<Microsoft.Agents.AI.AgentSession!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>?
+[MAAI001]Microsoft.Agents.AI.LoopAgentOptions.SessionCreatedCallback.set -> void
+[MAAI001]Microsoft.Agents.AI.LoopContext
+[MAAI001]Microsoft.Agents.AI.LoopContext.AdditionalProperties.get -> Microsoft.Extensions.AI.AdditionalPropertiesDictionary!
+[MAAI001]Microsoft.Agents.AI.LoopContext.Agent.get -> Microsoft.Agents.AI.AIAgent!
+[MAAI001]Microsoft.Agents.AI.LoopContext.Feedback.get -> System.Collections.Generic.IReadOnlyList<string?>!
+[MAAI001]Microsoft.Agents.AI.LoopContext.InitialMessages.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>!
+[MAAI001]Microsoft.Agents.AI.LoopContext.Iteration.get -> int
+[MAAI001]Microsoft.Agents.AI.LoopContext.LastResponse.get -> Microsoft.Agents.AI.AgentResponse!
+[MAAI001]Microsoft.Agents.AI.LoopContext.LoopContext(Microsoft.Agents.AI.AIAgent! agent, Microsoft.Agents.AI.AgentSession! session, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.ChatMessage!>! initialMessages, Microsoft.Agents.AI.AgentResponse! lastResponse, Microsoft.Agents.AI.AgentRunOptions? runOptions = null) -> void
+[MAAI001]Microsoft.Agents.AI.LoopContext.RunOptions.get -> Microsoft.Agents.AI.AgentRunOptions?
+[MAAI001]Microsoft.Agents.AI.LoopContext.Session.get -> Microsoft.Agents.AI.AgentSession!
+[MAAI001]Microsoft.Agents.AI.LoopEvaluation
+[MAAI001]Microsoft.Agents.AI.LoopEvaluation.Feedback.get -> string?
+[MAAI001]Microsoft.Agents.AI.LoopEvaluation.ShouldReinvoke.get -> bool
+[MAAI001]Microsoft.Agents.AI.LoopEvaluator
+[MAAI001]Microsoft.Agents.AI.LoopEvaluator.LoopEvaluator() -> void
+[MAAI001]Microsoft.Agents.AI.OpenTelemetryAgent.OpenTelemetryAgent(Microsoft.Agents.AI.AIAgent! innerAgent, string? sourceName, bool autoWireChatClient) -> void
+[MAAI001]Microsoft.Agents.AI.RoutePersistingRoutingChatClient
+[MAAI001]Microsoft.Agents.AI.RoutePersistingRoutingChatClient.GetActiveRoute(Microsoft.Agents.AI.AgentSession! session) -> string!
+[MAAI001]Microsoft.Agents.AI.RoutePersistingRoutingChatClient.RoutePersistingRoutingChatClient(System.Collections.Generic.IReadOnlyDictionary<string!, Microsoft.Extensions.AI.IChatClient!>! routes, Microsoft.Agents.AI.RoutePersistingRoutingChatClientOptions? options = null) -> void
+[MAAI001]Microsoft.Agents.AI.RoutePersistingRoutingChatClient.Routes.get -> System.Collections.Generic.IDictionary<string!, Microsoft.Extensions.AI.IChatClient!>!
+[MAAI001]Microsoft.Agents.AI.RoutePersistingRoutingChatClient.SetActiveRoute(Microsoft.Agents.AI.AgentSession! session, string! route) -> void
+[MAAI001]Microsoft.Agents.AI.RoutePersistingRoutingChatClientOptions
+[MAAI001]Microsoft.Agents.AI.RoutePersistingRoutingChatClientOptions.DefaultRoute.get -> string?
+[MAAI001]Microsoft.Agents.AI.RoutePersistingRoutingChatClientOptions.DefaultRoute.set -> void
+[MAAI001]Microsoft.Agents.AI.RoutePersistingRoutingChatClientOptions.OwnsInnerClients.get -> bool
+[MAAI001]Microsoft.Agents.AI.RoutePersistingRoutingChatClientOptions.OwnsInnerClients.set -> void
+[MAAI001]Microsoft.Agents.AI.RoutePersistingRoutingChatClientOptions.RoutePersistingRoutingChatClientOptions() -> void
+[MAAI001]Microsoft.Agents.AI.RoutePersistingRoutingChatClientOptions.StateKey.get -> string?
+[MAAI001]Microsoft.Agents.AI.RoutePersistingRoutingChatClientOptions.StateKey.set -> void
+[MAAI001]Microsoft.Agents.AI.TodoCompletionLoopEvaluator
+[MAAI001]Microsoft.Agents.AI.TodoCompletionLoopEvaluator.TodoCompletionLoopEvaluator(Microsoft.Agents.AI.TodoCompletionLoopEvaluatorOptions? options = null) -> void
+[MAAI001]Microsoft.Agents.AI.TodoCompletionLoopEvaluatorOptions
+[MAAI001]Microsoft.Agents.AI.TodoCompletionLoopEvaluatorOptions.FeedbackMessageTemplate.get -> string?
+[MAAI001]Microsoft.Agents.AI.TodoCompletionLoopEvaluatorOptions.FeedbackMessageTemplate.set -> void
+[MAAI001]Microsoft.Agents.AI.TodoCompletionLoopEvaluatorOptions.Modes.get -> System.Collections.Generic.IEnumerable<string!>?
+[MAAI001]Microsoft.Agents.AI.TodoCompletionLoopEvaluatorOptions.Modes.set -> void
+[MAAI001]Microsoft.Agents.AI.TodoCompletionLoopEvaluatorOptions.TodoCompletionLoopEvaluatorOptions() -> void
+[MAAI001]abstract Microsoft.Agents.AI.AgentFileStore.CreateDirectoryAsync(string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+[MAAI001]abstract Microsoft.Agents.AI.AgentFileStore.DeleteAsync(string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+[MAAI001]abstract Microsoft.Agents.AI.AgentFileStore.FileExistsAsync(string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+[MAAI001]abstract Microsoft.Agents.AI.AgentFileStore.ListChildrenAsync(string! directory, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.FileStoreEntry!>!>!
+[MAAI001]abstract Microsoft.Agents.AI.AgentFileStore.ReadAsync(string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<string?>!
+[MAAI001]abstract Microsoft.Agents.AI.AgentFileStore.SearchAsync(string! directory, string! regexPattern, string? globPattern = null, bool recursive = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.FileSearchResult!>!>!
+[MAAI001]abstract Microsoft.Agents.AI.AgentFileStore.WriteAsync(string! path, string! content, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+[MAAI001]abstract Microsoft.Agents.AI.Compaction.CompactionStrategy.CompactCoreAsync(Microsoft.Agents.AI.Compaction.CompactionMessageIndex! index, Microsoft.Extensions.Logging.ILogger! logger, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool>
+[MAAI001]abstract Microsoft.Agents.AI.LoopEvaluator.EvaluateAsync(Microsoft.Agents.AI.LoopContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.LoopEvaluation!>
+[MAAI001]const Microsoft.Agents.AI.AIJudgeLoopEvaluator.CriteriaPlaceholder = "{criteria}" -> string!
+[MAAI001]const Microsoft.Agents.AI.AIJudgeLoopEvaluator.DefaultFeedbackMessageTemplate = "Your previous response did not fully address the original request. The following is still missing or incomplete: {gap_analysis} Please continue and fully address the original request." -> string!
+[MAAI001]const Microsoft.Agents.AI.AIJudgeLoopEvaluator.DefaultInstructions = "You are an evaluator. You are given a user's original request and an agent's latest response. Decide whether the agent has fully addressed the original request. Set 'answered' to true if the request has been fully addressed, or false if more work is still required. When 'answered' is false, use 'gapAnalysis' to explain what is still missing or what work remains. If you cannot return structured output, reply with VERDICT: DONE when the request has been fully addressed, or VERDICT: MORE when more work is still required.{criteria}" -> string!
+[MAAI001]const Microsoft.Agents.AI.AIJudgeLoopEvaluator.DoneVerdictMarker = "VERDICT: DONE" -> string!
+[MAAI001]const Microsoft.Agents.AI.AIJudgeLoopEvaluator.GapAnalysisPlaceholder = "{gap_analysis}" -> string!
+[MAAI001]const Microsoft.Agents.AI.AIJudgeLoopEvaluator.MoreVerdictMarker = "VERDICT: MORE" -> string!
+[MAAI001]const Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluator.DefaultFeedbackMessageTemplate = "You still have {incomplete_task_count} background task(s) running that must finish before you can complete the work:\n{incomplete_tasks}\n\nWait for these tasks to complete, retrieve their results, and incorporate them. Only stop once every background task has finished." -> string!
+[MAAI001]const Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluator.IncompleteTaskCountPlaceholder = "{incomplete_task_count}" -> string!
+[MAAI001]const Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluator.IncompleteTasksPlaceholder = "{incomplete_tasks}" -> string!
+[MAAI001]const Microsoft.Agents.AI.Compaction.ContextWindowCompactionStrategy.DefaultToolEvictionThreshold = 0.5 -> double
+[MAAI001]const Microsoft.Agents.AI.Compaction.ContextWindowCompactionStrategy.DefaultTruncationThreshold = 0.8 -> double
+[MAAI001]const Microsoft.Agents.AI.Compaction.SlidingWindowCompactionStrategy.DefaultMinimumPreserved = 1 -> int
+[MAAI001]const Microsoft.Agents.AI.Compaction.SummarizationCompactionStrategy.DefaultMinimumPreserved = 8 -> int
+[MAAI001]const Microsoft.Agents.AI.Compaction.SummarizationCompactionStrategy.DefaultSummarizationPrompt = "You are a conversation summarizer. Produce a concise summary of the conversation that preserves:\n\n- Key facts, decisions, and user preferences\n- Important context needed for future turns\n- Tool call outcomes and their significance\n\nOmit pleasantries and redundant exchanges. Be factual and brief." -> string!
+[MAAI001]const Microsoft.Agents.AI.Compaction.ToolResultCompactionStrategy.DefaultMinimumPreserved = 16 -> int
+[MAAI001]const Microsoft.Agents.AI.Compaction.TruncationCompactionStrategy.DefaultMinimumPreserved = 32 -> int
+[MAAI001]const Microsoft.Agents.AI.CompletionMarkerLoopEvaluator.CompletionMarkerPlaceholder = "{completion_marker}" -> string!
+[MAAI001]const Microsoft.Agents.AI.CompletionMarkerLoopEvaluator.DefaultFeedbackMessageTemplate = "Continue working on the request. When you have fully completed the task, end your response with the marker '{completion_marker}' to indicate completion." -> string!
+[MAAI001]const Microsoft.Agents.AI.CompletionMarkerLoopEvaluator.LastResponsePlaceholder = "{last_response}" -> string!
+[MAAI001]const Microsoft.Agents.AI.FileAccessProvider.DeleteFileToolName = "file_access_delete" -> string!
+[MAAI001]const Microsoft.Agents.AI.FileAccessProvider.GrepToolName = "file_access_grep" -> string!
+[MAAI001]const Microsoft.Agents.AI.FileAccessProvider.LsToolName = "file_access_ls" -> string!
+[MAAI001]const Microsoft.Agents.AI.FileAccessProvider.ReadFileToolName = "file_access_read" -> string!
+[MAAI001]const Microsoft.Agents.AI.FileAccessProvider.ReplaceLinesToolName = "file_access_replace_lines" -> string!
+[MAAI001]const Microsoft.Agents.AI.FileAccessProvider.ReplaceToolName = "file_access_replace" -> string!
+[MAAI001]const Microsoft.Agents.AI.FileAccessProvider.WriteToolName = "file_access_write" -> string!
+[MAAI001]const Microsoft.Agents.AI.FileStoreEntry.Directory = "directory" -> string!
+[MAAI001]const Microsoft.Agents.AI.FileStoreEntry.File = "file" -> string!
+[MAAI001]const Microsoft.Agents.AI.LoopAgent.DefaultMaxIterations = 10 -> int
+[MAAI001]const Microsoft.Agents.AI.TodoCompletionLoopEvaluator.DefaultFeedbackMessageTemplate = "You still have incomplete todo items. Continue working until every item is complete, marking each item as complete when finished. The following items are still open:\n{remaining_todos}" -> string!
+[MAAI001]const Microsoft.Agents.AI.TodoCompletionLoopEvaluator.RemainingTodosPlaceholder = "{remaining_todos}" -> string!
+[MAAI001]override Microsoft.Agents.AI.AIJudgeLoopEvaluator.EvaluateAsync(Microsoft.Agents.AI.LoopContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.LoopEvaluation!>
+[MAAI001]override Microsoft.Agents.AI.BackgroundAgentsProvider.StateKeys.get -> System.Collections.Generic.IReadOnlyList<string!>!
+[MAAI001]override Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluator.EvaluateAsync(Microsoft.Agents.AI.LoopContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.LoopEvaluation!>
+[MAAI001]override Microsoft.Agents.AI.Compaction.CompactionProvider.StateKeys.get -> System.Collections.Generic.IReadOnlyList<string!>!
+[MAAI001]override Microsoft.Agents.AI.CompletionMarkerLoopEvaluator.EvaluateAsync(Microsoft.Agents.AI.LoopContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.LoopEvaluation!>
+[MAAI001]override Microsoft.Agents.AI.DelegateLoopEvaluator.EvaluateAsync(Microsoft.Agents.AI.LoopContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.LoopEvaluation!>
+[MAAI001]override Microsoft.Agents.AI.FileAccessProvider.StateKeys.get -> System.Collections.Generic.IReadOnlyList<string!>!
+[MAAI001]override Microsoft.Agents.AI.FileSystemAgentFileStore.CreateDirectoryAsync(string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+[MAAI001]override Microsoft.Agents.AI.FileSystemAgentFileStore.DeleteAsync(string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+[MAAI001]override Microsoft.Agents.AI.FileSystemAgentFileStore.FileExistsAsync(string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+[MAAI001]override Microsoft.Agents.AI.FileSystemAgentFileStore.ListChildrenAsync(string! directory, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.FileStoreEntry!>!>!
+[MAAI001]override Microsoft.Agents.AI.FileSystemAgentFileStore.ReadAsync(string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<string?>!
+[MAAI001]override Microsoft.Agents.AI.FileSystemAgentFileStore.SearchAsync(string! directory, string! regexPattern, string? globPattern = null, bool recursive = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.FileSearchResult!>!>!
+[MAAI001]override Microsoft.Agents.AI.FileSystemAgentFileStore.WriteAsync(string! path, string! content, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+[MAAI001]override Microsoft.Agents.AI.InMemoryAgentFileStore.CreateDirectoryAsync(string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+[MAAI001]override Microsoft.Agents.AI.InMemoryAgentFileStore.DeleteAsync(string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+[MAAI001]override Microsoft.Agents.AI.InMemoryAgentFileStore.FileExistsAsync(string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+[MAAI001]override Microsoft.Agents.AI.InMemoryAgentFileStore.ListChildrenAsync(string! directory, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.FileStoreEntry!>!>!
+[MAAI001]override Microsoft.Agents.AI.InMemoryAgentFileStore.ReadAsync(string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<string?>!
+[MAAI001]override Microsoft.Agents.AI.InMemoryAgentFileStore.SearchAsync(string! directory, string! regexPattern, string? globPattern = null, bool recursive = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.FileSearchResult!>!>!
+[MAAI001]override Microsoft.Agents.AI.InMemoryAgentFileStore.WriteAsync(string! path, string! content, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+[MAAI001]override Microsoft.Agents.AI.RoutePersistingRoutingChatClient.GetService(System.Type! serviceType, object? serviceKey = null) -> object?
+[MAAI001]override Microsoft.Agents.AI.TodoCompletionLoopEvaluator.EvaluateAsync(Microsoft.Agents.AI.LoopContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.LoopEvaluation!>
+[MAAI001]static Microsoft.Agents.AI.Compaction.ChatStrategyExtensions.AsChatReducer(this Microsoft.Agents.AI.Compaction.CompactionStrategy! strategy) -> Microsoft.Extensions.AI.IChatReducer!
+[MAAI001]static Microsoft.Agents.AI.Compaction.CompactionProvider.CompactAsync(Microsoft.Agents.AI.Compaction.CompactionStrategy! compactionStrategy, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Extensions.Logging.ILogger? logger = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>!
+[MAAI001]static Microsoft.Agents.AI.Compaction.CompactionStrategy.EnsureNonNegative(int value) -> int
+[MAAI001]static Microsoft.Agents.AI.Compaction.CompactionTriggers.All(params Microsoft.Agents.AI.Compaction.CompactionTrigger![]! triggers) -> Microsoft.Agents.AI.Compaction.CompactionTrigger!
+[MAAI001]static Microsoft.Agents.AI.Compaction.CompactionTriggers.Any(params Microsoft.Agents.AI.Compaction.CompactionTrigger![]! triggers) -> Microsoft.Agents.AI.Compaction.CompactionTrigger!
+[MAAI001]static Microsoft.Agents.AI.Compaction.CompactionTriggers.GroupsExceed(int maxGroups) -> Microsoft.Agents.AI.Compaction.CompactionTrigger!
+[MAAI001]static Microsoft.Agents.AI.Compaction.CompactionTriggers.HasToolCalls() -> Microsoft.Agents.AI.Compaction.CompactionTrigger!
+[MAAI001]static Microsoft.Agents.AI.Compaction.CompactionTriggers.MessagesExceed(int maxMessages) -> Microsoft.Agents.AI.Compaction.CompactionTrigger!
+[MAAI001]static Microsoft.Agents.AI.Compaction.CompactionTriggers.TokensBelow(int maxTokens) -> Microsoft.Agents.AI.Compaction.CompactionTrigger!
+[MAAI001]static Microsoft.Agents.AI.Compaction.CompactionTriggers.TokensExceed(int maxTokens) -> Microsoft.Agents.AI.Compaction.CompactionTrigger!
+[MAAI001]static Microsoft.Agents.AI.Compaction.CompactionTriggers.TurnsExceed(int maxTurns) -> Microsoft.Agents.AI.Compaction.CompactionTrigger!
+[MAAI001]static Microsoft.Agents.AI.Compaction.ToolResultCompactionStrategy.DefaultToolCallFormatter(Microsoft.Agents.AI.Compaction.CompactionMessageGroup! group) -> string!
+[MAAI001]static Microsoft.Agents.AI.FileAccessProvider.AllToolsAutoApprovalRule.get -> System.Func<Microsoft.Agents.AI.ToolAutoApprovalRuleContext!, System.Threading.Tasks.ValueTask<bool>>!
+[MAAI001]static Microsoft.Agents.AI.FileAccessProvider.ReadOnlyToolsAutoApprovalRule.get -> System.Func<Microsoft.Agents.AI.ToolAutoApprovalRuleContext!, System.Threading.Tasks.ValueTask<bool>>!
+[MAAI001]static Microsoft.Agents.AI.LoopEvaluation.Continue(string? feedback = null) -> Microsoft.Agents.AI.LoopEvaluation!
+[MAAI001]static Microsoft.Agents.AI.LoopEvaluation.ContinueWithMessages(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages) -> Microsoft.Agents.AI.LoopEvaluation!
+[MAAI001]static Microsoft.Agents.AI.LoopEvaluation.Stop() -> Microsoft.Agents.AI.LoopEvaluation!
+[MAAI001]static Microsoft.Extensions.AI.ChatClientBuilderExtensions.UseInvocableFunctionBypassing(this Microsoft.Extensions.AI.ChatClientBuilder! builder, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> Microsoft.Extensions.AI.ChatClientBuilder!
+[MAAI001]static readonly Microsoft.Agents.AI.Compaction.CompactionMessageGroup.SummaryPropertyKey -> string!
+[MAAI001]static readonly Microsoft.Agents.AI.Compaction.CompactionTriggers.Always -> Microsoft.Agents.AI.Compaction.CompactionTrigger!
+[MAAI001]static readonly Microsoft.Agents.AI.Compaction.CompactionTriggers.Never -> Microsoft.Agents.AI.Compaction.CompactionTrigger!
+[MAAI001]virtual Microsoft.Agents.AI.Compaction.CompactionTrigger.Invoke(Microsoft.Agents.AI.Compaction.CompactionMessageIndex! index) -> bool
+abstract Microsoft.Agents.AI.AgentClassSkill<TSelf>.Instructions.get -> string!
+abstract Microsoft.Agents.AI.AgentSkill.Frontmatter.get -> Microsoft.Agents.AI.AgentSkillFrontmatter!
+abstract Microsoft.Agents.AI.AgentSkill.GetContentAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string!>
+abstract Microsoft.Agents.AI.AgentSkillResource.ReadAsync(System.IServiceProvider? serviceProvider = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<object?>!
+abstract Microsoft.Agents.AI.AgentSkillScript.RunAsync(Microsoft.Agents.AI.AgentSkill! skill, System.Text.Json.JsonElement? arguments, System.IServiceProvider? serviceProvider, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<object?>!
+abstract Microsoft.Agents.AI.AgentSkillsSource.GetSkillsAsync(Microsoft.Agents.AI.AgentSkillsSourceContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IList<Microsoft.Agents.AI.AgentSkill!>!>!
+const Microsoft.Agents.AI.AgentSkillsProvider.LoadSkillToolName = "load_skill" -> string!
+const Microsoft.Agents.AI.AgentSkillsProvider.ReadSkillResourceToolName = "read_skill_resource" -> string!
+const Microsoft.Agents.AI.AgentSkillsProvider.RunSkillScriptToolName = "run_skill_script" -> string!
+const Microsoft.Agents.AI.FileMemoryProvider.DeleteFileToolName = "file_memory_delete" -> string!
+const Microsoft.Agents.AI.FileMemoryProvider.GrepToolName = "file_memory_grep" -> string!
+const Microsoft.Agents.AI.FileMemoryProvider.LsToolName = "file_memory_ls" -> string!
+const Microsoft.Agents.AI.FileMemoryProvider.ReadFileToolName = "file_memory_read" -> string!
+const Microsoft.Agents.AI.FileMemoryProvider.ReplaceLinesToolName = "file_memory_replace_lines" -> string!
+const Microsoft.Agents.AI.FileMemoryProvider.ReplaceToolName = "file_memory_replace" -> string!
+const Microsoft.Agents.AI.FileMemoryProvider.WriteToolName = "file_memory_write" -> string!
+const Microsoft.Agents.AI.ToolApprovalAgent.DefaultMaxAutoApprovalIterations = 40 -> int
+override Microsoft.Agents.AI.AgentClassSkill<TSelf>.GetContentAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string!>
+override Microsoft.Agents.AI.AgentFileSkill.Frontmatter.get -> Microsoft.Agents.AI.AgentSkillFrontmatter!
+override Microsoft.Agents.AI.AgentFileSkill.GetContentAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string!>
+override Microsoft.Agents.AI.AgentFileSkill.GetResourceAsync(string! name, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSkillResource?>
+override Microsoft.Agents.AI.AgentFileSkill.GetScriptAsync(string! name, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSkillScript?>
+override Microsoft.Agents.AI.AgentFileSkillScript.ParametersSchema.get -> System.Text.Json.JsonElement?
+override Microsoft.Agents.AI.AgentFileSkillScript.RunAsync(Microsoft.Agents.AI.AgentSkill! skill, System.Text.Json.JsonElement? arguments, System.IServiceProvider? serviceProvider, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<object?>!
+override Microsoft.Agents.AI.AgentFileSkillsSource.GetSkillsAsync(Microsoft.Agents.AI.AgentSkillsSourceContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IList<Microsoft.Agents.AI.AgentSkill!>!>!
+override Microsoft.Agents.AI.AgentInMemorySkillsSource.GetSkillsAsync(Microsoft.Agents.AI.AgentSkillsSourceContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IList<Microsoft.Agents.AI.AgentSkill!>!>!
+override Microsoft.Agents.AI.AgentInlineSkill.Frontmatter.get -> Microsoft.Agents.AI.AgentSkillFrontmatter!
+override Microsoft.Agents.AI.AgentInlineSkill.GetContentAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<string!>
+override Microsoft.Agents.AI.AgentInlineSkill.GetResourceAsync(string! name, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSkillResource?>
+override Microsoft.Agents.AI.AgentInlineSkill.GetScriptAsync(string! name, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSkillScript?>
+override Microsoft.Agents.AI.AgentModeProvider.StateKeys.get -> System.Collections.Generic.IReadOnlyList<string!>!
+override Microsoft.Agents.AI.AggregatingAgentSkillsSource.GetSkillsAsync(Microsoft.Agents.AI.AgentSkillsSourceContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IList<Microsoft.Agents.AI.AgentSkill!>!>!
+override Microsoft.Agents.AI.CachingAgentSkillsSource.GetSkillsAsync(Microsoft.Agents.AI.AgentSkillsSourceContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IList<Microsoft.Agents.AI.AgentSkill!>!>!
+override Microsoft.Agents.AI.ChatClientAgent.Description.get -> string?
+override Microsoft.Agents.AI.ChatClientAgent.GetService(System.Type! serviceType, object? serviceKey = null) -> object?
+override Microsoft.Agents.AI.ChatClientAgent.Name.get -> string?
+override Microsoft.Agents.AI.ChatClientAgentRunOptions.Clone() -> Microsoft.Agents.AI.AgentRunOptions!
+override Microsoft.Agents.AI.ChatHistoryMemoryProvider.StateKeys.get -> System.Collections.Generic.IReadOnlyList<string!>!
+override Microsoft.Agents.AI.DeduplicatingAgentSkillsSource.GetSkillsAsync(Microsoft.Agents.AI.AgentSkillsSourceContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IList<Microsoft.Agents.AI.AgentSkill!>!>!
+override Microsoft.Agents.AI.DelegatingAgentSkillsSource.Dispose(bool disposing) -> void
+override Microsoft.Agents.AI.DelegatingAgentSkillsSource.GetSkillsAsync(Microsoft.Agents.AI.AgentSkillsSourceContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IList<Microsoft.Agents.AI.AgentSkill!>!>!
+override Microsoft.Agents.AI.FileMemoryProvider.StateKeys.get -> System.Collections.Generic.IReadOnlyList<string!>!
+override Microsoft.Agents.AI.FilteringAgentSkillsSource.GetSkillsAsync(Microsoft.Agents.AI.AgentSkillsSourceContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IList<Microsoft.Agents.AI.AgentSkill!>!>!
+override Microsoft.Agents.AI.MessageInjectingChatClient.GetResponseAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Extensions.AI.ChatOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Extensions.AI.ChatResponse!>!
+override Microsoft.Agents.AI.MessageInjectingChatClient.GetStreamingResponseAsync(System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Extensions.AI.ChatOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Microsoft.Extensions.AI.ChatResponseUpdate!>!
+override Microsoft.Agents.AI.TextSearchProvider.StateKeys.get -> System.Collections.Generic.IReadOnlyList<string!>!
+override Microsoft.Agents.AI.TodoProvider.StateKeys.get -> System.Collections.Generic.IReadOnlyList<string!>!
+override sealed Microsoft.Agents.AI.AgentClassSkill<TSelf>.GetResourceAsync(string! name, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSkillResource?>
+override sealed Microsoft.Agents.AI.AgentClassSkill<TSelf>.GetScriptAsync(string! name, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSkillScript?>
+static Microsoft.Agents.AI.AIAgentExtensions.AsAIFunction(this Microsoft.Agents.AI.AIAgent! agent, Microsoft.Extensions.AI.AIFunctionFactoryOptions? options = null, Microsoft.Agents.AI.AgentSession? session = null) -> Microsoft.Extensions.AI.AIFunction!
+static Microsoft.Agents.AI.AIAgentExtensions.AsBuilder(this Microsoft.Agents.AI.AIAgent! innerAgent) -> Microsoft.Agents.AI.AIAgentBuilder!
+static Microsoft.Agents.AI.AgentSkillFrontmatter.ValidateCompatibility(string? compatibility, out string? reason) -> bool
+static Microsoft.Agents.AI.AgentSkillFrontmatter.ValidateDescription(string? description, out string? reason) -> bool
+static Microsoft.Agents.AI.AgentSkillFrontmatter.ValidateName(string? name, out string? reason) -> bool
+static Microsoft.Agents.AI.AgentSkillsProvider.AllToolsAutoApprovalRule.get -> System.Func<Microsoft.Agents.AI.ToolAutoApprovalRuleContext!, System.Threading.Tasks.ValueTask<bool>>!
+static Microsoft.Agents.AI.AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule.get -> System.Func<Microsoft.Agents.AI.ToolAutoApprovalRuleContext!, System.Threading.Tasks.ValueTask<bool>>!
+static Microsoft.Agents.AI.FunctionInvocationDelegatingAgentBuilderExtensions.Use(this Microsoft.Agents.AI.AIAgentBuilder! builder, System.Func<Microsoft.Agents.AI.AIAgent!, Microsoft.Extensions.AI.FunctionInvocationContext!, System.Func<Microsoft.Extensions.AI.FunctionInvocationContext!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<object?>>!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<object?>>! callback) -> Microsoft.Agents.AI.AIAgentBuilder!
+static Microsoft.Agents.AI.LoggingAgentBuilderExtensions.UseLogging(this Microsoft.Agents.AI.AIAgentBuilder! builder, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, System.Action<Microsoft.Agents.AI.LoggingAgent!>? configure = null) -> Microsoft.Agents.AI.AIAgentBuilder!
+static Microsoft.Agents.AI.OpenTelemetryAgentBuilderExtensions.UseOpenTelemetry(this Microsoft.Agents.AI.AIAgentBuilder! builder, string? sourceName = null, System.Action<Microsoft.Agents.AI.OpenTelemetryAgent!>? configure = null) -> Microsoft.Agents.AI.AIAgentBuilder!
+static Microsoft.Agents.AI.ToolApprovalAgent.AllToolsAutoApprovalRule.get -> System.Func<Microsoft.Agents.AI.ToolAutoApprovalRuleContext!, System.Threading.Tasks.ValueTask<bool>>!
+static Microsoft.Agents.AI.ToolApprovalAgentBuilderExtensions.UseToolApproval(this Microsoft.Agents.AI.AIAgentBuilder! builder, Microsoft.Agents.AI.ToolApprovalAgentOptions? options = null) -> Microsoft.Agents.AI.AIAgentBuilder!
+static Microsoft.Agents.AI.ToolApprovalRequestContentExtensions.CreateAlwaysApproveToolResponse(this Microsoft.Extensions.AI.ToolApprovalRequestContent! request, string? reason = null) -> Microsoft.Agents.AI.AlwaysApproveToolApprovalResponseContent!
+static Microsoft.Agents.AI.ToolApprovalRequestContentExtensions.CreateAlwaysApproveToolWithArgumentsResponse(this Microsoft.Extensions.AI.ToolApprovalRequestContent! request, string? reason = null) -> Microsoft.Agents.AI.AlwaysApproveToolApprovalResponseContent!
+static Microsoft.Extensions.AI.AIContextProviderChatClientBuilderExtensions.UseAIContextProviders(this Microsoft.Extensions.AI.ChatClientBuilder! builder, params Microsoft.Agents.AI.AIContextProvider![]! providers) -> Microsoft.Extensions.AI.ChatClientBuilder!
+static Microsoft.Extensions.AI.ChatClientBuilderExtensions.BuildAIAgent(this Microsoft.Extensions.AI.ChatClientBuilder! builder, Microsoft.Agents.AI.ChatClientAgentOptions? options, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, System.IServiceProvider? services = null) -> Microsoft.Agents.AI.ChatClientAgent!
+static Microsoft.Extensions.AI.ChatClientBuilderExtensions.BuildAIAgent(this Microsoft.Extensions.AI.ChatClientBuilder! builder, string? instructions = null, string? name = null, string? description = null, System.Collections.Generic.IList<Microsoft.Extensions.AI.AITool!>? tools = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, System.IServiceProvider? services = null) -> Microsoft.Agents.AI.ChatClientAgent!
+static Microsoft.Extensions.AI.ChatClientBuilderExtensions.UseApprovalNotRequiredFunctionBypassing(this Microsoft.Extensions.AI.ChatClientBuilder! builder, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> Microsoft.Extensions.AI.ChatClientBuilder!
+static Microsoft.Extensions.AI.ChatClientBuilderExtensions.UseApprovalResponseBinding(this Microsoft.Extensions.AI.ChatClientBuilder! builder, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null) -> Microsoft.Extensions.AI.ChatClientBuilder!
+static Microsoft.Extensions.AI.ChatClientBuilderExtensions.UseMessageInjection(this Microsoft.Extensions.AI.ChatClientBuilder! builder) -> Microsoft.Extensions.AI.ChatClientBuilder!
+static Microsoft.Extensions.AI.ChatClientBuilderExtensions.UsePerServiceCallChatHistoryPersistence(this Microsoft.Extensions.AI.ChatClientBuilder! builder) -> Microsoft.Extensions.AI.ChatClientBuilder!
+static Microsoft.Extensions.AI.ChatClientExtensions.AsAIAgent(this Microsoft.Extensions.AI.IChatClient! chatClient, Microsoft.Agents.AI.ChatClientAgentOptions? options, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, System.IServiceProvider? services = null) -> Microsoft.Agents.AI.ChatClientAgent!
+static Microsoft.Extensions.AI.ChatClientExtensions.AsAIAgent(this Microsoft.Extensions.AI.IChatClient! chatClient, string? instructions = null, string? name = null, string? description = null, System.Collections.Generic.IList<Microsoft.Extensions.AI.AITool!>? tools = null, Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory = null, System.IServiceProvider? services = null) -> Microsoft.Agents.AI.ChatClientAgent!
+virtual Microsoft.Agents.AI.AgentClassSkill<TSelf>.Resources.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.AgentSkillResource!>?
+virtual Microsoft.Agents.AI.AgentClassSkill<TSelf>.Scripts.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.AgentSkillScript!>?
+virtual Microsoft.Agents.AI.AgentClassSkill<TSelf>.SerializerOptions.get -> System.Text.Json.JsonSerializerOptions?
+virtual Microsoft.Agents.AI.AgentFileSkillScriptRunner.Invoke(Microsoft.Agents.AI.AgentFileSkill! skill, Microsoft.Agents.AI.AgentFileSkillScript! script, System.Text.Json.JsonElement? arguments, System.IServiceProvider? serviceProvider, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<object?>!
+virtual Microsoft.Agents.AI.AgentSkill.GetResourceAsync(string! name, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSkillResource?>
+virtual Microsoft.Agents.AI.AgentSkill.GetScriptAsync(string! name, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.AgentSkillScript?>
+virtual Microsoft.Agents.AI.AgentSkillScript.ParametersSchema.get -> System.Text.Json.JsonElement?
+virtual Microsoft.Agents.AI.AgentSkillsSource.Dispose(bool disposing) -> void

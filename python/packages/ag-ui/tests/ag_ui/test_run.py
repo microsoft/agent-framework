@@ -2,7 +2,7 @@
 
 """Tests for _agent_run.py helper functions and FlowState."""
 
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from ag_ui.core import (
@@ -990,6 +990,71 @@ def test_emit_approval_request_populates_interrupt_metadata():
     }
 
 
+def test_emit_local_approval_request_prefers_function_call_occurrence_id() -> None:
+    """Local approval interrupts use occurrence identity without rewriting tool correlation."""
+    flow = FlowState(message_id="msg-1")
+    function_call = Content.from_function_call(
+        call_id="call_123",
+        name="write_doc",
+        arguments={"content": "x"},
+        id="af-call-occurrence",
+    )
+    with pytest.warns(FutureWarning, match="id differs from function_call.id.*legacy"):
+        approval_content = Content.from_function_approval_request(id="call_123", function_call=function_call)
+
+    events = _emit_approval_request(approval_content, flow)
+
+    custom_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert custom_event.value["id"] == "af-call-occurrence"
+    assert flow.interrupts[0]["id"] == "af-call-occurrence"
+    assert flow.interrupts[0]["toolCallId"] == "call_123"
+
+
+def test_emit_approval_request_normalizes_empty_server_label_for_identity() -> None:
+    """Client events and lifecycle registration treat an empty server label as local."""
+    flow = FlowState(message_id="msg-1")
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="write_doc",
+        arguments={"content": "x"},
+        id="af-call-occurrence",
+        additional_properties={"server_label": ""},
+    )
+    approval_content = Content.from_function_approval_request(
+        id="provider-approval-request",
+        function_call=function_call,
+    )
+
+    events = _emit_approval_request(approval_content, flow)
+
+    custom_event = next(event for event in events if getattr(event, "name", None) == "function_approval_request")
+    assert custom_event.value["id"] == "af-call-occurrence"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert flow.interrupts[0]["id"] == "af-call-occurrence"
+
+
+def test_emit_hosted_approval_request_preserves_provider_request_id() -> None:
+    """Hosted approval interrupts retain the provider protocol request identity."""
+    flow = FlowState(message_id="msg-1")
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="hosted_search",
+        arguments={"query": "x"},
+        id="af-call-occurrence",
+        additional_properties={"server_label": "provider"},
+    )
+    approval_content = Content.from_function_approval_request(
+        id="provider-approval-request",
+        function_call=function_call,
+    )
+
+    events = _emit_approval_request(approval_content, flow)
+
+    custom_event = next(event for event in events if isinstance(event, CustomEvent))
+    assert custom_event.value["id"] == "provider-approval-request"
+    assert flow.interrupts[0]["id"] == "provider-approval-request"
+    assert flow.interrupts[0]["toolCallId"] == "provider-call"
+
+
 def test_emit_approval_request_reuses_confirmation_message_id_in_snapshot():
     """Confirmation tool events and snapshots share the same message ID."""
     flow = FlowState()
@@ -1821,6 +1886,44 @@ async def test_run_agent_stream_accumulates_multiple_confirm_interrupts():
     # Verify both tool calls are represented in interrupt metadata
     interrupt_tool_names = {i["metadata"]["agent_framework"]["value"]["function_call"]["name"] for i in interrupt}
     assert interrupt_tool_names == {"generate_tasks", "generate_notes"}
+
+
+async def test_run_agent_stream_suppresses_messages_snapshot_if_configured():
+    """When emit_messages_snapshot=False, no terminal MessagesSnapshotEvent is yielded."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    updates = [
+        AgentResponseUpdate(contents=[Content.from_text("Hello")], role="assistant"),
+    ]
+
+    stub = StubAgent(updates=updates)
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        emit_messages_snapshot=False,
+    )
+
+    payload = {
+        "thread_id": "thread-1",
+        "run_id": "run-1",
+        "messages": [{"role": "user", "content": "Hi"}],
+    }
+
+    events = [event async for event in agent.run(payload)]
+
+    # We should have TextMessageStart/Delta/End, but no MessagesSnapshot
+    snapshot_events = [e for e in events if getattr(e, "type", None) == "MESSAGES_SNAPSHOT"]
+    assert len(snapshot_events) == 0, "MessagesSnapshotEvent should be suppressed"
+
+    # Still finishes normally
+    finished_events = [
+        e
+        for e in events
+        if getattr(e, "type", None) == "RUN_FINISHED"
+        or getattr(getattr(e, "type", None), "value", None) == "RUN_FINISHED"
+    ]
+    assert len(finished_events) == 1
 
 
 def test_emit_oauth_consent_request():
@@ -2658,3 +2761,72 @@ async def test_provider_owned_service_session_requires_snapshot_persistence():
                 }
             )
         ]
+
+
+async def test_service_session_rejects_disabled_provider_storage():
+    """Service-session continuation cannot work when provider storage is disabled."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    agent = AgentFrameworkAgent(
+        agent=StubAgent(default_options={"store": False}),
+        use_service_session=True,
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+    )
+
+    with pytest.raises(ValueError, match="requires provider storage"):
+        _ = [
+            event
+            async for event in agent.run(
+                {
+                    "thread_id": "frontend-thread",
+                    "run_id": "run-store-false",
+                    "__ag_ui_snapshot_scope": "test",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                }
+            )
+        ]
+
+
+async def test_stateless_snapshot_excludes_only_provider_service_session_state():
+    """Stateless runs restore unrelated private state but not provider-owned continuation."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    setattr(stub, "service_session_state_keys", frozenset({"provider_continuation"}))
+    observed_state: list[dict[str, Any]] = []
+    original_run = stub.run
+
+    def capture_state(*args: Any, **kwargs: Any) -> Any:
+        session = kwargs["session"]
+        observed_state.append(dict(session.state))
+        session.state["provider_continuation"] = "provider-session"
+        session.state["private"] = "preserved"
+        return original_run(*args, **kwargs)
+
+    stub.run = capture_state  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkAgent(agent=stub, snapshot_store=store)
+    payload = {
+        "thread_id": "frontend-thread",
+        "__ag_ui_snapshot_scope": "test",
+        "messages": [{"role": "user", "content": "Hello"}],
+        "state": {
+            "provider_continuation": "client-injected",
+            "client_value": "available",
+        },
+    }
+
+    _ = [event async for event in agent.run(payload)]
+    first_snapshot = await store.get(scope="test", thread_id="frontend-thread")
+    assert first_snapshot is not None
+    _ = [event async for event in agent.run(payload)]
+
+    assert first_snapshot.session_state == {"private": "preserved"}
+    assert observed_state == [
+        {"client_value": "available"},
+        {"private": "preserved", "client_value": "available"},
+    ]

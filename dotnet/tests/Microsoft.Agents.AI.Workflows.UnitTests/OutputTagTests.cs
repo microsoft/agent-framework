@@ -3,7 +3,6 @@
 using System.Collections.Generic;
 using System.Reflection;
 using System.Text.Json;
-using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -12,30 +11,30 @@ public class OutputTagTests
     [Fact]
     public void Test_OutputTag_KnownValues()
     {
-        OutputTag.Intermediate.Value.Should().Be("intermediate");
+        Assert.Equal("intermediate", OutputTag.Intermediate.Value);
     }
 
     [Fact]
     public void Test_OutputTag_EqualityIsOrdinalOnValue()
     {
-        OutputTag.Intermediate.Should().Be(OutputTag.Intermediate);
-        (OutputTag.Intermediate == OutputTag.Intermediate).Should().BeTrue();
+        Assert.Equal(OutputTag.Intermediate, OutputTag.Intermediate);
+        Assert.True(OutputTag.Intermediate == OutputTag.Intermediate);
 
         // Same Value via independent construction (via JSON round-trip below) is equal.
         OutputTag rebuilt = JsonSerializer.Deserialize<OutputTag>("\"intermediate\"", WorkflowsJsonUtilities.DefaultOptions);
-        rebuilt.Should().Be(OutputTag.Intermediate);
+        Assert.Equal(OutputTag.Intermediate, rebuilt);
     }
 
     [Fact]
     public void Test_OutputTag_DefaultStructValueIsDistinct()
     {
         OutputTag def = default;
-        def.Value.Should().BeNull();
-        def.Should().NotBe(OutputTag.Intermediate);
-        def.GetHashCode().Should().Be(0);
+        Assert.Null(def.Value);
+        Assert.NotEqual(OutputTag.Intermediate, def);
+        Assert.Equal(0, def.GetHashCode());
 
         HashSet<OutputTag> set = [OutputTag.Intermediate];
-        set.Contains(def).Should().BeFalse("default(OutputTag) must not collide with the well-known singleton in a HashSet");
+        Assert.DoesNotContain(def, set);
     }
 
     [Fact]
@@ -44,21 +43,21 @@ public class OutputTagTests
         OutputTag a = OutputTag.Intermediate;
         OutputTag b = JsonSerializer.Deserialize<OutputTag>("\"intermediate\"", WorkflowsJsonUtilities.DefaultOptions);
 
-        a.Equals(b).Should().BeTrue();
-        a.GetHashCode().Should().Be(b.GetHashCode());
+        Assert.True(a.Equals(b));
+        Assert.Equal(b.GetHashCode(), a.GetHashCode());
     }
 
     [Fact]
     public void Test_OutputTag_JsonConverter_RoundtripsValueAsString()
     {
         string intermediateJson = JsonSerializer.Serialize(OutputTag.Intermediate, WorkflowsJsonUtilities.DefaultOptions);
-        intermediateJson.Should().Be("\"intermediate\"");
+        Assert.Equal("\"intermediate\"", intermediateJson);
 
         OutputTag back = JsonSerializer.Deserialize<OutputTag>("\"intermediate\"", WorkflowsJsonUtilities.DefaultOptions);
-        back.Should().Be(OutputTag.Intermediate);
+        Assert.Equal(OutputTag.Intermediate, back);
 
         OutputTag fromUnknown = JsonSerializer.Deserialize<OutputTag>("\"custom\"", WorkflowsJsonUtilities.DefaultOptions);
-        fromUnknown.Value.Should().Be("custom");
+        Assert.Equal("custom", fromUnknown.Value);
     }
 
     [Fact]
@@ -70,8 +69,8 @@ public class OutputTagTests
             types: [typeof(string)],
             modifiers: null);
 
-        ctor.Should().NotBeNull("OutputTag(string) must exist as an internal constructor");
-        ctor!.IsAssembly.Should().BeTrue("OutputTag(string) must be `internal` so external assemblies cannot synthesize tags");
-        ctor.IsPublic.Should().BeFalse();
+        Assert.NotNull(ctor);
+        Assert.True(ctor!.IsAssembly);
+        Assert.False(ctor.IsPublic);
     }
 }

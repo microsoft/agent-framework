@@ -17,7 +17,7 @@ namespace Microsoft.Agents.AI.Foundry;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Registered once per <see cref="OpenAIRequestPolicies"/> instance via the new MEAI 10.5.1
+/// Registered once per <see cref="OpenAIRequestPolicies"/> instance via the MEAI 10.9.0
 /// extension hook. Headers are written using <see cref="PipelineRequestHeaders.Set(string, string)"/>
 /// so per-call values overwrite anything stamped earlier in the pipeline (for example by static
 /// pipeline policies registered on the underlying client). This also makes accidental double
@@ -61,7 +61,7 @@ internal sealed class ClientHeadersPolicy : PipelinePolicy
 }
 
 /// <summary>
-/// Best-effort reflection helpers for <see cref="OpenAIRequestPolicies"/>. MEAI 10.5.1 does not
+/// Best-effort reflection helpers for <see cref="OpenAIRequestPolicies"/>. MEAI 10.9.0 does not
 /// publicly expose its registered-policies list, so we reach into the private <c>_entries</c>
 /// field to detect duplicate registrations of <see cref="ClientHeadersPolicy.Instance"/>.
 /// </summary>

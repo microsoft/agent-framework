@@ -8,6 +8,7 @@ using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using OpenAI.Conversations;
 
 string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
@@ -24,9 +25,9 @@ ProjectConversationsClient conversationsClient = aiProjectClient
             .GetProjectOpenAIClient()
             .GetProjectConversationsClient();
 
-ProjectConversation conversation = (await conversationsClient.CreateProjectConversationAsync().ConfigureAwait(false)).Value;
+ConversationResource conversation = (await conversationsClient.CreateProjectConversationAsync().ConfigureAwait(false)).Value;
 
-// CreateConversationSessionAsync creates a server-side ProjectConversation
+// CreateConversationSessionAsync creates a server-side ConversationResource
 // that persists on the Foundry service and is visible in the Foundry Project UI.
 AgentSession session = await agent.CreateSessionAsync(conversation.Id);
 
