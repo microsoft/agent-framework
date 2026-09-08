@@ -110,12 +110,17 @@ def _decode_json_state(content: Content) -> dict[str, Any] | None:
 
 
 def _extract_legacy_json_state(message: Message) -> dict[str, Any] | None:
-    """Extract the historical implicit state convention from a final message."""
-    for content in message.contents:
-        if isinstance(content, Content) and content.type == "data" and content.media_type == "application/json":
-            if (state := _decode_json_state(content)) is not None:
-                return state
-    return None
+    """Extract the historical implicit state convention from a final state-only message."""
+    if len(message.contents) != 1:
+        return None
+
+    content = message.contents[0]
+    if not isinstance(content, Content):
+        return None
+    if (content.additional_properties or {}).get(STATE_CARRIER_KEY) is True:
+        return None
+
+    return _decode_json_state(content)
 
 
 def _apply_server_function_call_unwrap(client: BaseChatClientT) -> BaseChatClientT:

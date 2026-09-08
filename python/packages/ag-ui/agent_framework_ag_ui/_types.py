@@ -184,8 +184,8 @@ class AGUIChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], tota
             Useful for passing custom parameters to specific server implementations.
         context: Shared context/state to send to the server.
         allow_legacy_state_carrier: Client-only migration option. When true,
-            recognize the deprecated implicit final base64 JSON state convention
-            and emit a deprecation warning. Defaults to false.
+            recognize the deprecated implicit final single-content base64 JSON
+            state convention and emit a deprecation warning. Defaults to false.
 
     Note:
         AG-UI is a protocol bridge - actual option support depends on the

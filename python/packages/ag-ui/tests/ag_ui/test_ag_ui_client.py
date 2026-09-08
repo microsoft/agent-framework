@@ -298,8 +298,8 @@ class TestAGUIChatClient:
             }
         ]
 
-    async def test_sends_mixed_json_attachment_in_request_instead_of_extracting_state(self) -> None:
-        """A prompt with a JSON attachment is not consumed as a state carrier."""
+    async def test_sends_mixed_json_attachment_when_legacy_compatibility_is_enabled(self) -> None:
+        """Legacy compatibility does not consume a prompt with a JSON attachment."""
         captured_request: dict[str, Any] = {}
 
         async def handler(request: httpx.Request) -> httpx.Response:
@@ -324,7 +324,10 @@ class TestAGUIChatClient:
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
             client = StubAGUIChatClient(endpoint="http://localhost:8888/", http_client=http_client)
-            response = await client.inner_get_response(messages=[message], options={})
+            response = await client.inner_get_response(
+                messages=[message],
+                options={"allow_legacy_state_carrier": True},
+            )
 
         assert response is not None
         assert "state" not in captured_request
