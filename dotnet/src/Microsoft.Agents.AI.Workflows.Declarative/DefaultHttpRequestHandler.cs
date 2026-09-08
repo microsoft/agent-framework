@@ -2,7 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Threading;
@@ -24,9 +26,17 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// The handler applies the per-request <see cref="HttpRequestInfo.Timeout"/> using a linked <see cref="CancellationTokenSource"/>
 /// so it does not mutate <see cref="HttpClient.Timeout"/> on shared instances.
 /// </para>
+/// <para>
+/// Redirects are handled by this handler so request credentials are not forwarded to a different origin. The
+/// internally owned client disables automatic redirects. Supplied clients should also disable automatic
+/// redirects; clients with credential-bearing default headers are rejected because their redirect behavior is
+/// opaque to this handler.
+/// </para>
 /// </remarks>
 public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDisposable
 {
+    private const int MaxAutomaticRedirections = 50;
+
     private readonly Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? _httpClientProvider;
     private readonly Lazy<HttpClient> _ownedHttpClient;
 
@@ -80,7 +90,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
     public DefaultHttpRequestHandler(Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? httpClientProvider)
     {
         this._httpClientProvider = httpClientProvider;
-        this._ownedHttpClient = new Lazy<HttpClient>(() => new HttpClient(), LazyThreadSafetyMode.ExecutionAndPublication);
+        this._ownedHttpClient = new Lazy<HttpClient>(CreateOwnedHttpClient, LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     private static Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>> CreateSingleClientProvider(HttpClient httpClient)
@@ -111,50 +121,70 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
             throw new ArgumentException("Request method must be provided.", nameof(request));
         }
 
-        HttpClient? providedClient = null;
-        if (this._httpClientProvider is not null)
+        HttpRequestInfo currentRequest = request;
+        Uri currentUri = CreateAbsoluteUri(ResolveRequestUri(request));
+
+        for (int redirectCount = 0; redirectCount <= MaxAutomaticRedirections; redirectCount++)
         {
-            providedClient = await this._httpClientProvider(request, cancellationToken).ConfigureAwait(false);
-        }
+            HttpClient? providedClient = null;
+            if (this._httpClientProvider is not null)
+            {
+                providedClient = await this._httpClientProvider(currentRequest, cancellationToken).ConfigureAwait(false);
+            }
 
-        HttpClient client = providedClient ?? this._ownedHttpClient.Value;
+            if (providedClient is not null)
+            {
+                ThrowIfUnsafeProvidedClientHeaders(providedClient, currentRequest);
+            }
 
-        using HttpRequestMessage httpRequest = BuildHttpRequestMessage(request);
+            HttpClient client = providedClient ?? this._ownedHttpClient.Value;
 
-        using CancellationTokenSource? timeoutCts = request.Timeout is { } timeout && timeout > TimeSpan.Zero
-            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
-            : null;
+            using HttpRequestMessage httpRequest = BuildHttpRequestMessage(currentRequest);
 
-        timeoutCts?.CancelAfter(request.Timeout!.Value);
+            using CancellationTokenSource? timeoutCts = currentRequest.Timeout is { } timeout && timeout > TimeSpan.Zero
+                ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+                : null;
 
-        CancellationToken effectiveToken = timeoutCts?.Token ?? cancellationToken;
+            timeoutCts?.CancelAfter(currentRequest.Timeout!.Value);
 
-        using HttpResponseMessage httpResponse = await client
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseContentRead, effectiveToken)
-            .ConfigureAwait(false);
+            CancellationToken effectiveToken = timeoutCts?.Token ?? cancellationToken;
 
-        string? body = httpResponse.Content is null
-            ? null
+            using HttpResponseMessage httpResponse = await client
+                .SendAsync(httpRequest, HttpCompletionOption.ResponseContentRead, effectiveToken)
+                .ConfigureAwait(false);
+
+            if (TryCreateRedirectRequest(httpResponse, currentRequest, currentUri, out HttpRequestInfo? redirectRequest, out Uri? redirectUri))
+            {
+                currentRequest = redirectRequest;
+                currentUri = redirectUri;
+                continue;
+            }
+
+            string? body = httpResponse.Content is null
+                ? null
 #if NET
-            : await httpResponse.Content.ReadAsStringAsync(effectiveToken).ConfigureAwait(false);
+                : await httpResponse.Content.ReadAsStringAsync(effectiveToken).ConfigureAwait(false);
 #else
-            : await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
+                : await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
 #endif
 
-        Dictionary<string, IReadOnlyList<string>> headers = new(StringComparer.OrdinalIgnoreCase);
-        AppendHeaders(headers, httpResponse.Headers);
-        if (httpResponse.Content is not null)
-        {
-            AppendHeaders(headers, httpResponse.Content.Headers);
+            Dictionary<string, IReadOnlyList<string>> headers = new(StringComparer.OrdinalIgnoreCase);
+            AppendHeaders(headers, httpResponse.Headers);
+            if (httpResponse.Content is not null)
+            {
+                AppendHeaders(headers, httpResponse.Content.Headers);
+            }
+
+            return new HttpRequestResult
+            {
+                StatusCode = (int)httpResponse.StatusCode,
+                IsSuccessStatusCode = httpResponse.IsSuccessStatusCode,
+                Body = body,
+                Headers = headers,
+            };
         }
 
-        return new HttpRequestResult
-        {
-            StatusCode = (int)httpResponse.StatusCode,
-            IsSuccessStatusCode = httpResponse.IsSuccessStatusCode,
-            Body = body,
-            Headers = headers,
-        };
+        throw new HttpRequestException($"The maximum number of HTTP redirects ({MaxAutomaticRedirections}) was exceeded.");
     }
 
     /// <inheritdoc/>
@@ -212,6 +242,102 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
 
         return httpRequest;
     }
+
+    private static HttpClient CreateOwnedHttpClient()
+    {
+        HttpClientHandler handler = new()
+        {
+            AllowAutoRedirect = false,
+            UseCookies = false,
+            CheckCertificateRevocationList = true
+        };
+
+        return new HttpClient(handler);
+    }
+
+    private static Uri CreateAbsoluteUri(string requestUri)
+    {
+        if (!Uri.TryCreate(requestUri, UriKind.Absolute, out Uri? uri))
+        {
+            throw new ArgumentException("Request URL must be an absolute URL.");
+        }
+
+        return uri;
+    }
+
+    private static bool TryCreateRedirectRequest(
+        HttpResponseMessage response,
+        HttpRequestInfo currentRequest,
+        Uri currentUri,
+        [NotNullWhen(true)] out HttpRequestInfo? redirectRequest,
+        [NotNullWhen(true)] out Uri? redirectUri)
+    {
+        redirectRequest = null;
+        redirectUri = null;
+
+        if (!IsRedirectStatusCode(response.StatusCode) || response.Headers.Location is null)
+        {
+            return false;
+        }
+
+        redirectUri = response.Headers.Location.IsAbsoluteUri
+            ? response.Headers.Location
+            : new Uri(currentUri, response.Headers.Location);
+
+        bool rewriteToGet = ShouldRewriteRedirectMethodToGet(response.StatusCode, currentRequest.Method);
+
+        redirectRequest = new HttpRequestInfo
+        {
+            Method = rewriteToGet ? "GET" : currentRequest.Method,
+            Url = redirectUri.ToString(),
+            Body = rewriteToGet ? null : currentRequest.Body,
+            BodyContentType = rewriteToGet ? null : currentRequest.BodyContentType,
+            Timeout = currentRequest.Timeout,
+            ConnectionName = currentRequest.ConnectionName,
+        };
+
+        return true;
+    }
+
+    private static bool IsRedirectStatusCode(HttpStatusCode statusCode)
+    {
+        int code = (int)statusCode;
+        return code is 301 or 302 or 303 or 307 or 308;
+    }
+
+    private static bool ShouldRewriteRedirectMethodToGet(HttpStatusCode statusCode, string method)
+    {
+        string normalized = method.Trim().ToUpperInvariant();
+        int code = (int)statusCode;
+        return code == 303 || ((code == 301 || code == 302) && string.Equals(normalized, "POST", StringComparison.Ordinal));
+    }
+
+    private static void ThrowIfUnsafeProvidedClientHeaders(HttpClient providedClient, HttpRequestInfo request)
+    {
+        if (providedClient.DefaultRequestHeaders.Any(header => IsSensitiveHeaderName(header.Key)))
+        {
+            throw new InvalidOperationException(
+                "DefaultHttpRequestHandler cannot safely use a provided HttpClient with credential-bearing DefaultRequestHeaders because the client may forward them during automatic redirects. Configure credentials with an origin-pinning handler that disables automatic redirects.");
+        }
+
+        if (request.Headers?.Keys.Any(IsCustomCredentialHeaderName) == true)
+        {
+            throw new InvalidOperationException(
+                "DefaultHttpRequestHandler cannot safely send credential-bearing request headers through a provided HttpClient because the client may forward them during automatic redirects. Use the handler-owned client or configure an origin-pinning handler that disables automatic redirects.");
+        }
+    }
+
+    private static bool IsSensitiveHeaderName(string headerName) =>
+        string.Equals(headerName, "Authorization", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(headerName, "Proxy-Authorization", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(headerName, "Cookie", StringComparison.OrdinalIgnoreCase) ||
+        IsCustomCredentialHeaderName(headerName);
+
+    private static bool IsCustomCredentialHeaderName(string headerName) =>
+        headerName.Contains("Api-Key", StringComparison.OrdinalIgnoreCase) ||
+        headerName.Contains("Token", StringComparison.OrdinalIgnoreCase) ||
+        headerName.Contains("Secret", StringComparison.OrdinalIgnoreCase) ||
+        headerName.Contains("Credential", StringComparison.OrdinalIgnoreCase);
 
     private static HttpMethod ResolveMethod(string method)
     {
