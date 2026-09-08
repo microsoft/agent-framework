@@ -11,6 +11,7 @@ import threading
 import time
 import uuid
 from collections.abc import Mapping
+from concurrent.futures import Future
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
@@ -249,31 +250,128 @@ class InMemoryCheckpointStorage:
         return [cp.checkpoint_id for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
 
 
-# Process-wide serialization of os.replace() per destination file.
+# Process-wide serialization of writes per destination file.
 #
-# asyncio.Lock is loop-bound, so a per-(loop, checkpoint-id) registry (the previous
-# design) could not serialize two FileCheckpointStorage instances pointed at the
-# same directory, nor one instance driven from two event loops. A threading.Lock
-# keyed by the canonical destination path *does* span coroutines, loops, and
-# instances because asyncio.to_thread runs the actual file write on a worker
-# thread, and threading primitives serialize across those.
+# asyncio.Lock is loop-bound, so a per-(loop, checkpoint-id) registry cannot
+# serialize two FileCheckpointStorage instances pointed at the same directory, nor one
+# instance driven from two event loops. Ownership is therefore handed out by a
+# process-wide queue keyed by the canonical destination path, and taken *before* the
+# write is submitted to a worker thread rather than inside it.
 #
-# Locks are created lazily on first save and never removed. The registry grows
-# by at most one entry per *distinct* checkpoint file ever written; that is
-# bounded by the number of files actually present under any FileCheckpointStorage
-# directory the process touches — a working-set bound, not unbounded.
-_file_locks: dict[Path, threading.Lock] = {}
-_file_locks_guard = threading.Lock()
+# Waiting on a ``concurrent.futures.Future`` through ``asyncio.wrap_future`` is what
+# makes that work in both directions: it is not bound to a loop, so a single chain
+# orders writers regardless of which loop enqueued them, and waiters suspend on the
+# event loop instead of occupying an ``asyncio.to_thread`` worker. Blocking on a
+# ``threading.Lock`` inside the worker instead -- the previous design -- let a burst of
+# same-path saves fill the default executor and stall unrelated ``to_thread`` work,
+# including checkpoint loads, and could deadlock once the write that had to finish
+# first was queued behind those waiters.
+#
+# Entries are reference-counted by queued-or-running operations and dropped when the
+# last one releases, so a process that saves many distinct checkpoint IDs -- the
+# default, since ``WorkflowCheckpoint`` generates a fresh UUID -- does not retain an
+# entry per ID for its lifetime.
+#
+# The scope really is one process. Several replicas sharing a checkpoint directory -- a
+# mounted volume, a network share -- get no serialization from this, because there is no
+# shared state between them to coordinate through. Concurrent saves of the same
+# checkpoint ID from different processes still rely on ``os.replace`` being atomic on
+# the underlying filesystem for the file not to be seen half-written; which write
+# survives is undefined.
+_destination_queues: dict[Path, _DestinationQueue] = {}
+_destination_queues_guard = threading.Lock()
 
 
-def _get_file_lock(file_path: Path) -> threading.Lock:
-    """Return the process-wide lock guarding *file_path*, creating it on first use."""
-    with _file_locks_guard:
-        lock = _file_locks.get(file_path)
-        if lock is None:
-            lock = threading.Lock()
-            _file_locks[file_path] = lock
-        return lock
+@dataclass
+class _DestinationQueue:
+    """FIFO ownership hand-off for one destination path."""
+
+    #: Completion signal of the most recently enqueued operation, awaited by the next.
+    tail: Future[None] | None = None
+    #: Operations queued or running for this path; the entry is dropped at zero.
+    pending: int = 0
+
+
+@dataclass
+class _WriteTicket:
+    """One operation's place in a destination's queue."""
+
+    path: Path
+    #: Signal to await before taking ownership; ``None`` when the queue was empty.
+    predecessor: Future[None] | None
+    #: Signal this operation resolves to hand ownership to its successor.
+    completion: Future[None]
+    #: Set by whichever of the worker thread or the coroutine releases first.
+    released: bool = False
+
+
+def _enqueue_write(file_path: Path) -> _WriteTicket:
+    """Take a place in *file_path*'s queue without waiting for it."""
+    completion: Future[None] = Future()
+    with _destination_queues_guard:
+        queue = _destination_queues.get(file_path)
+        if queue is None:
+            queue = _DestinationQueue()
+            _destination_queues[file_path] = queue
+        predecessor = queue.tail
+        queue.tail = completion
+        queue.pending += 1
+    return _WriteTicket(path=file_path, predecessor=predecessor, completion=completion)
+
+
+async def _drain_cancelled_write(worker: asyncio.Future[None], file_path: Path) -> None:
+    """Wait for *worker* to finish while this task is being cancelled.
+
+    A single ``await asyncio.shield(worker)`` is not enough here. Once the enclosing
+    task has a cancellation pending, the next await raises ``CancelledError`` again
+    immediately, so the shield returns without the worker having finished and the write
+    can still land after ownership is released. Absorbing the re-delivered
+    cancellations until the worker is genuinely done is what makes the drain real.
+    """
+    while not worker.done():
+        try:
+            await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            continue
+        except Exception:
+            break
+    if worker.done() and not worker.cancelled():
+        exception = worker.exception()
+        if exception is not None:
+            # The caller is being cancelled and will not see this, but a write that
+            # failed while draining should not vanish silently.
+            logger.warning(f"Checkpoint write to {file_path} failed while draining after cancellation: {exception!r}")
+
+
+def _release_write(ticket: _WriteTicket) -> None:
+    """Hand ownership to the next waiter and drop the entry once nothing is queued.
+
+    Called from two places, whichever gets there first, and idempotent so both can:
+
+    * the worker thread, as the last act of the write itself. This is what keeps a
+      destination usable if the event loop that submitted the write goes away before the
+      coroutine can resume -- the thread finishes and releases regardless, where a
+      release that only happened in the coroutine would leave the path owned forever and
+      hang every later save to it.
+    * the coroutine, on any exit path. This is the only releaser when the write was
+      never submitted, which is the case for a save cancelled while still queued.
+
+    Resolving the completion signal is what keeps the chain moving, so an operation that
+    is cancelled or fails must still release rather than stall every later writer.
+    """
+    with _destination_queues_guard:
+        if ticket.released:
+            return
+        ticket.released = True
+        queue = _destination_queues.get(ticket.path)
+        if queue is not None:
+            queue.pending -= 1
+            if queue.pending <= 0:
+                del _destination_queues[ticket.path]
+    # Outside the guard: waking the successor must not happen while holding the lock its
+    # own release will need.
+    if not ticket.completion.done():
+        ticket.completion.set_result(None)
 
 
 class FileCheckpointStorage:
@@ -358,10 +456,10 @@ class FileCheckpointStorage:
         def _replace_with_retry(tmp_path: Path) -> None:
             # On Windows, os.replace can transiently fail with PermissionError when a
             # background indexer or AV scan briefly holds a handle to the destination
-            # file. The process-wide per-path lock serializes concurrent save() calls
-            # to the same destination, but the OS callback is still external to the
-            # process and can trip a transient error even when only one replace is in
-            # flight. Retry briefly to absorb it.
+            # file. The destination queue serializes concurrent save() calls to the same
+            # path, but the OS callback is still external to the process and can trip a
+            # transient error even when only one replace is in flight. Retry briefly to
+            # absorb it.
             for attempt in range(5):
                 try:
                     os.replace(tmp_path, file_path)
@@ -372,54 +470,75 @@ class FileCheckpointStorage:
                     time.sleep(0.001 * (2**attempt))
 
         def _write_atomic() -> None:
-            # The threading lock here is the heartbeat of cross-instance/cross-loop
-            # safety: a same-directory save racing through a different
-            # FileCheckpointStorage instance — or from another event loop in the
-            # same process — contends on the same canonical destination path and
-            # therefore on the same lock. Holding it across the entire open + write
-            # + replace keeps no window where a second writer can briefly see a
-            # half-published temp file or reach os.replace concurrently.
-            with _get_file_lock(file_path):
-                # Use a unique temp file per save in the destination directory so
-                # concurrent saves of distinct checkpoint IDs never contend on a
-                # shared temporary path, and os.replace remains atomic (same
-                # filesystem). A short, ID-independent name keeps every destination
-                # name accepted by _validate_file_path saveable regardless of
-                # checkpoint-ID length or filesystem limits.
-                tmp_path: Path | None = None
-                try:
-                    # O_CREAT | O_EXCL | O_WRONLY with an explicit 0o666 mode, so the
-                    # file is created with the process umask exactly like the previous
-                    # open(..., "w") path was (NamedTemporaryFile would hard-code 0o600
-                    # and downgrade modes on POSIX after an os.replace over an existing
-                    # checkpoint).
-                    tmp_name = f".maf-ckpt-{uuid.uuid4().hex}.tmp"
-                    tmp_path = file_path.parent / tmp_name
-                    fd = os.open(tmp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
-                    with os.fdopen(fd, "w") as f:
-                        json.dump(encoded_checkpoint, f, indent=2, ensure_ascii=False)
-                    _replace_with_retry(tmp_path)
-                    tmp_path = None
-                finally:
-                    if tmp_path is not None and tmp_path.exists():
-                        try:
-                            tmp_path.unlink()
-                        except OSError:
-                            # Best-effort cleanup only; leaking a temp file is harmless
-                            # compared to masking the original exception.
-                            logger.debug(f"Failed to remove checkpoint temp file {tmp_path}", exc_info=True)
+            # No lock here: ownership of the destination is already held by the caller
+            # of this function, taken from the process-wide queue before the write was
+            # submitted. Acquiring it on the worker instead is what let same-path saves
+            # pile up inside the executor.
+            #
+            # Use a unique temp file per save in the destination directory so
+            # concurrent saves of distinct checkpoint IDs never contend on a
+            # shared temporary path, and os.replace remains atomic (same
+            # filesystem). A short, ID-independent name keeps every destination
+            # name accepted by _validate_file_path saveable regardless of
+            # checkpoint-ID length or filesystem limits.
+            tmp_path: Path | None = None
+            try:
+                # O_CREAT | O_EXCL | O_WRONLY with an explicit 0o666 mode, so the
+                # file is created with the process umask exactly like the previous
+                # open(..., "w") path was (NamedTemporaryFile would hard-code 0o600
+                # and downgrade modes on POSIX after an os.replace over an existing
+                # checkpoint).
+                tmp_name = f".maf-ckpt-{uuid.uuid4().hex}.tmp"
+                tmp_path = file_path.parent / tmp_name
+                fd = os.open(tmp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
+                with os.fdopen(fd, "w") as f:
+                    json.dump(encoded_checkpoint, f, indent=2, ensure_ascii=False)
+                _replace_with_retry(tmp_path)
+                tmp_path = None
+            finally:
+                if tmp_path is not None and tmp_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except OSError:
+                        # Best-effort cleanup only; leaking a temp file is harmless
+                        # compared to masking the original exception.
+                        logger.debug(f"Failed to remove checkpoint temp file {tmp_path}", exc_info=True)
 
-        # Shield the worker from caller-side cancellation: without the shield, a
-        # cancellation delivered while the coroutine is suspended inside
-        # asyncio.to_thread exits the await but leaves the OS thread running, so
-        # its os.replace can still come in *after* the caller has been cancelled
-        # and a subsequent save for the same checkpoint ID has started — on
-        # Windows that reintroduces the PermissionError race this path exists to
-        # avoid, and it can also overwrite a newer checkpoint with stale data.
-        # Shielding guarantees the in-flight write completes (or fails) before
-        # the caller observes a result, so the order seen on disk matches the
-        # order callers observed.
-        await asyncio.shield(asyncio.to_thread(_write_atomic))
+        def _write_atomic_and_release(ticket: _WriteTicket) -> None:
+            # Release on the worker thread, as the write's last act. The coroutine's
+            # `finally` would otherwise be the only releaser, and it never runs if the
+            # loop that submitted this write is gone -- leaving the destination owned
+            # forever and hanging every later save to it.
+            try:
+                _write_atomic()
+            finally:
+                _release_write(ticket)
+
+        ticket = _enqueue_write(file_path)
+        try:
+            if ticket.predecessor is not None:
+                # Suspends on the event loop, not on an executor worker, and orders this
+                # save behind every earlier one for the same destination even when they
+                # were enqueued from a different loop. A cancellation delivered here
+                # propagates with nothing submitted and nothing written, which is the
+                # cheapest correct outcome: `finally` hands ownership straight to the
+                # next waiter.
+                await asyncio.wrap_future(ticket.predecessor)
+
+            worker = asyncio.ensure_future(asyncio.to_thread(_write_atomic_and_release, ticket))
+            try:
+                # Shield so a cancellation arriving mid-write cannot leave the worker
+                # running past this frame: its os.replace would otherwise land after the
+                # caller returned, overwriting whatever a later save had published.
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                # Ownership is still held, so drain before propagating. Releasing first
+                # would let the next save begin while this replace is still in flight,
+                # which is the race the queue exists to prevent.
+                await _drain_cancelled_write(worker, file_path)
+                raise
+        finally:
+            _release_write(ticket)
 
         logger.info(f"Saved checkpoint {checkpoint.checkpoint_id} to {file_path}")
         return checkpoint.checkpoint_id
