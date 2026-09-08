@@ -69,7 +69,7 @@ def test_reject_non_equivalent_operations(collection, expression):
         collection._prepare_filter(expression)
 
 
-@pytest.mark.parametrize("value", [2**53, -(2**53), float("inf"), True])
+@pytest.mark.parametrize("value", [2**53, -(2**53), float("inf"), True, pytest.param(10**400, id="oversized-int")])
 def test_reject_unsafe_numeric_range(collection, value):
     with pytest.raises((TypeError, ValueError)):
         collection._prepare_filter(Filter("integer", "gt", value))
@@ -82,3 +82,32 @@ def test_numeric_equality_preserves_bool_distinction(collection):
     native = collection._prepare_filter(Filter("integer", "eq", 1.0))
     assert native is not None
     assert native.model_dump(exclude_none=True) == {"must": [{"key": "integer", "match": {"value": 1}}]}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (1, [1]),
+        (1.0, [1]),
+        (True, []),
+        (False, []),
+        (1.5, []),
+        (-1, []),
+        ("1", []),
+        (2**53 + 1, [2**53 + 1]),
+        (2**63, [2**63]),
+        (float(2**63), [2**63]),
+        (2**64 - 1, [2**64 - 1]),
+        (float(2**64 - 1), []),
+        (2**64, []),
+        pytest.param(10**400, [], id="oversized-int"),
+    ],
+)
+@pytest.mark.parametrize("operator", ["eq", "ne", "in", "not_in"])
+def test_integer_key_filter_operand_semantics(collection, value, expected, operator):
+    expression = Filter("id", operator, [value, True, None, "invalid"] if operator in {"in", "not_in"} else value)
+    condition = collection._prepare_filter_condition(expression)
+    expected_condition = {"has_id": expected}
+    assert condition.model_dump(exclude_none=True) == (
+        {"must_not": [expected_condition]} if operator in {"ne", "not_in"} else expected_condition
+    )

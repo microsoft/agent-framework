@@ -26,7 +26,10 @@ from agent_framework._telemetry import FeatureIndex, mark_feature_used
 from agent_framework._vector_filters import FilterExpression
 from agent_framework._vectors import EmbeddingClient, Vector
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
+from grpc import StatusCode
+from grpc.aio import AioRpcError
 from qdrant_client import AsyncQdrantClient, models
+from qdrant_client.http.exceptions import UnexpectedResponse
 from typing_extensions import TypedDict, TypeVar
 
 KeyT = TypeVar("KeyT", default=Any)
@@ -131,41 +134,43 @@ def _prepare_dense_vector(value: Any, name: str) -> list[float]:
     for item in cast(Sequence[Any], value):
         if isinstance(item, bool) or not isinstance(item, (int, float)):
             raise TypeError(f"Qdrant vector '{name}' must contain numbers, not booleans.")
-        number = float(item)
+        try:
+            number = float(item)
+        except OverflowError as exc:
+            raise ValueError(f"Qdrant vector '{name}' must contain finite float32 values.") from exc
         if not math.isfinite(number) or abs(number) > 3.4028234663852886e38:
             raise ValueError(f"Qdrant vector '{name}' must contain finite float32 values.")
         result.append(number)
     return result
 
 
-def _validate_payload(value: Any) -> None:
+def _prepare_payload(value: Any) -> Any:
     if value is None or isinstance(value, (str, bool)):
-        return
+        return value
     if isinstance(value, int):
         if not -(2**63) <= value < 2**63:
             raise ValueError("Qdrant integer payloads must be signed 64-bit integers.")
-        return
+        return value
     if isinstance(value, float):
         if not math.isfinite(value):
             raise ValueError("Qdrant payload numbers must be finite.")
-        return
-    if isinstance(value, list):
-        for item in cast(list[Any], value):
-            _validate_payload(item)
-        return
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_prepare_payload(item) for item in cast(Sequence[Any], value)]
     if isinstance(value, dict):
+        result: dict[str, Any] = {}
         for key, item in cast(dict[Any, Any], value).items():
             if not isinstance(key, str):
                 raise TypeError("Qdrant payload object keys must be strings.")
-            _validate_payload(item)
-        return
+            result[key] = _prepare_payload(item)
+        return result
     raise TypeError(f"Qdrant payloads must be JSON-compatible, not {type(value).__name__}.")
 
 
-def _validate_field_payload(field: VectorStoreField, value: Any) -> None:
-    _validate_payload(value)
+def _prepare_field_payload(field: VectorStoreField, value: Any) -> Any:
+    value = _prepare_payload(value)
     if value is None or field.type_ is None:
-        return
+        return value
     types: dict[str, tuple[type[Any], ...]] = {
         "str": (str,),
         "int": (int,),
@@ -182,6 +187,7 @@ def _validate_field_payload(field: VectorStoreField, value: Any) -> None:
         raise NotImplementedError(f"Qdrant payload field type '{field.type_}' is not supported.")
     if not isinstance(value, expected) or (field.type_ in {"int", "float"} and isinstance(value, bool)):
         raise TypeError(f"Qdrant payload field '{field.name}' must have declared type '{field.type_}'.")
+    return value
 
 
 def _prepare_payload_index(field: VectorStoreField) -> models.PayloadSchemaType | None:
@@ -230,7 +236,7 @@ def _prepare_non_null_condition(name: str) -> models.Filter:
 def _prepare_range_operand(value: Any) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError("Qdrant ordered filters require numeric operands, not booleans.")
-    if not math.isfinite(value):
+    if isinstance(value, float) and not math.isfinite(value):
         raise ValueError("Qdrant numeric filter operands must be finite.")
     if abs(value) > _MAX_EXACT_INTEGER:
         raise ValueError("Qdrant numeric range operands must be within +/- (2**53-1) to compare integers exactly.")
@@ -278,7 +284,24 @@ def _prepare_equality_condition(
     return models.FieldCondition(key=name, range=models.Range(gte=number, lte=number))
 
 
-def _prepare_key_filter_condition(expression: Filter) -> models.Condition:
+def _prepare_key_filter_id(value: Any, kind: str | None) -> int | str | None:
+    if isinstance(value, bool):
+        return None
+    if kind in {None, "int"} and isinstance(value, (int, float)):
+        if isinstance(value, float):
+            if not math.isfinite(value) or not value.is_integer():
+                return None
+            value = int(value)
+        return value if 0 <= value <= 2**64 - 1 else None
+    if kind in {None, "str", "UUID"} and isinstance(value, (str, UUID)):
+        try:
+            return _prepare_point_id(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _prepare_key_filter_condition(expression: Filter, field: VectorStoreField) -> models.Condition:
     operator, value = expression.operator, expression.value
     if operator in {"exists", "is_not_null"}:
         return models.Filter(must_not=[_prepare_false_condition()])
@@ -287,9 +310,12 @@ def _prepare_key_filter_condition(expression: Filter) -> models.Condition:
     if operator == "ne" and value is None:
         return models.Filter(must_not=[_prepare_false_condition()])
     if operator in {"eq", "ne"}:
-        condition = models.HasIdCondition(has_id=[_prepare_point_id(value)])
+        key = _prepare_key_filter_id(value, field.type_)
+        condition = models.HasIdCondition(has_id=[] if key is None else [key])
     elif operator in {"in", "not_in"}:
-        condition = models.HasIdCondition(has_id=[_prepare_point_id(item) for item in value if item is not None])
+        condition = models.HasIdCondition(
+            has_id=[key for item in value if (key := _prepare_key_filter_id(item, field.type_)) is not None]
+        )
     else:
         raise NotImplementedError(f"Qdrant key filters do not support '{operator}'.")
     return models.Filter(must_not=[condition]) if operator in {"ne", "not_in"} else condition
@@ -304,7 +330,7 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
 
     Portable filters require a server: Qdrant's local emulator has different
     null/missing and numeric matching behavior across supported SDK versions.
-    Local mode supports unfiltered CRUD and dense search.
+    Local mode supports unfiltered CRUD and dense search. Ordered retrieval is unsupported.
     """
 
     supported_key_types: ClassVar[set[str] | None] = {"int", "str", "UUID"}
@@ -376,6 +402,11 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         )
         self._closed = False
 
+    @property
+    def _is_local(self) -> bool:
+        options = self.async_client.init_options
+        return options.get("location") == ":memory:" or options.get("path") is not None
+
     def _validate_data_model(self) -> None:
         super()._validate_data_model()
         if self.definition.key_field.is_auto_generated:
@@ -421,10 +452,22 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
                 )
                 for field in self.definition.vector_fields
             }
-            if not await self.async_client.create_collection(
-                collection_name=self.collection_name, vectors_config=vectors, **options
-            ):
-                raise IntegrationException(f"Qdrant did not create collection '{self.collection_name}'.")
+            try:
+                created = await self.async_client.create_collection(
+                    collection_name=self.collection_name, vectors_config=vectors, **options
+                )
+            except UnexpectedResponse as exc:
+                if exc.status_code != 409:
+                    raise
+            except AioRpcError as exc:
+                if exc.code() != StatusCode.ALREADY_EXISTS:
+                    raise
+            except ValueError as exc:
+                if not self._is_local or str(exc) != f"Collection {self.collection_name} already exists":
+                    raise
+            else:
+                if not created and not await self.collection_exists():
+                    raise IntegrationException(f"Qdrant did not create collection '{self.collection_name}'.")
         info = await self.async_client.get_collection(self.collection_name)
         configured = info.config.params.vectors
         if not isinstance(configured, dict):
@@ -496,8 +539,7 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
             payload: dict[str, Any] = {}
             for field in self.definition.data_fields:
                 name = field.storage_name or field.name
-                _validate_field_payload(field, record[name])
-                payload[name] = record[name]
+                payload[name] = _prepare_field_payload(field, record[name])
             vectors: dict[str, models.Vector] = {
                 field.storage_name or field.name: _prepare_dense_vector(
                     record[field.storage_name or field.name], field.name
@@ -535,8 +577,7 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
     def _prepare_filter(self, filter: FilterExpression | None) -> models.Filter | None:
         if filter is None:
             return None
-        options = self.async_client.init_options
-        if options.get("location") == ":memory:" or options.get("path") is not None:
+        if self._is_local:
             raise NotImplementedError(
                 "Portable filters require a Qdrant server; local mode differs for missing/null and numeric values."
             )
@@ -556,7 +597,7 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         if field is None or "." in expression.field_name:
             raise NotImplementedError("Qdrant filters support declared top-level logical fields only.")
         if field.field_type == "key":
-            return _prepare_key_filter_condition(expression)
+            return _prepare_key_filter_condition(expression, field)
         if field.field_type == "vector":
             raise NotImplementedError("Portable Qdrant filters do not operate on vector fields.")
         name = field.storage_name or field.name
@@ -637,9 +678,13 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         operation_options: Mapping[str, Any] | None = None,
     ) -> Sequence[models.Record]:
         options = _validate_operation_options(operation_options, _READ_OPTIONS)
+        if order_by:
+            raise NotImplementedError(
+                "Qdrant ordered retrieval is not supported. Omit order_by to use unordered retrieval."
+            )
         if keys is not None:
-            if order_by or skip:
-                raise ValueError("Qdrant key retrieval cannot be combined with order_by or skip.")
+            if skip:
+                raise ValueError("Qdrant key retrieval cannot be combined with skip.")
             ids = [_prepare_point_id(key) for key in keys]
             result: list[models.Record] = []
             for start in range(0, len(ids), _BATCH_SIZE):
@@ -653,32 +698,6 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
                 result.extend(page)
             return result
         native_filter = self._prepare_filter(filter)
-        if order_by:
-            if len(order_by) != 1:
-                raise NotImplementedError("Qdrant retrieval supports one numeric order_by field.")
-            name, ascending = next(iter(order_by.items()))
-            if not isinstance(ascending, bool):
-                raise TypeError("order_by directions must be booleans.")
-            field = self.definition.try_get_field(name)
-            if field is None or field.field_type != "data" or field.type_ not in {"int", "float"}:
-                raise NotImplementedError("Qdrant order_by requires an indexed numeric data field.")
-            if _prepare_payload_index(field) not in {models.PayloadSchemaType.INTEGER, models.PayloadSchemaType.FLOAT}:
-                raise ValueError("Qdrant order_by requires a numeric payload index.")
-            order = models.OrderBy(
-                key=field.storage_name or field.name,
-                direction=models.Direction.ASC if ascending else models.Direction.DESC,
-            )
-            # Scroll's ordered mode has no point-ID cursor. Fetch only the requested prefix, not the collection.
-            records, _ = await self.async_client.scroll(
-                self.collection_name,
-                scroll_filter=native_filter,
-                limit=skip + top,
-                order_by=order,
-                with_payload=True,
-                with_vectors=include_vectors,
-                **options,
-            )
-            return records[skip:]
         records: list[models.Record] = []
         offset = None
         remaining_skip = skip
@@ -740,12 +759,15 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
         field = self.definition.try_get_vector_field(vector_property_name)
         if field is None:
             raise ValueError("Qdrant search requires a declared vector field.")
-        if score_threshold is not None and (
-            isinstance(score_threshold, bool)
-            or not isinstance(score_threshold, (int, float))
-            or not math.isfinite(score_threshold)
-        ):
-            raise ValueError("Qdrant score_threshold must be a finite number.")
+        if score_threshold is not None:
+            if isinstance(score_threshold, bool) or not isinstance(score_threshold, (int, float)):
+                raise ValueError("Qdrant score_threshold must be a finite number.")
+            try:
+                score_threshold = float(score_threshold)
+            except OverflowError as exc:
+                raise ValueError("Qdrant score_threshold must be a finite number.") from exc
+            if not math.isfinite(score_threshold):
+                raise ValueError("Qdrant score_threshold must be a finite number.")
         query = _prepare_dense_vector(vector, field.name)
         native_filter = self._prepare_filter(filter)
         response = await self.async_client.query_points(

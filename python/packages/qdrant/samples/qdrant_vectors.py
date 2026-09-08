@@ -1,5 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Use two named dense vectors with a disposable Qdrant server collection.
+
+Run from python/:
+    export QDRANT_URL=http://localhost:6333
+    uv run --package agent-framework-qdrant python packages/qdrant/samples/qdrant_vectors.py
+
+QDRANT_URL is required; QDRANT_API_KEY is optional. Use a development server,
+not production. No embedding model, inference service, or OpenAI credentials
+are used: the vectors are deliberately small and deterministic.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -11,18 +22,6 @@ from uuid import uuid4
 from agent_framework import Filter, VectorStoreField, vectorstoremodel
 
 from agent_framework_qdrant import QdrantStore
-
-"""
-Use two named dense vectors with a disposable Qdrant server collection.
-
-Run from python/:
-    export QDRANT_URL=http://localhost:6333
-    uv run --package agent-framework-qdrant python packages/qdrant/samples/qdrant_vectors.py
-
-QDRANT_URL is required; QDRANT_API_KEY is optional. Use a development server,
-not production. No embedding model, inference service, or OpenAI credentials
-are used: the vectors are deliberately small and deterministic.
-"""
 
 
 @vectorstoremodel

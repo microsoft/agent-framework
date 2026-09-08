@@ -3,9 +3,19 @@
 from __future__ import annotations
 
 import os
+from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
-from agent_framework import Filter, FilterGroup, Param, create_vector_search_tool
+from agent_framework import (
+    Filter,
+    FilterGroup,
+    Param,
+    VectorStoreCollectionDefinition,
+    VectorStoreField,
+    create_vector_search_tool,
+)
+from agent_framework._vector_filters import filter_values_equal
 from agent_framework.exceptions import IntegrationInvalidResponseException
 from qdrant_client import models
 
@@ -120,8 +130,10 @@ async def test_filtered_get_search_and_tool_params(server_collection, record):
         generate_vectors=False,
     )
     expression = Filter("text", "eq", "tenant-a")
-    values = await collection.get(filter=expression, top=1, skip=1, order_by={"number": True})
+    values = await collection.get(filter=expression, top=1, skip=1)
     assert values[0]["id"] == 3
+    with pytest.raises(NotImplementedError, match="order_by"):
+        await collection.get(filter=expression, top=1, skip=1, order_by={"number": True})
     results = [item async for item in await collection.search(vector=[1, 0, 0], filter=expression, top=1, skip=1)]
     assert results[0]["record"]["id"] == 3
     assert [
@@ -174,7 +186,7 @@ async def test_missing_payload_is_not_fabricated(payload_collection: QdrantColle
         await payload_collection.get([0])
 
 
-async def test_ordering_excludes_nulls_and_pages(server_collection, record):
+async def test_ordering_rejected_with_nulls_and_offsets(server_collection, record):
     await server_collection.upsert(
         [
             record(1, number=None),
@@ -183,5 +195,68 @@ async def test_ordering_excludes_nulls_and_pages(server_collection, record):
         ],
         generate_vectors=False,
     )
-    assert [item["id"] for item in await server_collection.get(order_by={"number": True})] == [3, 2]
-    assert await server_collection.get(order_by={"number": True}, skip=2, top=1) == []
+    for skip in (0, 2):
+        with pytest.raises(NotImplementedError, match="order_by"):
+            await server_collection.get(order_by={"number": True}, skip=skip, top=1)
+
+
+@pytest.mark.parametrize("ascending", [True, False])
+@pytest.mark.parametrize("filtered", [True, False])
+async def test_ordered_reads_rejected_with_large_ties(server_collection, record, ascending, filtered):
+    collection = server_collection
+    ids = list(range(1000))
+    values = [record(index, number=float(index // 700), flag=index % 2 == 0) for index in reversed(ids)]
+    await collection.upsert(values, generate_vectors=False)
+    expression = Filter("flag", "eq", True) if filtered else None
+    with (
+        patch.object(collection.async_client, "scroll") as scroll,
+        patch.object(collection.async_client, "query_points") as query_points,
+    ):
+        for skip in (0, 253, 1000):
+            with pytest.raises(NotImplementedError, match="Omit order_by"):
+                await collection.get(order_by={"number": ascending}, filter=expression, top=300, skip=skip)
+        scroll.assert_not_awaited()
+        query_points.assert_not_awaited()
+    assert {item["id"] for item in await collection.get(top=1005)} == set(ids)
+
+
+@pytest.mark.parametrize("operator", ["eq", "ne", "in", "not_in"])
+async def test_portable_integer_key_filters(server_collection, record, operator):
+    collection = server_collection
+    keys = [0, 1, 2, 2**53 + 1, 2**63, 2**64 - 1]
+    await collection.upsert([record(key, integer=0, number=0.0) for key in keys], generate_vectors=False)
+    for value in [1.0, True, False, 1.5, -1, "1", 2**53 + 1, float(2**63), 2**64 - 1, float(2**64 - 1), 10**400]:
+        operands = [value, True, None, "invalid"] if operator in {"in", "not_in"} else [value]
+        expected = {
+            key
+            for key in keys
+            if any(filter_values_equal(key, operand) for operand in operands) != (operator in {"ne", "not_in"})
+        }
+        records = await collection.get(
+            filter=Filter("id", operator, operands if operator in {"in", "not_in"} else value)
+        )
+        assert {item["id"] for item in records} == expected
+
+
+@pytest.mark.parametrize("key_type", ["str", "UUID"])
+async def test_uuid_key_filters_preserve_identity(server_collection, key_type):
+    definition = VectorStoreCollectionDefinition([VectorStoreField("key", name="id", type_=key_type)])
+    collection = QdrantCollection(
+        dict,
+        definition=definition,
+        collection_name=server_collection.collection_name,
+        async_client=server_collection.async_client,
+    )
+    uuids = [uuid4(), uuid4()]
+    keys = [str(key) for key in uuids] if key_type == "str" else uuids
+    await collection.upsert([{"id": key} for key in keys], generate_vectors=False)
+    assert [item["id"] for item in await collection.get(filter=Filter("id", "eq", str(uuids[0])))] == [keys[0]]
+    assert [item["id"] for item in await collection.get(filter=Filter("id", "ne", str(uuids[0])))] == [keys[1]]
+    assert await collection.get(filter=Filter("id", "eq", 1.0)) == []
+    assert await collection.get(filter=Filter("id", "eq", True)) == []
+    assert [item["id"] for item in await collection.get(filter=Filter("id", "in", [str(uuids[0]), 1, True]))] == [
+        keys[0]
+    ]
+    assert [item["id"] for item in await collection.get(filter=Filter("id", "not_in", [str(uuids[0]), 1, True]))] == [
+        keys[1]
+    ]

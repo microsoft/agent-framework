@@ -74,6 +74,11 @@ asyncio.run(main())
 Use `get([key], include_vectors=True)` to retrieve vectors, or `delete([key])`
 to remove records. Without `include_vectors=True`, retrieval omits vectors.
 Batch writes can partially succeed if the server reports an error.
+Tuple payload values, including nested tuples, are stored as JSON arrays without
+modifying the input records. Typed models restore tuples through their registered decoder.
+
+Ordered retrieval (`order_by`) is not supported. Unordered retrieval uses bounded
+scroll pages without retaining the skipped prefix.
 
 ## Capabilities and limits
 

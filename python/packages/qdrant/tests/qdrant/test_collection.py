@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Annotated
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
@@ -20,7 +21,11 @@ from agent_framework import (
     vectorstoremodel,
 )
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
+from grpc import StatusCode
+from grpc.aio import AioRpcError, Metadata
+from httpx import Headers
 from qdrant_client import AsyncQdrantClient, models
+from qdrant_client.http.exceptions import UnexpectedResponse
 
 from agent_framework_qdrant import QdrantCollection, QdrantStore
 
@@ -87,7 +92,8 @@ async def test_multiple_vectors_search_and_paging(collection_factory, record):
     assert alias[0]["record"]["id"] == 3
     assert [item["id"] for item in await collection.get(top=1, skip=1)] == [2]
     assert await collection.get(top=5, skip=999) == []
-    assert [item["id"] for item in await collection.get(order_by={"number": False}, top=1, skip=1)] == [2]
+    with pytest.raises(NotImplementedError, match="Omit order_by"):
+        await collection.get(order_by={"number": False}, top=1, skip=1)
     with pytest.raises(ValueError, match="vector field|Vector field"):
         await collection.search(vector=[1, 0, 0], vector_property_name="unknown")
 
@@ -206,6 +212,48 @@ async def test_registered_models_and_custom_codecs(collection_factory):
     await external.ensure_collection_exists()
     await external.upsert([External(7, "custom")], generate_vectors=False)
     assert (await external.get([7]))[0].text == "custom"
+
+
+async def test_tuple_payload_round_trip_and_input_ownership(collection_factory):
+    @vectorstoremodel
+    @dataclass
+    class Document:
+        id: Annotated[int, VectorStoreField("key")]
+        tags: Annotated[tuple[str, ...], VectorStoreField("data")]
+        nested: Annotated[dict[str, tuple[int, ...]], VectorStoreField("data")]
+
+    collection = collection_factory(Document)
+    await collection.ensure_collection_exists()
+    document = Document(1, ("one", "two"), {"values": (1, 2)})
+    await collection.upsert([document], generate_vectors=False)
+    assert (await collection.get([1]))[0] == document
+    assert isinstance(document.tags, tuple) and isinstance(document.nested["values"], tuple)
+    raw = (await collection.async_client.retrieve(collection.collection_name, [1]))[0]
+    assert raw.payload == {"tags": ["one", "two"], "nested": {"values": [1, 2]}}
+
+
+@pytest.mark.parametrize("field_type", ["tuple", "Sequence"])
+async def test_dictionary_tuple_payloads(collection_factory, field_type):
+    definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id", type_="int"),
+        VectorStoreField("data", name="values", type_=field_type),
+        VectorStoreField("data", name="nested", type_="dict"),
+    ])
+    collection = collection_factory(definition=definition)
+    await collection.ensure_collection_exists()
+    value = {"id": 1, "values": ("one", (2, None)), "nested": {"items": [(True, 3.0)]}}
+    await collection.upsert([value], generate_vectors=False)
+    assert await collection.get([1]) == [{"id": 1, "values": ["one", [2, None]], "nested": {"items": [[True, 3.0]]}}]
+    assert value == {"id": 1, "values": ("one", (2, None)), "nested": {"items": [(True, 3.0)]}}
+
+
+@pytest.mark.parametrize("invalid", [b"binary", math.inf, 2**63])
+async def test_nested_tuple_validation_rejects_batch_before_write(definition, record, invalid):
+    client = AsyncMock(spec=AsyncQdrantClient)
+    collection = QdrantCollection(dict, definition=definition, collection_name="test", async_client=client)
+    with pytest.raises((TypeError, ValueError)):
+        await collection.upsert([record(1), record(2, tags=("valid", (invalid,)))], generate_vectors=False)
+    client.upsert.assert_not_awaited()
 
 
 async def test_large_batch_multi_1536_vectors(collection_factory):
@@ -341,6 +389,56 @@ async def test_local_filters_rejected_even_on_empty_collection(definition):
             await collection.search(vector=[1, 0, 0], filter=Filter("integer", "eq", 1))
 
 
+@pytest.mark.parametrize("init_options", [{}, {"location": ":memory:"}, {"path": "local-storage"}])
+@pytest.mark.parametrize("skip", [0, 1_000_000])
+@pytest.mark.parametrize("keys", [None, [1]])
+async def test_ordering_rejected_before_io(definition, init_options, skip, keys):
+    client = AsyncMock(spec=AsyncQdrantClient)
+    client.init_options = init_options
+    collection = QdrantCollection(dict, definition=definition, collection_name="test", async_client=client)
+    with pytest.raises(NotImplementedError, match="Omit order_by"):
+        await collection.get(keys, order_by={"number": True}, skip=skip, top=600)
+    client.scroll.assert_not_awaited()
+    client.query_points.assert_not_awaited()
+    client.retrieve.assert_not_awaited()
+
+
+async def test_empty_order_by_preserves_unordered_reads(collection_factory, record):
+    collection = collection_factory()
+    await collection.ensure_collection_exists()
+    await collection.upsert([record(index) for index in range(3)], generate_vectors=False)
+    assert await collection.get(order_by={}, top=1, skip=1) == await collection.get(top=1, skip=1)
+    assert await collection.get([1], order_by={}) == await collection.get([1])
+
+
+@pytest.mark.parametrize("value", [pytest.param(10**400, id="positive"), pytest.param(-(10**400), id="negative")])
+@pytest.mark.parametrize(
+    "operation", ["upsert", "search", "range_get", "range_search", "equality", "contains", "threshold"]
+)
+async def test_oversized_numeric_inputs_raise_validation_errors(definition, record, value, operation):
+    client = AsyncMock(spec=AsyncQdrantClient)
+    client.init_options = {}
+    collection = QdrantCollection(dict, definition=definition, collection_name="test", async_client=client)
+    with pytest.raises(ValueError):
+        if operation == "upsert":
+            await collection.upsert([record(1), record(2, embedding=[value, 0, 0])], generate_vectors=False)
+        elif operation == "search":
+            await collection.search(vector=[value, 0, 0])
+        elif operation == "range_get":
+            await collection.get(filter=Filter("integer", "gte", value))
+        elif operation == "range_search":
+            await collection.search(vector=[1, 0, 0], filter=Filter("integer", "between", (0, value)))
+        elif operation == "equality":
+            await collection.get(filter=Filter("number", "eq", value))
+        elif operation == "contains":
+            await collection.get(filter=Filter("tags", "contains", value))
+        else:
+            await collection.search(vector=[1, 0, 0], score_threshold=value)
+    client.upsert.assert_not_awaited()
+    client.query_points.assert_not_awaited()
+    client.scroll.assert_not_awaited()
+
+
 async def test_unsupported_options_and_schema(definition):
     client = AsyncMock(spec=AsyncQdrantClient)
     client.init_options = {}
@@ -351,17 +449,14 @@ async def test_unsupported_options_and_schema(definition):
         await collection.search("query")
     with pytest.raises(ValueError, match="Unsupported"):
         await collection.get(operation_options={"with_payload": False})
-    with pytest.raises(ValueError):
+    with pytest.raises(NotImplementedError, match="order_by"):
         await collection.get([1], order_by={"number": True})
     with pytest.raises(NotImplementedError):
         await collection.get(order_by={"number": True, "integer": True})
     with pytest.raises(NotImplementedError):
         await collection.get(order_by={"text": True})
-    with pytest.raises(ValueError, match="numeric payload index"):
+    with pytest.raises(NotImplementedError, match="order_by"):
         await collection.get(order_by={"integer": True})
-    with pytest.raises(TypeError):
-        invalid_order: Any = {"number": "asc"}
-        await collection.get(order_by=invalid_order)
     with pytest.raises(ValueError, match="finite"):
         await collection.search(vector=[1, 0, 0], score_threshold=math.nan)
     with pytest.raises(ValueError, match="connection settings"):
@@ -401,6 +496,101 @@ async def test_existing_collection_mismatch(collection_factory, client):
     )
     with pytest.raises(ValueError, match="does not match"):
         await collection.ensure_collection_exists()
+
+
+@pytest.mark.parametrize("matching_schema", [True, False])
+async def test_concurrent_collection_creation_validates_winning_schema(collection_factory, client, matching_schema):
+    def definition(dimensions):
+        return VectorStoreCollectionDefinition([
+            VectorStoreField("key", name="id", type_="int"),
+            VectorStoreField("vector", name="v", dimensions=dimensions),
+        ])
+
+    first = collection_factory(definition=definition(2))
+    second = QdrantCollection(
+        dict,
+        definition=definition(2 if matching_schema else 3),
+        collection_name=first.collection_name,
+        async_client=client,
+    )
+    exists = client.collection_exists
+    ready = asyncio.Event()
+    count = 0
+
+    async def check_together(name):
+        nonlocal count
+        present = await exists(name)
+        if not present and count < 2:
+            count += 1
+            if count == 2:
+                ready.set()
+            await ready.wait()
+        return present
+
+    with patch.object(client, "collection_exists", side_effect=check_together):
+        results = await asyncio.gather(
+            first.ensure_collection_exists(), second.ensure_collection_exists(), return_exceptions=True
+        )
+    if matching_schema:
+        assert results == [None, None]
+    else:
+        assert sum(result is None for result in results) == 1
+        assert sum(isinstance(result, ValueError) and "does not match" in str(result) for result in results) == 1
+
+
+@pytest.mark.parametrize("outcome", ["rest_conflict", "grpc_conflict", "false"])
+async def test_create_race_revalidates_existing_collection(collection_factory, client, outcome):
+    collection = collection_factory()
+    await collection.ensure_collection_exists()
+    error = (
+        UnexpectedResponse(409, "Conflict", b"collection already exists", Headers())
+        if outcome == "rest_conflict"
+        else AioRpcError(StatusCode.ALREADY_EXISTS, Metadata(), Metadata(), "collection already exists")
+    )
+    with (
+        patch.object(client, "collection_exists", side_effect=[False, True]),
+        patch.object(
+            client, "create_collection", return_value=False, side_effect=None if outcome == "false" else error
+        ),
+        patch.object(client, "get_collection", wraps=client.get_collection) as get_collection,
+    ):
+        await collection.ensure_collection_exists()
+        get_collection.assert_awaited_once_with(collection.collection_name)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        UnexpectedResponse(403, "Forbidden", b"not authorized", Headers()),
+        UnexpectedResponse(500, "Internal Server Error", b"failed", Headers()),
+        AioRpcError(StatusCode.PERMISSION_DENIED, Metadata(), Metadata(), "not authorized"),
+        AioRpcError(StatusCode.DEADLINE_EXCEEDED, Metadata(), Metadata(), "timed out"),
+        ValueError("invalid configuration"),
+        TimeoutError("connection timed out"),
+    ],
+)
+async def test_create_errors_are_not_reconciled(definition, error):
+    client = AsyncMock(spec=AsyncQdrantClient)
+    client.init_options = {}
+    client.collection_exists.return_value = False
+    client.create_collection.side_effect = error
+    collection = QdrantCollection(dict, definition=definition, collection_name="test", async_client=client)
+    with pytest.raises(type(error)) as result:
+        await collection.ensure_collection_exists()
+    assert result.value is error
+    client.get_collection.assert_not_awaited()
+
+
+async def test_conflict_does_not_hide_missing_collection(definition):
+    client = AsyncMock(spec=AsyncQdrantClient)
+    client.collection_exists.return_value = False
+    client.create_collection.side_effect = UnexpectedResponse(409, "Conflict", b"already exists", Headers())
+    missing = UnexpectedResponse(404, "Not Found", b"collection is absent", Headers())
+    client.get_collection.side_effect = missing
+    collection = QdrantCollection(dict, definition=definition, collection_name="test", async_client=client)
+    with pytest.raises(UnexpectedResponse) as result:
+        await collection.ensure_collection_exists()
+    assert result.value is missing
 
 
 @pytest.mark.parametrize("configuration", ["uint8", "flat"])
