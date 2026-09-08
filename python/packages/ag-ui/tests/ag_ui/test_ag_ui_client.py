@@ -83,20 +83,18 @@ class TestAGUIChatClient:
         assert state is None
 
     async def test_extract_state_from_messages_with_state(self) -> None:
-        """Test state extraction from last message."""
-        import base64
+        """A marked state carrier populates the request state."""
+        from agent_framework_ag_ui import state_carrier
 
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
 
         state_data = {"key": "value", "count": 42}
-        state_json = json.dumps(state_data)
-        state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("utf-8")
 
         messages = [
             Message(role="user", contents=["Hello"]),
             Message(
                 role="user",
-                contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
+                contents=[state_carrier(state_data)],
             ),
         ]
 
@@ -110,6 +108,8 @@ class TestAGUIChatClient:
         """Test state extraction from JSON data URIs with media type parameters."""
         import base64
 
+        from agent_framework_ag_ui._state import STATE_CARRIER_KEY
+
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
 
         state_data = {"key": "value", "count": 42}
@@ -120,7 +120,12 @@ class TestAGUIChatClient:
             Message(role="user", contents=["Hello"]),
             Message(
                 role="user",
-                contents=[Content.from_uri(uri=f"data:application/json;charset=utf-8;base64,{state_b64}")],
+                contents=[
+                    Content.from_uri(
+                        uri=f"data:application/json;charset=utf-8;base64,{state_b64}",
+                        additional_properties={STATE_CARRIER_KEY: True},
+                    )
+                ],
             ),
         ]
 
@@ -134,6 +139,8 @@ class TestAGUIChatClient:
         """Test state extraction with invalid JSON."""
         import base64
 
+        from agent_framework_ag_ui._state import STATE_CARRIER_KEY
+
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
 
         invalid_json = "not valid json"
@@ -142,7 +149,12 @@ class TestAGUIChatClient:
         messages = [
             Message(
                 role="user",
-                contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
+                contents=[
+                    Content.from_uri(
+                        uri=f"data:application/json;base64,{state_b64}",
+                        additional_properties={STATE_CARRIER_KEY: True},
+                    )
+                ],
             ),
         ]
 
@@ -153,12 +165,19 @@ class TestAGUIChatClient:
 
     async def test_extract_state_invalid_base64(self) -> None:
         """Test state extraction with invalid base64."""
+        from agent_framework_ag_ui._state import STATE_CARRIER_KEY
+
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
 
         messages = [
             Message(
                 role="user",
-                contents=[Content.from_uri(uri="data:application/json;base64,not-valid-base64!")],
+                contents=[
+                    Content.from_uri(
+                        uri="data:application/json;base64,not-valid-base64!",
+                        additional_properties={STATE_CARRIER_KEY: True},
+                    )
+                ],
             ),
         ]
 
@@ -281,6 +300,50 @@ class TestAGUIChatClient:
                             "mimeType": "application/json",
                         },
                     },
+                ],
+            }
+        ]
+
+    async def test_sends_json_attachment_without_state_carrier_in_request(self) -> None:
+        """An unmarked JSON-only document is sent as AG-UI document input."""
+        captured_request: dict[str, Any] = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            captured_request.update(json.loads(request.content))
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=(
+                    b'data: {"type":"RUN_STARTED","threadId":"thread_1","runId":"run_1"}\n\n'
+                    b'data: {"type":"RUN_FINISHED","threadId":"thread_1","runId":"run_1"}\n\n'
+                ),
+            )
+
+        message = Message(
+            role="user",
+            contents=[Content.from_data(b'{"document":"keep me"}', media_type="application/json")],
+            message_id="msg-json-only-document",
+        )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StubAGUIChatClient(endpoint="http://localhost:8888/", http_client=http_client)
+            response = await client.inner_get_response(messages=[message], options={})
+
+        assert response is not None
+        assert "state" not in captured_request
+        assert captured_request["messages"] == [
+            {
+                "id": "msg-json-only-document",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "data",
+                            "value": "eyJkb2N1bWVudCI6ImtlZXAgbWUifQ==",
+                            "mimeType": "application/json",
+                        },
+                    }
                 ],
             }
         ]
@@ -472,18 +535,16 @@ class TestAGUIChatClient:
             pass
 
     async def test_state_transmission(self, monkeypatch: MonkeyPatch) -> None:
-        """Test state is properly transmitted to server."""
-        import base64
+        """A marked state carrier is transmitted through the request state field."""
+        from agent_framework_ag_ui import state_carrier
 
         state_data = {"user_id": "123", "session": "abc"}
-        state_json = json.dumps(state_data)
-        state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("utf-8")
 
         messages = [
             Message(role="user", contents=["Hello"]),
             Message(
                 role="user",
-                contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
+                contents=[state_carrier(state_data)],
             ),
         ]
 

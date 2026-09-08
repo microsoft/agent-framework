@@ -32,6 +32,7 @@ from ._event_converters import AGUIEventConverter
 from ._feature_usage import FeatureIndex
 from ._http_service import AGUIHttpService, _serialize_available_interrupts, _serialize_resume
 from ._message_adapters import agent_framework_messages_to_agui
+from ._state import STATE_CARRIER_KEY
 from ._utils import convert_tools_to_agui_format
 
 if sys.version_info >= (3, 13):
@@ -293,14 +294,18 @@ class AGUIChatClient(
 
         last_message = messages[-1]
 
-        # A state carrier is a dedicated final message. Mixed messages must remain
-        # intact so ordinary JSON attachments and their accompanying text reach the
-        # normal AG-UI message converter.
+        # A state carrier is an explicitly marked, dedicated final message. Mixed
+        # messages and ordinary JSON documents must reach the normal AG-UI message
+        # converter intact.
         if len(last_message.contents) != 1:
             return list(messages), None
 
         content = last_message.contents[0]
-        if not (isinstance(content, Content) and content.type == "data" and content.media_type == "application/json"):
+        if not isinstance(content, Content):
+            return list(messages), None
+        if (content.additional_properties or {}).get(STATE_CARRIER_KEY) is not True:
+            return list(messages), None
+        if content.type != "data" or content.media_type != "application/json":
             return list(messages), None
 
         try:
