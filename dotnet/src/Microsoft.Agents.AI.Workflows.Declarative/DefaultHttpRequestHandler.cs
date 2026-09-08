@@ -140,7 +140,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
                 providedClient = await this._httpClientProvider(currentRequest, effectiveToken).ConfigureAwait(false);
             }
 
-            if (providedClient is not null)
+            if (providedClient is not null && redirectCount > 0)
             {
                 ThrowIfUnsafeProvidedClientHeaders(providedClient, currentRequest);
             }

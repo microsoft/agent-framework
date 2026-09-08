@@ -606,11 +606,16 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
-    public async Task SendAsyncProviderClientRejectsScopedDefaultHeadersAsync()
+    public async Task SendAsyncProviderClientAllowsScopedDefaultHeadersOnInitialRequestAsync()
     {
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
-        using HttpClient providerClient = new();
+        TestHttpMessageHandler messageHandler = new((req, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("ok", Encoding.UTF8, "text/plain"),
+            }));
+        using HttpClient providerClient = new(messageHandler);
         providerClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Client-Token", "provider-header-value");
 
         int providerCallCount = 0;
@@ -629,12 +634,52 @@ public sealed class DefaultHttpRequestHandlerTests
         };
 
         // Act
+        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        Assert.Equal("ok", result.Body);
+        Assert.Equal(1, providerCallCount);
+    }
+
+    [Fact]
+    public async Task SendAsyncProviderClientRejectsScopedDefaultHeadersOnRedirectedRequestAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        TestHttpMessageHandler primaryMessageHandler = new((req, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
+            {
+                Headers = { Location = new Uri("https://secondary.example.test/next") },
+            }));
+        using HttpClient primaryClient = new(primaryMessageHandler);
+        using HttpClient secondaryClient = new();
+        secondaryClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Client-Token", "provider-header-value");
+
+        int providerCallCount = 0;
+#pragma warning disable CA2025
+        await using DefaultHttpRequestHandler handler = new((info, _) =>
+        {
+            providerCallCount++;
+            HttpClient client = info.Url.StartsWith("https://api.example.test/", StringComparison.Ordinal)
+                ? primaryClient
+                : secondaryClient;
+            return Task.FromResult<HttpClient?>(client);
+        });
+#pragma warning restore CA2025
+
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = TestUrl,
+        };
+
+        // Act
         async Task actAsync() => await handler.SendAsync(request, cancellationToken);
 
         // Assert
         InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(actAsync);
         Assert.Contains("DefaultRequestHeaders", exception.Message, StringComparison.Ordinal);
-        Assert.Equal(1, providerCallCount);
+        Assert.Equal(2, providerCallCount);
     }
 
     [Fact]
