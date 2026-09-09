@@ -592,11 +592,12 @@ def test_streaming_replay_preserves_empty_signed_thinking_block(
     from anthropic.types.beta import (
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
+        BetaRawMessageStreamEvent,
     )
 
     client = create_test_anthropic_client(mock_anthropic_client)
 
-    events = [
+    events: list[BetaRawMessageStreamEvent] = [
         BetaRawContentBlockStartEvent.model_validate(
             {
                 "type": "content_block_start",
