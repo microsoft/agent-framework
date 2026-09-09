@@ -114,7 +114,8 @@ def add_agent_framework_fastapi_endpoint(
             explicit Snapshot Scope resolver.
         snapshot_scope_resolver: Optional resolver for the application-defined Snapshot Scope. Required whenever
             a snapshot store is configured because an AG-UI Thread id is not an authorization boundary. Also scopes
-            in-memory workflow_factory instances when provided without a snapshot store.
+            the internal Agent Session id used by context providers and in-memory workflow_factory instances when
+            provided without a snapshot store.
         checkpoint_storage: Optional workflow checkpoint storage, applied when the endpoint exposes a workflow.
             When provided, each run creates a checkpoint at the end of every superstep, and a run may resume from
             a persisted checkpoint by supplying its id in the AG-UI forwarded props

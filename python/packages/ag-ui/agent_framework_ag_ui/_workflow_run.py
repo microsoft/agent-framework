@@ -910,6 +910,17 @@ def _workflow_payload_to_contents(payload: Any) -> list[Content] | None:
     if isinstance(payload, AgentResponseUpdate):
         contents = list(payload.contents or [])
         role_field = payload.role
+        if role_field is None:
+            # ``role`` is optional and streamed continuation chunks routinely omit it.
+            # Keep their text -- previously dropped, so role-less text surfaced as a
+            # CUSTOM workflow_output instead of reasoning/assistant text -- alongside tool
+            # content. Approval requests stay excluded (see _TOOL_CONTENT_TYPES): a
+            # role-less approval interrupt from streamed content has no pending request to
+            # resume against.
+            role_less_contents = [
+                content for content in contents if content.type == "text" or content.type in _TOOL_CONTENT_TYPES
+            ]
+            return role_less_contents or None
         if isinstance(role_field, str):
             role = role_field
         else:
@@ -931,6 +942,30 @@ def _workflow_payload_to_contents(payload: Any) -> list[Content] | None:
             contents.extend(item_contents)
         return contents if contents else None
     return None
+
+
+def _as_reasoning_content(content: Content) -> Content:
+    """Re-tag plain text content as ``text_reasoning``.
+
+    Intermediate workflow output should surface as AG-UI reasoning (a collapsible
+    "thinking" block) rather than a final assistant message. Only ``text`` content
+    is converted; tool calls, results, and other content types pass through
+    unchanged so they still emit as their native AG-UI events.
+    """
+    if content.type != "text":
+        return content
+    return Content.from_text_reasoning(
+        id=content.id,
+        text=content.text,
+        # Carry encrypted reasoning metadata through unchanged: _emit_text_reasoning
+        # turns protected_data into a ReasoningEncryptedValueEvent and an
+        # ``encryptedValue`` on the snapshot entry, so dropping it here would break
+        # reasoning state continuity for intermediate content that carries it.
+        protected_data=content.protected_data,
+        annotations=content.annotations,
+        additional_properties=content.additional_properties or None,
+        raw_representation=content.raw_representation,
+    )
 
 
 def _event_name(event: Any) -> str:
@@ -1115,6 +1150,22 @@ async def run_workflow_stream(
         flow.accumulated_text = ""
         return [TextMessageEndEvent(message_id=current_message_id)]
 
+    def _drain_open_blocks() -> list[BaseEvent]:
+        """Close any open reasoning block and assistant text message.
+
+        Emitted before content that must not sit inside an open block: a terminal event
+        (RUN_FINISHED / RUN_ERROR, which must be the final events in the stream) or a
+        request_info tool call (non-reasoning message content). Otherwise the block's
+        REASONING_* / TEXT_MESSAGE_* end events would be flushed only by the post-loop
+        cleanup -- after the terminal event, or after the tool call. Both inner helpers
+        are no-ops when their block is not open, so this is always safe to call (a later
+        cleanup pass then simply does nothing).
+        """
+        events: list[BaseEvent] = []
+        events.extend(_close_reasoning_block(flow))
+        events.extend(_drain_open_message())
+        return events
+
     fwd_kwargs: dict[str, Any] = {}
     if "forwarded_props" in input_data:
         forwarded_props = input_data["forwarded_props"]
@@ -1170,6 +1221,10 @@ async def run_workflow_stream(
                 run_started_emitted = True
 
             if event_type == "failed":
+                # Close any open reasoning block / text message so RUN_ERROR stays the
+                # last event a client receives for this run.
+                for end_event in _drain_open_blocks():
+                    yield end_event
                 details = getattr(event, "details", None)
                 yield RunErrorEvent(message=_details_message(details), code=_details_code(details))
                 run_error_emitted = True
@@ -1183,9 +1238,9 @@ async def run_workflow_stream(
                 else:
                     state_value = str(getattr(state, "value", state))
                 if state_value in _TERMINAL_STATES and not terminal_emitted:
-                    # Close any open assistant text message before the terminal event so
-                    # RUN_FINISHED is always the last emitted event.
-                    for end_event in _drain_open_message():
+                    # Close any open reasoning block and assistant text message before the
+                    # terminal event so RUN_FINISHED is always the last emitted event.
+                    for end_event in _drain_open_blocks():
                         yield end_event
                     if not interrupts:
                         interrupts.extend(_interrupts_from_pending_requests(await _pending_request_events(workflow)))
@@ -1238,7 +1293,10 @@ async def run_workflow_stream(
                 continue
 
             if event_type == "request_info":
-                for end_event in _drain_open_message():
+                # A request_info emits a tool call (non-reasoning message content), so any
+                # open reasoning block / text message must be closed first -- otherwise the
+                # tool call would sit inside an unclosed reasoning block.
+                for end_event in _drain_open_blocks():
                     yield end_event
                 request_payload = _request_payload_from_request_event(event)
                 if request_payload is None:
@@ -1258,7 +1316,12 @@ async def run_workflow_stream(
                     yield CustomEvent(name=_INTERRUPT_CARD_EVENT_NAME, value=interrupt_event_value)
                 continue
 
-            if event_type in {"output", "data"}:
+            if event_type in {"output", "intermediate", "data"}:
+                # "intermediate" (and its deprecated alias "data") carry non-terminal
+                # output. Their text is surfaced as AG-UI reasoning so consumers render
+                # it as a collapsible "thinking" block instead of a final assistant
+                # message. "output" keeps the terminal-message behavior.
+                is_intermediate = event_type in {"intermediate", "data"}
                 output_payload = getattr(event, "data", None)
                 if isinstance(output_payload, BaseEvent):
                     yield output_payload
@@ -1277,15 +1340,25 @@ async def run_workflow_stream(
                             yield out_event
                 contents = _workflow_payload_to_contents(output_payload)
                 if contents:
-                    output_text = _text_from_contents(contents)
-                    skip_text = bool(output_text and output_text == last_assistant_text)
-                    for content in contents:
-                        for out_event in _emit_content(content, flow, predictive_handler=None, skip_text=skip_text):
-                            yield out_event
-                    if flow.message_id and flow.accumulated_text:
-                        last_assistant_text = flow.accumulated_text.strip() or last_assistant_text
-                    elif output_text:
-                        last_assistant_text = output_text
+                    if is_intermediate:
+                        # Reasoning is a separate channel from the final assistant
+                        # message, so the last_assistant_text dedup does not apply.
+                        for content in contents:
+                            reasoning_content = _as_reasoning_content(content)
+                            for out_event in _emit_content(
+                                reasoning_content, flow, predictive_handler=None, skip_text=False
+                            ):
+                                yield out_event
+                    else:
+                        output_text = _text_from_contents(contents)
+                        skip_text = bool(output_text and output_text == last_assistant_text)
+                        for content in contents:
+                            for out_event in _emit_content(content, flow, predictive_handler=None, skip_text=skip_text):
+                                yield out_event
+                        if flow.message_id and flow.accumulated_text:
+                            last_assistant_text = flow.accumulated_text.strip() or last_assistant_text
+                        elif output_text:
+                            last_assistant_text = output_text
                 else:
                     yield CustomEvent(name="workflow_output", value=make_json_safe(output_payload))
                 continue
@@ -1298,6 +1371,9 @@ async def run_workflow_stream(
         if not run_started_emitted:
             yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
             run_started_emitted = True
+        # Close any open reasoning block / text message so RUN_ERROR stays the final event.
+        for end_event in _drain_open_blocks():
+            yield end_event
         if not run_error_emitted:
             yield RunErrorEvent(message=str(exc), code=type(exc).__name__)
             run_error_emitted = True

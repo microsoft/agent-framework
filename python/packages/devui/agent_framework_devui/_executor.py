@@ -135,7 +135,9 @@ class AgentFrameworkExecutor:
         request_id = event.get("request_id")
         fc = event.get("function_call", {})
         if isinstance(request_id, str) and request_id:
+            occurrence_id = fc.get("occurrence_id")
             self._pending_approvals[request_id] = {
+                "id": occurrence_id if isinstance(occurrence_id, str) and occurrence_id else request_id,
                 "call_id": fc.get("id", ""),
                 "name": fc.get("name", ""),
                 "arguments": fc.get("arguments", {}),
@@ -830,6 +832,7 @@ class AgentFrameworkExecutor:
                                             name=stored_fc["name"],
                                             arguments=stored_fc["arguments"],
                                         )
+                                        function_call.id = stored_fc.get("id", request_id)
 
                                         # Create approval response using server-validated data
                                         approval_response = Content.from_function_approval_response(

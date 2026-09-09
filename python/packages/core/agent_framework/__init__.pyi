@@ -123,6 +123,7 @@ from ._harness._tool_approval import (
     create_always_approve_tool_response,
     create_always_approve_tool_with_arguments_response,
 )
+from ._in_memory import InMemoryCollection, InMemoryStore
 from ._mcp import (
     MCPStdioTool,
     MCPStreamableHTTPTool,
@@ -250,6 +251,27 @@ from ._types import (
     validate_tool_mode,
     validate_tools,
 )
+from ._vector_filters import Filter, FilterGroup, FilterGroupOperator, FilterOperator, Param
+from ._vectors import (
+    DISTANCE_FUNCTION_DIRECTION_HELPER,
+    BaseVectorCollection,
+    BaseVectorSearch,
+    BaseVectorStore,
+    DistanceFunction,
+    FieldTypes,
+    GenerateVectors,
+    IndexKind,
+    SearchResponse,
+    SearchResults,
+    SearchType,
+    SupportsVectorSearch,
+    SupportsVectorUpsert,
+    VectorStoreCollectionDefinition,
+    VectorStoreField,
+    create_vector_search_tool,
+    register_vectorstoremodel,
+    vectorstoremodel,
+)
 from ._workflows._agent import WorkflowAgent
 from ._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
 from ._workflows._agent_utils import resolve_agent_id
@@ -306,7 +328,7 @@ from ._workflows._validation import (
     validate_workflow_graph,
 )
 from ._workflows._viz import WorkflowViz
-from ._workflows._workflow import Workflow, WorkflowRunResult
+from ._workflows._workflow import Workflow, WorkflowInvocationKwargs, WorkflowRunResult
 from ._workflows._workflow_builder import WorkflowBuilder
 from ._workflows._workflow_context import WorkflowContext
 from ._workflows._workflow_executor import SubWorkflowRequestMessage, SubWorkflowResponseMessage, WorkflowExecutor
@@ -335,6 +357,7 @@ __all__ = [
     "DEFAULT_MODE_SOURCE_ID",
     "DEFAULT_TODO_SOURCE_ID",
     "DEFAULT_TOOL_APPROVAL_SOURCE_ID",
+    "DISTANCE_FUNCTION_DIRECTION_HELPER",
     "EXCLUDED_KEY",
     "EXCLUDE_REASON_KEY",
     "GROUP_ANNOTATION_KEY",
@@ -376,6 +399,9 @@ __all__ = [
     "BaseAgent",
     "BaseChatClient",
     "BaseEmbeddingClient",
+    "BaseVectorCollection",
+    "BaseVectorSearch",
+    "BaseVectorStore",
     "CachingSkillsSource",
     "Case",
     "CharacterEstimatorTokenizer",
@@ -402,6 +428,7 @@ __all__ = [
     "DeduplicatingSkillsSource",
     "Default",
     "DelegatingSkillsSource",
+    "DistanceFunction",
     "Edge",
     "EdgeCondition",
     "EdgeDuplicationError",
@@ -420,6 +447,7 @@ __all__ = [
     "ExperimentalFeature",
     "FanInEdgeGroup",
     "FanOutEdgeGroup",
+    "FieldTypes",
     "FileAccessProvider",
     "FileCheckpointStorage",
     "FileHistoryProvider",
@@ -432,6 +460,10 @@ __all__ = [
     "FileSkillsSource",
     "FileStoreEntry",
     "FileSystemAgentFileStore",
+    "Filter",
+    "FilterGroup",
+    "FilterGroupOperator",
+    "FilterOperator",
     "FilteringSkillsSource",
     "FinalT",
     "FinishReason",
@@ -446,14 +478,18 @@ __all__ = [
     "FunctionalWorkflow",
     "FunctionalWorkflowAgent",
     "FunctionalWorkflowDefinition",
+    "GenerateVectors",
     "GeneratedEmbeddings",
     "GraphConnectivityError",
     "HistoryProvider",
     "InMemoryAgentFileStore",
     "InMemoryCheckpointStorage",
+    "InMemoryCollection",
     "InMemoryHistoryProvider",
     "InMemorySkillsSource",
+    "InMemoryStore",
     "InProcRunnerContext",
+    "IndexKind",
     "InlineSkill",
     "InlineSkillResource",
     "InlineSkillScript",
@@ -481,6 +517,7 @@ __all__ = [
     "MiddlewareTypes",
     "OuterFinalT",
     "OuterUpdateT",
+    "Param",
     "RawAgent",
     "ReleaseCandidateFeature",
     "ResponseStream",
@@ -491,6 +528,9 @@ __all__ = [
     "Runner",
     "RunnerContext",
     "SamplingApprovalCallback",
+    "SearchResponse",
+    "SearchResults",
+    "SearchType",
     "SecretString",
     "SelectiveToolCallCompactionStrategy",
     "ServiceSessionId",
@@ -519,6 +559,8 @@ __all__ = [
     "SupportsImageGenerationTool",
     "SupportsMCPTool",
     "SupportsShellTool",
+    "SupportsVectorSearch",
+    "SupportsVectorUpsert",
     "SupportsWebSearchTool",
     "SwitchCaseEdgeGroup",
     "SwitchCaseEdgeGroupCase",
@@ -544,6 +586,8 @@ __all__ = [
     "UsageDetails",
     "UserInputRequiredException",
     "ValidationTypeEnum",
+    "VectorStoreCollectionDefinition",
+    "VectorStoreField",
     "Workflow",
     "WorkflowAgent",
     "WorkflowBuilder",
@@ -559,6 +603,7 @@ __all__ = [
     "WorkflowExecutor",
     "WorkflowMessage",
     "WorkflowRunResult",
+    "WorkflowInvocationKwargs",
     "WorkflowRunState",
     "WorkflowRunnerException",
     "WorkflowValidationError",
@@ -577,6 +622,7 @@ __all__ = [
     "create_always_approve_tool_with_arguments_response",
     "create_edge_runner",
     "create_harness_agent",
+    "create_vector_search_tool",
     "detect_media_type_from_base64",
     "enqueue_messages",
     "evaluate_agent",
@@ -600,6 +646,7 @@ __all__ = [
     "prepend_instructions_to_messages",
     "register_checkpoint_type",
     "register_state_type",
+    "register_vectorstoremodel",
     "resolve_agent_id",
     "response_handler",
     "set_agent_mode",
@@ -614,5 +661,6 @@ __all__ = [
     "validate_tool_mode",
     "validate_tools",
     "validate_workflow_graph",
+    "vectorstoremodel",
     "workflow",
 ]

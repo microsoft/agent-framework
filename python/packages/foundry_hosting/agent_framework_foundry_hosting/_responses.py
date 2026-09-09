@@ -66,6 +66,7 @@ from azure.ai.agentserver.responses.streaming._builders import (
     OutputItemMcpCallBuilder,
     OutputItemMessageBuilder,
     ReasoningSummaryPartBuilder,
+    RefusalContentBuilder,
     TextContentBuilder,
 )
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
@@ -84,7 +85,13 @@ from ._state_store import (
 
 logger = logging.getLogger(__name__)
 
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
+
+
+def _is_refusal_text_content(content: Content) -> bool:
+    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
 
 
 def _validate_checkpoint_context_id(context_id: str) -> None:
@@ -379,6 +386,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
         checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
         function_approval_store_provider: StoreProvider[FunctionApprovalStore] | None = None,
+        history_source: Literal["agent_server", "agent"] = "agent_server",
         **kwargs: Any,
     ) -> None:
         """Initialize a ResponsesHostServer.
@@ -394,21 +402,31 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 If not provided, a default `CheckpointStoreProvider` will be used.
             function_approval_store_provider: Optional provider for function approval storage.
                 If not provided, a default `FunctionApprovalStoreProvider` will be used.
+            history_source: Source of conversation history supplied to the model for regular agents.
+                `"agent_server"` (default) uses the transcript from the configured response store,
+                requires a `RawAgent` whose client declares `STORES_BY_DEFAULT`, rejects load-enabled
+                agent history providers, and disables downstream service storage.
+                `"agent"` passes only the current request input and preserves the agent's normal
+                history-provider or service-storage behavior. AgentServer still manages Responses
+                API persistence through `store` in both modes.
             **kwargs: Additional keyword arguments.
 
         Note:
-            1. The agent must not have a history provider with `load_messages=True`,
-               because history is managed by the hosting infrastructure.
-            2. The agent must not have any context providers that maintain context
-               in memory, because the hosting environment may get deactivated between
-               requests, and any in-memory context would be lost.
-            3. Resiliency (resilient_background=True) is ONLY supported for workflows; constructing this
+            1. When `history_source="agent_server"`, the agent must not have a history provider
+               with `load_messages=True`, because history is managed by the hosting infrastructure.
+            2. Context providers must not keep required state only on their Python instances,
+               because the hosting environment may get deactivated between requests. Provider
+               state carried by `AgentSession`, including `InMemoryHistoryProvider` messages in
+               `history_source="agent"` mode, is persisted by the configured session store.
+            3. The server owns the supplied agent instance and may add hosting-specific providers.
+               Do not reuse the same agent with another host or invoke it directly after construction.
+            4. Resiliency (resilient_background=True) is ONLY supported for workflows; constructing this
                server with a non-workflow agent and `resilient_background=True` raises `RuntimeError`.
                When resiliency is enabled, and the server crashes mid-response:
                - Background responses are automatically re-invoked on server restart (client won't see the crash).
                - Stream events are preserved for client reconnection.
                - State is maintained across crashes.
-            4. Steering (steerable_conversations=True) is ONLY supported for non-workflow agents; constructing
+            5. Steering (steerable_conversations=True) is ONLY supported for non-workflow agents; constructing
                this server with a workflow agent and `steerable_conversations=True` raises `RuntimeError`.
                Steering a workflow is conceptually undefined -- a workflow's graph may have loops or parallel
                branches with no single well-defined "current point" to cancel and resume from, unlike an
@@ -417,32 +435,83 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                collected, and that isn't guaranteed to have happened in time.
 
         Raises:
-            RuntimeError: If `resilient_background=True` is requested for a non-workflow agent, or if
+            ValueError: If `history_source` is not supported.
+            RuntimeError: If the agent configuration conflicts with the selected history source,
+                `resilient_background=True` is requested for a non-workflow agent, or
                 `steerable_conversations=True` is requested for a workflow agent.
         """
+        if history_source not in ("agent_server", "agent"):
+            raise ValueError("history_source must be either 'agent_server' or 'agent'.")
+
+        is_workflow_agent = isinstance(agent, WorkflowAgent)
+        if is_workflow_agent and agent.workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
+            raise RuntimeError(
+                "There should not be a checkpoint storage already present in the workflow agent. "
+                "The hosting infrastructure will manage checkpoints instead."
+            )
+
+        resilient_background = bool(options and options.resilient_background)
+        if resilient_background and not is_workflow_agent:
+            raise RuntimeError(
+                "resilient_background=True is only supported for workflow agents. "
+                "Crash recovery cannot be provided for non-workflow agents."
+            )
+        if options and options.steerable_conversations and is_workflow_agent:
+            raise RuntimeError(
+                "steerable_conversations=True is only supported for non-workflow agents. "
+                "Steering cannot be provided reliably for workflow agents."
+            )
+
+        uses_agent_server_history = history_source == "agent_server"
+        client_stores_by_default = False
+        if uses_agent_server_history and not is_workflow_agent:
+            if not isinstance(agent, RawAgent):
+                raise RuntimeError(
+                    "history_source='agent_server' requires a RawAgent so hosting can enforce downstream "
+                    "storage options. Construct ResponsesHostServer with history_source='agent' for a custom "
+                    "SupportsAgentRun implementation."
+                )
+            for provider in agent.context_providers:
+                if isinstance(provider, HistoryProvider) and provider.load_messages:
+                    if _is_hosted_responses_history_sentinel(provider):
+                        continue
+                    raise RuntimeError(
+                        "AgentServer response history is enabled, but the agent has a HistoryProvider "
+                        "with load_messages=True. Remove that provider or construct ResponsesHostServer "
+                        "with history_source='agent' to use the agent's regular history setup."
+                    )
+            service_continuation_options = [
+                name
+                for name in ("conversation_id", "previous_response_id", "conversation")
+                if agent.default_options.get(name) is not None
+            ]
+            if service_continuation_options:
+                raise RuntimeError(
+                    "AgentServer response history is enabled, but the agent has downstream service continuation "
+                    f"option(s): {', '.join(service_continuation_options)}. Remove them or construct "
+                    "ResponsesHostServer with history_source='agent' to resume the downstream service conversation."
+                )
+            stores_by_default = getattr(cast(Any, agent).client, "STORES_BY_DEFAULT", None)
+            if not isinstance(stores_by_default, bool):
+                raise RuntimeError(
+                    "history_source='agent_server' requires the agent's chat client to declare "
+                    "STORES_BY_DEFAULT so hosting can enforce downstream storage behavior."
+                )
+            client_stores_by_default = stores_by_default
+
+        # No caller-owned agent state is mutated until all validation and base-host construction succeed.
         super().__init__(prefix=prefix, options=options, store=store, **kwargs)
 
-        for provider in getattr(agent, "context_providers", []):
-            if isinstance(provider, HistoryProvider) and provider.load_messages:
-                if _is_hosted_responses_history_sentinel(provider):
-                    continue
-                raise RuntimeError(
-                    "There shouldn't be a history provider with `load_messages=True` already present. "
-                    "History is managed by the hosting infrastructure."
-                )
-
-        self._is_workflow_agent = False
-        if isinstance(agent, WorkflowAgent):
-            if agent.workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
-                raise RuntimeError(
-                    "There should not be a checkpoint storage already present in the workflow agent. "
-                    "The hosting infrastructure will manage checkpoints instead."
-                )
-            self._is_workflow_agent = True
+        self._uses_agent_server_history = uses_agent_server_history
+        self._client_stores_by_default = client_stores_by_default
+        self._is_workflow_agent = is_workflow_agent
+        self._resilient_background = resilient_background
 
         self._uses_hosted_responses_history = False
-        if not self._is_workflow_agent and isinstance(agent, RawAgent):
+        if self._uses_agent_server_history and not self._is_workflow_agent and isinstance(agent, RawAgent):
             self._uses_hosted_responses_history = True
+            if not self._client_stores_by_default:
+                agent.default_options.pop("store", None)
             if not any(
                 _is_hosted_responses_history_sentinel(provider)
                 for provider in cast(Sequence[ContextProvider], agent.context_providers)
@@ -472,21 +541,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if function_approval_store_provider is None
             else function_approval_store_provider
         )
-
-        # Resiliency check: fail loud rather than silently downgrading to a non-recoverable row.
-        self._resilient_background = bool(options and options.resilient_background)
-        if self._resilient_background and not self._is_workflow_agent:
-            raise RuntimeError(
-                "resilient_background=True is only supported for workflow agents. "
-                "Crash recovery cannot be provided for non-workflow agents."
-            )
-
-        # Steering check: steering a workflow is conceptually undefined and also impractical today.
-        if options and options.steerable_conversations and self._is_workflow_agent:
-            raise RuntimeError(
-                "steerable_conversations=True is only supported for non-workflow agents. "
-                "Steering cannot be provided reliably for workflow agents."
-            )
 
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
         # the first request rather than at server startup, so that authentication
@@ -702,26 +756,38 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         request_interrupted = False
 
         try:
-            if self._uses_hosted_responses_history:
+            if self._uses_agent_server_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
+                # A restored service ID belongs to the downstream model service. Replaying the
+                # AgentServer transcript while resuming that service history would duplicate every
+                # prior turn, so AgentServer-history mode always starts the model call statelessly.
+                session.service_session_id = None
 
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
 
-            history = await context.get_history()
+            history_messages: list[Message] = []
+            if self._uses_agent_server_history:
+                history = await context.get_history()
+                history_messages = await _output_items_to_messages(history, approval_storage=approval_storage)
             run_kwargs: dict[str, Any] = {
-                "messages": [
-                    *(await _output_items_to_messages(history, approval_storage=approval_storage)),
-                    *input_messages,
-                ],
+                "messages": [*history_messages, *input_messages],
                 "session": session,
             }
             chat_options, are_options_set = _to_chat_options(request)
+            if self._uses_agent_server_history:
+                if self._client_stores_by_default:
+                    # The response provider already owns the transcript used for this run. Keep a
+                    # storing downstream service stateless so it cannot become a second history source.
+                    chat_options["store"] = False
+                else:
+                    # Do not pass a storage option to clients that do not advertise support for it.
+                    chat_options.pop("store", None)
 
-            if are_options_set and not isinstance(self._agent, RawAgent):
-                logger.warning("Agent doesn't support runtime options. They will be ignored.")
-            else:
+            if isinstance(self._agent, RawAgent):
                 run_kwargs["options"] = chat_options
+            elif are_options_set:
+                logger.warning("Agent doesn't support runtime options. They will be ignored.")
 
             # Non-workflow agents can't be resilient, so there is no exit_for_recovery path here:
             # both shutdown and steering/cancel just wind the turn down once observed.
@@ -749,8 +815,22 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         finally:
             if self._uses_hosted_responses_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
+
+            # A service ID here means the client stored the turn despite the forced `store=False`.
+            # Do not persist a session that could resume that unreconciled history on a later turn.
+            stored_output_violation = self._uses_agent_server_history and session.service_session_id is not None
+            if stored_output_violation:
+                misconfigured = RuntimeError(
+                    "The agent's chat client stored this turn server-side while AgentServer response history "
+                    "is supplying the conversation. Configure the client to honor store=False, or construct "
+                    "ResponsesHostServer with history_source='agent' to use the agent's regular history setup."
+                )
+                logger.error("%s", misconfigured)
+                if request_failure is None and not request_interrupted:
+                    request_failure = misconfigured
             try:
-                await session_storage.set(session_save_id, session)
+                if not stored_output_violation:
+                    await session_storage.set(session_save_id, session)
             except Exception as save_error:
                 save_failure = save_error
                 if request_interrupted:
@@ -1038,6 +1118,7 @@ class _OutputItemTracker:
         # Builder state — only one is active at a time
         self._message_item: OutputItemMessageBuilder | None = None
         self._text_content: TextContentBuilder | None = None
+        self._refusal_content: RefusalContentBuilder | None = None
         self._reasoning_item: OutputItemBuilder | None = None
         self._summary_part: ReasoningSummaryPartBuilder | None = None
         self._reasoning_encrypted_content: str | None = None
@@ -1101,14 +1182,17 @@ class _OutputItemTracker:
             approval_storage: Used for content types that fall back to one-shot emission
                 (anything not recognized as a streaming delta type) to save/load approval requests.
         """
-        if content.type == "text" and content.text is not None:
-            if self._active_type != "text" or (
-                message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
-            ):
-                for event in self._close():
-                    yield event
-                for event in self._open_message():
-                    yield event
+        if _is_refusal_text_content(content) and content.text is not None:
+            for event in self._ensure_message_content("refusal", message_id):
+                yield event
+            self._active_message_id = message_id
+            self._accumulated.append(content.text)
+            if self._refusal_content is not None:
+                yield self._refusal_content.emit_delta(content.text)
+
+        elif content.type == "text" and content.text is not None:
+            for event in self._ensure_message_content("text", message_id):
+                yield event
             self._active_message_id = message_id
             self._accumulated.append(content.text)
             if self._text_content is not None:
@@ -1335,13 +1419,42 @@ class _OutputItemTracker:
 
     # -- Private open/close helpers --
 
-    def _open_message(self) -> Generator[ResponseStreamEvent]:
+    def _ensure_message_content(
+        self,
+        content_type: Literal["text", "refusal"],
+        message_id: str | None,
+    ) -> Generator[ResponseStreamEvent]:
+        message_changed = (
+            message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
+        )
+        if self._active_type == content_type and not message_changed:
+            return
+        if self._message_item is not None and self._active_type in {"text", "refusal"} and not message_changed:
+            yield from self._close_message_content()
+            yield from self._open_message_content(content_type)
+            return
+        yield from self._close()
+        yield from self._open_message(content_type)
+
+    def _open_message(self, content_type: Literal["text", "refusal"]) -> Generator[ResponseStreamEvent]:
         self._message_item = self._stream.add_output_item_message()
-        self._text_content = self._message_item.add_text_content()
-        self._active_type = "text"
-        self._active_id = None
         yield self._message_item.emit_added()
-        yield self._text_content.emit_added()
+        yield from self._open_message_content(content_type)
+
+    def _open_message_content(
+        self,
+        content_type: Literal["text", "refusal"],
+    ) -> Generator[ResponseStreamEvent]:
+        if self._message_item is None:
+            raise RuntimeError("Cannot open message content without an active message")
+        self._active_type = content_type
+        self._active_id = None
+        if content_type == "refusal":
+            self._refusal_content = self._message_item.add_refusal_content()
+            yield self._refusal_content.emit_added()
+        else:
+            self._text_content = self._message_item.add_text_content()
+            yield self._text_content.emit_added()
 
     def _open_reasoning(self, content: Content) -> Generator[ResponseStreamEvent]:
         item_id = content.id
@@ -1388,16 +1501,14 @@ class _OutputItemTracker:
         yield self._mcp_builder.emit_added()
 
     def _close(self) -> Generator[ResponseStreamEvent]:
-        accumulated = "".join(self._accumulated)
-
-        if self._active_type == "text" and self._text_content and self._message_item:
-            yield self._text_content.emit_text_done(accumulated)
-            yield self._text_content.emit_done()
-            yield self._message_item.emit_done()
-            self._text_content = None
+        if self._active_type in {"text", "refusal"}:
+            yield from self._close_message_content()
+            if self._message_item is not None:
+                yield self._message_item.emit_done()
             self._message_item = None
 
         elif self._active_type == "text_reasoning" and self._summary_part and self._reasoning_item:
+            accumulated = "".join(self._accumulated)
             yield self._summary_part.emit_text_done(accumulated)
             yield self._summary_part.emit_done()
             yield self._reasoning_item.emit_done(
@@ -1413,11 +1524,13 @@ class _OutputItemTracker:
             self._reasoning_encrypted_content = None
 
         elif self._active_type == "function_call" and self._fc_builder:
+            accumulated = "".join(self._accumulated)
             yield self._fc_builder.emit_arguments_done(accumulated)
             yield self._fc_builder.emit_done()
             self._fc_builder = None
 
         elif self._active_type == "mcp_server_tool_call" and self._mcp_builder:
+            accumulated = "".join(self._accumulated)
             yield self._mcp_builder.emit_arguments_done(accumulated)
             yield self._mcp_builder.emit_completed()
             yield self._mcp_builder.emit_done()
@@ -1426,6 +1539,20 @@ class _OutputItemTracker:
         self._active_type = None
         self._active_id = None
         self._active_message_id = None
+        self._accumulated.clear()
+
+    def _close_message_content(self) -> Generator[ResponseStreamEvent]:
+        accumulated = "".join(self._accumulated)
+        if self._active_type == "text" and self._text_content is not None:
+            yield self._text_content.emit_text_done(accumulated)
+            yield self._text_content.emit_done()
+            self._text_content = None
+        elif self._active_type == "refusal" and self._refusal_content is not None:
+            yield self._refusal_content.emit_refusal_done(accumulated)
+            yield self._refusal_content.emit_done()
+            self._refusal_content = None
+        self._active_type = None
+        self._active_id = None
         self._accumulated.clear()
 
 
@@ -1826,7 +1953,10 @@ def _convert_output_message_content(content: OutputMessageContent) -> Content:
     if content["type"] == "output_text":
         return Content.from_text(content["text"])
     if content["type"] == "refusal":
-        return Content.from_text(content["refusal"])
+        return Content.from_text(
+            content["refusal"],
+            additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+        )
 
     # Defensive: `OutputMessageContent` currently only supports `output_text` and `refusal`,
     # but if new types are added in the future, this will catch them.
@@ -1879,7 +2009,10 @@ def _convert_message_content(content: MessageContent) -> Content:
     if content["type"] == "summary_text":
         return Content.from_text(content["text"])
     if content["type"] == "refusal":
-        return Content.from_text(content["refusal"])
+        return Content.from_text(
+            content["refusal"],
+            additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+        )
     if content["type"] == "reasoning_text":
         return Content.from_text_reasoning(text=content["text"])
     if content["type"] == "input_image":

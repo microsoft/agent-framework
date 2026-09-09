@@ -17,8 +17,9 @@ import json
 import time
 import uuid
 import warnings
-from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
-from typing import Any, cast
+from collections.abc import AsyncIterator, Iterator, Mapping, MutableMapping, Sequence
+from copy import copy
+from typing import Any, Literal, cast
 
 from agent_framework import AgentResponse, AgentResponseUpdate, ChatOptions, Content, Message, ResponseStream
 from agent_framework._telemetry import mark_feature_used
@@ -34,6 +35,7 @@ from openai.types.responses import (
     ResponseInputText,
     ResponseOutputItem,
     ResponseOutputMessage,
+    ResponseOutputRefusal,
     ResponseOutputText,
 )
 from openai.types.responses.response_usage import ResponseUsage
@@ -41,6 +43,8 @@ from pydantic import TypeAdapter, ValidationError
 
 from ._feature_usage import FeatureIndex
 
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
 _RESPONSE_OUTPUT_ITEM_ADAPTER: TypeAdapter[Any] = TypeAdapter(ResponseOutputItem)
 _RESPONSE_USAGE_ADAPTER: TypeAdapter[Any] = TypeAdapter(ResponseUsage)
 
@@ -64,6 +68,19 @@ _RESPONSES_STATUSES = frozenset({"completed", "failed", "in_progress", "cancelle
 _STREAMING_TERMINAL_STATUSES = frozenset({"completed", "failed", "incomplete"})
 
 
+def _is_refusal_text_content(content: Content) -> bool:
+    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+
+
+def _code_interpreter_projection_key(content: Content) -> tuple[str, str] | None:
+    if content.type not in {"code_interpreter_tool_call", "code_interpreter_tool_result"}:
+        return None
+    call_id = content.call_id or content.additional_properties.get("item_id")
+    if not isinstance(call_id, str) or not call_id:
+        return None
+    return content.type, call_id
+
+
 def _content_from_input_item(item: Mapping[str, Any]) -> Content:
     """Convert a single OpenAI Responses ``input`` item into a :class:`Content` part.
 
@@ -78,6 +95,14 @@ def _content_from_input_item(item: Mapping[str, Any]) -> Content:
         if not isinstance(text, str) or not text:
             raise ValueError(f"{item_type} requires a non-empty string `text`")
         return Content.from_text(text=text)
+    if item_type == "refusal":
+        refusal = item.get("refusal")
+        if not isinstance(refusal, str) or not refusal:
+            raise ValueError("refusal requires a non-empty string `refusal`")
+        return Content.from_text(
+            text=refusal,
+            additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+        )
     if item_type == "input_image":
         image_url: Any = item.get("image_url")
         if isinstance(image_url, Mapping):
@@ -711,6 +736,8 @@ def _message_output_item(content: Sequence[Any], *, status: str, message_id: str
 
 
 def _message_text_content(content: Content) -> Any:
+    if _is_refusal_text_content(content):
+        return ResponseOutputRefusal(type="refusal", refusal=content.text or "")
     raw_type = _raw_type(content.raw_representation)
     if raw_type in ("output_text", "refusal"):
         return content.raw_representation
@@ -1107,33 +1134,262 @@ async def responses_from_streaming_run(
     }
     if conversation_id is not None:
         created_response["conversation"] = {"id": conversation_id}
-    yield _sse_event(
-        "response.created",
-        {
-            "type": "response.created",
-            "response": created_response,
-        },
-    )
 
+    sequence_number = 0
     model: str | None = None
     updates: list[AgentResponseUpdate] = []
+    pending_projection_updates: list[AgentResponseUpdate] = []
+    committed_output_count = 0
+    projection_message_id: str | None = None
+    projection_message_role: str | None = None
+    seen_raw_projection_keys: set[tuple[str, str]] = set()
+    seen_code_interpreter_projection_keys: set[tuple[str, str]] = set()
+    output_index = -1
+    streamed_message_ids: list[str] = []
+    message_id: str | None = None
+    message_parts: list[dict[str, Any]] = []
+    content_index = -1
+    content_type: Literal["output_text", "refusal"] | None = None
+    content_text: str = ""
+
+    def event(event_type: str, **payload: Any) -> str:
+        nonlocal sequence_number
+        result = _sse_event(
+            event_type,
+            {
+                "type": event_type,
+                **payload,
+                "sequence_number": sequence_number,
+            },
+        )
+        sequence_number += 1
+        return result
+
+    def part_value(part_type: Literal["output_text", "refusal"], text: str) -> dict[str, Any]:
+        if part_type == "refusal":
+            return {"type": "refusal", "refusal": text}
+        return {"type": "output_text", "text": text, "annotations": []}
+
+    def close_content_part() -> list[str]:
+        nonlocal content_type, content_text
+        if message_id is None or content_type is None:
+            return []
+        part = part_value(content_type, content_text)
+        message_parts.append(part)
+        if content_type == "refusal":
+            done = event(
+                "response.refusal.done",
+                item_id=message_id,
+                output_index=output_index,
+                content_index=content_index,
+                refusal=content_text,
+            )
+        else:
+            done = event(
+                "response.output_text.done",
+                item_id=message_id,
+                output_index=output_index,
+                content_index=content_index,
+                text=content_text,
+                logprobs=[],
+            )
+        part_done = event(
+            "response.content_part.done",
+            item_id=message_id,
+            output_index=output_index,
+            content_index=content_index,
+            part=part,
+        )
+        content_type = None
+        content_text = ""
+        return [done, part_done]
+
+    def close_message(status: str) -> list[str]:
+        nonlocal message_id, message_parts, content_index
+        if message_id is None:
+            return []
+        events = close_content_part()
+        events.append(
+            event(
+                "response.output_item.done",
+                output_index=output_index,
+                item={
+                    "id": message_id,
+                    "type": "message",
+                    "role": "assistant",
+                    "status": _message_status(status),
+                    "content": list(message_parts),
+                },
+            )
+        )
+        message_id = None
+        message_parts = []
+        content_index = -1
+        return events
+
+    def projected_message_output_index(current_update: AgentResponseUpdate) -> int:
+        projected_response = AgentResponse.from_updates([*pending_projection_updates, current_update])
+        projected_items = _result_to_output_items(projected_response, status="in_progress")
+        for index in range(len(projected_items) - 1, -1, -1):
+            if _raw_type(projected_items[index]) == "message":
+                return committed_output_count + index
+        raise RuntimeError("Text content did not produce a Responses message output item")
+
+    def open_message(requested_message_id: str | None, projected_output_index: int) -> str:
+        nonlocal message_id, output_index
+        output_index = projected_output_index
+        message_id = requested_message_id or f"msg_{uuid.uuid4().hex}"
+        if message_id in streamed_message_ids:
+            message_id = f"msg_{uuid.uuid4().hex}"
+        streamed_message_ids.append(message_id)
+        return event(
+            "response.output_item.added",
+            output_index=output_index,
+            item={
+                "id": message_id,
+                "type": "message",
+                "role": "assistant",
+                "status": "in_progress",
+                "content": [],
+            },
+        )
+
+    def open_content_part(part_type: Literal["output_text", "refusal"]) -> str:
+        nonlocal content_index, content_type, content_text
+        if message_id is None:
+            raise RuntimeError("Cannot open response content without a message")
+        content_index += 1
+        content_type = part_type
+        content_text = ""
+        return event(
+            "response.content_part.added",
+            item_id=message_id,
+            output_index=output_index,
+            content_index=content_index,
+            part=part_value(part_type, ""),
+        )
+
+    def content_part_matches(part_type: Literal["output_text", "refusal"]) -> bool:
+        return content_type == part_type
+
+    def apply_streamed_message_ids(response: dict[str, Any]) -> None:
+        message_ids = iter(streamed_message_ids)
+        for output_item in response.get("output", []):
+            if not isinstance(output_item, MutableMapping):
+                continue
+            output_mapping = cast("MutableMapping[str, Any]", output_item)
+            if output_mapping.get("type") == "message":
+                try:
+                    output_mapping["id"] = next(message_ids)
+                except StopIteration:
+                    return
+
+    yield event("response.created", response=created_response)
+
     try:
         mark_feature_used(FeatureIndex.HOSTING_RESPONSES)
         async for update in stream:
             updates.append(update)
             if model is None:
                 model = _model_from_update(update)
-            if update.text:
-                yield _sse_event(
-                    "response.output_text.delta",
-                    {
-                        "type": "response.output_text.delta",
-                        "delta": update.text,
-                    },
+            update_role = update.role or projection_message_role
+            projection_message_changed = (
+                projection_message_role is not None
+                and update_role is not None
+                and update_role != projection_message_role
+            ) or (
+                projection_message_id is not None
+                and update.message_id is not None
+                and update.message_id != projection_message_id
+            )
+            if projection_message_changed:
+                if message_id is not None:
+                    for stream_event in close_message("completed"):
+                        yield stream_event
+                    committed_output_count = output_index + 1
+                seen_raw_projection_keys.clear()
+                seen_code_interpreter_projection_keys.clear()
+            if update_role is not None:
+                projection_message_role = update_role
+            if update.message_id is not None:
+                projection_message_id = update.message_id
+            for content in update.contents:
+                projected_update = copy(update)
+                projected_update.contents = [content]
+                if content.type == "text":
+                    text = content.text
+                    if not isinstance(text, str):
+                        continue
+                    is_active_annotation_carrier = (
+                        not text
+                        and bool(content.annotations)
+                        and message_id is not None
+                        and (update.message_id is None or update.message_id == message_id)
+                    )
+                    if is_active_annotation_carrier:
+                        continue
+                else:
+                    if code_key := _code_interpreter_projection_key(content):
+                        if code_key in seen_code_interpreter_projection_keys:
+                            if message_id is not None:
+                                for stream_event in close_content_part():
+                                    yield stream_event
+                            continue
+                        seen_code_interpreter_projection_keys.add(code_key)
+                    raw_item = _raw_response_output_item(content.raw_representation)
+                    if raw_item is not None:
+                        raw_key = _response_output_item_key(raw_item)
+                        if raw_key in seen_raw_projection_keys:
+                            continue
+                        seen_raw_projection_keys.add(raw_key)
+                    if content.type == "usage":
+                        continue
+                    if content.type == "error" and message_id is not None:
+                        continue
+                    if message_id is not None:
+                        for stream_event in close_message("completed"):
+                            yield stream_event
+                        committed_output_count = output_index + 1
+                    pending_projection_updates.append(projected_update)
+                    continue
+                requested_message_id = update.message_id
+                message_changed = (
+                    message_id is not None and requested_message_id is not None and requested_message_id != message_id
                 )
+                if message_changed:
+                    for stream_event in close_message("completed"):
+                        yield stream_event
+                    committed_output_count = output_index + 1
+                if message_id is None:
+                    projected_output_index = projected_message_output_index(projected_update)
+                    yield open_message(requested_message_id, projected_output_index)
+                    pending_projection_updates.clear()
+                requested_content_type: Literal["output_text", "refusal"] = (
+                    "refusal" if _is_refusal_text_content(content) else "output_text"
+                )
+                if not content_part_matches(requested_content_type):
+                    for stream_event in close_content_part():
+                        yield stream_event
+                    yield open_content_part(requested_content_type)
+                content_text += text
+                if not text:
+                    continue
+                delta_type = (
+                    "response.refusal.delta" if requested_content_type == "refusal" else "response.output_text.delta"
+                )
+                delta_payload: dict[str, Any] = {
+                    "item_id": message_id,
+                    "output_index": output_index,
+                    "content_index": content_index,
+                    "delta": text,
+                }
+                if requested_content_type == "output_text":
+                    delta_payload["logprobs"] = []
+                yield event(delta_type, **delta_payload)
 
         final = await stream.get_final_response()
         payload = responses_from_run(final, response_id=response_id, conversation_id=conversation_id)
+        apply_streamed_message_ids(payload)
         if model is not None:
             # The finalized `AgentResponse` never carries a raw representation
             # (see `_model_from_update`), so prefer the model observed on the
@@ -1145,23 +1401,23 @@ async def responses_from_streaming_run(
                 f"Response stream finalized with unsupported status {status!r}; "
                 "expected `completed`, `incomplete`, or `failed`"
             )
+        for stream_event in close_message(status):
+            yield stream_event
         terminal_event_type = f"response.{status}"
-        yield _sse_event(
-            terminal_event_type,
-            {
-                "type": terminal_event_type,
-                "response": payload,
-            },
-        )
+        yield event(terminal_event_type, response=payload)
     except Exception as exc:
-        partial_text = "".join(update.text for update in updates if update.text)
+        for stream_event in close_message("incomplete"):
+            yield stream_event
+        partial_contents = [
+            content for update in updates for content in update.contents if content.type == "text" and content.text
+        ]
         response_kwargs: dict[str, Any] = {
             "id": response_id,
             "object": "response",
             "created_at": int(time.time()),
             "status": "failed",
             "model": model or "agent",
-            "output": _text_output_items(partial_text, status="failed"),
+            "output": _contents_to_output_items(partial_contents, status="failed"),
             "parallel_tool_calls": False,
             "tool_choice": "auto",
             "tools": [],
@@ -1173,12 +1429,11 @@ async def responses_from_streaming_run(
         }
         if conversation_id is not None:
             response_kwargs["conversation"] = {"id": conversation_id}
-        yield _sse_event(
+        failed_response = _response_payload(OpenAIResponse(**response_kwargs))
+        apply_streamed_message_ids(failed_response)
+        yield event(
             "response.failed",
-            {
-                "type": "response.failed",
-                "response": _response_payload(OpenAIResponse(**response_kwargs)),
-            },
+            response=failed_response,
         )
 
 
