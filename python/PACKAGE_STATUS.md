@@ -43,6 +43,7 @@ Status is grouped into these buckets:
 | `agent-framework-lab` | `python/packages/lab` | `beta` |
 | `agent-framework-mem0` | `python/packages/mem0` | `beta` |
 | `agent-framework-mistral` | `python/packages/mistral` | `beta` |
+| `agent-framework-mongodb` | `python/packages/mongodb` | `alpha` |
 | `agent-framework-monty` | `python/packages/monty` | `beta` |
 | `agent-framework-ollama` | `python/packages/ollama` | `beta` |
 | `agent-framework-openai` | `python/packages/openai` | `released` |
