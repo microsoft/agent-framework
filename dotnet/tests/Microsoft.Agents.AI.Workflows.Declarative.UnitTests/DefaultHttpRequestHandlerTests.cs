@@ -381,7 +381,8 @@ public sealed class DefaultHttpRequestHandlerTests
             });
         });
 
-        await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        using HttpClient httpClient = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(httpClient));
         HttpRequestInfo request = new()
         {
             Method = "GET",
