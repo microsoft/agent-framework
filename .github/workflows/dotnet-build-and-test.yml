@@ -434,7 +434,7 @@ jobs:
             -c ${{ matrix.configuration }} `
             --no-build -v Normal `
             --report-xunit-trx `
-            --report-junit `
+            --report-xunit-junit `
             --results-directory ../IntegrationTestResults/ `
             --ignore-exit-code 8 `
             --filter-not-trait "Category=IntegrationDisabled" `
