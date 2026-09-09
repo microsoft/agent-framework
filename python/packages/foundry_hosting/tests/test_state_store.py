@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -70,6 +70,20 @@ def _config(*, is_hosted: bool) -> AgentConfig:
 
 def _platform_context(call_id: str = "call-1", user_id: str = "user-1") -> FoundryAgentRequestContext:
     return FoundryAgentRequestContext(call_id=call_id, user_id=user_id)
+
+
+@pytest.fixture(autouse=True)
+def _reset_agent_session_store_cache() -> Iterator[None]:
+    """Isolate the process-wide FoundryAgentSessionStore state-store cache.
+
+    FoundryAgentSessionStore caches one FoundryStateStore for the whole process
+    (a latency optimisation), which would otherwise leak a test's mocked store
+    into later tests. Clear it before and after every test so each test observes
+    its own patched ``get_or_create``.
+    """
+    FoundryAgentSessionStore._shared_store = None
+    yield
+    FoundryAgentSessionStore._shared_store = None
 
 
 def test_storage_providers_use_public_abstraction() -> None:
@@ -508,3 +522,24 @@ def test_agent_session_storage_provider_creates_request_scoped_storage() -> None
 
     assert storage_type.call_args_list[0].args == (first_context,)
     assert storage_type.call_args_list[1].args == (second_context,)
+
+
+async def test_agent_session_store_is_cached_across_operations() -> None:
+    store = _store()
+    store.get_item = AsyncMock(return_value=None)
+    session_store = FoundryAgentSessionStore(_platform_context())
+
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(return_value=store),
+    ) as get_or_create:
+        await session_store.set("s1", AgentSession(session_id="agent-session-1"))
+        await session_store.get("s1")
+        await session_store.delete("s1")
+
+    # The backing state store is resolved once via get_or_create and reused for
+    # every subsequent operation instead of being rebuilt per call.
+    get_or_create.assert_awaited_once_with("agent_sessions", user_isolation=True)
+    store.set_item.assert_awaited_once()
+    store.get_item.assert_awaited_once()
+    store.delete_item.assert_awaited_once()
