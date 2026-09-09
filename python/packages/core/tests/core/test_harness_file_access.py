@@ -29,7 +29,7 @@ from agent_framework import (
     Message,
     SupportsChatGetResponse,
 )
-from agent_framework._filesystem import is_link_or_reparse_point
+from agent_framework._filesystem import _is_link_or_reparse_point
 from agent_framework._harness import _file_access as _file_access_module
 from agent_framework._harness._file_access import (
     _SEARCH_SNIPPET_RADIUS,
@@ -335,7 +335,12 @@ async def test_filesystem_search_does_not_read_through_a_symlink(
         "_enumerate_search_files",
         staticmethod(lambda full_dir, recursive: [("notes.txt", swapped)]),
     )
-    monkeypatch.setattr(_file_access_module, "is_link_or_reparse_point", lambda candidate: candidate == swapped)
+    monkeypatch.setattr(
+        _file_access_module,
+        "_is_link_or_reparse_point",
+        lambda candidate: candidate == swapped,
+        raising=True,
+    )
 
     store = FileSystemAgentFileStore(root)
     results = await store.search("", "needle", recursive=True)
@@ -957,7 +962,7 @@ def test_link_probe_detects_windows_reparse_attribute(tmp_path: Path, monkeypatc
 
     monkeypatch.setattr(Path, "lstat", fake_lstat)
 
-    assert is_link_or_reparse_point(path) is True
+    assert _is_link_or_reparse_point(path) is True
 
 
 def test_file_access_harness_classes_are_marked_experimental() -> None:

@@ -405,9 +405,7 @@ async def test_get_response_returns_text() -> None:
         (RuntimeError("connection reset"), ChatClientException),
     ],
 )
-async def test_get_response_wraps_sdk_errors(
-    sdk_exception: Exception, expected_exception: type[Exception]
-) -> None:
+async def test_get_response_wraps_sdk_errors(sdk_exception: Exception, expected_exception: type[Exception]) -> None:
     """Non-streaming get_response must translate raw google-genai SDK errors into the
     framework's ChatClientException hierarchy, matching every other provider
     (OpenAI, Anthropic, Mistral, Ollama, Bedrock)."""
