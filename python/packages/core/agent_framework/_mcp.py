@@ -3425,6 +3425,7 @@ class MCPStreamableHTTPTool(MCPTool):
         try:
             await super()._close_on_owner()
         finally:
+            self._connection_kwargs = {}
             self._remove_header_hook()
 
     def _seed_connection_kwargs(self, kwargs: Mapping[str, Any]) -> None:

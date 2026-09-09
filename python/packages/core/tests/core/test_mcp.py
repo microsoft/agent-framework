@@ -6870,6 +6870,74 @@ async def test_agent_run_supplies_mcp_connect_headers(
     assert initialize_headers[0].get("x-api-key") == "connect-token"
 
 
+async def test_agent_context_manager_authenticates_connect_with_closure_provider(
+    client: SupportsChatGetResponse,
+) -> None:
+    """A constructor-supplied MCP tool authenticates its eager handshake with no run involved.
+
+    Pins that ``header_provider`` already covers construction-time credentials: entering the
+    agent context connects before any run exists, and the server rejects unauthenticated calls.
+    """
+    import httpx
+
+    captured_requests: list[tuple[str, dict[str, str]]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            return httpx.Response(200)
+        if request.method == "GET":
+            return httpx.Response(405)
+        if request.headers.get("x-api-key") != "constructor-token":
+            return httpx.Response(401)
+        body = json.loads(request.content.decode())
+        method = body.get("method", "")
+        captured_requests.append((method, {k.lower(): v for k, v in request.headers.items()}))
+        if method == "initialize":
+            return httpx.Response(
+                200,
+                headers={"mcp-session-id": "test-session"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {
+                        "protocolVersion": body["params"]["protocolVersion"],
+                        "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "mock-server", "version": "1.0.0"},
+                    },
+                },
+            )
+        if method == "tools/list":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"tools": [{"name": "greet", "inputSchema": {"type": "object", "properties": {}}}]},
+                },
+            )
+        if "id" in body:
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {}})
+        return httpx.Response(202)
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    # The credential is known at construction, so the provider closes over it and ignores kwargs.
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://127.0.0.1:8000/mcp",
+        load_prompts=False,
+        http_client=http_client,
+        header_provider=lambda _kwargs: {"x-api-key": "constructor-token"},
+    )
+    try:
+        async with Agent(client=client, tools=[tool]):
+            assert tool.is_connected
+    finally:
+        await http_client.aclose()
+
+    assert [method for method, _ in captured_requests].count("initialize") == 1
+    assert all(headers.get("x-api-key") == "constructor-token" for _, headers in captured_requests)
+
+
 async def test_mcp_streamable_http_tool_header_provider_applies_across_transport_tasks():
     """Regression test for #7161: header_provider headers must reach tools/call requests.
 
