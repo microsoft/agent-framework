@@ -508,7 +508,9 @@ public sealed class DefaultHttpRequestHandlerTests
             };
 
             createdResponses.Add(response);
+#pragma warning disable CA2025
             return Task.FromResult(response);
+#pragma warning restore CA2025
         });
 
         try
