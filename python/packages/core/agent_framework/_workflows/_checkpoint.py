@@ -328,7 +328,10 @@ class FileCheckpointStorage:
         encoded_checkpoint = encode_checkpoint_value(checkpoint_dict)
 
         def _write_atomic() -> None:
-            tmp_path = file_path.with_name(f"{file_path.name}.{uuid.uuid4().hex}.tmp")
+            # Short, id-independent temp name: embeds no checkpoint id, so a
+            # checkpoint id accepted by _validate_file_path can never push the
+            # temp name over the filesystem's filename-length limit.
+            tmp_path = file_path.with_name(f".maf-ckpt-{uuid.uuid4().hex}.tmp")
             try:
                 with open(tmp_path, "w") as f:
                     json.dump(encoded_checkpoint, f, indent=2, ensure_ascii=False)
