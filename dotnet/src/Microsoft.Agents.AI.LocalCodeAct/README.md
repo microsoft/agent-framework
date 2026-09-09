@@ -156,7 +156,8 @@ scanned for **new** files after execution, and those files are returned as
 ## Environment Variables
 
 Pass environment variables explicitly. The subprocess does NOT inherit the host
-environment by default:
+environment by default. On Windows, the system variables required for Python to
+load its standard library are retained:
 
 ```csharp
 using var provider = new LocalCodeActProvider("/usr/bin/python3", new LocalCodeActProviderOptions

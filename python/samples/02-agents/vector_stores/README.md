@@ -8,7 +8,7 @@ explicit definition and codecs. Dictionaries use a collection-specific
 definition; DataFrames and other containers can convert to row dictionaries
 before calling the batch API.
 
-No database is needed for these examples. The model, format, and direct
+No database is needed for the in-memory examples. The model, format, and direct
 in-memory filter samples need no credentials. The search-tool sample loads the
 existing Azure AI Search hotel dataset and uses OpenAI for embeddings and the
 agent; set `OPENAI_API_KEY` before running it.
@@ -19,6 +19,11 @@ agent; set `OPENAI_API_KEY` before running it.
 | [`optimized_data_formats.py`](optimized_data_formats.py) | Keeping NumPy vector fields and adapting pandas DataFrames to the batch record API. |
 | [`in_memory_filters.py`](in_memory_filters.py) | Direct vector search with `Filter` and `FilterGroup`. |
 | [`in_memory_search_tool.py`](in_memory_search_tool.py) | Model-set filter values with native typed `Param` declarations. |
+| [`redis_store.py`](redis_store.py) | Native HASH and JSON storage, vector search, filtering, and lifecycle with a disposable Redis server. |
+
+The Redis example requires Redis 8.0.3+ with Search and RedisJSON, but no
+embedding API. See the [Redis package documentation](../../../packages/redis/README.md)
+for setup and supported filter/score semantics.
 
 The first section shows the two equivalent custom-codec registration forms.
 `@vectorstoremodel` derives the definition from annotations and registers it;

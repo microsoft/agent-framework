@@ -8,6 +8,6 @@ pip install agent-framework-ollama --pre
 
 and see the [README](https://github.com/microsoft/agent-framework/tree/main/python/README.md) for more information.
 
-# Run samples with the Ollama Conector
+# Run samples with the Ollama Connector
 
 You can find samples how to run the connector in the [Ollama provider samples](../../samples/02-agents/providers/ollama).

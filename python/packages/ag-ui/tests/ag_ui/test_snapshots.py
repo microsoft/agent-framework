@@ -5,6 +5,42 @@
 from dataclasses import fields
 
 from agent_framework_ag_ui import AGUIThreadSnapshot, AGUIThreadSnapshotStore, InMemoryAGUIThreadSnapshotStore
+from agent_framework_ag_ui._snapshots import _session_id_for_thread
+
+
+def test_internal_session_id_is_stable_scoped_and_unambiguous() -> None:
+    """Internal session identity preserves raw IDs only when no trusted scope is present."""
+    raw_thread_id = "shared-thread"
+    scoped_session_id = _session_id_for_thread(scope="tenant-a", thread_id=raw_thread_id)
+
+    assert _session_id_for_thread(scope=None, thread_id=raw_thread_id) == raw_thread_id
+    assert scoped_session_id == _session_id_for_thread(scope="tenant-a", thread_id=raw_thread_id)
+    assert scoped_session_id.startswith("ag-ui:v1:scoped:")
+    assert len(scoped_session_id.removeprefix("ag-ui:v1:scoped:")) == 64
+    assert scoped_session_id != _session_id_for_thread(scope="tenant-b", thread_id=raw_thread_id)
+    assert _session_id_for_thread(scope="ab", thread_id="c") != _session_id_for_thread(scope="a", thread_id="bc")
+
+
+def test_internal_session_id_keeps_scoped_and_unscoped_namespaces_disjoint() -> None:
+    """A client cannot use a scoped internal ID as an unscoped raw Thread ID."""
+    scoped_session_id = _session_id_for_thread(scope="tenant-a", thread_id="shared-thread")
+    unscoped_session_id = _session_id_for_thread(scope=None, thread_id=scoped_session_id)
+
+    assert unscoped_session_id.startswith("ag-ui:v1:unscoped:")
+    assert unscoped_session_id != scoped_session_id
+    assert unscoped_session_id == _session_id_for_thread(scope=None, thread_id=scoped_session_id)
+
+
+def test_internal_session_id_supports_deprecated_legacy_mapping() -> None:
+    """The explicit migration escape hatch preserves the legacy raw provider key."""
+    assert (
+        _session_id_for_thread(
+            scope="tenant-a",
+            thread_id="shared-thread",
+            legacy_session_id_from_thread_id=True,
+        )
+        == "shared-thread"
+    )
 
 
 def test_thread_snapshot_model_contains_replayable_and_private_snapshot_fields() -> None:
@@ -183,6 +219,39 @@ def test_workflow_snapshot_builder_splits_tool_call_groups() -> None:
         ("assistant", ["call-b"]),
         ("tool", "call-b"),
     ]
+
+
+def test_workflow_snapshot_builder_preserves_safe_bounded_mcp_replay() -> None:
+    """Workflow event synthesis persists model-safe content and private Host replay data."""
+    from ag_ui.core import ToolCallResultEvent
+
+    from agent_framework_ag_ui._utils import (
+        _AGUI_MCP_TOOL_RESULT_KEY,
+        _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY,
+        _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY,
+    )
+    from agent_framework_ag_ui._workflow import _WorkflowSnapshotBuilder
+
+    host_content = '{"structuredContent":{"widget":"host"}}'
+    builder = _WorkflowSnapshotBuilder([])
+    builder.observe(
+        ToolCallResultEvent.model_validate(
+            {
+                "messageId": "result",
+                "toolCallId": "mcp-call",
+                "content": host_content,
+                "role": "tool",
+                _AGUI_MCP_TOOL_RESULT_KEY: True,
+                _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY: host_content,
+                _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: [{"type": "text", "text": "Model summary"}],
+            }
+        )
+    )
+
+    message = builder.build().messages[0]
+    assert message["content"] == "Model summary"
+    assert message[_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY] == host_content
+    assert message[_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY] == [{"type": "text", "text": "Model summary"}]
 
 
 async def test_in_memory_snapshot_store_rejects_invalid_keys() -> None:

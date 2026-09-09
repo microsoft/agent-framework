@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import json
 import logging
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
@@ -7157,10 +7158,19 @@ async def test_session_budget_state_persists_during_approval_and_cleans_up_on_co
 ):
     from agent_framework._harness._tool_approval import ToolApprovalMiddleware
     from agent_framework._sessions import AgentSession
-    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+    from agent_framework._tools import (
+        _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
+        _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY,
+    )
 
     @tool(name="op", approval_mode="always_require")
-    def op() -> str:
+    def op(ctx: FunctionInvocationContext) -> str:
+        assert ctx.session is not None
+        budget_state = ctx.session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY]
+        assert isinstance(budget_state, dict)
+        payload_budget_state = budget_state[_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY]
+        assert isinstance(payload_budget_state, dict)
+        observed_payload_budget_states.append(dict(payload_budget_state))
         return "done"
 
     chat_client_base.function_invocation_configuration["max_duration_seconds"] = 100.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
@@ -7175,6 +7185,7 @@ async def test_session_budget_state_persists_during_approval_and_cleans_up_on_co
     session = AgentSession()
     middleware = ToolApprovalMiddleware()
     agent = Agent(client=chat_client_base, tools=[op], middleware=[middleware])
+    observed_payload_budget_states: list[dict[str, Any]] = []
 
     current_time = [0.0]
 
@@ -7190,7 +7201,15 @@ async def test_session_budget_state_persists_during_approval_and_cleans_up_on_co
         assert any(c.type == "function_approval_request" for c in first_response.messages[-1].contents)
 
         assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY in session.state
-        assert "start_time" in session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY]
+        budget_state = session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY]
+        assert isinstance(budget_state, dict)
+        assert "start_time" in budget_state
+        payload_budget_state = budget_state[_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY]
+        assert isinstance(payload_budget_state, dict)
+        payload_budget_state.update({"limit_bytes": 512, "retained_bytes": 128})
+
+        serialized_session = json.dumps(session.to_dict())
+        session = AgentSession.from_dict(json.loads(serialized_session))
 
         approval_request = next(
             c for c in first_response.messages[-1].contents if c.type == "function_approval_request"
@@ -7199,6 +7218,7 @@ async def test_session_budget_state_persists_during_approval_and_cleans_up_on_co
 
         await agent.run(resume_message, session=session)
 
+    assert observed_payload_budget_states == [{"limit_bytes": 512, "retained_bytes": 128}]
     assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
 
 
@@ -7233,10 +7253,19 @@ async def test_plain_session_multiturn_has_isolated_budget_state_per_invocation(
 async def test_streaming_pending_approval_survives_budget_state_pop(chat_client_base: SupportsChatGetResponse):
     from agent_framework._harness._tool_approval import ToolApprovalMiddleware
     from agent_framework._sessions import AgentSession
-    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+    from agent_framework._tools import (
+        _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
+        _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY,
+    )
 
     @tool(name="op", approval_mode="always_require")
-    def op() -> str:
+    def op(ctx: FunctionInvocationContext) -> str:
+        assert ctx.session is not None
+        budget_state = ctx.session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY]
+        assert isinstance(budget_state, dict)
+        payload_budget_state = budget_state[_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY]
+        assert isinstance(payload_budget_state, dict)
+        observed_payload_budget_states.append(dict(payload_budget_state))
         return "done"
 
     chat_client_base.function_invocation_configuration["max_duration_seconds"] = 100.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
@@ -7249,6 +7278,7 @@ async def test_streaming_pending_approval_survives_budget_state_pop(chat_client_
     session = AgentSession()
     middleware = ToolApprovalMiddleware()
     agent = Agent(client=chat_client_base, tools=[op], middleware=[middleware])
+    observed_payload_budget_states: list[dict[str, Any]] = []
 
     from unittest.mock import patch
 
@@ -7261,6 +7291,14 @@ async def test_streaming_pending_approval_survives_budget_state_pop(chat_client_
         first_response = await stream.get_final_response()
         assert any(c.type == "function_approval_request" for c in first_response.messages[-1].contents)
         assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY in session.state
+        budget_state = session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY]
+        assert isinstance(budget_state, dict)
+        payload_budget_state = budget_state[_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY]
+        assert isinstance(payload_budget_state, dict)
+        payload_budget_state.update({"limit_bytes": 512, "retained_bytes": 128})
+
+        serialized_session = json.dumps(session.to_dict())
+        session = AgentSession.from_dict(json.loads(serialized_session))
 
         approval_request = next(
             c for c in first_response.messages[-1].contents if c.type == "function_approval_request"
@@ -7272,4 +7310,5 @@ async def test_streaming_pending_approval_survives_budget_state_pop(chat_client_
             pass
         await stream2.get_final_response()
 
+    assert observed_payload_budget_states == [{"limit_bytes": 512, "retained_bytes": 128}]
     assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
