@@ -113,6 +113,116 @@ def test_attach_checkpoint_id_to_interrupts_setdefault() -> None:
     assert preserved[0]["metadata"]["agent_framework"]["checkpoint_id"] == "cp-123"
 
 
+@pytest.mark.asyncio
+async def test_pause_checkpoint_id_ignores_competing_shared_latest() -> None:
+    """Prefer this runner's pause checkpoint over a newer shared get_latest() winner."""
+    from agent_framework import WorkflowCheckpoint
+    from agent_framework_ag_ui._workflow_run import (
+        _build_run_finished_with_checkpointed_interrupts,
+        _pause_checkpoint_id_for_interrupts,
+    )
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345"},
+            )
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+            del original_request, response
+            await ctx.yield_output("done")  # type: ignore[arg-type]
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor(), checkpoint_storage=storage).build()
+    first_events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "go"}]},
+            workflow,
+            checkpoint_storage=storage,
+        )
+    ]
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    interrupt_payload = _interrupts_from_run_finished(first_finished)
+    pause_id = interrupt_payload[0]["metadata"]["agent_framework"]["checkpoint_id"]
+
+    # Inject a newer shared checkpoint that does not cover this interrupt (other owner / stale).
+    competing = WorkflowCheckpoint(
+        workflow_name=workflow.name,
+        graph_signature_hash="competing",
+        pending_request_info_events={},
+        timestamp="9999-01-01T00:00:00+00:00",
+    )
+    await storage.save(competing)
+    latest = await storage.get_latest(workflow_name=workflow.name)
+    assert latest is not None
+    assert latest.checkpoint_id == competing.checkpoint_id
+
+    resolved = await _pause_checkpoint_id_for_interrupts(
+        workflow=workflow,
+        checkpoint_storage=storage,
+        interrupts=interrupt_payload,
+    )
+    assert resolved == pause_id
+
+    rebuilt = await _build_run_finished_with_checkpointed_interrupts(
+        run_id="run-1",
+        thread_id="thread-1",
+        interrupts=interrupt_payload,
+        workflow=workflow,
+        checkpoint_storage=storage,
+    )
+    rebuilt_interrupts = _interrupts_from_run_finished(rebuilt)
+    assert rebuilt_interrupts[0]["metadata"]["agent_framework"]["checkpoint_id"] == pause_id
+
+
+@pytest.mark.asyncio
+async def test_builder_checkpoint_storage_attaches_id_without_run_arg() -> None:
+    """WorkflowBuilder(checkpoint_storage=...) alone must still advertise pause checkpoint_id."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345"},
+            )
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+            del original_request, response
+            await ctx.yield_output("done")  # type: ignore[arg-type]
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor(), checkpoint_storage=storage).build()
+    # Deliberately omit checkpoint_storage= on the AG-UI entrypoint (builder path only).
+    events = [
+        event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
+    ]
+    finished = [event for event in events if event.type == "RUN_FINISHED"][0]
+    interrupt_payload = _interrupts_from_run_finished(finished)
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+    assert checkpoints
+    assert interrupt_payload[0]["metadata"]["agent_framework"]["checkpoint_id"] == checkpoints[-1].checkpoint_id
+
+
 async def test_workflow_run_maps_custom_and_text_events():
     """Custom workflow events and yielded text are mapped to AG-UI events."""
 

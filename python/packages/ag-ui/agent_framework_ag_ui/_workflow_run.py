@@ -130,8 +130,6 @@ def _workflow_interrupt_value(request_data: Any) -> Any:
 def _workflow_interrupt_metadata(
     request_payload: dict[str, Any],
     value: Any,
-    *,
-    checkpoint_id: str | None = None,
 ) -> dict[str, Any]:
     """Build Agent Framework metadata for workflow request_info interrupts."""
     agent_framework_metadata = {
@@ -144,7 +142,6 @@ def _workflow_interrupt_metadata(
             "response_type": request_payload.get("response_type"),
             "data": request_payload.get("data"),
             "value": value,
-            "checkpoint_id": checkpoint_id,
         }.items()
         if value is not None
     }
@@ -184,25 +181,88 @@ def _attach_checkpoint_id_to_interrupts(
     return attached
 
 
-async def _latest_checkpoint_id_for_workflow(
+def _resolve_effective_checkpoint_storage(
     workflow: Workflow,
     checkpoint_storage: CheckpointStorage | None,
-) -> str | None:
-    """Best-effort latest checkpoint id for the workflow when storage is configured."""
-    if checkpoint_storage is None:
+) -> CheckpointStorage | None:
+    """Prefer the run argument, else the storage already bound on the workflow runner."""
+    if checkpoint_storage is not None:
+        return checkpoint_storage
+    runner = getattr(workflow, "_runner", None)
+    ctx = getattr(runner, "context", None) if runner is not None else None
+    if ctx is None:
         return None
-    get_latest = getattr(checkpoint_storage, "get_latest", None)
-    if get_latest is None:
+    getter = getattr(ctx, "_get_effective_checkpoint_storage", None)
+    if callable(getter):
+        try:
+            return cast(CheckpointStorage | None, getter())
+        except Exception:  # pragma: no cover - defensive for duck-typed runners
+            return None
+    return None
+
+
+def _runner_previous_checkpoint_id(workflow: Workflow) -> str | None:
+    """Return the checkpoint id last persisted by *this* workflow runner instance."""
+    runner = getattr(workflow, "_runner", None)
+    if runner is None:
         return None
-    try:
-        latest = await get_latest(workflow_name=workflow.name)
-    except Exception:  # pragma: no cover - defensive for storage drift
-        logger.warning("Could not resolve latest workflow checkpoint id for interrupt metadata", exc_info=True)
-        return None
-    if latest is None:
-        return None
-    checkpoint_id = getattr(latest, "checkpoint_id", None)
+    checkpoint_id = getattr(runner, "_previous_checkpoint_id", None)
     return str(checkpoint_id) if checkpoint_id is not None else None
+
+
+def _interrupt_request_ids(interrupts: list[dict[str, Any]]) -> set[str]:
+    return {str(item["id"]) for item in interrupts if item.get("id") is not None}
+
+
+async def _checkpoint_covers_interrupt_ids(
+    storage: CheckpointStorage,
+    checkpoint_id: str,
+    request_ids: set[str],
+) -> bool:
+    """True when the checkpoint's pending request_info set covers ``request_ids``."""
+    if not request_ids:
+        return False
+    try:
+        checkpoint = await storage.load(checkpoint_id)
+    except Exception:  # pragma: no cover - storage/type drift
+        return False
+    pending = getattr(checkpoint, "pending_request_info_events", None) or {}
+    return request_ids.issubset({str(key) for key in dict(pending)})
+
+
+async def _pause_checkpoint_id_for_interrupts(
+    *,
+    workflow: Workflow,
+    checkpoint_storage: CheckpointStorage | None,
+    interrupts: list[dict[str, Any]],
+    known_checkpoint_id: str | None = None,
+) -> str | None:
+    """Resolve the pause checkpoint for *this* run's interrupts.
+
+    Prefer the runner's last-saved id (scoped to this instance) over shared
+    ``get_latest(workflow_name=...)``, which can race across owners. Validate that
+    the candidate actually records the pending interrupt ids before advertising it.
+    """
+    if not interrupts:
+        return None
+
+    storage = _resolve_effective_checkpoint_storage(workflow, checkpoint_storage)
+    request_ids = _interrupt_request_ids(interrupts)
+    candidates: list[str] = []
+    runner_id = _runner_previous_checkpoint_id(workflow)
+    if runner_id is not None:
+        candidates.append(runner_id)
+    if known_checkpoint_id is not None and known_checkpoint_id not in candidates:
+        candidates.append(known_checkpoint_id)
+
+    if storage is None:
+        # Without storage we cannot prove coverage; only advertise the id this runner saved.
+        return runner_id
+
+    for candidate in candidates:
+        if await _checkpoint_covers_interrupt_ids(storage, candidate, request_ids):
+            return candidate
+    return None
 
 
 async def _build_run_finished_with_checkpointed_interrupts(
@@ -215,11 +275,15 @@ async def _build_run_finished_with_checkpointed_interrupts(
     known_checkpoint_id: str | None = None,
 ) -> Any:
     """Build RUN_FINISHED, attaching the pause checkpoint id to interrupt metadata when available."""
-    # Prefer the latest persisted checkpoint (the pause boundary). Fall back to an
-    # explicitly known id (e.g. cold replay short-circuit) when storage has nothing newer.
-    pause_checkpoint_id = await _latest_checkpoint_id_for_workflow(workflow, checkpoint_storage)
-    if pause_checkpoint_id is None:
-        pause_checkpoint_id = known_checkpoint_id
+    if not interrupts:
+        return _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=interrupts)
+
+    pause_checkpoint_id = await _pause_checkpoint_id_for_interrupts(
+        workflow=workflow,
+        checkpoint_storage=checkpoint_storage,
+        interrupts=interrupts,
+        known_checkpoint_id=known_checkpoint_id,
+    )
     return _build_run_finished_event(
         run_id=run_id,
         thread_id=thread_id,
