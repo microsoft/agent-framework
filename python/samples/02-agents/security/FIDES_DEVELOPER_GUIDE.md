@@ -612,7 +612,6 @@ response = await agent.run(messages=[
 ### Example 2: Manual Setup (More Control)
 
 ```python
-from agent_framework import AgentSession
 from agent_framework.security import (
     LabelTrackingFunctionMiddleware,
     PolicyEnforcementFunctionMiddleware,
@@ -636,16 +635,15 @@ agent = Agent(
     middleware=[label_tracker, policy_enforcer],
 )
 
-# Manual agent-loop wiring requires an explicit session so security state cannot leak between runs.
-session = AgentSession()
-response = await agent.run(session=session, messages=[
+# Omitting session uses isolated state for this run.
+response = await agent.run(messages=[
     {"role": "user", "content": "Search the web for Python tutorials"}
 ])
 ```
 
-Reusable manual middleware selects labels, variables, audit records, and approvals from the explicit
-`AgentSession`. Concurrent runs remain task-local. Calling an agent loop without a session fails closed; only
-direct standalone `FunctionTool` invocation (where no agent tool list is present) may use the middleware private scope.
+Reusable manual middleware uses one private security scope for the complete run when `session` is omitted, so tool
+chains within that run share hidden variables while separate runs remain isolated. Pass an explicit `AgentSession`
+when labels, variables, audit records, or FIDES policy-approval authority must survive across distinct `Agent.run` calls. Ordinary tool approval responses retain their no-session pass-through behavior.
 
 ### Example 3: Agent Processing Hidden Content
 

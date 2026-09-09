@@ -21,7 +21,7 @@ from agent_framework import (
     Message,
     SessionContext,
 )
-from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareFailure, MiddlewareTermination
+from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareTermination
 from agent_framework._tools import FunctionTool, _auto_invoke_function, normalize_function_invocation_configuration
 from agent_framework._types import Content
 from agent_framework.security import (
@@ -4440,18 +4440,6 @@ class TestManualSecuritySessionSelection:
             inspect(bob, bob_variable),
         ) == ["alice secret", "bob secret"]
         assert get_current_middleware() is None
-
-    async def test_manual_agent_loop_without_session_fails_closed(self) -> None:
-        tracker = LabelTrackingFunctionMiddleware()
-        sink = self._sink()
-        context = FunctionInvocationContext(
-            function=sink,
-            arguments={"value": "test"},
-            tools=[sink],
-        )
-
-        with pytest.raises(MiddlewareFailure, match="requires an AgentSession"):
-            await tracker.process(context, lambda: pytest.fail("Tool must not execute without a session"))
 
     async def test_direct_standalone_invocation_keeps_private_scope(self) -> None:
         tracker = LabelTrackingFunctionMiddleware()

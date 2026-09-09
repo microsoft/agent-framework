@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import warnings
-from collections.abc import MutableSequence
+from collections.abc import Awaitable, Callable, MutableSequence
+from enum import Enum
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import pytest
+from pydantic import create_model
 
 from agent_framework import (
     DEFAULT_TOOL_APPROVAL_SOURCE_ID,
@@ -17,6 +21,10 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FileHistoryProvider,
+    FunctionInvocationContext,
+    FunctionMiddleware,
+    FunctionTool,
+    InMemoryHistoryProvider,
     Message,
     ToolApprovalMiddleware,
     ToolApprovalState,
@@ -25,6 +33,12 @@ from agent_framework import (
     tool,
 )
 from agent_framework._feature_stage import ExperimentalWarning
+from agent_framework.security import (
+    ContentLabel,
+    IntegrityLabel,
+    LabelTrackingFunctionMiddleware,
+    PolicyEnforcementFunctionMiddleware,
+)
 
 from .conftest import MockBaseChatClient
 
@@ -38,6 +52,610 @@ def _approval_requests(messages: list[Message]) -> list[Content]:
 def _function_call(request: Content) -> Content:
     assert request.function_call is not None
     return request.function_call
+
+
+class _MarkUntrusted(FunctionMiddleware):
+    async def process(
+        self,
+        context: FunctionInvocationContext,
+        call_next: Callable[[], Awaitable[None]],
+    ) -> None:
+        context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        await call_next()
+
+
+async def test_manual_fides_no_session_preserves_standard_tool_approval(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """Run-local FIDES state must not make ordinary no-session approval authoritative."""
+    calls: list[str] = []
+
+    @tool(name="approved_tool", approval_mode="always_require")
+    def approved_tool() -> str:
+        calls.append("approved")
+        return "approved"
+
+    @tool(name="safe_tool")
+    def safe_tool() -> str:
+        calls.append("safe")
+        return "safe"
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[approved_tool, safe_tool],
+        middleware=[LabelTrackingFunctionMiddleware(), PolicyEnforcementFunctionMiddleware()],
+    )
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="approved-call",
+                        name="approved_tool",
+                        arguments="{}",
+                        id="approved-occurrence",
+                    ),
+                    Content.from_function_call(
+                        call_id="safe-call",
+                        name="safe_tool",
+                        arguments="{}",
+                        id="safe-occurrence",
+                    ),
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    first = await agent.run("request approval")
+    assert {request.id for request in first.user_input_requests} == {
+        "approved-occurrence",
+        "safe-occurrence",
+    }
+    resumed = await agent.run(
+        Message(
+            role="user",
+            contents=[request.to_function_approval_response(True) for request in first.user_input_requests],
+        )
+    )
+
+    assert calls == ["approved", "safe"]
+    assert [(message.role, [content.type for content in message.contents]) for message in resumed.messages] == [
+        ("tool", ["function_result", "function_result"]),
+        ("assistant", ["text"]),
+    ]
+
+
+class _StringApprovalValue(str, Enum):
+    ALPHA = "alpha"
+
+
+class _IntApprovalValue(int, Enum):
+    ONE = 1
+
+
+@pytest.mark.parametrize("max_iterations", [3], indirect=True)
+async def test_manual_fides_no_session_uses_isolated_run_scope(
+    chat_client_base: MockBaseChatClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Manual FIDES middleware shares one run scope without leaking it to a later run."""
+    monkeypatch.setattr(
+        "agent_framework.security.uuid.uuid4",
+        lambda: UUID("01234567-89ab-cdef-0123-456789abcdef"),
+    )
+    hidden_id = "var_0123456789abcdef"
+    received: list[str] = []
+    run_sessions: list[AgentSession | None] = []
+
+    @tool(name="untrusted_source", additional_properties={"source_integrity": "untrusted"})
+    def untrusted_source(ctx: FunctionInvocationContext) -> str:
+        run_sessions.append(ctx.session)
+        return "hidden payload"
+
+    @tool(
+        name="forward_sink",
+        additional_properties={"accepts_untrusted": True, "source_integrity": "trusted"},
+    )
+    def forward_sink(value: str, ctx: FunctionInvocationContext) -> str:
+        run_sessions.append(ctx.session)
+        received.append(value)
+        return "sent"
+
+    tracker = LabelTrackingFunctionMiddleware()
+    policy = PolicyEnforcementFunctionMiddleware()
+    agent = Agent(
+        client=chat_client_base,
+        tools=[untrusted_source, forward_sink],
+        middleware=[tracker, policy],
+    )
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="source-call",
+                        name="untrusted_source",
+                        arguments="{}",
+                    )
+                ],
+            )
+        ),
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="forward-same-run",
+                        name="forward_sink",
+                        arguments={"value": f"[{hidden_id}]"},
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["first done"])),
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="forward-next-run",
+                        name="forward_sink",
+                        arguments={"value": f"[{hidden_id}]"},
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["second done"])),
+    ]
+
+    first = await agent.run("first run")
+    second = await agent.run("second run")
+
+    assert first.text == "first done"
+    assert second.text == "second done"
+    assert received == ["hidden payload", f"[{hidden_id}]"]
+    assert run_sessions[0] is not None
+    assert run_sessions[0] is run_sessions[1]
+    assert run_sessions[2] is not None
+    assert run_sessions[2] is not run_sessions[0]
+    assert tracker.list_variables() == []
+
+
+@pytest.mark.parametrize(
+    ("enum_type", "wire_value", "expected"),
+    [
+        pytest.param(_StringApprovalValue, "alpha", _StringApprovalValue.ALPHA, id="string-enum"),
+        pytest.param(_IntApprovalValue, 1, _IntApprovalValue.ONE, id="int-enum"),
+    ],
+)
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_policy_approval_resume_supports_enum_arguments(
+    chat_client_base: MockBaseChatClient,
+    monkeypatch: pytest.MonkeyPatch,
+    enum_type: type[Enum],
+    wire_value: str | int,
+    expected: Enum,
+    streaming: bool,
+) -> None:
+    """Strict approval binding accepts Pydantic-validated string and integer enums."""
+    input_model = create_model("PolicyEnumArguments", value=(enum_type, ...))
+    received: list[Enum] = []
+
+    def guarded_enum(value: Enum) -> str:
+        received.append(value)
+        return "approved enum"
+
+    guarded_tool = FunctionTool(
+        func=guarded_enum,
+        name="guarded_enum",
+        description="Use one enum value",
+        input_model=input_model,
+    )
+    policy = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+    agent = Agent(
+        client=chat_client_base,
+        tools=[guarded_tool],
+        middleware=[_MarkUntrusted(), policy],
+        context_providers=[InMemoryHistoryProvider()],
+    )
+    session = AgentSession(session_id=f"enum-policy-{enum_type.__name__}-{streaming}")
+    function_call = Content.from_function_call(
+        call_id="enum-call",
+        name="guarded_enum",
+        arguments={"value": wire_value},
+        id="enum-occurrence",
+    )
+    captured_model_calls: list[list[Message]] = []
+
+    if streaming:
+        original_stream = chat_client_base._get_streaming_response
+
+        def capture_stream(
+            *,
+            messages: MutableSequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> Any:
+            captured_model_calls.append([Message.from_dict(message.to_dict()) for message in messages])
+            return original_stream(messages=messages, options=options, **kwargs)
+
+        monkeypatch.setattr(chat_client_base, "_get_streaming_response", capture_stream)
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+        first_stream = agent.run("run enum", stream=True, session=session)
+        first_updates = [update async for update in first_stream]
+        first_response = await first_stream.get_final_response()
+        assert [content.type for update in first_updates for content in update.contents] == [
+            "function_call",
+            "function_approval_request",
+        ]
+    else:
+        original_response = chat_client_base._get_non_streaming_response
+
+        async def capture_response(
+            *,
+            messages: MutableSequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ChatResponse:
+            captured_model_calls.append([Message.from_dict(message.to_dict()) for message in messages])
+            return await original_response(messages=messages, options=options, **kwargs)
+
+        monkeypatch.setattr(chat_client_base, "_get_non_streaming_response", capture_response)
+        chat_client_base.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+        first_response = await agent.run("run enum", session=session)
+
+    assert received == []
+    request = first_response.user_input_requests[0]
+    assert request.id == "enum-occurrence"
+
+    if streaming:
+        resumed_stream = agent.run(request.to_function_approval_response(True), stream=True, session=session)
+        resumed_updates = [update async for update in resumed_stream]
+        resumed = await resumed_stream.get_final_response()
+        assert [(update.role, [content.type for content in update.contents]) for update in resumed_updates] == [
+            ("tool", ["function_result"]),
+            ("assistant", ["text"]),
+        ]
+    else:
+        resumed = await agent.run(request.to_function_approval_response(True), session=session)
+
+    assert received == [expected]
+    assert [(message.role, [content.type for content in message.contents]) for message in resumed.messages] == [
+        ("tool", ["function_result"]),
+        ("assistant", ["text"]),
+    ]
+    result = resumed.messages[0].contents[0]
+    assert result.call_id == "enum-call"
+    model_contents = [content for message in captured_model_calls[-1] for content in message.contents]
+    model_calls = [content for content in model_contents if content.type == "function_call"]
+    model_results = [content for content in model_contents if content.type == "function_result"]
+    assert [content.call_id for content in model_calls] == ["enum-call"]
+    assert [content.call_id for content in model_results] == ["enum-call"]
+    assert not any(content.type.startswith("function_approval_") for content in model_contents)
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_changed_hidden_snapshot_requires_visible_second_approval(
+    chat_client_base: MockBaseChatClient,
+    monkeypatch: pytest.MonkeyPatch,
+    streaming: bool,
+) -> None:
+    """A changed resolved snapshot surfaces a persisted replacement before executing once."""
+    received: list[str] = []
+
+    @tool(name="guarded_sink")
+    def guarded_sink(value: str) -> str:
+        received.append(value)
+        return "approved hidden value"
+
+    tracker = LabelTrackingFunctionMiddleware()
+    policy = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+    session = AgentSession(session_id=f"changed-hidden-{streaming}")
+    variable_id = tracker.get_variable_store(session).store(
+        "original",
+        ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+    )
+    agent = Agent(
+        client=chat_client_base,
+        tools=[guarded_sink],
+        middleware=[tracker, policy],
+        context_providers=[InMemoryHistoryProvider()],
+    )
+    function_call = Content.from_function_call(
+        call_id="hidden-call",
+        name="guarded_sink",
+        arguments={"value": f"[{variable_id}]"},
+        id="hidden-occurrence",
+    )
+    captured_model_calls: list[list[Message]] = []
+
+    if streaming:
+        original_stream = chat_client_base._get_streaming_response
+
+        def capture_stream(
+            *,
+            messages: MutableSequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> Any:
+            captured_model_calls.append([Message.from_dict(message.to_dict()) for message in messages])
+            return original_stream(messages=messages, options=options, **kwargs)
+
+        monkeypatch.setattr(chat_client_base, "_get_streaming_response", capture_stream)
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("ignored stale replay")])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("later")])],
+        ]
+        first_stream = agent.run("run hidden", stream=True, session=session)
+        _ = [update async for update in first_stream]
+        first = await first_stream.get_final_response()
+    else:
+        original_response = chat_client_base._get_non_streaming_response
+
+        async def capture_response(
+            *,
+            messages: MutableSequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ChatResponse:
+            captured_model_calls.append([Message.from_dict(message.to_dict()) for message in messages])
+            return await original_response(messages=messages, options=options, **kwargs)
+
+        monkeypatch.setattr(chat_client_base, "_get_non_streaming_response", capture_response)
+        chat_client_base.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["ignored stale replay"])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+            ChatResponse(messages=Message(role="assistant", contents=["later"])),
+        ]
+        first = await agent.run("run hidden", session=session)
+
+    original_request = first.user_input_requests[0]
+    security_state = session.state["__agent_framework_fides_security__"]
+    security_state["variables"][variable_id]["content"] = json.dumps("changed")
+
+    if streaming:
+        stale_stream = agent.run(
+            original_request.to_function_approval_response(True),
+            stream=True,
+            session=session,
+        )
+        stale_updates = [update async for update in stale_stream]
+        stale = await stale_stream.get_final_response()
+        assert [(update.role, [content.type for content in update.contents]) for update in stale_updates] == [
+            ("assistant", ["function_approval_request"]),
+        ]
+    else:
+        stale = await agent.run(original_request.to_function_approval_response(True), session=session)
+
+    assert received == []
+    assert chat_client_base.call_count == 1
+    replacement = stale.user_input_requests[0]
+    assert replacement.id != original_request.id
+    assert replacement.function_call is not None
+    assert original_request.function_call is not None
+    assert replacement.function_call.id == original_request.function_call.id
+    assert replacement.function_call.call_id == original_request.function_call.call_id
+    pending = session.state["tool_approval"]["pending_approval_requests"]
+    assert [snapshot["id"] for snapshot in pending] == [replacement.id]
+
+    if streaming:
+        replay_stream = agent.run(
+            original_request.to_function_approval_response(True),
+            stream=True,
+            session=session,
+        )
+        _ = [update async for update in replay_stream]
+        await replay_stream.get_final_response()
+    else:
+        await agent.run(original_request.to_function_approval_response(True), session=session)
+
+    assert received == []
+    assert [snapshot["id"] for snapshot in session.state["tool_approval"]["pending_approval_requests"]] == [
+        replacement.id
+    ]
+
+    if streaming:
+        approved_stream = agent.run(
+            replacement.to_function_approval_response(True),
+            stream=True,
+            session=session,
+        )
+        approved_updates = [update async for update in approved_stream]
+        approved = await approved_stream.get_final_response()
+        assert [(update.role, [content.type for content in update.contents]) for update in approved_updates] == [
+            ("tool", ["function_result"]),
+            ("assistant", ["text"]),
+        ]
+    else:
+        approved = await agent.run(replacement.to_function_approval_response(True), session=session)
+
+    assert received == ["changed"]
+    assert chat_client_base.call_count == 3
+    assert [(message.role, [content.type for content in message.contents]) for message in approved.messages] == [
+        ("tool", ["function_result"]),
+        ("assistant", ["text"]),
+    ]
+    model_contents = [content for message in captured_model_calls[-1] for content in message.contents]
+    assert [content.type for content in model_contents].count("function_call") == 1
+    assert [content.type for content in model_contents].count("function_result") == 1
+    assert not any(content.type.startswith("function_approval_") for content in model_contents)
+
+
+async def test_replacement_approval_preserves_unanswered_reused_call_id_sibling(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """Replacing one approval must not discard an unanswered sibling occurrence."""
+    calls = 0
+
+    @tool(name="guarded_sink")
+    def guarded_sink(value: str) -> str:
+        nonlocal calls
+        calls += 1
+        return value
+
+    tracker = LabelTrackingFunctionMiddleware()
+    policy = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+    session = AgentSession(session_id="replacement-sibling")
+    first_variable = tracker.get_variable_store(session).store(
+        "first",
+        ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+    )
+    second_variable = tracker.get_variable_store(session).store(
+        "second",
+        ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+    )
+    agent = Agent(
+        client=chat_client_base,
+        tools=[guarded_sink],
+        middleware=[tracker, policy],
+        context_providers=[InMemoryHistoryProvider()],
+    )
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="reused-call",
+                        name="guarded_sink",
+                        arguments={"value": f"[{first_variable}]"},
+                        id="first-occurrence",
+                    ),
+                    Content.from_function_call(
+                        call_id="reused-call",
+                        name="guarded_sink",
+                        arguments={"value": f"[{second_variable}]"},
+                        id="second-occurrence",
+                    ),
+                ],
+            )
+        )
+    ]
+
+    first = await agent.run("run both", session=session)
+    first_request = next(request for request in first.user_input_requests if request.id == "first-occurrence")
+    second_request = next(request for request in first.user_input_requests if request.id == "second-occurrence")
+    security_state = session.state["__agent_framework_fides_security__"]
+    security_state["variables"][first_variable]["content"] = json.dumps("changed")
+
+    resumed = await agent.run(first_request.to_function_approval_response(True), session=session)
+
+    assert calls == 0
+    replacement = next(
+        request
+        for request in resumed.user_input_requests
+        if request.function_call is not None and request.function_call.id == "first-occurrence"
+    )
+    assert replacement.id != first_request.id
+    assert second_request in resumed.user_input_requests
+    pending_ids = {snapshot["id"] for snapshot in session.state["tool_approval"]["pending_approval_requests"]}
+    assert pending_ids == {replacement.id, second_request.id}
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_dynamic_policy_approval_partitions_safe_sibling_result_roles(
+    chat_client_base: MockBaseChatClient,
+    streaming: bool,
+) -> None:
+    """A safe sibling result remains tool-role when dynamic policy asks for approval."""
+    safe_calls = 0
+    guarded_values: list[str] = []
+
+    @tool(name="safe_tool", additional_properties={"source_integrity": "trusted"})
+    def safe_tool() -> str:
+        nonlocal safe_calls
+        safe_calls += 1
+        return "safe result"
+
+    @tool(name="guarded_sink", additional_properties={"source_integrity": "trusted"})
+    def guarded_sink(value: str) -> str:
+        guarded_values.append(value)
+        return "guarded result"
+
+    tracker = LabelTrackingFunctionMiddleware()
+    policy = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+    session = AgentSession(session_id=f"mixed-policy-{streaming}")
+    variable_id = tracker.get_variable_store(session).store(
+        "hidden payload",
+        ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+    )
+    agent = Agent(
+        client=chat_client_base,
+        tools=[safe_tool, guarded_sink],
+        middleware=[tracker, policy],
+        context_providers=[InMemoryHistoryProvider()],
+    )
+    calls = [
+        Content.from_function_call(call_id="safe-call", name="safe_tool", arguments="{}", id="safe-occurrence"),
+        Content.from_function_call(
+            call_id="guarded-call",
+            name="guarded_sink",
+            arguments={"value": f"[{variable_id}]"},
+            id="guarded-occurrence",
+        ),
+    ]
+
+    if streaming:
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=calls)],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+        first_stream = agent.run("run mixed", stream=True, session=session)
+        first_updates = [update async for update in first_stream]
+        first = await first_stream.get_final_response()
+        generated_updates = [
+            (update.role, [content.type for content in update.contents])
+            for update in first_updates
+            if any(content.type in {"function_result", "function_approval_request"} for content in update.contents)
+        ]
+        assert generated_updates == [
+            ("tool", ["function_result"]),
+            ("assistant", ["function_approval_request"]),
+        ]
+    else:
+        chat_client_base.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=calls)),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+        first = await agent.run("run mixed", session=session)
+
+    assert safe_calls == 1
+    assert guarded_values == []
+    assert not any(
+        message.role == "assistant" and any(content.type == "function_result" for content in message.contents)
+        for message in first.messages
+    )
+    safe_result_message = next(
+        message
+        for message in first.messages
+        if any(content.type == "function_result" and content.call_id == "safe-call" for content in message.contents)
+    )
+    assert safe_result_message.role == "tool"
+    request = first.user_input_requests[0]
+    approval_message = next(message for message in first.messages if request in message.contents)
+    assert approval_message.role == "assistant"
+
+    if streaming:
+        resumed_stream = agent.run(request.to_function_approval_response(True), stream=True, session=session)
+        _ = [update async for update in resumed_stream]
+        await resumed_stream.get_final_response()
+    else:
+        await agent.run(request.to_function_approval_response(True), session=session)
+
+    assert safe_calls == 1
+    assert guarded_values == ["hidden payload"]
 
 
 @pytest.mark.parametrize("approved", [True, False], ids=["approved", "rejected"])

@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, NoReturn, cast
 from pydantic import BaseModel, Field
 
 from ._feature_stage import ExperimentalFeature, experimental
-from ._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareFailure, MiddlewareTermination
+from ._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
 from ._serialization import SerializationMixin
 from ._sessions import AgentSession, ContextProvider
 from ._tools import FunctionTool, tool
@@ -708,6 +708,14 @@ def _strict_json_value(
     """Return a strict JSON-compatible value without string coercion."""
     if active_container_ids is None:
         active_container_ids = set()
+    if isinstance(value, Enum):
+        return _strict_json_value(
+            value.value,
+            path=path,
+            canonical=canonical,
+            allow_content=allow_content,
+            active_container_ids=active_container_ids,
+        )
     if type(value) in (str, int, bool, type(None)):
         return value
     if type(value) is float:
@@ -1023,14 +1031,8 @@ class _SecurityScopeBinding:
 
     def _activate_security_scope(self, context: FunctionInvocationContext) -> Token[_SecurityScope | None]:
         scope = self._default_security_scope
-        if not self._security_scope_is_fixed:
-            if context.session is not None:
-                scope = self._scope_for_session(context.session)
-            elif context.tools is not None:
-                raise MiddlewareFailure(
-                    "Reusable FIDES middleware requires an AgentSession. Pass session=... to Agent.run(), "
-                    "or configure SecureAgentConfig as a context provider."
-                )
+        if not self._security_scope_is_fixed and context.session is not None:
+            scope = self._scope_for_session(context.session)
         return self._active_security_scope.set(scope)
 
 
@@ -1179,6 +1181,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             # Run agent - untrusted tool results are automatically hidden
             response = await agent.run(messages=[{"role": "user", "content": "What's the weather?"}])
     """
+
+    _requires_session_state = True
 
     def __init__(
         self,
@@ -1944,6 +1948,8 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
             )
     """
 
+    _requires_session_state = True
+
     def __init__(
         self,
         allow_untrusted_tools: set[str] | None = None,
@@ -2163,7 +2169,15 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         approval_id = self._get_approval_id(context)
         if approval_id:
             self._store_pending_approval(approval_id, binding)
+        approval_response = context.metadata.get("approval_response")
+        is_replacement = (
+            isinstance(approval_response, Content)
+            and approval_response.type == "function_approval_response"
+            and approval_response.approved is True
+        )
+        request_id = f"{approval_id}:replacement:{uuid.uuid4().hex}" if is_replacement else approval_id
         additional_properties: dict[str, Any] = {
+            "_replacement_approval_request": is_replacement,
             "policy_violation": True,
             "violation_type": primary["violation_type"],
             "reason": (
@@ -2179,7 +2193,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
                 {"violation_type": v["violation_type"], "reason": v["approval_reason"]} for v in violations
             ]
         context.result = Content.from_function_approval_request(
-            id=approval_id,
+            id=request_id,
             function_call=self._build_function_call_content(context),
             additional_properties=additional_properties,
         )
