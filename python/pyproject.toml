@@ -43,6 +43,7 @@ dev = [
     "ty==0.0.75",
     "zuban==0.9.2",
     "opentelemetry-sdk",
+    "pandas>=2,<4",
     #tasks
     "poethepoet==0.48.0",
     "rich>=13.7.1,<16.0.0",
