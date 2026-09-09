@@ -10,6 +10,7 @@ This folder contains Microsoft Foundry and Foundry Local samples for Agent Frame
 | [`foundry_agent_custom_client.py`](foundry_agent_custom_client.py) | Foundry Agent custom client configuration |
 | [`foundry_agent_hosted.py`](foundry_agent_hosted.py) | Foundry Agent for hosted agents |
 | [`foundry_agent_with_function_tools.py`](foundry_agent_with_function_tools.py) | Foundry Agent with local function tools |
+| [`foundry_agent_tracing.py`](../../observability/foundry_agent_tracing.py) | Existing-agent tracing with helper or application-managed exporters and per-agent project attribution |
 
 ## FoundryChatClient Samples
 

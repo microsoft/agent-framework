@@ -6,6 +6,7 @@ import inspect
 import json
 import os
 import sys
+from asyncio import CancelledError
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from typing import Any, cast
@@ -36,7 +37,7 @@ from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapsho
 from agent_framework_openai._chat_client import RawOpenAIChatClient
 from agent_framework_openai._feature_usage import FeatureIndex as OpenAIFeatureIndex
 from azure.ai.projects import models as projects_models
-from azure.core.exceptions import ResourceNotFoundError
+from azure.core.exceptions import HttpResponseError, ResourceNotFoundError, ServiceRequestError, ServiceResponseError
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 from openai import AsyncOpenAI
@@ -986,6 +987,83 @@ async def test_get_foundry_project_arm_id_rejects_unexpected_connection_id() -> 
         await agent._get_foundry_project_arm_id()
 
 
+@pytest.mark.parametrize("agent_type", [RawFoundryAgent, FoundryAgent])
+def test_foundry_agent_explicit_project_arm_id(agent_type: type[RawFoundryAgent]) -> None:
+    project_arm_id = (
+        "/subscriptions/test-sub/resourceGroups/test-rg/providers/"
+        "Microsoft.CognitiveServices/accounts/test-account/projects/test-project"
+    )
+    project_client = MagicMock()
+    agent = agent_type(project_client=project_client, agent_name="test-agent", project_arm_id=project_arm_id)
+
+    assert agent._foundry_project_arm_id == project_arm_id
+    project_client.connections.list.assert_not_called()
+    project_client.telemetry.get_application_insights_connection_string.assert_not_called()
+    if isinstance(agent, FoundryAgent):
+        assert agent._get_additional_otel_agent_attributes() == {"microsoft.foundry.project.id": project_arm_id}
+
+
+@pytest.mark.parametrize(
+    "project_arm_id",
+    [
+        "",
+        "test-project",
+        "https://test-account.services.ai.azure.com/api/projects/test-project",
+        "/subscriptions/test-sub/resourceGroups/test-rg/providers/Microsoft.CognitiveServices/accounts/test-account",
+        (
+            "/subscriptions/test-sub/resourceGroups/test-rg/providers/"
+            "Microsoft.CognitiveServices/accounts/test-account/projects/test-project/connections/appinsights"
+        ),
+    ],
+)
+def test_foundry_agent_rejects_invalid_explicit_project_arm_id(project_arm_id: str) -> None:
+    project_client = MagicMock()
+    with pytest.raises(ValueError, match="full Foundry project ARM resource ID"):
+        FoundryAgent(project_client=project_client, agent_name="test-agent", project_arm_id=project_arm_id)
+    project_client.get_openai_client.assert_not_called()
+
+
+def test_foundry_agent_project_attribution_is_per_instance() -> None:
+    prefix = (
+        "/subscriptions/test-sub/resourceGroups/test-rg/providers/"
+        "Microsoft.CognitiveServices/accounts/test-account/projects/"
+    )
+    agents = [
+        FoundryAgent(project_client=MagicMock(), agent_name="test-agent", project_arm_id=f"{prefix}{name}")
+        for name in ("first", "second")
+    ]
+    assert [agent._get_additional_otel_agent_attributes() for agent in agents] == [
+        {"microsoft.foundry.project.id": f"{prefix}first"},
+        {"microsoft.foundry.project.id": f"{prefix}second"},
+    ]
+    unconfigured = FoundryAgent(project_client=MagicMock(), agent_name="test-agent")
+    assert unconfigured._get_additional_otel_agent_attributes() == {}
+
+
+async def test_get_foundry_project_arm_id_rejects_account_scoped_connection() -> None:
+    project_client = MagicMock()
+
+    async def connections():
+        yield SimpleNamespace(
+            id="/subscriptions/test-sub/resourceGroups/test-rg/providers/"
+            "Microsoft.CognitiveServices/accounts/test-account/connections/appinsights",
+            name="appinsights",
+        )
+
+    project_client.connections.list.return_value = connections()
+    agent = RawFoundryAgent(project_client=project_client, agent_name="test-agent")
+    with pytest.raises(ValueError, match="full Foundry project ARM resource ID"):
+        await agent._get_foundry_project_arm_id()
+
+
+async def test_get_foundry_project_arm_id_requires_connection() -> None:
+    project_client = MagicMock()
+    project_client.connections.list.return_value.__aiter__.return_value = []
+    agent = RawFoundryAgent(project_client=project_client, agent_name="test-agent")
+    with pytest.raises(ValueError, match="does not have an Application Insights connection"):
+        await agent._get_foundry_project_arm_id()
+
+
 def test_raw_foundry_agent_init_passes_default_headers_to_client() -> None:
     """Test that RawFoundryAgent passes default_headers to the underlying client."""
 
@@ -1303,7 +1381,8 @@ def test_foundry_agent_init_with_middleware() -> None:
     assert agent.client is not None
 
 
-async def test_foundry_agent_configure_azure_monitor() -> None:
+@pytest.mark.parametrize("explicit_project_id", [False, True])
+async def test_foundry_agent_configure_azure_monitor(explicit_project_id: bool) -> None:
     """Test configure_azure_monitor delegates through the underlying client."""
 
     mock_project = MagicMock()
@@ -1311,8 +1390,6 @@ async def test_foundry_agent_configure_azure_monitor() -> None:
     mock_project.telemetry.get_application_insights_connection_string = AsyncMock(
         return_value="InstrumentationKey=test-key;IngestionEndpoint=https://test.endpoint"
     )
-    agent = FoundryAgent(project_client=mock_project, agent_name="test-agent")
-
     mock_configure = MagicMock()
     mock_views = MagicMock(return_value=[])
     mock_resource = MagicMock()
@@ -1320,6 +1397,11 @@ async def test_foundry_agent_configure_azure_monitor() -> None:
     project_arm_id = (
         "/subscriptions/test-sub/resourceGroups/test-rg/providers/"
         "Microsoft.CognitiveServices/accounts/test-account/projects/test-project"
+    )
+    agent = FoundryAgent(
+        project_client=mock_project,
+        agent_name="test-agent",
+        project_arm_id=project_arm_id if explicit_project_id else None,
     )
 
     with (
@@ -1337,17 +1419,75 @@ async def test_foundry_agent_configure_azure_monitor() -> None:
         ) as mock_get_project_arm_id,
     ):
         await agent.configure_azure_monitor(enable_sensitive_data=True)
+        await agent.configure_azure_monitor(enable_sensitive_data=True)
 
-    mock_project.telemetry.get_application_insights_connection_string.assert_called_once()
-    mock_get_project_arm_id.assert_awaited_once_with()
+    assert mock_project.telemetry.get_application_insights_connection_string.await_count == 2
+    if explicit_project_id:
+        mock_get_project_arm_id.assert_not_awaited()
+    else:
+        mock_get_project_arm_id.assert_awaited_once_with()
     call_kwargs = mock_configure.call_args.kwargs
     assert call_kwargs["connection_string"] == "InstrumentationKey=test-key;IngestionEndpoint=https://test.endpoint"
     assert call_kwargs["views"] == []
     assert call_kwargs["resource"] is mock_resource
-    mock_enable.assert_called_once_with(enable_sensitive_data=True)
+    assert mock_enable.call_count == 2
+    mock_enable.assert_called_with(enable_sensitive_data=True)
     assert agent._get_additional_otel_agent_attributes() == {
         "microsoft.foundry.project.id": project_arm_id,
     }
+
+
+@pytest.mark.parametrize(
+    "lookup_error",
+    [
+        ValueError("Unexpected connection ID"),
+        HttpResponseError("Forbidden"),
+        ResourceNotFoundError("Connection not found"),
+        ServiceRequestError("Connection unavailable"),
+        ServiceResponseError("Incomplete response"),
+    ],
+)
+async def test_foundry_agent_configure_azure_monitor_project_lookup_failure(
+    lookup_error: Exception, caplog: pytest.LogCaptureFixture
+) -> None:
+    mock_project = MagicMock()
+    mock_project.telemetry.get_application_insights_connection_string = AsyncMock(return_value="test-connection-string")
+    agent = FoundryAgent(project_client=mock_project, agent_name="test-agent")
+    mock_configure = MagicMock()
+    mock_enable = MagicMock()
+
+    with (
+        patch.dict("sys.modules", {"azure.monitor.opentelemetry": MagicMock(configure_azure_monitor=mock_configure)}),
+        patch("agent_framework.observability.create_metric_views", return_value=[]),
+        patch("agent_framework.observability.create_resource"),
+        patch("agent_framework.observability.enable_instrumentation", mock_enable),
+        patch.object(agent, "_get_foundry_project_arm_id", side_effect=lookup_error),
+        caplog.at_level("WARNING", logger="agent_framework.foundry"),
+    ):
+        await agent.configure_azure_monitor()
+
+    mock_configure.assert_called_once()
+    assert mock_configure.call_args.kwargs["connection_string"] == "test-connection-string"
+    mock_enable.assert_called_once_with(enable_sensitive_data=False)
+    assert agent._get_additional_otel_agent_attributes() == {}
+    assert "export will continue without project attribution" in caplog.text
+    assert "project_arm_id" in caplog.text
+
+
+@pytest.mark.parametrize("lookup_error", [RuntimeError("Programming failure"), CancelledError()])
+async def test_foundry_agent_project_lookup_does_not_swallow_unexpected_errors(lookup_error: BaseException) -> None:
+    mock_project = MagicMock()
+    mock_project.telemetry.get_application_insights_connection_string = AsyncMock(return_value="test-connection-string")
+    agent = FoundryAgent(project_client=mock_project, agent_name="test-agent")
+    mock_configure = MagicMock()
+
+    with (
+        patch.dict("sys.modules", {"azure.monitor.opentelemetry": MagicMock(configure_azure_monitor=mock_configure)}),
+        patch.object(agent, "_get_foundry_project_arm_id", side_effect=lookup_error),
+        pytest.raises(type(lookup_error)),
+    ):
+        await agent.configure_azure_monitor()
+    mock_configure.assert_not_called()
 
 
 async def test_foundry_agent_configure_azure_monitor_resource_not_found() -> None:

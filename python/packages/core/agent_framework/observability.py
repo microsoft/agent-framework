@@ -23,6 +23,7 @@ import os
 import sys
 import weakref
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
+from dataclasses import dataclass, field
 from enum import Enum
 from time import perf_counter, time_ns
 from typing import (
@@ -119,18 +120,21 @@ logger = logging.getLogger("agent_framework")
 otel_event_logger = get_otel_logger("agent_framework", version_info)
 
 
-INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS: Final[contextvars.ContextVar[set[str] | None]] = contextvars.ContextVar(
-    "inner_response_telemetry_captured_fields", default=None
-)
 INNER_RESPONSE_ID_CAPTURED_FIELD: Final[str] = "response_id"
 INNER_USAGE_CAPTURED_FIELD: Final[str] = "usage"
-INNER_CAPTURED_RESPONSE_ID: Final[contextvars.ContextVar[str | None]] = contextvars.ContextVar(
-    "inner_captured_response_id", default=None
-)
 
-# Tracks accumulated token usage from all inner chat completion spans within an agent invoke.
-INNER_ACCUMULATED_USAGE: Final[contextvars.ContextVar[UsageDetails | None]] = contextvars.ContextVar(
-    "inner_accumulated_usage", default=None
+
+@dataclass
+class _InnerResponseTelemetryState:
+    owner: object
+    captured_fields: set[str] = field(default_factory=set[str])
+    response_id: str | None = None
+    response_id_recorded: bool = False
+    accumulated_usage: UsageDetails = field(default_factory=lambda: cast("UsageDetails", {}))
+
+
+_INNER_RESPONSE_TELEMETRY_STATE: Final[contextvars.ContextVar[_InnerResponseTelemetryState | None]] = (
+    contextvars.ContextVar("inner_response_telemetry_state", default=None)
 )
 
 # Allows protocol adapters to supply an application-managed conversation identity for one execution
@@ -2347,17 +2351,15 @@ class AgentTelemetryLayer:
         attributes.update(self._get_additional_otel_agent_attributes())
 
         if stream:
-            # Do NOT set the inner-telemetry context vars here: this synchronous run() body executes
+            # Do NOT set the inner-telemetry context var here: this synchronous run() body executes
             # in the CALLER's context, but the ResponseStream may be consumed in a different context
             # (e.g. ``stream = agent.run(stream=True)`` then ``await asyncio.create_task(consume(stream))``).
             # The cleanup-hook reset (in _finalize_stream) runs in the consuming context, so a token
             # created here would raise ``ValueError: <Token ...> was created in a different Context``.
-            # Instead the tokens are set lazily on the first pull (see _inner_telemetry_pull_context
+            # Instead the token is set lazily on the first pull (see _inner_telemetry_pull_context
             # below), so set and reset both happen in the consumer's context.
-            inner_response_telemetry_captured_fields: set[str] = set()
-            inner_response_telemetry_captured_fields_token: contextvars.Token[set[str] | None] | None = None
-            inner_captured_response_id_token: contextvars.Token[str | None] | None = None
-            inner_accumulated_usage_token: contextvars.Token[UsageDetails | None] | None = None
+            inner_telemetry_state = _InnerResponseTelemetryState(owner=self)
+            inner_telemetry_token: contextvars.Token[_InnerResponseTelemetryState | None] | None = None
             # Agent Framework's agents run in-process (the actual network call happens on a nested
             # chat span), so invoke_agent spans use the default INTERNAL kind.
             span = _start_streaming_span(attributes, OtelAttr.AGENT_NAME)
@@ -2426,13 +2428,13 @@ class AgentTelemetryLayer:
                         response,
                         capture_response_id=(
                             self._should_capture_agent_response_id()
-                            or INNER_RESPONSE_ID_CAPTURED_FIELD not in inner_response_telemetry_captured_fields
+                            or INNER_RESPONSE_ID_CAPTURED_FIELD not in inner_telemetry_state.captured_fields
                         ),
-                        capture_usage=INNER_USAGE_CAPTURED_FIELD not in inner_response_telemetry_captured_fields,
+                        capture_usage=INNER_USAGE_CAPTURED_FIELD not in inner_telemetry_state.captured_fields,
                     )
                     if self._should_capture_agent_response_id():
-                        _apply_captured_response_id(response_attributes)
-                    _apply_accumulated_usage(response_attributes, inner_response_telemetry_captured_fields)
+                        _apply_captured_response_id(response_attributes, inner_telemetry_state)
+                    _apply_accumulated_usage(response_attributes, inner_telemetry_state)
                     _capture_response(span=span, attributes=response_attributes, duration=duration)
                     if (
                         OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
@@ -2450,38 +2452,28 @@ class AgentTelemetryLayer:
                 finally:
                     # Reset only if the lazy set actually ran (it may not have if the stream was
                     # never pulled). These run in the consuming context — the same context the
-                    # pull-context factory below set the tokens in — so the reset is cross-context safe.
-                    if inner_response_telemetry_captured_fields_token is not None:
-                        INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
-                    if inner_captured_response_id_token is not None:
-                        INNER_CAPTURED_RESPONSE_ID.reset(inner_captured_response_id_token)
-                    if inner_accumulated_usage_token is not None:
-                        INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
+                    # pull-context factory below set the token in — so the reset is cross-context safe.
+                    if inner_telemetry_token is not None:
+                        _INNER_RESPONSE_TELEMETRY_STATE.reset(inner_telemetry_token)
                     _close_span()
 
             def _inner_telemetry_pull_context() -> contextlib.AbstractContextManager[Any]:
                 # Invoked at the start of every pull (and during stream resolution), in the
-                # consuming context. On the first pull it sets the inner-telemetry context vars so
+                # consuming context. On the first pull it sets the inner-telemetry context var so
                 # that set and the reset in _finalize_stream both run in the consumer's context,
                 # avoiding the cross-context Token reset failure. Setting happens before the
                 # underlying iterator is pulled, so inner chat completion spans created during the
                 # pull can still accumulate usage / mark captured fields.
-                nonlocal inner_response_telemetry_captured_fields_token
-                nonlocal inner_captured_response_id_token
-                nonlocal inner_accumulated_usage_token
-                if inner_response_telemetry_captured_fields_token is None:
-                    inner_response_telemetry_captured_fields_token = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.set(
-                        inner_response_telemetry_captured_fields
-                    )
-                    inner_captured_response_id_token = INNER_CAPTURED_RESPONSE_ID.set(None)
-                    inner_accumulated_usage_token = INNER_ACCUMULATED_USAGE.set({})
+                nonlocal inner_telemetry_token
+                if inner_telemetry_token is None:
+                    inner_telemetry_token = _INNER_RESPONSE_TELEMETRY_STATE.set(inner_telemetry_state)
                 return _activate_span(span)
 
             # The pull context manager attaches the span around each underlying iterator pull so
             # that child spans created during the pull (e.g. inner chat completion spans from the
             # underlying ChatTelemetryLayer) are parented under this agent invoke span. Attach and
             # detach happen in the same async context as the pull, avoiding cross-context cleanup
-            # issues. It also lazily sets the inner-telemetry context vars on the first pull (see
+            # issues. It also lazily sets the inner-telemetry context var on the first pull (see
             # _inner_telemetry_pull_context). The weakref finalizer ensures the span is closed even
             # if the stream is garbage collected without being consumed.
             wrapped_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = (
@@ -2494,19 +2486,15 @@ class AgentTelemetryLayer:
             return wrapped_stream
 
         async def _run() -> AgentResponse[Any]:
-            # Set the inner-telemetry context vars inside the coroutine so the set and the
+            # Set the inner-telemetry context var inside the coroutine so the set and the
             # reset in `finally` always happen in the same execution context. `run()` is a sync
             # method that returns this coroutine, which may be awaited in a different context than
             # the one that called `run()` (e.g. `asyncio.create_task(agent.run(...))`, as used by
             # BackgroundAgentsProvider). A contextvars.Token can only be reset in the context that
             # created it, so setting eagerly in `run()`/`_trace_agent_invocation` and resetting
             # here would raise "Token was created in a different Context".
-            inner_response_telemetry_captured_fields: set[str] = set()
-            inner_response_telemetry_captured_fields_token = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.set(
-                inner_response_telemetry_captured_fields
-            )
-            inner_captured_response_id_token = INNER_CAPTURED_RESPONSE_ID.set(None)
-            inner_accumulated_usage_token = INNER_ACCUMULATED_USAGE.set({})
+            inner_telemetry_state = _InnerResponseTelemetryState(owner=self)
+            inner_telemetry_token = _INNER_RESPONSE_TELEMETRY_STATE.set(inner_telemetry_state)
             try:
                 with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
                     try:
@@ -2525,17 +2513,15 @@ class AgentTelemetryLayer:
                                 response,
                                 capture_response_id=(
                                     self._should_capture_agent_response_id()
-                                    or INNER_RESPONSE_ID_CAPTURED_FIELD not in inner_response_telemetry_captured_fields
+                                    or INNER_RESPONSE_ID_CAPTURED_FIELD not in inner_telemetry_state.captured_fields
                                 ),
-                                capture_usage=(
-                                    INNER_USAGE_CAPTURED_FIELD not in inner_response_telemetry_captured_fields
-                                ),
+                                capture_usage=(INNER_USAGE_CAPTURED_FIELD not in inner_telemetry_state.captured_fields),
                             )
                             if self._should_capture_agent_response_id():
-                                _apply_captured_response_id(response_attributes)
+                                _apply_captured_response_id(response_attributes, inner_telemetry_state)
                             _apply_accumulated_usage(
                                 response_attributes,
-                                inner_response_telemetry_captured_fields,
+                                inner_telemetry_state,
                             )
                             _capture_response(
                                 span=span,
@@ -2557,9 +2543,7 @@ class AgentTelemetryLayer:
                         capture_exception(span=span, exception=exception, timestamp=time_ns())
                         raise
             finally:
-                INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
-                INNER_CAPTURED_RESPONSE_ID.reset(inner_captured_response_id_token)
-                INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
+                _INNER_RESPONSE_TELEMETRY_STATE.reset(inner_telemetry_token)
 
         return _run()
 
@@ -3462,35 +3446,45 @@ def _mark_inner_response_telemetry_captured(
     response: ChatResponse | AgentResponse,
 ) -> None:
     """Record when an inner chat telemetry span already captured response metadata."""
-    captured_fields = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.get()
-    if captured_fields is None:
+    state = _INNER_RESPONSE_TELEMETRY_STATE.get()
+    if state is None:
         return
     if response.response_id:
-        captured_fields.add(INNER_RESPONSE_ID_CAPTURED_FIELD)
-        INNER_CAPTURED_RESPONSE_ID.set(response.response_id)
+        state.captured_fields.add(INNER_RESPONSE_ID_CAPTURED_FIELD)
     if response.usage_details:
-        captured_fields.add(INNER_USAGE_CAPTURED_FIELD)
-        accumulated = INNER_ACCUMULATED_USAGE.get()
-        if accumulated is not None:
-            from ._types import add_usage_details
+        from ._types import add_usage_details
 
-            INNER_ACCUMULATED_USAGE.set(add_usage_details(accumulated, response.usage_details))
+        state.captured_fields.add(INNER_USAGE_CAPTURED_FIELD)
+        state.accumulated_usage = add_usage_details(state.accumulated_usage, response.usage_details)
 
 
-def _apply_captured_response_id(attributes: dict[str, Any]) -> None:
-    """Apply the inner chat response ID to an agent span when the provider requires it."""
-    if response_id := INNER_CAPTURED_RESPONSE_ID.get():
-        attributes.setdefault(OtelAttr.RESPONSE_ID, response_id)
+def _capture_agent_response_id(owner: object, response: ChatResponse[Any]) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Record the owned chat result before conversion, suppression, and after-run callbacks."""
+    state = _INNER_RESPONSE_TELEMETRY_STATE.get()
+    # Raw agents do not establish their own telemetry state, so a nested raw agent
+    # must not replace the enclosing instrumented agent's response identity.
+    if state is not None and state.owner is owner:
+        state.response_id = response.response_id
+        state.response_id_recorded = True
 
 
-def _apply_accumulated_usage(attributes: dict[str, Any], captured_fields: set[str]) -> None:
+def _apply_captured_response_id(attributes: dict[str, Any], state: _InnerResponseTelemetryState) -> None:
+    """Apply the owned chat response ID to an agent span when the provider requires it."""
+    if not state.response_id_recorded:
+        return
+    if state.response_id:
+        attributes[OtelAttr.RESPONSE_ID] = state.response_id
+    else:
+        attributes.pop(OtelAttr.RESPONSE_ID, None)
+
+
+def _apply_accumulated_usage(attributes: dict[str, Any], state: _InnerResponseTelemetryState) -> None:
     """Apply accumulated usage from inner chat spans to the invoke_agent span attributes."""
-    if INNER_USAGE_CAPTURED_FIELD not in captured_fields:
+    if INNER_USAGE_CAPTURED_FIELD not in state.captured_fields:
         return
-    accumulated = INNER_ACCUMULATED_USAGE.get()
-    if not accumulated:
+    if not state.accumulated_usage:
         return
-    _apply_usage_attributes(attributes, accumulated)
+    _apply_usage_attributes(attributes, state.accumulated_usage)
 
 
 def _apply_usage_attributes(attributes: dict[str, Any], usage: Mapping[str, Any]) -> None:

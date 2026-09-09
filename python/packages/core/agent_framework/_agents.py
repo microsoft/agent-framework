@@ -64,7 +64,10 @@ from ._types import (
     normalize_messages,
 )
 from .exceptions import AgentInvalidRequestException, AgentInvalidResponseException, UserInputRequiredException
-from .observability import AgentTelemetryLayer
+from .observability import (
+    AgentTelemetryLayer,
+    _capture_agent_response_id,  # pyright: ignore[reportPrivateUsage]
+)
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -1219,6 +1222,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         if not response:
             raise AgentInvalidResponseException("Chat client did not return a response.")
 
+        _capture_agent_response_id(self, response)
         for message in response.messages:
             if message.author_name is None:
                 message.author_name = context["agent_name"]
@@ -1290,7 +1294,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 response_format=context["chat_options"].get("response_format"),
             )
 
-        stream = stream_response.map(
+        # Capture the completed chat operation, including finalizer-only metadata,
+        # before mapping to the public response and invoking after-run providers.
+        stream = stream_response.with_result_hook(partial(_capture_agent_response_id, self)).map(
             transform=partial(
                 map_chat_to_agent_update,
                 agent_name=self.name,

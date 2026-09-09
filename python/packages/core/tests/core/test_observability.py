@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import Mock, patch
 
 import pytest
@@ -15,14 +15,17 @@ from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     Agent,
     AgentResponse,
+    AgentSession,
     BaseChatClient,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     ContextProvider,
+    InMemoryHistoryProvider,
     Message,
     RawAgent,
     ResponseStream,
+    SessionContext,
     SupportsAgentRun,
     UsageDetails,
     prepend_agent_framework_to_user_agent,
@@ -4866,10 +4869,14 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
 
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("retain_agent_response_id", [False, True])
+@pytest.mark.parametrize("chunk_response_id", [None, "chunk_resp"])
+@pytest.mark.parametrize("final_response_id", [None, "nested_resp_123"])
 async def test_agent_provider_hooks_control_response_telemetry(
     span_exporter: InMemorySpanExporter,
     stream: bool,
     retain_agent_response_id: bool,
+    chunk_response_id: str | None,
+    final_response_id: str | None,
 ):
     """Provider hooks can add root attributes and retain an inner response ID when required."""
 
@@ -4888,13 +4895,17 @@ async def test_agent_provider_hooks_control_response_telemetry(
             if stream:
 
                 async def _stream() -> AsyncIterable[ChatResponseUpdate]:
-                    yield ChatResponseUpdate(contents=[Content.from_text("Nested")], role="assistant")
-                    yield ChatResponseUpdate(contents=[Content.from_text(" response")], role="assistant")
+                    yield ChatResponseUpdate(
+                        contents=[Content.from_text("Nested")], role="assistant", response_id=chunk_response_id
+                    )
+                    yield ChatResponseUpdate(
+                        contents=[Content.from_text(" response")], role="assistant", response_id=chunk_response_id
+                    )
 
                 def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
                     return ChatResponse(
                         messages=[Message(role="assistant", contents=["Nested response"])],
-                        response_id="nested_resp_123",
+                        response_id=final_response_id,
                         usage_details=UsageDetails(input_token_count=11, output_token_count=22),
                         finish_reason="stop",
                     )
@@ -4904,7 +4915,7 @@ async def test_agent_provider_hooks_control_response_telemetry(
             async def _get() -> ChatResponse:
                 return ChatResponse(
                     messages=[Message(role="assistant", contents=["Nested response"])],
-                    response_id="nested_resp_123",
+                    response_id=final_response_id,
                     usage_details=UsageDetails(input_token_count=11, output_token_count=22),
                     finish_reason="stop",
                 )
@@ -4945,18 +4956,297 @@ async def test_agent_provider_hooks_control_response_telemetry(
     agent_span = span_by_operation[OtelAttr.AGENT_INVOKE_OPERATION]
     chat_span = span_by_operation[OtelAttr.CHAT_COMPLETION_OPERATION]
 
-    assert chat_span.attributes[OtelAttr.RESPONSE_ID] == "nested_resp_123"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert chat_span.attributes is not None
+    assert chat_span.attributes.get(OtelAttr.RESPONSE_ID) == final_response_id
     assert chat_span.attributes[OtelAttr.INPUT_TOKENS] == 11  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert chat_span.attributes[OtelAttr.OUTPUT_TOKENS] == 22  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
     assert agent_span.attributes["test.provider.attribute"] == "provider-value"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
-    if retain_agent_response_id:
-        assert agent_span.attributes[OtelAttr.RESPONSE_ID] == "nested_resp_123"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
-    else:
-        assert OtelAttr.RESPONSE_ID not in agent_span.attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert agent_span.attributes is not None
+    expected_id = (
+        final_response_id
+        if retain_agent_response_id
+        else chunk_response_id
+        if stream and not final_response_id
+        else None
+    )
+    assert agent_span.attributes.get(OtelAttr.RESPONSE_ID) == expected_id
     # The agent span carries the aggregated usage from all inner chat completions
     assert agent_span.attributes[OtelAttr.INPUT_TOKENS] == 11  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert agent_span.attributes[OtelAttr.OUTPUT_TOKENS] == 22  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("callback_kind", ["same_client", "other_client", "agent", "raw_agent"])
+@pytest.mark.parametrize("final_response_id", ["owned-final", None])
+async def test_agent_response_identity_ignores_provider_callbacks(
+    span_exporter: InMemorySpanExporter,
+    stream: bool,
+    callback_kind: str,
+    final_response_id: str | None,
+) -> None:
+    """Only the completed owned operation supplies identity; all direct child chats supply usage."""
+    from agent_framework._middleware import ChatMiddlewareLayer
+    from agent_framework._tools import FunctionInvocationLayer
+
+    calls: list[str] = []
+    tool_calls: list[str] = []
+
+    @tool
+    async def lookup() -> str:
+        """Look up the requested value."""
+        tool_calls.append("lookup")
+        return "found"
+
+    class IdentityClient(FunctionInvocationLayer, ChatMiddlewareLayer, ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self) -> str:
+            return "https://test.example.com"
+
+        def _inner_get_response(  # pyrefly: ignore[bad-override]
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,  # type: ignore[override]
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            label = next(message.text for message in reversed(messages) if message.role == "user")
+            is_tool_call = label == "owned" and not any(message.role == "tool" for message in messages)
+            response_id = (
+                ("owned-first" if final_response_id else None)
+                if is_tool_call
+                else final_response_id
+                if label == "owned"
+                else label
+            )
+            contents = (
+                [Content.from_function_call(call_id="lookup-call", name="lookup", arguments="{}")]
+                if is_tool_call
+                else [Content.from_text(f"{label} result")]
+            )
+
+            async def _get() -> ChatResponse:
+                await asyncio.sleep(0)
+                calls.append(response_id or "no-id")
+                return ChatResponse(
+                    messages=[Message("assistant", contents)],
+                    response_id=response_id,
+                    usage_details=UsageDetails(input_token_count=11, output_token_count=22),
+                )
+
+            if stream:
+
+                async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                    response = await _get()
+                    assert response.usage_details is not None
+                    yield ChatResponseUpdate(
+                        role="assistant",
+                        contents=[*contents, Content.from_usage(response.usage_details)],
+                        response_id=response_id,
+                    )
+
+                return ResponseStream(_stream(), finalizer=ChatResponse.from_updates)
+            return _get()
+
+    class IdentityAgent(Agent):
+        def _should_capture_agent_response_id(self) -> bool:
+            return True
+
+    client = IdentityClient()
+    callback_client = client if callback_kind == "same_client" else IdentityClient()
+    callback_agent = (
+        IdentityAgent(client=callback_client, name="callback")
+        if callback_kind == "agent"
+        else RawAgent(client=callback_client, name="callback")
+    )
+
+    async def invoke_callback(label: str) -> None:
+        if callback_kind in {"agent", "raw_agent"}:
+            if stream:
+                await callback_agent.run(label, stream=True).get_final_response()
+            else:
+                await callback_agent.run(label)
+        elif stream:
+            await callback_client.get_response([Message("user", [label])], stream=True).get_final_response()
+        else:
+            await callback_client.get_response([Message("user", [label])])
+
+    class CallbackProvider(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__(source_id="callback")
+
+        async def before_run(
+            self, *, agent: SupportsAgentRun, session: AgentSession, context: SessionContext, state: dict[str, Any]
+        ) -> None:
+            await invoke_callback("before")
+
+        async def after_run(
+            self, *, agent: SupportsAgentRun, session: AgentSession, context: SessionContext, state: dict[str, Any]
+        ) -> None:
+            assert context.response is not None
+            assert context.response.response_id is None
+            await invoke_callback("after")
+
+    history = InMemoryHistoryProvider()
+    agent = IdentityAgent(
+        client=client,
+        name="owner",
+        context_providers=[history, CallbackProvider()],
+        require_per_service_call_history_persistence=True,
+        tools=[lookup],
+    )
+    session = AgentSession()
+    span_exporter.clear()
+    if stream:
+        result = agent.run("owned", stream=True, session=session, options={"store": False})
+        updates = [update async for update in result]
+        assert all(update.response_id is None for update in updates)
+        response = await result.get_final_response()
+    else:
+        response = await agent.run("owned", session=session, options={"store": False})
+
+    assert response.response_id is None
+    assert session.service_session_id is None
+    assert calls == ["before", "owned-first" if final_response_id else "no-id", final_response_id or "no-id", "after"]
+    assert tool_calls == ["lookup"]
+    assert response.text == "owned result"
+    saved = await history.get_messages(session.session_id, state=session.state[history.source_id])
+    assert [content.type for message in saved for content in message.contents] == [
+        "text",
+        "function_call",
+        "function_result",
+        "text",
+    ]
+
+    agent_spans = [
+        span
+        for span in span_exporter.get_finished_spans()
+        if span.attributes and span.attributes.get(OtelAttr.AGENT_NAME) == "owner"
+    ]
+    assert len(agent_spans) == 1
+    attributes = agent_spans[0].attributes
+    assert attributes is not None
+    assert attributes.get(OtelAttr.RESPONSE_ID) == final_response_id
+    chat_count = 2 if callback_kind == "agent" else 4
+    assert attributes[OtelAttr.INPUT_TOKENS] == 11 * chat_count
+    assert attributes[OtelAttr.OUTPUT_TOKENS] == 22 * chat_count
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("execution", ["nested", "concurrent"])
+async def test_agent_response_telemetry_state_isolated_per_invocation(
+    span_exporter: InMemorySpanExporter,
+    stream: bool,
+    execution: Literal["nested", "concurrent"],
+) -> None:
+    """Re-entering one agent and consuming its streams in other tasks never shares invocation state."""
+    from agent_framework.observability import _INNER_RESPONSE_TELEMETRY_STATE, _InnerResponseTelemetryState
+
+    ready = {label: asyncio.Event() for label in ("first", "second")}
+
+    class IdentityClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self) -> str:
+            return "https://test.example.com"
+
+        def _inner_get_response(  # pyrefly: ignore[bad-override]
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,  # type: ignore[override]
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            label = messages[-1].text
+            usage = 1 if label == "first" else 10
+
+            async def _get() -> ChatResponse:
+                if execution == "concurrent":
+                    ready[label].set()
+                    await ready["second" if label == "first" else "first"].wait()
+                return ChatResponse(
+                    messages=[Message("assistant", [label])],
+                    response_id=label,
+                    usage_details=UsageDetails(input_token_count=usage, output_token_count=2 * usage),
+                )
+
+            if stream:
+                response: ChatResponse | None = None
+
+                async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                    nonlocal response
+                    response = await _get()
+                    yield ChatResponseUpdate(role="assistant", contents=[Content.from_text(label)])
+
+                def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                    assert response is not None
+                    return response
+
+                return ResponseStream(_stream(), finalizer=_finalize)
+            return _get()
+
+    class IdentityAgent(Agent):
+        def _should_capture_agent_response_id(self) -> bool:
+            return True
+
+    class ReenterProvider(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__(source_id="reenter")
+
+        async def after_run(
+            self, *, agent: SupportsAgentRun, session: AgentSession, context: SessionContext, state: dict[str, Any]
+        ) -> None:
+            assert context.response is not None
+            if execution == "nested" and context.response.text == "first":
+                await consume("second")
+
+    agent = IdentityAgent(
+        client=IdentityClient(),  # ty: ignore[invalid-argument-type]
+        name="shared",
+        context_providers=[InMemoryHistoryProvider(), ReenterProvider()],
+        require_per_service_call_history_persistence=True,
+    )
+
+    async def consume(label: str) -> AgentResponse:
+        previous = _INNER_RESPONSE_TELEMETRY_STATE.get()
+        if stream:
+            response = await agent.run(label, stream=True).get_final_response()
+        else:
+            response = await agent.run(label)
+        assert _INNER_RESPONSE_TELEMETRY_STATE.get() is previous
+        assert response.response_id is None
+        return response
+
+    sentinel = _InnerResponseTelemetryState(
+        owner=object(),
+        captured_fields={"sentinel"},
+        response_id="sentinel",
+        accumulated_usage=UsageDetails(input_token_count=100),
+    )
+    token = _INNER_RESPONSE_TELEMETRY_STATE.set(sentinel)
+    span_exporter.clear()
+    try:
+        if execution == "concurrent":
+            await asyncio.gather(consume("first"), consume("second"))
+        else:
+            await consume("first")
+        assert _INNER_RESPONSE_TELEMETRY_STATE.get() is sentinel
+        assert sentinel.captured_fields == {"sentinel"}
+        assert sentinel.response_id == "sentinel"
+        assert sentinel.accumulated_usage == {"input_token_count": 100}
+    finally:
+        _INNER_RESPONSE_TELEMETRY_STATE.reset(token)
+
+    agent_attributes = [
+        span.attributes
+        for span in span_exporter.get_finished_spans()
+        if span.attributes and span.attributes.get(OtelAttr.OPERATION) == OtelAttr.AGENT_INVOKE_OPERATION
+    ]
+    assert len(agent_attributes) == 2
+    by_id = {attributes[OtelAttr.RESPONSE_ID]: attributes for attributes in agent_attributes}
+    assert by_id["first"][OtelAttr.INPUT_TOKENS] == 1
+    assert by_id["first"][OtelAttr.OUTPUT_TOKENS] == 2
+    assert by_id["second"][OtelAttr.INPUT_TOKENS] == 10
+    assert by_id["second"][OtelAttr.OUTPUT_TOKENS] == 20
 
 
 # region Test non-ASCII character handling in JSON serialization
@@ -6748,8 +7038,8 @@ async def test_agent_streaming_execute_failure_closes_span_and_resets_contextvar
     """If ``execute()`` raises synchronously during streaming agent invocation, the agent span is
     ended, the exception is recorded, and the telemetry contextvars are reset."""
     from agent_framework.observability import (
-        INNER_ACCUMULATED_USAGE,
-        INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS,
+        _INNER_RESPONSE_TELEMETRY_STATE,
+        _InnerResponseTelemetryState,
     )
 
     class _FailingExecuteAgent:
@@ -6786,10 +7076,8 @@ async def test_agent_streaming_execute_failure_closes_span_and_resets_contextvar
         pass
 
     # Sentinel values to detect that contextvars were reset to their pre-call state.
-    sentinel_fields: set[str] = set()
-    sentinel_usage: dict[str, Any] = {}
-    fields_token = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.set(sentinel_fields)
-    usage_token = INNER_ACCUMULATED_USAGE.set(sentinel_usage)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    sentinel = _InnerResponseTelemetryState(owner=object())
+    token = _INNER_RESPONSE_TELEMETRY_STATE.set(sentinel)
     try:
         agent = FailingExecuteAgent()
         span_exporter.clear()
@@ -6797,11 +7085,9 @@ async def test_agent_streaming_execute_failure_closes_span_and_resets_contextvar
             agent.run(messages="Hello", stream=True)
 
         # Contextvars must be back to the sentinel values registered before the call.
-        assert INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.get() is sentinel_fields
-        assert INNER_ACCUMULATED_USAGE.get() is sentinel_usage
+        assert _INNER_RESPONSE_TELEMETRY_STATE.get() is sentinel
     finally:
-        INNER_ACCUMULATED_USAGE.reset(usage_token)
-        INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(fields_token)
+        _INNER_RESPONSE_TELEMETRY_STATE.reset(token)
 
     spans = span_exporter.get_finished_spans()
     agent_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]

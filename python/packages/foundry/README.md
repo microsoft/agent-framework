@@ -2,6 +2,73 @@
 
 This package contains the Microsoft Foundry integrations for Microsoft Agent Framework, including Foundry chat clients, preconfigured Foundry agents, Foundry embedding clients, and Foundry memory providers.
 
+## Tracing an existing Foundry agent
+
+Telemetry export and project attribution are separate concerns. For an existing
+prompt or hosted agent, `FoundryAgent.configure_azure_monitor()` configures the
+exporter and, unless supplied explicitly, discovers the project's ARM resource
+ID from its Application Insights connection. Discovery is cached per agent.
+
+```python
+import os
+
+from agent_framework.foundry import FoundryAgent
+from azure.identity.aio import AzureCliCredential
+
+async with AzureCliCredential() as credential, FoundryAgent(
+    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    agent_name=os.environ["FOUNDRY_AGENT_NAME"],
+    credential=credential,
+) as agent:
+    await agent.configure_azure_monitor()
+    response = await agent.run("Hello!")
+```
+
+If your application already configures OpenTelemetry providers/exporters, pass
+`project_arm_id` when constructing each `FoundryAgent` instead of calling the
+helper again. This sets `microsoft.foundry.project.id` on that agent's invocation
+span without changing global exporters or making a discovery request:
+
+```python
+import os
+
+from agent_framework.foundry import FoundryAgent
+from azure.identity.aio import AzureCliCredential
+
+# The application has already configured its OpenTelemetry exporters.
+async with AzureCliCredential() as credential, FoundryAgent(
+    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    project_arm_id=os.environ["FOUNDRY_PROJECT_ARM_ID"],
+    agent_name=os.environ["FOUNDRY_AGENT_NAME"],
+    credential=credential,
+) as agent:
+    response = await agent.run("Hello!")
+```
+
+The sample environment variable is read explicitly by the application, not
+automatically by `FoundryAgent`. Use the full **project** ARM ID:
+`/subscriptions/{subscription}/resourceGroups/{group}/providers/Microsoft.CognitiveServices/accounts/{account}/projects/{project}`.
+The project endpoint and Application Insights connection string are not substitutes.
+Keep each agent's project identity consistent with its endpoint; do not use one
+process-wide project attribute when agents address different projects.
+
+If optional discovery fails, the helper logs a warning and still configures Azure
+Monitor. Telemetry can reach Application Insights without appearing in Foundry's
+project/agent view. Supply the project ARM ID explicitly or repair the connection
+metadata before relying on portal attribution. The SDK exposure gap is tracked in
+[Azure/azure-sdk-for-python#48825](https://github.com/Azure/azure-sdk-for-python/issues/48825).
+
+`FoundryAgent` also retains its own chat operation's response ID on the invocation
+span, including streaming, without changing public history/continuation behavior.
+An unrelated model call from a context provider cannot replace that identity.
+The invocation span may itself be a child of an application span; there is no
+requirement for your application parent to carry the same attributes.
+
+See [the existing-agent tracing sample](../../samples/02-agents/observability/foundry_agent_tracing.py)
+for helper/manual setup and streaming. This differs from tracing a local
+`Agent(client=FoundryChatClient(...))`: calling the chat client's helper does not
+initialize identity on a separate `FoundryAgent` instance.
+
 ## Evaluations
 
 `FoundryEvals` implements the provider-neutral `Evaluator` protocol with

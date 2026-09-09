@@ -103,7 +103,8 @@ configure_azure_monitor(
 enable_sensitive_telemetry()
 ```
 
-For Microsoft Foundry projects, use `client.configure_azure_monitor()` which retrieves the connection string from the project and configures everything:
+For model calls through `FoundryChatClient`, use `client.configure_azure_monitor()`
+to retrieve the connection string and configure Azure Monitor:
 
 ```python
 from agent_framework.foundry import FoundryChatClient
@@ -118,6 +119,28 @@ client = FoundryChatClient(
 # Automatically configures Azure Monitor with connection string from project
 await client.configure_azure_monitor(enable_sensitive_data=True)
 ```
+
+For calls to an **existing prompt or hosted agent**, use
+[`foundry_agent_tracing.py`](foundry_agent_tracing.py). It shows two supported paths:
+
+- `await agent.configure_azure_monitor()` configures Azure Monitor and discovers
+  project attribution for that `FoundryAgent` instance.
+- For application-managed exporters, supply the full `project_arm_id` when
+  constructing the `FoundryAgent`; the constructor does not configure exporters.
+
+Run from `python/` using the workspace packages:
+
+```powershell
+uv run python samples\02-agents\observability\foundry_agent_tracing.py
+uv run python samples\02-agents\observability\foundry_agent_tracing.py --manual-setup --stream
+```
+
+Manual setup requires `FOUNDRY_PROJECT_ARM_ID` and
+`APPLICATIONINSIGHTS_CONNECTION_STRING` in addition to the endpoint and agent
+name. These are explicitly read by the sample. Optional discovery failures warn
+and preserve Application Insights export, but may prevent Foundry discovery.
+Confirm the printed trace ID appears under the agent in Foundry, not merely in
+Application Insights. Keep the agent available during inspection.
 
 Or with [Langfuse](https://langfuse.com/integrations/frameworks/microsoft-agent-framework):
 
