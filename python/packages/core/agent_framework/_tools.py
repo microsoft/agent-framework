@@ -129,17 +129,30 @@ class _FunctionResultCarrier:
     result_already_parsed: bool = False
 
 
-@dataclass
 class _FunctionResultPayloadBudget:
     """Bound retained Host payloads across one function-invocation request."""
 
-    limit_bytes: int = 0
-    retained_bytes: int = 0
+    def __init__(self, state: dict[str, Any] | None = None) -> None:
+        self._state = state if state is not None else {}
+        self._state["limit_bytes"] = self._normalize_counter(self._state.get("limit_bytes"))
+        self._state["retained_bytes"] = self._normalize_counter(self._state.get("retained_bytes"))
+
+    @staticmethod
+    def _normalize_counter(value: Any) -> int:
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+    @property
+    def limit_bytes(self) -> int:
+        return cast(int, self._state["limit_bytes"])
+
+    @property
+    def retained_bytes(self) -> int:
+        return cast(int, self._state["retained_bytes"])
 
     def remaining(self, per_result_limit: int | None) -> int | None:
         if per_result_limit is None:
             return None
-        self.limit_bytes = max(self.limit_bytes, per_result_limit)
+        self._state["limit_bytes"] = max(self.limit_bytes, per_result_limit)
         return max(self.limit_bytes - self.retained_bytes, 0)
 
     def reserve(self, size_bytes: int, per_result_limit: int | None) -> bool:
@@ -148,7 +161,7 @@ class _FunctionResultPayloadBudget:
         remaining = self.remaining(per_result_limit)
         if remaining is None or size_bytes > remaining:
             return False
-        self.retained_bytes += size_bytes
+        self._state["retained_bytes"] = self.retained_bytes + size_bytes
         return True
 
 
@@ -3980,12 +3993,11 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         # max_duration_seconds measures cumulative elapsed time, not just the current segment.
         budget_state.setdefault("start_time", perf_counter())
         raw_host_payload_budget = budget_state.get(_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY)
-        host_payload_budget = (
-            raw_host_payload_budget
-            if isinstance(raw_host_payload_budget, _FunctionResultPayloadBudget)
-            else _FunctionResultPayloadBudget()
+        host_payload_budget_state = (
+            cast(dict[str, Any], raw_host_payload_budget) if isinstance(raw_host_payload_budget, dict) else {}
         )
-        budget_state[_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY] = host_payload_budget
+        budget_state[_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY] = host_payload_budget_state
+        host_payload_budget = _FunctionResultPayloadBudget(host_payload_budget_state)
         max_errors = self.function_invocation_configuration.get(
             "max_consecutive_errors_per_request", DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST
         )

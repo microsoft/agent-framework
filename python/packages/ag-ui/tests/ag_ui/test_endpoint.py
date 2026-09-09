@@ -8,7 +8,7 @@ import logging
 import subprocess
 import sys
 from collections import Counter
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from inspect import signature
 from typing import Any, cast
@@ -25,6 +25,7 @@ from agent_framework import (
     ContextProvider,
     Executor,
     FunctionTool,
+    HistoryProvider,
     InMemoryCheckpointStorage,
     InMemoryHistoryProvider,
     Message,
@@ -2133,6 +2134,128 @@ async def test_endpoint_request_collision_evicts_prior_private_value(streaming_c
         if event.get("type") == "TEXT_MESSAGE_CONTENT"
     ]
     assert observed == ["mode=None", "mode=request", "mode=request"]
+
+
+async def test_endpoint_scopes_history_provider_session_ids_by_trusted_snapshot_scope(
+    streaming_chat_client_stub,
+):
+    """Trusted scopes isolate history from other scopes and the unscoped client-id namespace."""
+
+    class RecordingHistoryProvider(HistoryProvider):
+        def __init__(self) -> None:
+            super().__init__(source_id="recording-history", load_messages=False)
+            self.saved_session_ids: list[str] = []
+            self.messages_by_session: dict[str, list[Message]] = {}
+
+        async def get_messages(
+            self,
+            session_id: str | None,
+            *,
+            state: dict[str, Any] | None = None,
+            **kwargs: Any,
+        ) -> list[Message]:
+            del state, kwargs
+            if session_id is None:
+                return []
+            return list(self.messages_by_session.get(session_id, []))
+
+        async def save_messages(
+            self,
+            session_id: str | None,
+            messages: Sequence[Message],
+            *,
+            state: dict[str, Any] | None = None,
+            **kwargs: Any,
+        ) -> None:
+            del state, kwargs
+            assert session_id is not None
+            self.saved_session_ids.append(session_id)
+            self.messages_by_session.setdefault(session_id, []).extend(messages)
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        latest_user_text = next(message.text for message in reversed(messages) if message.role == "user")
+        yield ChatResponseUpdate(contents=[Content.from_text(text=f"Reply to {latest_user_text}")])
+
+    history = RecordingHistoryProvider()
+    agent = Agent(
+        name="test",
+        instructions=None,
+        client=streaming_chat_client_stub(stream_fn),
+        context_providers=[history],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/scoped-history",
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+        snapshot_scope_resolver=lambda request: cast("dict[str, Any]", request.forwarded_props)["scope"],
+        keepalive_seconds=None,
+    )
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/unscoped-history",
+        keepalive_seconds=None,
+    )
+    client = TestClient(app)
+
+    raw_thread_id = "shared-client-thread"
+    requests = [
+        ("tenant-a", "tenant-a first"),
+        ("tenant-a", "tenant-a second"),
+        ("tenant-b", "tenant-b first"),
+    ]
+    responses = [
+        client.post(
+            "/scoped-history",
+            json={
+                "thread_id": raw_thread_id,
+                "messages": [{"role": "user", "content": content}],
+                "forwardedProps": {"scope": scope},
+            },
+        )
+        for scope, content in requests
+    ]
+
+    assert all(response.status_code == 200 for response in responses)
+    tenant_a_session_id, repeated_tenant_a_session_id, tenant_b_session_id = history.saved_session_ids
+    assert tenant_a_session_id == repeated_tenant_a_session_id
+    assert tenant_a_session_id != tenant_b_session_id
+
+    collision_response = client.post(
+        "/unscoped-history",
+        json={
+            "thread_id": tenant_a_session_id,
+            "messages": [{"role": "user", "content": "unscoped collision attempt"}],
+        },
+    )
+    assert collision_response.status_code == 200
+    unscoped_session_id = history.saved_session_ids[-1]
+    assert unscoped_session_id != tenant_a_session_id
+
+    assert set(history.messages_by_session) == {
+        tenant_a_session_id,
+        tenant_b_session_id,
+        unscoped_session_id,
+    }
+    assert all("tenant-b" not in message.text for message in history.messages_by_session[tenant_a_session_id])
+    assert all("tenant-a" not in message.text for message in history.messages_by_session[tenant_b_session_id])
+    assert all("unscoped" not in message.text for message in history.messages_by_session[tenant_a_session_id])
+    assert all("tenant-a" not in message.text for message in history.messages_by_session[unscoped_session_id])
+
+    for response in responses:
+        events = _decode_sse_events(response)
+        assert events[0]["threadId"] == raw_thread_id
+        assert events[-1]["threadId"] == raw_thread_id
+    collision_events = _decode_sse_events(collision_response)
+    assert collision_events[0]["threadId"] == tenant_a_session_id
+    assert collision_events[-1]["threadId"] == tenant_a_session_id
 
 
 async def test_endpoint_excludes_history_provider_state_from_continuation(streaming_chat_client_stub):
