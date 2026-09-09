@@ -8,7 +8,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Optional
 
-from agent_framework import AgentSession, ContextProvider, Message, SessionContext
+from agent_framework import AgentSession, ContextProvider, SessionContext
 from agent_framework._telemetry import get_user_agent, mark_feature_used
 
 if TYPE_CHECKING:
@@ -99,7 +99,7 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
 
         Called automatically before each model invocation. Extracts the user's
         query from input messages, retrieves relevant passages, and adds them
-        as a user message to the context.
+        as instructions to the context (prepended to the system prompt).
 
         Args:
             agent: The agent running this invocation.
@@ -127,9 +127,12 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
         if not retrieved_context:
             return
 
-        # Inject as a user message (untrusted external content) via extend_messages
-        context_message = Message(role="user", contents=[f"{self.context_prompt}\n\n{retrieved_context}"])
-        context.extend_messages(self, [context_message])
+        # Inject retrieved context as instructions rather than a message.
+        # Adding it as a separate user message would produce consecutive user
+        # roles when the agent appends the real input (SessionContext.get_messages
+        # with include_input=True), which Bedrock Converse rejects since roles must
+        # alternate. Instructions are prepended to the system context and avoid this.
+        context.extend_instructions(self.source_id, f"{self.context_prompt}\n\n{retrieved_context}")
 
     async def _retrieve(self, query: str) -> str:
         """Retrieve and format context from the knowledge base."""
