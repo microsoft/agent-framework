@@ -372,17 +372,22 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         int requestCount = 0;
+        using var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StallingContent(),
+        };
         TestHttpMessageHandler messageHandler = new((_, _) =>
         {
             requestCount++;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StallingContent(),
-            });
+#pragma warning disable CA2025 // Do not pass 'IDisposable' instances into unawaited tasks
+            return Task.FromResult(response);
+#pragma warning restore CA2025 // Do not pass 'IDisposable' instances into unawaited tasks
         });
 
         using HttpClient httpClient = new(messageHandler);
+#pragma warning disable CA2025 // Do not pass 'IDisposable' instances into unawaited tasks
         await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(httpClient));
+#pragma warning restore CA2025 // Do not pass 'IDisposable' instances into unawaited tasks
         HttpRequestInfo request = new()
         {
             Method = "GET",
