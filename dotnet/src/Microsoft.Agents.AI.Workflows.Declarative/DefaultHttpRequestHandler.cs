@@ -27,10 +27,10 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// so it does not mutate <see cref="HttpClient.Timeout"/> on shared instances.
 /// </para>
 /// <para>
-/// Redirects are handled by this handler so per-request headers are not forwarded to redirect destinations. The
-/// internally owned client disables automatic redirects. Supplied clients should also disable automatic
-/// redirects and handle redirect responses before returning them to this handler because their redirect behavior
-/// is opaque to this handler.
+/// Redirects are handled by this handler only when using its internally owned client, which disables automatic
+/// redirects so per-request headers are not forwarded to redirect destinations. If a supplied client returns a
+/// redirect response, this handler rejects it because the client's redirect behavior is opaque. Supplied clients
+/// should disable automatic redirects and handle redirect responses before returning them to this handler.
 /// </para>
 /// </remarks>
 public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDisposable

@@ -383,7 +383,8 @@ public sealed class DefaultHttpRequestHandlerTests
         TestHttpMessageHandler messageHandler = new(async (req, ct) =>
         {
             requestCount++;
-            await Task.Delay(TimeSpan.FromMilliseconds(200), ct).ConfigureAwait(false);
+            TimeSpan delay = requestCount == 1 ? TimeSpan.FromMilliseconds(1) : TimeSpan.FromSeconds(5);
+            await Task.Delay(delay, ct).ConfigureAwait(false);
 
             if (requestCount == 1)
             {
@@ -407,6 +408,119 @@ public sealed class DefaultHttpRequestHandlerTests
         // Assert
         await Assert.ThrowsAnyAsync<OperationCanceledException>(actAsync);
         Assert.Equal(2, requestCount);
+    }
+
+    [Fact]
+    public async Task SendAsyncPostFoundRedirectRewritesToGetAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.Found)
+        {
+            Headers = { Location = new Uri("https://api.example.test/next") },
+        };
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
+        };
+        int requestCount = 0;
+#pragma warning disable CA2025
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+        {
+            requestCount++;
+            return Task.FromResult(requestCount == 1 ? redirectResponse : okResponse);
+        });
+#pragma warning restore CA2025
+
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
+        HttpRequestInfo request = new()
+        {
+            Method = "POST",
+            Url = TestUrl,
+            Body = "request-body",
+            BodyContentType = "text/plain",
+        };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        Assert.Equal("redirected", result.Body);
+        Assert.Equal(["POST", "GET"], messageHandler.RequestMethods);
+        Assert.Equal(["request-body", null], messageHandler.RequestBodies);
+    }
+
+    [Theory]
+    [InlineData(307)]
+    [InlineData(308)]
+    public async Task SendAsyncPostPreserveMethodRedirectPreservesBodyAsync(int redirectStatusCode)
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        using HttpResponseMessage redirectResponse = new((HttpStatusCode)redirectStatusCode)
+        {
+            Headers = { Location = new Uri("https://api.example.test/next") },
+        };
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
+        };
+        int requestCount = 0;
+#pragma warning disable CA2025
+        TestHttpMessageHandler messageHandler = new((req, _) =>
+        {
+            requestCount++;
+            return Task.FromResult(requestCount == 1 ? redirectResponse : okResponse);
+        });
+#pragma warning restore CA2025
+
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
+        HttpRequestInfo request = new()
+        {
+            Method = "POST",
+            Url = TestUrl,
+            Body = "request-body",
+            BodyContentType = "text/plain",
+        };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        Assert.Equal("redirected", result.Body);
+        Assert.Equal(["POST", "POST"], messageHandler.RequestMethods);
+        Assert.Equal(["request-body", "request-body"], messageHandler.RequestBodies);
+    }
+
+    [Fact]
+    public async Task SendAsyncTooManyRedirectsThrowsAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        int requestCount = 0;
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+        {
+            requestCount++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
+            {
+                Headers = { Location = new Uri($"https://api.example.test/redirect/{requestCount}") },
+            });
+        });
+
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = TestUrl,
+        };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Contains("maximum number of HTTP redirects", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(51, requestCount);
     }
 
     [Fact]
@@ -820,7 +934,8 @@ public sealed class DefaultHttpRequestHandlerTests
         Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? httpClientProvider = null)
     {
         DefaultHttpRequestHandler handler = new(httpClientProvider);
-        FieldInfo ownedHttpClientField = typeof(DefaultHttpRequestHandler).GetField("_ownedHttpClient", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        FieldInfo? ownedHttpClientField = typeof(DefaultHttpRequestHandler).GetField("_ownedHttpClient", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(ownedHttpClientField);
         ownedHttpClientField.SetValue(handler, new Lazy<HttpClient>(() => new HttpClient(ownedHttpMessageHandler), LazyThreadSafetyMode.ExecutionAndPublication));
         return handler;
     }
@@ -840,9 +955,14 @@ public sealed class DefaultHttpRequestHandlerTests
 
         public string? LastRequestContentType { get; private set; }
 
+        public List<string> RequestMethods { get; } = [];
+
+        public List<string?> RequestBodies { get; } = [];
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             this.LastRequest = request;
+            this.RequestMethods.Add(request.Method.Method);
             if (request.Content is not null)
             {
 #if NET
@@ -850,7 +970,12 @@ public sealed class DefaultHttpRequestHandlerTests
 #else
                 this.LastRequestBody = await request.Content.ReadAsStringAsync().ConfigureAwait(false);
 #endif
+                this.RequestBodies.Add(this.LastRequestBody);
                 this.LastRequestContentType = request.Content.Headers.ContentType?.MediaType;
+            }
+            else
+            {
+                this.RequestBodies.Add(null);
             }
             return await this._responseFactory(request, cancellationToken).ConfigureAwait(false);
         }
