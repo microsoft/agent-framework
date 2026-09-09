@@ -3708,10 +3708,6 @@ class _ChatOptionsBase(TypedDict, total=False):
     tool_choice: ToolMode | Literal["auto", "required", "none"]
     allow_multiple_tool_calls: bool
 
-    # Dictates whether multiple tool calls in a single message batch
-    # are executed concurrently (True, default) or one-by-one (False).
-    allow_concurrent_invocation: bool
-
     # Response configuration
     response_format: type[BaseModel] | Mapping[str, Any] | None
 

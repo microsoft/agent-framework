@@ -1439,6 +1439,11 @@ def _function_execution_error_result(
     )
 
 
+def _is_server_managed_tool(tool: FunctionTool) -> bool:
+    """Check if a tool is server-managed and should not be executed locally."""
+    return bool(tool.additional_properties and tool.additional_properties.get("server_label"))
+
+
 async def _auto_invoke_function(
     function_call_content: Content,
     custom_args: dict[str, Any] | None = None,
@@ -1652,7 +1657,7 @@ def _get_tool_map(
     return {
         tool_item.name: tool_item
         for tool_item in _ensure_unique_tool_names(tools)
-        if isinstance(tool_item, FunctionTool)
+        if isinstance(tool_item, FunctionTool) and not _is_server_managed_tool(tool_item)
     }
 
 
@@ -1680,6 +1685,20 @@ async def _execute_single_function_call(
     from ._sessions import _suspend_run_persistence_gate  # pyright: ignore[reportPrivateUsage]
     from ._types import Content
 
+    source_function_call = _underlying_function_call(function_call)
+    tool_name = source_function_call.name
+
+    if tool_name not in tool_map:
+        exc = KeyError(f'Function "{tool_name}" not found.')
+        return [
+            Content.from_function_result(
+                call_id=source_function_call.call_id,  # type: ignore[arg-type]
+                result=f'Error: Requested function "{tool_name}" not found.',
+                exception=str(exc),
+                additional_properties=source_function_call.additional_properties,
+            )
+        ], False
+
     try:
         # A run-persistence gate defers only the gated run's own persistence; nested
         # agent runs persist inline at their own boundaries. Run-identity ownership
@@ -1697,11 +1716,10 @@ async def _execute_single_function_call(
                 config=config,
                 live_tools=live_tools,
             )
-        return [result], False
+            return [result], False
     except MiddlewareTermination as exc:
         if isinstance(exc.result, Content):
             return [exc.result], True
-        source_function_call = _underlying_function_call(function_call)
         return [
             Content.from_function_result(
                 call_id=source_function_call.call_id,  # type: ignore[arg-type]
@@ -1709,7 +1727,6 @@ async def _execute_single_function_call(
             )
         ], True
     except UserInputRequiredException as exc:
-        source_function_call = _underlying_function_call(function_call)
         call_id = source_function_call.call_id
         propagated_contents = [item for item in exc.contents if isinstance(item, Content)] if exc.contents else []
         for item in propagated_contents:
@@ -1800,12 +1817,10 @@ async def _try_execute_function_call_groups(
         if config.get("terminate_on_unknown_calls", False) and function_name not in tool_map:
             raise KeyError(f'Error: Requested function "{function_name}" not found.')
     if requires_approval:
-        # Surface only the approvals the host must decide; session-backed safe siblings wait for that resume.
-        # approval can only be needed for Function Call Content, not Approval Responses.
         logger.debug("Returning visible function_approval_request contents and storing already-approved requests")
         visible_requests: list[Content] = []
-        already_approved_requests: list[Content] = []
-        for function_call in function_calls:
+        already_approved_requests: list[tuple[int, Content]] = []
+        for idx, function_call in enumerate(function_calls):
             if function_call.type != "function_call":
                 continue
             approval_request = Content.from_function_approval_request(
@@ -1828,7 +1843,7 @@ async def _try_execute_function_call_groups(
             if invocation_session is None:
                 visible_requests.append(approval_request)
                 continue
-            already_approved_requests.append(approval_request)
+            already_approved_requests.append((idx, approval_request))
         _store_already_approved_approval_requests(
             invocation_session,
             visible_requests,
@@ -1877,11 +1892,19 @@ async def _try_execute_function_call_groups(
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
     else:
-        for call in function_calls:
+        for idx, call in enumerate(function_calls):
             res = await _execute_single(call)
             execution_results.append(res)
             if res[1]:
+                for skipped in function_calls[idx + 1 :]:
+                    skipped_call = _underlying_function_call(skipped)
+                    skipped_result = Content.from_function_result(
+                        call_id=skipped_call.call_id,  # type: ignore[arg-type]
+                        result="Skipped: a prior tool call in this batch requested termination.",
+                    )
+                    execution_results.append(([skipped_result], False))
                 break
+
     should_terminate = any(terminate for _, terminate in execution_results)
     return [result_contents for result_contents, _ in execution_results], should_terminate
 
@@ -1914,20 +1937,19 @@ async def _execute_function_calls(
     custom_args: dict[str, Any],
     function_calls: list[Content],
     options: dict[str, Any] | None,
-    config: FunctionInvocationConfiguration,
+    config_provider: Callable[[], FunctionInvocationConfiguration],
     invocation_session: AgentSession | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
 ) -> _FunctionExecutionBatch:
-
-    run_config = cast("FunctionInvocationConfiguration", dict(config) if config else {})
-    if custom_args and "allow_concurrent_invocation" in custom_args:
-        if "allow_concurrent_invocation" not in run_config:
-            run_config["allow_concurrent_invocation"] = custom_args["allow_concurrent_invocation"]
-        custom_args.pop("allow_concurrent_invocation")
+    run_config = cast(
+        "FunctionInvocationConfiguration",
+        dict(config_provider()) if config_provider() else {},
+    )
 
     tools = _extract_tools(options)
     if not tools:
         return _FunctionExecutionBatch(result_groups=[])
+
     result_groups, should_terminate = await _try_execute_function_call_groups(
         custom_args=custom_args,
         function_calls=function_calls,
@@ -2263,7 +2285,7 @@ def _bind_approval_responses_to_pending_requests(
 def _store_already_approved_approval_requests(
     invocation_session: AgentSession | None,
     visible_approval_requests: Sequence[Content],
-    already_approved_requests: Sequence[Content],
+    already_approved_requests: Sequence[tuple[int, Content] | Content],
 ) -> None:
     """Store hidden already-approved requests keyed by the visible approvals that resume the batch."""
     if not already_approved_requests:
@@ -2271,15 +2293,33 @@ def _store_already_approved_approval_requests(
     state = _get_tool_approval_state(invocation_session)
     if state is None:
         return
-    visible_ids = [request.id for request in visible_approval_requests if request.id]
+    visible_ids: list[str] = [request.id for request in visible_approval_requests if request.id]
     if not visible_ids:
         return
 
     existing_groups = state.get(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY)
-    pending_groups = list(cast(list[Any], existing_groups)) if isinstance(existing_groups, list) else []
+
+    pending_groups: list[dict[str, Any]] = (
+        cast("list[dict[str, Any]]", existing_groups) if isinstance(existing_groups, list) else []
+    )
+
+    serialized_requests: list[dict[str, Any]] = []
+    request_indices: list[int] = []
+    for i, item in enumerate(already_approved_requests):
+        idx: int
+        request: Content
+        if isinstance(item, tuple):
+            idx, request = item
+        else:
+            idx, request = i, item  
+            
+        serialized_requests.append(request.to_dict())
+        request_indices.append(idx)
+
     pending_groups.append({
         "approval_request_ids": visible_ids,
-        "approval_requests": [request.to_dict() for request in already_approved_requests],
+        "approval_requests": serialized_requests,
+        "approval_request_indices": request_indices,
     })
     state[_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY] = pending_groups
 
@@ -2288,7 +2328,7 @@ def _pop_already_approved_approval_responses(
     invocation_session: AgentSession | None,
     approval_response_ids: set[str],
 ) -> list[Content]:
-    """Pop already-approved requests for the visible approval ids being answered."""
+    """Pop already-approved requests for the visible approval ids being answered, preserving original order."""
     if not approval_response_ids:
         return []
     state = _get_tool_approval_state(invocation_session)
@@ -2297,33 +2337,49 @@ def _pop_already_approved_approval_responses(
     raw_groups = state.get(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY, [])
     if not isinstance(raw_groups, list):
         return []
-    typed_groups = cast(list[Any], raw_groups)
+    typed_groups = cast("list[Mapping[str, Any]]", raw_groups)
 
-    responses: list[Content] = []
-    remaining_groups: list[Any] = []
+    tagged_responses: list[tuple[int, Content]] = []
+    remaining_groups: list[Mapping[str, Any]] = []
     for raw_group in typed_groups:
         if not isinstance(raw_group, Mapping):
             continue
-        group = cast(Mapping[str, Any], raw_group)
+        group = raw_group
         raw_ids = group.get("approval_request_ids")
-        group_ids: set[str] = {str(item) for item in cast(list[Any], raw_ids)} if isinstance(raw_ids, list) else set()
+        group_ids: set[str] = {str(item) for item in cast("list[Any]", raw_ids)} if isinstance(raw_ids, list) else set()
         if group_ids.isdisjoint(approval_response_ids):
-            remaining_groups.append(raw_group)
+            remaining_groups.append(group)
             continue
         raw_requests = group.get("approval_requests")
         if not isinstance(raw_requests, list):
             continue
-        for raw_request in cast(list[Any], raw_requests):
-            request = _content_from_state(raw_request)
+            
+        raw_indices = group.get("approval_request_indices")
+        indices = cast("list[int]", raw_indices) if isinstance(raw_indices, list) else []
+        
+        for i, raw_request in enumerate(cast(list[Any], raw_requests)):
+            if isinstance(raw_request, Mapping) and "original_index" in raw_request:
+                req_map = cast("Mapping[str, Any]", raw_request)
+                original_index: int = int(req_map["original_index"])
+                request_dict: dict[str, Any] = dict(req_map)
+                request_dict.pop("original_index", None)
+                request = _content_from_state(request_dict)
+            else:
+                original_index = indices[i] if i < len(indices) else 0
+                request = _content_from_state(raw_request)
+
             if request is None or request.type != "function_approval_request":
                 continue
-            responses.append(request.to_function_approval_response(approved=True))
+            tagged_responses.append((original_index, request.to_function_approval_response(approved=True)))
+
+    tagged_responses.sort(key=lambda item: item[0])
+    responses = [content for _, content in tagged_responses]
+
     if remaining_groups:
         state[_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY] = remaining_groups
     else:
         state.pop(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY, None)
     return responses
-
 
 def _collect_approval_responses(
     messages: list[Message],
@@ -3640,18 +3696,15 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
         # Bind one executor with the run's custom arguments, middleware, configuration, and session.
         mutable_options: dict[str, Any] = dict(options) if options else {}
-        run_config = cast(
-            "FunctionInvocationConfiguration",
-            dict(self.function_invocation_configuration) if self.function_invocation_configuration else {},
-        )
 
-        if allow_concurrent := mutable_options.pop("allow_concurrent_invocation", None):
-            run_config["allow_concurrent_invocation"] = allow_concurrent
+        def _get_run_config() -> FunctionInvocationConfiguration:
+            base = dict(self.function_invocation_configuration) if self.function_invocation_configuration else {}
+            return cast("FunctionInvocationConfiguration", base)
 
         execute_function_calls = partial(
             _execute_function_calls,
             custom_args=additional_function_arguments,
-            config=run_config,
+            config_provider=_get_run_config,
             invocation_session=invocation_session,
             middleware_pipeline=function_middleware_pipeline,
         )
