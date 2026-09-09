@@ -1095,8 +1095,10 @@ public sealed class DefaultHttpRequestHandlerTests
 
     private sealed class StallingContent : HttpContent
     {
+        private readonly TaskCompletionSource<object?> _stall = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
-            Task.Delay(Timeout.Infinite);
+            this._stall.Task;
 
 #if NET
         protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context, CancellationToken cancellationToken) =>
@@ -1107,6 +1109,16 @@ public sealed class DefaultHttpRequestHandlerTests
         {
             length = 0;
             return false;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                this._stall.TrySetCanceled();
+            }
+
+            base.Dispose(disposing);
         }
     }
 }

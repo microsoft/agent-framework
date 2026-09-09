@@ -29,8 +29,8 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// <para>
 /// Redirects are handled by this handler only when using its internally owned client, which disables automatic
 /// redirects so per-request headers are not forwarded to redirect destinations. If a supplied client returns a
-/// redirect response, this handler rejects it because the client's redirect behavior is opaque. Supplied clients
-/// should disable automatic redirects and handle redirect responses before returning them to this handler.
+/// redirect response, this handler does not follow it because the client's redirect behavior is opaque. Supplied
+/// clients should disable automatic redirects and handle redirect responses before returning them to this handler.
 /// </para>
 /// </remarks>
 public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDisposable
