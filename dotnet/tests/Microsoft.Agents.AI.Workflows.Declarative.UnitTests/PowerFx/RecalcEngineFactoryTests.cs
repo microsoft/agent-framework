@@ -3,6 +3,7 @@
 using System.Collections.Generic;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.PowerFx;
+using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.PowerFx;
 
@@ -36,9 +37,10 @@ public class RecalcEngineFactoryTests(ITestOutputHelper output) : WorkflowTest(o
     {
         // Arrange
         RecalcEngine engine = RecalcEngineFactory.Create();
+        engine.UpdateVariable("MyVariable", FormulaValue.New(0));
 
         // Act
-        CheckResult result = engine.Check("Set(MyVariable, 1)");
+        CheckResult result = engine.Check("Set(MyVariable, 1)", options: new ParserOptions() { AllowsSideEffects = true });
 
         // Assert
         Assert.False(result.IsSuccess);

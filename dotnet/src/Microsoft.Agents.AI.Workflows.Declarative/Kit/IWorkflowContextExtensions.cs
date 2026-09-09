@@ -117,7 +117,7 @@ public static class IWorkflowContextExtensions
     /// <typeparam name="TValue">The type of the state value.</typeparam>
     /// <param name="context">The workflow execution context used to read state.</param>
     /// <param name="key">The key of the state value.</param>
-    /// <param name = "scopeName" > An optional name that specifies the scope to read.If null, the default scope is used.</param>
+    /// <param name="scopeName">An optional name that specifies the scope to read. If null, the default scope is used.</param>
     /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
     /// <returns>The state value and its sensitivity metadata.</returns>
     public static async ValueTask<EvaluationResult<TValue?>> ReadStateWithSensitivityAsync<TValue>(
@@ -126,12 +126,16 @@ public static class IWorkflowContextExtensions
         string? scopeName = null,
         CancellationToken cancellationToken = default)
     {
-        TValue? value = await context.ReadStateAsync<TValue>(key, scopeName, cancellationToken).ConfigureAwait(false);
-        SensitivityLevel sensitivity = context is DeclarativeWorkflowContext declarativeContext
-            ? declarativeContext.State.GetSensitivity(key, scopeName)
-            : SensitivityLevel.None;
+        if (context is DeclarativeWorkflowContext declarativeContext)
+        {
+            string effectiveScopeName = scopeName ?? WorkflowFormulaState.DefaultScopeName;
+            TValue? declarativeValue = await context.ReadStateAsync<TValue>(key, effectiveScopeName, cancellationToken).ConfigureAwait(false);
+            SensitivityLevel declarativeSensitivity = declarativeContext.State.GetSensitivity(key, effectiveScopeName);
+            return new(declarativeValue, declarativeSensitivity);
+        }
 
-        return new(value, sensitivity);
+        TValue? value = await context.ReadStateAsync<TValue>(key, scopeName, cancellationToken).ConfigureAwait(false);
+        return new(value, SensitivityLevel.None);
     }
 
     /// <summary>
@@ -141,7 +145,7 @@ public static class IWorkflowContextExtensions
     /// <param name="context">The workflow execution context used to queue state updates.</param>
     /// <param name="key">The key of the state value.</param>
     /// <param name="value">The value and sensitivity metadata to store.</param>
-    /// <param name = "scopeName" > An optional name that specifies the scope to update.If null, the default scope is used.</param>
+    /// <param name="scopeName">An optional name that specifies the scope to update. If null, the default scope is used.</param>
     /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
     /// <returns>A task representing the queued state update.</returns>
     public static async ValueTask QueueStateUpdateWithSensitivityAsync<TValue>(
@@ -153,7 +157,8 @@ public static class IWorkflowContextExtensions
     {
         if (context is DeclarativeWorkflowContext declarativeContext)
         {
-            await declarativeContext.QueueStateUpdateAsync(key, value.Value, scopeName, value.Sensitivity, cancellationToken).ConfigureAwait(false);
+            string effectiveScopeName = scopeName ?? WorkflowFormulaState.DefaultScopeName;
+            await declarativeContext.QueueStateUpdateAsync(key, value.Value, effectiveScopeName, value.Sensitivity, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -180,7 +185,7 @@ public static class IWorkflowContextExtensions
     /// <param name="context">The workflow execution context used to restore persisted state prior to formatting.</param>
     /// <param name="targetType">Describes the target type for the value conversion.</param>
     /// <param name="key">The key of the state value.</param>
-    /// <param name = "scopeName" > An optional name that specifies the scope to read.If null, the default scope is used.</param>
+    /// <param name="scopeName">An optional name that specifies the scope to read. If null, the default scope is used.</param>
     /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
     /// <returns>The converted value</returns>
     public static async ValueTask<object?> ConvertValueAsync(this IWorkflowContext context, VariableType targetType, string key, string? scopeName = null, CancellationToken cancellationToken = default)
@@ -195,7 +200,7 @@ public static class IWorkflowContextExtensions
     /// <typeparam name="TElement">The type of the list element.</typeparam>
     /// <param name="context">The workflow execution context used to restore persisted state prior to formatting.</param>
     /// <param name="key">The key of the state value.</param>
-    /// <param name = "scopeName" > An optional name that specifies the scope to read.If null, the default scope is used.</param>
+    /// <param name="scopeName">An optional name that specifies the scope to read. If null, the default scope is used.</param>
     /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
     /// <returns>The evaluated list expression</returns>
     public static async ValueTask<IList<TElement>?> ReadListAsync<TElement>(this IWorkflowContext context, string key, string? scopeName = null, CancellationToken cancellationToken = default)

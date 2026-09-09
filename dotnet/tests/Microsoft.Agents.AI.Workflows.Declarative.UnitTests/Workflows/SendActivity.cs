@@ -56,7 +56,7 @@ public static class WorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            var evaluatedValue = await context.ReadStateWithSensitivityAsync<object>(key: "LastMessageText", scopeName: "System").ConfigureAwait(false);
+            var evaluatedValue = await context.ReadStateWithSensitivityAsync<string>(key: "LastMessageText", scopeName: "System").ConfigureAwait(false);
             await context.QueueStateUpdateWithSensitivityAsync(key: "TestValue", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
     
             return default;
