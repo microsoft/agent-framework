@@ -1023,6 +1023,8 @@ def test_parse_output_files_rejects_intermediate_dir_swap_after_validation(
 ) -> None:
     if not _symlinks_supported(tmp_path):
         pytest.skip("Symlinks not supported on this platform/environment")
+    if not execute_code_module._supports_secure_output_dir_fd():
+        pytest.skip("Atomic intermediate-directory swap test requires secure dir_fd support")
     monkeypatch.setattr(execute_code_module, "OUTPUT_FILE_RETRY_ATTEMPTS", 1)
     output_root = tmp_path / "output"
     output_root.mkdir()
