@@ -104,11 +104,10 @@ from ._snapshots import (
 from ._snapshot_session import ThreadSnapshotSession, _event_messages_to_snapshot_dicts
 from ._utils import (
     _AGUI_MCP_TOOL_RESULT_KEY,
-    _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY,
-    _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY,
     _approval_interrupt_id,
     _bound_host_payload_history,
     _function_call_server_label,
+    _mcp_host_history_fields,
     _model_items_for_agui_replay,
     _persistable_host_payload_history,
     _project_host_payload_history,
@@ -701,11 +700,10 @@ def _make_approval_tool_result_events(resolved_approval_results: list[Content]) 
             ui_str = _resolve_ui_payload(llm_str, host_payload if has_host_payload else display_result)
             replay_properties: dict[str, Any] = {}
             if has_host_payload:
-                replay_properties = {
-                    _AGUI_MCP_TOOL_RESULT_KEY: True,
-                    _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY: _stringify_tool_result(host_payload),
-                    _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: _model_items_for_agui_replay(resolved, llm_str),
-                }
+                replay_properties = _mcp_host_history_fields(
+                    host_payload,
+                    _model_items_for_agui_replay(resolved, llm_str),
+                )
             events.append(
                 ToolCallResultEvent(
                     message_id=generate_event_id(),
@@ -1997,10 +1995,11 @@ def _resolved_tool_result_snapshot_messages(resolved_messages: list[Message]) ->
                 "content": llm_result,
             }
             if has_host_payload:
-                snapshot_message[_AGUI_MCP_TOOL_RESULT_KEY] = True
-                snapshot_message[_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY] = _stringify_tool_result(host_payload)
-                snapshot_message[_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY] = _model_items_for_agui_replay(
-                    content, llm_result
+                snapshot_message.update(
+                    _mcp_host_history_fields(
+                        host_payload,
+                        _model_items_for_agui_replay(content, llm_result),
+                    )
                 )
             result_by_call_id[call_id] = snapshot_message
     return result_by_call_id

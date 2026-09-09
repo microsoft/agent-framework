@@ -204,6 +204,15 @@ def _host_payload_history_size(message: dict[str, Any]) -> int:
     return content_size + sidecar_size
 
 
+def _mcp_host_history_fields(host_payload: Any, model_items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build the private fields that preserve one MCP Host result for safe replay."""
+    return {
+        _AGUI_MCP_TOOL_RESULT_KEY: True,
+        _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY: _stringify_tool_result(host_payload),
+        _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: model_items,
+    }
+
+
 def _persistable_host_payload_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep canonical persisted content safe for readers that ignore private replay fields."""
     persisted: list[dict[str, Any]] = []

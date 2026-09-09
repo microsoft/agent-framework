@@ -10,6 +10,7 @@ from ._client import AGUIChatClient
 from ._endpoint import add_agent_framework_fastapi_endpoint
 from ._event_converters import AGUIEventConverter
 from ._http_service import AGUIHttpService
+from ._message_adapters import agent_framework_messages_to_agui_host_history
 from ._snapshots import (
     DEFAULT_MAX_THREAD_SNAPSHOTS,
     AGUIThreadID,
@@ -39,6 +40,7 @@ __all__ = [
     "AgentFrameworkWorkflow",
     "WorkflowFactory",
     "add_agent_framework_fastapi_endpoint",
+    "agent_framework_messages_to_agui_host_history",
     "AGUIChatClient",
     "AGUIChatOptions",
     "AGUIEventConverter",

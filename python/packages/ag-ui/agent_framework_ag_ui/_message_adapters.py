@@ -16,15 +16,26 @@ from agent_framework import (
 )
 from agent_framework._types import ContentType  # pyright: ignore[reportPrivateUsage]
 
+from ._state import TOOL_RESULT_DISPLAY_KEY
 from ._utils import (
     _AGUI_HOST_PAYLOAD_OMITTED_KEY,
     _AGUI_MCP_TOOL_RESULT_KEY,
     _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY,
     _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY,
+    _MAX_MCP_HOST_PAYLOAD_HISTORY_SIZE_BYTES,
     AGUI_TO_FRAMEWORK_ROLE,
     FRAMEWORK_TO_AGUI_ROLE,
+    _bound_host_payload_history,
+    _extract_mcp_tool_result_host_payload,
+    _extract_tool_result_marker_values,
+    _host_payload_history_size,
+    _mcp_host_history_fields,
     _model_content_from_mcp_host_payload,
+    _model_items_for_agui_replay,
+    _persistable_host_payload_history,
+    _project_host_payload_history,
     _sanitize_model_replay_item,
+    _stringify_tool_result,
     get_role_value,
     normalize_agui_role,
     safe_json_parse,
@@ -589,6 +600,24 @@ def normalize_agui_input_messages(
     return provider_messages, snapshot_messages
 
 
+def _deserialize_model_replay_items(serialized_items: Any) -> list[Content] | None:
+    """Deserialize a valid model replay sidecar without trusting malformed Host history."""
+    if not isinstance(serialized_items, list) or not all(
+        isinstance(item, dict) and item.get("type") in _VALID_CONTENT_TYPES for item in serialized_items
+    ):
+        return None
+    try:
+        model_items = [Content.from_dict(_sanitize_model_replay_item(item)) for item in serialized_items]
+        if any(
+            item.get("type") == "text" and "text" in item and not isinstance(item.get("text"), str)
+            for item in serialized_items
+        ):
+            raise TypeError("Serialized text replay content must contain a string")
+        return model_items
+    except (RecursionError, TypeError, ValueError):
+        return None
+
+
 def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Message]:
     """Convert AG-UI messages to Agent Framework format.
 
@@ -731,28 +760,10 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                 host_payload = msg.get(_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY, result_content)
                 parsed_host_payload = safe_json_parse(host_payload)
                 serialized_items = msg.get(_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY)
-                function_result: Content | None = None
-                if isinstance(serialized_items, list) and all(
-                    isinstance(item, dict) and item.get("type") in _VALID_CONTENT_TYPES for item in serialized_items
-                ):
-                    try:
-                        model_items = [
-                            Content.from_dict(_sanitize_model_replay_item(item)) for item in serialized_items
-                        ]
-                        if any(
-                            item.get("type") == "text" and "text" in item and not isinstance(item.get("text"), str)
-                            for item in serialized_items
-                        ):
-                            raise TypeError("Serialized text replay content must contain a string")
-                        function_result = Content.from_function_result(
-                            call_id=str(tool_call_id),
-                            result=model_items,
-                        )
-                    except (RecursionError, TypeError, ValueError):
-                        function_result = None
-                if function_result is None:
+                model_items = _deserialize_model_replay_items(serialized_items)
+                if model_items is None:
                     model_items = [Content.from_text(_model_content_from_mcp_host_payload(parsed_host_payload))]
-                    function_result = Content.from_function_result(call_id=str(tool_call_id), result=model_items)
+                function_result = Content.from_function_result(call_id=str(tool_call_id), result=model_items)
                 chat_msg = Message(
                     role="tool",
                     contents=[function_result],
@@ -1038,9 +1049,7 @@ def _convert_framework_content_to_agui(content: Content) -> dict[str, Any] | Non
     return {"type": part_type, "source": source}
 
 
-def _encode_agui_segment(
-    contents: list[Content], role: str
-) -> tuple[str | list[dict[str, Any]], list[dict[str, Any]]]:
+def _encode_agui_segment(contents: list[Content], role: str) -> tuple[str | list[dict[str, Any]], list[dict[str, Any]]]:
     """Encode a framework content segment into AG-UI message content and tool calls.
 
     The shared encoder preserves ordered user text and media parts for both the
@@ -1076,7 +1085,12 @@ def _encode_agui_segment(
     return message_content, tool_calls
 
 
-def _split_mixed_message_to_agui(msg: Message, role: str, unresolved_call_ids: set[str]) -> list[dict[str, Any]]:
+def _split_mixed_message_to_agui(
+    msg: Message,
+    role: str,
+    unresolved_call_ids: set[str],
+    emitted_results: list[tuple[Content, dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
     """Convert a Message that carries function_result content into ordered AG-UI messages.
 
     A single Agent Framework message can interleave assistant content (text,
@@ -1149,14 +1163,15 @@ def _split_mixed_message_to_agui(msg: Message, role: str, unresolved_call_ids: s
         messages.append(assistant_msg)
 
     def emit_result(content: Content) -> None:
-        messages.append(
-            {
-                "id": next_id(),
-                "role": "tool",
-                "content": content.result if content.result is not None else "",
-                "toolCallId": content.call_id,
-            }
-        )
+        tool_message: dict[str, Any] = {
+            "id": next_id(),
+            "role": "tool",
+            "content": content.result if content.result is not None else "",
+            "toolCallId": content.call_id,
+        }
+        messages.append(tool_message)
+        if emitted_results is not None:
+            emitted_results.append((content, tool_message))
         if content.call_id is not None:
             unresolved_call_ids.discard(str(content.call_id))
 
@@ -1205,15 +1220,13 @@ def _split_mixed_message_to_agui(msg: Message, role: str, unresolved_call_ids: s
     return messages
 
 
-def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert Agent Framework messages to AG-UI format.
-
-    Args:
-        messages: List of Agent Framework Message objects or AG-UI dicts (already converted)
-
-    Returns:
-        List of AG-UI message dictionaries
-    """
+def _convert_agent_framework_messages_to_agui(
+    messages: list[Message] | list[dict[str, Any]],
+    *,
+    emitted_results: list[tuple[Content, dict[str, Any]]] | None = None,
+    preserve_host_history_dicts: bool = False,
+) -> list[dict[str, Any]]:
+    """Convert Agent Framework messages to AG-UI format."""
     from ._utils import generate_event_id
 
     result: list[dict[str, Any]] = []
@@ -1241,6 +1254,12 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
         if isinstance(msg, dict):
             # Always work on a copy to avoid mutating input
             normalized_msg = msg.copy()
+            if not preserve_host_history_dicts and normalized_msg.get(_AGUI_MCP_TOOL_RESULT_KEY) is True:
+                normalized_msg = _persistable_host_payload_history([normalized_msg])[0].copy()
+                normalized_msg.pop(_AGUI_MCP_TOOL_RESULT_KEY, None)
+                normalized_msg.pop(_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY, None)
+                normalized_msg.pop(_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY, None)
+                normalized_msg.pop(_AGUI_HOST_PAYLOAD_OMITTED_KEY, None)
             normalized_msg["role"] = normalize_agui_role(normalized_msg.get("role"))
             # Ensure ID exists
             if "id" not in normalized_msg:
@@ -1272,7 +1291,14 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
         # result is dropped and each result stays after its matching call. Messages
         # with no result use the simple single-message form below.
         if any(content.type == "function_result" for content in msg.contents):
-            result.extend(_split_mixed_message_to_agui(msg, role, unresolved_call_ids))
+            result.extend(
+                _split_mixed_message_to_agui(
+                    msg,
+                    role,
+                    unresolved_call_ids,
+                    emitted_results,
+                )
+            )
             continue
 
         message_content, tool_calls = _encode_agui_segment(msg.contents, role)
@@ -1290,6 +1316,108 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
         track_emitted(role, tool_calls)
 
     return result
+
+
+def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert Agent Framework messages to model-safe AG-UI request format."""
+    return _convert_agent_framework_messages_to_agui(messages)
+
+
+def _prepare_host_history_fields(
+    emitted_results: list[tuple[Content, dict[str, Any]]],
+    *,
+    max_size_bytes: int,
+) -> tuple[dict[int, dict[str, Any]], set[int]]:
+    """Materialize only the newest MCP Host projections that fit the aggregate budget."""
+    retained_fields: dict[int, dict[str, Any]] = {}
+    omitted_ids: set[int] = set()
+    retained_size = 0
+    budget_exhausted = False
+
+    for content, _ in reversed(emitted_results):
+        has_host_payload, host_payload = _extract_mcp_tool_result_host_payload(content)
+        if not has_host_payload:
+            continue
+        content_id = id(content)
+        if budget_exhausted:
+            omitted_ids.add(content_id)
+            continue
+
+        display_values = _extract_tool_result_marker_values(content, TOOL_RESULT_DISPLAY_KEY)
+        if display_values:
+            host_payload = display_values[-1]
+        model_result = _stringify_tool_result(content.result if content.result is not None else "")
+        fields = _mcp_host_history_fields(
+            host_payload,
+            _model_items_for_agui_replay(content, model_result),
+        )
+        message_size = _host_payload_history_size({"content": model_result, **fields})
+        if retained_size + message_size > max_size_bytes:
+            omitted_ids.add(content_id)
+            budget_exhausted = True
+            continue
+        retained_size += message_size
+        retained_fields[content_id] = fields
+
+    return retained_fields, omitted_ids
+
+
+def _normalize_host_history_dict_replay(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Replace malformed dictionary sidecars before projecting Host-visible content."""
+    normalized: list[dict[str, Any]] = []
+    for message in messages:
+        normalized_message = message.copy()
+        if (
+            message.get(_AGUI_MCP_TOOL_RESULT_KEY) is True
+            and _deserialize_model_replay_items(message.get(_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY)) is None
+        ):
+            if _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY in message:
+                model_content = _stringify_tool_result(message.get("content", "Tool result unavailable."))
+            else:
+                host_payload = safe_json_parse(message.get("content"))
+                model_content = (
+                    "Error: Function failed."
+                    if isinstance(host_payload, dict) and host_payload.get("isError") is True
+                    else "Tool result unavailable."
+                )
+            normalized_message[_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY] = [{"type": "text", "text": model_content}]
+        normalized.append(normalized_message)
+    return normalized
+
+
+def agent_framework_messages_to_agui_host_history(
+    messages: list[Message] | list[dict[str, Any]],
+    *,
+    max_host_payload_history_size_bytes: int = _MAX_MCP_HOST_PAYLOAD_HISTORY_SIZE_BYTES,
+) -> list[dict[str, Any]]:
+    """Convert Agent Framework messages to bounded AG-UI Host history with replay metadata."""
+    if messages and isinstance(messages[0], dict):
+        converted = _persistable_host_payload_history(
+            _normalize_host_history_dict_replay(
+                _convert_agent_framework_messages_to_agui(messages, preserve_host_history_dicts=True)
+            )
+        )
+    else:
+        message_objects = cast(list[Message], messages)
+        emitted_results: list[tuple[Content, dict[str, Any]]] = []
+        converted = _convert_agent_framework_messages_to_agui(
+            message_objects,
+            emitted_results=emitted_results,
+        )
+        host_history_fields, omitted_ids = _prepare_host_history_fields(
+            emitted_results,
+            max_size_bytes=max_host_payload_history_size_bytes,
+        )
+        for content, tool_message in emitted_results:
+            if fields := host_history_fields.get(id(content)):
+                tool_message.update(fields)
+            elif id(content) in omitted_ids:
+                tool_message[_AGUI_HOST_PAYLOAD_OMITTED_KEY] = True
+    bounded = _bound_host_payload_history(
+        converted,
+        max_size_bytes=max_host_payload_history_size_bytes,
+    )
+    return _project_host_payload_history(bounded)
 
 
 def extract_text_from_contents(contents: list[Any]) -> str:
