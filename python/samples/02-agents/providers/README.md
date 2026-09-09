@@ -4,8 +4,8 @@ This directory groups provider-specific samples for Agent Framework.
 
 | Folder | What you will find |
 | --- | --- |
-| [`aimlapi/`](aimlapi/) | aimlapi.com samples using `OpenAIChatCompletionClient` with a base-URL override, including streaming and multi-turn tool calling. |
 | [`anthropic/`](anthropic/) | Anthropic Claude samples using both `AnthropicClient` and `ClaudeAgent`, including tools, MCP, sessions, and Foundry Anthropic integration. |
+| [`aimlapi/`](aimlapi/) | aimlapi.com samples using `OpenAIChatCompletionClient` with a base-URL override, including streaming and multi-turn tool calling. |
 | [`amazon/`](amazon/) | AWS Bedrock samples using `BedrockChatClient`, including tool-enabled agent usage. |
 | [`azure/`](azure/) | Azure OpenAI chat completion samples using `OpenAIChatCompletionClient`, including basic usage, explicit configuration, tools, and sessions. |
 | [`copilotstudio/`](copilotstudio/) | Microsoft Copilot Studio agent samples, including required environment/app registration setup and explicit authentication patterns. |
