@@ -8,6 +8,8 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
 
+#pragma warning disable Moq1206
+
 namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
