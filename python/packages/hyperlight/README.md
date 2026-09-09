@@ -124,6 +124,8 @@ Files written under `/output` are returned as inline data attachments. Hyperligh
 limits each invocation to 20 files, 5 MiB per file, and 20 MiB of cumulative raw
 file data by default. Oversized output is returned as a structured execution error
 without partial data attachments.
+Output discovery also has finite internal entry and nesting-depth safeguards;
+directory-heavy output that exceeds them is rejected as an execution error.
 
 Trusted applications can raise these limits with positive integers on either
 `HyperlightExecuteCodeTool` or `HyperlightCodeActProvider`:

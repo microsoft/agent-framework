@@ -954,6 +954,66 @@ def test_collect_output_relative_paths_skips_junctioned_directory(tmp_path: Path
     assert relative_paths == set()
 
 
+def test_collect_output_relative_paths_bounds_directory_only_breadth(tmp_path: Path) -> None:
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    for index in range(101):
+        (output_root / f"directory-{index}").mkdir()
+
+    with pytest.raises(execute_code_module._OutputMaterializationError, match="traversal entry limit of 100"):
+        execute_code_module._collect_output_relative_paths(root=output_root, max_output_files=1)
+
+
+def test_collect_output_relative_paths_bounds_nesting_depth(tmp_path: Path) -> None:
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    current = output_root
+    for index in range(execute_code_module.OUTPUT_TRAVERSAL_MAX_DEPTH + 1):
+        current /= f"level-{index}"
+        current.mkdir()
+
+    with pytest.raises(execute_code_module._OutputMaterializationError, match="nesting depth limit"):
+        execute_code_module._collect_output_relative_paths(root=output_root)
+
+
+def test_collect_output_relative_paths_surfaces_scandir_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    original_scandir = os.scandir
+
+    def fail_output_scan(path: str | os.PathLike[str]) -> Any:
+        if Path(path) == output_root:
+            raise PermissionError("simulated output scan failure")
+        return original_scandir(path)
+
+    monkeypatch.setattr(execute_code_module.os, "scandir", fail_output_scan)
+
+    with pytest.raises(execute_code_module._OutputMaterializationError, match="Could not enumerate output directory"):
+        execute_code_module._collect_output_relative_paths(root=output_root)
+
+
+def test_parse_output_files_collects_legitimate_nested_file(tmp_path: Path) -> None:
+    if not execute_code_module._supports_secure_output_dir_fd():
+        pytest.skip("Nested output attachments require secure dir_fd support")
+    output_root = tmp_path / "output"
+    nested_dir = output_root / "nested"
+    nested_dir.mkdir(parents=True)
+    (nested_dir / "report.txt").write_bytes(b"nested-report")
+
+    contents = execute_code_module._parse_output_files(
+        output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
+        expect_output_files=True,
+    )
+
+    data_items = [item for item in contents if item.type == "data"]
+    assert len(data_items) == 1
+    assert data_items[0].additional_properties["path"] == "/output/nested/report.txt"
+    assert _decode_content_bytes(data_items[0]) == b"nested-report"
+
+
 def test_parse_output_files_skips_symlink_to_host_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """End-to-end: a /output symlink to a host file is never returned as Content."""
     if not _symlinks_supported(tmp_path):

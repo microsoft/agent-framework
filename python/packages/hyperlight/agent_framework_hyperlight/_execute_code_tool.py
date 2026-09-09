@@ -34,6 +34,10 @@ OUTPUT_FILE_RETRY_DELAY_SECONDS = 0.1
 DEFAULT_MAX_OUTPUT_FILES = 20
 DEFAULT_MAX_OUTPUT_FILE_BYTES = 5 * 1024 * 1024
 DEFAULT_MAX_OUTPUT_TOTAL_BYTES = 20 * 1024 * 1024
+OUTPUT_TRAVERSAL_MIN_ENTRIES = 100
+OUTPUT_TRAVERSAL_ENTRIES_PER_FILE = 10
+OUTPUT_TRAVERSAL_MAX_ENTRIES = 10_000
+OUTPUT_TRAVERSAL_MAX_DEPTH = 32
 
 EXECUTE_CODE_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -950,6 +954,72 @@ def _is_safe_output_file(*, root: Path, host_path: Path) -> bool:
     return stat.S_ISREG(final_stat.st_mode)
 
 
+def _output_traversal_entry_limit(max_output_files: int) -> int:
+    return min(
+        OUTPUT_TRAVERSAL_MAX_ENTRIES,
+        max(OUTPUT_TRAVERSAL_MIN_ENTRIES, max_output_files * OUTPUT_TRAVERSAL_ENTRIES_PER_FILE),
+    )
+
+
+def _iter_bounded_output_files(
+    root: Path,
+    *,
+    max_entries: int,
+    max_depth: int,
+) -> Iterator[Path]:
+    """Yield regular output files while bounding traversal work and open scanners."""
+    scan_stack: list[tuple[Any, int]] = []
+    entries_visited = 0
+
+    def _open_scanner(path: Path) -> Any:
+        try:
+            return os.scandir(path)
+        except OSError as exc:
+            raise _OutputMaterializationError("Could not enumerate output directory safely.") from exc
+
+    try:
+        scan_stack.append((_open_scanner(root), 0))
+        while scan_stack:
+            entries, depth = scan_stack[-1]
+            try:
+                entry = next(entries)
+            except StopIteration:
+                entries.close()
+                scan_stack.pop()
+                continue
+            except OSError as exc:
+                raise _OutputMaterializationError("Could not enumerate output directory safely.") from exc
+
+            entries_visited += 1
+            if entries_visited > max_entries:
+                raise _OutputMaterializationError(
+                    f"Sandbox output exceeded the traversal entry limit of {max_entries}."
+                )
+
+            child = Path(entry.path)
+            try:
+                child_stat = child.lstat()
+            except OSError as exc:
+                raise _OutputMaterializationError("Could not inspect output entry safely.") from exc
+
+            if _is_link_or_reparse_point(child, child_stat):
+                continue
+            if stat.S_ISREG(child_stat.st_mode):
+                yield child
+                continue
+            if not stat.S_ISDIR(child_stat.st_mode):
+                continue
+
+            child_depth = depth + 1
+            if child_depth > max_depth:
+                raise _OutputMaterializationError(f"Sandbox output exceeded the nesting depth limit of {max_depth}.")
+            scan_stack.append((_open_scanner(child), child_depth))
+    finally:
+        for entries, _ in scan_stack:
+            with suppress(OSError):
+                entries.close()
+
+
 def _collect_output_relative_paths(
     *,
     root: Path,
@@ -957,8 +1027,11 @@ def _collect_output_relative_paths(
 ) -> set[str]:
     relative_paths: set[str] = set()
 
-    # The streaming walker skips links and never materializes a whole directory.
-    for host_path in _iter_real_entries(root, files_only=True):
+    for host_path in _iter_bounded_output_files(
+        root,
+        max_entries=_output_traversal_entry_limit(max_output_files),
+        max_depth=OUTPUT_TRAVERSAL_MAX_DEPTH,
+    ):
         if len(relative_paths) >= max_output_files:
             raise _OutputMaterializationError(
                 f"Sandbox exceeded the output file count limit of {max_output_files} while enumerating candidates."
