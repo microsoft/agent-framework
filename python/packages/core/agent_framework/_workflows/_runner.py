@@ -227,12 +227,10 @@ class RunnerImpl:
             await gather_cancelling_siblings_on_error(*tasks)
 
         message_batches = await self._ctx.drain_messages()
-        # Create actual Task objects so we can cancel them if needed
-        task_objects = [
-            asyncio.create_task(_deliver_messages(source_executor_id, source_messages))
-            for source_executor_id, source_messages in message_batches.items()
-        ]
-        await gather_cancelling_siblings_on_error(*task_objects)
+        await gather_cancelling_siblings_on_error(
+            *(_deliver_messages(source_executor_id, source_messages)
+              for source_executor_id, source_messages in message_batches.items())
+        )
 
     async def _prepare_checkpoint_state(self) -> None:
         """Persist executor snapshots into committed shared state.
