@@ -138,6 +138,33 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     }
 
     [Fact]
+    public void StringExpressionGetValueForQuotedEnvironmentVariableIsSensitive()
+    {
+        // Arrange
+        this.State.Set("API-KEY", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Expression("Env.'API-KEY'"),
+            expectedValue: "secret-value",
+            expectedSensitivity: SensitivityLevel.Sensitive);
+    }
+
+    [Fact]
+    public void StringExpressionGetValueForEnvironmentVariableTextLiteralIsNotSensitive()
+    {
+        // Arrange
+        this.State.Set("SOME_SECRET", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Expression(@"Concatenate(""Env.SOME_SECRET"", "" literal"")"),
+            expectedValue: "Env.SOME_SECRET literal");
+    }
+
+    [Fact]
     public void StringExpressionGetValueForFormula() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(

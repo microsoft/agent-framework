@@ -131,12 +131,12 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
             return;
         }
 
-        await context.QueueStateUpdateAsync(targetPath, result).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync(targetPath, result, sensitivity).ConfigureAwait(false);
         string variableName = targetPath.VariableName ?? throw new DeclarativeActionException($"Invalid variable reference: '{targetPath}'.");
         this._state.SetSensitivity(variableName, targetPath.NamespaceAlias, sensitivity);
 
 #if DEBUG
-        string? resultValue = result.Format();
+        string? resultValue = sensitivity == SensitivityLevel.Sensitive ? "<redacted>" : result.Format();
         string valuePosition = (resultValue?.IndexOf('\n') ?? -1) >= 0 ? Environment.NewLine : " ";
         Debug.WriteLine(
             $"""

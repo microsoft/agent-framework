@@ -27,6 +27,8 @@ internal sealed class WorkflowFormulaState
             VariableScopeNames.System,
         ];
 
+    private const string SensitivityScopePrefix = "__Microsoft_Agents_AI_Workflows_Declarative_Sensitivity:";
+
     private readonly Dictionary<string, WorkflowScope> _scopes;
 
     private int _isInitialized;
@@ -97,13 +99,14 @@ internal sealed class WorkflowFormulaState
             foreach (string key in keys)
             {
                 PortableValue? value = await context.ReadStateAsync<PortableValue>(key, scopeName, cancellationToken).ConfigureAwait(false);
+                SensitivityLevel sensitivity = await context.ReadStateAsync<SensitivityLevel>(key, GetSensitivityScopeName(scopeName), cancellationToken).ConfigureAwait(false);
                 if (value is null)
                 {
-                    this.Set(key, FormulaValue.NewBlank(), scopeName);
+                    this.Set(key, FormulaValue.NewBlank(), scopeName, sensitivity);
                     continue;
                 }
                 FormulaValue formulaValue = value.ToFormula();
-                this.Set(key, formulaValue, scopeName);
+                this.Set(key, formulaValue, scopeName, sensitivity);
                 Debug.WriteLine($"RESTORED: {scopeName}.{key} => {formulaValue.Type}");
             }
 
@@ -141,6 +144,8 @@ internal sealed class WorkflowFormulaState
     }
 
     private WorkflowScope GetScope(string? scopeName) => this._scopes[GetScopeName(scopeName)];
+
+    public static string GetSensitivityScopeName(string scopeName) => $"{SensitivityScopePrefix}{GetScopeName(scopeName)}";
 
     public static string GetScopeName(string? scopeName)
     {

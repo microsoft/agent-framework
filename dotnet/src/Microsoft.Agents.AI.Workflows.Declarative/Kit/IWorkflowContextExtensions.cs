@@ -58,7 +58,9 @@ public static class IWorkflowContextExtensions
         StringBuilder builder = new();
         foreach (string line in lines)
         {
-            builder.AppendLine(state.Engine.Format(TemplateLine.Parse(line)));
+            EvaluationResult<string> result = state.Evaluator.Format(TemplateLine.Parse(line));
+            ThrowIfSensitive(result.Sensitivity);
+            builder.AppendLine(result.Value);
         }
 
         return builder.ToString();
@@ -86,6 +88,7 @@ public static class IWorkflowContextExtensions
         WorkflowFormulaState state = await context.GetStateAsync(cancellationToken).ConfigureAwait(false);
 
         EvaluationResult<DataValue> result = state.Evaluator.GetValue(ValueExpression.Expression(expression));
+        ThrowIfSensitive(result.Sensitivity);
 
         return (TValue?)result.Value.ToObject();
     }
@@ -103,6 +106,7 @@ public static class IWorkflowContextExtensions
         WorkflowFormulaState state = await context.GetStateAsync(cancellationToken).ConfigureAwait(false);
 
         EvaluationResult<DataValue> result = state.Evaluator.GetValue(ValueExpression.Expression(expression));
+        ThrowIfSensitive(result.Sensitivity);
 
         return result.Value.AsList<TElement>();
     }
@@ -163,5 +167,13 @@ public static class IWorkflowContextExtensions
         await state.RestoreAsync(context, cancellationToken).ConfigureAwait(false);
 
         return state;
+    }
+
+    private static void ThrowIfSensitive(SensitivityLevel sensitivity)
+    {
+        if (sensitivity == SensitivityLevel.Sensitive)
+        {
+            throw new DeclarativeActionException("Cannot return sensitive workflow expression value.");
+        }
     }
 }

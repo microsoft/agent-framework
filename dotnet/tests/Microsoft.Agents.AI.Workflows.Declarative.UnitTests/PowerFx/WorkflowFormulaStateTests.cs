@@ -1,8 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx.Types;
+using Moq;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.PowerFx;
 
@@ -80,5 +85,24 @@ public class WorkflowFormulaStateTests
         // Assert
         FormulaValue result = this.State.Get("key1");
         Assert.Equal(newValue, result);
+    }
+
+    [Fact]
+    public async Task RestoreAsync_RestoresPersistedSensitivityAsync()
+    {
+        // Arrange
+        Mock<IWorkflowContext> context = new(MockBehavior.Strict);
+        context.Setup(c => c.ReadStateKeysAsync(It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string? scopeName, CancellationToken _) => scopeName == VariableScopeNames.Local ? new HashSet<string> { "secret" } : []);
+        context.Setup(c => c.ReadStateAsync<PortableValue>("secret", VariableScopeNames.Local, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PortableValue("secret-value"));
+        context.Setup(c => c.ReadStateAsync<SensitivityLevel>("secret", WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(SensitivityLevel.Sensitive);
+
+        // Act
+        await this.State.RestoreAsync(context.Object, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(SensitivityLevel.Sensitive, this.State.GetSensitivity("secret"));
     }
 }

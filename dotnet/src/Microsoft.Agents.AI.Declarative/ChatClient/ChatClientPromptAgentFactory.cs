@@ -31,7 +31,15 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
         RecalcEngine? engine = null,
         IConfiguration? configuration = null,
         ILoggerFactory? loggerFactory = null)
-        : this(chatClient, allowedConfigurationVariables: null, functions, engine, configuration, loggerFactory)
+        : this(
+            chatClient,
+            functions,
+            new ChatClientPromptAgentFactoryOptions()
+            {
+                Engine = engine,
+                Configuration = configuration,
+                LoggerFactory = loggerFactory,
+            })
     {
     }
 
@@ -39,28 +47,20 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
     /// Creates a new instance of the <see cref="ChatClientPromptAgentFactory"/> class.
     /// </summary>
     /// <param name="chatClient">The chat client used by created agents.</param>
-    /// <param name="allowedConfigurationVariables">Configuration keys that may be exposed to Power Fx when the agent definition references them through <c>Env</c>.</param>
     /// <param name="functions">Optional functions exposed as tools to created agents.</param>
-    /// <param name="engine">Optional Power Fx engine used to evaluate declarative expressions.</param>
-    /// <param name="configuration">Optional configuration used to resolve explicitly allowed environment variables referenced by the agent definition.</param>
-    /// <param name="loggerFactory">Optional logger factory used by created agents.</param>
-    /// <param name="maximumExpressionLength">Optional maximum length for Power Fx expressions evaluated by the factory-created engine.</param>
-    /// <param name="maximumCallDepth">Optional maximum nested call depth for Power Fx expressions evaluated by the factory-created engine.</param>
+    /// <param name="options">Options used to configure the created agents and declarative expression evaluation.</param>
     public ChatClientPromptAgentFactory(
         IChatClient chatClient,
-        IEnumerable<string>? allowedConfigurationVariables,
-        IList<AIFunction>? functions = null,
-        RecalcEngine? engine = null,
-        IConfiguration? configuration = null,
-        ILoggerFactory? loggerFactory = null,
-        int? maximumExpressionLength = null,
-        int? maximumCallDepth = null) : base(engine, configuration, allowedConfigurationVariables, maximumExpressionLength, maximumCallDepth)
+        IList<AIFunction>? functions,
+        ChatClientPromptAgentFactoryOptions options) :
+        base(options?.Engine, options?.Configuration, options?.AllowedConfigurationVariables, options?.MaximumExpressionLength, options?.MaximumCallDepth)
     {
         Throw.IfNull(chatClient);
+        Throw.IfNull(options);
 
         this._chatClient = chatClient;
         this._functions = functions;
-        this._loggerFactory = loggerFactory;
+        this._loggerFactory = options.LoggerFactory;
     }
 
     /// <inheritdoc/>
@@ -88,4 +88,40 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
     private readonly IList<AIFunction>? _functions;
     private readonly ILoggerFactory? _loggerFactory;
     #endregion
+}
+
+/// <summary>
+/// Options for configuring <see cref="ChatClientPromptAgentFactory"/>.
+/// </summary>
+public sealed class ChatClientPromptAgentFactoryOptions
+{
+    /// <summary>
+    /// Gets or sets configuration keys that may be exposed to Power Fx when the agent definition references them through <c>Env</c>.
+    /// </summary>
+    public IEnumerable<string>? AllowedConfigurationVariables { get; init; }
+
+    /// <summary>
+    /// Gets or sets an optional Power Fx engine used to evaluate declarative expressions.
+    /// </summary>
+    public RecalcEngine? Engine { get; init; }
+
+    /// <summary>
+    /// Gets or sets optional configuration used to resolve explicitly allowed environment variables referenced by the agent definition.
+    /// </summary>
+    public IConfiguration? Configuration { get; init; }
+
+    /// <summary>
+    /// Gets or sets an optional logger factory used by created agents.
+    /// </summary>
+    public ILoggerFactory? LoggerFactory { get; init; }
+
+    /// <summary>
+    /// Gets or sets an optional maximum length for Power Fx expressions evaluated by the factory-created engine.
+    /// </summary>
+    public int? MaximumExpressionLength { get; init; }
+
+    /// <summary>
+    /// Gets or sets an optional maximum nested call depth for Power Fx expressions evaluated by the factory-created engine.
+    /// </summary>
+    public int? MaximumCallDepth { get; init; }
 }

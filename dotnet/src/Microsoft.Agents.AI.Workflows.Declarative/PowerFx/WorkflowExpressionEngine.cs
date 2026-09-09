@@ -10,6 +10,7 @@ using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Agents.ObjectModel.Exceptions;
 using Microsoft.PowerFx;
+using Microsoft.PowerFx.Core.Texl.Intellisense;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
@@ -17,7 +18,22 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 
 internal sealed class WorkflowExpressionEngine
 {
-    private static readonly Regex s_scopedVariableReference = new(@"\b(?:(?<scope>[A-Za-z][A-Za-z0-9_]*)\.)?(?<name>[A-Za-z_][A-Za-z0-9_]*)\b", RegexOptions.Compiled);
+    private static readonly TokenType[] s_nonReferenceTokenTypes =
+    [
+        TokenType.BoolLit,
+        TokenType.Comment,
+        TokenType.DecLit,
+        TokenType.Delimiter,
+        TokenType.Function,
+        TokenType.NumLit,
+        TokenType.StrLit,
+        TokenType.UnaryOp,
+        TokenType.BinaryOp,
+        TokenType.VariadicOp,
+        TokenType.Punctuator,
+        TokenType.Self,
+        TokenType.Parent,
+    ];
 
     private readonly WorkflowFormulaState _state;
 
@@ -350,16 +366,27 @@ internal sealed class WorkflowExpressionEngine
             return SensitivityLevel.None;
         }
 
+        TokenTextSpan[] tokens = this._state.Engine.Check(expressionText).GetTextTokens(s_nonReferenceTokenTypes).ToArray();
+
         SensitivityLevel sensitivity = SensitivityLevel.None;
-        foreach (Match match in s_scopedVariableReference.Matches(expressionText))
+        for (int index = 0; index < tokens.Length; index++)
         {
-            string? scopeName = match.Groups["scope"].Success ? match.Groups["scope"].Value : null;
-            string referencedName = match.Groups["name"].Value;
-            sensitivity = MaxSensitivity(sensitivity, this._state.GetSensitivity(referencedName, scopeName));
+            TokenTextSpan token = tokens[index];
+            if (index + 1 < tokens.Length && IsDotSeparated(token, tokens[index + 1]))
+            {
+                TokenTextSpan nameToken = tokens[index + 1];
+                sensitivity = MaxSensitivity(sensitivity, this._state.GetSensitivity(nameToken.TokenName, token.TokenName));
+                index++;
+                continue;
+            }
+
+            sensitivity = MaxSensitivity(sensitivity, this._state.GetSensitivity(token.TokenName));
         }
 
         return sensitivity;
     }
+
+    private static bool IsDotSeparated(TokenTextSpan left, TokenTextSpan right) => left.EndIndex < right.StartIndex && right.StartIndex - left.EndIndex <= 1;
 
     private static SensitivityLevel MaxSensitivity(SensitivityLevel left, SensitivityLevel right) =>
         left == SensitivityLevel.Sensitive || right == SensitivityLevel.Sensitive ? SensitivityLevel.Sensitive : SensitivityLevel.None;

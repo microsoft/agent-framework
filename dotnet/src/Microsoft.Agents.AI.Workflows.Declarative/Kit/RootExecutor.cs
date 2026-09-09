@@ -1,6 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Frozen;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
@@ -22,6 +25,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
     private readonly WorkflowFormulaState _state;
     private readonly Func<TInput, ChatMessage>? _inputTransform;
     private readonly bool _allowProcessEnvironmentVariableFallback;
+    private readonly FrozenSet<string> _allowedEnvironmentVariables;
 
     private string? _conversationId;
 
@@ -44,6 +48,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
         this._conversationId = options.ConversationId;
         this._inputTransform = inputTransform;
         this._allowProcessEnvironmentVariableFallback = options.AllowProcessEnvironmentVariableFallback;
+        this._allowedEnvironmentVariables = (options.AllowedEnvironmentVariables ?? []).ToFrozenSet(StringComparer.OrdinalIgnoreCase);
         this._state = new WorkflowFormulaState(options.CreateRecalcEngine());
         this._state.InitializeSystem();
         this.Session = new RootFormulaSession(this._state);
@@ -92,6 +97,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
 
     /// <summary>
     /// Initializes the specified variables from <see cref="IConfiguration"/> if available.
+    /// Only names included in <see cref="DeclarativeWorkflowOptions.AllowedEnvironmentVariables"/> are initialized.
     /// Process environment variables are used only when enabled by <see cref="DeclarativeWorkflowOptions.AllowProcessEnvironmentVariableFallback"/>.
     /// </summary>
     /// <param name="context">The workflow execution context providing messaging and state services.</param>
@@ -99,7 +105,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous execution operation.</returns>
     protected async ValueTask InitializeEnvironmentAsync(IWorkflowContext context, params string[] variableNames)
     {
-        foreach (string variableName in variableNames)
+        foreach (string variableName in variableNames.Where(this._allowedEnvironmentVariables.Contains))
         {
             await context.QueueEnvironmentUpdateAsync(variableName, GetEnvironmentVariable(variableName)).ConfigureAwait(false);
         }
