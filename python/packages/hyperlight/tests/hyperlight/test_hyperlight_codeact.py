@@ -1219,6 +1219,7 @@ async def test_execute_code_tool_streams_directory_enumeration_to_count_limit(
     try:
         contents = await execute_code.invoke(arguments={"code": "create-count-output"})
     finally:
+        monkeypatch.setattr(execute_code_module.os, "scandir", original_scandir)
         _close_execute_code_registry(execute_code)
 
     assert scanned_entries == 3
