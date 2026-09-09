@@ -27,10 +27,9 @@ public sealed class LocalCodeActProviderOptions
     /// Gets or sets environment variables passed to the subprocess.
     /// </summary>
     /// <remarks>
-    /// When <see langword="null"/>, the subprocess inherits the parent process environment
-    /// (the default <see cref="System.Diagnostics.ProcessStartInfo"/> behavior). To run with
-    /// a restricted environment, supply a dictionary containing only the variables the
-    /// subprocess should see — pass an empty dictionary for a fully scrubbed environment.
+    /// The subprocess does not inherit the parent process environment. When this property is
+    /// <see langword="null"/> or empty, the subprocess runs with a scrubbed environment.
+    /// Otherwise, the subprocess receives only the variables in the supplied dictionary.
     /// On Windows, a small set of system variables (SYSTEMROOT, SYSTEMDRIVE, COMSPEC,
     /// PATHEXT, TEMP, TMP) is back-filled from the parent environment when not already
     /// present so Python can locate its standard library.

@@ -45,7 +45,7 @@ else:
     from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
-    from ._workflow import Workflow
+    from ._workflow import Workflow, WorkflowInvocationKwargs
 
 logger = logging.getLogger(__name__)
 
@@ -157,9 +157,12 @@ class WorkflowAgent(BaseAgent):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
-    ) -> Awaitable[AgentResponse[Any]]: ...
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
     @overload
     def run(
@@ -171,9 +174,12 @@ class WorkflowAgent(BaseAgent):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
     def run(
         self,
@@ -184,9 +190,12 @@ class WorkflowAgent(BaseAgent):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]] | Awaitable[AgentResponse[Any]]:
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse] | Awaitable[AgentResponse]:
         """Get a response from the workflow agent.
 
         Args:
@@ -254,8 +263,11 @@ class WorkflowAgent(BaseAgent):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AgentResponse:
         """Internal implementation of non-streaming execution.
 
@@ -337,8 +349,11 @@ class WorkflowAgent(BaseAgent):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal implementation of streaming execution.
 
@@ -419,8 +434,11 @@ class WorkflowAgent(BaseAgent):
         checkpoint_storage: CheckpointStorage | None,
         streaming: bool,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Core implementation that yields workflow events for both streaming and non-streaming modes.
 

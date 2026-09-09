@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from agent_framework import Content, Message
 from agent_framework._sessions import AgentSession, SessionContext
+from agent_framework._settings import SecretString
 from agent_framework.exceptions import SettingNotFoundError
 from azure.core.credentials import AzureKeyCredential
 from azure.core.pipeline.transport import AioHttpTransport
@@ -205,6 +206,9 @@ class TestInitSemantic:
             provider = AzureAISearchContextProvider(source_id="env-test")
             assert provider.endpoint == "https://env.search.windows.net"
             assert provider.index_name == "env-index"
+            assert isinstance(provider.credential, AzureKeyCredential)
+            assert type(provider.credential.key) is str
+            assert provider.credential.key == "env-key"
 
     def test_top_k_and_semantic_config(self) -> None:
         provider = _make_provider(top_k=10, semantic_configuration_name="my-config")
@@ -234,6 +238,18 @@ class TestInitSemantic:
 
 class TestInitCredentialResolution:
     """Tests for credential resolution paths."""
+
+    @pytest.mark.parametrize("api_key", ["test-key", SecretString("test-key")], ids=["str", "secret"])
+    def test_api_key_unwrapped(self, api_key: str | SecretString, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AZURE_SEARCH_API_KEY", "env-key")
+        provider = AzureAISearchContextProvider(
+            endpoint="https://test.search.windows.net",
+            index_name="idx",
+            api_key=api_key,
+        )
+        assert isinstance(provider.credential, AzureKeyCredential)
+        assert type(provider.credential.key) is str
+        assert provider.credential.key == "test-key"
 
     def test_token_credential_used(self) -> None:
         mock_cred = AsyncMock()
@@ -1273,10 +1289,11 @@ class TestEnsureKnowledgeBase:
         with pytest.raises(ValueError, match="index_name is required"):
             await provider._ensure_knowledge_base()
 
-    async def test_creates_knowledge_source_when_not_found(self) -> None:
+    @pytest.mark.parametrize("api_key", [None, "aoai-key", SecretString("aoai-key")], ids=["none", "str", "secret"])
+    async def test_creates_knowledge_source_when_not_found(self, api_key: str | SecretString | None) -> None:
         from azure.core.exceptions import ResourceNotFoundError
 
-        provider = _make_provider()
+        provider = _make_provider(azure_openai_api_key=api_key)
         provider._knowledge_base_initialized = False
         provider._use_existing_knowledge_base = False
         provider.knowledge_base_name = "test-kb"
@@ -1296,6 +1313,16 @@ class TestEnsureKnowledgeBase:
 
         mock_index_client.create_knowledge_source.assert_awaited_once()
         mock_index_client.create_or_update_knowledge_base.assert_awaited_once()
+        knowledge_base = mock_index_client.create_or_update_knowledge_base.call_args.args[0]
+        sdk_api_key = knowledge_base.models[0].azure_open_ai_parameters.api_key
+        if api_key is None:
+            assert sdk_api_key is None
+        else:
+            assert type(sdk_api_key) is str
+            assert sdk_api_key == "aoai-key"
+        if isinstance(api_key, SecretString):
+            assert provider.azure_openai_api_key is api_key
+            assert "aoai-key" not in repr(provider.azure_openai_api_key)
         assert provider._knowledge_base_initialized is True
 
     async def test_uses_existing_knowledge_source(self) -> None:

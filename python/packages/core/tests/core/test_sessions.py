@@ -27,6 +27,7 @@ from agent_framework import (
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
+    SecretString,
     SessionContext,
     SessionStore,
     agent_middleware,
@@ -46,6 +47,8 @@ from agent_framework._sessions import (
 )
 from agent_framework._telemetry import FeatureIndex
 from agent_framework.exceptions import MiddlewareException
+
+from .test_filesystem import COLLIDING_IDENTIFIERS
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
@@ -884,6 +887,18 @@ class TestSessionStore:
         assert reread is not None
         assert reread.state["nested"]["values"] == ["original"]
 
+    async def test_set_and_get_preserves_immutable_secret_string(self) -> None:
+        store = SessionStore()
+        secret = SecretString("my-secret")
+        session = AgentSession(session_id="session-1")
+        session.state["secret"] = secret
+
+        await store.set("session-1", session)
+
+        stored = await store.get("session-1")
+        assert stored is not None
+        assert stored.state["secret"] is secret
+
     async def test_set_stores_independent_snapshot(self) -> None:
         store = SessionStore()
         session = AgentSession(session_id="session-1")
@@ -1284,6 +1299,31 @@ class TestFileSessionStore:
         session_file = provider._session_file_path(session_id)
         assert session_file.name.startswith("~session-")
         assert session_file.is_file()
+
+    def test_colliding_session_ids_get_distinct_history_files(self, tmp_path: Path) -> None:
+        """Session IDs that a path normalizer would fold together stay separate.
+
+        ``FileHistoryProvider`` shares the storage-key derivation with the todo
+        store, the memory store, and the file-memory provider, so it is held to
+        the same injectivity contract.
+        """
+        provider = FileHistoryProvider(tmp_path)
+        paths = {session_id: provider._session_file_path(session_id) for session_id in COLLIDING_IDENTIFIERS}
+
+        assert len(set(paths.values())) == len(COLLIDING_IDENTIFIERS), paths
+        assert len({str(path).lower() for path in paths.values()}) == len(COLLIDING_IDENTIFIERS), paths
+        for path in paths.values():
+            assert path.parent == tmp_path.resolve()
+
+    def test_non_ascii_session_ids_are_encoded(self, tmp_path: Path) -> None:
+        """NFC and NFD spellings of one word must not share a history file."""
+        provider = FileHistoryProvider(tmp_path)
+        nfc = provider._session_file_path("caf\u00e9")
+        nfd = provider._session_file_path("cafe\u0301")
+
+        assert nfc != nfd
+        assert nfc.name.isascii()
+        assert nfd.name.isascii()
 
 
 # ---------------------------------------------------------------------------

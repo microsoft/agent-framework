@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import copy
-import hashlib
 import json
 import logging
 import math
@@ -28,7 +27,6 @@ import uuid
 import warnings
 import weakref
 from abc import abstractmethod
-from base64 import urlsafe_b64encode
 from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Iterable, Mapping, Sequence
 from contextvars import ContextVar, Token
@@ -40,6 +38,10 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, ca
 import msgspec
 
 from ._feature_stage import ExperimentalFeature, experimental
+from ._filesystem import (
+    _is_literal_storage_key_segment_safe,  # pyright: ignore[reportPrivateUsage]
+    _storage_key_segment,  # pyright: ignore[reportPrivateUsage]
+)
 from ._middleware import ChatContext, ChatMiddleware
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import (
@@ -73,36 +75,6 @@ StateT = TypeVar("StateT")
 StateEncoder: TypeAlias = Callable[[Any], Mapping[str, Any]]
 StateDecoder: TypeAlias = Callable[[Mapping[str, Any]], Any]
 _STATE_SCALAR_TYPES = (str, int, float, bool, type(None))
-_WINDOWS_RESERVED_FILE_STEMS: frozenset[str] = frozenset({
-    "CON",
-    "PRN",
-    "AUX",
-    "NUL",
-    "COM1",
-    "COM2",
-    "COM3",
-    "COM4",
-    "COM5",
-    "COM6",
-    "COM7",
-    "COM8",
-    "COM9",
-    "LPT1",
-    "LPT2",
-    "LPT3",
-    "LPT4",
-    "LPT5",
-    "LPT6",
-    "LPT7",
-    "LPT8",
-    "LPT9",
-    "COM¹",
-    "COM²",
-    "COM³",
-    "LPT¹",
-    "LPT²",
-    "LPT³",
-})
 
 
 _DEFAULT_JSON_ENCODER = msgspec.json.Encoder()
@@ -113,7 +85,6 @@ _JSON_FILE_EXTENSION = ".json"
 _JSON_LINES_FILE_EXTENSION = ".jsonl"
 _MSGPACK_FILE_EXTENSION = ".msgpack"
 _SESSION_SNAPSHOT_VERSION = "1.0"
-_MAX_ENCODED_SESSION_FILE_STEM_LENGTH = 180
 
 
 def _default_json_dumps(value: Any) -> bytes:
@@ -152,29 +123,17 @@ def _is_literal_session_file_stem_safe(session_id: str) -> bool:
     with separators and platform-reserved names such as ``CON``. Unsafe values
     are encoded by :func:`_session_file_stem` rather than rejected.
     """
-    windows_stem = session_id.split(".", maxsplit=1)[0].upper()
-    if (
-        not session_id
-        or session_id.startswith(".")
-        or session_id.endswith((" ", "."))
-        or windows_stem in _WINDOWS_RESERVED_FILE_STEMS
-    ):
-        return False
-    if any(ord(character) < 32 for character in session_id):
-        return False
-    return all(character.isascii() and (character.isalnum() or character in "._-") for character in session_id)
+    return _is_literal_storage_key_segment_safe(session_id)
 
 
 def _session_file_stem(session_id: str, *, encoded_prefix: str) -> str:
-    """Return a safe filename stem for an opaque session ID."""
-    if _is_literal_session_file_stem_safe(session_id):
-        return session_id
-    encoded_session_id = urlsafe_b64encode(session_id.encode("utf-8")).decode("ascii").rstrip("=")
-    encoded_stem = f"{encoded_prefix}{encoded_session_id}"
-    if len(encoded_stem) <= _MAX_ENCODED_SESSION_FILE_STEM_LENGTH:
-        return encoded_stem
-    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-    return f"{encoded_prefix}sha256-{digest}"
+    """Return a safe filename stem for an opaque session ID.
+
+    Delegates to the shared :func:`~agent_framework._filesystem._storage_key_segment`
+    derivation so every component that maps an identifier onto storage produces
+    the same injective result.
+    """
+    return _storage_key_segment(session_id, encoded_prefix=encoded_prefix)
 
 
 def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[str]:
