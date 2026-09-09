@@ -2493,9 +2493,12 @@ async def run_agent_stream(
                 )
                 raw_messages = provider_suffix
         elif not config.use_service_session:
-            if resume_payload is not None:
-                # Predictive-state / generic resumes also merge history here; mark seeded
-                # so save-time resume_seeded_messages does not prepend again (#8140).
+            if resume_payload is not None and raw_messages:
+                # Client-replayed transcript on predictive/generic resume: overlap-merge
+                # and mark seeded so save-time resume_seeded_messages does not prepend
+                # again (#8140). Empty interrupt-only resumes (e.g. confirm_changes)
+                # must stay empty so synthesized resume tool messages are the only
+                # turn input; history is restored at save when this flag stays false.
                 seeded_resume_from_snapshot = True
                 raw_messages = snapshot_session.reconcile_resume_messages(raw_messages)
             else:

@@ -144,9 +144,14 @@ class ThreadSnapshotSession:
     def reconcile_resume_messages(self, incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Merge stored history with resume messages without double-persisting.
 
-        Empty incoming (interrupt-only / checkpoint resume) prepends stored
-        history. Non-empty incoming is overlapped via the thread-snapshot
-        reconstructor so a client that replays its transcript is not duplicated.
+        Empty incoming prepends stored history (approval / checkpoint builders that
+        need history in the provider or snapshot input). Non-empty incoming is
+        overlapped via the thread-snapshot reconstructor so a client that replays
+        its transcript is not duplicated.
+
+        Agent confirm_changes resumes that synthesize the tool result separately
+        should keep empty incoming as empty and call this only for non-empty
+        client-replayed transcripts.
         """
         if self._stored is None:
             return incoming
