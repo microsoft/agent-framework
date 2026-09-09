@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, make_dataclass
 from datetime import date, datetime, timezone
+from types import GenericAlias
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
@@ -413,6 +414,53 @@ async def test_floating_vector_types_preserve_typed_roundtrips(database, vector_
     assert results[0]["record"] == records[0]
     results = [item async for item in await collection.search(vector=range(3))]
     assert [item["record"].id for item in results] == ["one"]
+
+
+@pytest.mark.parametrize("scalar_name", ["float16", "float32"])
+async def test_numpy_scalar_annotations_roundtrip_with_custom_decoder(database, scalar_name):
+    np = pytest.importorskip("numpy")
+    scalar_type = getattr(np, scalar_name)
+    record_type = make_dataclass(
+        "NumpyRecord",
+        [
+            ("id", str),
+            ("embedding", GenericAlias(list, scalar_type) | None, None),
+        ],
+    )
+
+    def decode_record(row):
+        vector = row.get("embedding")
+        return record_type(
+            id=row["id"],
+            embedding=[scalar_type(value) for value in vector] if vector is not None else None,
+        )
+
+    register_vectorstoremodel(
+        record_type,
+        definition=VectorStoreCollectionDefinition(
+            [
+                VectorStoreField("key", name="id", type_="str"),
+                VectorStoreField("vector", name="embedding", dimensions=3, type_=scalar_name),
+            ],
+            collection_name="numpy_vectors",
+        ),
+        decoder=decode_record,
+    )
+    connection, schema = database
+    collection = PostgresCollection(record_type, client=connection, schema=schema)
+    assert collection.definition.vector_fields[0].type_ == scalar_name
+    await collection.ensure_collection_exists()
+    original = record_type("one", [scalar_type(0.1), scalar_type(1), scalar_type(0)])
+    await collection.upsert([original], generate_vectors=False)
+
+    records = await collection.get(["one"], include_vectors=True)
+    results = [item async for item in await collection.search(vector=(0.1, 1, 0), include_vectors=True)]
+    assert len(records) == len(results) == 1
+    for restored in (records[0], results[0]["record"]):
+        assert isinstance(restored, record_type)
+        assert restored == original
+        assert all(isinstance(value, scalar_type) for value in vars(restored)["embedding"])
+    assert vars((await collection.get(["one"]))[0])["embedding"] is None
 
 
 async def test_missing_schema_is_not_created(database, definition_factory):

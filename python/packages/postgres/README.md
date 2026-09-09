@@ -104,6 +104,14 @@ The `postgres.vector_type` provider annotation explicitly selects either storage
 type. Ordinary Python floats and integer-valued elements are accepted and rounded
 to the selected precision; declared `int` and `float64` vector fields are rejected.
 
+Storage precision does not determine the model's Python scalar type. The default
+decoder returns ordinary Python floats: use `list[float]` annotations even with
+explicit `float16` or `float32` field metadata. Models annotated with
+`list[numpy.float16]` or `list[numpy.float32]` require a custom `decoder` passed to
+`vectorstoremodel` or `register_vectorstoremodel`. That decoder must reconstruct
+each component with the declared NumPy scalar type and handle omitted vector
+fields when `include_vectors=False`. NumPy is not a connector runtime dependency.
+
 Exact search is the default. HNSW and IVFFlat are optional approximate indexes;
 selective filters can reduce their recall. Use
 `operation_options={"exact": True}` when complete recall is required.

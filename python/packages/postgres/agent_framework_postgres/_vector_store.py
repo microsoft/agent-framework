@@ -278,10 +278,16 @@ class _FilterCompiler:
 
     def __init__(self, definition: VectorStoreCollectionDefinition) -> None:
         self.definition = definition
-        self.parameters: list[Any] = []
+        self._parameters: list[Any] = []
+
+    def compile(self, expression: FilterExpression) -> tuple[sql.Composable, list[Any]]:
+        """Return SQL and its parameters in placeholder order for one expression."""
+        self._parameters = []
+        condition = self._prepare_filter_condition(expression)
+        return condition, self._parameters
 
     def _prepare_parameter(self, value: Any) -> sql.Placeholder:
-        self.parameters.append(value)
+        self._parameters.append(value)
         return sql.Placeholder()
 
     def _prepare_equality(self, field: VectorStoreField, column: sql.Composable, value: Any) -> sql.Composable:
@@ -580,9 +586,7 @@ class PostgresCollection(
     def _prepare_filter(self, filter: FilterExpression | None) -> tuple[sql.Composable, list[Any]]:
         if filter is None:
             return sql.SQL("TRUE"), []
-        compiler = _FilterCompiler(self.definition)
-        condition = compiler._prepare_filter_condition(filter)  # pyright: ignore[reportPrivateUsage]
-        return condition, compiler.parameters
+        return _FilterCompiler(self.definition).compile(filter)
 
     def _prepare_order_by(self, order_by: Mapping[str, bool] | None) -> sql.Composable:
         parts: list[sql.Composable] = []

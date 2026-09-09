@@ -26,7 +26,7 @@ from psycopg import AsyncConnection, OperationalError
 from psycopg_pool import AsyncConnectionPool
 
 from agent_framework_postgres import PostgresCollection, PostgresStore
-from agent_framework_postgres._vector_store import _Client, _prepare_identifier, _prepare_value
+from agent_framework_postgres._vector_store import _Client, _FilterCompiler, _prepare_identifier, _prepare_value
 
 
 @pytest.fixture
@@ -122,6 +122,33 @@ def test_nested_groups_and_array_membership(collection):
     text = condition.as_string()
     assert "jsonb_array_elements" in text and " AND " in text and " OR " in text
     assert [p.obj for p in params] == [True, None, 2]
+
+
+def test_filter_compiler_preserves_parameter_order_and_isolates_calls(definition_factory):
+    compiler = _FilterCompiler(definition_factory())
+    condition, params = compiler.compile(
+        FilterGroup(
+            "and",
+            [
+                Filter("id", "eq", "one"),
+                FilterGroup("or", [Filter("number", "between", [2, 3]), Filter("text", "eq", "last")]),
+            ],
+        )
+    )
+    text = condition.as_string()
+    assert text.count("%s") == len(params) == 4
+    assert text.index('"record_id"') < text.index('"number"') < text.index('"body ""text"""')
+    assert params == ["one", 2, 3, "last"]
+
+    next_condition, next_params = compiler.compile(Filter("number", "eq", 4))
+    assert next_condition.as_string().count("%s") == 1
+    assert next_params == [4]
+    assert params == ["one", 2, 3, "last"]
+
+    with pytest.raises(ValueError, match="unknown"):
+        compiler.compile(FilterGroup("and", [Filter("id", "eq", "partial"), Filter("unknown", "eq", 5)]))
+    _, recovered_params = compiler.compile(Filter("id", "eq", "after-error"))
+    assert recovered_params == ["after-error"]
 
 
 @pytest.mark.parametrize("value", [("tuple",), [("nested",)], {1: "non-string key"}, b"bytes", float("nan")])
