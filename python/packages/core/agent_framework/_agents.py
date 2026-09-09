@@ -1480,6 +1480,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         for mcp_server in self.mcp_tools:
             if not mcp_server.is_connected:
+                mcp_server._seed_connection_kwargs(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
                 await self._async_exit_stack.enter_async_context(mcp_server)
             _append_unique_tools(
                 final_tools,

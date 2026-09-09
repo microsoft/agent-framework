@@ -6938,6 +6938,76 @@ async def test_agent_context_manager_authenticates_connect_with_closure_provider
     assert all(headers.get("x-api-key") == "constructor-token" for _, headers in captured_requests)
 
 
+async def test_constructor_supplied_mcp_tool_uses_run_credentials_on_lazy_connect(
+    client: SupportsChatGetResponse,
+) -> None:
+    """A constructor-supplied MCP tool connected at first run authenticates with that run's kwargs.
+
+    Without the agent context manager the handshake is deferred to ``run()``, so the run's
+    credentials are available and must reach ``header_provider``.
+    """
+    import httpx
+
+    captured_requests: list[tuple[str, dict[str, str]]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            return httpx.Response(200)
+        if request.method == "GET":
+            return httpx.Response(405)
+        if request.headers.get("x-api-key") != "run-token":
+            return httpx.Response(401)
+        body = json.loads(request.content.decode())
+        method = body.get("method", "")
+        captured_requests.append((method, {k.lower(): v for k, v in request.headers.items()}))
+        if method == "initialize":
+            return httpx.Response(
+                200,
+                headers={"mcp-session-id": "test-session"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {
+                        "protocolVersion": body["params"]["protocolVersion"],
+                        "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "mock-server", "version": "1.0.0"},
+                    },
+                },
+            )
+        if method == "tools/list":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"tools": [{"name": "greet", "inputSchema": {"type": "object", "properties": {}}}]},
+                },
+            )
+        if "id" in body:
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {}})
+        return httpx.Response(202)
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://127.0.0.1:8000/mcp",
+        load_prompts=False,
+        http_client=http_client,
+        header_provider=lambda kw: {"x-api-key": kw["api_key"]},
+    )
+    agent = Agent(client=client, tools=[tool])
+    try:
+        # No agent context manager, so the tool is still unconnected when the run starts.
+        assert not tool.is_connected
+        await agent.run("Hello", function_invocation_kwargs={"api_key": "run-token"})
+    finally:
+        await tool.close()
+        await http_client.aclose()
+
+    assert [method for method, _ in captured_requests].count("initialize") == 1
+    assert all(headers.get("x-api-key") == "run-token" for _, headers in captured_requests)
+
+
 async def test_mcp_streamable_http_tool_header_provider_applies_across_transport_tasks():
     """Regression test for #7161: header_provider headers must reach tools/call requests.
 
