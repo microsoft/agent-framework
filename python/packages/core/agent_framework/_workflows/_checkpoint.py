@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import json
 import logging
@@ -258,14 +259,21 @@ class InMemoryCheckpointStorage:
 # process-wide queue keyed by the canonical destination path, and taken *before* the
 # write is submitted to a worker thread rather than inside it.
 #
-# Waiting on a ``concurrent.futures.Future`` through ``asyncio.wrap_future`` is what
-# makes that work in both directions: it is not bound to a loop, so a single chain
-# orders writers regardless of which loop enqueued them, and waiters suspend on the
-# event loop instead of occupying an ``asyncio.to_thread`` worker. Blocking on a
-# ``threading.Lock`` inside the worker instead -- the previous design -- let a burst of
-# same-path saves fill the default executor and stall unrelated ``to_thread`` work,
-# including checkpoint loads, and could deadlock once the write that had to finish
-# first was queued behind those waiters.
+# Hand-off runs over ``concurrent.futures.Future`` signals, which are not bound to a
+# loop, so a single chain orders writers regardless of which loop enqueued them, and
+# waiters suspend on the event loop instead of occupying an ``asyncio.to_thread``
+# worker. Blocking on a ``threading.Lock`` inside the worker instead -- the original
+# design -- let a burst of same-path saves fill the default executor and stall unrelated
+# ``to_thread`` work, including checkpoint loads, and could deadlock once the write that
+# had to finish first was queued behind those waiters.
+#
+# Those signals are awaited through ``_wait_for_signal``, never ``asyncio.wrap_future``.
+# Cancellation is the reason: ``wrap_future`` chains it into the future it wraps, so one
+# cancelled waiter would cancel the signal an earlier writer still has to resolve, and
+# the ``asyncio`` task wrapping a submitted write reports ``done()`` while its function
+# is still running on the executor thread. Both let a later save start its ``os.replace``
+# beside an earlier one, after which the earlier write can land last and overwrite the
+# newer checkpoint.
 #
 # Entries are reference-counted by queued-or-running operations and dropped when the
 # last one releases, so a process that saves many distinct checkpoint IDs -- the
@@ -303,6 +311,10 @@ class _WriteTicket:
     completion: Future[None]
     #: Set by whichever of the worker thread or the coroutine releases first.
     released: bool = False
+    #: Failure raised by the write, recorded on the worker thread. A cancelled caller
+    #: never sees it, and a cancelled task hides its own exception, so the ticket is the
+    #: only place it survives.
+    error: BaseException | None = None
 
 
 def _enqueue_write(file_path: Path) -> _WriteTicket:
@@ -319,46 +331,134 @@ def _enqueue_write(file_path: Path) -> _WriteTicket:
     return _WriteTicket(path=file_path, predecessor=predecessor, completion=completion)
 
 
-async def _drain_cancelled_write(worker: asyncio.Future[None], file_path: Path) -> None:
-    """Wait for *worker* to finish while this task is being cancelled.
+def _wait_for_signal(source: Future[None]) -> asyncio.Future[None]:
+    """Return a fresh awaitable that completes when *source* does.
 
-    A single ``await asyncio.shield(worker)`` is not enough here. Once the enclosing
-    task has a cancellation pending, the next await raises ``CancelledError`` again
-    immediately, so the shield returns without the worker having finished and the write
-    can still land after ownership is released. Absorbing the re-delivered
-    cancellations until the worker is genuinely done is what makes the drain real.
+    Deliberately not ``asyncio.wrap_future``: that chains cancellation into the future it
+    wraps, so a waiter cancelled here would cancel the hand-off signal an earlier writer
+    still has to resolve, and every later writer keyed to it. A per-wait future fed by a
+    done-callback leaves *source* untouched no matter what happens to the waiter.
     """
-    while not worker.done():
+    loop = asyncio.get_running_loop()
+    waiter: asyncio.Future[None] = loop.create_future()
+
+    def _resolve(_completed: Future[None]) -> None:
+        def _set() -> None:
+            if not waiter.done():
+                waiter.set_result(None)
+
+        # A closed loop means nobody is left to wake.
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(_set)
+
+    source.add_done_callback(_resolve)
+    return waiter
+
+
+async def _await_signal_through_cancellation(source: Future[None]) -> None:
+    """Wait until *source* resolves, absorbing cancellations delivered meanwhile.
+
+    Used to wait out a write this coroutine still owns. Waiting on the ``asyncio`` task
+    wrapping the write is not equivalent: a cancelled task reports ``done()`` while its
+    function is still running on the executor thread, so ownership would be released
+    with the write still in flight. Only the signal the worker thread resolves tracks
+    the write itself, and cancellation cannot mark it done.
+
+    The done-callback is registered once and points at whichever waiter is current,
+    rather than one callback per wait. Each cancellation would otherwise leave another
+    callback on the signal, so a caller cancelling in a loop would grow that list in
+    step with it and pay for the whole list when the write finally lands.
+    """
+    if source.done():
+        # Purely to avoid registering a callback that would fire straight back; the loop
+        # condition below already short-circuits, so this is not load-bearing.
+        return
+
+    loop = asyncio.get_running_loop()
+    current: dict[str, asyncio.Future[None] | None] = {"waiter": None}
+
+    def _resolve(_completed: Future[None]) -> None:
+        def _set() -> None:
+            waiter = current["waiter"]
+            if waiter is not None and not waiter.done():
+                waiter.set_result(None)
+
+        # A closed loop means nobody is left to wake.
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(_set)
+
+    source.add_done_callback(_resolve)
+    while not source.done():
+        waiter: asyncio.Future[None] = loop.create_future()
+        current["waiter"] = waiter
         try:
-            await asyncio.shield(worker)
+            await waiter
         except asyncio.CancelledError:
+            # Re-delivered cancellation. The signal may have resolved against the waiter
+            # we just abandoned, so the loop condition is what decides whether to stop.
             continue
-        except Exception:
-            break
-    if worker.done() and not worker.cancelled():
-        exception = worker.exception()
-        if exception is not None:
-            # The caller is being cancelled and will not see this, but a write that
-            # failed while draining should not vanish silently.
-            logger.warning(f"Checkpoint write to {file_path} failed while draining after cancellation: {exception!r}")
+
+
+def _release_write_after(ticket: _WriteTicket, predecessor: Future[None]) -> None:
+    """Hand *ticket*'s ownership on only once *predecessor* has actually finished.
+
+    A ticket cancelled while still queued must not resolve its own signal immediately:
+    an earlier writer still owns the destination, and the next waiter would start its
+    write alongside that one. Deferring keeps the queue in order while still guaranteeing
+    the hand-off happens, so nothing waits forever behind a cancelled save.
+    """
+    predecessor.add_done_callback(lambda _completed: _release_write(ticket))
+
+
+class _ReleaseTrampoline(threading.local):
+    """Releases waiting for the one currently unwinding on this thread.
+
+    Resolving one ticket's signal runs the next ticket's deferred-release callback
+    synchronously, so a run of cancelled queued saves would otherwise nest one stack
+    frame per link and raise ``RecursionError`` on the worker thread partway through --
+    leaving the destination owned for good. Collecting them here and draining in a loop
+    keeps the depth flat however long the run is.
+    """
+
+    queued: list[_WriteTicket] | None = None
+
+
+_release_trampoline = _ReleaseTrampoline()
 
 
 def _release_write(ticket: _WriteTicket) -> None:
     """Hand ownership to the next waiter and drop the entry once nothing is queued.
 
-    Called from two places, whichever gets there first, and idempotent so both can:
+    Called from three places, whichever gets there first, and idempotent so all can:
 
     * the worker thread, as the last act of the write itself. This is what keeps a
       destination usable if the event loop that submitted the write goes away before the
-      coroutine can resume -- the thread finishes and releases regardless, where a
-      release that only happened in the coroutine would leave the path owned forever and
-      hang every later save to it.
-    * the coroutine, on any exit path. This is the only releaser when the write was
-      never submitted, which is the case for a save cancelled while still queued.
+      coroutine can resume -- the thread finishes and releases regardless.
+    * a done-callback on the submitted write, which fires on success, failure and
+      cancellation alike, so the executor dropping the work still releases.
+    * the coroutine, when the write was never submitted at all.
 
     Resolving the completion signal is what keeps the chain moving, so an operation that
     is cancelled or fails must still release rather than stall every later writer.
     """
+    queued = _release_trampoline.queued
+    if queued is not None:
+        # A release is already unwinding on this thread; let it drain this one.
+        queued.append(ticket)
+        return
+
+    draining: list[_WriteTicket] = []
+    _release_trampoline.queued = draining
+    try:
+        _release_one_write(ticket)
+        while draining:
+            _release_one_write(draining.pop(0))
+    finally:
+        _release_trampoline.queued = None
+
+
+def _release_one_write(ticket: _WriteTicket) -> None:
+    """Release exactly one ticket. Only ``_release_write`` should call this."""
     with _destination_queues_guard:
         if ticket.released:
             return
@@ -511,34 +611,73 @@ class FileCheckpointStorage:
             # forever and hanging every later save to it.
             try:
                 _write_atomic()
+            except BaseException as exc:
+                ticket.error = exc
+                raise
             finally:
                 _release_write(ticket)
 
         ticket = _enqueue_write(file_path)
-        try:
-            if ticket.predecessor is not None:
-                # Suspends on the event loop, not on an executor worker, and orders this
-                # save behind every earlier one for the same destination even when they
-                # were enqueued from a different loop. A cancellation delivered here
-                # propagates with nothing submitted and nothing written, which is the
-                # cheapest correct outcome: `finally` hands ownership straight to the
-                # next waiter.
-                await asyncio.wrap_future(ticket.predecessor)
-
-            worker = asyncio.ensure_future(asyncio.to_thread(_write_atomic_and_release, ticket))
+        if ticket.predecessor is not None:
+            # Suspends on the event loop, not on an executor worker, and orders this save
+            # behind every earlier one for the same destination even when they were
+            # enqueued from a different loop.
             try:
-                # Shield so a cancellation arriving mid-write cannot leave the worker
-                # running past this frame: its os.replace would otherwise land after the
-                # caller returned, overwriting whatever a later save had published.
-                await asyncio.shield(worker)
-            except asyncio.CancelledError:
-                # Ownership is still held, so drain before propagating. Releasing first
-                # would let the next save begin while this replace is still in flight,
-                # which is the race the queue exists to prevent.
-                await _drain_cancelled_write(worker, file_path)
+                await _wait_for_signal(ticket.predecessor)
+            except BaseException:
+                # Nothing was submitted and nothing written, but the hand-off cannot
+                # happen yet: an earlier writer still owns the destination, and resolving
+                # this ticket's signal now would let the next save run its os.replace
+                # alongside that one -- after which the earlier write can land last and
+                # overwrite the newer checkpoint. Defer the hand-off until the
+                # predecessor has actually finished.
+                _release_write_after(ticket, ticket.predecessor)
                 raise
-        finally:
+
+        # Ownership held from here. Submit through `run_in_executor` rather than
+        # `ensure_future(asyncio.to_thread(...))`: the latter creates a Task, and loop
+        # shutdown cancels every task, so the write could be cancelled before it ever
+        # reached the executor -- leaving nobody to release the destination and this
+        # coroutine waiting on a signal that could never be resolved. `run_in_executor`
+        # returns a plain Future that `asyncio.all_tasks()` does not include, and it
+        # submits synchronously, so returning from it means the write really is queued.
+        loop = asyncio.get_running_loop()
+        try:
+            write_future = loop.run_in_executor(None, _write_atomic_and_release, ticket)
+        except BaseException:
+            # Never reached the executor, so no worker will release on our behalf.
             _release_write(ticket)
+            raise
+        # The callback fires on success, failure and cancellation alike, so the
+        # destination is released even if the executor drops the work before the function
+        # runs. Idempotent with the worker thread's own release, which means no flag is
+        # needed to decide which of the two owns it.
+        write_future.add_done_callback(lambda _completed: _release_write(ticket))
+
+        try:
+            # Shield so a cancellation arriving mid-write cannot leave the write running
+            # past this frame: its os.replace would otherwise land after the caller
+            # returned, overwriting whatever a later save had published.
+            await asyncio.shield(write_future)
+        except asyncio.CancelledError:
+            # Wait out the write itself rather than the task wrapping it. A cancelled
+            # task reports done() while its function is still running on the executor
+            # thread, so waiting on `worker` would return with the replace still in
+            # flight and ownership about to be released.
+            await _await_signal_through_cancellation(ticket.completion)
+            if ticket.error is not None:
+                # The caller is receiving CancelledError and will never see this, and a
+                # cancelled task hides its own exception, so the log is the only place a
+                # write that failed while draining can surface.
+                logger.warning(
+                    f"Checkpoint write to {file_path} failed while draining after cancellation: {ticket.error!r}"
+                )
+            raise
+        except BaseException:
+            # The write failed. The worker already released in its own `finally`; this is
+            # idempotent cover for a submission that never got that far.
+            _release_write(ticket)
+            raise
 
         logger.info(f"Saved checkpoint {checkpoint.checkpoint_id} to {file_path}")
         return checkpoint.checkpoint_id

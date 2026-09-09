@@ -4,7 +4,9 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import tempfile
+import time
 from concurrent.futures import Future as ConcurrentFuture
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -2430,3 +2432,379 @@ async def test_file_checkpoint_storage_failed_save_releases_the_destination(monk
         await asyncio.wait_for(storage.save(make("after-failure")), timeout=10)
         assert (await storage.load("shared-id")).workflow_name == "after-failure"
         assert not registry
+
+
+async def test_file_checkpoint_storage_cancelling_a_queued_save_does_not_let_the_next_overtake(monkeypatch):
+    """A save cancelled while queued must not hand off before its predecessor finishes.
+
+    Reviewer concern on #7757: `asyncio.wrap_future` chains cancellation into the future
+    it wraps, so cancelling the middle of three queued saves cancelled the shared
+    hand-off signal, and the unconditional release then let the third save reach
+    `os.replace` while the first still owned the destination -- after which the first
+    write could land last and overwrite the newer checkpoint. The hand-off for a
+    cancelled ticket is now deferred until its predecessor actually completes.
+    """
+    import threading
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        real_replace = checkpoint_module.os.replace
+        holder_parked = threading.Event()
+        release_holder = threading.Event()
+        inside_replace = 0
+        max_inside_replace = 0
+        completed: list[str] = []
+        guard = threading.Lock()
+
+        def gated_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+            nonlocal inside_replace, max_inside_replace
+            with guard:
+                inside_replace += 1
+                max_inside_replace = max(max_inside_replace, inside_replace)
+                park = inside_replace == 1 and not holder_parked.is_set()
+            try:
+                if park:
+                    holder_parked.set()
+                    assert release_holder.wait(timeout=15)
+                real_replace(src, dst)
+                with guard:
+                    completed.append(os.path.basename(str(dst)))
+            finally:
+                with guard:
+                    inside_replace -= 1
+
+        monkeypatch.setattr(checkpoint_module.os, "replace", gated_replace)
+
+        def make(name: str) -> WorkflowCheckpoint:
+            return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="shared-id")
+
+        holder = asyncio.create_task(storage.save(make("holder")))
+        assert await asyncio.to_thread(holder_parked.wait, 15)
+
+        queued = asyncio.create_task(storage.save(make("cancelled")))
+        third = asyncio.create_task(storage.save(make("third")))
+
+        registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+        canonical = (Path(temp_dir) / "shared-id.json").resolve()
+        for _ in range(400):
+            entry = registry.get(canonical)
+            if entry is not None and entry.pending == 3:
+                break
+            await asyncio.sleep(0.005)
+        entry = registry.get(canonical)
+        assert entry is not None and entry.pending == 3
+
+        queued.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await queued
+
+        # The holder is still parked inside its replace. The third save must not have
+        # taken the destination on the back of the cancellation.
+        for _ in range(30):
+            await asyncio.sleep(0.01)
+            with guard:
+                assert max_inside_replace == 1, "a second write started while the holder still owned the path"
+                assert completed == [], "a write completed while the holder was still parked"
+        assert not third.done()
+
+        release_holder.set()
+        await asyncio.wait_for(asyncio.gather(holder, third), timeout=15)
+
+        with guard:
+            assert max_inside_replace == 1, "writes overlapped for one destination"
+            assert len(completed) == 2, f"expected holder + third, got {completed}"
+        assert (await storage.load("shared-id")).workflow_name == "third"
+        assert not registry, "a cancelled queued save leaked its destination entry"
+
+
+def test_file_checkpoint_storage_cancelled_worker_task_does_not_release_early(monkeypatch, tmp_path):
+    """Cancelling the worker task must not release ownership while the thread writes.
+
+    Reviewer concern on #7757: loop shutdown cancels `save()` and the task wrapping
+    `asyncio.to_thread`, which makes `worker.done()` true while the function is still
+    blocked in `os.replace`. Draining on that task therefore returned immediately and
+    ownership was released with the write in flight. The drain now waits on the signal
+    the worker thread resolves, which cancellation cannot mark done.
+
+    Deliberately not an async test: it cancels every task the way shutdown does.
+    """
+    import threading
+    import time
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    real_replace = checkpoint_module.os.replace
+    parked = threading.Event()
+    release_parked = threading.Event()
+
+    def gated_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+        parked.set()
+        assert release_parked.wait(timeout=15)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(checkpoint_module.os, "replace", gated_replace)
+
+    canonical = (tmp_path / "shared-id.json").resolve()
+    observed: dict[str, bool] = {}
+
+    async def main() -> None:
+        storage = FileCheckpointStorage(str(tmp_path))
+        task = asyncio.create_task(
+            storage.save(
+                WorkflowCheckpoint(workflow_name="holder", graph_signature_hash="test-hash", checkpoint_id="shared-id")
+            )
+        )
+        await asyncio.to_thread(parked.wait, 15)
+
+        # What loop shutdown does: cancel every remaining task, including the one
+        # wrapping asyncio.to_thread.
+        for pending in [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]:
+            pending.cancel()
+
+        for _ in range(40):
+            await asyncio.sleep(0.01)
+            if canonical not in checkpoint_module._destination_queues:  # pyright: ignore[reportPrivateUsage]
+                break
+        # The write is still parked, so the destination must still be owned.
+        observed["released_early"] = canonical not in checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+        observed["still_writing"] = not release_parked.is_set()
+
+        release_parked.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(main())
+
+    assert observed["still_writing"], "the test never held the write open"
+    assert not observed["released_early"], "ownership was released while the write was still in flight"
+    # The worker thread releases once its write lands, so nothing is left owned.
+    deadline = time.monotonic() + 10
+    while checkpoint_module._destination_queues and time.monotonic() < deadline:  # pyright: ignore[reportPrivateUsage]
+        time.sleep(0.05)
+    assert not checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+
+
+def test_file_checkpoint_storage_shutdown_before_the_write_starts_does_not_hang(monkeypatch, tmp_path):
+    """Loop shutdown before the write reaches the executor must not strand the save.
+
+    Submitting through `asyncio.ensure_future(asyncio.to_thread(...))` makes the write a
+    Task, and shutdown cancels every task -- potentially before it has reached the
+    executor. Nothing would then release the destination, and a coroutine waiting for the
+    write's completion signal would wait for a signal that could never be resolved, so
+    the save never finished at all. Submission now goes through `run_in_executor`, which
+    returns a plain Future that `asyncio.all_tasks()` does not include, and a done
+    callback releases even if the executor drops the work.
+
+    Deliberately not an async test: it has to cancel every task the way shutdown does.
+    """
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    canonical = (tmp_path / "shared-id.json").resolve()
+    outcome: dict[str, object] = {}
+
+    async def main() -> None:
+        storage = FileCheckpointStorage(str(tmp_path))
+        asyncio.create_task(
+            storage.save(
+                WorkflowCheckpoint(workflow_name="victim", graph_signature_hash="test-hash", checkpoint_id="shared-id")
+            )
+        )
+        # One tick, so the save coroutine actually runs and submits its write. Without
+        # it the write has not been created yet and cancelling only the save takes the
+        # clean cancelled-before-submission path, which was never the broken case.
+        await asyncio.sleep(0)
+        victims = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+        outcome["task_count"] = len(victims)
+
+        # Assert the structural property *before* cancelling anything. If the write is a
+        # task, shutdown sweeps it and the save can end up waiting for a completion
+        # signal nothing will ever resolve -- which hangs `asyncio.run`'s own shutdown,
+        # outside any `wait_for` this test could wrap around it. Failing here keeps the
+        # regression a clean assertion rather than a hung CI job.
+        assert len(victims) == 1, (
+            f"the write must not be a task, or loop shutdown cancels it: found {len(victims)} tasks"
+        )
+
+        for task in victims:
+            task.cancel()
+        await asyncio.wait_for(asyncio.gather(*victims, return_exceptions=True), timeout=10)
+
+    asyncio.run(main())
+    assert outcome["task_count"] == 1
+
+    deadline = time.monotonic() + 10
+    while canonical in checkpoint_module._destination_queues and time.monotonic() < deadline:  # pyright: ignore[reportPrivateUsage]
+        time.sleep(0.05)
+    assert canonical not in checkpoint_module._destination_queues, (  # pyright: ignore[reportPrivateUsage]
+        "shutdown before the write started left the destination owned forever"
+    )
+
+
+async def test_file_checkpoint_storage_executor_shutdown_at_submission_releases():
+    """If the write cannot be submitted at all, the coroutine must release the destination.
+
+    `run_in_executor` raises synchronously against a shut-down executor, so no worker
+    exists to release on our behalf. This is the one path where the coroutine, not the
+    worker thread, owns the release.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        dead_executor = ThreadPoolExecutor(max_workers=1)
+        dead_executor.shutdown(wait=True)
+        loop: Any = asyncio.get_running_loop()
+        previous_executor = loop._default_executor
+        loop.set_default_executor(dead_executor)
+        try:
+            with pytest.raises(RuntimeError):
+                await storage.save(
+                    WorkflowCheckpoint(
+                        workflow_name="no-executor",
+                        graph_signature_hash="test-hash",
+                        checkpoint_id="shared-id",
+                    )
+                )
+        finally:
+            loop._default_executor = previous_executor
+
+        registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+        assert not registry, "a save that could not be submitted kept its destination"
+
+        # The path is still usable once an executor is available again.
+        await asyncio.wait_for(
+            storage.save(
+                WorkflowCheckpoint(workflow_name="after", graph_signature_hash="test-hash", checkpoint_id="shared-id")
+            ),
+            timeout=10,
+        )
+        assert (await storage.load("shared-id")).workflow_name == "after"
+
+
+def test_wait_for_signal_survives_its_loop_being_closed():
+    """Resolving a signal after its waiter's loop closed must not raise.
+
+    The worker thread outlives the loop that submitted the write, so it can resolve a
+    hand-off signal that a now-dead loop was waiting on. `call_soon_threadsafe` raises
+    `RuntimeError` on a closed loop, and that runs inside a `concurrent.futures`
+    done-callback -- where an exception would be swallowed into the callback machinery
+    rather than surfacing usefully.
+    """
+    import threading
+    from concurrent.futures import Future as ConcurrentFuture
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    source: ConcurrentFuture[None] = ConcurrentFuture()
+    loop = asyncio.new_event_loop()
+    try:
+
+        async def register() -> None:
+            checkpoint_module._wait_for_signal(source)  # pyright: ignore[reportPrivateUsage]
+
+        loop.run_until_complete(register())
+    finally:
+        loop.close()
+
+    # The worker thread resolves it after the loop is gone.
+    errors: list[BaseException] = []
+
+    def resolve() -> None:
+        try:
+            source.set_result(None)
+        except BaseException as exc:  # noqa: BLE001 - surfaced below
+            errors.append(exc)
+
+    thread = threading.Thread(target=resolve)
+    thread.start()
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert not errors, f"resolving after loop close raised: {errors!r}"
+    assert source.done()
+
+
+def test_await_signal_through_cancellation_survives_its_loop_being_closed():
+    """Resolving the signal after the draining loop closed must not raise.
+
+    The worker thread outlives the loop that submitted the write, so it can resolve a
+    signal that a now-dead loop was draining on. `call_soon_threadsafe` raises
+    `RuntimeError` against a closed loop, inside a `concurrent.futures` done-callback
+    where it would be swallowed rather than surface.
+    """
+    import threading
+    from concurrent.futures import Future as ConcurrentFuture
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    source: ConcurrentFuture[None] = ConcurrentFuture()
+    loop = asyncio.new_event_loop()
+    loop.set_exception_handler(lambda active_loop, context: None)
+    try:
+        # Start the drain, let it subscribe and suspend, then abandon the loop.
+        drain = loop.create_task(
+            checkpoint_module._await_signal_through_cancellation(source)  # pyright: ignore[reportPrivateUsage]
+        )
+        loop.run_until_complete(asyncio.sleep(0))
+        assert not drain.done()
+    finally:
+        loop.close()
+
+    errors: list[BaseException] = []
+
+    def resolve() -> None:
+        try:
+            source.set_result(None)
+        except BaseException as exc:  # noqa: BLE001 - surfaced below
+            errors.append(exc)
+
+    thread = threading.Thread(target=resolve)
+    thread.start()
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert not errors, f"resolving after the draining loop closed raised: {errors!r}"
+    assert source.done()
+
+
+def test_release_write_does_not_recurse_per_deferred_link():
+    """A long run of deferred releases must not nest one stack frame per link.
+
+    A save cancelled while queued defers its hand-off onto its predecessor, so resolving
+    the first ticket runs the second's callback, which resolves the third, and so on. Done
+    naively that is synchronous recursion: a run longer than the recursion limit raised
+    `RecursionError` on the worker thread partway through and left the destination owned
+    for the life of the process. The chain is drained in a loop instead.
+
+    Built from tickets directly so the depth can exceed the recursion limit without
+    thousands of real saves.
+    """
+    from concurrent.futures import Future as ConcurrentFuture
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    depth = 2000
+    assert depth > sys.getrecursionlimit(), "the run has to be longer than the recursion limit to prove anything"
+
+    path = Path("/nonexistent/deferred-chain.json")
+    tickets = [
+        checkpoint_module._WriteTicket(  # pyright: ignore[reportPrivateUsage]
+            path=path,
+            predecessor=None,
+            completion=ConcurrentFuture(),
+        )
+        for _ in range(depth)
+    ]
+    # Each link releases only once the one before it has.
+    for earlier, later in zip(tickets, tickets[1:]):
+        checkpoint_module._release_write_after(later, earlier.completion)  # pyright: ignore[reportPrivateUsage]
+
+    # Releasing the head must unwind the whole run.
+    checkpoint_module._release_write(tickets[0])  # pyright: ignore[reportPrivateUsage]
+
+    unresolved = [index for index, ticket in enumerate(tickets) if not ticket.completion.done()]
+    assert not unresolved, f"{len(unresolved)} links never released, first at index {unresolved[0]}"
+    assert all(ticket.released for ticket in tickets)
