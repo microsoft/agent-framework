@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import gc
 import inspect
 import json
 from collections.abc import AsyncIterator
@@ -11,6 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any
 from unittest.mock import AsyncMock, Mock, patch
+from weakref import ref
 
 import pytest
 from agent_framework import (
@@ -888,15 +891,77 @@ async def test_owned_and_borrowed_clients(client: Mock) -> None:
     assert client.close.await_count == 2
 
 
-async def test_close_remaining_clients_if_one_close_fails(client: Mock) -> None:
+@pytest.mark.parametrize("managed", [False, True])
+async def test_store_releases_closed_collections_but_retains_open_clients(managed: bool) -> None:
+    index_client = Mock(spec=SearchIndexClient)
+    index_client.get_search_client.side_effect = lambda *args, **kwargs: Mock(spec=SearchClient)
+    store = AzureAISearchStore(index_client=index_client, managed_client=managed)
+    active = store.get_collection(dict, definition=definition())
+    active_client = active.search_client
+    assert isinstance(active_client, Mock)
+    active_ref = ref(active)
+    del active
+    gc.collect()
+    assert active_ref() is not None
+
+    for _ in range(3):
+        generator = Mock()
+        async with store.get_collection(dict, definition=definition(), embedding_generator=generator) as collection:
+            collection_ref = ref(collection)
+            generator_ref = ref(generator)
+            client_ref = ref(collection.search_client)
+            assert len(store._collections) == 2
+        await collection.close()
+        assert isinstance(collection.search_client, Mock)
+        collection.search_client.close.assert_awaited_once()
+        generator.close.assert_not_called()
+        assert len(store._collections) == 1
+        del collection, generator
+        gc.collect()
+        assert collection_ref() is None
+        assert generator_ref() is None
+        assert client_ref() is None
+        active_client.close.assert_not_called()
+
+    await store.close()
+    await store.close()
+    active_client.close.assert_awaited_once()
+    assert index_client.close.await_count == int(managed)
+    assert not store._collections
+    gc.collect()
+    assert active_ref() is None
+
+
+@pytest.mark.parametrize("error", [RuntimeError, asyncio.CancelledError])
+async def test_store_releases_collection_after_close_error(client: Mock, error: type[BaseException]) -> None:
     index_client = Mock(spec=SearchIndexClient)
     index_client.get_search_client.return_value = client
+    client.close.side_effect = error("close failure")
+    store = AzureAISearchStore(index_client=index_client, managed_client=True)
+    collection = store.get_collection(dict, definition=definition())
+    with pytest.raises(error, match="close failure"):
+        await collection.close()
+    assert not store._collections
+    await collection.close()
+    await store.close()
+    client.close.assert_awaited_once()
+    index_client.close.assert_awaited_once()
+
+
+async def test_close_remaining_clients_if_one_close_fails(client: Mock) -> None:
+    index_client = Mock(spec=SearchIndexClient)
+    other_client = Mock(spec=SearchClient)
+    index_client.get_search_client.side_effect = [other_client, client]
     client.close.side_effect = RuntimeError("close failure")
     store = AzureAISearchStore(index_client=index_client, managed_client=True)
     store.get_collection(dict, definition=definition())
+    store.get_collection(dict, definition=definition())
     with pytest.raises(RuntimeError, match="close failure"):
         await store.close()
+    client.close.assert_awaited_once()
+    other_client.close.assert_awaited_once()
     index_client.close.assert_awaited_once()
+    assert not store._collections
 
 
 async def test_lifecycle_and_alias_safety(client: Mock) -> None:

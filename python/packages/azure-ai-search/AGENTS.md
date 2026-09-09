@@ -77,6 +77,9 @@ and the public AF `load_settings` / `SecretString` API with the `AZURE_SEARCH_` 
 override the selected `.env` file, which overrides the process environment. `env_file_path` and
 `env_file_encoding` are supported on both. Injected clients bypass settings entirely and reject explicit
 connection/file overrides; store-created collections reuse its resolved client without another load.
+The store tracks open collections in insertion order with constant-time removal. A collection's
+private close callback removes its registration and is cleared even when client cleanup fails;
+store shutdown still attempts all remaining owned clients without closing borrowed credentials.
 
 Keep the package exports and core `agent_framework/azure/__init__.py` / `__init__.pyi` synchronized.
 Read the package README for supported field annotations, operation options, score units, null/missing

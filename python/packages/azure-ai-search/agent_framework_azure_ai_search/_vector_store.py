@@ -9,7 +9,7 @@ import json
 import math
 import re
 from collections import Counter
-from collections.abc import AsyncIterable, Mapping, Sequence
+from collections.abc import AsyncIterable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from datetime import date
 from functools import partial
@@ -333,6 +333,7 @@ class AzureAISearchCollection(BaseVectorCollection[str, ModelT], BaseVectorSearc
         self._field_types: dict[str, str] = {}
         self._fields = self._prepare_fields()
         self._closed = False
+        self._on_close: Callable[[AzureAISearchCollection[ModelT]], None] | None = None
         self._owned_clients: list[SearchClient | SearchIndexClient] = []
         if index_client is None and search_client is None:
             index_client = _create_index_client(
@@ -512,7 +513,12 @@ class AzureAISearchCollection(BaseVectorCollection[str, ModelT], BaseVectorSearc
         """Close owned clients, but never caller-owned credentials."""
         if not self._closed:
             self._closed = True
-            await _close_clients(self._owned_clients)
+            try:
+                await _close_clients(self._owned_clients)
+            finally:
+                on_close, self._on_close = self._on_close, None
+                if on_close is not None:
+                    on_close(self)
 
     async def __aexit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
         await self.close()
@@ -957,7 +963,7 @@ class AzureAISearchStore(BaseVectorStore):
         )
         self.allow_preview = allow_preview
         self.query_source_credential = query_source_credential
-        self._collections: list[AzureAISearchCollection[Any]] = []
+        self._collections: dict[AzureAISearchCollection[Any], None] = {}
         self._closed = False
 
     def _require_open(self) -> None:
@@ -990,7 +996,8 @@ class AzureAISearchStore(BaseVectorStore):
             allow_preview=self.allow_preview,
             query_source_credential=self.query_source_credential,
         )
-        self._collections.append(collection)
+        self._collections[collection] = None
+        collection._on_close = lambda closed: self._collections.pop(closed, None)  # pyright: ignore[reportPrivateUsage]
         return collection
 
     async def list_collection_names(self, *, operation_options: Mapping[str, Any] | None = None) -> Sequence[str]:
