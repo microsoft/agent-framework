@@ -29,8 +29,8 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// <para>
 /// Redirects are handled by this handler so per-request headers are not forwarded to redirect destinations. The
 /// internally owned client disables automatic redirects. Supplied clients should also disable automatic
-/// redirects; clients with credential-bearing default headers are rejected because their redirect behavior is
-/// opaque to this handler.
+/// redirects and handle redirect responses before returning them to this handler because their redirect behavior
+/// is opaque to this handler.
 /// </para>
 /// </remarks>
 public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDisposable
@@ -140,11 +140,6 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
                 providedClient = await this._httpClientProvider(currentRequest, effectiveToken).ConfigureAwait(false);
             }
 
-            if (providedClient is not null && redirectCount > 0)
-            {
-                ThrowIfUnsafeProvidedClientHeaders(providedClient, currentRequest);
-            }
-
             HttpClient client = providedClient ?? this._ownedHttpClient.Value;
 
             using HttpRequestMessage httpRequest = BuildHttpRequestMessage(currentRequest);
@@ -155,6 +150,12 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
 
             if (TryCreateRedirectRequest(httpResponse, currentRequest, currentUri, out HttpRequestInfo? redirectRequest, out Uri? redirectUri))
             {
+                if (providedClient is not null)
+                {
+                    throw new InvalidOperationException(
+                        "DefaultHttpRequestHandler cannot safely follow redirects when using a caller-supplied HttpClient because the client's redirect behavior is opaque. Use the handler-owned client for redirect handling, or handle redirects with an origin-pinned transport before returning the response.");
+                }
+
                 currentRequest = redirectRequest;
                 currentUri = redirectUri;
                 continue;
@@ -320,33 +321,6 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
     private static bool IsHttpsToHttpRedirect(Uri currentUri, Uri redirectUri) =>
         string.Equals(currentUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
         string.Equals(redirectUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase);
-
-    private static void ThrowIfUnsafeProvidedClientHeaders(HttpClient providedClient, HttpRequestInfo request)
-    {
-        if (providedClient.DefaultRequestHeaders.Any(header => IsSensitiveHeaderName(header.Key)))
-        {
-            throw new InvalidOperationException(
-                "DefaultHttpRequestHandler cannot safely use a provided HttpClient with credential-bearing DefaultRequestHeaders because the client may forward them during automatic redirects. Configure credentials with an origin-pinning handler that disables automatic redirects.");
-        }
-
-        if (request.Headers?.Keys.Any(IsCustomCredentialHeaderName) == true)
-        {
-            throw new InvalidOperationException(
-                "DefaultHttpRequestHandler cannot safely send credential-bearing request headers through a provided HttpClient because the client may forward them during automatic redirects. Use the handler-owned client or configure an origin-pinning handler that disables automatic redirects.");
-        }
-    }
-
-    private static bool IsSensitiveHeaderName(string headerName) =>
-        string.Equals(headerName, "Authorization", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(headerName, "Proxy-Authorization", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(headerName, "Cookie", StringComparison.OrdinalIgnoreCase) ||
-        IsCustomCredentialHeaderName(headerName);
-
-    private static bool IsCustomCredentialHeaderName(string headerName) =>
-        headerName.Contains("Api-Key", StringComparison.OrdinalIgnoreCase) ||
-        headerName.Contains("Token", StringComparison.OrdinalIgnoreCase) ||
-        headerName.Contains("Secret", StringComparison.OrdinalIgnoreCase) ||
-        headerName.Contains("Credential", StringComparison.OrdinalIgnoreCase);
 
     private static HttpMethod ResolveMethod(string method)
     {

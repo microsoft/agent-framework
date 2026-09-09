@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -392,8 +393,7 @@ public sealed class DefaultHttpRequestHandlerTests
             return okResponse;
         });
 
-        using HttpClient client = new(messageHandler);
-        await using DefaultHttpRequestHandler handler = new(client);
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
         HttpRequestInfo request = new()
         {
             Method = "GET",
@@ -457,8 +457,7 @@ public sealed class DefaultHttpRequestHandlerTests
         });
 #pragma warning restore CA2025
 
-        using HttpClient client = new(messageHandler);
-        await using DefaultHttpRequestHandler handler = new(client);
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
         HttpRequestInfo request = new()
         {
             Method = "GET",
@@ -483,6 +482,7 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         List<bool> requestsWithHeader = [];
+        List<string> requestUrls = [];
         using HttpResponseMessage redirectResponse = new(HttpStatusCode.TemporaryRedirect)
         {
             Headers = { Location = new Uri("https://secondary.example.test/next") },
@@ -492,29 +492,15 @@ public sealed class DefaultHttpRequestHandlerTests
             Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
         };
 #pragma warning disable CA2025
-        TestHttpMessageHandler primaryMessageHandler = new((req, _) =>
+        TestHttpMessageHandler messageHandler = new((req, _) =>
         {
+            requestUrls.Add(req.RequestUri!.ToString());
             requestsWithHeader.Add(req.Headers.Contains("X-Trace-Id"));
-            return Task.FromResult(redirectResponse);
-        });
-        TestHttpMessageHandler secondaryMessageHandler = new((req, _) =>
-        {
-            requestsWithHeader.Add(req.Headers.Contains("X-Trace-Id"));
-            return Task.FromResult(okResponse);
+            return Task.FromResult(requestUrls.Count == 1 ? redirectResponse : okResponse);
         });
 #pragma warning restore CA2025
 
-        using HttpClient primaryClient = new(primaryMessageHandler);
-        using HttpClient secondaryClient = new(secondaryMessageHandler);
-#pragma warning disable CA2025
-        await using DefaultHttpRequestHandler handler = new((info, _) =>
-        {
-            HttpClient client = info.Url.StartsWith("https://api.example.test/", StringComparison.Ordinal)
-                ? primaryClient
-                : secondaryClient;
-            return Task.FromResult<HttpClient?>(client);
-        });
-#pragma warning restore CA2025
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
 
         HttpRequestInfo request = new()
         {
@@ -532,6 +518,7 @@ public sealed class DefaultHttpRequestHandlerTests
         // Assert
         Assert.Equal("redirected", result.Body);
         Assert.Equal([true, false], requestsWithHeader);
+        Assert.Equal([TestUrl, "https://secondary.example.test/next"], requestUrls);
     }
 
     [Fact]
@@ -561,8 +548,7 @@ public sealed class DefaultHttpRequestHandlerTests
         });
 #pragma warning restore CA2025
 
-        using HttpClient client = new(messageHandler);
-        await using DefaultHttpRequestHandler handler = new(client);
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
         HttpRequestInfo request = new()
         {
             Method = "GET",
@@ -595,8 +581,7 @@ public sealed class DefaultHttpRequestHandlerTests
         });
 #pragma warning restore CA2025
 
-        using HttpClient client = new(messageHandler);
-        await using DefaultHttpRequestHandler handler = new(client);
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
         HttpRequestInfo request = new()
         {
             Method = "POST",
@@ -654,7 +639,7 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
-    public async Task SendAsyncProviderClientRejectsScopedDefaultHeadersOnRedirectedRequestAsync()
+    public async Task SendAsyncSuppliedClientRejectsRedirectResponseAsync()
     {
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
@@ -667,18 +652,14 @@ public sealed class DefaultHttpRequestHandlerTests
             Task.FromResult(redirectResponse));
 #pragma warning restore CA2025
         using HttpClient primaryClient = new(primaryMessageHandler);
-        using HttpClient secondaryClient = new();
-        secondaryClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Client-Token", "provider-header-value");
+        primaryClient.DefaultRequestHeaders.TryAddWithoutValidation("Ocp-Apim-Subscription-Key", "provider-header-value");
 
         int providerCallCount = 0;
 #pragma warning disable CA2025
-        await using DefaultHttpRequestHandler handler = new((info, _) =>
+        await using DefaultHttpRequestHandler handler = new((_, _) =>
         {
             providerCallCount++;
-            HttpClient client = info.Url.StartsWith("https://api.example.test/", StringComparison.Ordinal)
-                ? primaryClient
-                : secondaryClient;
-            return Task.FromResult<HttpClient?>(client);
+            return Task.FromResult<HttpClient?>(primaryClient);
         });
 #pragma warning restore CA2025
 
@@ -693,8 +674,8 @@ public sealed class DefaultHttpRequestHandlerTests
 
         // Assert
         InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(actAsync);
-        Assert.Contains("DefaultRequestHeaders", exception.Message, StringComparison.Ordinal);
-        Assert.Equal(2, providerCallCount);
+        Assert.Contains("caller-supplied HttpClient", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(1, providerCallCount);
     }
 
     [Fact]
@@ -702,6 +683,8 @@ public sealed class DefaultHttpRequestHandlerTests
     {
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        List<string> providerUrls = [];
+        List<string> requestUrls = [];
         using HttpResponseMessage redirectResponse = new(HttpStatusCode.TemporaryRedirect)
         {
             Headers = { Location = new Uri("https://secondary.example.test/next") },
@@ -711,25 +694,18 @@ public sealed class DefaultHttpRequestHandlerTests
             Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
         };
 #pragma warning disable CA2025
-        TestHttpMessageHandler primaryMessageHandler = new((req, _) =>
-            Task.FromResult(redirectResponse));
-        TestHttpMessageHandler secondaryMessageHandler = new((req, _) =>
-            Task.FromResult(okResponse));
-#pragma warning restore CA2025
-
-        using HttpClient primaryClient = new(primaryMessageHandler);
-        using HttpClient secondaryClient = new(secondaryMessageHandler);
-        List<string> providerUrls = [];
-#pragma warning disable CA2025
-        await using DefaultHttpRequestHandler handler = new((info, _) =>
+        TestHttpMessageHandler messageHandler = new((req, _) =>
         {
-            providerUrls.Add(info.Url);
-            HttpClient client = info.Url.StartsWith("https://api.example.test/", StringComparison.Ordinal)
-                ? primaryClient
-                : secondaryClient;
-            return Task.FromResult<HttpClient?>(client);
+            requestUrls.Add(req.RequestUri!.ToString());
+            return Task.FromResult(requestUrls.Count == 1 ? redirectResponse : okResponse);
         });
 #pragma warning restore CA2025
+
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler, (info, _) =>
+        {
+            providerUrls.Add(info.Url);
+            return Task.FromResult<HttpClient?>(null);
+        });
 
         HttpRequestInfo request = new()
         {
@@ -745,6 +721,7 @@ public sealed class DefaultHttpRequestHandlerTests
         Assert.Equal(2, providerUrls.Count);
         Assert.Equal(TestUrl, providerUrls[0]);
         Assert.Equal("https://secondary.example.test/next", providerUrls[1]);
+        Assert.Equal(providerUrls, requestUrls);
     }
 
     #endregion
@@ -837,6 +814,16 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     #endregion
+
+    private static DefaultHttpRequestHandler CreateHandlerWithOwnedMessageHandler(
+        HttpMessageHandler ownedHttpMessageHandler,
+        Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? httpClientProvider = null)
+    {
+        DefaultHttpRequestHandler handler = new(httpClientProvider);
+        FieldInfo ownedHttpClientField = typeof(DefaultHttpRequestHandler).GetField("_ownedHttpClient", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        ownedHttpClientField.SetValue(handler, new Lazy<HttpClient>(() => new HttpClient(ownedHttpMessageHandler), LazyThreadSafetyMode.ExecutionAndPublication));
+        return handler;
+    }
 
     private sealed class TestHttpMessageHandler : HttpMessageHandler
     {
