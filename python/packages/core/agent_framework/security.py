@@ -3640,80 +3640,33 @@ def _map_mcp_annotations_to_labels(
     *,
     default_integrity: IntegrityLabel = IntegrityLabel.UNTRUSTED,
 ) -> tuple[IntegrityLabel, ConfidentialityLabel | None, bool]:
-    """Map MCP ToolAnnotations to FIDES security labels.
+    """Map untrusted MCP ToolAnnotations to restriction-only FIDES labels.
 
-    Uses the MCP hint fields (``readOnlyHint``, ``openWorldHint``)
-    to infer an appropriate ``source_integrity``,
-    ``max_allowed_confidentiality``, and ``accepts_untrusted`` flag.
-
-    Mapping rules (conservative - when in doubt, default to UNTRUSTED *source*
-    and PUBLIC-only *sink*):
-
-        * ``readOnlyHint=True`` -> ``accepts_untrusted=True`` (pure data source,
-            safe to call even when the context is tainted - it cannot exfiltrate)
-      and **no** ``max_allowed_confidentiality`` cap.
-    * ``readOnlyHint`` is anything other than ``True`` (``False`` *or* missing)
-            -> treated as a potential write / exfiltration sink:
-      ``max_allowed_confidentiality = PUBLIC`` and ``accepts_untrusted = False``.
-      This matters because real-world servers (e.g. GitHub's MCP) declare
-      ``readOnlyHint=True`` on read tools but leave the field unset on write
-      tools, so a strict ``readOnlyHint=False`` check would miss them.
-        * ``openWorldHint=True`` -> integrity ``UNTRUSTED`` (tool touches external
-            data); ``openWorldHint=False`` -> ``TRUSTED``.
-        * If ``openWorldHint`` is missing, integrity remains ``default_integrity``.
-        * All hints absent / ``None`` -> ``default_integrity`` (UNTRUSTED by default),
-      ``max_allowed_confidentiality=PUBLIC``, ``accepts_untrusted=False``.
+    Server annotations are hints, not policy authority. They may make locally
+    configured policy more restrictive, but cannot grant trust, remove the
+    PUBLIC confidentiality cap, or authorize tainted context. Consequently,
+    only ``openWorldHint=True`` changes the local default. Explicit local
+    ``annotation_overrides`` are applied by :func:`apply_mcp_security_labels`
+    before this mapper is called.
 
     Args:
         annotations: An MCP ``ToolAnnotations`` object (or ``None``).
-        default_integrity: Fallback integrity when hints are absent.
+        default_integrity: Locally configured integrity when hints do not
+            require a stricter label.
 
     Returns:
         A ``(integrity, max_confidentiality, accepts_untrusted)`` tuple.
-        ``max_confidentiality`` is ``None`` for read-only / source tools and
-        ``PUBLIC`` for sinks.  ``accepts_untrusted`` is ``True`` for read-only
-        tools that are safe to invoke in a tainted context.
+        Server annotations always retain the PUBLIC cap and reject untrusted
+        context.
     """
     if annotations is None:
-        # No annotations at all - treat as both UNTRUSTED-by-default and a
-        # potential sink (max_conf=PUBLIC). We have no signal that the tool is
-        # safe to receive PRIVATE data, so we err on the side of blocking
-        # exfiltration.
         return (default_integrity, ConfidentialityLabel.PUBLIC, False)
 
-    read_only: bool | None = getattr(annotations, "readOnlyHint", None)
     open_world: bool | None = getattr(annotations, "openWorldHint", None)
-
-    # --- Determine integrity ---
     integrity = default_integrity
-
     if open_world is True:
-        # Interacts with external entities -> untrusted data
         integrity = IntegrityLabel.UNTRUSTED
-    elif open_world is False:
-        # Closed-world tool (e.g., local memory) -> data is trusted
-        integrity = IntegrityLabel.TRUSTED
-
-    # --- Determine max_allowed_confidentiality (sink detection) ---
-    # Conservative rule: only tools that *explicitly* declare ``readOnlyHint=True``
-    # are treated as pure data sources. Everything else - including tools whose
-    # server omits the hint entirely - is treated as a potential write / sink
-    # and capped at PUBLIC confidentiality. This matters because many real
-    # servers (notably GitHub's MCP) declare ``readOnlyHint=True`` on read
-    # tools but leave *all* hints as ``None`` on their write tools
-    # (``push_files``, ``create_or_update_file``, ``create_pull_request``,
-    # ``create_repository``, ``merge_pull_request``, ...). Without this default,
-    # those write tools would bypass the exfiltration gate entirely.
-    max_confidentiality: ConfidentialityLabel | None = None
-    if read_only is not True:
-        max_confidentiality = ConfidentialityLabel.PUBLIC
-
-    # --- Determine accepts_untrusted ---
-    # Read-only tools are pure data sources; they cannot exfiltrate data,
-    # so they are safe to call even when the agent context is tainted.
-    accepts_untrusted = read_only is True
-
-    return (integrity, max_confidentiality, accepts_untrusted)
+    return (integrity, ConfidentialityLabel.PUBLIC, False)
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
@@ -3726,13 +3679,15 @@ async def apply_mcp_security_labels(
 ) -> None:
     """Auto-assign FIDES security labels to every tool loaded from an MCP server.
 
-    Reads the MCP ``ToolAnnotations`` hints (``readOnlyHint``, ``openWorldHint``)
-    that the server advertises for
-    each tool and translates them into ``source_integrity`` and
-    ``max_allowed_confidentiality`` entries in each ``FunctionTool``'s
+    Reads the MCP ``ToolAnnotations`` hints that the server advertises for
+    each tool and translates them into restriction-only ``source_integrity``
+    and ``max_allowed_confidentiality`` entries in each ``FunctionTool``'s
     ``additional_properties``.  The existing
     :class:`LabelTrackingFunctionMiddleware` picks these up automatically
     (Tier 2 label propagation), so **no middleware changes are needed**.
+
+    Server annotations cannot relax local policy. Use ``annotation_overrides``
+    for explicit local per-tool label authority.
 
     Call this **after** the ``MCPTool`` is connected (tools already loaded).
 
@@ -3820,8 +3775,7 @@ async def apply_mcp_security_labels(
         if mark_write_tools_as_sinks and max_conf is not None:
             props["max_allowed_confidentiality"] = max_conf.value
 
-        # Allow read-only tools to execute even when context is tainted;
-        # explicitly block write tools in untrusted contexts.
+        # Server annotations cannot authorize tainted input.
         props["accepts_untrusted"] = accepts_untrusted
 
         logger.info(
@@ -3876,17 +3830,11 @@ def _label_from_mcp_meta(meta: Any) -> ContentLabel | None:
 def _stamp_mcp_content_labels(contents: Any, static_label: ContentLabel) -> Any:
     """Stamp ``security_label`` on each Content in an MCP tool result.
 
-    The per-item label is sourced from ``additional_properties["_meta"]``
-    (set by :meth:`MCPTool._parse_tool_result_from_mcp`) when the server
-    provided a parseable ``ifc`` payload; otherwise ``static_label`` is used.
-    The sentinel ``_meta`` key is consumed (removed) regardless
-    so downstream layers don't re-process it.
-
-    By design the server-supplied label always wins over the static label.
-    Composition-time invariants (e.g. confidentiality ceilings on write
-    tools) are still enforced by :class:`LabelTrackingFunctionMiddleware`
-    and :class:`PolicyEnforcementFunctionMiddleware` via the standard
-    label-combination semantics.
+    A parseable server label from ``additional_properties["_meta"]`` can only
+    restrict ``static_label`` through standard FIDES label combination. The
+    local label is used unchanged when metadata is missing or malformed. The
+    sentinel ``_meta`` key is consumed regardless so downstream layers do not
+    re-process it.
     """
     if not isinstance(contents, list):
         return contents
@@ -3897,7 +3845,7 @@ def _stamp_mcp_content_labels(contents: Any, static_label: ContentLabel) -> Any:
         props = item.additional_properties or {}
         server_meta = props.pop(_MCP_RESULT_META_KEY, None)
         dynamic = _label_from_mcp_meta(server_meta) if server_meta else None
-        label = dynamic or static_label
+        label = combine_labels(static_label, dynamic) if dynamic is not None else static_label
         props["security_label"] = label.to_dict()
         item.additional_properties = props
     return contents_list
@@ -4145,8 +4093,8 @@ class SecureMCPToolProxy:
         # After static labels are stamped on each FunctionTool, install a
         # per-tool wrapper that consumes any server-provided ``_meta.ifc``
         # payload propagated by MCPTool and translates it into per-Content
-        # ``security_label`` entries.  The server-supplied label always wins
-        # over the static label; the static label is the fallback when the
-        # server omits ``_meta`` (or it cannot be parsed).
+        # ``security_label`` entries. Server labels can restrict the static
+        # label but cannot relax it; the static label is the fallback when
+        # ``_meta`` is missing or cannot be parsed.
         for func_tool in getattr(self._mcp_tool, "functions", []):
             _wrap_mcp_function_for_ifc(func_tool, self._default_integrity)
