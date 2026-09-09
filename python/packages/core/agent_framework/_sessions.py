@@ -832,7 +832,7 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
     idx = _index_approval_occurrences(messages)
     keep_ids: set[int] = set()
 
-    response_ids = {r.content.id for r in idx.responses if r.content.id is not None}
+    response_ids = {r.content.id for r in (*idx.responses, *idx.hosted_responses) if r.content.id is not None}
 
     request_pos_by_id: dict[str, tuple[int, int]] = {
         req.content.id: (req.msg_idx, req.content_idx) for req in idx.requests if req.content.id is not None

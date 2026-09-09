@@ -2526,7 +2526,7 @@ def _pop_already_approved_approval_responses(
 class _ApprovalOccurrence:
     msg_idx: int
     content_idx: int
-    call_id: str
+    call_id: str | None
     content: Content
 
 
@@ -2555,15 +2555,18 @@ def _index_approval_occurrences(messages: Sequence[Message]) -> _ApprovalIndex:
         for content_idx, content in enumerate(message.contents):
             if content.type == "function_approval_request":
                 fc = content.function_call
-                if content.id is not None and fc is not None and fc.call_id is not None:
-                    requests.append(_ApprovalOccurrence(msg_idx, content_idx, fc.call_id, content))
+                if content.id is None:
+                    continue
+                call_id = fc.call_id if fc is not None else None
+                requests.append(_ApprovalOccurrence(msg_idx, content_idx, call_id, content))
                 continue
             if content.type == "function_approval_response":
                 fc = content.function_call
-                if content.id is None or fc is None or fc.call_id is None:
+                if content.id is None:
                     continue
+                call_id = fc.call_id if fc is not None else None
                 bucket = hosted if _is_hosted_tool_approval(content) else responses
-                bucket.append(_ApprovalOccurrence(msg_idx, content_idx, fc.call_id, content))
+                bucket.append(_ApprovalOccurrence(msg_idx, content_idx, call_id, content))
                 continue
             if content.call_id is None:
                 continue
@@ -2617,7 +2620,9 @@ def _collect_approval_responses(messages: list[Message]) -> dict[str, Content]:
 
 def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[Content]:
     idx = _index_approval_occurrences(messages)
-    answered_ids: set[str] = {r.content.id for r in idx.responses if r.content.id is not None}
+    answered_ids: set[str] = {
+        r.content.id for r in (*idx.responses, *idx.hosted_responses) if r.content.id is not None
+    }
     for req in idx.requests:
         req_pos = (req.msg_idx, req.content_idx)
         for bucket in (idx.terminal_results, idx.follow_ups):
