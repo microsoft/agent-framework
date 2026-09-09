@@ -18,6 +18,7 @@ import pickle
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -285,6 +286,22 @@ async def test_file_storage_blocks_unlisted_user_type():
         load_storage = FileCheckpointStorage(tmpdir)
         with pytest.raises(WorkflowCheckpointException, match="deserialization blocked"):
             await load_storage.load(checkpoint.checkpoint_id)
+
+
+async def test_file_storage_rejects_unlisted_user_type_at_save():
+    """Issue #8181: same storage must refuse to save what it cannot restore."""
+    from agent_framework import WorkflowCheckpoint
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = FileCheckpointStorage(tmpdir)
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="test",
+            graph_signature_hash="hash",
+            state={"data": _AllowedTestState(name="test", value=1)},
+        )
+        with pytest.raises(WorkflowCheckpointException, match="deserialization blocked|Unable to save|cannot be restored"):
+            await storage.save(checkpoint)
+        assert list(Path(tmpdir).glob("*.json")) == []
 
 
 async def test_file_storage_allows_listed_user_type():

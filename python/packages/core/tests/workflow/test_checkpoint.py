@@ -1289,6 +1289,43 @@ async def test_file_checkpoint_storage_corrupted_file():
         assert checkpoints == []
 
 
+async def test_file_checkpoint_storage_load_invalid_json_raises():
+    """Issue #8181: load wraps JSONDecodeError as WorkflowCheckpointException."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        bad_id = "bad-json-checkpoint"
+        bad_file = Path(temp_dir) / f"{bad_id}.json"
+        with open(bad_file, "w") as f:  # noqa: ASYNC230
+            f.write("{ not json")
+        with pytest.raises(WorkflowCheckpointException, match="not valid JSON"):
+            await storage.load(bad_id)
+
+
+async def test_file_checkpoint_storage_list_ids_matches_list_decode_filter():
+    """Issue #8181: list_checkpoint_ids skips undecodable files like list_checkpoints."""
+    from tests.workflow.test_checkpoint_unrestricted_pickle import _AllowedTestState
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        type_key = f"{_AllowedTestState.__module__}:{_AllowedTestState.__qualname__}"
+        writer = FileCheckpointStorage(temp_dir, allowed_checkpoint_types=[type_key])
+        good = WorkflowCheckpoint(workflow_name="wf-a", graph_signature_hash="h")
+        await writer.save(good)
+        blocked = WorkflowCheckpoint(
+            workflow_name="wf-a",
+            graph_signature_hash="h",
+            checkpoint_id="orphan-blocked",
+            state={"x": _AllowedTestState(name="x", value=1)},
+        )
+        await writer.save(blocked)
+
+        reader = FileCheckpointStorage(temp_dir)  # no allow list
+        listed = await reader.list_checkpoints(workflow_name="wf-a")
+        ids = await reader.list_checkpoint_ids(workflow_name="wf-a")
+        assert [c.checkpoint_id for c in listed] == ids
+        assert "orphan-blocked" not in ids
+        assert good.checkpoint_id in ids
+
+
 async def test_file_checkpoint_storage_json_serialization():
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
