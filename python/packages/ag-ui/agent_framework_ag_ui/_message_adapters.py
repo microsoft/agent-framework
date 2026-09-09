@@ -1012,19 +1012,55 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
     return result
 
 
-def _encode_agui_segment(contents: list[Content]) -> tuple[str, list[dict[str, Any]]]:
-    """Encode assistant contents into an AG-UI ``(content, tool_calls)`` pair.
+def _convert_framework_content_to_agui(content: Content) -> dict[str, Any] | None:
+    """Convert Agent Framework media content to an AG-UI input part."""
+    if content.type not in {"uri", "data"} or not content.uri:
+        return None
 
-    Shared by both the single-message path (``agent_framework_messages_to_agui``) and the
-    split path (``_split_mixed_message_to_agui``) so the text / function_call
-    serialization lives in one place. A future argument-format or supported-content
-    change then updates both paths at once instead of drifting between them.
+    media_type = content.media_type
+    media_type_prefix = media_type.lower().split("/", 1)[0] if media_type else ""
+    part_type = media_type_prefix if media_type_prefix in {"image", "audio", "video"} else "document"
+
+    if content.type == "data":
+        data_uri_prefix, separator, encoded_data = content.uri.partition(",")
+        is_base64_data_uri = bool(separator) and any(
+            parameter.lower() == "base64" for parameter in data_uri_prefix.split(";")[1:]
+        )
+        if is_base64_data_uri:
+            source: dict[str, Any] = {"type": "data", "value": encoded_data}
+        else:
+            source = {"type": "url", "value": content.uri}
+    else:
+        source = {"type": "url", "value": content.uri}
+
+    if media_type is not None:
+        source["mimeType"] = media_type
+    return {"type": part_type, "source": source}
+
+
+def _encode_agui_segment(
+    contents: list[Content], role: str
+) -> tuple[str | list[dict[str, Any]], list[dict[str, Any]]]:
+    """Encode a framework content segment into AG-UI message content and tool calls.
+
+    The shared encoder preserves ordered user text and media parts for both the
+    single-message and function-result split paths. Non-user messages retain AG-UI's
+    string-content shape.
     """
     text = ""
+    input_content_parts: list[dict[str, Any]] = []
+    has_multimodal_content = False
     tool_calls: list[dict[str, Any]] = []
     for content in contents:
         if content.type == "text":
-            text += content.text or ""
+            text_content = content.text or ""
+            text += text_content
+            if role == "user":
+                input_content_parts.append({"type": "text", "text": text_content})
+        elif role == "user" and content.type in {"uri", "data"}:
+            if input_part := _convert_framework_content_to_agui(content):
+                input_content_parts.append(input_part)
+                has_multimodal_content = True
         elif content.type == "function_call":
             tool_calls.append(
                 {
@@ -1036,7 +1072,8 @@ def _encode_agui_segment(contents: list[Content]) -> tuple[str, list[dict[str, A
                     },
                 }
             )
-    return text, tool_calls
+    message_content: str | list[dict[str, Any]] = input_content_parts if has_multimodal_content else text
+    return message_content, tool_calls
 
 
 def _split_mixed_message_to_agui(msg: Message, role: str, unresolved_call_ids: set[str]) -> list[dict[str, Any]]:
@@ -1099,7 +1136,7 @@ def _split_mixed_message_to_agui(msg: Message, role: str, unresolved_call_ids: s
         nonlocal seg_contents, seg_has_call
         if not seg_contents:
             return
-        seg_text, seg_tool_calls = _encode_agui_segment(seg_contents)
+        seg_text, seg_tool_calls = _encode_agui_segment(seg_contents, role)
         seg_contents = []
         seg_has_call = False
         seg_call_ids.clear()
@@ -1133,7 +1170,7 @@ def _split_mixed_message_to_agui(msg: Message, role: str, unresolved_call_ids: s
         queued_results.clear()
 
     for content in msg.contents:
-        if content.type in ("text", "function_call"):
+        if content.type in ("text", "function_call") or (role == "user" and content.type in {"uri", "data"}):
             seg_contents.append(content)
             if content.type == "function_call":
                 seg_has_call = True
@@ -1238,12 +1275,12 @@ def agent_framework_messages_to_agui(messages: list[Message] | list[dict[str, An
             result.extend(_split_mixed_message_to_agui(msg, role, unresolved_call_ids))
             continue
 
-        content_text, tool_calls = _encode_agui_segment(msg.contents)
+        message_content, tool_calls = _encode_agui_segment(msg.contents, role)
 
         agui_msg: dict[str, Any] = {
             "id": msg.message_id if msg.message_id else generate_event_id(),  # Always include id
             "role": role,
-            "content": content_text,
+            "content": message_content,
         }
 
         if tool_calls:

@@ -19,7 +19,7 @@ from ._snapshots import (
     SnapshotScope,
     SnapshotScopeResolver,
 )
-from ._state import state_update
+from ._state import state_carrier, state_update
 from ._types import AgentState, AGUIChatOptions, AGUIRequest, PredictStateConfig, RunMetadata
 from ._workflow import AgentFrameworkWorkflow, WorkflowFactory
 
@@ -55,6 +55,7 @@ __all__ = [
     "SnapshotScopeResolver",
     "DEFAULT_MAX_THREAD_SNAPSHOTS",
     "DEFAULT_TAGS",
+    "state_carrier",
     "state_update",
     "__version__",
     # A2UI (lazy — require ag-ui-a2ui-toolkit)

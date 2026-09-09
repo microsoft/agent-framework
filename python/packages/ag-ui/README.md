@@ -239,11 +239,13 @@ Review focus: whether these names are the right stable contract for Python users
 
 | Surface | Public exports |
 | --- | --- |
-| `agent_framework.ag_ui` facade | `AgentFrameworkAgent`, `AgentFrameworkWorkflow`, `AGUIChatClient`, `AGUIEventConverter`, `AGUIHttpService`, `AGUIThreadSnapshot`, `AGUIThreadSnapshotStore`, `InMemoryAGUIThreadSnapshotStore`, `SnapshotScopeResolver`, `add_agent_framework_fastapi_endpoint`, `state_update`, `__version__` |
+| `agent_framework.ag_ui` facade | `AgentFrameworkAgent`, `AgentFrameworkWorkflow`, `AGUIChatClient`, `AGUIEventConverter`, `AGUIHttpService`, `AGUIThreadSnapshot`, `AGUIThreadSnapshotStore`, `InMemoryAGUIThreadSnapshotStore`, `SnapshotScopeResolver`, `add_agent_framework_fastapi_endpoint`, `state_carrier`, `state_update`, `__version__` |
 | Direct `agent_framework_ag_ui` package | Facade exports plus `AGUIChatOptions`, `AGUIRequest`, `AGUIThreadID`, `AgentState`, `DEFAULT_MAX_THREAD_SNAPSHOTS`, `DEFAULT_TAGS`, `PredictStateConfig`, `RunMetadata`, `SnapshotScope`, `WorkflowFactory` |
 | AG-UI protocol package (`ag_ui.core`) | `Interrupt`, `ResumeEntry`, `RunFinishedInterruptOutcome`, and related run outcome models |
 
 Interrupt support is protocol data rather than a separate Agent Framework Python class. Requests accept canonical `availableInterrupts`/`available_interrupts` and `resume` values; `AGUIChatClient` and `AGUIHttpService.post_run(...)` forward those fields with AG-UI wire aliases; agent approval and workflow `request_info` pauses emit `RUN_FINISHED.outcome.interrupts`; `AGUIEventConverter` preserves canonical interrupt outcome metadata on the final `ChatResponseUpdate`; and thread snapshot hydration replays the canonical interrupt outcome when a scoped snapshot stores an unresolved pause.
+
+Use `state_carrier(...)` to mark JSON content that should be sent in the AG-UI request's `state` field rather than as a model-visible document. The client removes explicitly marked carriers from all client-controlled history and uses the most recent carrier. Ordinary `application/json` content remains a document. For migration, pass `allow_legacy_state_carrier=True` in `AGUIChatOptions` to recognize the deprecated final single-content base64 JSON convention; mixed text and document messages remain model-visible. This client-only option emits a `DeprecationWarning` when the legacy convention is used and is not sent to the remote server.
 
 ## Features
 

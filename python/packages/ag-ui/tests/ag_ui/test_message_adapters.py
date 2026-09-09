@@ -59,6 +59,110 @@ def test_agent_framework_to_agui_basic(sample_agent_framework_message):
     assert messages[0]["id"] == "msg-123"
 
 
+def test_agent_framework_to_agui_preserves_uri_content():
+    """URI content is serialized as an ordered AG-UI input content part."""
+    message = Message(
+        role="user",
+        contents=[Content.from_uri("https://example.com/cat.png", media_type="image/png")],
+        message_id="msg-uri",
+    )
+
+    assert agent_framework_messages_to_agui([message]) == [
+        {
+            "id": "msg-uri",
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "url",
+                        "value": "https://example.com/cat.png",
+                        "mimeType": "image/png",
+                    },
+                }
+            ],
+        }
+    ]
+
+
+def test_agent_framework_to_agui_converts_data_uri_to_inline_data_source():
+    """Inline data content is serialized as an AG-UI data source."""
+    message = Message(
+        role="user",
+        contents=[Content.from_data(b"abc", media_type="image/png")],
+        message_id="msg-data",
+    )
+
+    assert agent_framework_messages_to_agui([message])[0]["content"] == [
+        {
+            "type": "image",
+            "source": {"type": "data", "value": "YWJj", "mimeType": "image/png"},
+        }
+    ]
+
+
+def test_agent_framework_to_agui_preserves_non_base64_data_uri_as_url_source():
+    """Non-base64 data URIs remain complete URL sources for AG-UI."""
+    data_uri = "data:text/plain,hello%20world"
+    message = Message(
+        role="user",
+        contents=[Content.from_uri(data_uri, media_type="text/plain")],
+        message_id="msg-data-uri",
+    )
+
+    assert agent_framework_messages_to_agui([message])[0]["content"] == [
+        {
+            "type": "document",
+            "source": {"type": "url", "value": data_uri, "mimeType": "text/plain"},
+        }
+    ]
+
+
+def test_agent_framework_to_agui_preserves_mixed_content_order():
+    """Mixed text and media content remains in its original order."""
+    message = Message(
+        role="user",
+        contents=[
+            Content.from_text("before"),
+            Content.from_uri("https://example.com/cat.png", media_type="image/png"),
+            Content.from_text("after"),
+            Content.from_data(b"abc", media_type="application/pdf"),
+        ],
+        message_id="msg-mixed",
+    )
+
+    assert agent_framework_messages_to_agui([message])[0]["content"] == [
+        {"type": "text", "text": "before"},
+        {
+            "type": "image",
+            "source": {
+                "type": "url",
+                "value": "https://example.com/cat.png",
+                "mimeType": "image/png",
+            },
+        },
+        {"type": "text", "text": "after"},
+        {
+            "type": "document",
+            "source": {"type": "data", "value": "YWJj", "mimeType": "application/pdf"},
+        },
+    ]
+
+
+def test_agent_framework_to_agui_keeps_assistant_content_as_text():
+    """Assistant messages keep AG-UI's string content shape when media is present."""
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text("answer"),
+            Content.from_uri("https://example.com/cat.png", media_type="image/png"),
+        ],
+        message_id="msg-assistant",
+    )
+
+    assert agent_framework_messages_to_agui([message])[0]["content"] == "answer"
+
+
 def test_marked_mcp_snapshot_restores_lossless_model_items():
     """Inbound replay restores media and provider-visible data but excludes Host-only metadata."""
     host_payload = {
