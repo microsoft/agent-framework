@@ -53,10 +53,19 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
         IChatClient chatClient,
         IList<AIFunction>? functions,
         ChatClientPromptAgentFactoryOptions options) :
-        base(options?.Engine, options?.Configuration, options?.AllowedConfigurationVariables, options?.MaximumExpressionLength, options?.MaximumCallDepth)
+        this(chatClient, functions, ValidateOptions(options), isValidated: true)
     {
+    }
+
+    private ChatClientPromptAgentFactory(
+        IChatClient chatClient,
+        IList<AIFunction>? functions,
+        ChatClientPromptAgentFactoryOptions options,
+        bool isValidated) :
+        base(options.Engine, options.Configuration, options.AllowedConfigurationVariables, options.MaximumExpressionLength, options.MaximumCallDepth)
+    {
+        _ = isValidated;
         Throw.IfNull(chatClient);
-        Throw.IfNull(options);
 
         this._chatClient = chatClient;
         this._functions = functions;
@@ -87,6 +96,9 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
     private readonly IChatClient _chatClient;
     private readonly IList<AIFunction>? _functions;
     private readonly ILoggerFactory? _loggerFactory;
+
+    private static ChatClientPromptAgentFactoryOptions ValidateOptions(ChatClientPromptAgentFactoryOptions? options) =>
+        Throw.IfNull(options);
     #endregion
 }
 
