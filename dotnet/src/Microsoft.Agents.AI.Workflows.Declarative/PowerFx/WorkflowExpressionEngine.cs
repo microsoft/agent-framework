@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.ObjectModel.Abstractions;
@@ -11,7 +12,6 @@ using Microsoft.Agents.ObjectModel.Exceptions;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
-using System.Text.RegularExpressions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 
@@ -335,7 +335,7 @@ internal sealed class WorkflowExpressionEngine
             throw new DeclarativeActionException(errorValue.Format());
         }
 
-        return new(result, GetSensitivity(expression));
+        return new(result, this.GetSensitivity(expression));
     }
 
     private SensitivityLevel GetSensitivity(ExpressionBase expression)

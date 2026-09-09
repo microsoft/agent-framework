@@ -9,7 +9,6 @@ using System.Threading.Tasks;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.Configuration;
 using Microsoft.PowerFx;
-using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
