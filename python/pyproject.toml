@@ -28,7 +28,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "uv==0.12.7",
+    "uv==0.12.9",
     "flit==4.0.2",
     "ruff==0.16.5",
     "pytest==9.1.1",
@@ -48,7 +48,7 @@ dev = [
     "poethepoet==0.48.0",
     "rich>=13.7.1,<16.0.0",
     "tomli==2.4.1",
-    "prek==0.5.0",
+    "prek==0.5.2",
 ]
 test = [
     "azure-monitor-opentelemetry",
