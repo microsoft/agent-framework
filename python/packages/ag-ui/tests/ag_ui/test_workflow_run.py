@@ -117,6 +117,7 @@ def test_attach_checkpoint_id_to_interrupts_setdefault() -> None:
 async def test_pause_checkpoint_id_ignores_competing_shared_latest() -> None:
     """Prefer this runner's pause checkpoint over a newer shared get_latest() winner."""
     from agent_framework import WorkflowCheckpoint
+
     from agent_framework_ag_ui._workflow_run import (
         _build_run_finished_with_checkpointed_interrupts,
         _pause_checkpoint_id_for_interrupts,
@@ -140,7 +141,7 @@ async def test_pause_checkpoint_id_ignores_competing_shared_latest() -> None:
         @response_handler
         async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
             del original_request, response
-            await ctx.yield_output("done")  # type: ignore[arg-type]
+            await ctx.yield_output("done")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     storage = InMemoryCheckpointStorage()
     workflow = WorkflowBuilder(start_executor=ApprovalExecutor(), checkpoint_storage=storage).build()
@@ -208,7 +209,7 @@ async def test_builder_checkpoint_storage_attaches_id_without_run_arg() -> None:
         @response_handler
         async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
             del original_request, response
-            await ctx.yield_output("done")  # type: ignore[arg-type]
+            await ctx.yield_output("done")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     storage = InMemoryCheckpointStorage()
     workflow = WorkflowBuilder(start_executor=ApprovalExecutor(), checkpoint_storage=storage).build()
