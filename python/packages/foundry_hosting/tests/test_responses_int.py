@@ -737,7 +737,7 @@ class TestReasoningHostedMcpReplay:
         transport = _OPENAI_HTTPX.MockTransport(foundry_responses_boundary)
         responses_client = AsyncOpenAI(
             api_key="test-key",
-            http_client=DefaultAsyncHttpxClient(transport=cast(Any, transport)),
+            http_client=DefaultAsyncHttpxClient(transport=transport),
             max_retries=0,
         )
         project_client = MagicMock()
