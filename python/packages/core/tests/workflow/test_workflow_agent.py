@@ -901,8 +901,8 @@ class TestWorkflowAgent:
 
         @executor
         async def custom_reason_executor(
-            messages: list[Message], ctx: WorkflowContext[Never, AgentResponseUpdate]
-        ) -> None:  # type: ignore[valid-type]  # noqa: E501
+            messages: list[Message], ctx: WorkflowContext[Any, AgentResponseUpdate]
+        ) -> None:
             await ctx.yield_output(
                 AgentResponseUpdate(
                     contents=[Content.from_text(text="payload")],
@@ -933,8 +933,8 @@ class TestWorkflowAgent:
 
         @executor
         async def empty_props_executor(
-            messages: list[Message], ctx: WorkflowContext[Never, AgentResponseUpdate]
-        ) -> None:  # type: ignore[valid-type]  # noqa: E501
+            messages: list[Message], ctx: WorkflowContext[Any, AgentResponseUpdate]
+        ) -> None:
             await ctx.yield_output(
                 AgentResponseUpdate(
                     contents=[Content.from_text(text="payload")],
