@@ -204,6 +204,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     [InlineData(typeof(InvokeAIBuilderModelAction.Builder))]
     [InlineData(typeof(InvokeConnectorAction.Builder))]
     [InlineData(typeof(InvokeMcpToolAction.Builder))]
+    [InlineData(typeof(VoiceAuthenticate.Builder))]
     [InlineData(typeof(InvokeCustomModelAction.Builder))]
     [InlineData(typeof(InvokeFlowAction.Builder))]
     [InlineData(typeof(InvokeSkillAction.Builder))]
