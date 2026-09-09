@@ -1571,10 +1571,7 @@ class Content:
             and ("reasoning_text" in self.additional_properties) != ("reasoning_text" in other.additional_properties)
         ):
             raise AdditionItemMismatch("Cannot merge reasoning text with a reasoning summary")
-        if self.text is None and other.text is None:
-            combined_text = None
-        else:
-            combined_text = self_text + other_text
+        combined_text = None if self.text is None and other.text is None else self_text + other_text
 
         # Handle protected_data replacement
         protected_data = other.protected_data if other.protected_data is not None else self.protected_data
