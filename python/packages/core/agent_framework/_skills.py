@@ -320,23 +320,22 @@ class _FileSkillResource(SkillResource):
         Raises:
             ValueError: If the resource file does not exist.
         """
+        return await asyncio.to_thread(self._read_validated_resource)
 
-        def read_validated_resource() -> str:
-            validated_path = self.full_path
-            if self._scope is not None:
-                validated_path = FileSkillsSource._validate_file_path_for_use(  # pyright: ignore[reportPrivateUsage]
-                    self._scope,
-                    self.full_path,
-                    self.name,
-                    "Resource",
-                )
-            elif not Path(self.full_path).is_file():
-                raise ValueError(f"Resource file '{self.name}' not found at '{self.full_path}'.")
+    def _read_validated_resource(self) -> str:
+        validated_path = self.full_path
+        if self._scope is not None:
+            validated_path = FileSkillsSource._validate_file_path_for_use(  # pyright: ignore[reportPrivateUsage]
+                self._scope,
+                self.full_path,
+                self.name,
+                "Resource",
+            )
+        elif not Path(self.full_path).is_file():
+            raise ValueError(f"Resource file '{self.name}' not found at '{self.full_path}'.")
 
-            logger.info("Reading resource '%s' from '%s'", self.name, self.full_path)
-            return Path(validated_path).read_text(encoding="utf-8")
-
-        return await asyncio.to_thread(read_validated_resource)
+        logger.info("Reading resource '%s' from '%s'", self.name, self.full_path)
+        return Path(validated_path).read_text(encoding="utf-8")
 
 
 class SkillScript(ABC):
