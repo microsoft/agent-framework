@@ -4,13 +4,12 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
-using System.Text.RegularExpressions;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Agents.ObjectModel.Exceptions;
 using Microsoft.PowerFx;
-using Microsoft.PowerFx.Core.Texl.Intellisense;
+using Microsoft.PowerFx.Syntax;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
@@ -18,23 +17,6 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 
 internal sealed class WorkflowExpressionEngine
 {
-    private static readonly TokenType[] s_nonReferenceTokenTypes =
-    [
-        TokenType.BoolLit,
-        TokenType.Comment,
-        TokenType.DecLit,
-        TokenType.Delimiter,
-        TokenType.Function,
-        TokenType.NumLit,
-        TokenType.StrLit,
-        TokenType.UnaryOp,
-        TokenType.BinaryOp,
-        TokenType.VariadicOp,
-        TokenType.Punctuator,
-        TokenType.Self,
-        TokenType.Parent,
-    ];
-
     private readonly WorkflowFormulaState _state;
 
     public WorkflowExpressionEngine(WorkflowFormulaState state)
@@ -366,27 +348,111 @@ internal sealed class WorkflowExpressionEngine
             return SensitivityLevel.None;
         }
 
-        TokenTextSpan[] tokens = this._state.Engine.Check(expressionText).GetTextTokens(s_nonReferenceTokenTypes).ToArray();
+        CheckResult checkResult = this._state.Engine.Check(expressionText);
+        checkResult.ThrowOnErrors();
 
         SensitivityLevel sensitivity = SensitivityLevel.None;
-        for (int index = 0; index < tokens.Length; index++)
+        foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(checkResult.Parse.Root))
         {
-            TokenTextSpan token = tokens[index];
-            if (index + 1 < tokens.Length && IsDotSeparated(token, tokens[index + 1]))
-            {
-                TokenTextSpan nameToken = tokens[index + 1];
-                sensitivity = MaxSensitivity(sensitivity, this._state.GetSensitivity(nameToken.TokenName, token.TokenName));
-                index++;
-                continue;
-            }
-
-            sensitivity = MaxSensitivity(sensitivity, this._state.GetSensitivity(token.TokenName));
+            sensitivity = MaxSensitivity(sensitivity, this._state.GetSensitivity(reference.VariableName, reference.ScopeName));
         }
 
         return sensitivity;
     }
 
-    private static bool IsDotSeparated(TokenTextSpan left, TokenTextSpan right) => left.EndIndex < right.StartIndex && right.StartIndex - left.EndIndex <= 1;
+    private static IEnumerable<(string? ScopeName, string VariableName)> GetVariableReferences(TexlNode node)
+    {
+        switch (node)
+        {
+            case DottedNameNode dottedNameNode:
+                if (TryGetDottedReference(dottedNameNode, out (string? ScopeName, string VariableName) dottedReference))
+                {
+                    yield return dottedReference;
+                }
+                else
+                {
+                    foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(dottedNameNode.Left))
+                    {
+                        yield return reference;
+                    }
+                }
+                yield break;
+
+            case FirstNameNode firstNameNode:
+                yield return (null, firstNameNode.Ident.Name.Value);
+                yield break;
+
+            case AsNode asNode:
+                foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(asNode.Left))
+                {
+                    yield return reference;
+                }
+                yield break;
+
+            case BinaryOpNode binaryOpNode:
+                foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(binaryOpNode.Left))
+                {
+                    yield return reference;
+                }
+                foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(binaryOpNode.Right))
+                {
+                    yield return reference;
+                }
+                yield break;
+
+            case UnaryOpNode unaryOpNode:
+                foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(unaryOpNode.Child))
+                {
+                    yield return reference;
+                }
+                yield break;
+
+            case CallNode callNode:
+                foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(callNode.Args))
+                {
+                    yield return reference;
+                }
+                yield break;
+
+            case VariadicBase variadicBase:
+                foreach (TexlNode childNode in variadicBase.ChildNodes)
+                {
+                    foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(childNode))
+                    {
+                        yield return reference;
+                    }
+                }
+                yield break;
+        }
+    }
+
+    private static bool TryGetDottedReference(DottedNameNode dottedNameNode, out (string? ScopeName, string VariableName) reference)
+    {
+        List<string> names = [];
+        TexlNode node = dottedNameNode;
+        while (node is DottedNameNode current)
+        {
+            names.Add(current.Right.Name.Value);
+            node = current.Left;
+        }
+
+        if (node is FirstNameNode firstNameNode)
+        {
+            names.Add(firstNameNode.Ident.Name.Value);
+        }
+
+        names.Reverse();
+        if (names.Count == 0)
+        {
+            reference = default;
+            return false;
+        }
+
+        reference = names.Count > 1 && VariableScopeNames.IsValidName(names[0])
+            ? (names[0], names[1])
+            : (null, names[0]);
+        return true;
+    }
 
     private static SensitivityLevel MaxSensitivity(SensitivityLevel left, SensitivityLevel right) =>
         left == SensitivityLevel.Sensitive || right == SensitivityLevel.Sensitive ? SensitivityLevel.Sensitive : SensitivityLevel.None;
