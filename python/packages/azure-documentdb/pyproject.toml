@@ -1,0 +1,66 @@
+[project]
+name = "agent-framework-azure-documentdb"
+description = "Azure DocumentDB vector stores for Microsoft Agent Framework."
+authors = [{ name = "Microsoft", email = "af-support@microsoft.com" }]
+readme = "README.md"
+requires-python = ">=3.10"
+version = "1.0.0a260909"
+license-files = ["LICENSE"]
+urls.homepage = "https://aka.ms/agent-framework"
+urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
+urls.issues = "https://github.com/microsoft/agent-framework/issues"
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+dependencies = [
+    "agent-framework-core>=1.17.0,<2",
+    "pymongo>=4.13,<5",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q -r fEX"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+timeout = 120
+markers = [
+    "flaky: marks tests that depend on external services",
+    "integration: requires an explicitly authorized Azure DocumentDB test database",
+]
+
+[tool.ruff]
+extend = "../../pyproject.toml"
+
+[tool.ruff.lint.per-file-ignores]
+"samples/**" = ["D", "INP", "commented-out-code", "RUF", "S", "print", "CPY"]
+"tests/**" = ["D", "INP", "TD", "commented-out-code", "RUF", "S"]
+
+[tool.coverage.run]
+omit = ["**/__init__.py"]
+
+[tool.pyright]
+extends = "../../pyproject.toml"
+include = ["agent_framework_azure_documentdb"]
+
+[tool.poe]
+executor.type = "uv"
+include = "../../shared_tasks.toml"
+
+[tool.poe.tasks.test]
+cmd = 'pytest -m "not integration" --cov=agent_framework_azure_documentdb --cov-report=term-missing:skip-covered tests'
+
+[tool.poe.tasks.test-integration]
+cmd = "pytest -m integration tests"
+
+[build-system]
+requires = ["flit-core>=3.11,<4.0"]
+build-backend = "flit_core.buildapi"
