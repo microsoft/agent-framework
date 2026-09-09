@@ -31,6 +31,9 @@ DEFAULT_HYPERLIGHT_MODULE = "python_guest.path"
 EXECUTE_CODE_TOOL_DESCRIPTION = "Execute Python in an isolated Hyperlight sandbox."
 OUTPUT_FILE_RETRY_ATTEMPTS = 10
 OUTPUT_FILE_RETRY_DELAY_SECONDS = 0.1
+DEFAULT_MAX_OUTPUT_FILES = 20
+DEFAULT_MAX_OUTPUT_FILE_BYTES = 5 * 1024 * 1024
+DEFAULT_MAX_OUTPUT_TOTAL_BYTES = 20 * 1024 * 1024
 
 EXECUTE_CODE_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -44,6 +47,17 @@ EXECUTE_CODE_INPUT_SCHEMA: dict[str, Any] = {
     },
     "required": ["code"],
 }
+
+
+class _OutputMaterializationError(RuntimeError):
+    """Raised when sandbox output cannot be safely materialized."""
+
+
+@dataclass(frozen=True, slots=True)
+class _ValidatedOutputFile:
+    relative_path: str
+    media_type: str
+    data: bytes
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +78,9 @@ class _RunConfig:
     workspace_signature: tuple[tuple[str, int, int], ...]
     file_mounts: tuple[_NormalizedFileMount, ...]
     allowed_domains: tuple[AllowedDomain, ...]
+    max_output_files: int = DEFAULT_MAX_OUTPUT_FILES
+    max_output_file_bytes: int = DEFAULT_MAX_OUTPUT_FILE_BYTES
+    max_output_total_bytes: int = DEFAULT_MAX_OUTPUT_TOTAL_BYTES
 
     @property
     def mounted_paths(self) -> tuple[str, ...]:
@@ -74,6 +91,8 @@ class _RunConfig:
         return self.workspace_root is not None or bool(self.file_mounts)
 
     def cache_key(self) -> tuple[Any, ...]:
+        # Output limits are invocation-scoped and do not change sandbox construction,
+        # so they intentionally do not participate in the shared runtime cache key.
         return (
             self.backend,
             self.module,
@@ -200,6 +219,9 @@ class _SandboxWorker:
         code: str,
         output_dir: TemporaryDirectory[str] | None,
         build_contents: Callable[..., list[Content]],
+        max_output_files: int,
+        max_output_file_bytes: int,
+        max_output_total_bytes: int,
     ) -> list[Content]:
         """Restore + run + build sendable contents — all on the worker thread.
 
@@ -219,6 +241,9 @@ class _SandboxWorker:
                     sandbox=sandbox,
                     output_dir=output_dir,
                     code=code,
+                    max_output_files=max_output_files,
+                    max_output_file_bytes=max_output_file_bytes,
+                    max_output_total_bytes=max_output_total_bytes,
                 )
             finally:
                 # ``result`` may carry a back-reference to the sandbox. Force its
@@ -344,6 +369,14 @@ def _resolve_execute_code_approval_mode(
         return "always_require"
 
     return "never_require"
+
+
+def _validate_positive_integer(*, name: str, value: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be a positive integer.")
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer.")
+    return value
 
 
 def _resolve_existing_path(value: str | Path) -> Path:
@@ -682,24 +715,23 @@ def _populate_input_dir(*, config: _RunConfig, input_root: Path) -> None:
         _copy_path(mount.host_path, input_root / mount.mount_path, source_root=mount_root)
 
 
-def _read_output_file_bytes(file_path: Path) -> bytes:
+def _read_output_file_bytes(
+    file_path: Path,
+    *,
+    relative_path: str,
+    max_file_bytes: int,
+    remaining_total_bytes: int,
+    max_total_bytes: int,
+) -> bytes:
     """Read ``file_path`` without following a link, even under a TOCTOU swap.
 
-    ``Path.read_bytes`` follows links, so a sandbox payload that replaces an
-    output file with ``/output/leak.txt -> /host/secret`` or a Windows reparse
-    point between validation and read could still exfiltrate a host file. Two
-    layers defend against this:
-
-    * ``os.O_NOFOLLOW`` makes the kernel reject a final-component symlink with
-      ``ELOOP``. The flag is absent on some platforms (notably Windows), where
-      it degrades to ``0``, so it cannot be the only defense.
-    * The file is ``lstat``-ed before opening and ``fstat``-ed after; if the
-      ``(st_dev, st_ino)`` identity changed, or the pre-open entry is a link or
-      reparse point, the read is refused. This closes the swap window on every
-      platform.
+    The path is lstat-ed before a single no-follow open, then the opened descriptor's
+    identity and logical size are checked before a bounded read. Reading one byte past
+    the remaining allowance detects growth after fstat without trusting a second path
+    lookup or allocating according to an attacker-controlled logical size.
     """
     pre_stat = file_path.lstat()
-    if _is_link_or_reparse_point(file_path, pre_stat):
+    if _is_link_or_reparse_point(file_path, pre_stat) or not stat.S_ISREG(pre_stat.st_mode):
         raise OSError(f"refusing to read linked or reparse-point output file: {file_path}")
 
     fd = os.open(file_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
@@ -707,21 +739,55 @@ def _read_output_file_bytes(file_path: Path) -> bytes:
         opened_stat = os.fstat(fd)
         if (opened_stat.st_dev, opened_stat.st_ino) != (pre_stat.st_dev, pre_stat.st_ino):
             raise OSError(f"output file changed between validation and read: {file_path}")
-    except BaseException:
+        if not stat.S_ISREG(opened_stat.st_mode):
+            raise OSError(f"refusing to read non-regular output file: {file_path}")
+        if opened_stat.st_size > max_file_bytes:
+            output_path = f"/output/{relative_path}"
+            raise _OutputMaterializationError(
+                f"Output file {output_path[:200]!r} exceeds the {max_file_bytes}-byte per-file output limit."
+            )
+        if opened_stat.st_size > remaining_total_bytes:
+            raise _OutputMaterializationError(
+                f"Output files exceed the {max_total_bytes}-byte cumulative output limit."
+            )
+
+        with os.fdopen(fd, "rb", closefd=False) as handle:
+            read_allowance = min(max_file_bytes, remaining_total_bytes)
+            try:
+                data = handle.read(read_allowance + 1)
+            except MemoryError:
+                raise _OutputMaterializationError(
+                    "Sandbox output could not be read because the host did not have enough memory."
+                ) from None
+    finally:
         os.close(fd)
-        raise
 
-    with os.fdopen(fd, "rb") as handle:
-        return handle.read()
+    if len(data) > max_file_bytes:
+        output_path = f"/output/{relative_path}"
+        raise _OutputMaterializationError(
+            f"Output file {output_path[:200]!r} exceeds the {max_file_bytes}-byte per-file output limit."
+        )
+    if len(data) > remaining_total_bytes:
+        raise _OutputMaterializationError(f"Output files exceed the {max_total_bytes}-byte cumulative output limit.")
+    return data
 
 
-def _create_file_content(file_path: Path, *, relative_path: str) -> Content:
-    media_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
-    return Content.from_data(
-        data=_read_output_file_bytes(file_path),
-        media_type=media_type,
-        additional_properties={"path": f"/output/{relative_path}"},
-    )
+def _materialize_output_files(output_files: Sequence[_ValidatedOutputFile]) -> list[Content]:
+    contents: list[Content] = []
+    try:
+        for output_file in output_files:
+            contents.append(
+                Content.from_data(
+                    data=output_file.data,
+                    media_type=output_file.media_type,
+                    additional_properties={"path": f"/output/{output_file.relative_path}"},
+                )
+            )
+    except MemoryError:
+        raise _OutputMaterializationError(
+            "Sandbox output could not be encoded because the host did not have enough memory."
+        ) from None
+    return contents
 
 
 def _normalize_output_relative_path(*, output_file: object, root: Path) -> str | None:
@@ -819,6 +885,9 @@ def _parse_output_files(
     sandbox: Any,
     output_dir: _NamedDirectory | None,
     expect_output_files: bool,
+    max_output_files: int = DEFAULT_MAX_OUTPUT_FILES,
+    max_output_file_bytes: int = DEFAULT_MAX_OUTPUT_FILE_BYTES,
+    max_output_total_bytes: int = DEFAULT_MAX_OUTPUT_TOTAL_BYTES,
 ) -> list[Content]:
     if output_dir is None:
         return []
@@ -828,20 +897,51 @@ def _parse_output_files(
     for attempt in range(OUTPUT_FILE_RETRY_ATTEMPTS):
         relative_paths = _collect_output_relative_paths(sandbox=sandbox, root=root)
         missing_files = expect_output_files and not relative_paths
-        contents: list[Content] = []
+        safe_output_files: list[tuple[str, Path]] = []
 
         for relative_path in sorted(relative_paths):
             host_path = root.joinpath(*PurePosixPath(relative_path).parts)
             if not _is_safe_output_file(root=root, host_path=host_path):
                 missing_files = True
                 continue
+            safe_output_files.append((relative_path, host_path))
+
+        if len(safe_output_files) > max_output_files:
+            raise _OutputMaterializationError(
+                f"Sandbox produced {len(safe_output_files)} safe output files, exceeding the "
+                f"output file count limit of {max_output_files}."
+            )
+
+        validated_output_files: list[_ValidatedOutputFile] = []
+        total_bytes_read = 0
+        for relative_path, host_path in safe_output_files:
             try:
-                contents.append(_create_file_content(host_path, relative_path=relative_path))
+                data = _read_output_file_bytes(
+                    host_path,
+                    relative_path=relative_path,
+                    max_file_bytes=max_output_file_bytes,
+                    remaining_total_bytes=max_output_total_bytes - total_bytes_read,
+                    max_total_bytes=max_output_total_bytes,
+                )
+            except MemoryError:
+                raise _OutputMaterializationError(
+                    "Sandbox output could not be read because the host did not have enough memory."
+                ) from None
             except (PermissionError, OSError):
                 missing_files = True
+                continue
+
+            total_bytes_read += len(data)
+            validated_output_files.append(
+                _ValidatedOutputFile(
+                    relative_path=relative_path,
+                    media_type=mimetypes.guess_type(host_path.name)[0] or "application/octet-stream",
+                    data=data,
+                )
+            )
 
         if not missing_files or attempt == OUTPUT_FILE_RETRY_ATTEMPTS - 1:
-            return contents
+            return _materialize_output_files(validated_output_files)
 
         time.sleep(OUTPUT_FILE_RETRY_DELAY_SECONDS)
 
@@ -871,6 +971,9 @@ def _build_execution_contents(
     sandbox: Any,
     output_dir: TemporaryDirectory[str] | None,
     code: str,
+    max_output_files: int,
+    max_output_file_bytes: int,
+    max_output_total_bytes: int,
 ) -> list[Content]:
     success = bool(getattr(result, "success", False))
     stdout = str(getattr(result, "stdout", "") or "").replace("\r\n", "\n") or None
@@ -881,13 +984,26 @@ def _build_execution_contents(
     if stdout is not None:
         outputs.append(Content.from_text(stdout, raw_representation=snapshot))
 
-    outputs.extend(
-        _parse_output_files(
+    try:
+        output_files = _parse_output_files(
             sandbox=sandbox,
             output_dir=output_dir,
             expect_output_files="/output" in code,
+            max_output_files=max_output_files,
+            max_output_file_bytes=max_output_file_bytes,
+            max_output_total_bytes=max_output_total_bytes,
         )
-    )
+    except _OutputMaterializationError as exc:
+        outputs.append(
+            Content.from_error(
+                message="Execution error",
+                error_details=str(exc),
+                raw_representation=snapshot,
+            )
+        )
+        return outputs
+
+    outputs.extend(output_files)
 
     if success:
         if stderr is not None:
@@ -985,6 +1101,9 @@ class _SandboxRegistry(SandboxRuntime):
             code=code,
             output_dir=entry.output_dir,
             build_contents=_build_execution_contents,
+            max_output_files=config.max_output_files,
+            max_output_file_bytes=config.max_output_file_bytes,
+            max_output_total_bytes=config.max_output_total_bytes,
         )
 
     def _get_or_create_entry(self, config: _RunConfig) -> _SandboxEntry:
@@ -1093,11 +1212,17 @@ class HyperlightExecuteCodeTool(FunctionTool):
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         allowed_domains: AllowedDomainInput | Sequence[AllowedDomainInput] | None = None,
+        max_output_files: int = DEFAULT_MAX_OUTPUT_FILES,
+        max_output_file_bytes: int = DEFAULT_MAX_OUTPUT_FILE_BYTES,
+        max_output_total_bytes: int = DEFAULT_MAX_OUTPUT_TOTAL_BYTES,
         backend: str = DEFAULT_HYPERLIGHT_BACKEND,
         module: str | None = DEFAULT_HYPERLIGHT_MODULE,
         module_path: str | None = None,
         _registry: SandboxRuntime | None = None,
     ) -> None:
+        max_output_files = _validate_positive_integer(name="max_output_files", value=max_output_files)
+        max_output_file_bytes = _validate_positive_integer(name="max_output_file_bytes", value=max_output_file_bytes)
+        max_output_total_bytes = _validate_positive_integer(name="max_output_total_bytes", value=max_output_total_bytes)
         super().__init__(
             name="execute_code",
             description=EXECUTE_CODE_TOOL_DESCRIPTION,
@@ -1112,6 +1237,9 @@ class HyperlightExecuteCodeTool(FunctionTool):
         self._backend: str = backend
         self._module: str | None = module
         self._module_path: str | None = module_path
+        self._max_output_files = max_output_files
+        self._max_output_file_bytes = max_output_file_bytes
+        self._max_output_total_bytes = max_output_total_bytes
         self._managed_tools: list[FunctionTool] = []
         self._file_mounts: dict[str, FileMount] = {}
         self._allowed_domains: dict[str, AllowedDomain] = {}
@@ -1264,6 +1392,9 @@ class HyperlightExecuteCodeTool(FunctionTool):
             workspace_root=self._workspace_root,
             file_mounts=file_mounts or None,
             allowed_domains=allowed_domains or None,
+            max_output_files=self._max_output_files,
+            max_output_file_bytes=self._max_output_file_bytes,
+            max_output_total_bytes=self._max_output_total_bytes,
             backend=self._backend,
             module=self._module,
             module_path=self._module_path,
@@ -1278,6 +1409,9 @@ class HyperlightExecuteCodeTool(FunctionTool):
             "module": config.module,
             "module_path": config.module_path,
             "approval_mode": config.approval_mode,
+            "max_output_files": config.max_output_files,
+            "max_output_file_bytes": config.max_output_file_bytes,
+            "max_output_total_bytes": config.max_output_total_bytes,
             "tool_names": [tool_obj.name for tool_obj in config.tools],
             "filesystem_enabled": config.filesystem_enabled,
             "workspace_root": str(config.workspace_root) if config.workspace_root is not None else None,
@@ -1314,6 +1448,9 @@ class HyperlightExecuteCodeTool(FunctionTool):
             workspace_root = self._workspace_root
             stored_mounts = tuple(self._file_mounts.values())
             allowed_domains = tuple(sorted(self._allowed_domains.values(), key=lambda value: value.target))
+            max_output_files = self._max_output_files
+            max_output_file_bytes = self._max_output_file_bytes
+            max_output_total_bytes = self._max_output_total_bytes
             approval_mode = _resolve_execute_code_approval_mode(
                 base_approval_mode=self._default_approval_mode,
                 tools=managed_tools,
@@ -1339,6 +1476,9 @@ class HyperlightExecuteCodeTool(FunctionTool):
             workspace_signature=workspace_signature,
             file_mounts=normalized_mounts,
             allowed_domains=allowed_domains,
+            max_output_files=max_output_files,
+            max_output_file_bytes=max_output_file_bytes,
+            max_output_total_bytes=max_output_total_bytes,
         )
 
     async def _run_code(self, *, code: str) -> list[Content]:

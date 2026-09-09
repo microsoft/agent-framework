@@ -359,6 +359,44 @@ class _FakeSandboxWithDelayedUnlistedOutput(_FakeSandboxWithoutOutputListing):
         return super().run(code)
 
 
+class _FakeSandboxWithBoundedOutputs(_FakeSandbox):
+    def run(self, code: str) -> _FakeResult:
+        if code == "None":
+            return _FakeResult(success=True)
+        if self.output_dir is None:
+            raise AssertionError("Expected output directory for bounded output test.")
+
+        output_root = Path(self.output_dir)
+        if code == "create-sparse-output":
+            sparse_file = output_root / "sparse.bin"
+            with sparse_file.open("wb") as handle:
+                handle.seek((2 << 30) - 1)
+                handle.write(b"X")
+            self.output_files = ["sparse.bin"]
+        elif code == "create-count-output":
+            for index in range(3):
+                (output_root / f"report-{index}.txt").write_bytes(b"x")
+            self.output_files = [f"report-{index}.txt" for index in range(3)]
+        elif code == "create-cumulative-output":
+            (output_root / "first.bin").write_bytes(b"abc")
+            (output_root / "second.bin").write_bytes(b"def")
+            self.output_files = ["first.bin", "second.bin"]
+        elif code == "create-exact-output":
+            (output_root / "first.bin").write_bytes(b"abc")
+            (output_root / "second.bin").write_bytes(b"de")
+            self.output_files = ["first.bin", "second.bin"]
+        elif code == "create-growing-output":
+            (output_root / "growing.bin").write_bytes(b"data")
+            self.output_files = ["growing.bin"]
+        elif code == "create-memory-output":
+            (output_root / "memory.bin").write_bytes(b"data")
+            self.output_files = ["memory.bin"]
+        else:
+            return super().run(code)
+
+        return _FakeResult(success=True, stdout="guest-finished\n")
+
+
 class _FakeSessionContext:
     def __init__(self, *, tools: list[Any] | None = None) -> None:
         self.options: dict[str, Any] = {}
@@ -850,6 +888,16 @@ def _decode_content_bytes(item: Content) -> bytes:
     return base64.b64decode(encoded)
 
 
+def _assert_bounded_output_error(contents: list[Content], match: str) -> None:
+    assert any(item.type == "text" and item.text == "guest-finished\n" for item in contents)
+    assert not any(item.type == "data" for item in contents)
+    errors = [item for item in contents if item.type == "error"]
+    assert len(errors) == 1
+    assert errors[0].message == "Execution error"
+    assert errors[0].error_details is not None
+    assert match in errors[0].error_details
+
+
 def test_collect_output_relative_paths_skips_symlinked_file(tmp_path: Path) -> None:
     """A final-component symlink planted in /output must not be surfaced."""
     if not _symlinks_supported(tmp_path):
@@ -1031,6 +1079,217 @@ def test_parse_output_files_collects_real_output_file(tmp_path: Path) -> None:
     assert len(data_items) == 1
     assert data_items[0].additional_properties["path"] == "/output/report.txt"
     assert _decode_content_bytes(data_items[0]) == b"artifact"
+
+
+async def test_execute_code_tool_rejects_sparse_output_without_unbounded_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+    original_fdopen = os.fdopen
+
+    class _BoundedReadGuard:
+        def __init__(self, handle: Any) -> None:
+            self._handle = handle
+
+        def __enter__(self) -> _BoundedReadGuard:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self._handle.close()
+
+        def read(self, size: int = -1) -> bytes:
+            assert size >= 0, "output reads must always be bounded"
+            assert size <= 5 * 1024 * 1024 + 1
+            return cast(bytes, self._handle.read(size))
+
+    def guarded_fdopen(fd: int, *args: Any, **kwargs: Any) -> _BoundedReadGuard:
+        return _BoundedReadGuard(original_fdopen(fd, *args, **kwargs))
+
+    monkeypatch.setattr(execute_code_module.os, "fdopen", guarded_fdopen)
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path)
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-sparse-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    _assert_bounded_output_error(contents, "per-file output limit")
+
+
+async def test_execute_code_tool_checks_output_count_before_reading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+
+    def fail_if_read(*args: Any, **kwargs: Any) -> bytes:
+        del args, kwargs
+        pytest.fail("output files were read before enforcing the count limit")
+
+    monkeypatch.setattr(execute_code_module, "_read_output_file_bytes", fail_if_read)
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path, max_output_files=2)
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-count-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    _assert_bounded_output_error(contents, "output file count limit")
+
+
+async def test_execute_code_tool_rejects_cumulative_output_overflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+    execute_code = HyperlightExecuteCodeTool(
+        workspace_root=tmp_path,
+        max_output_file_bytes=3,
+        max_output_total_bytes=5,
+    )
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-cumulative-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    _assert_bounded_output_error(contents, "cumulative output limit")
+
+
+async def test_execute_code_tool_accepts_output_at_exact_limits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+    execute_code = HyperlightExecuteCodeTool(
+        workspace_root=tmp_path,
+        max_output_files=2,
+        max_output_file_bytes=3,
+        max_output_total_bytes=5,
+    )
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-exact-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    data_items = [item for item in contents if item.type == "data"]
+    assert [_decode_content_bytes(item) for item in data_items] == [b"abc", b"de"]
+    assert not any(item.type == "error" for item in contents)
+
+
+async def test_execute_code_tool_bounds_file_growth_after_fstat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+    original_fdopen = os.fdopen
+    read_sizes: list[int] = []
+
+    class _GrowingHandle:
+        def __init__(self, handle: Any, file_path: Path) -> None:
+            self._handle = handle
+            self._file_path = file_path
+
+        def __enter__(self) -> _GrowingHandle:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self._handle.close()
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            with self._file_path.open("ab") as growing_file:
+                growing_file.write(b"X")
+            return cast(bytes, self._handle.read(size))
+
+    execute_code = HyperlightExecuteCodeTool(
+        workspace_root=tmp_path,
+        max_output_file_bytes=4,
+        max_output_total_bytes=4,
+    )
+    try:
+        config = execute_code._build_run_config()
+        output_root = Path(cast(Any, execute_code._registry)._get_or_create_entry(config).output_dir.name)
+        monkeypatch.setattr(
+            execute_code_module.os,
+            "fdopen",
+            lambda fd, *args, **kwargs: _GrowingHandle(
+                original_fdopen(fd, *args, **kwargs), output_root / "growing.bin"
+            ),
+        )
+        contents = await execute_code.invoke(arguments={"code": "create-growing-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    assert read_sizes == [5]
+    _assert_bounded_output_error(contents, "per-file output limit")
+
+
+@pytest.mark.parametrize("stage", ["read", "content"])
+async def test_execute_code_tool_converts_output_memory_error_to_content_error(
+    stage: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+
+    if stage == "read":
+        original_fdopen = os.fdopen
+
+        class _MemoryErrorHandle:
+            def __init__(self, handle: Any) -> None:
+                self._handle = handle
+
+            def __enter__(self) -> _MemoryErrorHandle:
+                return self
+
+            def __exit__(self, *args: Any) -> None:
+                self._handle.close()
+
+            def read(self, size: int = -1) -> bytes:
+                del size
+                raise MemoryError("simulated allocation failure")
+
+        monkeypatch.setattr(
+            execute_code_module.os,
+            "fdopen",
+            lambda fd, *args, **kwargs: _MemoryErrorHandle(original_fdopen(fd, *args, **kwargs)),
+        )
+    else:
+
+        def raise_memory_error(*args: Any, **kwargs: Any) -> Any:
+            del args, kwargs
+            raise MemoryError("simulated allocation failure")
+
+        monkeypatch.setattr(execute_code_module.Content, "from_data", raise_memory_error)
+
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path)
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-memory-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    _assert_bounded_output_error(contents, "enough memory")
+
+
+@pytest.mark.parametrize(
+    ("option", "value", "error_type"),
+    [
+        ("max_output_files", 0, ValueError),
+        ("max_output_file_bytes", -1, ValueError),
+        ("max_output_total_bytes", True, TypeError),
+        ("max_output_files", 1.5, TypeError),
+        ("max_output_file_bytes", "1024", TypeError),
+    ],
+)
+def test_hyperlight_output_limit_options_require_positive_integers(
+    option: str,
+    value: Any,
+    error_type: type[Exception],
+) -> None:
+    kwargs = {option: value}
+    with pytest.raises(error_type, match=option):
+        HyperlightExecuteCodeTool(**kwargs)
+    with pytest.raises(error_type, match=option):
+        HyperlightCodeActProvider(**kwargs)
 
 
 def test_execute_code_tool_allowed_domains_use_structured_entries_and_replace_by_target() -> None:
@@ -1304,6 +1563,75 @@ async def test_provider_injects_run_scoped_execute_code_tool() -> None:
     assert [tool_obj.name for tool_obj in run_tool.get_tools()] == ["compute"]
 
 
+async def test_provider_forwards_output_limits_to_run_tool_and_serializable_state() -> None:
+    runtime = _FakeRuntime()
+    provider = HyperlightCodeActProvider(
+        max_output_files=7,
+        max_output_file_bytes=11,
+        max_output_total_bytes=13,
+        _registry=runtime,
+    )
+    context = _FakeSessionContext()
+    state: dict[str, Any] = {}
+
+    await provider.before_run(agent=object(), session=None, context=cast(Any, context), state=state)
+    run_tool = context.tools[0][1][0]
+    assert isinstance(run_tool, HyperlightExecuteCodeTool)
+
+    result = await run_tool.invoke(arguments={"code": "None"})
+
+    assert result[0].text == "ok"
+    config = runtime.calls[0][0]
+    assert config.max_output_files == 7
+    assert config.max_output_file_bytes == 11
+    assert config.max_output_total_bytes == 13
+    assert state[provider.source_id]["max_output_files"] == 7
+    assert state[provider.source_id]["max_output_file_bytes"] == 11
+    assert state[provider.source_id]["max_output_total_bytes"] == 13
+    json.dumps(state)
+
+
+async def test_output_limits_are_invocation_scoped_when_registry_is_shared(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+    registry = execute_code_module._SandboxRegistry()
+    restrictive_tool = HyperlightExecuteCodeTool(
+        workspace_root=tmp_path,
+        max_output_file_bytes=3,
+        max_output_total_bytes=10,
+        _registry=registry,
+    )
+    permissive_tool = HyperlightExecuteCodeTool(
+        workspace_root=tmp_path,
+        max_output_file_bytes=4,
+        max_output_total_bytes=10,
+        _registry=registry,
+    )
+
+    try:
+        rejected = await restrictive_tool.invoke(arguments={"code": "create-growing-output"})
+        accepted = await permissive_tool.invoke(arguments={"code": "create-growing-output"})
+    finally:
+        registry.close()
+
+    _assert_bounded_output_error(rejected, "per-file output limit")
+    assert [_decode_content_bytes(item) for item in accepted if item.type == "data"] == [b"data"]
+    assert len(_FakeSandbox.instances) == 1
+
+
+def test_execute_code_tool_uses_finite_default_output_limits() -> None:
+    execute_code = HyperlightExecuteCodeTool(_registry=_FakeRuntime())
+
+    state = execute_code.build_serializable_state()
+
+    assert state["max_output_files"] == 20
+    assert state["max_output_file_bytes"] == 5 * 1024 * 1024
+    assert state["max_output_total_bytes"] == 20 * 1024 * 1024
+
+
 def test_provider_delegates_file_mounts_and_allowed_domains_to_internal_tool(tmp_path: Path) -> None:
     provider = HyperlightCodeActProvider()
 
@@ -1423,6 +1751,30 @@ async def test_provider_run_tool_writes_files_with_real_sandbox(tmp_path: Path) 
         _close_execute_code_registry(run_tool)
 
 
+@pytest.mark.integration
+@skip_if_hyperlight_integration_tests_disabled
+async def test_execute_code_tool_rejects_sparse_file_with_real_sandbox(tmp_path: Path) -> None:
+    _skip_if_hyperlight_integration_runtime_disabled()
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path)
+
+    try:
+        contents = await execute_code.invoke(
+            arguments={
+                "code": (
+                    'with open("/output/sparse.bin", "wb") as output:\n'
+                    "    output.seek((2 << 30) - 1)\n"
+                    '    output.write(b"X")\n'
+                    'print("guest-finished")\n'
+                )
+            }
+        )
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    _assert_bounded_output_error(contents, "per-file output limit")
+
+
+@pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 @pytest.mark.skipif(sys.platform == "win32", reason="Hyperlight WASM sandbox lacks encodings.idna on Windows")
