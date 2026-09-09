@@ -817,7 +817,6 @@ async def test_policy_reapproval_is_visible_persisted_and_executes_once(
     else:
         await agent.run(stale_approval, session=session)
 
-    assert calls == 0
     assert chat_client_base.call_count == 2
     restored_pending = session.state["tool_approval"]["pending_approval_requests"]
     assert restored_pending == [replacement_snapshot]

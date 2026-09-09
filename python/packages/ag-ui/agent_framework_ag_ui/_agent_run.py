@@ -40,7 +40,6 @@ from agent_framework import (
 )
 from agent_framework._middleware import (
     FunctionMiddlewarePipeline,
-    FunctionMiddlewareTypes,
     _as_middleware_list,  # pyright: ignore[reportPrivateUsage]
     categorize_middleware,
 )
@@ -1536,7 +1535,7 @@ def _approval_resolution_middleware_pipeline(
     for provider in cast(list[Any], getattr(agent, "context_providers", [])):
         provider_middleware = getattr(provider, "_function_middleware_for_approval_resolution", None)
         if callable(provider_middleware):
-            function_middleware.extend(cast("Sequence[FunctionMiddlewareTypes]", provider_middleware(session)))
+            function_middleware.extend(cast("Sequence[Any]", provider_middleware(session)))
     return FunctionMiddlewarePipeline(*function_middleware)
 
 
