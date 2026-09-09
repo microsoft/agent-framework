@@ -397,6 +397,25 @@ class _FakeSandboxWithBoundedOutputs(_FakeSandbox):
         return _FakeResult(success=True, stdout="guest-finished\n")
 
 
+class _FakeSandboxWithBoundedOutputsWithoutListing(_FakeSandboxWithBoundedOutputs):
+    def get_output_files(self) -> list[str]:
+        return []
+
+
+class _FakeSandboxWithBoundedOutputListing(_FakeSandboxWithBoundedOutputs):
+    listing_items_requested = 0
+
+    def get_output_files(self) -> Any:
+        def _iter_paths() -> Generator[str]:
+            for index in range(100):
+                type(self).listing_items_requested += 1
+                if type(self).listing_items_requested > 3:
+                    pytest.fail("backend output listing was consumed past max_output_files + 1")
+                yield f"report-{index}.txt"
+
+        return _iter_paths()
+
+
 class _FakeSessionContext:
     def __init__(self, *, tools: list[Any] | None = None) -> None:
         self.options: dict[str, Any] = {}
@@ -1136,6 +1155,120 @@ async def test_execute_code_tool_checks_output_count_before_reading(
     _assert_bounded_output_error(contents, "output file count limit")
 
 
+async def test_execute_code_tool_stops_consuming_backend_listing_at_count_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeSandboxWithBoundedOutputListing.listing_items_requested = 0
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputListing)
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path, max_output_files=2)
+
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-count-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    assert _FakeSandboxWithBoundedOutputListing.listing_items_requested == 3
+    _assert_bounded_output_error(contents, "output file count limit")
+
+
+async def test_execute_code_tool_streams_directory_enumeration_to_count_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        execute_code_module,
+        "_load_sandbox_class",
+        lambda: _FakeSandboxWithBoundedOutputsWithoutListing,
+    )
+    original_scandir = os.scandir
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path, max_output_files=2)
+    config = execute_code._build_run_config()
+    output_root = Path(cast(Any, execute_code._registry)._get_or_create_entry(config).output_dir.name)
+    scanned_entries = 0
+
+    class _BoundedScandir:
+        def __init__(self, path: str | os.PathLike[str]) -> None:
+            self._entries = original_scandir(path)
+            self._track = Path(path) == output_root
+
+        def __enter__(self) -> _BoundedScandir:
+            self._entries.__enter__()
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self._entries.__exit__(*args)
+
+        def close(self) -> None:
+            self._entries.close()
+
+        def __iter__(self) -> _BoundedScandir:
+            return self
+
+        def __next__(self) -> os.DirEntry[str]:
+            nonlocal scanned_entries
+            entry = next(self._entries)
+            if self._track:
+                scanned_entries += 1
+                if scanned_entries > 3:
+                    pytest.fail("output directory enumeration continued past max_output_files + 1")
+            return entry
+
+    monkeypatch.setattr(execute_code_module.os, "scandir", _BoundedScandir)
+
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-count-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    assert scanned_entries == 3
+    _assert_bounded_output_error(contents, "output file count limit")
+
+
+async def test_execute_code_tool_reads_only_observed_file_size_with_large_limits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+    original_fdopen = os.fdopen
+    read_sizes: list[int] = []
+
+    class _ReadSizeGuard:
+        def __init__(self, handle: Any) -> None:
+            self._handle = handle
+
+        def __enter__(self) -> _ReadSizeGuard:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self._handle.close()
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            if size > 5:
+                pytest.fail("small output requested a quota-sized read")
+            return cast(bytes, self._handle.read(size))
+
+    monkeypatch.setattr(
+        execute_code_module.os,
+        "fdopen",
+        lambda fd, *args, **kwargs: _ReadSizeGuard(original_fdopen(fd, *args, **kwargs)),
+    )
+    execute_code = HyperlightExecuteCodeTool(
+        workspace_root=tmp_path,
+        max_output_file_bytes=sys.maxsize,
+        max_output_total_bytes=sys.maxsize,
+    )
+
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-memory-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    assert read_sizes == [5]
+    assert [_decode_content_bytes(item) for item in contents if item.type == "data"] == [b"data"]
+
+
 async def test_execute_code_tool_rejects_cumulative_output_overflow(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1202,8 +1335,8 @@ async def test_execute_code_tool_bounds_file_growth_after_fstat(
 
     execute_code = HyperlightExecuteCodeTool(
         workspace_root=tmp_path,
-        max_output_file_bytes=4,
-        max_output_total_bytes=4,
+        max_output_file_bytes=8,
+        max_output_total_bytes=8,
     )
     try:
         config = execute_code._build_run_config()
@@ -1220,18 +1353,18 @@ async def test_execute_code_tool_bounds_file_growth_after_fstat(
         _close_execute_code_registry(execute_code)
 
     assert read_sizes == [5]
-    _assert_bounded_output_error(contents, "per-file output limit")
+    _assert_bounded_output_error(contents, "grew while it was being read")
 
 
-@pytest.mark.parametrize("stage", ["read", "content"])
-async def test_execute_code_tool_converts_output_memory_error_to_content_error(
+@pytest.mark.parametrize("stage", ["read_memory", "read_overflow", "content_memory"])
+async def test_execute_code_tool_converts_output_allocation_error_to_content_error(
     stage: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
 
-    if stage == "read":
+    if stage != "content_memory":
         original_fdopen = os.fdopen
 
         class _MemoryErrorHandle:
@@ -1246,7 +1379,9 @@ async def test_execute_code_tool_converts_output_memory_error_to_content_error(
 
             def read(self, size: int = -1) -> bytes:
                 del size
-                raise MemoryError("simulated allocation failure")
+                if stage == "read_memory":
+                    raise MemoryError("simulated allocation failure")
+                raise OverflowError("simulated read size overflow")
 
         monkeypatch.setattr(
             execute_code_module.os,
@@ -1267,7 +1402,10 @@ async def test_execute_code_tool_converts_output_memory_error_to_content_error(
     finally:
         _close_execute_code_registry(execute_code)
 
-    _assert_bounded_output_error(contents, "enough memory")
+    _assert_bounded_output_error(
+        contents,
+        "configured byte limits" if stage != "content_memory" else "enough memory",
+    )
 
 
 @pytest.mark.parametrize(

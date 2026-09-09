@@ -590,7 +590,7 @@ def _display_mount_path(mount_path: str) -> str:
     return f"/input/{mount_path}"
 
 
-def _iter_real_entries(root: Path, *, reject_links: bool = False) -> Iterator[Path]:
+def _iter_real_entries(root: Path, *, reject_links: bool = False, files_only: bool = False) -> Iterator[Path]:
     """Walk ``root`` recursively, yielding directories and regular files only.
 
     ``Path.rglob`` follows directory links by default, which combined with
@@ -603,35 +603,61 @@ def _iter_real_entries(root: Path, *, reject_links: bool = False) -> Iterator[Pa
     Non-regular files (sockets, FIFOs, devices) are also filtered out so the
     signature mirrors exactly what ``_copy_path`` actually stages.
     """
-    stack: list[Path] = [root]
-    while stack:
-        current = stack.pop()
+    scan_stack: list[tuple[Path, Any]] = []
+    try:
         try:
-            children = list(current.iterdir())
+            scan_stack.append((root, os.scandir(root)))
         except OSError as exc:
             if reject_links:
-                raise ValueError(f"Could not inspect Hyperlight sandbox input directory: {current}") from exc
-            continue
-        for child in children:
+                raise ValueError(f"Could not inspect Hyperlight sandbox input directory: {root}") from exc
+            return
+
+        while scan_stack:
+            current, entries = scan_stack[-1]
+            try:
+                entry = next(entries)
+            except StopIteration:
+                entries.close()
+                scan_stack.pop()
+                continue
+            except OSError as exc:
+                entries.close()
+                scan_stack.pop()
+                if reject_links:
+                    raise ValueError(f"Could not inspect Hyperlight sandbox input directory: {current}") from exc
+                continue
+
+            child = Path(entry.path)
             try:
                 child_stat = child.lstat()
-                if _is_link_or_reparse_point(child, child_stat):
-                    if reject_links:
-                        raise ValueError(
-                            f"Refusing to stage linked or reparse-point path for Hyperlight sandbox input: {child}"
-                        )
-                    continue
-                if stat.S_ISDIR(child_stat.st_mode):
-                    stack.append(child)
-                    yield child
-                elif stat.S_ISREG(child_stat.st_mode):
-                    yield child
-                # Non-regular files (sockets/FIFOs/devices) are skipped to
-                # match ``_copy_path``'s staging behaviour.
             except OSError as exc:
                 if reject_links:
                     raise ValueError(f"Could not inspect Hyperlight sandbox input path: {child}") from exc
                 continue
+
+            if _is_link_or_reparse_point(child, child_stat):
+                if reject_links:
+                    raise ValueError(
+                        f"Refusing to stage linked or reparse-point path for Hyperlight sandbox input: {child}"
+                    )
+                continue
+
+            if stat.S_ISDIR(child_stat.st_mode):
+                if not files_only:
+                    yield child
+                try:
+                    scan_stack.append((child, os.scandir(child)))
+                except OSError as exc:
+                    if reject_links:
+                        raise ValueError(f"Could not inspect Hyperlight sandbox input directory: {child}") from exc
+                    continue
+            elif stat.S_ISREG(child_stat.st_mode):
+                yield child
+            # Non-regular files (sockets/FIFOs/devices) are skipped to
+            # match ``_copy_path``'s staging behaviour.
+    finally:
+        for _, entries in scan_stack:
+            entries.close()
 
 
 def _path_tree_signature(path: Path) -> tuple[tuple[str, int, int], ...]:
@@ -731,6 +757,7 @@ def _read_output_file_bytes(
     lookup or allocating according to an attacker-controlled logical size.
     """
     pre_stat = file_path.lstat()
+    output_path = f"/output/{relative_path}"
     if _is_link_or_reparse_point(file_path, pre_stat) or not stat.S_ISREG(pre_stat.st_mode):
         raise OSError(f"refusing to read linked or reparse-point output file: {file_path}")
 
@@ -742,7 +769,6 @@ def _read_output_file_bytes(
         if not stat.S_ISREG(opened_stat.st_mode):
             raise OSError(f"refusing to read non-regular output file: {file_path}")
         if opened_stat.st_size > max_file_bytes:
-            output_path = f"/output/{relative_path}"
             raise _OutputMaterializationError(
                 f"Output file {output_path[:200]!r} exceeds the {max_file_bytes}-byte per-file output limit."
             )
@@ -752,23 +778,24 @@ def _read_output_file_bytes(
             )
 
         with os.fdopen(fd, "rb", closefd=False) as handle:
-            read_allowance = min(max_file_bytes, remaining_total_bytes)
+            read_allowance = min(opened_stat.st_size, max_file_bytes, remaining_total_bytes)
             try:
                 data = handle.read(read_allowance + 1)
-            except MemoryError:
+            except (MemoryError, OverflowError):
                 raise _OutputMaterializationError(
-                    "Sandbox output could not be read because the host did not have enough memory."
+                    "Sandbox output could not be read within the configured byte limits."
                 ) from None
     finally:
         os.close(fd)
 
     if len(data) > max_file_bytes:
-        output_path = f"/output/{relative_path}"
         raise _OutputMaterializationError(
             f"Output file {output_path[:200]!r} exceeds the {max_file_bytes}-byte per-file output limit."
         )
     if len(data) > remaining_total_bytes:
         raise _OutputMaterializationError(f"Output files exceed the {max_total_bytes}-byte cumulative output limit.")
+    if len(data) > opened_stat.st_size:
+        raise _OutputMaterializationError(f"Output file {output_path[:200]!r} grew while it was being read.")
     return data
 
 
@@ -856,26 +883,42 @@ def _is_safe_output_file(*, root: Path, host_path: Path) -> bool:
     return stat.S_ISREG(final_stat.st_mode)
 
 
-def _collect_output_relative_paths(*, sandbox: Any, root: Path) -> set[str]:
+def _collect_output_relative_paths(
+    *,
+    sandbox: Any,
+    root: Path,
+    max_output_files: int = DEFAULT_MAX_OUTPUT_FILES,
+) -> set[str]:
     relative_paths: set[str] = set()
+
+    def _add_relative_path(relative_path: str) -> None:
+        if relative_path in relative_paths:
+            return
+        if len(relative_paths) >= max_output_files:
+            raise _OutputMaterializationError(
+                f"Sandbox exceeded the output file count limit of {max_output_files} while enumerating candidates."
+            )
+        relative_paths.add(relative_path)
 
     if hasattr(sandbox, "get_output_files"):
         try:
-            output_files = cast(Sequence[object], sandbox.get_output_files())
+            output_files = cast(Iterator[object], iter(sandbox.get_output_files()))
+        except MemoryError:
+            raise
         except Exception:
-            output_files = ()
+            output_files = iter(())
 
-        for output_file in output_files:
+        for backend_items_seen, output_file in enumerate(output_files, start=1):
+            if backend_items_seen > max_output_files:
+                raise _OutputMaterializationError(
+                    f"Sandbox exceeded the output file count limit of {max_output_files} while enumerating candidates."
+                )
             if (relative_path := _normalize_output_relative_path(output_file=output_file, root=root)) is not None:
-                relative_paths.add(relative_path)
+                _add_relative_path(relative_path)
 
-    # ``Path.rglob`` follows directory symlinks and ``Path.is_file`` follows
-    # symlinks, both of which would surface paths outside the sandbox-controlled
-    # output tree. ``_iter_real_entries`` skips symlinks and never descends
-    # through a symlinked directory, yielding only real entries under ``root``.
-    for host_path in _iter_real_entries(root):
-        if host_path.is_file():
-            relative_paths.add(host_path.relative_to(root).as_posix())
+    # The streaming walker skips links and never materializes a whole directory.
+    for host_path in _iter_real_entries(root, files_only=True):
+        _add_relative_path(host_path.relative_to(root).as_posix())
 
     return relative_paths
 
@@ -895,7 +938,16 @@ def _parse_output_files(
     root = Path(output_dir.name)
 
     for attempt in range(OUTPUT_FILE_RETRY_ATTEMPTS):
-        relative_paths = _collect_output_relative_paths(sandbox=sandbox, root=root)
+        try:
+            relative_paths = _collect_output_relative_paths(
+                sandbox=sandbox,
+                root=root,
+                max_output_files=max_output_files,
+            )
+        except MemoryError:
+            raise _OutputMaterializationError(
+                "Sandbox output could not be enumerated because the host did not have enough memory."
+            ) from None
         missing_files = expect_output_files and not relative_paths
         safe_output_files: list[tuple[str, Path]] = []
 
