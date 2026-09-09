@@ -1843,4 +1843,20 @@ async def test_file_checkpoint_storage_roundtrip_empty_collections():
         assert loaded.pending_request_info_events == {}
 
 
+async def test_file_checkpoint_storage_concurrent_saves_same_id(tmp_path):
+    """Concurrent saves of the same checkpoint id must not race on a shared tmp file."""
+    import asyncio
+
+    storage = FileCheckpointStorage(tmp_path)
+    checkpoint = WorkflowCheckpoint(workflow_name="test-workflow", graph_signature_hash="test-hash")
+
+    await asyncio.gather(*(storage.save(checkpoint) for _ in range(8)))
+
+    loaded = await storage.load(checkpoint.checkpoint_id)
+    assert loaded.checkpoint_id == checkpoint.checkpoint_id
+    assert loaded.workflow_name == checkpoint.workflow_name
+    assert loaded.state == checkpoint.state
+    assert list(Path(storage.storage_path).glob("*.tmp")) == []
+
+
 # endregion

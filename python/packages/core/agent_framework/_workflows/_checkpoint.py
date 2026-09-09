@@ -328,10 +328,17 @@ class FileCheckpointStorage:
         encoded_checkpoint = encode_checkpoint_value(checkpoint_dict)
 
         def _write_atomic() -> None:
-            tmp_path = file_path.with_suffix(".json.tmp")
-            with open(tmp_path, "w") as f:
-                json.dump(encoded_checkpoint, f, indent=2, ensure_ascii=False)
-            os.replace(tmp_path, file_path)
+            tmp_path = file_path.with_name(f"{file_path.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                with open(tmp_path, "w") as f:
+                    json.dump(encoded_checkpoint, f, indent=2, ensure_ascii=False)
+                os.replace(tmp_path, file_path)
+            finally:
+                # best-effort cleanup if replace failed or the write raised
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
         await asyncio.to_thread(_write_atomic)
 
