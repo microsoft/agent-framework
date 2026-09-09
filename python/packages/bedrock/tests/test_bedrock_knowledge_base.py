@@ -227,8 +227,8 @@ class TestBedrockKnowledgeBaseProvider:
             input_messages=[Message(role="user", contents=["What is our policy?"])],
         )
 
-        # Verify instructions are empty before
-        assert len(context.instructions) == 0
+        # Verify context_messages is empty before
+        assert len(context.context_messages) == 0
 
         # Run before_run
         asyncio.run(provider.before_run(
@@ -238,11 +238,14 @@ class TestBedrockKnowledgeBaseProvider:
             state={},
         ))
 
-        # Verify context was injected as instructions (avoids consecutive user-role
-        # issue with BedrockChatClient which requires alternating roles)
-        assert len(context.instructions) == 1
-        assert "Relevant passage" in context.instructions[0]
-        assert "s3://b/doc" in context.instructions[0]
+        # Verify context injected as an untrusted user-role message (matches repo
+        # convention; role alternation is handled by _prepare_bedrock_messages coalescing)
+        assert "bedrock-kb" in context.context_messages
+        injected = context.context_messages["bedrock-kb"]
+        assert len(injected) == 1
+        assert injected[0].role == "user"
+        assert "Relevant passage" in injected[0].text
+        assert "s3://b/doc" in injected[0].text
 
     def test_before_run_skips_empty_input(self):
         from agent_framework import SessionContext
@@ -263,4 +266,4 @@ class TestBedrockKnowledgeBaseProvider:
 
         # Should not call retrieve
         mock_client.retrieve.assert_not_called()
-        assert len(context.instructions) == 0
+        assert len(context.context_messages) == 0

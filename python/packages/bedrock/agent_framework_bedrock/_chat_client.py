@@ -495,7 +495,16 @@ class BedrockChatClient(
             else:
                 pending_tool_use_ids.clear()
 
-            conversation.append({"role": role, "content": content_blocks})
+            # Coalesce adjacent user-role turns. Context providers (e.g. the Bedrock
+            # Knowledge Base provider) inject retrieved passages as separate user
+            # messages, which would otherwise sit next to the real user input and
+            # violate Bedrock's role-alternation requirement. Merging their content
+            # blocks into a single user turn keeps the conversation valid. Assistant
+            # turns are intentionally not merged to preserve tool-use/tool-result pairing.
+            if role == "user" and conversation and conversation[-1]["role"] == "user":
+                conversation[-1]["content"].extend(content_blocks)
+            else:
+                conversation.append({"role": role, "content": content_blocks})
 
         return prompts, conversation
 

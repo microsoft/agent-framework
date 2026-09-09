@@ -357,8 +357,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "boto3", specifier = ">=1.35.0,<2.0.0" },
-    { name = "botocore", specifier = ">=1.35.0,<2.0.0" },
+    { name = "boto3", specifier = ">=1.43.32,<2.0.0" },
+    { name = "botocore", specifier = ">=1.43.32,<2.0.0" },
 ]
 
 [[package]]

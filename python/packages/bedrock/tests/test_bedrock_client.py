@@ -381,6 +381,43 @@ def test_prepare_bedrock_messages_skips_unsupported_content_and_unmatched_tool_r
     assert conversation == [{"role": "user", "content": [{"text": "hello"}]}]
 
 
+def test_prepare_bedrock_messages_coalesces_adjacent_user_turns() -> None:
+    """Adjacent user-role messages (e.g. injected KB context + real input) must be
+    merged into a single user turn so Bedrock's role-alternation rule is satisfied."""
+    client = _make_client()
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="[KB context] policy is 30 days")]),
+        Message(role="user", contents=[Content.from_text(text="What is the policy?")]),
+    ]
+
+    prompts, conversation = client._prepare_bedrock_messages(messages)
+
+    assert prompts == []
+    assert conversation == [
+        {
+            "role": "user",
+            "content": [
+                {"text": "[KB context] policy is 30 days"},
+                {"text": "What is the policy?"},
+            ],
+        }
+    ]
+
+
+def test_prepare_bedrock_messages_does_not_coalesce_across_assistant() -> None:
+    """User turns separated by an assistant turn must remain distinct."""
+    client = _make_client()
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="first")]),
+        Message(role="assistant", contents=[Content.from_text(text="reply")]),
+        Message(role="user", contents=[Content.from_text(text="second")]),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    assert [m["role"] for m in conversation] == ["user", "assistant", "user"]
+
+
 def test_align_tool_results_handles_pending_edge_cases() -> None:
     """Tool result alignment should preserve valid blocks and drop invalid or extra results."""
     client = _make_client()
