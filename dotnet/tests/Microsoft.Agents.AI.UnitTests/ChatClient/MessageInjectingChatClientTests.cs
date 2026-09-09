@@ -10,6 +10,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Moq.Protected;
 
+#pragma warning disable Moq1206
+
 namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
