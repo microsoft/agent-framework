@@ -97,6 +97,8 @@ class TestBedrockKnowledgeBaseTool:
         assert "s3://b/doc" in result
         # Agentic results must not fabricate a numeric score
         assert "score:" not in result
+        # Response generation must be disabled (tool returns passages only)
+        assert mock_client.agentic_retrieve_stream.call_args.kwargs["generateResponse"] is False
         mock_client.retrieve.assert_not_called()
 
     def test_client_uses_get_user_agent(self):

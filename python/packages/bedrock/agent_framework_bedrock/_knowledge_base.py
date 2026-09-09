@@ -138,6 +138,11 @@ class BedrockKnowledgeBaseTool(FunctionTool):
         """Use AgenticRetrieveStream for query decomposition + managed reranking."""
         response = self._client.agentic_retrieve_stream(
             messages=[{"content": {"text": query}, "role": "user"}],
+            # This tool returns retrieval passages only; the agent's own model
+            # generates the final answer. AgenticRetrieveStream defaults to
+            # generating a response (streamed responseEvents we would discard),
+            # so disable it explicitly to avoid unnecessary generation latency/cost.
+            generateResponse=False,
             retrievers=[{
                 "configuration": {
                     "knowledgeBase": {
