@@ -31,6 +31,7 @@ from redis.asyncio import Redis
 from redis.exceptions import ResponseError
 
 from agent_framework_redis import RedisCollection, RedisContextProvider, RedisHistoryProvider, RedisStore
+from agent_framework_redis._vector_store import _RedisNamespaceNames
 
 
 def definition(*, dimensions=2, metric="DEFAULT", vector_type="float32", index_kind="flat"):
@@ -606,10 +607,31 @@ async def test_store_lists_and_deletes_only_its_namespace(noncanonical_index_suf
             c._index.delete.assert_awaited_once_with(drop=True)
 
 
+@pytest.mark.parametrize(
+    "namespace,name,index_name,key_prefix",
+    [
+        ("scope", "one", "af:vector:73636f7065:index:6f6e65", "af:vector:73636f7065:data:6f6e65:"),
+        ("a:b", "\u00e9", "af:vector:613a62:index:c3a9", "af:vector:613a62:data:c3a9:"),
+        ("\u00e9", "a:b", "af:vector:c3a9:index:613a62", "af:vector:c3a9:data:613a62:"),
+    ],
+)
+def test_namespace_names_preserve_persisted_format(namespace, name, index_name, key_prefix):
+    names = _RedisNamespaceNames(namespace)
+    assert names.for_collection(name) == (index_name, key_prefix)
+    assert names.try_parse_index_name(index_name.encode()) == name
+    assert names.try_parse_index_name(key_prefix.encode()) is None
+    assert _RedisNamespaceNames(namespace + "other").try_parse_index_name(index_name.encode()) is None
+
+
+@pytest.mark.parametrize("namespace", ["default", "a:b", "\u00e9"])
 @pytest.mark.parametrize("name", ["one", "\u00e9", "a" * 256, "\u00e9" * 128])
-async def test_store_lists_canonical_unicode_and_boundary_names(name):
-    async with RedisStore() as store:
+async def test_store_lists_canonical_unicode_and_boundary_names(namespace, name):
+    names = _RedisNamespaceNames(namespace)
+    index_name, key_prefix = names.for_collection(name)
+    assert names.try_parse_index_name(index_name.encode()) == name
+    async with RedisStore(namespace=namespace) as store:
         collection = store.get_collection(dict, definition=definition(), collection_name=name)
+        assert (collection.index_name, collection.key_prefix) == (index_name, key_prefix)
         with patch.object(
             store.redis_client, "execute_command", AsyncMock(return_value=[collection.index_name.encode()])
         ):
@@ -834,6 +856,21 @@ async def test_live_scores_thresholds_and_paging(live_store, metric, expected):
     other = [r async for r in await c.search(vector=[0.0, 1.0], vector_property_name="other_vector")]
     assert all(r["score"] == 0.0 for r in other)
     assert [r["id"] for r in await c.get(order_by={"number": False}, skip=1, top=1)] == ["two"]
+
+
+@pytest.mark.integration
+async def test_live_unicode_keys_and_text_roundtrip(live_store):
+    c = live_store.get_collection(dict, definition=definition(), collection_name="unicode:\u00e9")
+    await c.ensure_collection_exists()
+    source = [record("abc", text="Plain text"), record("a\u00e9b\u00e9c", text="Caf\u00e9 \u6f22\u5b57")]
+    assert await c.upsert(source, generate_vectors=False) == ["abc", "a\u00e9b\u00e9c"]
+    assert await c.get(["abc", "a\u00e9b\u00e9c"], include_vectors=True) == source
+    assert [r["id"] for r in await c.get(filter=Filter("text", "eq", "Caf\u00e9 \u6f22\u5b57"))] == ["a\u00e9b\u00e9c"]
+    assert await live_store.list_collection_names() == ["unicode:\u00e9"]
+    await c.delete(["abc"])
+    assert await c.get(["a\u00e9b\u00e9c"], include_vectors=True) == [source[1]]
+    await live_store.ensure_collection_deleted("unicode:\u00e9")
+    assert not await live_store.collection_exists("unicode:\u00e9")
 
 
 @pytest.mark.integration

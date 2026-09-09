@@ -10,7 +10,9 @@ Redis-based storage for agent threads and context.
   explicit URL overrides, an optional .env file, or `REDIS_URL`. URLs use `SecretString` to mask credentials.
 - **`RedisCollection` / `RedisStore`** - Experimental generic vector storage and search over native HASH and JSON
   documents. `_vector_store.py` contains settings, connection/codec/schema/filter helpers, the collection, and
-  the store, separate from the preexisting history/context providers. `_create_client` shares AF settings resolution;
+  the store, separate from the preexisting history/context providers. `_create_client` shares AF settings resolution
+  and requires database 0, strict UTF-8 encoding, RESP2, and binary responses for URL-created and borrowed clients.
+  `_RedisNamespaceNames` owns the persisted index/document prefix format and canonical index-name parsing;
   `RedisCollection._prepare_filter` validates support and translates portable filters to native Redis queries.
   Requires Redis Search with INDEXMISSING/INDEXEMPTY support.
   Nonempty CRUD/search operations recheck index existence and schema. These checks observe completed external

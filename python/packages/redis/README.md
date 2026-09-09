@@ -49,6 +49,8 @@ Conversation history uses Redis Lists and does not require Search or RedisJSON.
 Context retrieval requires Redis Search. Vector collections require Redis
 8.0.3 or later with Search, including `INDEXMISSING` and `INDEXEMPTY` support;
 JSON collections additionally require RedisJSON.
+Redis Search indexes require logical database 0, so vector-store URLs and clients
+must select database 0 (the default).
 
 Choose `storage_type="hash"` for non-null records with binary vector storage,
 or `"json"` for nullable fields/vectors and native JSON data. HASH rejects
@@ -62,9 +64,13 @@ settings loader. Connection precedence is an explicit `redis_url`, then
 with `SecretString`; use `rediss://` when your server requires TLS.
 
 You may supply a standalone `redis.asyncio.Redis` client using
-`decode_responses=False` and RESP2. Supplied clients take precedence over URL
-settings and remain caller-owned. Closing a store closes its owned connection,
-not its stored data. Redis Cluster clients are not supported.
+`decode_responses=False` and RESP2. Both URL-created and supplied clients must use
+strict UTF-8 encoding (`encoding="utf-8"`, `encoding_errors="strict"`, the defaults)
+so Unicode keys and string fields round-trip without lossy conversions.
+Incompatible encoding or database settings are rejected before connecting.
+Supplied clients take precedence over URL settings and remain caller-owned.
+Closing a store closes its owned connection, not its stored data. Redis Cluster
+clients are not supported.
 
 Vector collections support dense search and a subset of portable filters,
 not hybrid/full-text search or literal substring/prefix/suffix filters.

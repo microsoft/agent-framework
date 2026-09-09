@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 import re
+from codecs import lookup
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, Generic, Literal, cast
 from uuid import uuid4
@@ -102,6 +103,14 @@ def _create_client(
     kwargs = cast(dict[str, Any], redis_client.connection_pool.connection_kwargs)  # pyright: ignore[reportUnknownMemberType]
     if kwargs.get("decode_responses", False) or kwargs.get("protocol", 2) != 2:
         raise ValueError("Redis vector stores require decode_responses=False and RESP protocol=2.")
+    try:
+        encoding = lookup(kwargs.get("encoding", "utf-8")).name
+    except LookupError as exc:
+        raise ValueError("Redis vector stores require strict UTF-8 encoding.") from exc
+    if encoding != "utf-8" or kwargs.get("encoding_errors", "strict") != "strict":
+        raise ValueError("Redis vector stores require strict UTF-8 encoding.")
+    if kwargs.get("db", 0) != 0:
+        raise ValueError("Redis vector stores require database 0; Redis Search cannot index other databases.")
     return redis_client
 
 
@@ -116,10 +125,33 @@ def _prepare_namespace_component(value: str) -> str:
     return value.encode("utf-8").hex()
 
 
-def _prepare_collection_names(namespace: str, collection_name: str) -> tuple[str, str]:
-    base = f"af:vector:{_prepare_namespace_component(namespace)}:"
-    collection = _prepare_namespace_component(collection_name)
-    return f"{base}index:{collection}", f"{base}data:{collection}:"
+class _RedisNamespaceNames:
+    """Encode and parse persisted collection names within one Redis namespace."""
+
+    def __init__(self, namespace: str) -> None:
+        base = f"af:vector:{_prepare_namespace_component(namespace)}:"
+        self._index_prefix = f"{base}index:"
+        self._data_prefix = f"{base}data:"
+
+    def for_collection(self, collection_name: str) -> tuple[str, str]:
+        """Return the index name and document prefix for a collection."""
+        collection = _prepare_namespace_component(collection_name)
+        return f"{self._index_prefix}{collection}", f"{self._data_prefix}{collection}:"
+
+    def try_parse_index_name(self, index_name: bytes) -> str | None:
+        """Return a canonical collection name, or None for foreign/malformed index names."""
+        prefix = self._index_prefix.encode("ascii")
+        if not index_name.startswith(prefix):
+            return None
+        encoded_name = index_name[len(prefix) :]
+        if not 2 <= len(encoded_name) <= 512:
+            return None
+        try:
+            name = bytes.fromhex(encoded_name.decode("ascii")).decode("utf-8")
+            canonical_index, _ = self.for_collection(name)
+        except ValueError:
+            return None
+        return name if index_name == canonical_index.encode("ascii") else None
 
 
 def _prepare_vector(value: Any, field: VectorStoreField) -> np.ndarray[Any, np.dtype[Any]]:
@@ -314,7 +346,8 @@ class RedisCollection(BaseVectorCollection[str, ModelT], BaseVectorSearch[str, M
     Tested with Redis 8.0.3+ including Search and, for JSON, RedisJSON.
     Index creation requires INDEXMISSING and INDEXEMPTY support.
     Fields use native Redis types, with JSON encoding for unindexed HASH containers.
-    Caller-provided clients are borrowed and must use RESP2 with binary responses.
+    Clients must use database 0, strict UTF-8 encoding, and RESP2 with binary responses.
+    Caller-provided clients are borrowed.
 
     Scores are native distances, lower is better: DEFAULT/cosine_distance use
     COSINE, euclidean_squared_distance uses L2, and redis.ip uses 1 - dot product.
@@ -366,7 +399,7 @@ class RedisCollection(BaseVectorCollection[str, ModelT], BaseVectorSearch[str, M
             raise ValueError("storage_type must be 'hash' or 'json'.")
         self.storage_type: Literal["hash", "json"] = storage_type
         self.namespace = namespace
-        self.index_name, self.key_prefix = _prepare_collection_names(namespace, self.collection_name)
+        self.index_name, self.key_prefix = _RedisNamespaceNames(namespace).for_collection(self.collection_name)
         self._indexed_fields: dict[str, VectorStoreField] = {}
         for field in self.definition.fields:
             name = field.storage_name or field.name
@@ -916,21 +949,12 @@ class RedisStore(BaseVectorStore):
         if self._closed:
             raise RuntimeError("The Redis store is closed.")
         mark_feature_used(FeatureIndex.REDIS)
-        prefix = f"af:vector:{_prepare_namespace_component(self.namespace)}:index:".encode("ascii")
+        namespace_names = _RedisNamespaceNames(self.namespace)
         names: list[str] = []
         indexes = cast(list[bytes], await self.redis_client.execute_command("FT._LIST"))  # pyright: ignore[reportUnknownMemberType]
         for index_name in indexes:
-            if not index_name.startswith(prefix):
-                continue
-            encoded_name = index_name[len(prefix) :]
-            if not 2 <= len(encoded_name) <= 512:
-                continue
-            try:
-                name = bytes.fromhex(encoded_name.decode("ascii")).decode("utf-8")
-                canonical_name = _prepare_namespace_component(name).encode("ascii")
-            except ValueError:
-                continue
-            if encoded_name == canonical_name:
+            name = namespace_names.try_parse_index_name(index_name)
+            if name is not None:
                 names.append(name)
         return sorted(names)
 
@@ -938,7 +962,7 @@ class RedisStore(BaseVectorStore):
         self, collection_name: str, *, operation_options: Mapping[str, Any] | None = None
     ) -> None:
         _validate_operation_options(operation_options)
-        index_name, key_prefix = _prepare_collection_names(self.namespace, collection_name)
+        index_name, key_prefix = _RedisNamespaceNames(self.namespace).for_collection(collection_name)
         existing = await AsyncSearchIndex.from_existing(  # pyright: ignore[reportUnknownMemberType]
             index_name, redis_client=self.redis_client
         )
