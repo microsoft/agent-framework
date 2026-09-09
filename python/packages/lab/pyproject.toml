@@ -58,7 +58,7 @@ math = [
 [dependency-groups]
 dev = [
     "agent-framework-openai>=1.14.2,<2",
-    "uv==0.12.7",
+    "uv==0.12.9",
     "ruff==0.16.5",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
@@ -70,7 +70,7 @@ dev = [
     "rich>=13.7.1,<15.0.0",
     "tomli==2.4.1",
     "tomli-w==1.2.0",
-    "prek==0.5.0",
+    "prek==0.5.2",
 ]
 # tau2 is an executable optional feature fetched from source because it is not available on PyPI.
 tau2 = [
