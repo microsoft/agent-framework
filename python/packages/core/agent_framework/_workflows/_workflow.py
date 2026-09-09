@@ -1269,6 +1269,77 @@ class Workflow(DictConvertible):
 
         return list(output_types)
 
+    def get_last_checkpoint_id(self) -> str | None:
+        """Return the checkpoint id last persisted or restored by this workflow runner.
+
+        Capture this value before ``run()`` when a host needs a run-scoped pause id:
+        after the run, only a different id indicates *this* run advanced the chain.
+        """
+        checkpoint_id = self._runner._previous_checkpoint_id  # pyright: ignore[reportPrivateUsage]
+        return str(checkpoint_id) if checkpoint_id is not None else None
+
+    async def resolve_pause_checkpoint_id(
+        self,
+        request_ids: Collection[str],
+        *,
+        checkpoint_storage: CheckpointStorage | None = None,
+        known_checkpoint_id: str | None = None,
+        baseline_checkpoint_id: str | None = None,
+    ) -> str | None:
+        """Resolve the persisted pause checkpoint that covers ``request_ids``.
+
+        Prefers this runner's last-saved id when it advanced past ``baseline_checkpoint_id``
+        (the id captured before ``run()``), over shared ``get_latest(workflow_name=...)``.
+        Storage precedence is the run argument, else the runner's effective
+        (runtime / builder) storage. When storage is available, candidates are accepted
+        only if their ``pending_request_info_events`` cover ``request_ids``.
+
+        Args:
+            request_ids: Pending request_info ids that must be present on the checkpoint.
+            checkpoint_storage: Optional storage override for this lookup.
+            known_checkpoint_id: Fallback id (for example a cold-resume short-circuit).
+            baseline_checkpoint_id: Runner checkpoint id captured before the run that
+                produced these requests. When set (including ``None`` as “no prior id”),
+                the runner candidate is used only if ``get_last_checkpoint_id()`` differs.
+
+        Returns:
+            A checkpoint id suitable for durable resume, or ``None`` when none is safe.
+        """
+        ids = {str(request_id) for request_id in request_ids if request_id is not None and str(request_id)}
+        if not ids:
+            return None
+
+        storage = checkpoint_storage
+        if storage is None:
+            storage = self._runner.context._get_effective_checkpoint_storage()  # pyright: ignore[reportPrivateUsage]
+
+        current = self.get_last_checkpoint_id()
+        # Run-scoped: do not advertise a pre-run leftover when this run did not persist.
+        runner_candidate: str | None = None
+        if current is not None and current != baseline_checkpoint_id:
+            runner_candidate = current
+
+        candidates: list[str] = []
+        if runner_candidate is not None:
+            candidates.append(runner_candidate)
+        if known_checkpoint_id is not None and known_checkpoint_id not in candidates:
+            candidates.append(str(known_checkpoint_id))
+
+        if storage is None:
+            # Without storage we cannot prove coverage; only advertise a run-scoped runner id.
+            return runner_candidate
+
+        for candidate in candidates:
+            try:
+                checkpoint = await storage.load(candidate)
+            except Exception:  # pragma: no cover - storage/type drift
+                logger.debug("Could not load pause checkpoint candidate %s", candidate, exc_info=True)
+                continue
+            pending = getattr(checkpoint, "pending_request_info_events", None) or {}
+            if ids.issubset({str(key) for key in dict(pending)}):
+                return candidate
+        return None
+
     async def cancel_pending_requests(
         self,
         request_ids: Collection[str],

@@ -169,10 +169,12 @@ async def test_pause_checkpoint_id_ignores_competing_shared_latest() -> None:
     assert latest is not None
     assert latest.checkpoint_id == competing.checkpoint_id
 
+    # baseline=None: treat as first advertisement after the pause run already advanced the runner id.
     resolved = await _pause_checkpoint_id_for_interrupts(
         workflow=workflow,
         checkpoint_storage=storage,
         interrupts=interrupt_payload,
+        baseline_checkpoint_id=None,
     )
     assert resolved == pause_id
 
@@ -182,6 +184,7 @@ async def test_pause_checkpoint_id_ignores_competing_shared_latest() -> None:
         interrupts=interrupt_payload,
         workflow=workflow,
         checkpoint_storage=storage,
+        baseline_checkpoint_id=None,
     )
     rebuilt_interrupts = _interrupts_from_run_finished(rebuilt)
     assert rebuilt_interrupts[0]["metadata"]["agent_framework"]["checkpoint_id"] == pause_id
@@ -222,6 +225,51 @@ async def test_builder_checkpoint_storage_attaches_id_without_run_arg() -> None:
     checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
     assert checkpoints
     assert interrupt_payload[0]["metadata"]["agent_framework"]["checkpoint_id"] == checkpoints[-1].checkpoint_id
+
+
+@pytest.mark.asyncio
+async def test_resolve_pause_checkpoint_id_is_run_scoped_without_storage() -> None:
+    """Stale runner ids must not be advertised when baseline shows this run did not persist."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            await ctx.request_info("need-input", str, request_id="req-1")
+
+        @response_handler
+        async def handle(self, original_request: str, response: str, ctx: WorkflowContext) -> None:
+            del original_request, response
+            await ctx.yield_output("done")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    # Simulate a leftover id from a prior run on a workflow with no checkpoint storage.
+    workflow._runner._previous_checkpoint_id = "stale-from-prior-run"  # pyright: ignore[reportPrivateUsage]
+
+    from agent_framework_ag_ui._workflow_run import _pause_checkpoint_id_for_interrupts
+
+    interrupts = [{"id": "req-1", "value": "need-input"}]
+    assert (
+        await _pause_checkpoint_id_for_interrupts(
+            workflow=workflow,
+            checkpoint_storage=None,
+            interrupts=interrupts,
+            baseline_checkpoint_id="stale-from-prior-run",
+        )
+        is None
+    )
+    assert (
+        await _pause_checkpoint_id_for_interrupts(
+            workflow=workflow,
+            checkpoint_storage=None,
+            interrupts=interrupts,
+            baseline_checkpoint_id=None,
+        )
+        == "stale-from-prior-run"
+    )
 
 
 async def test_workflow_run_maps_custom_and_text_events():
