@@ -69,9 +69,8 @@ internal sealed class WorkflowExpressionEngine
 
         SensitivityLevel sensitivity = SensitivityLevel.None;
         List<string> segments = [];
-        foreach (TemplateSegment segment in line.Segments)
+        foreach (EvaluationResult<string> result in line.Segments.Select(this.Format))
         {
-            EvaluationResult<string> result = this.Format(segment);
             sensitivity = MaxSensitivity(sensitivity, result.Sensitivity);
             segments.Add(result.Value);
         }
