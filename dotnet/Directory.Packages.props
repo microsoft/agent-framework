@@ -154,7 +154,7 @@
     <PackageVersion Include="xRetry.v3" Version="1.0.0-rc3" />
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.4.1" />
     <!-- Symbols -->
-    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="8.0.0" />
+    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.401" />
     <!-- Toolset -->
     <PackageVersion Include="ReferenceTrimmer" Version="3.4.5" />
     <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" />
