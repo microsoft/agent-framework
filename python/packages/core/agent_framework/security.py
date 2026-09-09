@@ -75,6 +75,9 @@ _EMBEDDED_VAR_REF_RE = re.compile(rf"\[\s*(?P<bracketed>{_BRACKETED_VAR_ID})\s*\
 _WHOLE_VAR_REF_RE = re.compile(rf"\s*(?:\[\s*(?P<bracketed>{_BRACKETED_VAR_ID})\s*\]|(?P<bare>{_BARE_VAR_ID}))\s*")
 _BARE_REFERENCE_WARNING = "Expanded a bare variable reference in a tool argument; models should use [var_<id>] instead."
 _UNRESOLVED = object()
+_AUTHORITATIVE_CONFIDENTIALITY = "_security_label_authoritative_confidentiality"
+_INSPECT_VARIABLE_ERROR = "_inspect_variable_error"
+_INTERNAL_RESULT_MARKER = object()
 
 # Tools that consume variable IDs literally (as opaque references) and therefore
 # must NOT have ``var_xxx`` arguments expanded to stored content before execution.
@@ -90,15 +93,21 @@ def _get_additional_properties(obj: Any) -> dict[str, Any]:
     return cast(dict[str, Any], props) if isinstance(props, dict) else {}
 
 
-def _is_quarantine_payload(payload: dict[str, Any]) -> bool:
-    """Return whether a mapping has the internal quarantined LLM result shape."""
-    return (
-        payload.get("quarantined") is True
-        and "response" in payload
-        and isinstance(payload.get("security_label"), MutableMapping)
-        and isinstance(payload.get("metadata"), MutableMapping)
-        and isinstance(payload.get("variables_processed"), list)
-        and isinstance(payload.get("content_summary"), list)
+def _parse_content_label(label_data: MutableMapping[str, Any], *, source: str) -> ContentLabel:
+    """Parse explicit label fields while ignoring malformed optional metadata."""
+    integrity = label_data.get("integrity")
+    confidentiality = label_data.get("confidentiality")
+    if not isinstance(integrity, str) or not isinstance(confidentiality, str):
+        raise ValueError(f"{source} security label requires integrity and confidentiality")
+
+    metadata = label_data.get("metadata")
+    if metadata is not None and not isinstance(metadata, dict):
+        logger.warning("Ignoring malformed metadata from %s security label", source)
+        metadata = {}
+    return ContentLabel(
+        integrity=IntegrityLabel(integrity),
+        confidentiality=ConfidentialityLabel(confidentiality),
+        metadata=cast(dict[str, Any], metadata) if isinstance(metadata, dict) else None,
     )
 
 
@@ -1271,17 +1280,18 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             )
 
     @staticmethod
-    def _extract_primary_tool_content(expanded_content: Any) -> Any:
-        """Return the tool-visible content for an expanded variable payload.
+    def _extract_primary_tool_content(expanded_content: Any, *, from_quarantined_llm: bool) -> Any:
+        """Return the primary response from a proven quarantined LLM result.
 
-        Hidden ``quarantined_llm`` results are stored as rich payloads containing
-        the response plus security metadata. Tool arguments should receive only the
-        primary response they would have seen without variable indirection. Ordinary
-        mappings or JSON text that happen to contain a ``response`` key remain intact.
+        Producer metadata is owned by the middleware and distinguishes internal
+        quarantine wrappers from ordinary, potentially attacker-controlled JSON.
         """
+        if not from_quarantined_llm:
+            return expanded_content
+
         if isinstance(expanded_content, dict):
             content_map = cast(dict[str, Any], expanded_content)
-            if _is_quarantine_payload(content_map):
+            if "response" in content_map:
                 return content_map["response"]
             return content_map
 
@@ -1292,7 +1302,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                     parsed = json.loads(stripped)
                     if isinstance(parsed, dict):
                         parsed_map = cast(dict[str, Any], parsed)
-                        if _is_quarantine_payload(parsed_map):
+                        if "response" in parsed_map:
                             return parsed_map["response"]
 
         return expanded_content
@@ -1308,7 +1318,11 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         except KeyError:
             return _UNRESOLVED
         labels.append(stored_label)
-        return self._extract_primary_tool_content(stored_content)
+        metadata = self.get_variable_metadata(variable_id)
+        return self._extract_primary_tool_content(
+            stored_content,
+            from_quarantined_llm=metadata is not None and metadata.get("function_name") == "quarantined_llm",
+        )
 
     def _resolve_string(self, value: str, labels: list[ContentLabel]) -> Any:
         if not _EMBEDDED_VAR_REF_RE.search(value):
@@ -1395,14 +1409,18 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 if "security_label" in value_dict:
                     label_data = value_dict["security_label"]
                     if isinstance(label_data, ContentLabel):
-                        labels.append(label_data)
+                        labels.append(
+                            _parse_content_label(
+                                cast(MutableMapping[str, Any], label_data.to_dict()),
+                                source="input",
+                            )
+                        )
                     elif isinstance(label_data, dict):
-                        with contextlib.suppress(Exception):  # nosec B110 - best-effort label extraction
-                            labels.append(ContentLabel.from_dict(cast(dict[str, Any], label_data)))
-                # Fall back to "label" for backward compatibility
+                        with contextlib.suppress(TypeError, ValueError):
+                            labels.append(_parse_content_label(cast(dict[str, Any], label_data), source="input"))
                 elif "label" in value_dict and isinstance(value_dict.get("label"), dict):
-                    with contextlib.suppress(Exception):  # nosec B110 - best-effort label extraction
-                        labels.append(ContentLabel.from_dict(cast(dict[str, Any], value_dict["label"])))
+                    with contextlib.suppress(TypeError, ValueError):
+                        labels.append(_parse_content_label(cast(dict[str, Any], value_dict["label"]), source="input"))
                 # Recurse into dict values
                 for v in value_dict.values():
                     _extract_labels_recursive(v)
@@ -1712,7 +1730,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         visible_item_labels: list[ContentLabel] = []
 
         for item in items:
-            item_label = self._extract_content_label(item, fallback_label)
+            item_label = self._extract_content_label(item, fallback_label, function_name)
             item_labels.append(item_label)
 
             if self._should_hide(item_label, function_name):
@@ -1732,38 +1750,58 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         self,
         item: Content,
         fallback_label: ContentLabel,
+        function_name: str,
     ) -> ContentLabel:
-        """Extract the security label for a single Content item.
-
-        Checks (in order):
-        1. ``additional_properties.security_label`` (explicit label)
-        2. Falls back to ``fallback_label``
+        """Extract and constrain the security label for one result item.
 
         Args:
             item: The Content item to inspect.
-            fallback_label: The label to use if no embedded label is found.
+            fallback_label: The label inherited from the invocation.
+            function_name: The name of the tool that produced the item.
 
         Returns:
             The resolved ContentLabel for this item.
         """
         additional_props = _get_additional_properties(item)
+        authoritative_marker = additional_props.pop(_AUTHORITATIVE_CONFIDENTIALITY, None)
+        inspect_error_marker = additional_props.pop(_INSPECT_VARIABLE_ERROR, None)
+        authoritative_confidentiality = (
+            function_name == "quarantined_llm" and authoritative_marker is _INTERNAL_RESULT_MARKER
+        )
+        inspect_error = function_name == "inspect_variable" and inspect_error_marker is _INTERNAL_RESULT_MARKER
 
-        # Embedded labels remain authoritative for integrity, but cannot
-        # declassify data inherited from the tool's inputs.
         label_data = additional_props.get("security_label")
         if label_data and isinstance(label_data, dict):
             try:
-                embedded_label = ContentLabel.from_dict(cast(dict[str, Any], label_data))
+                embedded_label = _parse_content_label(
+                    cast(dict[str, Any], label_data),
+                    source="embedded",
+                )
                 combined_label = combine_labels(fallback_label, embedded_label)
                 return ContentLabel(
                     integrity=embedded_label.integrity,
-                    confidentiality=combined_label.confidentiality,
+                    confidentiality=(
+                        embedded_label.confidentiality
+                        if authoritative_confidentiality
+                        else combined_label.confidentiality
+                    ),
                     metadata=combined_label.metadata,
                 )
-            except Exception as e:
-                logger.warning(f"Failed to parse security_label from Content: {e}")
+            except (TypeError, ValueError) as exc:
+                logger.warning("Failed to parse security_label from Content: %s", exc)
 
-        # No embedded label — use fallback
+        if inspect_error:
+            integrity = (
+                IntegrityLabel.TRUSTED
+                if fallback_label.metadata.get("source") == "default"
+                else fallback_label.integrity
+            )
+            return ContentLabel(
+                integrity=integrity,
+                confidentiality=fallback_label.confidentiality,
+                metadata=fallback_label.metadata,
+            )
+
         return fallback_label
 
     def _hide_item(
@@ -2914,9 +2952,17 @@ def _quarantined_llm_result_parser(result: Any) -> list[Content]:
     label_data = cast(dict[str, Any], result).get("security_label")
     if not isinstance(label_data, MutableMapping):
         return contents
+    typed_label_data = cast(MutableMapping[str, Any], label_data)
+    confidentiality = typed_label_data.get("confidentiality")
+    if not isinstance(confidentiality, str):
+        logger.warning("quarantined_llm result label is missing confidentiality")
+        return contents
 
     try:
-        parsed_label = ContentLabel.from_dict(cast(MutableMapping[str, Any], label_data))
+        parsed_label = _parse_content_label(
+            typed_label_data,
+            source="quarantined_llm result",
+        )
     except (TypeError, ValueError) as exc:
         logger.warning("Failed to parse quarantined_llm result label: %s", exc)
         return contents
@@ -2929,6 +2975,7 @@ def _quarantined_llm_result_parser(result: Any) -> list[Content]:
     first = contents[0]
     props = first.additional_properties or {}
     props["security_label"] = quarantine_label.to_dict()
+    props[_AUTHORITATIVE_CONFIDENTIALITY] = _INTERNAL_RESULT_MARKER
     first.additional_properties = props
     return contents
 
@@ -3013,6 +3060,10 @@ async def quarantined_llm(
     variable_store = middleware.get_variable_store() if middleware else _global_variable_store
 
     labels: list[ContentLabel] = []
+    unknown_input_label = ContentLabel(
+        integrity=IntegrityLabel.UNTRUSTED,
+        confidentiality=ConfidentialityLabel.PRIVATE,
+    )
     retrieved_content: dict[str, Any] = {}
 
     # Retrieve content from variable_ids
@@ -3025,7 +3076,7 @@ async def quarantined_llm(
         except KeyError:
             logger.warning("A requested quarantine variable was not found in the current security scope")
             # Still add untrusted label for unknown variables
-            labels.append(ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+            labels.append(unknown_input_label)
 
     # Parse labels and content from labelled_data
     labelled_data_content: dict[str, Any] = {}
@@ -3044,19 +3095,24 @@ async def quarantined_llm(
                 try:
                     label_data = value_dict[label_key]
                     if isinstance(label_data, dict):
-                        label = ContentLabel.from_dict(cast(dict[str, Any], label_data))
+                        label = _parse_content_label(
+                            cast(dict[str, Any], label_data),
+                            source="quarantine input",
+                        )
                     elif isinstance(label_data, ContentLabel):
                         label = label_data
                     else:
-                        label = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+                        label = unknown_input_label
                     labels.append(label)
-                except Exception as e:
+                except (TypeError, ValueError) as e:
                     logger.warning("Failed to parse a quarantine data security label; using UNTRUSTED")
                     logger.debug("Quarantine label parse failure for %s: %s", key, e)
-                    labels.append(ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+                    labels.append(unknown_input_label)
             else:
                 # No label provided, default to UNTRUSTED
-                labels.append(ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+                labels.append(unknown_input_label)
+        else:
+            labels.append(unknown_input_label)
 
     # Combine all labels (most restrictive)
     combined_label = combine_labels(*labels) if labels else ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
@@ -3197,25 +3253,21 @@ def _inspect_variable_result_parser(result: Any) -> list[Content]:
     downgrading the real label.
 
     This parser stamps the inspected label back onto the produced Content so
-    ``LabelTrackingFunctionMiddleware`` propagates it faithfully. Missing-variable
-    errors are labeled as trusted tool output so probing an absent or foreign id
-    does not falsely taint cumulative integrity.
+    ``LabelTrackingFunctionMiddleware`` propagates it faithfully. Error results
+    remain unstamped so their integrity inherits from the invocation fallback.
     """
     contents = FunctionTool.parse_result(result)
     if not contents:
         return contents
 
+    first = contents[0]
+    props = first.additional_properties or {}
     label = cast(dict[str, Any], result).get("security_label") if isinstance(result, dict) else None
-    if label is None and isinstance(result, dict) and "error" in cast(dict[str, Any], result):
-        label = ContentLabel(
-            integrity=IntegrityLabel.TRUSTED,
-            confidentiality=_INSPECT_VARIABLE_CONFIDENTIALITY,
-        ).to_dict()
     if label:
-        first = contents[0]
-        props = first.additional_properties or {}
         props["security_label"] = label
-        first.additional_properties = props
+    if isinstance(result, dict) and "error" in cast(dict[str, Any], result):
+        props[_INSPECT_VARIABLE_ERROR] = _INTERNAL_RESULT_MARKER
+    first.additional_properties = props
     return contents
 
 

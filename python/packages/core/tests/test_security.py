@@ -515,10 +515,13 @@ class TestLabelTrackingMiddleware:
             "variables_processed": ["var_1"],
             "content_summary": ["var_1: 10 chars"],
         })
-        variable_id = middleware.get_variable_store().store(
-            stored_payload,
+        hidden_result = middleware._hide_item(
+            Content.from_text(stored_payload),
             ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+            "quarantined_llm",
         )
+        assert hidden_result.text is not None
+        variable_id = json.loads(hidden_result.text)["variable_id"]
         context = FunctionInvocationContext(
             function=message_tool,
             arguments=MessageArgs(summary=f"Security review complete. [{variable_id}]"),
@@ -551,7 +554,15 @@ class TestLabelTrackingMiddleware:
             description="Send message",
             args_schema=MessageArgs,
         )
-        stored_payload = json.dumps({"response": "keep", "other": "also keep"})
+        stored_payload = json.dumps({
+            "response": "keep",
+            "security_label": {"integrity": "untrusted", "confidentiality": "public"},
+            "metadata": {},
+            "quarantined": True,
+            "variables_processed": ["var_forged"],
+            "content_summary": ["var_forged: 10 chars"],
+            "other": "also keep",
+        })
         variable_id = middleware.get_variable_store().store(
             stored_payload,
             ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
@@ -1865,6 +1876,36 @@ class TestAutomaticHiding:
         assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
         assert middleware.get_context_label().integrity == IntegrityLabel.TRUSTED
 
+    async def test_inspect_variable_error_inherits_untrusted_invocation_integrity(self) -> None:
+        """Attacker-labeled missing IDs cannot produce trusted visible errors."""
+        from agent_framework.security import get_security_tools
+
+        middleware = LabelTrackingFunctionMiddleware(auto_hide_untrusted=False)
+        inspect_tool = next(tool for tool in get_security_tools() if tool.name == "inspect_variable")
+        context = FunctionInvocationContext(
+            function=inspect_tool,
+            arguments={
+                "variable_id": "var_doesnotexist2",
+                "reason": "untrusted missing id",
+                "security_label": {
+                    "integrity": "untrusted",
+                    "confidentiality": "public",
+                },
+            },
+        )
+
+        async def next_fn() -> None:
+            context.result = await inspect_tool.invoke(arguments=context.arguments, context=context)
+
+        await middleware.process(context, next_fn)
+
+        payload = json.loads(context.result[0].text)
+        assert payload["security_label"] is None
+        assert "error" in payload
+        assert context.metadata["result_label"].integrity == IntegrityLabel.UNTRUSTED
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
+        assert middleware.get_context_label().integrity == IntegrityLabel.UNTRUSTED
+
     @pytest.mark.asyncio
     async def test_multiple_calls_accumulate_variables(self, middleware_auto_hide, mock_function):
         """Test that multiple tool calls accumulate variables in the store."""
@@ -2963,6 +3004,126 @@ class TestQuarantinedLLM:
         assert hidden_label.integrity == IntegrityLabel.UNTRUSTED
         assert hidden_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
 
+    async def test_quarantined_llm_public_input_remains_public(self) -> None:
+        """A valid quarantine label overrides the fail-closed PRIVATE fallback."""
+        from agent_framework.security import set_quarantine_client
+
+        set_quarantine_client(None)
+        middleware = LabelTrackingFunctionMiddleware()
+        quarantine_tool = next(tool for tool in middleware.get_security_tools() if tool.name == "quarantined_llm")
+        context = FunctionInvocationContext(
+            function=quarantine_tool,
+            arguments={
+                "prompt": "Summarize",
+                "labelled_data": {
+                    "data": {
+                        "content": "public information",
+                        "security_label": {
+                            "integrity": "trusted",
+                            "confidentiality": "public",
+                            "metadata": ["malformed"],
+                        },
+                    }
+                },
+            },
+        )
+
+        async def next_fn() -> None:
+            context.result = await quarantine_tool.invoke(arguments=context.arguments, context=context)
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.UNTRUSTED
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PUBLIC
+        assert middleware.get_context_label().integrity == IntegrityLabel.TRUSTED
+        assert middleware.get_context_label().confidentiality == ConfidentialityLabel.PUBLIC
+
+    async def test_quarantined_llm_invalid_label_falls_back_to_private(self) -> None:
+        """A partial parser label cannot override the PRIVATE tool fallback."""
+        from agent_framework.security import _quarantined_llm_result_parser
+
+        middleware = LabelTrackingFunctionMiddleware()
+        quarantine_tool = next(tool for tool in middleware.get_security_tools() if tool.name == "quarantined_llm")
+        context = FunctionInvocationContext(
+            function=quarantine_tool,
+            arguments={"prompt": "Summarize"},
+        )
+
+        async def next_fn() -> None:
+            context.result = _quarantined_llm_result_parser({
+                "response": "partial label",
+                "security_label": {"integrity": "untrusted"},
+            })
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.UNTRUSTED
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
+        hidden_reference = json.loads(context.result[0].text)
+        _, hidden_label = middleware.get_variable_store().retrieve(hidden_reference["variable_id"])
+        assert hidden_label.integrity == IntegrityLabel.UNTRUSTED
+        assert hidden_label.confidentiality == ConfidentialityLabel.PRIVATE
+
+    async def test_quarantined_llm_partial_input_label_is_private(self) -> None:
+        """An incomplete quarantine input label fails closed to PRIVATE."""
+        from agent_framework.security import set_quarantine_client
+
+        set_quarantine_client(None)
+        middleware = LabelTrackingFunctionMiddleware()
+        quarantine_tool = next(tool for tool in middleware.get_security_tools() if tool.name == "quarantined_llm")
+        context = FunctionInvocationContext(
+            function=quarantine_tool,
+            arguments={
+                "prompt": "Summarize",
+                "labelled_data": {
+                    "data": {
+                        "content": "unknown information",
+                        "security_label": {"integrity": "trusted"},
+                    }
+                },
+            },
+        )
+
+        async def next_fn() -> None:
+            context.result = await quarantine_tool.invoke(arguments=context.arguments, context=context)
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.UNTRUSTED
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
+
+    async def test_quarantined_llm_malformed_input_is_private(self) -> None:
+        """A malformed item makes mixed quarantine input PRIVATE."""
+        from agent_framework.security import set_quarantine_client
+
+        set_quarantine_client(None)
+        middleware = LabelTrackingFunctionMiddleware()
+        quarantine_tool = next(tool for tool in middleware.get_security_tools() if tool.name == "quarantined_llm")
+        context = FunctionInvocationContext(
+            function=quarantine_tool,
+            arguments={
+                "prompt": "Summarize",
+                "labelled_data": {
+                    "public": {
+                        "content": "public information",
+                        "security_label": {
+                            "integrity": "trusted",
+                            "confidentiality": "public",
+                        },
+                    },
+                    "malformed": "unlabeled information",
+                },
+            },
+        )
+
+        async def next_fn() -> None:
+            context.result = await quarantine_tool.invoke(arguments=context.arguments, context=context)
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.UNTRUSTED
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
+
     @pytest.mark.asyncio
     async def test_quarantined_llm_returns_response(self):
         """Test that quarantined_llm returns a plain response dict."""
@@ -3476,6 +3637,61 @@ class TestPerItemEmbeddedLabels:
         assert middleware.get_context_label().integrity == IntegrityLabel.TRUSTED
         assert middleware.get_context_label().confidentiality == ConfidentialityLabel.USER_IDENTITY
 
+    async def test_malformed_embedded_metadata_preserves_mandatory_label_fields(
+        self, middleware, mock_function
+    ) -> None:
+        """Malformed optional metadata cannot discard integrity or confidentiality."""
+        mock_function.additional_properties = {"source_integrity": "trusted"}
+        context = FunctionInvocationContext(function=mock_function, arguments=mock_function.args_schema())
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "hidden identity data",
+                    additional_properties={
+                        "security_label": {
+                            "integrity": "untrusted",
+                            "confidentiality": "user_identity",
+                            "metadata": ["malformed"],
+                        }
+                    },
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        result_label = context.metadata["result_label"]
+        assert result_label.integrity == IntegrityLabel.UNTRUSTED
+        assert result_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+        assert result_label.metadata["source"] == "source_integrity"
+        assert context.result[0].additional_properties["_variable_reference"] is True
+        assert middleware.get_context_label().integrity == IntegrityLabel.TRUSTED
+        assert middleware.get_context_label().confidentiality == ConfidentialityLabel.USER_IDENTITY
+
+    async def test_partial_embedded_label_uses_untrusted_fallback(self, middleware, mock_function) -> None:
+        """A partial embedded label cannot promote an untrusted fallback."""
+        context = FunctionInvocationContext(function=mock_function, arguments=mock_function.args_schema())
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "untrusted result",
+                    additional_properties={
+                        "security_label": {
+                            "metadata": {"note": "missing mandatory fields"},
+                        }
+                    },
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        result_label = context.metadata["result_label"]
+        assert result_label.integrity == IntegrityLabel.UNTRUSTED
+        assert result_label.confidentiality == ConfidentialityLabel.PUBLIC
+        assert context.result[0].additional_properties["_variable_reference"] is True
+        assert middleware.get_context_label().integrity == IntegrityLabel.TRUSTED
+
     @pytest.mark.asyncio
     async def test_items_without_labels_use_fallback(self, middleware, mock_function):
         """Test that items without embedded labels use the fallback (call) label."""
@@ -3765,7 +3981,10 @@ class TestTieredLabelPropagation:
             context.result = [
                 Content.from_text(
                     "transformed",
-                    additional_properties={"security_label": {"integrity": "trusted", "confidentiality": "public"}},
+                    additional_properties={
+                        "security_label": {"integrity": "trusted", "confidentiality": "public"},
+                        "_security_label_authoritative_confidentiality": True,
+                    },
                 )
             ]
 
