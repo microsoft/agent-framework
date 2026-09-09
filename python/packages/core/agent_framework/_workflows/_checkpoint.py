@@ -320,12 +320,26 @@ class FileCheckpointStorage:
 
         Returns:
             The unique ID of the saved checkpoint.
+
+        Raises:
+            WorkflowCheckpointException: If the checkpoint cannot be encoded or would
+                fail to decode under this storage's ``allowed_checkpoint_types``.
         """
-        from ._checkpoint_encoding import encode_checkpoint_value
+        from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 
         file_path = self._validate_file_path(checkpoint.checkpoint_id)
         checkpoint_dict = checkpoint.to_dict()
         encoded_checkpoint = encode_checkpoint_value(checkpoint_dict)
+        # Fail at save time if this storage could not restore the payload (#8181).
+        try:
+            decode_checkpoint_value(encoded_checkpoint, allowed_types=self._allowed_types)
+        except WorkflowCheckpointException:
+            raise
+        except Exception as ex:
+            raise WorkflowCheckpointException(
+                f"Checkpoint {checkpoint.checkpoint_id} cannot be restored under this "
+                "storage's allowed types; refusing to save."
+            ) from ex
 
         def _write_atomic() -> None:
             tmp_path = file_path.with_suffix(".json.tmp")
@@ -360,7 +374,12 @@ class FileCheckpointStorage:
             with open(file_path) as f:
                 return json.load(f)
 
-        encoded_checkpoint = await asyncio.to_thread(_read)
+        try:
+            encoded_checkpoint = await asyncio.to_thread(_read)
+        except json.JSONDecodeError as ex:
+            raise WorkflowCheckpointException(
+                f"Checkpoint file for {checkpoint_id} is not valid JSON and cannot be loaded."
+            ) from ex
 
         from ._checkpoint_encoding import decode_checkpoint_value
 
@@ -446,6 +465,8 @@ class FileCheckpointStorage:
 
         Returns:
             A list of checkpoint IDs for the specified workflow name.
+            Only includes checkpoints that can be decoded under this storage's
+            allowed types (aligned with :meth:`list_checkpoints`, #8181).
         """
 
         def _list_ids() -> list[CheckpointID]:
@@ -453,9 +474,15 @@ class FileCheckpointStorage:
             for file_path in self.storage_path.glob("*.json"):
                 try:
                     with open(file_path) as f:
-                        data = json.load(f)
-                    if data.get("workflow_name") == workflow_name:
-                        checkpoint_ids.append(data.get("checkpoint_id", file_path.stem))
+                        encoded_checkpoint = json.load(f)
+                    from ._checkpoint_encoding import decode_checkpoint_value
+
+                    decoded_checkpoint_dict = decode_checkpoint_value(
+                        encoded_checkpoint, allowed_types=self._allowed_types
+                    )
+                    checkpoint = WorkflowCheckpoint.from_dict(decoded_checkpoint_dict)
+                    if checkpoint.workflow_name == workflow_name:
+                        checkpoint_ids.append(checkpoint.checkpoint_id)
                 except Exception as e:
                     logger.warning(f"Failed to read checkpoint file {file_path}: {e}")
             return checkpoint_ids
