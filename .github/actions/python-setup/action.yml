@@ -22,7 +22,7 @@ runs:
             version-file: "python/pyproject.toml"
             enable-cache: true
             cache-suffix: ${{ inputs.os }}-${{ inputs.python-version }}
-            cache-dependency-glob: "**/uv.lock"
+            cache-dependency-glob: "python/uv.lock"
       - name: Exclude incompatible workspace packages
         if: ${{ inputs.exclude-packages != '' }}
         shell: bash
