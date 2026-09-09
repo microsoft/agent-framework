@@ -39,6 +39,7 @@ jobs:
       foundryChanged: ${{ steps.filter.outputs.foundry }}
       foundryHostingChanged: ${{ steps.filter.outputs.foundry_hosting }}
       cosmosChanged: ${{ steps.filter.outputs.cosmos }}
+      redisChanged: ${{ steps.filter.outputs.redis }}
       githubCopilotChanged: ${{ steps.filter.outputs.github_copilot }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,6 +85,9 @@ jobs:
               - 'python/packages/foundry_hosting/**'
             cosmos:
               - 'python/packages/azure-cosmos/**'
+            redis:
+              - 'python/packages/redis/**'
+              - 'python/packages/core/agent_framework/redis/**'
             github_copilot:
               - 'python/packages/github_copilot/**'
       # run only if 'python' files were changed
@@ -638,6 +642,53 @@ jobs:
           path: ./python/pytest.xml
           if-no-files-found: ignore
 
+  python-tests-redis:
+    name: Python Tests - Redis Integration
+    needs: paths-filter
+    if: >
+      github.event_name != 'pull_request' &&
+      needs.paths-filter.outputs.pythonChanges == 'true' &&
+      (github.event_name != 'merge_group' ||
+       needs.paths-filter.outputs.redisChanged == 'true' ||
+       needs.paths-filter.outputs.coreChanged == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    services:
+      redis:
+        image: redis:8.0.3
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      REDIS_VECTOR_TEST_URL: redis://localhost:6379
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Test Redis HASH and JSON vector collections
+        run: >
+          uv run --no-sync pytest packages/redis/tests/test_vector_store.py
+          -m integration --timeout=120 --junitxml=pytest-redis.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-redis
+          path: ./python/pytest-redis.xml
+          if-no-files-found: ignore
+
   # Integration test trend report (aggregates per-job JUnit XML results)
   python-integration-test-report:
     name: Integration Test Report
@@ -654,6 +705,7 @@ jobs:
         python-tests-foundry-hosting,
         python-tests-cosmos,
         python-tests-github-copilot,
+        python-tests-redis,
       ]
     runs-on: ubuntu-latest
     defaults:
@@ -715,6 +767,7 @@ jobs:
         python-tests-foundry-hosting,
         python-tests-cosmos,
         python-tests-github-copilot,
+        python-tests-redis,
       ]
     steps:
       - name: Fail workflow if tests failed

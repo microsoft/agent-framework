@@ -20,6 +20,7 @@ agent; set `OPENAI_API_KEY` before running it.
 | [`in_memory_filters.py`](in_memory_filters.py) | Direct vector search with `Filter` and `FilterGroup`. |
 | [`in_memory_search_tool.py`](in_memory_search_tool.py) | Model-set filter values with native typed `Param` declarations. |
 | [`azure_ai_search.py`](azure_ai_search.py) | Native Azure vector/hybrid search with deterministic vectors and a disposable index. |
+| [`redis_store.py`](redis_store.py) | Native HASH and JSON storage, vector search, filtering, and lifecycle with a disposable Redis server. |
 
 The Azure sample requires an authorized Azure AI Search service and `az login`.
 Set `AZURE_SEARCH_ENDPOINT` to your search service. Running the sample creates a
@@ -32,6 +33,10 @@ Run the Azure sample from the `python` directory:
 ```bash
 uv run --package agent-framework-azure-ai-search --with azure-identity python samples/02-agents/vector_stores/azure_ai_search.py
 ```
+
+The Redis example requires Redis 8.0.3+ with Search and RedisJSON, but no
+embedding API. See the [Redis package documentation](../../../packages/redis/README.md)
+for setup and supported filter/score semantics.
 
 The first section shows the two equivalent custom-codec registration forms.
 `@vectorstoremodel` derives the definition from annotations and registers it;

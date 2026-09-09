@@ -91,19 +91,27 @@ from ._run_common import (
     _new_tool_call_segment_id,  # type: ignore
     _reconstruct_messages_from_thread_snapshot,  # type: ignore
     _resume_contract_error,  # type: ignore
+    _resolve_tool_result_host_payload,  # type: ignore
     _resolve_ui_payload,  # type: ignore
-    _stringify_tool_result,  # type: ignore
     _track_tool_call_segment,  # type: ignore
 )
 from ._snapshots import (
     _DEFAULT_STATE_INPUT_KEY,
     _SNAPSHOT_SCOPE_INPUT_KEY,
+    _session_id_for_thread,
     AGUIThreadSnapshot,
 )
 from ._snapshot_session import ThreadSnapshotSession, _event_messages_to_snapshot_dicts
 from ._utils import (
+    _AGUI_MCP_TOOL_RESULT_KEY,
     _approval_interrupt_id,
+    _bound_host_payload_history,
     _function_call_server_label,
+    _mcp_host_history_fields,
+    _model_items_for_agui_replay,
+    _persistable_host_payload_history,
+    _project_host_payload_history,
+    _stringify_tool_result,
     canonical_function_arguments,
     convert_agui_tools_to_agent_framework,
     generate_event_id,
@@ -687,13 +695,22 @@ def _make_approval_tool_result_events(resolved_approval_results: list[Content]) 
         if resolved.call_id:
             raw = resolved.result if resolved.result is not None else ""
             llm_str = _stringify_tool_result(raw)
-            ui_str = _resolve_ui_payload(llm_str, _extract_tool_result_display(resolved))
+            display_result = _extract_tool_result_display(resolved)
+            has_host_payload, host_payload = _resolve_tool_result_host_payload(resolved, display_result)
+            ui_str = _resolve_ui_payload(llm_str, host_payload if has_host_payload else display_result)
+            replay_properties: dict[str, Any] = {}
+            if has_host_payload:
+                replay_properties = _mcp_host_history_fields(
+                    host_payload,
+                    _model_items_for_agui_replay(resolved, llm_str),
+                )
             events.append(
                 ToolCallResultEvent(
                     message_id=generate_event_id(),
                     tool_call_id=resolved.call_id,
                     content=ui_str,
                     role="tool",
+                    **replay_properties,
                 )
             )
     return events
@@ -1968,12 +1985,23 @@ def _resolved_tool_result_snapshot_messages(resolved_messages: list[Message]) ->
         ]
         for content in function_results:
             call_id = str(content.call_id)
-            result_by_call_id[call_id] = {
+            llm_result = _stringify_tool_result(content.result if content.result is not None else "")
+            display_result = _extract_tool_result_display(content)
+            has_host_payload, host_payload = _resolve_tool_result_host_payload(content, display_result)
+            snapshot_message: dict[str, Any] = {
                 "id": msg.message_id if msg.message_id and len(function_results) == 1 else generate_event_id(),
                 "role": "tool",
                 "toolCallId": call_id,
-                "content": _stringify_tool_result(content.result if content.result is not None else ""),
+                "content": llm_result,
             }
+            if has_host_payload:
+                snapshot_message.update(
+                    _mcp_host_history_fields(
+                        host_payload,
+                        _model_items_for_agui_replay(content, llm_result),
+                    )
+                )
+            result_by_call_id[call_id] = snapshot_message
     return result_by_call_id
 
 
@@ -1986,6 +2014,16 @@ def _merge_resolved_approval_results_into_snapshot(
     if not result_by_call_id:
         snapshot_messages[:] = [message for message in snapshot_messages if not message.get("function_approvals")]
         return
+
+    for message in snapshot_messages:
+        if normalize_agui_role(message.get("role", "")) != "tool":
+            continue
+        tool_call_id = message.get("toolCallId") or message.get("tool_call_id")
+        if not tool_call_id or message.get(_AGUI_MCP_TOOL_RESULT_KEY) is not True:
+            continue
+        replacement = result_by_call_id.get(str(tool_call_id))
+        if replacement is not None and replacement.get(_AGUI_MCP_TOOL_RESULT_KEY) is not True:
+            result_by_call_id.pop(str(tool_call_id))
 
     merged_messages: list[dict[str, Any]] = []
     for message in snapshot_messages:
@@ -2067,7 +2105,8 @@ def _build_messages_snapshot(
 
     if flow.snapshot_segments:
         _append_segmented_snapshot_messages(flow, all_messages)
-        return MessagesSnapshotEvent(messages=all_messages)  # type: ignore[arg-type]
+        bounded_messages = _bound_host_payload_history(_persistable_host_payload_history(all_messages))
+        return MessagesSnapshotEvent(messages=_project_host_payload_history(bounded_messages))  # type: ignore[arg-type]
 
     # Add assistant message with tool calls only (no content)
     if flow.pending_tool_calls:
@@ -2101,7 +2140,8 @@ def _build_messages_snapshot(
     # MESSAGES_SNAPSHOT retain reasoning content after streaming ends.
     all_messages.extend(flow.reasoning_messages)
 
-    return MessagesSnapshotEvent(messages=all_messages)  # type: ignore[arg-type]
+    bounded_messages = _bound_host_payload_history(_persistable_host_payload_history(all_messages))
+    return MessagesSnapshotEvent(messages=_project_host_payload_history(bounded_messages))  # type: ignore[arg-type]
 
 
 def _text_events_to_snapshot_messages(events: list[BaseEvent]) -> list[dict[str, Any]]:
@@ -2432,6 +2472,11 @@ async def run_agent_stream(
     thread_id = supplied_thread_id or str(uuid.uuid4())
     run_id = supplied_run_id or str(uuid.uuid4())
     snapshot_scope = cast(str | None, input_data.get(_SNAPSHOT_SCOPE_INPUT_KEY))
+    session_id = _session_id_for_thread(
+        scope=snapshot_scope,
+        thread_id=thread_id,
+        legacy_session_id_from_thread_id=config.legacy_session_id_from_thread_id,
+    )
     approval_scope = cast(str | None, input_data.get(_APPROVAL_SCOPE_INPUT_KEY))
     approval_thread_id = approval_state_thread_id(scope=approval_scope, thread_id=thread_id)
     if approval_state_store is None:
@@ -2721,7 +2766,7 @@ async def run_agent_stream(
                 "use_service_session=True requires snapshot persistence unless service_session_id_from_thread_id=True."
             )
         service_session_id = supplied_thread_id if config.service_session_id_from_thread_id else None
-        session = AgentSession(session_id=thread_id, service_session_id=service_session_id)
+        session = AgentSession(session_id=session_id, service_session_id=service_session_id)
         stored_service_session_id = (
             stored_snapshot.session_state.get(_PROVIDER_SERVICE_SESSION_ID_STATE_KEY)
             if stored_snapshot is not None and stored_snapshot.session_state is not None
@@ -2733,14 +2778,14 @@ async def run_agent_stream(
             and stored_service_session_id is None
             and callable(create_conversation)
         ):
-            created_session = create_conversation(session_id=thread_id)
+            created_session = create_conversation(session_id=session_id)
             if isinstance(created_session, Awaitable):
                 created_session = await created_session
             if not isinstance(created_session, AgentSession):
                 raise TypeError("agent.create_conversation() must return AgentSession")
             session = created_session
     else:
-        session = AgentSession(session_id=thread_id)
+        session = AgentSession(session_id=session_id)
     _restore_session_continuation_state(
         session,
         stored_snapshot,
@@ -2876,7 +2921,7 @@ async def run_agent_stream(
             # stored history unless this run already seeded raw messages from it.
             persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
         await snapshot_session.save(
-            messages=persisted_messages,
+            messages=_bound_host_payload_history(_persistable_host_payload_history(persisted_messages)),
             state=cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None,
             interrupt=None,
             session_state=_safe_serialize_session_continuation_state(
@@ -3241,7 +3286,7 @@ async def run_agent_stream(
         # stored history unless this run already seeded raw messages from it.
         persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
     await snapshot_session.save(
-        messages=persisted_messages,
+        messages=_bound_host_payload_history(_persistable_host_payload_history(persisted_messages)),
         state=latest_state_snapshot,
         interrupt=flow.interrupts or None,
         session_state=_safe_serialize_session_continuation_state(
