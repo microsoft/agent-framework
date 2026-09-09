@@ -498,29 +498,43 @@ public sealed class DefaultHttpRequestHandlerTests
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
         int requestCount = 0;
+        List<HttpResponseMessage> createdResponses = [];
         TestHttpMessageHandler messageHandler = new((_, _) =>
         {
             requestCount++;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.TemporaryRedirect)
+            HttpResponseMessage response = new(HttpStatusCode.TemporaryRedirect)
             {
                 Headers = { Location = new Uri($"https://api.example.test/redirect/{requestCount}") },
-            });
+            };
+
+            createdResponses.Add(response);
+            return Task.FromResult(response);
         });
 
-        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
-        HttpRequestInfo request = new()
+        try
         {
-            Method = "GET",
-            Url = TestUrl,
-        };
+            await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
+            HttpRequestInfo request = new()
+            {
+                Method = "GET",
+                Url = TestUrl,
+            };
 
-        // Act
-        async Task actAsync() => await handler.SendAsync(request, cancellationToken);
+            // Act
+            async Task actAsync() => await handler.SendAsync(request, cancellationToken);
 
-        // Assert
-        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(actAsync);
-        Assert.Contains("maximum number of HTTP redirects", exception.Message, StringComparison.Ordinal);
-        Assert.Equal(51, requestCount);
+            // Assert
+            HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+            Assert.Contains("maximum number of HTTP redirects", exception.Message, StringComparison.Ordinal);
+            Assert.Equal(51, requestCount);
+        }
+        finally
+        {
+            foreach (HttpResponseMessage response in createdResponses)
+            {
+                response.Dispose();
+            }
+        }
     }
 
     [Fact]
