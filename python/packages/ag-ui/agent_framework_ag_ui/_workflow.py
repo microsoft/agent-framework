@@ -446,19 +446,9 @@ class AgentFrameworkWorkflow:
             run_checkpoint_storage = _OwnedWorkflowCheckpointStorage(checkpoint_storage, request_owner)
         builder_seed_messages = raw_messages
         if resume_payload is not None or (checkpoint_id is not None and not raw_messages):
-            # Resume / checkpoint-only requests need stored history. Prefer the
-            # overlap reconstructor when a snapshot exists and the client sent a
-            # (possibly replayed) transcript so it is not duplicated (#8140).
-            # Empty input must keep resume_seeded_messages — the reconstructor
-            # returns [] unchanged and would otherwise wipe stored history.
-            if stored_snapshot is not None and builder_seed_messages:
-                builder_seed_messages = _reconstruct_messages_from_thread_snapshot(
-                    stored_messages=stored_snapshot.messages,
-                    incoming_messages=builder_seed_messages,
-                    stored_interrupt=stored_snapshot.interrupt,
-                )
-            else:
-                builder_seed_messages = snapshot_session.resume_seeded_messages(builder_seed_messages)
+            # Resume / checkpoint-only requests need stored history. Session-owned
+            # reconcile covers empty vs client-replayed transcripts (#8140).
+            builder_seed_messages = snapshot_session.reconcile_resume_messages(builder_seed_messages)
         snapshot_builder = _WorkflowSnapshotBuilder(builder_seed_messages) if snapshot_session.enabled else None
         if snapshot_builder is not None and effective_state:
             # Seed builder state so a run that emits no StateSnapshotEvent still

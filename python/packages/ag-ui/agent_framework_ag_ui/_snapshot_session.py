@@ -22,7 +22,7 @@ from ag_ui.core import (
     StateSnapshotEvent,
 )
 
-from ._run_common import _build_run_finished_event
+from ._run_common import _build_run_finished_event, _reconstruct_messages_from_thread_snapshot
 from ._snapshots import (
     AGUIThreadSnapshot,
     AGUIThreadSnapshotStore,
@@ -140,6 +140,23 @@ class ThreadSnapshotSession:
         if self._stored is None:
             return incoming
         return [copy.deepcopy(message) for message in self._stored.messages] + incoming
+
+    def reconcile_resume_messages(self, incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Merge stored history with resume messages without double-persisting.
+
+        Empty incoming (interrupt-only / checkpoint resume) prepends stored
+        history. Non-empty incoming is overlapped via the thread-snapshot
+        reconstructor so a client that replays its transcript is not duplicated.
+        """
+        if self._stored is None:
+            return incoming
+        if not incoming:
+            return self.resume_seeded_messages(incoming)
+        return _reconstruct_messages_from_thread_snapshot(
+            stored_messages=self._stored.messages,
+            incoming_messages=incoming,
+            stored_interrupt=self._stored.interrupt,
+        )
 
     async def save(
         self,

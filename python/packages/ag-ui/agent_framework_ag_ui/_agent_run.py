@@ -2483,18 +2483,8 @@ async def run_agent_stream(
             seeded_resume_from_snapshot = True
 
             if not config.use_service_session:
-                # Use the same overlap/reconstructor as non-resume turns so a client
-                # that replays its transcript on resume is not double-persisted (#8140).
-                # Empty messages (interrupt-only / approval resume) still need the
-                # stored history prepended — the reconstructor returns [] unchanged.
-                if raw_messages:
-                    raw_messages = _reconstruct_messages_from_thread_snapshot(
-                        stored_messages=stored_snapshot.messages,
-                        incoming_messages=raw_messages,
-                        stored_interrupt=stored_snapshot.interrupt,
-                    )
-                else:
-                    raw_messages = snapshot_session.resume_seeded_messages(raw_messages)
+                # One session-owned reconcile for empty vs replayed resume shapes (#8140).
+                raw_messages = snapshot_session.reconcile_resume_messages(raw_messages)
             else:
                 provider_suffix, snapshot_seed_messages = _split_service_session_input(
                     stored_snapshot_messages=stored_snapshot.messages,
@@ -2503,11 +2493,17 @@ async def run_agent_stream(
                 )
                 raw_messages = provider_suffix
         elif not config.use_service_session:
-            raw_messages = _reconstruct_messages_from_thread_snapshot(
-                stored_messages=stored_snapshot.messages,
-                incoming_messages=raw_messages,
-                stored_interrupt=stored_snapshot.interrupt,
-            )
+            if resume_payload is not None:
+                # Predictive-state / generic resumes also merge history here; mark seeded
+                # so save-time resume_seeded_messages does not prepend again (#8140).
+                seeded_resume_from_snapshot = True
+                raw_messages = snapshot_session.reconcile_resume_messages(raw_messages)
+            else:
+                raw_messages = _reconstruct_messages_from_thread_snapshot(
+                    stored_messages=stored_snapshot.messages,
+                    incoming_messages=raw_messages,
+                    stored_interrupt=stored_snapshot.interrupt,
+                )
         else:
             provider_suffix, snapshot_seed_messages = _split_service_session_input(
                 stored_snapshot_messages=stored_snapshot.messages,
