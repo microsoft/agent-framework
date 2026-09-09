@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import copy
+import gc
+import importlib
 import math
 from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
+from weakref import ref
 
 import pytest
 from agent_framework import (
@@ -20,6 +23,7 @@ from agent_framework import (
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException, SettingNotFoundError
 from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceExistsError, CosmosResourceNotFoundError
 
+import agent_framework_azure_cosmos as cosmos_package
 import agent_framework_azure_cosmos._vector_store as vector_store_module
 from agent_framework_azure_cosmos import AzureCosmosSettings, CosmosCollection, CosmosStore
 from agent_framework_azure_cosmos._vector_store import (
@@ -33,6 +37,24 @@ from agent_framework_azure_cosmos._vector_store import (
 )
 
 pytestmark = pytest.mark.filterwarnings("ignore::agent_framework._feature_stage.ExperimentalWarning")
+
+
+def test_package_vector_exports_are_lazy() -> None:
+    with patch.object(importlib, "import_module", wraps=importlib.import_module) as importer:
+        package = importlib.reload(cosmos_package)
+    importer.assert_not_called()
+    assert "CosmosCollection" not in vars(package)
+    assert package.CosmosCollection is CosmosCollection
+    assert {"AzureCosmosSettings", "CosmosCollection", "CosmosStore"} <= set(dir(package))
+    export_name = "CosmosStore"
+    with (
+        patch.object(importlib, "import_module", side_effect=ImportError("missing vector core")),
+        pytest.raises(ImportError, match="core with vector-store support"),
+    ):
+        getattr(package, export_name)
+    missing_name = "not_an_export"
+    with pytest.raises(AttributeError):
+        getattr(package, missing_name)
 
 
 def _async_items(items: list[Any]) -> AsyncIterator[Any]:
@@ -292,6 +314,7 @@ def test_vector_schema_tuning_annotations() -> None:
     definition = _definition(
         index_kind="disk_ann",
         vector_type="float",
+        dimensions=512,
         annotations={
             "azure_cosmos": {
                 "data_type": "int8",
@@ -418,9 +441,39 @@ def test_invalid_collection_schema(
             "diskANN",
         ),
         (
-            {"index_kind": "disk_ann", "annotations": {"azure_cosmos": {"quantization_byte_size": 513}}},
+            {
+                "index_kind": "disk_ann",
+                "dimensions": 1536,
+                "annotations": {"azure_cosmos": {"quantization_byte_size": 513}},
+            },
             ValueError,
-            "between 1 and 512",
+            "between 4 and 512",
+        ),
+        (
+            {
+                "index_kind": "disk_ann",
+                "dimensions": 1536,
+                "annotations": {"azure_cosmos": {"quantization_byte_size": 3}},
+            },
+            ValueError,
+            "between 4 and 512",
+        ),
+        (
+            {
+                "index_kind": "disk_ann",
+                "dimensions": 8,
+                "annotations": {"azure_cosmos": {"quantization_byte_size": 9}},
+            },
+            ValueError,
+            "between 4 and 8",
+        ),
+        (
+            {
+                "index_kind": "disk_ann",
+                "annotations": {"azure_cosmos": {"indexing_search_list_size": 24}},
+            },
+            ValueError,
+            "between 25 and 500",
         ),
     ],
 )
@@ -455,6 +508,29 @@ def test_float16_schema_rejected_before_container_io(
     container.query_items.assert_not_called()
 
 
+def test_vector_schema_tuning_boundaries() -> None:
+    collection, _ = _collection(
+        definition=_definition(
+            index_kind="disk_ann",
+            dimensions=4,
+            annotations={
+                "azure_cosmos": {
+                    "quantization_byte_size": 4,
+                    "indexing_search_list_size": 25,
+                }
+            },
+        )
+    )
+    assert collection._indexing_policy["vectorIndexes"] == [
+        {
+            "path": "/embedding",
+            "type": "diskANN",
+            "quantizationByteSize": 4,
+            "indexingSearchListSize": 25,
+        }
+    ]
+
+
 def test_policy_path_normalization_and_semantic_defaults() -> None:
     collection, _ = _collection(
         definition=_definition(
@@ -473,12 +549,36 @@ def test_policy_path_normalization_and_semantic_defaults() -> None:
     properties["indexingPolicy"]["vectorIndexes"][0]["quantizerType"] = "product"
     properties["indexingPolicy"]["vectorIndexes"].reverse()
     assert _normalize_policy_path('/"embedding"/*') == "/embedding/*"
+    assert _normalize_policy_path('/"a/b"/*') == '/"a/b"/*'
+    assert _normalize_policy_path('/"a/b"/*') != "/a/b/*"
     _validate_existing_policies(
         properties,
         vector_policy=collection._vector_policy,
         indexing_policy=collection._indexing_policy,
         required_indexed_paths=_required_indexed_paths(collection.definition),
     )
+
+
+def test_quoted_policy_path_does_not_match_nested_path() -> None:
+    definition = VectorStoreCollectionDefinition(
+        [
+            VectorStoreField("key", name="key", storage_name="id", type_="str"),
+            VectorStoreField("data", name="value", storage_name="a/b", type_="str", is_indexed=False),
+            VectorStoreField("vector", name="vector", storage_name="embedding", dimensions=3, type_="float"),
+        ],
+        collection_name="items",
+    )
+    collection, _ = _collection(definition=definition)
+    properties = _container_properties(collection)
+    excluded_paths = properties["indexingPolicy"]["excludedPaths"]
+    excluded_paths[1] = {"path": "/a/b/*"}
+    with pytest.raises(ValueError, match="exclude all required"):
+        _validate_existing_policies(
+            properties,
+            vector_policy=collection._vector_policy,
+            indexing_policy=collection._indexing_policy,
+            required_indexed_paths=_required_indexed_paths(collection.definition),
+        )
 
 
 @pytest.mark.parametrize(
@@ -523,6 +623,8 @@ def test_incompatible_existing_policy(mutate: Any, match: str) -> None:
         ("", ValueError),
         ("a/b", ValueError),
         ("a\\b", ValueError),
+        ("a?b", ValueError),
+        ("a#b", ValueError),
         ("a" * 1024, ValueError),
         (1, TypeError),
     ],
@@ -932,20 +1034,39 @@ async def test_cosine_search_query_threshold_filter_order_and_metadata() -> None
     }
 
 
-async def test_euclidean_search_returns_raw_scores_and_uses_offset() -> None:
+async def test_euclidean_search_uses_bounded_top_and_lazily_skips() -> None:
     collection, container = _collection(
         definition=_definition(distance="euclidean_distance"),
-        query_results=[{"record": _record("one", include_vectors=False), "score": 0.25}],
+        query_results=[
+            {"record": _record("skipped", include_vectors=False), "score": 0.0},
+            {"record": _record("kept", include_vectors=False), "score": 0.25},
+        ],
     )
     results = await collection.search(
         vector=[1.0, 0.0, 0.0],
         top=2,
         skip=1,
     )
-    assert [row async for row in results][0]["score"] == 0.25
-    query = container.query_items.call_args.kwargs["query"]
+    rows = [row async for row in results]
+    assert rows == [
+        {
+            "record": {
+                "key": "kept",
+                "text": "hello",
+                "count": 2,
+                "active": True,
+                "tags": ["a", "b"],
+                "optional": None,
+            },
+            "score": 0.25,
+        }
+    ]
+    kwargs = container.query_items.call_args.kwargs
+    query = kwargs["query"]
+    assert query.startswith("SELECT TOP @top VALUE")
     assert "@threshold_" not in query
-    assert query.endswith("OFFSET @skip LIMIT @top")
+    assert "OFFSET" not in query
+    assert {"name": "@top", "value": 3} in kwargs["parameters"]
     assert results.metadata is not None
     assert results.metadata["score_kind"] == "euclidean_distance"
     assert results.metadata["score_direction"] == "lower_is_better"
@@ -1084,3 +1205,67 @@ async def test_store_children_share_database_and_do_not_reload_settings() -> Non
     await store.close()
     assert collection._closed
     database.close.assert_not_called()
+
+
+async def test_store_does_not_retain_abandoned_collection_handles() -> None:
+    database = MagicMock()
+    database.id = "db"
+    database.read = AsyncMock(return_value={})
+    store = CosmosStore(database_client=database)
+    collection = store.get_collection(dict, definition=_definition())
+    collection_ref = ref(collection)
+    assert len(store._collections) == 1
+    del collection
+    gc.collect()
+    assert collection_ref() is None
+    assert len(store._collections) == 0
+    await store.close()
+
+
+async def test_store_delete_invalidates_same_name_children_only() -> None:
+    database = MagicMock()
+    database.id = "db"
+    database.read = AsyncMock(return_value={})
+    lifecycle_container = MagicMock()
+    lifecycle_container.read = AsyncMock(return_value={})
+    database.get_container_client.return_value = lifecycle_container
+    database.delete_container = AsyncMock(return_value=None)
+    store = CosmosStore(database_client=database)
+    first = store.get_collection(dict, definition=_definition())
+    sibling = store.get_collection(dict, definition=_definition())
+    other = store.get_collection(dict, definition=_definition(), collection_name="other")
+    for collection in (first, sibling, other):
+        collection._container_client = MagicMock()
+        collection._container_validated = True
+
+    await store.ensure_collection_deleted("items")
+
+    assert first._container_client is None
+    assert not first._container_validated
+    assert sibling._container_client is None
+    assert not sibling._container_validated
+    assert other._container_client is not None
+    assert other._container_validated
+    await store.close()
+
+
+async def test_child_delete_invalidates_same_name_sibling() -> None:
+    database = MagicMock()
+    database.id = "db"
+    database.read = AsyncMock(return_value={})
+    database.delete_container = AsyncMock(return_value=None)
+    store = CosmosStore(database_client=database)
+    first = store.get_collection(dict, definition=_definition())
+    sibling = store.get_collection(dict, definition=_definition())
+    first._container_client = MagicMock()
+    first._container_validated = True
+    sibling._container_client = MagicMock()
+    sibling._container_validated = True
+
+    await first.ensure_collection_deleted()
+
+    assert first._container_client is None
+    assert not first._container_validated
+    assert sibling._container_client is None
+    assert not sibling._container_validated
+    await store.close()

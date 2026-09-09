@@ -47,8 +47,9 @@ Vector collections require:
 - the container vector and indexing policies derived from the collection definition.
 
 This makes `get()` and `delete()` unambiguous point operations because the item ID is also
-its partition key. IDs must contain 1-1,023 UTF-8 bytes and cannot contain `/` or `\`;
-the connector never encodes them. Custom and hierarchical partition keys are not supported.
+its partition key. IDs must contain 1-1,023 UTF-8 bytes and cannot contain `/`, `\`,
+`?`, or `#`; the connector never encodes them. Custom and hierarchical partition keys
+are not supported.
 
 ```python
 from dataclasses import dataclass

@@ -7,8 +7,10 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections.abc import AsyncIterable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
+from contextlib import suppress
 from typing import Any, ClassVar, Generic, TypeAlias, cast
+from weakref import WeakSet
 
 from agent_framework import (
     BaseVectorCollection,
@@ -316,7 +318,10 @@ def _normalize_policy_path(path: Any) -> str:
         char = path[index]
         if char == '"' and not escaped:
             segment = json.loads(path[1 : index + 1])
-            return f"/{segment}{path[index + 1 :]}"
+            suffix = path[index + 1 :]
+            if isinstance(segment, str) and _VECTOR_NAME.fullmatch(segment):
+                return f"/{segment}{suffix}"
+            return f"/{json.dumps(segment, ensure_ascii=True)}{suffix}"
         escaped = char == "\\" and not escaped
         if char != "\\":
             escaped = False
@@ -372,15 +377,16 @@ def _prepare_vector_config(field: VectorStoreField) -> dict[str, Any]:
     if quantization_bytes is not None:
         if index_kind == "flat":
             raise ValueError("quantization_byte_size is only supported by quantizedFlat and diskANN indexes.")
-        if type(quantization_bytes) is not int or not 1 <= quantization_bytes <= 512:
-            raise ValueError("quantization_byte_size must be an integer between 1 and 512.")
+        maximum_quantization_bytes = min(512, dimensions)
+        if type(quantization_bytes) is not int or not 4 <= quantization_bytes <= maximum_quantization_bytes:
+            raise ValueError(f"quantization_byte_size must be an integer between 4 and {maximum_quantization_bytes}.")
         index_options["quantizationByteSize"] = quantization_bytes
     indexing_list_size = options.pop("indexing_search_list_size", None)
     if indexing_list_size is not None:
         if index_kind != "diskANN":
             raise ValueError("indexing_search_list_size is only supported by diskANN indexes.")
-        if type(indexing_list_size) is not int or not 10 <= indexing_list_size <= 500:
-            raise ValueError("indexing_search_list_size must be an integer between 10 and 500.")
+        if type(indexing_list_size) is not int or not 25 <= indexing_list_size <= 500:
+            raise ValueError("indexing_search_list_size must be an integer between 25 and 500.")
         index_options["indexingSearchListSize"] = indexing_list_size
     return {
         "field": field,
@@ -551,8 +557,8 @@ def _validate_key(value: Any) -> str:
     if not isinstance(value, str):
         raise TypeError("Cosmos item keys must be strings.")
     size = len(value.encode("utf-8"))
-    if not value or size > _ID_BYTE_LIMIT or "/" in value or "\\" in value:
-        raise ValueError("Cosmos item keys must contain 1-1023 UTF-8 bytes and cannot contain '/' or '\\'.")
+    if not value or size > _ID_BYTE_LIMIT or any(char in value for char in "/\\?#"):
+        raise ValueError("Cosmos item keys must contain 1-1023 UTF-8 bytes and cannot contain '/', '\\', '?', or '#'.")
     return value
 
 
@@ -666,6 +672,18 @@ def _query_metadata_hook(metadata: dict[str, Any]) -> Callable[[Mapping[str, str
         metadata["has_more_results"] = bool(headers.get("x-ms-continuation"))
 
     return response_hook
+
+
+async def _skip_results(
+    results: AsyncIterable[Mapping[str, Any]],
+    skip: int,
+) -> AsyncIterator[Mapping[str, Any]]:
+    index = 0
+    async for result in results:
+        if index < skip:
+            index += 1
+            continue
+        yield result
 
 
 class CosmosCollection(BaseVectorCollection[str, ModelT], BaseVectorSearch[str, ModelT], Generic[ModelT]):
@@ -797,6 +815,7 @@ class CosmosCollection(BaseVectorCollection[str, ModelT], BaseVectorSearch[str, 
         self._owns_connection = owns_connection
         self._closed = False
         self._on_close: Callable[[CosmosCollection[ModelT]], None] | None = None
+        self._on_delete: Callable[[str], None] | None = None
 
     def _require_open(self) -> None:
         if self._closed:
@@ -872,10 +891,13 @@ class CosmosCollection(BaseVectorCollection[str, ModelT], BaseVectorSearch[str, 
         """Delete the configured container when a database proxy is available."""
         _validate_operation_options(operation_options, set())
         database = await self._get_database()
-        try:
+        with suppress(CosmosResourceNotFoundError):
             await database.delete_container(self.collection_name)
-        except CosmosResourceNotFoundError:
-            return
+        self._invalidate_container()
+        if self._on_delete is not None:
+            self._on_delete(self.collection_name)
+
+    def _invalidate_container(self) -> None:
         self._container_client = None
         self._container_validated = False
 
@@ -1211,20 +1233,11 @@ class CosmosCollection(BaseVectorCollection[str, ModelT], BaseVectorSearch[str, 
             where = threshold if where is None else f"({where} AND {threshold})"
         names = self.definition.get_storage_names(include_vector_fields=include_vectors)
         result_projection = '{"record": ' + _object_projection(names) + f', "score": {distance}' + "}"
-        if skip == 0:
-            parameters.append({"name": "@top", "value": top})
-            query = f"SELECT TOP @top VALUE {result_projection} FROM c"  # nosec B608  # ruff: ignore[hardcoded-sql-expression]
-        else:
-            parameters.extend([
-                {"name": "@skip", "value": skip},
-                {"name": "@top", "value": top},
-            ])
-            query = f"SELECT VALUE {result_projection} FROM c"  # nosec B608  # ruff: ignore[hardcoded-sql-expression]
+        parameters.append({"name": "@top", "value": top + skip})
+        query = f"SELECT TOP @top VALUE {result_projection} FROM c"  # nosec B608  # ruff: ignore[hardcoded-sql-expression]
         if where is not None:
             query += f" WHERE {where}"
         query += f" ORDER BY {distance}"
-        if skip:
-            query += " OFFSET @skip LIMIT @top"
         metadata: dict[str, Any] = {
             "score_kind": (f"{config['distance']}_{'distance' if config['distance'] == 'euclidean' else 'similarity'}"),
             "score_direction": "lower_is_better" if config["distance"] == "euclidean" else "higher_is_better",
@@ -1241,7 +1254,7 @@ class CosmosCollection(BaseVectorCollection[str, ModelT], BaseVectorSearch[str, 
                 response_hook=_query_metadata_hook(metadata),
             ),
         )
-        return SearchResults(items, metadata=metadata)
+        return SearchResults(_skip_results(items, skip), metadata=metadata)
 
     def _get_record_from_result(self, result: Any) -> Any:
         if not isinstance(result, Mapping):
@@ -1269,6 +1282,7 @@ class CosmosCollection(BaseVectorCollection[str, ModelT], BaseVectorSearch[str, 
                     await self._connection.close()
             finally:
                 on_close, self._on_close = self._on_close, None
+                self._on_delete = None
                 if on_close is not None:
                     on_close(self)
 
@@ -1318,7 +1332,7 @@ class CosmosStore(BaseVectorStore):
         super().__init__(embedding_generator=embedding_generator, managed_client=connection.owns_client)
         self._connection = connection
         self.database_name = connection.database_name
-        self._collections: dict[CosmosCollection[Any], None] = {}
+        self._collections: WeakSet[CosmosCollection[Any]] = WeakSet()
         self._closed = False
 
     def _require_open(self) -> None:
@@ -1344,9 +1358,15 @@ class CosmosStore(BaseVectorStore):
             embedding_generator=embedding_generator or self.embedding_generator,
             _connection=self._connection,
         )
-        self._collections[collection] = None
-        collection._on_close = lambda closed: self._collections.pop(closed, None)  # pyright: ignore[reportPrivateUsage]
+        self._collections.add(collection)
+        collection._on_close = self._collections.discard  # pyright: ignore[reportPrivateUsage]
+        collection._on_delete = self._invalidate_collections  # pyright: ignore[reportPrivateUsage]
         return collection
+
+    def _invalidate_collections(self, collection_name: str) -> None:
+        for collection in list(self._collections):
+            if collection.collection_name == collection_name:
+                collection._invalidate_container()  # pyright: ignore[reportPrivateUsage]
 
     async def list_collection_names(
         self,
@@ -1388,10 +1408,9 @@ class CosmosStore(BaseVectorStore):
         _validate_operation_options(operation_options, set())
         self._require_open()
         database = await self._connection.get_database()
-        try:
+        with suppress(CosmosResourceNotFoundError):
             await database.delete_container(collection_name)
-        except CosmosResourceNotFoundError:
-            return
+        self._invalidate_collections(collection_name)
 
     async def close(self) -> None:
         """Close child collections and the owned Cosmos client, leaving injected objects open."""
