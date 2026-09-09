@@ -10,16 +10,19 @@ using Microsoft.Agents.ObjectModel.Exceptions;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 
 internal sealed class WorkflowExpressionEngine
 {
-    private readonly RecalcEngine _engine;
+    private static readonly Regex s_scopedVariableReference = new(@"\b(?:(?<scope>[A-Za-z][A-Za-z0-9_]*)\.)?(?<name>[A-Za-z_][A-Za-z0-9_]*)\b", RegexOptions.Compiled);
 
-    public WorkflowExpressionEngine(RecalcEngine engine)
+    private readonly WorkflowFormulaState _state;
+
+    public WorkflowExpressionEngine(WorkflowFormulaState state)
     {
-        this._engine = engine;
+        this._state = state;
     }
 
     public EvaluationResult<bool> GetValue(BoolExpression boolean) => this.Evaluate(boolean);
@@ -40,6 +43,57 @@ internal sealed class WorkflowExpressionEngine
 
     public EvaluationResult<TValue> GetValue<TValue>(EnumExpression<TValue> expression) where TValue : EnumWrapper =>
         this.Evaluate(expression);
+
+    public EvaluationResult<string> Format(IEnumerable<TemplateLine> template)
+    {
+        Throw.IfNull(template);
+
+        SensitivityLevel sensitivity = SensitivityLevel.None;
+        List<string> segments = [];
+        foreach (TemplateLine line in template)
+        {
+            EvaluationResult<string> result = this.Format(line);
+            sensitivity = MaxSensitivity(sensitivity, result.Sensitivity);
+            segments.Add(result.Value);
+        }
+
+        return new(string.Concat(segments), sensitivity);
+    }
+
+    public EvaluationResult<string> Format(TemplateLine? line)
+    {
+        if (line is null)
+        {
+            return new(string.Empty, SensitivityLevel.None);
+        }
+
+        SensitivityLevel sensitivity = SensitivityLevel.None;
+        List<string> segments = [];
+        foreach (TemplateSegment segment in line.Segments)
+        {
+            EvaluationResult<string> result = this.Format(segment);
+            sensitivity = MaxSensitivity(sensitivity, result.Sensitivity);
+            segments.Add(result.Value);
+        }
+
+        return new(string.Concat(segments), sensitivity);
+    }
+
+    private EvaluationResult<string> Format(TemplateSegment segment)
+    {
+        if (segment is TextSegment textSegment)
+        {
+            return new(textSegment.Value ?? string.Empty, SensitivityLevel.None);
+        }
+
+        if (segment is ExpressionSegment { Expression: not null } expressionSegment)
+        {
+            EvaluationResult<FormulaValue> result = this.EvaluateScope(expressionSegment.Expression);
+            return new(result.Value.Format(), result.Sensitivity);
+        }
+
+        throw new DeclarativeModelException($"Unsupported segment type: {segment.GetType().Name}");
+    }
 
     private EvaluationResult<bool> Evaluate(BoolExpression expression)
     {
@@ -274,13 +328,40 @@ internal sealed class WorkflowExpressionEngine
             expression.VariableReference?.ToString() :
             expression.ExpressionText;
 
-        FormulaValue result = this._engine.Eval(expressionText);
+        FormulaValue result = this._state.Engine.Eval(expressionText);
 
         if (result is ErrorValue errorValue)
         {
             throw new DeclarativeActionException(errorValue.Format());
         }
 
-        return new(result, SensitivityLevel.None);
+        return new(result, GetSensitivity(expression));
     }
+
+    private SensitivityLevel GetSensitivity(ExpressionBase expression)
+    {
+        if (expression.VariableReference is { VariableName: string variableName })
+        {
+            return this._state.GetSensitivity(variableName, expression.VariableReference.NamespaceAlias);
+        }
+
+        string? expressionText = expression.ExpressionText;
+        if (string.IsNullOrWhiteSpace(expressionText))
+        {
+            return SensitivityLevel.None;
+        }
+
+        SensitivityLevel sensitivity = SensitivityLevel.None;
+        foreach (Match match in s_scopedVariableReference.Matches(expressionText))
+        {
+            string? scopeName = match.Groups["scope"].Success ? match.Groups["scope"].Value : null;
+            string referencedName = match.Groups["name"].Value;
+            sensitivity = MaxSensitivity(sensitivity, this._state.GetSensitivity(referencedName, scopeName));
+        }
+
+        return sensitivity;
+    }
+
+    private static SensitivityLevel MaxSensitivity(SensitivityLevel left, SensitivityLevel right) =>
+        left == SensitivityLevel.Sensitive || right == SensitivityLevel.Sensitive ? SensitivityLevel.Sensitive : SensitivityLevel.None;
 }

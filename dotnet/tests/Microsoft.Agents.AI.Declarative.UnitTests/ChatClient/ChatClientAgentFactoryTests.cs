@@ -1,7 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Threading;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Configuration;
+using Microsoft.PowerFx.Types;
 using Moq;
 
 namespace Microsoft.Agents.AI.Declarative.UnitTests.ChatClient;
@@ -103,5 +108,45 @@ public sealed class ChatClientAgentFactoryTests
         Assert.NotNull(chatClientAgent?.ChatOptions?.Tools);
         var tools = chatClientAgent?.ChatOptions?.Tools;
         Assert.Equal(5, tools?.Count);
+    }
+
+    [Fact]
+    public async Task TryCreateAsync_OnlyLoadsAllowedReferencedConfigurationAsync()
+    {
+        // Arrange
+        IConfiguration configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Temperature"] = "0.9",
+                ["SOME_SECRET"] = "secret-value",
+            })
+            .Build();
+        GptComponentMetadata promptAgent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithVariableReferences);
+        InspectingPromptAgentFactory factory = new(configuration, ["Temperature"]);
+
+        // Act
+        await factory.TryCreateAsync(promptAgent);
+
+        // Assert
+        StringValue temperature = Assert.IsType<StringValue>(factory.Evaluate("Temperature"));
+        Assert.Equal("0.9", temperature.Value);
+        Assert.False(factory.CanEvaluate("SOME_SECRET"));
+    }
+
+    private sealed class InspectingPromptAgentFactory(IConfiguration configuration, IEnumerable<string> allowedConfigurationVariables)
+        : PromptAgentFactory(engine: null, configuration: configuration, allowedConfigurationVariables: allowedConfigurationVariables)
+    {
+        public FormulaValue Evaluate(string expression) => this.Engine.Eval(expression);
+
+        public bool CanEvaluate(string expression) => this.Engine.Check(expression).IsSuccess;
+
+        public override Task<AIAgent?> TryCreateAsync(GptComponentMetadata promptAgent, CancellationToken cancellationToken = default)
+        {
+            // Arrange
+            this.InitializeConfigurationVariables(promptAgent);
+
+            // Act & Assert
+            return Task.FromResult<AIAgent?>(null);
+        }
     }
 }

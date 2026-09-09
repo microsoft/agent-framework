@@ -124,6 +124,20 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     }
 
     [Fact]
+    public void StringExpressionGetValueForEnvironmentVariableIsSensitive()
+    {
+        // Arrange
+        this.State.Set("SOME_SECRET", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Variable(PropertyPath.Create("Env.SOME_SECRET")),
+            expectedValue: "secret-value",
+            expectedSensitivity: SensitivityLevel.Sensitive);
+    }
+
+    [Fact]
     public void StringExpressionGetValueForFormula() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(

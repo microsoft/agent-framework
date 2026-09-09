@@ -21,6 +21,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
     private readonly ResponseAgentProvider _agentProvider;
     private readonly WorkflowFormulaState _state;
     private readonly Func<TInput, ChatMessage>? _inputTransform;
+    private readonly bool _allowProcessEnvironmentVariableFallback;
 
     private string? _conversationId;
 
@@ -42,6 +43,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
         this._agentProvider = options.AgentProvider;
         this._conversationId = options.ConversationId;
         this._inputTransform = inputTransform;
+        this._allowProcessEnvironmentVariableFallback = options.AllowProcessEnvironmentVariableFallback;
         this._state = new WorkflowFormulaState(options.CreateRecalcEngine());
         this._state.InitializeSystem();
         this.Session = new RootFormulaSession(this._state);
@@ -89,8 +91,8 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
     protected abstract ValueTask ExecuteAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Initializes the specified variables from <see cref="IConfiguration"/> if available;
-    /// otherwise falls back to the process environment variables.
+    /// Initializes the specified variables from <see cref="IConfiguration"/> if available.
+    /// Process environment variables are used only when enabled by <see cref="DeclarativeWorkflowOptions.AllowProcessEnvironmentVariableFallback"/>.
     /// </summary>
     /// <param name="context">The workflow execution context providing messaging and state services.</param>
     /// <param name="variableNames">The set of variable names to initialize.</param>
@@ -104,12 +106,8 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
 
         string GetEnvironmentVariable(string name)
         {
-            if (this._configuration is not null)
-            {
-                return this._configuration[name] ?? string.Empty;
-            }
-
-            return Environment.GetEnvironmentVariable(name) ?? string.Empty;
+            string? configurationValue = this._configuration?[name];
+            return configurationValue ?? (this._allowProcessEnvironmentVariableFallback ? Environment.GetEnvironmentVariable(name) ?? string.Empty : string.Empty);
         }
     }
 

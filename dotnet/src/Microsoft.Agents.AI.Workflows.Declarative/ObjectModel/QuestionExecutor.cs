@@ -10,6 +10,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
@@ -187,6 +188,12 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
             return string.Empty;
         }
 
-        return this.Engine.Format(messageActivity.Text).Trim();
+        EvaluationResult<string> promptResult = this.Evaluator.Format(messageActivity.Text);
+        if (promptResult.Sensitivity == SensitivityLevel.Sensitive)
+        {
+            throw new DeclarativeActionException($"Cannot send sensitive question prompt: {this.Id}.");
+        }
+
+        return promptResult.Value.Trim();
     }
 }

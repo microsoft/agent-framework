@@ -124,7 +124,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
     protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
         this._state.RestoreAsync(context, cancellationToken);
 
-    protected async ValueTask AssignAsync(PropertyPath? targetPath, FormulaValue result, IWorkflowContext context)
+    protected async ValueTask AssignAsync(PropertyPath? targetPath, FormulaValue result, IWorkflowContext context, SensitivityLevel sensitivity = SensitivityLevel.None)
     {
         if (targetPath is null)
         {
@@ -132,6 +132,8 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
         }
 
         await context.QueueStateUpdateAsync(targetPath, result).ConfigureAwait(false);
+        string variableName = targetPath.VariableName ?? throw new DeclarativeActionException($"Invalid variable reference: '{targetPath}'.");
+        this._state.SetSensitivity(variableName, targetPath.NamespaceAlias, sensitivity);
 
 #if DEBUG
         string? resultValue = result.Format();

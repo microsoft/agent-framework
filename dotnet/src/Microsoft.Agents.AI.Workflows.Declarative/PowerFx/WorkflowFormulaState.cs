@@ -40,7 +40,7 @@ internal sealed class WorkflowFormulaState
         this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => GetScopeName(scopeName), _ => new WorkflowScope());
 
         this.Engine = engine;
-        this.Evaluator = new WorkflowExpressionEngine(engine);
+        this.Evaluator = new WorkflowExpressionEngine(this);
         this.Bind();
     }
 
@@ -56,8 +56,26 @@ internal sealed class WorkflowFormulaState
         return FormulaValue.NewBlank();
     }
 
-    public void Set(string variableName, FormulaValue value, string? scopeName = null) =>
-        this.GetScope(scopeName ?? DefaultScopeName)[variableName] = value;
+    public void Set(string variableName, FormulaValue value, string? scopeName = null, SensitivityLevel sensitivity = SensitivityLevel.None)
+    {
+        WorkflowScope scope = this.GetScope(scopeName ?? DefaultScopeName);
+        scope[variableName] = value;
+        scope.Sensitivities[variableName] = sensitivity;
+    }
+
+    public SensitivityLevel GetSensitivity(string variableName, string? scopeName = null)
+    {
+        if (scopeName is not null && !VariableScopeNames.IsValidName(scopeName))
+        {
+            return SensitivityLevel.None;
+        }
+
+        WorkflowScope scope = this.GetScope(scopeName ?? DefaultScopeName);
+        return scope.Sensitivities.TryGetValue(variableName, out SensitivityLevel sensitivity) ? sensitivity : SensitivityLevel.None;
+    }
+
+    public void SetSensitivity(string variableName, string? scopeName, SensitivityLevel sensitivity) =>
+        this.GetScope(scopeName ?? DefaultScopeName).Sensitivities[variableName] = sensitivity;
 
     public bool SetInitialized() => Interlocked.CompareExchange(ref this._isInitialized, 1, 0) == 0;
 
@@ -143,5 +161,8 @@ internal sealed class WorkflowFormulaState
     /// <summary>
     /// The set of variables for a specific action scope.
     /// </summary>
-    private sealed class WorkflowScope : Dictionary<string, FormulaValue>;
+    private sealed class WorkflowScope : Dictionary<string, FormulaValue>
+    {
+        public Dictionary<string, SensitivityLevel> Sensitivities { get; } = [];
+    }
 }

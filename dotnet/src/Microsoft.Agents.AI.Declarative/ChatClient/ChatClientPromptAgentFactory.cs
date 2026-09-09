@@ -20,7 +20,41 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="ChatClientPromptAgentFactory"/> class.
     /// </summary>
-    public ChatClientPromptAgentFactory(IChatClient chatClient, IList<AIFunction>? functions = null, RecalcEngine? engine = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(engine, configuration)
+    /// <param name="chatClient">The chat client used by created agents.</param>
+    /// <param name="functions">Optional functions exposed as tools to created agents.</param>
+    /// <param name="engine">Optional Power Fx engine used to evaluate declarative expressions.</param>
+    /// <param name="configuration">Optional configuration used to resolve explicitly allowed environment variables referenced by the agent definition.</param>
+    /// <param name="loggerFactory">Optional logger factory used by created agents.</param>
+    public ChatClientPromptAgentFactory(
+        IChatClient chatClient,
+        IList<AIFunction>? functions = null,
+        RecalcEngine? engine = null,
+        IConfiguration? configuration = null,
+        ILoggerFactory? loggerFactory = null)
+        : this(chatClient, allowedConfigurationVariables: null, functions, engine, configuration, loggerFactory)
+    {
+    }
+
+    /// <summary>
+    /// Creates a new instance of the <see cref="ChatClientPromptAgentFactory"/> class.
+    /// </summary>
+    /// <param name="chatClient">The chat client used by created agents.</param>
+    /// <param name="allowedConfigurationVariables">Configuration keys that may be exposed to Power Fx when the agent definition references them through <c>Env</c>.</param>
+    /// <param name="functions">Optional functions exposed as tools to created agents.</param>
+    /// <param name="engine">Optional Power Fx engine used to evaluate declarative expressions.</param>
+    /// <param name="configuration">Optional configuration used to resolve explicitly allowed environment variables referenced by the agent definition.</param>
+    /// <param name="loggerFactory">Optional logger factory used by created agents.</param>
+    /// <param name="maximumExpressionLength">Optional maximum length for Power Fx expressions evaluated by the factory-created engine.</param>
+    /// <param name="maximumCallDepth">Optional maximum nested call depth for Power Fx expressions evaluated by the factory-created engine.</param>
+    public ChatClientPromptAgentFactory(
+        IChatClient chatClient,
+        IEnumerable<string>? allowedConfigurationVariables,
+        IList<AIFunction>? functions = null,
+        RecalcEngine? engine = null,
+        IConfiguration? configuration = null,
+        ILoggerFactory? loggerFactory = null,
+        int? maximumExpressionLength = null,
+        int? maximumCallDepth = null) : base(engine, configuration, allowedConfigurationVariables, maximumExpressionLength, maximumCallDepth)
     {
         Throw.IfNull(chatClient);
 
@@ -33,6 +67,8 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
     public override Task<AIAgent?> TryCreateAsync(GptComponentMetadata promptAgent, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(promptAgent);
+
+        this.InitializeConfigurationVariables(promptAgent);
 
         var options = new ChatClientAgentOptions()
         {

@@ -42,6 +42,7 @@ internal static class IWorkflowContextExtensions
     {
         DeclarativeWorkflowContext declarativeContext = DeclarativeContext(context);
         await declarativeContext.UpdateStateAsync(key, value, VariableScopeNames.Environment, allowSystem: true, cancellationToken).ConfigureAwait(false);
+        declarativeContext.State.SetSensitivity(key, VariableScopeNames.Environment, SensitivityLevel.Sensitive);
         declarativeContext.State.Bind();
     }
 

@@ -7,6 +7,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
@@ -18,7 +19,13 @@ internal sealed class SendActivityExecutor(SendActivity model, WorkflowFormulaSt
     {
         if (this.Model.Activity is MessageActivityTemplate messageActivity)
         {
-            string activityText = this.Engine.Format(messageActivity.Text).Trim();
+            EvaluationResult<string> activityResult = this.Evaluator.Format(messageActivity.Text);
+            if (activityResult.Sensitivity == SensitivityLevel.Sensitive)
+            {
+                throw new DeclarativeActionException($"Cannot send sensitive activity text: {this.Id}.");
+            }
+
+            string activityText = activityResult.Value.Trim();
 
             await context.AddEventAsync(new MessageActivityEvent(activityText.Trim()), cancellationToken).ConfigureAwait(false);
 

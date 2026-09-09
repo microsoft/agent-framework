@@ -32,16 +32,16 @@ public class RecalcEngineFactoryTests(ITestOutputHelper output) : WorkflowTest(o
     }
 
     [Fact]
-    public void HasSetFunctionEnabled()
+    public void SetFunctionDisabledByDefault()
     {
         // Arrange
         RecalcEngine engine = RecalcEngineFactory.Create();
 
         // Act
-        CheckResult result = engine.Check("1+1");
+        CheckResult result = engine.Check("Set(MyVariable, 1)");
 
         // Assert
-        Assert.True(result.IsSuccess);
+        Assert.False(result.IsSuccess);
     }
 
     [Fact]

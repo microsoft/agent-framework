@@ -31,7 +31,7 @@ internal sealed class SetMultipleVariablesExecutor(SetMultipleVariables model, W
             {
                 EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(assignment.Value);
 
-                await this.AssignAsync(assignment.Variable, expressionResult.Value.ToFormula(), context).ConfigureAwait(false);
+                await this.AssignAsync(assignment.Variable, expressionResult.Value.ToFormula(), context, expressionResult.Sensitivity).ConfigureAwait(false);
             }
         }
 

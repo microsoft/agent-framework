@@ -1,1 +1,7 @@
 ﻿#nullable enable
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.AllowProcessEnvironmentVariableFallback.get -> bool
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.AllowProcessEnvironmentVariableFallback.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.AllowedEnvironmentVariables.get -> System.Collections.Generic.IEnumerable<string!>?
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.AllowedEnvironmentVariables.init -> void
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.EnableSetFunction.get -> bool
+Microsoft.Agents.AI.Workflows.Declarative.DeclarativeWorkflowOptions.EnableSetFunction.init -> void

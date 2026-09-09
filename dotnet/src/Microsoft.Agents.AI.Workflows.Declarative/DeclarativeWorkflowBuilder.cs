@@ -73,7 +73,11 @@ public static class DeclarativeWorkflowBuilder
         string rootId = WorkflowActionVisitor.Steps.Root(workflowElement);
 
         WorkflowFormulaState state = new(options.CreateRecalcEngine());
-        state.Initialize(workflowElement.WrapWithBot(), options.Configuration);
+        state.Initialize(
+            workflowElement.WrapWithBot(),
+            options.Configuration,
+            options.AllowedEnvironmentVariables,
+            options.AllowProcessEnvironmentVariableFallback);
         DeclarativeWorkflowExecutor<TInput> rootExecutor =
             new(rootId,
                 options,

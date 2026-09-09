@@ -37,22 +37,43 @@ internal static class WorkflowDiagnostics
                 [.. semanticModel.GetVariables(workflowElement.SchemaName.Value).Where(x => !x.IsSystemVariable).Select(v => v.ToDiagnostic())]);
     }
 
-    public static void Initialize<TElement>(this WorkflowFormulaState scopes, TElement workflowElement, IConfiguration? configuration) where TElement : BotElement, IDialogBase
+    public static void Initialize<TElement>(
+        this WorkflowFormulaState scopes,
+        TElement workflowElement,
+        IConfiguration? configuration,
+        IEnumerable<string>? allowedEnvironmentVariables,
+        bool allowProcessEnvironmentVariableFallback) where TElement : BotElement, IDialogBase
     {
         scopes.InitializeSystem();
 
         SemanticModel semanticModel = workflowElement.GetSemanticModel(new PowerFxExpressionChecker(s_semanticFeatureConfig), s_semanticFeatureConfig);
-        scopes.InitializeEnvironment(semanticModel, configuration);
+        scopes.InitializeEnvironment(semanticModel, configuration, allowedEnvironmentVariables, allowProcessEnvironmentVariableFallback);
         scopes.InitializeDefaults(semanticModel, workflowElement.SchemaName.Value);
     }
 
-    private static void InitializeEnvironment(this WorkflowFormulaState scopes, SemanticModel semanticModel, IConfiguration? configuration)
+    private static void InitializeEnvironment(
+        this WorkflowFormulaState scopes,
+        SemanticModel semanticModel,
+        IConfiguration? configuration,
+        IEnumerable<string>? allowedEnvironmentVariables,
+        bool allowProcessEnvironmentVariableFallback)
     {
+        HashSet<string> allowedVariables = new(allowedEnvironmentVariables ?? [], StringComparer.OrdinalIgnoreCase);
         foreach (string variableName in semanticModel.GetAllEnvironmentVariablesReferencedInTheBot())
         {
-            string? environmentValue = configuration is not null ? configuration[variableName] : Environment.GetEnvironmentVariable(variableName);
+            if (!allowedVariables.Contains(variableName))
+            {
+                continue;
+            }
+
+            string? environmentValue = configuration?[variableName];
+            if (environmentValue is null && allowProcessEnvironmentVariableFallback)
+            {
+                environmentValue = Environment.GetEnvironmentVariable(variableName);
+            }
+
             FormulaValue variableValue = string.IsNullOrEmpty(environmentValue) ? FormulaType.String.NewBlank() : FormulaValue.New(environmentValue);
-            scopes.Set(variableName, variableValue, VariableScopeNames.Environment);
+            scopes.Set(variableName, variableValue, VariableScopeNames.Environment, SensitivityLevel.Sensitive);
         }
     }
 
