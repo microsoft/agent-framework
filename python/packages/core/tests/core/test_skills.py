@@ -1129,7 +1129,7 @@ class TestSkillDiscoveryFailsClosed:
         def _raise(path: Path) -> bool:
             raise OSError("cannot inspect")
 
-        with patch("agent_framework._skills.is_link_or_reparse_point", side_effect=_raise):
+        with patch("agent_framework._skills._is_link_or_reparse_point", side_effect=_raise):
             assert FileSkillsSource._discover_skill_directories([str(root)]) == []
 
     def test_skill_file_that_cannot_be_inspected_is_skipped(self, tmp_path: Path) -> None:
@@ -1142,7 +1142,7 @@ class TestSkillDiscoveryFailsClosed:
                 raise OSError("cannot inspect")
             return False
 
-        with patch("agent_framework._skills.is_link_or_reparse_point", side_effect=_raise_for_skill_file):
+        with patch("agent_framework._skills._is_link_or_reparse_point", side_effect=_raise_for_skill_file):
             assert FileSkillsSource._discover_skill_directories([str(root)]) == []
 
 
@@ -2035,7 +2035,7 @@ class TestHasLinkOrReparsePointInPathEdgeCases:
         def fail_probe(path: Path) -> bool:
             raise PermissionError(path)
 
-        monkeypatch.setattr("agent_framework._skills.is_link_or_reparse_point", fail_probe)
+        monkeypatch.setattr("agent_framework._skills._is_link_or_reparse_point", fail_probe)
 
         assert FileSkillsSource._has_link_or_reparse_point_in_path(str(target), str(tmp_path)) is True
 

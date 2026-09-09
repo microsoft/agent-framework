@@ -35,7 +35,7 @@ from typing import Annotated, Any, ClassVar, cast
 from pydantic import BaseModel, Field
 
 from .._feature_stage import ExperimentalFeature, experimental
-from .._filesystem import is_link_or_reparse_point
+from .._filesystem import _is_link_or_reparse_point  # pyright: ignore[reportPrivateUsage]
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession, ContextProvider, SessionContext
 from .._telemetry import FeatureIndex, mark_feature_used
@@ -156,6 +156,14 @@ def _normalize_relative_path(path: str, *, is_directory: bool = False) -> str:
     allowed and represents the root; otherwise an empty result is rejected and
     trailing separators are not accepted (so ``"foo/"`` does not silently
     become the file path ``"foo"``).
+
+    This is for *paths supplied as tool arguments*. It is deliberately lossy:
+    ``"a/"`` and ``"a//"`` both normalize to ``"a"``, as does the equivalent
+    backslash-terminated spelling. Never use it to derive a storage namespace
+    from an identifier that participates in an isolation boundary (a session ID,
+    owner ID, or memory scope) — distinct identifiers would share one location.
+    Use :func:`~agent_framework._filesystem._storage_key_segment` for that
+    instead.
 
     Args:
         path: The relative path to normalize.
@@ -1160,7 +1168,7 @@ class FileSystemAgentFileStore(AgentFileStore):
             # normal and must stay cheap, but a dangling link still has to be rejected rather than
             # read as absent.
             if os.path.lexists(self._root_path):
-                if is_link_or_reparse_point(self._root_path):
+                if _is_link_or_reparse_point(self._root_path):
                     raise ValueError("Invalid path: the resolved path contains a symbolic link or reparse point.")
                 if self._root_path.resolve() != self._root_path:
                     raise ValueError("Invalid path: the resolved path escapes the root directory.")
@@ -1187,7 +1195,7 @@ class FileSystemAgentFileStore(AgentFileStore):
         for segment in relative_parts:
             current = current / segment
             try:
-                is_link = is_link_or_reparse_point(current)
+                is_link = _is_link_or_reparse_point(current)
             except FileNotFoundError:
                 break
             except OSError as exc:
@@ -1301,7 +1309,7 @@ class FileSystemAgentFileStore(AgentFileStore):
         files: list[FileStoreEntry] = []
         for entry in full_dir.iterdir():
             try:
-                is_link = is_link_or_reparse_point(entry)
+                is_link = _is_link_or_reparse_point(entry)
             except OSError:
                 # Fail closed when an entry cannot be inspected.
                 continue
@@ -1362,7 +1370,7 @@ class FileSystemAgentFileStore(AgentFileStore):
             current = directories.pop()
             for entry in current.iterdir():
                 try:
-                    is_link = is_link_or_reparse_point(entry)
+                    is_link = _is_link_or_reparse_point(entry)
                 except OSError:
                     # Fail closed when an entry cannot be inspected.
                     continue
@@ -1392,7 +1400,7 @@ class FileSystemAgentFileStore(AgentFileStore):
                 # Re-checked here, not only during enumeration: a candidate can be swapped for a
                 # link in between. O_NOFOLLOW makes the read itself atomic where the platform has
                 # it, and this narrows the window on Windows, where it does not exist.
-                if is_link_or_reparse_point(entry):
+                if _is_link_or_reparse_point(entry):
                     logger.warning("Skipping symlinked file during search: %s", entry)
                     skipped.append(relative_name)
                     continue

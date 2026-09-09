@@ -2,13 +2,25 @@
 
 """Unit tests for prompt injection defense system."""
 
+import asyncio
 import json
+import logging
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from pydantic import BaseModel
 
-from agent_framework import AgentSession, ExperimentalFeature, FunctionInvocationContext, FunctionMiddleware
+from agent_framework import (
+    Agent,
+    AgentSession,
+    ChatResponse,
+    ExperimentalFeature,
+    FunctionInvocationContext,
+    FunctionMiddleware,
+    Message,
+    SessionContext,
+)
 from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareTermination
 from agent_framework._tools import FunctionTool, _auto_invoke_function, normalize_function_invocation_configuration
 from agent_framework._types import Content
@@ -24,6 +36,7 @@ from agent_framework.security import (
     SecureAgentConfig,
     VariableReferenceContent,
     combine_labels,
+    get_current_middleware,
     store_untrusted_content,
 )
 
@@ -1874,6 +1887,469 @@ class TestSecureAgentConfig:
         assert "requires_approval" not in inspect_variable.additional_properties  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
+async def _get_session_security_middleware(
+    config: SecureAgentConfig,
+    session: AgentSession,
+) -> tuple[LabelTrackingFunctionMiddleware, PolicyEnforcementFunctionMiddleware]:
+    """Run the provider and return the middleware bound to one session."""
+    context = SessionContext(session_id=session.session_id, input_messages=[])
+    await config.before_run(
+        agent=SimpleNamespace(),
+        session=session,
+        context=context,
+        state=session.state.setdefault(config.source_id, {}),
+    )
+    middleware = context.get_middleware()
+    assert isinstance(middleware[0], LabelTrackingFunctionMiddleware)
+    assert isinstance(middleware[1], PolicyEnforcementFunctionMiddleware)
+    return middleware[0], middleware[1]
+
+
+class TestSecureAgentSessionIsolation:
+    """Regression tests for session-scoped FIDES state."""
+
+    async def test_routine_logs_redact_hidden_content_handles_and_quarantine_prompt(self, caplog) -> None:
+        """INFO and WARNING logs must not disclose hidden data or its handles."""
+
+        class SinkArgs(BaseModel):
+            value: str
+
+        async def sink(value: str) -> str:
+            return value
+
+        caplog.set_level(logging.INFO, logger="agent_framework.security")
+        tracker = LabelTrackingFunctionMiddleware()
+        secret = "EXPANDED-CONTENT-SECRET"
+        variable_id = tracker.get_variable_store().store(
+            secret,
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        sink_tool = FunctionTool(
+            fn=sink,
+            name="sink",
+            description="Accept a value",
+            args_schema=SinkArgs,
+            additional_properties={"source_integrity": "trusted"},
+        )
+        sink_context = FunctionInvocationContext(
+            function=sink_tool,
+            arguments=SinkArgs(value=f"[{variable_id}]"),
+        )
+
+        async def execute_sink() -> None:
+            sink_context.result = [Content.from_text("sent")]
+
+        await tracker.process(sink_context, execute_sink)
+
+        quarantine_prompt = "QUARANTINE-PROMPT-SECRET"
+        quarantine_tool = next(tool for tool in tracker.get_security_tools() if tool.name == "quarantined_llm")
+        quarantine_context = FunctionInvocationContext(
+            function=quarantine_tool,
+            arguments={"prompt": quarantine_prompt, "variable_ids": [variable_id]},
+        )
+
+        async def execute_quarantine() -> None:
+            quarantine_context.result = await quarantine_tool.invoke(
+                arguments=quarantine_context.arguments,
+                context=quarantine_context,
+            )
+
+        await tracker.process(quarantine_context, execute_quarantine)
+
+        inspect_tool = next(tool for tool in tracker.get_security_tools() if tool.name == "inspect_variable")
+        inspect_context = FunctionInvocationContext(
+            function=inspect_tool,
+            arguments={
+                "variable_id": variable_id,
+                "reason": f"Review hidden handle {variable_id}",
+            },
+        )
+
+        async def execute_inspection() -> None:
+            inspect_context.result = await inspect_tool.invoke(
+                arguments=inspect_context.arguments, context=inspect_context
+            )
+
+        await tracker.process(inspect_context, execute_inspection)
+
+        routine_logs = "\n".join(record.getMessage() for record in caplog.records if record.levelno >= logging.INFO)
+        assert variable_id not in routine_logs
+        assert secret not in routine_logs
+        assert quarantine_prompt not in routine_logs
+
+    async def test_provider_scoping_preserves_middleware_customization(self) -> None:
+        """Provider runs clone the current overridable middleware stack into the session scope."""
+
+        class CustomConfig(SecureAgentConfig):
+            def get_middleware(self) -> list[FunctionMiddleware]:
+                assert self.policy_enforcer is not None
+                return [self.policy_enforcer, self.label_tracker]
+
+        config = CustomConfig()
+        configured_tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=False)
+        config.label_tracker = configured_tracker
+        assert config.policy_enforcer is not None
+        config.policy_enforcer.allow_untrusted_tools.add("post_init_tool")
+
+        session = AgentSession(session_id="customized-provider")
+        context = SessionContext(session_id=session.session_id, input_messages=[])
+        await config.before_run(
+            agent=SimpleNamespace(),
+            session=session,
+            context=context,
+            state=session.state.setdefault(config.source_id, {}),
+        )
+
+        scoped_policy, scoped_tracker = context.get_middleware()
+        assert isinstance(scoped_tracker, LabelTrackingFunctionMiddleware)
+        assert scoped_tracker is not configured_tracker
+        assert scoped_tracker.auto_hide_untrusted is False
+        assert isinstance(scoped_policy, PolicyEnforcementFunctionMiddleware)
+        assert scoped_policy is not config.policy_enforcer
+        assert "post_init_tool" in scoped_policy.allow_untrusted_tools
+
+    async def test_provider_use_requires_session_for_state_accessors(self) -> None:
+        """No-session access remains standalone-only and becomes explicit after provider use."""
+        config = SecureAgentConfig()
+        standalone_id = config.get_variable_store().store("standalone", ContentLabel())
+        assert config.list_variables() == [standalone_id]
+
+        session = AgentSession(session_id="provider-accessor")
+        await _get_session_security_middleware(config, session)
+
+        with pytest.raises(ValueError, match="session is required"):
+            config.get_audit_log()
+        with pytest.raises(ValueError, match="session is required"):
+            config.get_variable_store()
+        with pytest.raises(ValueError, match="session is required"):
+            config.list_variables()
+
+        assert config.get_audit_log(session) == []
+        assert config.list_variables(session) == []
+
+    async def test_explicit_sessions_isolate_and_restore_state_across_a_b_a(self) -> None:
+        """A shared config persists each explicit session without reset-on-switch."""
+        config = SecureAgentConfig()
+        alice = AgentSession(session_id="alice")
+        bob = AgentSession(session_id="bob")
+
+        alice_tracker, _ = await _get_session_security_middleware(config, alice)
+        alice_tracker._update_context_label(ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+        alice_variable = alice_tracker.get_variable_store().store(
+            {"secret": ["alice"]},
+            ContentLabel(
+                integrity=IntegrityLabel.UNTRUSTED,
+                confidentiality=ConfidentialityLabel.PRIVATE,
+            ),
+        )
+
+        bob_tracker, _ = await _get_session_security_middleware(config, bob)
+        assert bob_tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
+        assert not bob_tracker.get_variable_store().exists(alice_variable)
+
+        alice_tracker_again, _ = await _get_session_security_middleware(config, alice)
+        assert alice_tracker_again.get_context_label().integrity == IntegrityLabel.UNTRUSTED
+        assert alice_tracker_again.get_variable_store().retrieve(alice_variable)[0] == {"secret": ["alice"]}
+        assert config.list_variables(alice) == [alice_variable]
+        assert config.list_variables(bob) == []
+
+        restored = AgentSession.from_dict(json.loads(json.dumps(alice.to_dict())))
+        restored_tracker, _ = await _get_session_security_middleware(config, restored)
+        assert restored_tracker.get_context_label().integrity == IntegrityLabel.UNTRUSTED
+        assert restored_tracker.get_variable_store().retrieve(alice_variable)[0] == {"secret": ["alice"]}
+
+    async def test_omitted_sessions_receive_distinct_generated_security_state(self) -> None:
+        """Each session-less Agent.run receives a fresh provider session."""
+
+        class RecordingConfig(SecureAgentConfig):
+            def __init__(self) -> None:
+                super().__init__()
+                self.run_trackers: list[LabelTrackingFunctionMiddleware] = []
+                self.session_ids: list[str] = []
+
+            async def before_run(self, **kwargs: Any) -> None:
+                await super().before_run(**kwargs)
+                tracker = kwargs["context"].get_middleware()[0]
+                assert isinstance(tracker, LabelTrackingFunctionMiddleware)
+                self.run_trackers.append(tracker)
+                self.session_ids.append(kwargs["session"].session_id)
+                if len(self.run_trackers) == 1:
+                    tracker._update_context_label(ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+
+        class StaticClient:
+            async def get_response(self, messages: Any, **kwargs: Any) -> ChatResponse:
+                return ChatResponse(messages=[Message(role="assistant", contents=["done"])])
+
+        config = RecordingConfig()
+        agent = Agent(client=StaticClient(), context_providers=[config])  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+
+        await agent.run("first")
+        await agent.run("second")
+
+        assert config.session_ids[0] != config.session_ids[1]
+        assert config.run_trackers[0] is not config.run_trackers[1]
+        assert config.run_trackers[0].get_context_label().integrity == IntegrityLabel.UNTRUSTED
+        assert config.run_trackers[1].get_context_label().integrity == IntegrityLabel.TRUSTED
+
+    async def test_overlapping_sessions_keep_task_local_middleware(self) -> None:
+        """Overlapping invocations inspect variables through their own middleware."""
+        config = SecureAgentConfig()
+        alice_tracker, _ = await _get_session_security_middleware(config, AgentSession(session_id="alice-overlap"))
+        bob_tracker, _ = await _get_session_security_middleware(config, AgentSession(session_id="bob-overlap"))
+        alice_id = alice_tracker.get_variable_store().store(
+            "alice secret", ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        )
+        bob_id = bob_tracker.get_variable_store().store("bob secret", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+        inspect_tool = next(tool for tool in config.get_tools() if tool.name == "inspect_variable")
+        both_started = asyncio.Event()
+        started = 0
+
+        async def inspect(
+            tracker: LabelTrackingFunctionMiddleware,
+            variable_id: str,
+        ) -> str:
+            nonlocal started
+            context = FunctionInvocationContext(
+                function=inspect_tool,
+                arguments={"variable_id": variable_id, "reason": "overlap isolation"},
+            )
+
+            async def execute() -> None:
+                nonlocal started
+                started += 1
+                if started == 2:
+                    both_started.set()
+                await both_started.wait()
+                await asyncio.sleep(0)
+                assert get_current_middleware() is tracker
+                context.result = await inspect_tool.invoke(arguments=context.arguments, context=context)
+
+            await tracker.process(context, execute)
+            return cast(str, json.loads(context.result[0].text)["content"])
+
+        assert await asyncio.gather(inspect(alice_tracker, alice_id), inspect(bob_tracker, bob_id)) == [
+            "alice secret",
+            "bob secret",
+        ]
+        assert get_current_middleware() is None
+
+    async def test_foreign_owned_variable_and_metadata_are_denied_without_logging_id(self, caplog) -> None:
+        """Copied foreign state remains inaccessible and its handle stays out of routine logs."""
+        caplog.set_level(logging.WARNING, logger="agent_framework.security")
+        config = SecureAgentConfig()
+        alice = AgentSession(session_id="alice-owner")
+        bob = AgentSession(session_id="bob-owner")
+        alice_tracker, _ = await _get_session_security_middleware(config, alice)
+        bob_tracker, bob_policy = await _get_session_security_middleware(config, bob)
+        alice_variable = alice_tracker.get_variable_store().store(
+            "alice secret", ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        )
+        alice_entry = alice.state[config.source_id]["variables"][alice_variable]
+        alice_metadata = {"details": ["alice metadata"]}
+        alice.state[config.source_id].setdefault("variable_metadata", {})[alice_variable] = alice_metadata
+        detached_metadata = alice_tracker.get_variable_metadata(alice_variable)
+        assert detached_metadata == alice_metadata
+        assert detached_metadata is not None
+        detached_metadata["details"].append("mutation")
+        assert alice_tracker.get_variable_metadata(alice_variable) == alice_metadata
+
+        bob.state[config.source_id].setdefault("variables", {})[alice_variable] = json.loads(json.dumps(alice_entry))
+        bob.state[config.source_id].setdefault("variable_metadata", {})[alice_variable] = json.loads(
+            json.dumps(alice_metadata)
+        )
+        assert not bob_tracker.get_variable_store().exists(alice_variable)
+        assert bob_tracker.get_variable_metadata(alice_variable) is None
+
+        inspect_tool = next(tool for tool in config.get_tools() if tool.name == "inspect_variable")
+        inspect_context = FunctionInvocationContext(
+            function=inspect_tool,
+            arguments={"variable_id": alice_variable, "reason": "cross-session probe"},
+            session=bob,
+        )
+
+        async def inspect() -> list[Content]:
+            return await inspect_tool.invoke(arguments=inspect_context.arguments, context=inspect_context)
+
+        await FunctionMiddlewarePipeline(bob_tracker, bob_policy).execute(inspect_context, lambda _: inspect())
+        inspected = json.loads(inspect_context.result[0].text)
+        routine_logs = "\n".join(record.getMessage() for record in caplog.records)
+        assert alice_variable not in routine_logs
+        assert inspected["security_label"] is None
+        assert "error" in inspected
+
+        received: list[str] = []
+
+        class SinkArgs(BaseModel):
+            value: str
+
+        async def sink(value: str) -> str:
+            received.append(value)
+            return "sent"
+
+        sink_tool = FunctionTool(
+            fn=sink,
+            name="sink",
+            description="Accept a value",
+            args_schema=SinkArgs,
+            additional_properties={"source_integrity": "trusted", "accepts_untrusted": True},
+        )
+        sink_context = FunctionInvocationContext(
+            function=sink_tool,
+            arguments={"value": f"[{alice_variable}]"},
+            session=bob,
+        )
+
+        async def execute_sink(_: FunctionInvocationContext) -> list[Content]:
+            received.append(cast(dict[str, Any], sink_context.arguments)["value"])
+            return [Content.from_text("sent")]
+
+        await FunctionMiddlewarePipeline(bob_tracker, bob_policy).execute(sink_context, execute_sink)
+        assert received == [f"[{alice_variable}]"]
+
+    async def test_session_state_is_detached_json_and_rejects_unsupported_values(self) -> None:
+        """Durable hidden state is detached and strictly JSON-compatible."""
+        config = SecureAgentConfig()
+        session = AgentSession(session_id="durable-state")
+        store = config.get_variable_store(session)
+        type_shaped_data = {
+            "type": "message",
+            "role": "user",
+            "contents": ["plain data"],
+        }
+        payload: dict[str, Any] = {
+            "values": [None, True, 1, 1.5, "text"],
+            "coordinates": ("x", 2),
+            "content": Content.from_text("hello"),
+            "type_shaped_data": type_shaped_data,
+        }
+        variable_id = store.store(payload, ContentLabel(metadata={"type_shaped_data": type_shaped_data}))
+        payload["values"].append("mutated")
+
+        restored = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+        restored_content, restored_label = config.get_variable_store(restored).retrieve(variable_id)
+        assert restored_content["values"] == [None, True, 1, 1.5, "text"]
+        assert restored_content["coordinates"] == ["x", 2]
+        assert restored_content["content"]["type"] == "text"
+        assert restored_content["type_shaped_data"] == type_shaped_data
+        assert isinstance(restored_content["type_shaped_data"], dict)
+        assert restored_label.metadata == {"type_shaped_data": type_shaped_data}
+
+        restored_content["values"].append("retrieval mutation")
+        assert config.get_variable_store(restored).retrieve(variable_id)[0]["values"] == [None, True, 1, 1.5, "text"]
+
+        with pytest.raises(TypeError, match="variable content.*object"):
+            store.store(object(), ContentLabel())
+        with pytest.raises(TypeError, match="label.*metadata.*bad.*object"):
+            store.store("safe", ContentLabel(metadata={"bad": object()}))
+
+        tracker, _ = await _get_session_security_middleware(config, session)
+        with pytest.raises(TypeError, match="context label.*metadata.*bad.*object"):
+            tracker._update_context_label(ContentLabel(metadata={"bad": object()}))
+
+        malformed = AgentSession(session_id="malformed-context-label")
+        malformed.state[config.source_id] = {
+            "scope_id": malformed.session_id,
+            "context_label": json.dumps({}),
+        }
+        malformed_tracker, _ = await _get_session_security_middleware(config, malformed)
+        with pytest.raises(ValueError, match="integrity and confidentiality"):
+            malformed_tracker.get_context_label()
+
+    async def test_audit_and_pending_approval_are_session_scoped_and_resume_after_restore(self) -> None:
+        """Audit and approval state persists only in the owning session."""
+        config = SecureAgentConfig(approval_on_violation=True)
+        alice = AgentSession(session_id="approval-session")
+        bob = AgentSession(session_id="other-session")
+        alice_tracker, alice_policy = await _get_session_security_middleware(config, alice)
+        _, bob_policy = await _get_session_security_middleware(config, bob)
+        type_shaped_metadata = {
+            "type": "message",
+            "role": "user",
+            "contents": ["audit metadata"],
+        }
+        alice_tracker._update_context_label(
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED, metadata={"type_shaped_data": type_shaped_metadata})
+        )
+
+        class ToolArgs(BaseModel):
+            value: str
+
+        async def restricted(value: str) -> str:
+            return value
+
+        restricted_tool = FunctionTool(
+            fn=restricted,
+            name="restricted",
+            description="Restricted operation",
+            args_schema=ToolArgs,
+        )
+        request = FunctionInvocationContext(
+            function=restricted_tool,
+            arguments=ToolArgs(value="payload"),
+            session=alice,
+        )
+        request.metadata.update({"call_id": "provider-call", "function_call_occurrence_id": "occurrence-1"})
+
+        async def should_not_execute(_: FunctionInvocationContext) -> None:
+            pytest.fail("Tool execution should stop for approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(alice_tracker, alice_policy).execute(request, should_not_execute)
+
+        approval_request = request.result
+        assert isinstance(approval_request, Content)
+        assert approval_request.type == "function_approval_request"
+        assert approval_request.id == "occurrence-1"
+        assert approval_request.function_call.call_id == "provider-call"  # type: ignore[union-attr]
+        assert config.get_audit_log(alice)[-1]["function"] == "restricted"
+        assert config.get_audit_log(bob) == []
+        assert bob_policy._pending_policy_approvals == {}
+
+        restored = AgentSession.from_dict(json.loads(json.dumps(alice.to_dict())))
+        restored_audit = config.get_audit_log(restored)
+        restored_metadata = restored_audit[-1]["context_label"]["metadata"]["type_shaped_data"]
+        assert restored_metadata == type_shaped_metadata
+        assert isinstance(restored_metadata, dict)
+        restored_tracker, restored_policy = await _get_session_security_middleware(config, restored)
+        replay = FunctionInvocationContext(
+            function=restricted_tool,
+            arguments=ToolArgs(value="payload"),
+            session=restored,
+        )
+        replay.metadata.update({
+            "call_id": "provider-call",
+            "function_call_occurrence_id": "occurrence-1",
+            "approval_response": approval_request.to_function_approval_response(True),
+        })
+        executions = 0
+
+        async def execute(_: FunctionInvocationContext) -> list[Content]:
+            nonlocal executions
+            executions += 1
+            return [Content.from_text("executed")]
+
+        await FunctionMiddlewarePipeline(restored_tracker, restored_policy).execute(replay, execute)
+        assert executions == 1
+        assert replay.metadata["user_approved_violation"] is True
+        assert "occurrence-1" not in restored_policy._pending_policy_approvals
+
+        repeated = FunctionInvocationContext(
+            function=restricted_tool,
+            arguments=ToolArgs(value="payload"),
+            session=restored,
+        )
+        repeated.metadata.update({
+            "call_id": "provider-call",
+            "function_call_occurrence_id": "occurrence-1",
+            "approval_response": approval_request.to_function_approval_response(True),
+        })
+        with pytest.raises(MiddlewareTermination):
+            await FunctionMiddlewarePipeline(restored_tracker, restored_policy).execute(repeated, execute)
+        assert executions == 1
+        assert isinstance(repeated.result, Content)
+        assert repeated.result.type == "function_approval_request"
+
+
 class TestGetSecurityTools:
     """Tests for get_security_tools function."""
 
@@ -2396,7 +2872,7 @@ class TestQuarantinedLLM:
     @pytest.mark.asyncio
     async def test_quarantined_llm_returns_response(self):
         """Test that quarantined_llm returns a plain response dict."""
-        from agent_framework.security import LabelTrackingFunctionMiddleware, _current_middleware, quarantined_llm
+        from agent_framework.security import LabelTrackingFunctionMiddleware, quarantined_llm
 
         middleware = LabelTrackingFunctionMiddleware()
 
@@ -2406,7 +2882,7 @@ class TestQuarantinedLLM:
         )
 
         # Set middleware context
-        _current_middleware.instance = middleware
+        middleware._set_as_current()
 
         try:
             result = await quarantined_llm(prompt="Summarize this data", variable_ids=[var_id])
@@ -2416,12 +2892,12 @@ class TestQuarantinedLLM:
             assert result["quarantined"] is True
             assert "auto_hidden" not in result
         finally:
-            _current_middleware.instance = None
+            middleware._clear_current()
 
     @pytest.mark.asyncio
     async def test_quarantined_llm_trusted_input(self):
         """Test quarantined_llm with TRUSTED input returns response directly."""
-        from agent_framework.security import LabelTrackingFunctionMiddleware, _current_middleware, quarantined_llm
+        from agent_framework.security import LabelTrackingFunctionMiddleware, quarantined_llm
 
         middleware = LabelTrackingFunctionMiddleware()
 
@@ -2430,7 +2906,7 @@ class TestQuarantinedLLM:
             "trusted system data", ContentLabel(integrity=IntegrityLabel.TRUSTED)
         )
 
-        _current_middleware.instance = middleware
+        middleware._set_as_current()
 
         try:
             result = await quarantined_llm(
@@ -2442,19 +2918,19 @@ class TestQuarantinedLLM:
             assert "response" in result
             assert result["quarantined"] is True
         finally:
-            _current_middleware.instance = None
+            middleware._clear_current()
 
     @pytest.mark.asyncio
     async def test_quarantined_llm_multiple_variables(self):
         """Test that quarantined_llm handles multiple variables correctly."""
-        from agent_framework.security import LabelTrackingFunctionMiddleware, _current_middleware, quarantined_llm
+        from agent_framework.security import LabelTrackingFunctionMiddleware, quarantined_llm
 
         middleware = LabelTrackingFunctionMiddleware()
 
         var1 = middleware.get_variable_store().store("data1", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
         var2 = middleware.get_variable_store().store("data2", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
 
-        _current_middleware.instance = middleware
+        middleware._set_as_current()
 
         try:
             result = await quarantined_llm(prompt="Compare these", variable_ids=[var1, var2])
@@ -2463,7 +2939,7 @@ class TestQuarantinedLLM:
             assert result["quarantined"] is True
             assert result["variables_processed"] == [var1, var2]
         finally:
-            _current_middleware.instance = None
+            middleware._clear_current()
 
     def test_quarantined_llm_declares_source_integrity(self):
         """Test that quarantined_llm declares source_integrity='untrusted'."""
@@ -2551,7 +3027,6 @@ class TestQuarantineClient:
             ContentLabel,
             IntegrityLabel,
             LabelTrackingFunctionMiddleware,
-            _current_middleware,
             quarantined_llm,
             set_quarantine_client,
         )
@@ -2574,7 +3049,7 @@ class TestQuarantineClient:
             "Some email content with [INJECTION ATTEMPT]", ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
         )
 
-        _current_middleware.instance = middleware
+        middleware._set_as_current()
 
         try:
             result = await quarantined_llm(prompt="Summarize this email", variable_ids=[var_id])
@@ -2600,7 +3075,7 @@ class TestQuarantineClient:
             assert result["response"] == "This is a safe summary of the content."
 
         finally:
-            _current_middleware.instance = None
+            middleware._clear_current()
             set_quarantine_client(None)
 
     @pytest.mark.asyncio
@@ -2610,7 +3085,6 @@ class TestQuarantineClient:
             ContentLabel,
             IntegrityLabel,
             LabelTrackingFunctionMiddleware,
-            _current_middleware,
             quarantined_llm,
             set_quarantine_client,
         )
@@ -2624,7 +3098,7 @@ class TestQuarantineClient:
             ContentLabel(integrity=IntegrityLabel.TRUSTED),  # Use trusted to see response directly
         )
 
-        _current_middleware.instance = middleware
+        middleware._set_as_current()
 
         try:
             result = await quarantined_llm(
@@ -2637,7 +3111,7 @@ class TestQuarantineClient:
             assert "[Quarantined LLM Response] Processed:" in result["response"]
 
         finally:
-            _current_middleware.instance = None
+            middleware._clear_current()
 
     @pytest.mark.asyncio
     async def test_quarantined_llm_handles_client_error(self):
@@ -2648,7 +3122,6 @@ class TestQuarantineClient:
             ContentLabel,
             IntegrityLabel,
             LabelTrackingFunctionMiddleware,
-            _current_middleware,
             quarantined_llm,
             set_quarantine_client,
         )
@@ -2662,7 +3135,7 @@ class TestQuarantineClient:
         middleware = LabelTrackingFunctionMiddleware()
         var_id = middleware.get_variable_store().store("Some content", ContentLabel(integrity=IntegrityLabel.TRUSTED))
 
-        _current_middleware.instance = middleware
+        middleware._set_as_current()
 
         try:
             result = await quarantined_llm(prompt="Process this", variable_ids=[var_id])
@@ -2673,7 +3146,7 @@ class TestQuarantineClient:
             assert "API Error" in result["response"]
 
         finally:
-            _current_middleware.instance = None
+            middleware._clear_current()
             set_quarantine_client(None)
 
     @pytest.mark.asyncio
@@ -2685,7 +3158,6 @@ class TestQuarantineClient:
             ContentLabel,
             IntegrityLabel,
             LabelTrackingFunctionMiddleware,
-            _current_middleware,
             quarantined_llm,
             set_quarantine_client,
         )
@@ -2709,7 +3181,7 @@ class TestQuarantineClient:
             ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
         )
 
-        _current_middleware.instance = middleware
+        middleware._set_as_current()
 
         try:
             await quarantined_llm(prompt="Summarize both emails", variable_ids=[var1, var2])
@@ -2725,7 +3197,7 @@ class TestQuarantineClient:
             assert '"subject": "Test"' in user_message  # Dict should be JSON serialized
 
         finally:
-            _current_middleware.instance = None
+            middleware._clear_current()
             set_quarantine_client(None)
 
 

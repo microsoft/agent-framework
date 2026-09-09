@@ -8,22 +8,30 @@ import base64
 import binascii
 import json
 import logging
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 from agent_framework import (
     Content,
     Message,
 )
+from agent_framework._types import ContentType  # pyright: ignore[reportPrivateUsage]
 
 from ._utils import (
+    _AGUI_HOST_PAYLOAD_OMITTED_KEY,
+    _AGUI_MCP_TOOL_RESULT_KEY,
+    _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY,
+    _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY,
     AGUI_TO_FRAMEWORK_ROLE,
     FRAMEWORK_TO_AGUI_ROLE,
+    _model_content_from_mcp_host_payload,
+    _sanitize_model_replay_item,
     get_role_value,
     normalize_agui_role,
     safe_json_parse,
 )
 
 logger = logging.getLogger(__name__)
+_VALID_CONTENT_TYPES = frozenset(get_args(ContentType))
 
 
 def _append_synthetic_tool_results(
@@ -718,6 +726,52 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                     parsed = cast(dict[str, Any], parsed_candidate)
             elif isinstance(result_content, dict):
                 parsed = cast(dict[str, Any], result_content)
+
+            if msg.get(_AGUI_MCP_TOOL_RESULT_KEY) is True:
+                host_payload = msg.get(_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY, result_content)
+                parsed_host_payload = safe_json_parse(host_payload)
+                serialized_items = msg.get(_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY)
+                function_result: Content | None = None
+                if isinstance(serialized_items, list) and all(
+                    isinstance(item, dict) and item.get("type") in _VALID_CONTENT_TYPES for item in serialized_items
+                ):
+                    try:
+                        model_items = [
+                            Content.from_dict(_sanitize_model_replay_item(item)) for item in serialized_items
+                        ]
+                        if any(
+                            item.get("type") == "text" and "text" in item and not isinstance(item.get("text"), str)
+                            for item in serialized_items
+                        ):
+                            raise TypeError("Serialized text replay content must contain a string")
+                        function_result = Content.from_function_result(
+                            call_id=str(tool_call_id),
+                            result=model_items,
+                        )
+                    except (RecursionError, TypeError, ValueError):
+                        function_result = None
+                if function_result is None:
+                    model_items = [Content.from_text(_model_content_from_mcp_host_payload(parsed_host_payload))]
+                    function_result = Content.from_function_result(call_id=str(tool_call_id), result=model_items)
+                chat_msg = Message(
+                    role="tool",
+                    contents=[function_result],
+                )
+                if "id" in msg:
+                    chat_msg.message_id = msg["id"]
+                result.append(chat_msg)
+                continue
+
+            if msg.get(_AGUI_HOST_PAYLOAD_OMITTED_KEY) is True:
+                safe_result = result_content if isinstance(result_content, (str, dict, list)) else str(result_content)
+                chat_msg = Message(
+                    role="tool",
+                    contents=[Content.from_function_result(call_id=str(tool_call_id), result=safe_result)],
+                )
+                if "id" in msg:
+                    chat_msg.message_id = msg["id"]
+                result.append(chat_msg)
+                continue
 
             is_approval = parsed is not None and "accepted" in parsed
 

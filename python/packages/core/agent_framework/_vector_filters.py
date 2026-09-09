@@ -255,7 +255,7 @@ class Param:
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "value_type", value_type)
         object.__setattr__(self, "required", required)
-        object.__setattr__(self, "_default", deepcopy(default))
+        object.__setattr__(self, "_default", default if default is _PARAM_UNSET else deepcopy(default))
         object.__setattr__(self, "omit_if_none", omit_if_none)
         object.__setattr__(self, "description", description)
         object.__setattr__(self, "minimum", minimum)
@@ -271,8 +271,8 @@ class Param:
 
     @property
     def default(self) -> Any:
-        """Return an independent copy of the default value."""
-        return deepcopy(self._default)
+        """Return an independent copy of the default value, or the unset sentinel."""
+        return deepcopy(self._default) if self.has_default else _PARAM_UNSET
 
     def __deepcopy__(self, memo: dict[int, Any]) -> Param:
         return self

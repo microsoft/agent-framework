@@ -50,6 +50,11 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - AG-UI Thread and Run ids are client-owned protocol correlation ids. Service-session mode stores provider conversation
   or response ids privately in the thread snapshot. Set `service_session_id_from_thread_id=True` only for compatibility
   when the application intentionally uses a provider continuation id as its AG-UI Thread id.
+- A configured Snapshot Scope and the client-owned Thread id are combined into a deterministic internal
+  `AgentSession.session_id`. Keep the raw Thread id for protocol events and snapshot addressing so equal Thread ids
+  in different trusted scopes cannot collide in context-provider state. The deprecated
+  `legacy_session_id_from_thread_id=True` compatibility option preserves raw provider keys only for explicit
+  migrations and must warn because it disables that isolation.
 - `confirm_changes` snapshot cleanup resolves the synthetic confirmation back to its original `function_call_id`;
   it must never concatenate unrelated tool results or record accepted changes without a matching real result.
 - SSE keepalive is endpoint-owned transport behavior configured through
