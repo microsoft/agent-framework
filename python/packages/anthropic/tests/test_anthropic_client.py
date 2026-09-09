@@ -598,26 +598,32 @@ def test_streaming_replay_preserves_empty_signed_thinking_block(
     client = create_test_anthropic_client(mock_anthropic_client)
 
     events: list[BetaRawMessageStreamEvent] = [
-        BetaRawContentBlockStartEvent.model_validate({
-            "type": "content_block_start",
-            "index": 0,
-            "content_block": {"type": "thinking", "thinking": "", "signature": ""},
-        }),
-        BetaRawContentBlockDeltaEvent.model_validate({
-            "type": "content_block_delta",
-            "index": 0,
-            "delta": {"type": "signature_delta", "signature": "synthetic-signature"},
-        }),
-        BetaRawContentBlockStartEvent.model_validate({
-            "type": "content_block_start",
-            "index": 1,
-            "content_block": {
-                "type": "tool_use",
-                "id": "toolu_test",
-                "name": "lookup",
-                "input": {},
-            },
-        }),
+        BetaRawContentBlockStartEvent.model_validate(
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "thinking", "thinking": "", "signature": ""},
+            }
+        ),
+        BetaRawContentBlockDeltaEvent.model_validate(
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "signature_delta", "signature": "synthetic-signature"},
+            }
+        ),
+        BetaRawContentBlockStartEvent.model_validate(
+            {
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_test",
+                    "name": "lookup",
+                    "input": {},
+                },
+            }
+        ),
     ]
 
     updates = [client._process_stream_event(event) for event in events]
