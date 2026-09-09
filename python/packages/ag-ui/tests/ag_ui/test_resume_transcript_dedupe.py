@@ -52,7 +52,7 @@ def test_resume_with_partial_new_turn_still_seeds_history():
 
 
 def test_reconstruct_with_empty_incoming_returns_empty():
-    """Empty incoming is unchanged; call sites must use resume seeding instead."""
+    """Empty incoming is unchanged at the helper; ThreadSnapshotSession.resume_seeded_messages seeds instead."""
     stored = _stored_history()
 
     assert (
@@ -65,8 +65,8 @@ def test_reconstruct_with_empty_incoming_returns_empty():
     )
 
 
-def test_reconcile_resume_messages_empty_vs_replayed():
-    """Session-owned reconcile covers interrupt-only and replayed transcript shapes."""
+def test_resume_seeded_messages_empty_vs_replayed():
+    """Session-owned resume seeding covers interrupt-only and replayed transcript shapes."""
     stored = _stored_history()
     session = ThreadSnapshotSession(
         store=None,
@@ -80,10 +80,10 @@ def test_reconcile_resume_messages_empty_vs_replayed():
         ),
     )
 
-    empty = session.reconcile_resume_messages([])
+    empty = session.resume_seeded_messages([])
     assert [m.get("id") for m in empty] == ["u1", "a1"]
 
-    replayed = session.reconcile_resume_messages(
+    replayed = session.resume_seeded_messages(
         [
             *stored,
             {"id": "u2", "role": "user", "content": "approved"},

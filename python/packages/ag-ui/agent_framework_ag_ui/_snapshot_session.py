@@ -132,17 +132,7 @@ class ThreadSnapshotSession:
         return state
 
     def resume_seeded_messages(self, incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Prepend copies of stored thread history to a resume request's messages.
-
-        Resume requests carry only the synthesized interrupt response; seeding
-        with stored history keeps the persisted thread from being truncated.
-        """
-        if self._stored is None:
-            return incoming
-        return [copy.deepcopy(message) for message in self._stored.messages] + incoming
-
-    def reconcile_resume_messages(self, incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Merge stored history with resume messages without double-persisting.
+        """Merge stored thread history with resume messages without double-persisting.
 
         Empty incoming prepends stored history (approval / checkpoint builders that
         need history in the provider or snapshot input). Non-empty incoming is
@@ -151,12 +141,12 @@ class ThreadSnapshotSession:
 
         Agent confirm_changes resumes that synthesize the tool result separately
         should keep empty incoming as empty and call this only for non-empty
-        client-replayed transcripts.
+        client-replayed transcripts (or at save-time for interrupt-only resumes).
         """
         if self._stored is None:
             return incoming
         if not incoming:
-            return self.resume_seeded_messages(incoming)
+            return [copy.deepcopy(message) for message in self._stored.messages]
         return _reconstruct_messages_from_thread_snapshot(
             stored_messages=self._stored.messages,
             incoming_messages=incoming,

@@ -447,8 +447,8 @@ class AgentFrameworkWorkflow:
         builder_seed_messages = raw_messages
         if resume_payload is not None or (checkpoint_id is not None and not raw_messages):
             # Resume / checkpoint-only requests need stored history. Session-owned
-            # reconcile covers empty vs client-replayed transcripts (#8140).
-            builder_seed_messages = snapshot_session.reconcile_resume_messages(builder_seed_messages)
+            # resume_seeded_messages covers empty vs client-replayed transcripts (#8140).
+            builder_seed_messages = snapshot_session.resume_seeded_messages(builder_seed_messages)
         snapshot_builder = _WorkflowSnapshotBuilder(builder_seed_messages) if snapshot_session.enabled else None
         if snapshot_builder is not None and effective_state:
             # Seed builder state so a run that emits no StateSnapshotEvent still
