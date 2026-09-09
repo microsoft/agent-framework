@@ -3,7 +3,7 @@
 """Tests for AGUIChatClient."""
 
 import json
-from collections.abc import AsyncGenerator, Awaitable, MutableSequence
+from collections.abc import AsyncGenerator, Awaitable, Mapping, MutableSequence
 from typing import Any, cast
 
 import httpx
@@ -48,7 +48,7 @@ class StubAGUIChatClient(AGUIChatClient):
         self,
         *,
         messages: MutableSequence[Message],
-        options: ChatOptions[Any] | dict[str, Any] | None,
+        options: Mapping[str, Any],
         stream: bool = False,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Proxy to protected response call."""
