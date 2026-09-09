@@ -163,11 +163,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
 
             string? body = httpResponse.Content is null
                 ? null
-#if NET
-                : await httpResponse.Content.ReadAsStringAsync(effectiveToken).ConfigureAwait(false);
-#else
-                : await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
-#endif
+                : await ReadResponseBodyAsStringAsync(httpResponse.Content, effectiveToken).ConfigureAwait(false);
 
             Dictionary<string, IReadOnlyList<string>> headers = new(StringComparer.OrdinalIgnoreCase);
             AppendHeaders(headers, httpResponse.Headers);
@@ -186,6 +182,31 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
         }
 
         throw new HttpRequestException($"The maximum number of HTTP redirects ({MaxAutomaticRedirections}) was exceeded.");
+    }
+
+    private static async Task<string> ReadResponseBodyAsStringAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+#if NET
+        return await content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+#else
+        Task<string> readTask = content.ReadAsStringAsync();
+        Task cancellationTask = Task.Delay(Timeout.Infinite, cancellationToken);
+        Task completedTask = await Task.WhenAny(readTask, cancellationTask).ConfigureAwait(false);
+        if (completedTask == readTask)
+        {
+            return await readTask.ConfigureAwait(false);
+        }
+
+        content.Dispose();
+        _ = readTask.ContinueWith(
+            static task => _ = task.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+        cancellationToken.ThrowIfCancellationRequested();
+        throw new OperationCanceledException(cancellationToken);
+#endif
     }
 
     /// <inheritdoc/>

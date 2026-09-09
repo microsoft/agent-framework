@@ -367,6 +367,37 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
+    public async Task SendAsyncTimeoutCancelsResponseBodyReadAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        int requestCount = 0;
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+        {
+            requestCount++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StallingContent(),
+            });
+        });
+
+        await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(new HttpClient(messageHandler)));
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = TestUrl,
+            Timeout = TimeSpan.FromMilliseconds(50),
+        };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(actAsync);
+        Assert.Equal(1, requestCount);
+    }
+
+    [Fact]
     public async Task SendAsyncTimeoutAppliesAcrossRedirectsAsync()
     {
         // Arrange
@@ -1057,6 +1088,23 @@ public sealed class DefaultHttpRequestHandlerTests
         {
             length = Encoding.UTF8.GetByteCount(this._content);
             return true;
+        }
+    }
+
+    private sealed class StallingContent : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
+            Task.Delay(Timeout.Infinite);
+
+#if NET
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context, CancellationToken cancellationToken) =>
+            Task.Delay(Timeout.Infinite, cancellationToken);
+#endif
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
         }
     }
 }
