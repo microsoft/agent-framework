@@ -3124,6 +3124,77 @@ class TestQuarantinedLLM:
         assert context.metadata["result_label"].integrity == IntegrityLabel.UNTRUSTED
         assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
 
+    async def test_quarantined_llm_empty_input_placeholder_is_private(self) -> None:
+        """An unlabeled placeholder response remains PRIVATE."""
+        from agent_framework.security import set_quarantine_client
+
+        set_quarantine_client(None)
+        middleware = LabelTrackingFunctionMiddleware()
+        quarantine_tool = next(tool for tool in middleware.get_security_tools() if tool.name == "quarantined_llm")
+        context = FunctionInvocationContext(
+            function=quarantine_tool,
+            arguments={
+                "prompt": "Summarize sensitive instructions",
+                "variable_ids": [],
+                "labelled_data": {},
+            },
+        )
+
+        async def next_fn() -> None:
+            context.result = await quarantine_tool.invoke(arguments=context.arguments, context=context)
+
+        await middleware.process(context, next_fn)
+
+        result_label = context.metadata["result_label"]
+        assert result_label.integrity == IntegrityLabel.UNTRUSTED
+        assert result_label.confidentiality == ConfidentialityLabel.PRIVATE
+        hidden_reference = json.loads(context.result[0].text)
+        hidden_content, hidden_label = middleware.get_variable_store().retrieve(hidden_reference["variable_id"])
+        assert hidden_label.integrity == IntegrityLabel.UNTRUSTED
+        assert hidden_label.confidentiality == ConfidentialityLabel.PRIVATE
+        assert "[Quarantined LLM Response]" in json.loads(hidden_content)["response"]
+
+    async def test_quarantined_llm_empty_input_client_response_is_private(self) -> None:
+        """An unlabeled client response remains PRIVATE."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from agent_framework.security import set_quarantine_client
+
+        mock_response = MagicMock()
+        mock_response.text = "client-produced sensitive response"
+        mock_client = MagicMock()
+        mock_client.get_response = AsyncMock(return_value=mock_response)
+        set_quarantine_client(mock_client)
+
+        try:
+            middleware = LabelTrackingFunctionMiddleware()
+            quarantine_tool = next(tool for tool in middleware.get_security_tools() if tool.name == "quarantined_llm")
+            context = FunctionInvocationContext(
+                function=quarantine_tool,
+                arguments={
+                    "prompt": "Summarize sensitive instructions",
+                    "variable_ids": [],
+                    "labelled_data": {},
+                },
+            )
+
+            async def next_fn() -> None:
+                context.result = await quarantine_tool.invoke(arguments=context.arguments, context=context)
+
+            await middleware.process(context, next_fn)
+
+            result_label = context.metadata["result_label"]
+            assert result_label.integrity == IntegrityLabel.UNTRUSTED
+            assert result_label.confidentiality == ConfidentialityLabel.PRIVATE
+            hidden_reference = json.loads(context.result[0].text)
+            hidden_content, hidden_label = middleware.get_variable_store().retrieve(hidden_reference["variable_id"])
+            assert hidden_label.integrity == IntegrityLabel.UNTRUSTED
+            assert hidden_label.confidentiality == ConfidentialityLabel.PRIVATE
+            assert json.loads(hidden_content)["response"] == "client-produced sensitive response"
+            mock_client.get_response.assert_awaited_once()
+        finally:
+            set_quarantine_client(None)
+
     @pytest.mark.asyncio
     async def test_quarantined_llm_returns_response(self):
         """Test that quarantined_llm returns a plain response dict."""

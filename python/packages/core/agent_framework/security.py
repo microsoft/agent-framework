@@ -3115,7 +3115,7 @@ async def quarantined_llm(
             labels.append(unknown_input_label)
 
     # Combine all labels (most restrictive)
-    combined_label = combine_labels(*labels) if labels else ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+    combined_label = combine_labels(*labels) if labels else unknown_input_label
 
     content_summary: list[str] = []
     for var_id, content in retrieved_content.items():
