@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.ObjectModel.Abstractions;
@@ -50,9 +51,8 @@ internal sealed class WorkflowExpressionEngine
 
         SensitivityLevel sensitivity = SensitivityLevel.None;
         List<string> segments = [];
-        foreach (TemplateLine line in template)
+        foreach (EvaluationResult<string> result in template.Select(this.Format))
         {
-            EvaluationResult<string> result = this.Format(line);
             sensitivity = MaxSensitivity(sensitivity, result.Sensitivity);
             segments.Add(result.Value);
         }

@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.ObjectModel;
@@ -85,12 +86,9 @@ public abstract class PromptAgentFactory
             return;
         }
 
-        foreach (string variableName in AgentBotElementYaml.GetReferencedEnvironmentVariableNames(promptAgent))
+        foreach (string variableName in AgentBotElementYaml.GetReferencedEnvironmentVariableNames(promptAgent).Where(variableName => this._allowedConfigurationVariables.Contains(variableName)))
         {
-            if (this._allowedConfigurationVariables.Contains(variableName))
-            {
-                this.Engine.UpdateVariable(variableName, this._configuration[variableName] ?? string.Empty);
-            }
+            this.Engine.UpdateVariable(variableName, this._configuration[variableName] ?? string.Empty);
         }
     }
 
