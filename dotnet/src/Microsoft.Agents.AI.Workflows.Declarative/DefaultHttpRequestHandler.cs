@@ -291,6 +291,10 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
         }
 
         bool rewriteToGet = ShouldRewriteRedirectMethodToGet(response.StatusCode, currentRequest.Method);
+        if (!rewriteToGet && currentRequest.Body is not null && !HaveSameOrigin(currentUri, redirectUri))
+        {
+            throw new HttpRequestException("Redirects that preserve the request body to a different origin are not allowed.");
+        }
 
         redirectRequest = new HttpRequestInfo
         {
@@ -321,6 +325,14 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
     private static bool IsHttpsToHttpRedirect(Uri currentUri, Uri redirectUri) =>
         string.Equals(currentUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
         string.Equals(redirectUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase);
+
+    private static bool HaveSameOrigin(Uri currentUri, Uri redirectUri) =>
+        Uri.Compare(
+            currentUri,
+            redirectUri,
+            UriComponents.SchemeAndServer,
+            UriFormat.Unescaped,
+            StringComparison.OrdinalIgnoreCase) == 0;
 
     private static HttpMethod ResolveMethod(string method)
     {

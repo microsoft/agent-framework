@@ -492,6 +492,44 @@ public sealed class DefaultHttpRequestHandlerTests
         Assert.Equal(["request-body", "request-body"], messageHandler.RequestBodies);
     }
 
+    [Theory]
+    [InlineData(307)]
+    [InlineData(308)]
+    public async Task SendAsyncPostPreserveMethodRedirectToDifferentOriginWithBodyThrowsAsync(int redirectStatusCode)
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        int requestCount = 0;
+        using HttpResponseMessage redirectResponse = new((HttpStatusCode)redirectStatusCode)
+        {
+            Headers = { Location = new Uri("https://secondary.example.test/next") },
+        };
+#pragma warning disable CA2025
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+        {
+            requestCount++;
+            return Task.FromResult(redirectResponse);
+        });
+#pragma warning restore CA2025
+
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
+        HttpRequestInfo request = new()
+        {
+            Method = "POST",
+            Url = TestUrl,
+            Body = "request-body",
+            BodyContentType = "text/plain",
+        };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Contains("preserve the request body to a different origin", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(1, requestCount);
+    }
+
     [Fact]
     public async Task SendAsyncTooManyRedirectsThrowsAsync()
     {
