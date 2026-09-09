@@ -350,6 +350,13 @@ class ShellSession:
             return (
                 "& {"
                 " $__af_rc = 0;"
+                # $LASTEXITCODE is a session-wide automatic variable that only
+                # native (external) processes update. Clearing it first means a
+                # non-null value below really came from *this* command instead
+                # of an earlier one. It must be cleared in the global scope:
+                # assigning the unqualified name here would shadow the global
+                # the engine writes to, hiding real native exit codes.
+                " $global:LASTEXITCODE = $null;"
                 " try {"
                 f"   $__af_cmd = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}'));"
                 "   Invoke-Expression $__af_cmd;"
