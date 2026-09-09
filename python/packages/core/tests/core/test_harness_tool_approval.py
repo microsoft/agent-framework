@@ -796,7 +796,6 @@ async def test_policy_reapproval_is_visible_persisted_and_executes_once(
     else:
         stale_response = await agent.run(resume_message, session=session)
 
-    assert calls == 0
     assert chat_client_base.call_count == 1
     replacement_requests = stale_response.user_input_requests
     assert len(replacement_requests) == 1
@@ -808,6 +807,20 @@ async def test_policy_reapproval_is_visible_persisted_and_executes_once(
     assert replacement.function_call.call_id == original_request.function_call.call_id
     pending_snapshots = session.state["tool_approval"]["pending_approval_requests"]
     assert [snapshot["id"] for snapshot in pending_snapshots] == [replacement.id]
+    replacement_snapshot = json.loads(json.dumps(replacement.to_dict()))
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+
+    if streaming:
+        stale_generation_stream = agent.run(stale_approval, stream=True, session=session)
+        _ = [update async for update in stale_generation_stream]
+        await stale_generation_stream.get_final_response()
+    else:
+        await agent.run(stale_approval, session=session)
+
+    assert calls == 0
+    assert chat_client_base.call_count == 2
+    restored_pending = session.state["tool_approval"]["pending_approval_requests"]
+    assert restored_pending == [replacement_snapshot]
 
     if streaming:
         approved_stream = agent.run(
@@ -825,7 +838,7 @@ async def test_policy_reapproval_is_visible_persisted_and_executes_once(
         approved_response = await agent.run(replacement.to_function_approval_response(True), session=session)
 
     assert calls == 1
-    assert chat_client_base.call_count == 2
+    assert chat_client_base.call_count == 3
     assert [[content.type for content in message.contents] for message in approved_response.messages] == [
         ["function_result"],
         ["text"],
@@ -851,8 +864,7 @@ async def test_policy_reapproval_is_visible_persisted_and_executes_once(
     else:
         await agent.run(stale_approval, session=session)
 
-    assert calls == 1
-    assert chat_client_base.call_count == 3
+    assert chat_client_base.call_count == 4
     assert "pending_approval_requests" not in session.state["tool_approval"]
     replayed_types = [content.type for message in captured_model_calls[-1] for content in message.contents]
     assert replayed_types.count("function_call") == expected_occurrences

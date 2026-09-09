@@ -9,7 +9,7 @@ import sys
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Iterable, Mapping, Sequence
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeAlias, cast, overload, runtime_checkable
 
 from ._clients import SupportsChatGetResponse
 from ._feature_stage import ExperimentalFeature, experimental
@@ -686,6 +686,19 @@ class AgentMiddleware(ABC):
         ...
 
 
+@runtime_checkable
+class _ApprovalResponseObserver(Protocol):
+    """Private capability for authenticated approval lifecycle notifications."""
+
+    def _on_approval_responses(
+        self,
+        responses: Sequence[Content],
+        *,
+        session: AgentSession | None,
+    ) -> None:
+        """Observe non-executing responses already bound to authoritative state."""
+
+
 class FunctionMiddleware(ABC):
     """Abstract base class for function middleware that can intercept function invocations.
 
@@ -755,25 +768,6 @@ class FunctionMiddleware(ABC):
             or observe context.result after calling call_next() for actual results.
         """
         ...
-
-    def on_approval_responses(
-        self,
-        responses: Sequence[Content],
-        *,
-        session: AgentSession | None,
-    ) -> None:
-        """Observe authenticated approval responses that do not execute a function.
-
-        The function loop calls this only after binding responses to the active session's
-        authoritative pending snapshot. Stateful middleware can discard rejected or
-        cancelled authority here; the default implementation retains no state.
-
-        Args:
-            responses: Session-rebound approval responses.
-
-        Keyword Args:
-            session: The active invocation session, if any.
-        """
 
 
 class ChatMiddleware(ABC):
@@ -1238,16 +1232,18 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
         """Return whether this pipeline was built from the provided middleware sequence."""
         return self._source_middleware == tuple(middleware)
 
-    def notify_approval_responses(
+    def _notify_approval_responses(
         self,
         responses: Sequence[Content],
         *,
         session: AgentSession | None,
     ) -> None:
-        """Notify class-based middleware of authenticated non-executing decisions."""
+        """Notify class-based middleware implementing the private observer capability."""
         for middleware in self._middleware:
-            if isinstance(middleware, FunctionMiddleware):
-                middleware.on_approval_responses(responses, session=session)
+            if isinstance(middleware, _ApprovalResponseObserver):
+                middleware._on_approval_responses(  # pyright: ignore[reportPrivateUsage]
+                    responses, session=session
+                )
 
     def _register_middleware(self, middleware: FunctionMiddlewareTypes) -> None:
         """Register a function middleware item.

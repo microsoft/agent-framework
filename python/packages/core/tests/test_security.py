@@ -761,6 +761,16 @@ class TestPolicyEnforcementMiddleware:
         assert context.result == [Content.from_text("approved result")]
         assert "call-approved" not in middleware._pending_policy_approvals
 
+    @pytest.mark.parametrize("invalid_max", [float("nan"), 1.0, True, False, 0, "1"])
+    def test_max_pending_approvals_requires_positive_int(self, invalid_max: Any) -> None:
+        """Capacity must reject values that could disable the bound."""
+        with pytest.raises(ValueError, match="max_pending_approvals must be a positive integer"):
+            PolicyEnforcementFunctionMiddleware(max_pending_approvals=invalid_max)  # type: ignore[arg-type]
+
+    def test_max_pending_approvals_accepts_positive_int(self) -> None:
+        middleware = PolicyEnforcementFunctionMiddleware(max_pending_approvals=1)
+        assert middleware._max_pending_approvals == 1
+
     async def test_pending_policy_approvals_are_fifo_bounded_by_occurrence(self, mock_function) -> None:
         """The oldest occurrence is evicted and its stale grant fails closed."""
         middleware = PolicyEnforcementFunctionMiddleware(
@@ -877,8 +887,56 @@ class TestPolicyEnforcementMiddleware:
         assert replay_context.result.id != "ttl-occurrence"
         assert replay_context.result.function_call is not None
         assert replay_context.result.function_call.id == "ttl-occurrence"
+        replacement = replay_context.result
         pending = middleware._scope_for_session(restored).pending_approvals["ttl-occurrence"]
         assert pending["created_at"] == now
+        assert pending["request_id"] == replacement.id
+
+        restored_again = AgentSession.from_dict(json.loads(json.dumps(restored.to_dict())))
+        stale_generation_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+            session=restored_again,
+            kwargs={"session": restored_again},
+        )
+        stale_generation_context.metadata.update({
+            "context_label": ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+            "call_id": "ttl-provider-call",
+            "function_call_occurrence_id": "ttl-occurrence",
+            "approval_response": approval_request.to_function_approval_response(True),
+        })
+        executions = 0
+
+        async def execute_once() -> None:
+            nonlocal executions
+            executions += 1
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(stale_generation_context, execute_once)
+
+        assert executions == 0
+        assert isinstance(stale_generation_context.result, Content)
+        latest_replacement = stale_generation_context.result
+        assert latest_replacement.id not in {approval_request.id, replacement.id}
+
+        final_restore = AgentSession.from_dict(json.loads(json.dumps(restored_again.to_dict())))
+        approved_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+            session=final_restore,
+            kwargs={"session": final_restore},
+        )
+        approved_context.metadata.update({
+            "context_label": ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+            "call_id": "ttl-provider-call",
+            "function_call_occurrence_id": "ttl-occurrence",
+            "approval_response": latest_replacement.to_function_approval_response(True),
+        })
+
+        await middleware.process(approved_context, execute_once)
+
+        assert executions == 1
+        assert "ttl-occurrence" not in middleware._scope_for_session(final_restore).pending_approvals
 
     @pytest.mark.parametrize("cancelled", [False, True], ids=["rejected", "cancelled"])
     async def test_non_grant_cleanup_is_authenticated_session_and_occurrence_bound(
@@ -956,6 +1014,70 @@ class TestPolicyEnforcementMiddleware:
         assert results[0].type == "function_result"
         assert results[0].call_id == "shared-provider-call"
         assert owner_request.id == "shared-occurrence"
+
+    @pytest.mark.parametrize("cancelled", [False, True], ids=["rejected", "cancelled"])
+    async def test_fixed_scope_non_grant_cleanup_keeps_unrelated_occurrence(
+        self,
+        mock_function,
+        cancelled: bool,
+    ) -> None:
+        """Provider-cloned middleware must clean its fixed scope, not standalone state."""
+        config = SecureAgentConfig(approval_on_violation=True)
+        session = AgentSession(session_id=f"fixed-scope-cleanup-{cancelled}")
+        _, policy = await _get_session_security_middleware(config, session)
+
+        async def request(occurrence_id: str) -> Content:
+            context = FunctionInvocationContext(
+                function=mock_function,
+                arguments=mock_function.args_schema(arg="test"),
+                session=session,
+                kwargs={"session": session},
+            )
+            context.metadata.update({
+                "context_label": ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+                "call_id": f"call-{occurrence_id}",
+                "function_call_occurrence_id": occurrence_id,
+            })
+
+            async def should_not_execute() -> None:
+                pytest.fail("Policy-violating tools require approval")
+
+            with pytest.raises(MiddlewareTermination):
+                await policy.process(context, should_not_execute)
+            assert isinstance(context.result, Content)
+            return context.result
+
+        target = await request("target-occurrence")
+        await request("unrelated-occurrence")
+        response = target.to_function_approval_response(False)
+        if cancelled:
+            response.additional_properties["cancelled"] = True
+
+        FunctionMiddlewarePipeline(policy)._notify_approval_responses([response], session=session)
+
+        pending = config._scope_for_session(session).pending_approvals
+        assert set(pending) == {"unrelated-occurrence"}
+        assert "pending_policy_approvals" not in session.state.get("__agent_framework_fides_security__", {})
+
+    def test_callable_middleware_cannot_observe_approval_lifecycle(self) -> None:
+        """Only class middleware implementing the private capability receives notifications."""
+        observed = False
+
+        class CallableMiddleware:
+            async def __call__(self, _context: Any, call_next: Any) -> None:
+                await call_next()
+
+            def _on_approval_responses(self, _responses: Any, *, session: Any) -> None:
+                nonlocal observed
+                observed = True
+
+        FunctionMiddlewarePipeline(CallableMiddleware())._notify_approval_responses(
+            [],
+            session=AgentSession(session_id="callable-observer"),
+        )
+
+        assert observed is False
+        assert not hasattr(FunctionMiddleware, "on_approval_responses")
 
     async def test_auto_invoke_passes_approval_response_to_middleware(self, mock_function):
         """Test the main tool loop passes approval response content via metadata."""
@@ -2160,6 +2282,16 @@ class TestSecureAgentConfig:
         assert label_tracker.auto_hide_untrusted is True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "fetch_data" in policy_enforcer.allow_untrusted_tools  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "search" in policy_enforcer.allow_untrusted_tools  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    @pytest.mark.parametrize("invalid_max", [float("nan"), 1.0, True, False, 0, "1"])
+    def test_max_pending_approvals_requires_positive_int(self, invalid_max: Any) -> None:
+        """SecureAgentConfig must reject values that can disable policy capacity."""
+        with pytest.raises(ValueError, match="max_pending_approvals must be a positive integer"):
+            SecureAgentConfig(max_pending_approvals=invalid_max)  # type: ignore[arg-type]
+
+    def test_max_pending_approvals_accepts_positive_int(self) -> None:
+        config = SecureAgentConfig(max_pending_approvals=1)
+        assert config._max_pending_approvals == 1
 
     def test_get_tools_returns_security_tools(self):
         """Test that get_tools returns quarantined_llm and inspect_variable."""

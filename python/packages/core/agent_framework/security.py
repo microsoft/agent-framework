@@ -36,7 +36,7 @@ from ._feature_stage import ExperimentalFeature, experimental
 from ._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
 from ._serialization import SerializationMixin
 from ._sessions import AgentSession, ContextProvider
-from ._tools import FunctionTool, tool
+from ._tools import _APPROVAL_REQUEST_ID_KEY, FunctionTool, tool  # pyright: ignore[reportPrivateUsage]
 from ._types import Content, Message
 
 if TYPE_CHECKING:
@@ -1969,6 +1969,7 @@ class _PendingPolicyApproval(NamedTuple):
     effective_label_key: str
     session_key: str
     disclosed_violations: tuple[str, ...]
+    request_id: str
     created_at: float
 
     def to_state(self) -> dict[str, Any]:
@@ -1979,6 +1980,7 @@ class _PendingPolicyApproval(NamedTuple):
             "effective_label_key": self.effective_label_key,
             "session_key": self.session_key,
             "disclosed_violations": list(self.disclosed_violations),
+            "request_id": self.request_id,
             "created_at": self.created_at,
         }
 
@@ -2008,6 +2010,7 @@ class _PendingPolicyApproval(NamedTuple):
                 record["session_key"],
             )
             violations = record["disclosed_violations"]
+            request_id = record["request_id"]
             created_at = record["created_at"]
         except KeyError:
             return None
@@ -2017,6 +2020,8 @@ class _PendingPolicyApproval(NamedTuple):
             return None
         violation_items = cast(list[Any], violations)
         if not all(type(item) is str for item in violation_items):
+            return None
+        if not isinstance(request_id, str) or not request_id:
             return None
         if type(created_at) not in (int, float) or not math.isfinite(created_at):
             return None
@@ -2028,6 +2033,7 @@ class _PendingPolicyApproval(NamedTuple):
             effective_label_key=typed_values[3],
             session_key=typed_values[4],
             disclosed_violations=tuple(cast(list[str], violation_items)),
+            request_id=request_id,
             created_at=float(created_at),
         )
 
@@ -2101,8 +2107,8 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
             security_scope: Internal fixed scope used by the context-provider path.
             session_state_key: Internal session-state key shared by reusable middleware.
         """
-        if isinstance(max_pending_approvals, bool) or max_pending_approvals < 1:
-            raise ValueError("max_pending_approvals must be at least 1.")
+        if type(max_pending_approvals) is not int or max_pending_approvals < 1:
+            raise ValueError("max_pending_approvals must be a positive integer.")
         if pending_approval_ttl is not None and pending_approval_ttl <= timedelta(0):
             raise ValueError("pending_approval_ttl must be positive or None.")
         self.allow_untrusted_tools = allow_untrusted_tools or set()
@@ -2252,6 +2258,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
             effective_label_key=self._effective_label_key(context),
             session_key=self._session_key(context),
             disclosed_violations=self._violation_set_key(violations),
+            request_id=self._get_approval_id(context),
             created_at=time.time(),
         )
 
@@ -2266,14 +2273,17 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         approval_id: str,
         call_id: str,
         body_signature: str,
+        request_id: str,
     ) -> bool:
         embedded = approval_response.function_call
         if self._signature_from_function_call(embedded) != body_signature:
             return False
         if embedded is None:
             return False
+        authenticated_request_id = approval_response.additional_properties.get(_APPROVAL_REQUEST_ID_KEY)
         return (
-            approval_response.id == approval_id
+            approval_response.id in {approval_id, request_id}
+            and authenticated_request_id == request_id
             and embedded.call_id == call_id
             and (approval_id == call_id or embedded.id == approval_id)
         )
@@ -2298,17 +2308,17 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         ):
             return False
         return current_binding.binding_key() == pending.binding_key() and self._response_matches_pending(
-            approval_response, approval_id, call_id, pending.body_signature
+            approval_response, approval_id, call_id, pending.body_signature, pending.request_id
         )
 
-    def on_approval_responses(
+    def _on_approval_responses(
         self,
         responses: Sequence[Content],
         *,
         session: AgentSession | None,
     ) -> None:
         """Discard authenticated non-grants from only their owning security scope."""
-        scope = self._scope_for_session(session)
+        scope = self._default_security_scope if self._security_scope_is_fixed else self._scope_for_session(session)
         self._prune_pending_approvals(scope)
         session_key = session.session_id if session is not None else ""
         for response in responses:
@@ -2325,6 +2335,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
                 response.id,
                 function_call.call_id,
                 pending.body_signature,
+                pending.request_id,
             ):
                 scope.pending_approvals.pop(response.id, None)
 
@@ -2362,8 +2373,6 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
             f"due to policy violation(s): {disclosed}."
         )
         approval_id = self._get_approval_id(context)
-        if approval_id:
-            self._store_pending_approval(approval_id, binding)
         approval_response = context.metadata.get("approval_response")
         is_replacement = (
             isinstance(approval_response, Content)
@@ -2371,7 +2380,10 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
             and approval_response.approved is True
         )
         request_id = f"{approval_id}:replacement:{uuid.uuid4().hex}" if is_replacement else approval_id
+        if approval_id:
+            self._store_pending_approval(approval_id, binding._replace(request_id=request_id))
         additional_properties: dict[str, Any] = {
+            _APPROVAL_REQUEST_ID_KEY: request_id,
             "_replacement_approval_request": is_replacement,
             "policy_violation": True,
             "violation_type": primary["violation_type"],
@@ -2760,8 +2772,8 @@ class SecureAgentConfig(ContextProvider):
             max_pending_approvals: Maximum pending policy approvals retained per session.
             pending_approval_ttl: Maximum age of an unconsumed approval. ``None`` disables expiry.
         """
-        if isinstance(max_pending_approvals, bool) or max_pending_approvals < 1:
-            raise ValueError("max_pending_approvals must be at least 1.")
+        if type(max_pending_approvals) is not int or max_pending_approvals < 1:
+            raise ValueError("max_pending_approvals must be a positive integer.")
         if pending_approval_ttl is not None and pending_approval_ttl <= timedelta(0):
             raise ValueError("pending_approval_ttl must be positive or None.")
         super().__init__(source_id or self.DEFAULT_SOURCE_ID)
@@ -2817,6 +2829,10 @@ class SecureAgentConfig(ContextProvider):
             else middleware
             for middleware in self.get_middleware()
         ]
+
+    def _function_middleware_for_approval_resolution(self, session: AgentSession) -> list[FunctionMiddleware]:
+        """Return provider-customized middleware bound to one restored session scope."""
+        return self._middleware_for_scope(self._scope_for_session(session))
 
     async def before_run(
         self,
