@@ -148,14 +148,9 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
                 .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, effectiveToken)
                 .ConfigureAwait(false);
 
-            if (TryCreateRedirectRequest(httpResponse, currentRequest, currentUri, out HttpRequestInfo? redirectRequest, out Uri? redirectUri))
+            if (providedClient is null &&
+                TryCreateRedirectRequest(httpResponse, currentRequest, currentUri, out HttpRequestInfo? redirectRequest, out Uri? redirectUri))
             {
-                if (providedClient is not null)
-                {
-                    throw new InvalidOperationException(
-                        "DefaultHttpRequestHandler cannot safely follow redirects when using a caller-supplied HttpClient because the client's redirect behavior is opaque. Use the handler-owned client for redirect handling, or handle redirects with an origin-pinned transport before returning the response.");
-                }
-
                 currentRequest = redirectRequest;
                 currentUri = redirectUri;
                 continue;

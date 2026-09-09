@@ -838,7 +838,7 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
-    public async Task SendAsyncSuppliedClientRejectsRedirectResponseAsync()
+    public async Task SendAsyncSuppliedClientReturnsRedirectResponseAsync()
     {
         // Arrange
         CancellationToken cancellationToken = TestContext.Current.CancellationToken;
@@ -869,11 +869,13 @@ public sealed class DefaultHttpRequestHandlerTests
         };
 
         // Act
-        async Task actAsync() => await handler.SendAsync(request, cancellationToken);
+        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
 
         // Assert
-        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(actAsync);
-        Assert.Contains("caller-supplied HttpClient", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(307, result.StatusCode);
+        Assert.False(result.IsSuccessStatusCode);
+        Assert.NotNull(result.Headers);
+        Assert.Equal("https://secondary.example.test/next", Assert.Single(result.Headers!["Location"]));
         Assert.Equal(1, providerCallCount);
     }
 
