@@ -334,21 +334,7 @@ class QdrantCollection(BaseVectorCollection[KeyT, ModelT], BaseVectorSearch[KeyT
     """
 
     supported_key_types: ClassVar[set[str] | None] = {"int", "str", "UUID"}
-    supported_vector_types: ClassVar[set[str] | None] = {
-        "float",
-        "float16",
-        "float32",
-        "float64",
-        "int",
-        "int8",
-        "int16",
-        "int32",
-        "int64",
-        "uint8",
-        "uint16",
-        "uint32",
-        "uint64",
-    }
+    supported_vector_types: ClassVar[set[str] | None] = {"float", "float16", "float32", "float64"}
     supported_search_types: ClassVar[set[SearchType]] = {"vector"}
 
     def __init__(

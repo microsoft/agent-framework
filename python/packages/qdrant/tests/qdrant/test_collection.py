@@ -180,6 +180,33 @@ async def test_missing_vectors_and_selective_embeddings(collection_factory, reco
     assert generator.get_embeddings.await_args.args == (["query"],)
 
 
+@pytest.mark.parametrize(
+    "vector_type",
+    ["int", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64"],
+)
+def test_integer_vector_declarations_rejected_before_io(vector_type):
+    definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id", type_="int"),
+        VectorStoreField("vector", name="v", type_=vector_type, dimensions=2),
+    ])
+    client = AsyncMock(spec=AsyncQdrantClient)
+    with pytest.raises(ValueError, match="must be one of"):
+        QdrantCollection(dict, definition=definition, collection_name="test", async_client=client)
+    client.create_collection.assert_not_awaited()
+    client.upsert.assert_not_awaited()
+
+
+async def test_integer_values_round_trip_for_float_vector_field(collection_factory):
+    definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id", type_="int"),
+        VectorStoreField("vector", name="v", type_="float", dimensions=2, distance_function="dot_prod"),
+    ])
+    collection = collection_factory(definition=definition)
+    await collection.ensure_collection_exists()
+    await collection.upsert([{"id": 1, "v": [16_777_217, 0]}], generate_vectors=False)
+    assert await collection.get([1], include_vectors=True) == [{"id": 1, "v": [16_777_216.0, 0.0]}]
+
+
 async def test_registered_models_and_custom_codecs(collection_factory):
     @vectorstoremodel
     @dataclass

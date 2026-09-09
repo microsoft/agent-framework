@@ -86,6 +86,8 @@ scroll pages without retaining the skipped prefix.
   Arbitrary strings and automatically generated keys are not supported.
 - Multiple named dense-vector fields are supported. Binary, sparse,
   multivector-fusion, and keyword-hybrid search are not supported.
+- Vector fields must declare a floating-point element type. Qdrant stores dense
+  vectors as float32; integer-valued inputs remain valid for floating-point fields.
 - Scores and thresholds use native Qdrant units. The default is cosine
   similarity; dot product, Euclidean distance, and Manhattan distance are also supported.
 - Portable filters require a server. SDK local mode supports unfiltered storage
