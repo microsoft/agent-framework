@@ -75,7 +75,13 @@ class TestBedrockKnowledgeBaseTool:
         mock_client.agentic_retrieve_stream.return_value = {
             "stream": [
                 {"result": {"results": [
-                    {"content": {"text": "Agentic result"}, "score": 0.99, "location": {"s3Location": {"uri": "s3://b/doc"}}},
+                    # AgenticRetrieveStream schema: content/metadata/sourceRetriever
+                    # (no score, no location). Source URI comes from metadata._source_uri.
+                    {
+                        "content": {"mimeType": "text/plain", "text": "Agentic result"},
+                        "metadata": {"_source_uri": "s3://b/doc", "_document_title": "Doc"},
+                        "sourceRetriever": {"identifier": "TEST_KB"},
+                    },
                 ]}}
             ]
         }
@@ -89,6 +95,8 @@ class TestBedrockKnowledgeBaseTool:
         result = asyncio.run(tool._retrieve(query="complex question"))
         assert "Agentic result" in result
         assert "s3://b/doc" in result
+        # Agentic results must not fabricate a numeric score
+        assert "score:" not in result
         mock_client.retrieve.assert_not_called()
 
     def test_client_uses_get_user_agent(self):

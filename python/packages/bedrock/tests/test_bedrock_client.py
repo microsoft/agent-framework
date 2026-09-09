@@ -418,6 +418,29 @@ def test_prepare_bedrock_messages_does_not_coalesce_across_assistant() -> None:
     assert [m["role"] for m in conversation] == ["user", "assistant", "user"]
 
 
+def test_prepare_bedrock_messages_does_not_coalesce_tool_results_into_user_text() -> None:
+    """A tool-result turn (role='tool' -> Bedrock 'user') must NOT be merged into a
+    preceding genuine user text turn; function-call/tool-result serialization is preserved."""
+    client = _make_client()
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="run the tool")]),
+        Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="call-1", name="do_it", arguments={})],
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="call-1", result={"ok": True})]),
+    ]
+
+    _, conversation = client._prepare_bedrock_messages(messages)
+
+    # user text, assistant toolUse, then a SEPARATE user turn holding the toolResult
+    assert [m["role"] for m in conversation] == ["user", "assistant", "user"]
+    # the tool-result turn must contain the toolResult block, not be merged with "run the tool"
+    last = conversation[-1]
+    assert any(isinstance(b, dict) and "toolResult" in b for b in last["content"])
+    assert not any(isinstance(b, dict) and b.get("text") == "run the tool" for b in last["content"])
+
+
 def test_align_tool_results_handles_pending_edge_cases() -> None:
     """Tool result alignment should preserve valid blocks and drop invalid or extra results."""
     client = _make_client()

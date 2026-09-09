@@ -155,10 +155,15 @@ class BedrockKnowledgeBaseTool(FunctionTool):
         for event in response.get("stream", []):
             if "result" in event and "results" in event["result"]:
                 for r in event["result"]["results"]:
+                    # AgenticRetrieveStream results use a different schema than standard
+                    # Retrieve: they expose `content`/`metadata`/`sourceRetriever` and do
+                    # NOT include `score` or `location`. The source URI lives in metadata,
+                    # and managed reranking orders results without exposing a numeric score.
+                    metadata = r.get("metadata", {}) or {}
                     results.append({
                         "content": r.get("content", {}).get("text", ""),
-                        "source": _get_source_uri(r),
-                        "score": r.get("score", 0),
+                        "source": metadata.get("_source_uri", ""),
+                        "score": None,
                     })
         return results
 
@@ -187,6 +192,9 @@ class BedrockKnowledgeBaseTool(FunctionTool):
         for i, r in enumerate(results, 1):
             source = r.get("source", "")
             content = r.get("content", "")
-            score = r.get("score", 0)
-            parts.append(f"[{i}] (score: {score:.3f}) {content}\n    Source: {source}")
+            score = r.get("score")
+            # Standard Retrieve results carry a numeric relevance score; agentic
+            # (managed reranking) results do not, so only render it when present.
+            header = f"[{i}] (score: {score:.3f})" if isinstance(score, (int, float)) else f"[{i}]"
+            parts.append(f"{header} {content}\n    Source: {source}")
         return "\n\n".join(parts)
