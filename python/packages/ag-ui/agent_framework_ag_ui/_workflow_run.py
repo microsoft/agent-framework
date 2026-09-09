@@ -8,7 +8,7 @@ import inspect
 import json
 import logging
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from functools import partial
 from types import UnionType
 from typing import Any, Union, cast, get_args, get_origin, get_type_hints
@@ -205,7 +205,12 @@ async def _pause_checkpoint_id_for_interrupts(
     if not callable(resolve):
         return None
 
-    return await resolve(
+    # getattr returns a plain object to the type checker; cast to an awaitable callable.
+    resolve_fn = cast(
+        Callable[..., Awaitable[str | None]],
+        resolve,
+    )
+    return await resolve_fn(
         _interrupt_request_ids(interrupts),
         checkpoint_storage=checkpoint_storage,
         known_checkpoint_id=known_checkpoint_id,

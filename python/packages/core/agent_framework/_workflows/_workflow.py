@@ -1305,13 +1305,14 @@ class Workflow(DictConvertible):
         Returns:
             A checkpoint id suitable for durable resume, or ``None`` when none is safe.
         """
-        ids = {str(request_id) for request_id in request_ids if request_id is not None and str(request_id)}
+        ids = {str(request_id) for request_id in request_ids if request_id}
         if not ids:
             return None
 
+        # Prefer explicit storage; otherwise load via public RunnerContext APIs
+        # (Protocol has no private `_get_effective_checkpoint_storage`).
         storage = checkpoint_storage
-        if storage is None:
-            storage = self._runner.context._get_effective_checkpoint_storage()  # pyright: ignore[reportPrivateUsage]
+        use_context_storage = storage is None and self._runner.context.has_checkpointing()
 
         current = self.get_last_checkpoint_id()
         # Run-scoped: do not advertise a pre-run leftover when this run did not persist.
@@ -1325,17 +1326,22 @@ class Workflow(DictConvertible):
         if known_checkpoint_id is not None and known_checkpoint_id not in candidates:
             candidates.append(str(known_checkpoint_id))
 
-        if storage is None:
+        if storage is None and not use_context_storage:
             # Without storage we cannot prove coverage; only advertise a run-scoped runner id.
             return runner_candidate
 
         for candidate in candidates:
             try:
-                checkpoint = await storage.load(candidate)
+                if storage is not None:
+                    checkpoint = await storage.load(candidate)
+                else:
+                    checkpoint = await self._runner.context.load_checkpoint(candidate)
             except Exception:  # pragma: no cover - storage/type drift
                 logger.debug("Could not load pause checkpoint candidate %s", candidate, exc_info=True)
                 continue
-            pending = getattr(checkpoint, "pending_request_info_events", None) or {}
+            if checkpoint is None:
+                continue
+            pending = checkpoint.pending_request_info_events or {}
             if ids.issubset({str(key) for key in dict(pending)}):
                 return candidate
         return None
