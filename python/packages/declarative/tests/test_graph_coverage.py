@@ -977,6 +977,30 @@ class TestAgentExecutorsCoverage:
         input_text = await executor._build_input_text(state, {}, None)
         assert input_text == "workflow input"
 
+    async def test_agent_executor_build_input_text_arguments_only_skips_implicit_fallback(
+        self, mock_context, mock_state
+    ):
+        """Arguments-only actions must not append implicit fallback input (#7902 review)."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            InvokeAzureAgentExecutor,
+        )
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize({"query": "workflow input"})
+        state.set("System.LastMessage", {"Text": "prior agent response", "Id": "1"})
+        state.set("Local.input", "turn input")
+
+        action_def = {"kind": "InvokeAzureAgent", "agent": "Test"}
+        executor = InvokeAzureAgentExecutor(action_def)
+
+        input_text = await executor._build_input_text(
+            state,
+            {"IssueDescription": "Printer jammed"},
+            None,
+        )
+
+        assert input_text == "IssueDescription: Printer jammed"
+
     async def test_agent_executor_build_input_text_includes_arguments_only(self, mock_context, mock_state):
         """Regression for #7902: input.arguments must reach the agent when messages are omitted."""
         from agent_framework_declarative._workflows._executors_agents import (

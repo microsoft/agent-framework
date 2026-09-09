@@ -719,8 +719,12 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                     messages_text = str(getattr(last, "text", ""))  # type: ignore
             elif evaluated_input:
                 messages_text = str(cast(Any, evaluated_input))
-        else:
+        elif not evaluated_args:
             # Fallback chain for implicit input (like .NET conversationId pattern):
+            # Only when neither explicit messages nor explicit arguments are present.
+            # Otherwise arguments-only actions (e.g. customer-support TicketingAgent)
+            # would append System.LastMessage (prior agent's response) or
+            # Workflow.Inputs to their structured fields in chained workflows.
             # 1. Local.input / Local.userInput (explicit turn state)
             # 2. System.LastMessage.Text (previous agent's response)
             # 3. Workflow.Inputs (first agent gets workflow inputs)
