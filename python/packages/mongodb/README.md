@@ -83,16 +83,19 @@ asyncio.run(main())
   asynchronously, even after an index is queryable.
 - Retrieval filters preserve whole-value equality, missing/null, direct array
   membership, boolean/number, and literal text semantics with server-side
-  expressions. Vector prefilters are intentionally narrower: indexed scalar
-  equality, range, membership, AND, and OR only. Nested paths, NOT, null/missing,
-  list membership, and literal/analyzed text are rejected for vector search.
+  expressions. Collection filters require fields declared as `list` and reject
+  mapping and non-list collection operands whose identity BSON cannot preserve.
+  Vector prefilters are intentionally narrower: indexed scalar equality, range,
+  membership, AND, and OR only. Nested paths, NOT, null/missing, list membership,
+  and literal/analyzed text are rejected for vector search.
 - Keyword-hybrid search, sparse/binary vectors, provider-side embedding
   generation, and automatic schema migration are not supported.
 - ANN defaults `numCandidates` to the MongoDB recommendation of 20 times
-  `skip + top`; callers can override it or request exact search. The vector stage
-  selects its result window before score thresholding, skip, and limit, so
-  selective thresholds can underfill a page. Deep offsets increase server cost;
-  result prefixes are never materialized by the connector.
+  `skip + top`, capped at MongoDB's maximum of 10,000. Explicit values must be
+  1-10,000 and at least `skip + top`; larger result windows require exact search.
+  The vector stage selects its result window before score thresholding, skip,
+  and limit, so selective thresholds can underfill a page. Deep offsets increase
+  server cost; result prefixes are never materialized by the connector.
 - Every record is fully validated against BSON's signed 64-bit integer and 16 MiB
   document limits before any batch write. PyMongo then chunks bulk writes using
   negotiated server limits. A server error can leave a successful prefix

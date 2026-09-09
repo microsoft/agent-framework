@@ -93,6 +93,44 @@ def test_list_whole_equality_and_membership_remain_separate(collection):
     }
 
 
+@pytest.mark.parametrize("field_type", ["tuple", "set", "Sequence"])
+def test_non_list_collection_fields_reject_filters(mongo_mocks, field_type):
+    client, _, native_collection = mongo_mocks
+    definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id", type_="int"),
+        VectorStoreField("data", name="items", type_=field_type),
+    ])
+    from agent_framework_mongodb import MongoDBCollection
+
+    collection = MongoDBCollection(
+        dict,
+        definition=definition,
+        collection_name="collection_shapes",
+        async_client=client,
+        database_name="vectors",
+    )
+    with pytest.raises(NotImplementedError, match="container identity"):
+        collection._prepare_filter(Filter("items", "eq", ["one"]))
+    native_collection.find.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        Filter("tags", "eq", [{"b": 2, "a": 1}]),
+        Filter("tags", "in", [[{"a": 1}]]),
+        Filter("tags", "contains", {"a": 1}),
+        Filter("tags", "contains", ("one",)),
+        Filter("tags", "contains_any", [{"a": 1}]),
+    ],
+)
+async def test_collection_filters_reject_lossy_operand_shapes(collection, mongo_mocks, expression):
+    _, _, native_collection = mongo_mocks
+    with pytest.raises(NotImplementedError):
+        await collection.get(filter=expression)
+    native_collection.find.assert_not_called()
+
+
 def test_in_not_in_ignore_null_and_incompatible_operands(collection):
     assert collection._prepare_filter(Filter("integer", "in", [1, 1.0, True, None, "1"])) == {
         "$expr": {

@@ -63,6 +63,7 @@ class MongoDBSettings(TypedDict, total=False):
 _BSON_MAX_DOCUMENT_SIZE = 16 * 1024 * 1024
 _BSON_INT64_MIN = -(2**63)
 _BSON_INT64_MAX = 2**63 - 1
+_MAX_NUM_CANDIDATES = 10_000
 _SCORE_FIELD = "__af_vector_search_score"
 _VECTOR_FILTER_TYPES = frozenset({"str", "int", "float", "bool", "ObjectId", "datetime"})
 _LIST_TYPES = frozenset({"list", "tuple", "set", "Sequence"})
@@ -287,8 +288,13 @@ def _field_type_guard(field: VectorStoreField, name: str) -> MongoDocument:
         return {"$eq": [_field_type_expression(name), "objectId"]}
     if kind == "datetime":
         return {"$eq": [_field_type_expression(name), "date"]}
-    if kind in _LIST_TYPES:
+    if kind == "list":
         return {"$isArray": f"${name}"}
+    if kind in _LIST_TYPES:
+        raise NotImplementedError(
+            f"MongoDB filters require field '{field.name}' to use declared type 'list'; "
+            f"'{kind}' loses container identity in BSON."
+        )
     if kind == "dict":
         return {"$eq": [_field_type_expression(name), "object"]}
     raise NotImplementedError(f"MongoDB filters require a supported declared type for field '{field.name}'.")
@@ -318,7 +324,7 @@ def _value_matches_field_type(field: VectorStoreField, value: Any) -> bool:
         return isinstance(value, ObjectId)
     if kind == "datetime":
         return isinstance(value, datetime)
-    if kind in _LIST_TYPES:
+    if kind == "list":
         return isinstance(value, list)
     if kind == "dict":
         return isinstance(value, Mapping)
@@ -335,6 +341,21 @@ def _prepare_filter_operand(field: VectorStoreField, value: Any) -> Any:
             raise ValueError(f"Filter value for integer field '{field.name}' exceeds signed 64-bit range.")
         return integer
     return prepared
+
+
+def _prepare_collection_filter_operand(value: Any, *, field_name: str) -> Any:
+    if isinstance(value, Mapping):
+        raise NotImplementedError(
+            f"MongoDB collection filters do not support mapping operands for field '{field_name}' "
+            "because BSON document equality is key-order-sensitive."
+        )
+    if isinstance(value, list):
+        return [_prepare_collection_filter_operand(item, field_name=field_name) for item in cast(list[Any], value)]
+    if isinstance(value, Collection) and not isinstance(value, (str, bytes, bytearray)):
+        raise NotImplementedError(
+            f"MongoDB collection filters support only scalar and nested-list operands for field '{field_name}'."
+        )
+    return _validate_bson_query_value(value, name=f"Filter value for '{field_name}'")
 
 
 def _prepare_filter_field(
@@ -369,25 +390,42 @@ def _prepare_retrieval_filter_condition(
 
     type_guard = _field_type_guard(field, name)
     if operator in {"eq", "ne"}:
-        prepared = _prepare_filter_operand(field, value)
         if value is None:
             equality: MongoDocument = {"$and": [exists, {"$eq": [actual, None]}]}
         elif not _value_matches_field_type(field, value):
+            if (
+                field.type_ == "list"
+                and isinstance(value, Collection)
+                and not isinstance(value, (str, bytes, bytearray))
+            ):
+                _prepare_collection_filter_operand(value, field_name=field.name)
             equality = _FALSE_EXPRESSION
         elif field.type_ == "dict":
             raise NotImplementedError("MongoDB mapping equality does not match portable mapping semantics.")
         else:
+            prepared = (
+                _prepare_collection_filter_operand(value, field_name=field.name)
+                if field.type_ == "list"
+                else _prepare_filter_operand(field, value)
+            )
             equality = {"$and": [type_guard, {"$eq": [actual, _literal(prepared)]}]}
         return equality if operator == "eq" else {"$and": [exists, {"$not": [equality]}]}
 
     if operator in {"in", "not_in"}:
         if field.type_ == "dict":
             raise NotImplementedError("MongoDB mapping membership does not match portable mapping semantics.")
-        prepared_values = [
-            _prepare_filter_operand(field, item)
-            for item in cast(Collection[Any], value)
-            if item is not None and _value_matches_field_type(field, item)
-        ]
+        prepared_values: list[Any] = []
+        for item in cast(Collection[Any], value):
+            if item is None:
+                continue
+            if field.type_ == "list" and isinstance(item, Collection) and not isinstance(item, (str, bytes, bytearray)):
+                prepared_item = _prepare_collection_filter_operand(item, field_name=field.name)
+            elif _value_matches_field_type(field, item):
+                prepared_item = _prepare_filter_operand(field, item)
+            else:
+                continue
+            if _value_matches_field_type(field, item):
+                prepared_values.append(prepared_item)
         membership: MongoDocument = {
             "$and": [
                 type_guard,
@@ -431,10 +469,10 @@ def _prepare_retrieval_filter_condition(
         }
 
     if operator in {"contains", "contains_any", "contains_all"}:
-        if field.type_ not in _LIST_TYPES:
-            raise TypeError("MongoDB collection filters require a declared collection field.")
+        if field.type_ != "list":
+            raise TypeError("MongoDB collection filters require a field declared as list.")
         operands = [value] if operator == "contains" else list(cast(Collection[Any], value))
-        prepared = [_prepare_filter_operand(field, item) for item in operands]
+        prepared = [_prepare_collection_filter_operand(item, field_name=field.name) for item in operands]
         if operator == "contains_all":
             predicate: MongoDocument = {"$setIsSubset": [_literal(prepared), actual]}
         else:
@@ -606,6 +644,8 @@ class MongoDBCollection(
                 raise ValueError(
                     "MongoDB storage names must be top-level names without NUL, dots, '$' prefixes, or reserved names."
                 )
+            if field.field_type != "key" and name == "_id":
+                raise ValueError("MongoDB reserves storage name '_id' for the key field.")
             annotations = field.provider_annotations
             unknown = annotations.keys() - ({"mongodb.index_name"} if field.field_type == "vector" else set())
             if unknown:
@@ -985,12 +1025,18 @@ class MongoDBCollection(
         explicit_num_candidates = options.get("num_candidates")
         if exact and has_explicit_num_candidates:
             raise ValueError("num_candidates cannot be supplied when exact=True.")
+        if not exact and window > _MAX_NUM_CANDIDATES:
+            raise ValueError(
+                "MongoDB ANN search requires skip + top to be at most 10000; use exact=True for a larger window."
+            )
         if has_explicit_num_candidates:
             num_candidates = _prepare_int64(explicit_num_candidates, "num_candidates")
+            if not 1 <= num_candidates <= _MAX_NUM_CANDIDATES:
+                raise ValueError("num_candidates must be between 1 and 10000.")
             if num_candidates < window:
                 raise ValueError("num_candidates must be greater than or equal to skip + top.")
         else:
-            num_candidates = None if exact else _prepare_int64(20 * window, "MongoDB default num_candidates")
+            num_candidates = None if exact else min(20 * window, _MAX_NUM_CANDIDATES)
         if score_threshold is not None:
             if (
                 isinstance(score_threshold, bool)

@@ -60,6 +60,29 @@ def test_model_validation_and_index_mapping(collection):
     }
 
 
+@pytest.mark.parametrize("field_type", ["data", "vector"])
+def test_non_key_fields_cannot_use_reserved_id_storage_name(mongo_mocks, field_type):
+    client, _, native_collection = mongo_mocks
+    field = (
+        VectorStoreField("data", name="value", type_="str", storage_name="_id")
+        if field_type == "data"
+        else VectorStoreField("vector", name="value", dimensions=2, storage_name="_id")
+    )
+    definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id", type_="int"),
+        field,
+    ])
+    with pytest.raises(ValueError, match="reserves storage name '_id'"):
+        MongoDBCollection(
+            dict,
+            definition=definition,
+            collection_name="reserved_id",
+            async_client=client,
+            database_name="vectors",
+        )
+    native_collection.bulk_write.assert_not_awaited()
+
+
 def test_invalid_dimensions_rejected(mongo_mocks):
     client, _, native_collection = mongo_mocks
     definition = VectorStoreCollectionDefinition([
@@ -392,7 +415,29 @@ async def test_search_exact_omits_num_candidates(collection, mongo_mocks, cursor
     assert "numCandidates" not in search
 
 
-async def test_search_explicit_num_candidates_and_large_representable_window(collection, mongo_mocks, cursor_factory):
+async def test_search_explicit_max_num_candidates(collection, mongo_mocks, cursor_factory):
+    _, _, native_collection = mongo_mocks
+    native_collection.aggregate.return_value = cursor_factory([])
+    window = 501
+    await collection._inner_search(
+        search_type="vector",
+        vector=[1, 0, 0],
+        top=window,
+        operation_options={"num_candidates": 10_000},
+    )
+    search = native_collection.aggregate.await_args.args[0][0]["$vectorSearch"]
+    assert search["limit"] == window and search["numCandidates"] == 10_000
+
+
+async def test_search_default_num_candidates_is_capped(collection, mongo_mocks, cursor_factory):
+    _, _, native_collection = mongo_mocks
+    native_collection.aggregate.return_value = cursor_factory([])
+    await collection._inner_search(search_type="vector", vector=[1, 0, 0], top=501)
+    search = native_collection.aggregate.await_args.args[0][0]["$vectorSearch"]
+    assert search["limit"] == 501 and search["numCandidates"] == 10_000
+
+
+async def test_search_exact_allows_large_representable_window(collection, mongo_mocks, cursor_factory):
     _, _, native_collection = mongo_mocks
     native_collection.aggregate.return_value = cursor_factory([])
     window = 2**55
@@ -400,10 +445,11 @@ async def test_search_explicit_num_candidates_and_large_representable_window(col
         search_type="vector",
         vector=[1, 0, 0],
         top=window,
-        operation_options={"num_candidates": window},
+        operation_options={"exact": True},
     )
     search = native_collection.aggregate.await_args.args[0][0]["$vectorSearch"]
-    assert search["limit"] == window and search["numCandidates"] == window
+    assert search["limit"] == window and search["exact"] is True
+    assert "numCandidates" not in search
 
 
 async def test_zero_top_search_validates_but_does_not_aggregate(collection, mongo_mocks):
@@ -425,8 +471,10 @@ async def test_zero_top_search_validates_but_does_not_aggregate(collection, mong
         (3, 0, {"exact": True, "num_candidates": None}, "cannot be supplied"),
         (3, 2, {"num_candidates": 4}, "greater than or equal"),
         (3, 0, {"num_candidates": None}, "signed 64-bit"),
+        (3, 0, {"num_candidates": 0}, "between 1 and 10000"),
+        (3, 0, {"num_candidates": 10_001}, "between 1 and 10000"),
+        (10_001, 0, {}, "at most 10000"),
         (_BSON_INT64_MAX, 1, {"exact": True}, "signed 64-bit"),
-        (_BSON_INT64_MAX // 20 + 1, 0, {}, "default num_candidates"),
     ],
 )
 async def test_search_window_validation_before_aggregation(collection, mongo_mocks, top, skip, options, message):
