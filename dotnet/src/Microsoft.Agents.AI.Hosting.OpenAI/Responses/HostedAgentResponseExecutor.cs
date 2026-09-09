@@ -83,7 +83,7 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
         // exception during execution.
         try
         {
-            _ = request.ToRunOptions(this._mapOptions, agent, this._logger);
+            _ = this._mapOptions.RunOptionsFactory(request.ToRequestInfo());
         }
         catch (NotSupportedException ex)
         {
@@ -109,11 +109,7 @@ internal sealed class HostedAgentResponseExecutor : IResponseExecutor
 
         // The hosting developer controls, via OpenAIResponsesMapOptions.RunOptionsFactory, which (if any)
         // request settings are mapped onto the agent run. By default no request setting is mapped.
-        AgentRunOptions? options = request.ToRunOptions(
-            this._mapOptions,
-            agent,
-            this._logger,
-            logConflicts: true);
+        AgentRunOptions? options = this._mapOptions.RunOptionsFactory(request.ToRequestInfo());
         var messages = new List<ChatMessage>();
 
         if (conversationHistory is not null)

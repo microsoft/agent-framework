@@ -43,76 +43,32 @@ public sealed class OpenAIResponsesClientFunctionToolsLiveTests
         Environment.GetEnvironmentVariable(TestSettings.OpenAIChatModelName) ?? "gpt-4o-mini";
 
     [Fact]
-    public async Task ClientFunctionNameConflictPolicies_WorkEndToEndAsync()
+    public async Task AllowedClientFunction_ReturnsFunctionCallAsync()
     {
         // Arrange
         Assert.SkipWhen(
             string.IsNullOrEmpty(ApiKey),
             "OPENAI_API_KEY is not configured; skipping live client function tool test.");
 
-        (ChatClientAgent rejectAgent, _) = CreateAgent();
-        (ChatClientAgent ignoreAgent, Func<int> getIgnoreInvocationCount) = CreateAgent();
-        (ChatClientAgent overrideAgent, Func<int> getOverrideInvocationCount) = CreateAgent();
+        using IChatClient chatClient = new OpenAIClient(ApiKey).GetResponsesClient().AsIChatClient(ModelName);
+        var agent = new ChatClientAgent(
+            chatClient,
+            instructions: "For every weather request, call get_weather before answering.",
+            name: "weather-agent");
         JsonElement requestBody = ParseBody(ClientRequestJson);
+#pragma warning disable MAAI001
+        var mapOptions = new OpenAIResponsesMapOptions { DangerouslyAllowClientFunctionTools = true };
+#pragma warning restore MAAI001
 
-        // Act & Assert: Reject blocks the conflicting client declaration before inference.
-        Assert.Throws<NotSupportedException>(() =>
-            OpenAIResponses.ToAgentRunRequest(
-                requestBody,
-                rejectAgent,
-                CreateMapOptions(OpenAIClientFunctionToolNameConflictBehavior.Reject())));
+        // Act
+        OpenAIResponsesRunRequest run = OpenAIResponses.ToAgentRunRequest(requestBody, mapOptions);
+        AgentResponse response = await agent.RunAsync(run.Messages, options: run.Options);
 
-        // Act & Assert: Ignore keeps and executes the hosted function.
-        OpenAIResponsesRunRequest ignoreRun = OpenAIResponses.ToAgentRunRequest(
-            requestBody,
-            ignoreAgent,
-            CreateMapOptions(OpenAIClientFunctionToolNameConflictBehavior.Ignore()));
-        AgentResponse ignoreResponse = await ignoreAgent.RunAsync(ignoreRun.Messages, options: ignoreRun.Options);
-        Assert.True(getIgnoreInvocationCount() > 0);
-        Assert.Contains("HOSTED_FUNCTION_RESULT", ignoreResponse.Text, StringComparison.Ordinal);
-
-        // Act & Assert: AllowOverride returns the client function call without executing the hosted function.
-        OpenAIResponsesRunRequest overrideRun = OpenAIResponses.ToAgentRunRequest(
-            requestBody,
-            overrideAgent,
-            CreateMapOptions(OpenAIClientFunctionToolNameConflictBehavior.AllowOverride()));
-        AgentResponse overrideResponse = await overrideAgent.RunAsync(
-            overrideRun.Messages,
-            options: overrideRun.Options);
-        Assert.Equal(0, getOverrideInvocationCount());
+        // Assert
         FunctionCallContent functionCall = Assert.Single(
-            overrideResponse.Messages.SelectMany(message => message.Contents).OfType<FunctionCallContent>());
+            response.Messages.SelectMany(message => message.Contents).OfType<FunctionCallContent>());
         Assert.Equal("get_weather", functionCall.Name);
     }
-
-    private static (ChatClientAgent Agent, Func<int> GetInvocationCount) CreateAgent()
-    {
-        int invocationCount = 0;
-        var agent = new ChatClientAgent(
-            new OpenAIClient(ApiKey).GetResponsesClient().AsIChatClient(ModelName),
-            instructions: """
-                For every weather request, call get_weather before answering.
-                After receiving a function result, include it verbatim in the answer.
-                """,
-            name: "weather-agent",
-            tools: [AIFunctionFactory.Create(GetHostedWeather, name: "get_weather")]);
-        return (agent, () => invocationCount);
-
-        string GetHostedWeather(string location)
-        {
-            invocationCount++;
-            return $"HOSTED_FUNCTION_RESULT: {location}=18C";
-        }
-    }
-
-#pragma warning disable MAAI001
-    private static OpenAIResponsesMapOptions CreateMapOptions(
-        OpenAIClientFunctionToolNameConflictBehavior behavior) =>
-        new()
-        {
-            DangerouslyAllowClientFunctionTools = behavior
-        };
-#pragma warning restore MAAI001
 
     private static JsonElement ParseBody(string json)
     {

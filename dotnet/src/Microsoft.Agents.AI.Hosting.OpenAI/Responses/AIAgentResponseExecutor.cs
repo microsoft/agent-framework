@@ -7,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 
@@ -19,17 +18,14 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
 {
     private readonly AIAgent _agent;
     private readonly OpenAIResponsesMapOptions _mapOptions;
-    private readonly ILogger<AIAgentResponseExecutor>? _logger;
 
     public AIAgentResponseExecutor(
         AIAgent agent,
-        OpenAIResponsesMapOptions? mapOptions = null,
-        ILogger<AIAgentResponseExecutor>? logger = null)
+        OpenAIResponsesMapOptions? mapOptions = null)
     {
         ArgumentNullException.ThrowIfNull(agent);
         this._agent = agent;
         this._mapOptions = mapOptions ?? new OpenAIResponsesMapOptions();
-        this._logger = logger;
     }
 
     public ValueTask<ResponseError?> ValidateRequestAsync(
@@ -41,9 +37,9 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
     {
         try
         {
-            // Invoke the factory during validation so that unsupported request settings are surfaced
+            // Map options during validation so that unsupported request settings are surfaced
             // as a clean request error rather than an unhandled exception during execution.
-            _ = request.ToRunOptions(this._mapOptions, this._agent, this._logger);
+            _ = this._mapOptions.RunOptionsFactory(request.ToRequestInfo());
             return null;
         }
         catch (NotSupportedException ex)
@@ -64,11 +60,7 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
     {
         // The hosting developer controls, via OpenAIResponsesMapOptions.RunOptionsFactory, which (if any)
         // request settings are mapped onto the agent run. By default no request setting is mapped.
-        AgentRunOptions? options = request.ToRunOptions(
-            this._mapOptions,
-            this._agent,
-            this._logger,
-            logConflicts: true);
+        AgentRunOptions? options = this._mapOptions.RunOptionsFactory(request.ToRequestInfo());
 
         // Convert input to chat messages, prepending conversation history if available
         var messages = new List<ChatMessage>();

@@ -132,6 +132,48 @@ public sealed class OpenAIResponseRequestInfoBuilderTests
         Assert.True(function.GetProperty("strict").GetBoolean());
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ConvertClientFunctionTools_PreservesMetadataAndStrict(bool? strict)
+    {
+        // Arrange
+        string strictProperty = strict.HasValue ? $",\"strict\":{(strict.Value ? "true" : "false")}" : string.Empty;
+        JsonElement[] tools =
+        [
+            ParseElement(
+                $$$$"""
+                {
+                  "type":"function",
+                  "name":"get_weather",
+                  "description":"Retrieves current weather.",
+                  "parameters":{"type":"object","properties":{"location":{"type":"string"}}}
+                  {{{{strictProperty}}}}
+                }
+                """)
+        ];
+
+        // Act
+        var (clientTools, remainingTools) = tools.ConvertClientFunctionTools();
+
+        // Assert
+        var function = Assert.IsAssignableFrom<AIFunctionDeclaration>(Assert.Single(clientTools!));
+        Assert.Null(remainingTools);
+        Assert.Equal("get_weather", function.Name);
+        Assert.Equal("Retrieves current weather.", function.Description);
+        Assert.Equal("string", function.JsonSchema.GetProperty("properties").GetProperty("location").GetProperty("type").GetString());
+        Assert.Null(function.ReturnJsonSchema);
+        if (strict.HasValue)
+        {
+            Assert.Equal(strict.Value, Assert.IsType<bool>(function.AdditionalProperties["strict"]));
+        }
+        else
+        {
+            Assert.False(function.AdditionalProperties.ContainsKey("strict"));
+        }
+    }
+
     private static CreateResponse CreateRequestWithToolChoice(string toolChoiceJson)
     {
         using JsonDocument document = JsonDocument.Parse(toolChoiceJson);

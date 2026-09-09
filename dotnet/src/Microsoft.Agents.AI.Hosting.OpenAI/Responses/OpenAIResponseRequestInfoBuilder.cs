@@ -23,25 +23,25 @@ internal static class OpenAIResponseRequestInfoBuilder
         HasToolChoice = request.ToolChoice is not null,
     };
 
-    internal static (List<AITool>? FunctionTools, List<JsonElement>? UnsupportedTools)
-        ExtractClientFunctionTools(this IReadOnlyList<JsonElement> tools)
+    internal static (List<AITool>? ClientTools, List<JsonElement>? RemainingTools)
+        ConvertClientFunctionTools(this IReadOnlyList<JsonElement> tools)
     {
-        List<AITool>? functionTools = null;
-        List<JsonElement>? unsupportedTools = null;
+        List<AITool>? clientTools = null;
+        List<JsonElement>? remainingTools = null;
 
         foreach (JsonElement tool in tools)
         {
             if (tool.ToFunctionTool() is { } functionTool)
             {
-                (functionTools ??= []).Add(functionTool);
+                (clientTools ??= []).Add(functionTool);
             }
             else
             {
-                (unsupportedTools ??= []).Add(tool);
+                (remainingTools ??= []).Add(tool);
             }
         }
 
-        return (functionTools, unsupportedTools);
+        return (clientTools, remainingTools);
     }
 
     private static ClientAIFunctionDeclaration? ToFunctionTool(this JsonElement tool)

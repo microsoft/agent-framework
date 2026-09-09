@@ -15,7 +15,6 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
@@ -952,8 +951,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
 #pragma warning disable MAAI001
         var mapOptions = new OpenAIResponsesMapOptions
         {
-            DangerouslyAllowClientFunctionTools =
-                OpenAIClientFunctionToolNameConflictBehavior.AllowOverride()
+            DangerouslyAllowClientFunctionTools = true
         };
 #pragma warning restore MAAI001
 
@@ -997,7 +995,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         // Assert
         Assert.True(httpResponse.IsSuccessStatusCode, $"Response status: {httpResponse.StatusCode}");
         Assert.NotNull(chatClient.LastChatOptions);
-        Assert.False(chatClient.LastChatOptions.AllowMultipleToolCalls);
+        Assert.Null(chatClient.LastChatOptions.AllowMultipleToolCalls);
         Assert.Null(chatClient.LastChatOptions.ToolMode);
         AIFunctionDeclaration tool = Assert.IsAssignableFrom<AIFunctionDeclaration>(Assert.Single(chatClient.LastChatOptions.Tools!));
         Assert.Equal("get_weather", tool.Name);
@@ -1107,8 +1105,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
 #pragma warning disable MAAI001
         var mapOptions = new OpenAIResponsesMapOptions
         {
-            DangerouslyAllowClientFunctionTools =
-                OpenAIClientFunctionToolNameConflictBehavior.AllowOverride()
+            DangerouslyAllowClientFunctionTools = true
         };
 #pragma warning restore MAAI001
 
@@ -1132,92 +1129,10 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task CreateResponse_WithConflictingClientFunctionAndRejectPolicy_ReturnsBadRequestAsync()
+    public async Task CreateResponse_WithConflictingClientFunction_ForwardsBothToolsToChatClientAsync()
     {
         // Arrange
-        const string AgentName = "reject-client-function-conflict-agent";
-        const string FunctionName = "get_weather";
-        AIFunction hostedFunction = AIFunctionFactory.Create(
-            (string location) => $"Sunny in {location}",
-            FunctionName);
-#pragma warning disable MAAI001
-        var mapOptions = new OpenAIResponsesMapOptions
-        {
-            DangerouslyAllowClientFunctionTools =
-                OpenAIClientFunctionToolNameConflictBehavior.Reject()
-        };
-#pragma warning restore MAAI001
-
-        this._httpClient = await this.CreateTestServerWithHostedToolAsync(
-            AgentName,
-            new TestHelpers.SimpleMockChatClient(),
-            hostedFunction,
-            mapOptions);
-        using StringContent content = CreateClientFunctionRequest(FunctionName);
-
-        // Act
-        using HttpResponseMessage response = await this._httpClient.PostAsync(
-            new Uri($"/{AgentName}/v1/responses", UriKind.Relative),
-            content);
-
-        // Assert
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        Assert.Contains(
-            FunctionName,
-            await response.Content.ReadAsStringAsync(),
-            StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task CreateResponse_WithConflictingClientFunctionAndIgnorePolicy_UsesHostedFunctionAndLogsWarningAsync()
-    {
-        // Arrange
-        const string AgentName = "ignore-client-function-conflict-agent";
-        const string FunctionName = "get_weather";
-        int invocationCount = 0;
-        var chatClient = new TestHelpers.FunctionToolExecutingMockChatClient(FunctionName);
-        var loggerProvider = new WarningRecordingLoggerProvider();
-        AIFunction hostedFunction = AIFunctionFactory.Create(GetWeather, FunctionName);
-#pragma warning disable MAAI001
-        var mapOptions = new OpenAIResponsesMapOptions
-        {
-            DangerouslyAllowClientFunctionTools =
-                OpenAIClientFunctionToolNameConflictBehavior.Ignore()
-        };
-#pragma warning restore MAAI001
-
-        this._httpClient = await this.CreateTestServerWithHostedToolAsync(
-            AgentName,
-            chatClient,
-            hostedFunction,
-            mapOptions,
-            loggerProvider);
-        using StringContent content = CreateClientFunctionRequest(FunctionName);
-
-        // Act
-        using HttpResponseMessage response = await this._httpClient.PostAsync(
-            new Uri($"/{AgentName}/v1/responses", UriKind.Relative),
-            content);
-
-        // Assert
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(1, invocationCount);
-        Assert.Equal("Sunny in Valencia", chatClient.FunctionResult);
-        Assert.Contains(loggerProvider.Messages, message =>
-            message.Contains(FunctionName, StringComparison.Ordinal));
-
-        string GetWeather(string location)
-        {
-            invocationCount++;
-            return $"Sunny in {location}";
-        }
-    }
-
-    [Fact]
-    public async Task CreateResponse_WithConflictingClientFunctionAndAllowOverridePolicy_UsesClientDeclarationAsync()
-    {
-        // Arrange
-        const string AgentName = "override-client-function-conflict-agent";
+        const string AgentName = "client-function-conflict-agent";
         const string FunctionName = "get_weather";
         int invocationCount = 0;
         var chatClient = new TestHelpers.FunctionCallMockChatClient(
@@ -1227,8 +1142,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
 #pragma warning disable MAAI001
         var mapOptions = new OpenAIResponsesMapOptions
         {
-            DangerouslyAllowClientFunctionTools =
-                OpenAIClientFunctionToolNameConflictBehavior.AllowOverride()
+            DangerouslyAllowClientFunctionTools = true
         };
 #pragma warning restore MAAI001
 
@@ -1247,8 +1161,11 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(0, invocationCount);
+        Assert.Equal(2, chatClient.LastChatOptions!.Tools!.Count);
+        Assert.Contains(hostedFunction, chatClient.LastChatOptions.Tools);
         AIFunctionDeclaration forwardedFunction =
-            Assert.IsAssignableFrom<AIFunctionDeclaration>(Assert.Single(chatClient.LastChatOptions!.Tools!));
+            Assert.IsAssignableFrom<AIFunctionDeclaration>(Assert.Single(
+                chatClient.LastChatOptions.Tools, tool => tool is not AIFunction));
         Assert.Equal("Client-provided function.", forwardedFunction.Description);
         Assert.Contains(
             "\"type\":\"function_call\"",
@@ -1760,15 +1677,10 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         string agentName,
         IChatClient chatClient,
         AITool tool,
-        OpenAIResponsesMapOptions? mapOptions = null,
-        ILoggerProvider? loggerProvider = null)
+        OpenAIResponsesMapOptions? mapOptions = null)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        if (loggerProvider is not null)
-        {
-            builder.Logging.AddProvider(loggerProvider);
-        }
 
         IHostedAgentBuilder agentBuilder = builder
             .AddAIAgent(agentName, "You are a helpful assistant.", chatClient)
@@ -1840,37 +1752,5 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
             ?? throw new InvalidOperationException("TestServer not found");
 
         return testServer.CreateClient();
-    }
-
-    private sealed class WarningRecordingLoggerProvider : ILoggerProvider
-    {
-        public List<string> Messages { get; } = [];
-
-        public ILogger CreateLogger(string categoryName) => new WarningRecordingLogger(this.Messages);
-
-        public void Dispose()
-        {
-        }
-
-        private sealed class WarningRecordingLogger(List<string> messages) : ILogger
-        {
-            public IDisposable? BeginScope<TState>(TState state)
-                where TState : notnull => null;
-
-            public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
-
-            public void Log<TState>(
-                LogLevel logLevel,
-                EventId eventId,
-                TState state,
-                Exception? exception,
-                Func<TState, Exception?, string> formatter)
-            {
-                if (this.IsEnabled(logLevel))
-                {
-                    messages.Add(formatter(state, exception));
-                }
-            }
-        }
     }
 }

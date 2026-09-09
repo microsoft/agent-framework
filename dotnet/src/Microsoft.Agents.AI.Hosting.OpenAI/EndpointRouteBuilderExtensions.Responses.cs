@@ -10,7 +10,6 @@ using Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 
 namespace Microsoft.AspNetCore.Builder;
 
@@ -72,10 +71,7 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
         responsesPath ??= $"/{agent.Name}/v1/responses";
 
         // Create an executor for this agent
-        var executor = new AIAgentResponseExecutor(
-            agent,
-            mapOptions,
-            endpoints.ServiceProvider.GetService<ILogger<AIAgentResponseExecutor>>());
+        var executor = new AIAgentResponseExecutor(agent, mapOptions);
         var storageOptions = endpoints.ServiceProvider.GetService<InMemoryStorageOptions>() ?? new InMemoryStorageOptions();
         var conversationStorage = endpoints.ServiceProvider.GetService<IConversationStorage>();
         var responsesService = new InMemoryResponsesService(executor, storageOptions, conversationStorage);

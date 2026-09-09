@@ -28,25 +28,26 @@ public class OpenAIResponsesTests
     }
 
     [Fact]
-    public void ToAgentRunRequest_DangerousClientFunctionOptInWithoutAgent_ThrowsNotSupportedException()
+    public void ToAgentRunRequest_DangerousClientFunctionOptInWithoutTools_ReturnsNullOptions()
     {
         // Arrange
         using var doc = JsonDocument.Parse("""{ "input": "Hello there" }""");
 #pragma warning disable MAAI001
         var mapOptions = new OpenAIResponsesMapOptions
         {
-            DangerouslyAllowClientFunctionTools =
-                OpenAIClientFunctionToolNameConflictBehavior.Reject()
+            DangerouslyAllowClientFunctionTools = true
         };
 #pragma warning restore MAAI001
 
-        // Act & Assert
-        Assert.Throws<NotSupportedException>(() =>
-            OpenAIResponses.ToAgentRunRequest(doc.RootElement, mapOptions));
+        // Act
+        var request = OpenAIResponses.ToAgentRunRequest(doc.RootElement, mapOptions);
+
+        // Assert
+        Assert.Null(request.Options);
     }
 
     [Fact]
-    public void ToAgentRunRequest_DangerousClientFunctionOptInWithAgent_ReturnsRunOptions()
+    public void ToAgentRunRequest_DangerousClientFunctionOptIn_ReturnsRunOptions()
     {
         // Arrange
         using var doc = JsonDocument.Parse(
@@ -62,19 +63,16 @@ public class OpenAIResponsesTests
               ]
             }
             """);
-        using var chatClient = new TestHelpers.SimpleMockChatClient();
-        AIAgent agent = chatClient.AsAIAgent(name: "test-agent");
 #pragma warning disable MAAI001
         var mapOptions = new OpenAIResponsesMapOptions
         {
-            DangerouslyAllowClientFunctionTools =
-                OpenAIClientFunctionToolNameConflictBehavior.Reject()
+            DangerouslyAllowClientFunctionTools = true
         };
 #pragma warning restore MAAI001
 
         // Act
         OpenAIResponsesRunRequest request =
-            OpenAIResponses.ToAgentRunRequest(doc.RootElement, agent, mapOptions);
+            OpenAIResponses.ToAgentRunRequest(doc.RootElement, mapOptions);
 
         // Assert
         ChatClientAgentRunOptions runOptions =
