@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 
+import asyncio
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Generic, Protocol, TypeVar
+from typing import ClassVar, Generic, Protocol, TypeVar
 
 from agent_framework import (
     AgentSession,
@@ -300,32 +301,54 @@ class FoundryAgentSessionStore(SessionStore):
 
     DEFAULT_ROOT_SCOPE = "agent_sessions"
 
+    # Process-wide cache of the backing state store. The agent-session scope
+    # ("agent_sessions", user_isolation=True) is identical for every request,
+    # and per-request user isolation is enforced through the per-operation
+    # ``call_id`` argument -- not through the store instance -- so a single
+    # shared store is equivalent to a per-request one. Caching it avoids
+    # rebuilding the store on every get/set/delete, where each rebuild creates a
+    # fresh credential (empty token cache -> a new managed-identity token fetch)
+    # and issues an ``agent_sessions`` metadata round-trip via ``get_or_create``
+    # before the actual item operation. Because the session ``set`` runs on the
+    # critical path of every Responses request, that redundant work is pure
+    # per-request latency.
+    _shared_store: ClassVar[FoundryStateStore | None] = None
+    _shared_store_lock: ClassVar[asyncio.Lock] = asyncio.Lock()
+
     def __init__(self, platform_context: FoundryAgentRequestContext) -> None:
         self.platform_context = platform_context
 
     async def _get_store(self) -> FoundryStateStore:
-        return await FoundryStateStore.get_or_create(
-            f"{self.DEFAULT_ROOT_SCOPE}",
-            user_isolation=True,
-        )
+        # Fast path: already resolved -> no lock, no metadata round-trip.
+        if FoundryAgentSessionStore._shared_store is not None:
+            return FoundryAgentSessionStore._shared_store
+        async with FoundryAgentSessionStore._shared_store_lock:
+            if FoundryAgentSessionStore._shared_store is None:
+                FoundryAgentSessionStore._shared_store = await FoundryStateStore.get_or_create(
+                    f"{self.DEFAULT_ROOT_SCOPE}",
+                    user_isolation=True,
+                )
+        return FoundryAgentSessionStore._shared_store
 
     async def get(self, session_id: str) -> AgentSession | None:
+        # The shared store is intentionally NOT entered as an ``async with``
+        # context manager: its ``__aexit__`` calls ``aclose()``, which would
+        # close the pooled pipeline and owned credential and defeat the cache.
+        # The store is created once and kept open for the process lifetime;
+        # process exit reclaims it.
         store = await self._get_store()
-        async with store:
-            item = await store.get_item(session_id, call_id=self.platform_context.call_id)
+        item = await store.get_item(session_id, call_id=self.platform_context.call_id)
         if item is None:
             return None
         return AgentSession.from_dict(item.value)
 
     async def set(self, session_id: str, session: AgentSession) -> None:
         store = await self._get_store()
-        async with store:
-            await store.set_item(session_id, session.to_dict(), call_id=self.platform_context.call_id)
+        await store.set_item(session_id, session.to_dict(), call_id=self.platform_context.call_id)
 
     async def delete(self, session_id: str) -> None:
         store = await self._get_store()
-        async with store:
-            await store.delete_item(session_id, call_id=self.platform_context.call_id)
+        await store.delete_item(session_id, call_id=self.platform_context.call_id)
 
 
 class AgentSessionStoreProvider(StoreProvider[SessionStore]):
