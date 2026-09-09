@@ -78,7 +78,7 @@ tau2 = [
 ]
 
 [tool.uv]
-prerelease = "if-necessary-or-explicit"
+prerelease = "if-necessary"
 # Security floors for transitive dependencies from agentlightning and Tau2.
 # litellm>=1.100.0 drops the `fastapi.dependencies.utils.get_flat_dependant` import removed in FastAPI 0.141.0.
 constraint-dependencies = ["litellm>=1.100.0", "fastapi-sso>=0.19.0"]

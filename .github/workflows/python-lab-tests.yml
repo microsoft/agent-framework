@@ -68,7 +68,7 @@ jobs:
           cache-dependency-glob: "python/packages/lab/uv.lock"
 
       - name: Install the Lab project
-        run: uv sync --all-extras --all-groups --frozen --prerelease=if-necessary-or-explicit
+        run: uv sync --all-extras --all-groups --frozen --prerelease=if-necessary
 
       # Lab specific tests
       - name: Run lab tests

@@ -59,7 +59,7 @@ test = [
 
 [tool.uv]
 package = false
-prerelease = "if-necessary-or-explicit"
+prerelease = "if-necessary"
 # Security floors for transitive dependencies.
 override-dependencies = ["mcp[ws]>=1.27.0,<2", "uvicorn[standard]>=0.34.0", "python-multipart>=0.0.31"]
 environments = [
@@ -250,7 +250,7 @@ executor.type = "uv"
 # Workspace setup
 [tool.poe.tasks.install]
 help = "Install all workspace packages, extras, and dependency groups from the lockfile."
-cmd = "uv sync --all-packages --all-extras --all-groups --frozen --prerelease=if-necessary-or-explicit"
+cmd = "uv sync --all-packages --all-extras --all-groups --frozen --prerelease=if-necessary"
 
 [tool.poe.tasks.setup]
 help = "Create the workspace virtual environment for -P/--python, install dependencies, and install prek hooks."
