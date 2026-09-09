@@ -77,6 +77,17 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
         this.State.Bind();
     }
 
+    internal async ValueTask QueueStateUpdateAsync<T>(
+        string key,
+        T? value,
+        string? scopeName,
+        SensitivityLevel sensitivity,
+        CancellationToken cancellationToken = default)
+    {
+        await this.UpdateStateAsync(key, value, scopeName, allowSystem: false, sensitivity: sensitivity, cancellationToken: cancellationToken).ConfigureAwait(false);
+        this.State.Bind();
+    }
+
     private static bool IsManagedScope(string? scopeName) => scopeName is not null && VariableScopeNames.IsValidName(scopeName);
 
     /// <inheritdoc/>

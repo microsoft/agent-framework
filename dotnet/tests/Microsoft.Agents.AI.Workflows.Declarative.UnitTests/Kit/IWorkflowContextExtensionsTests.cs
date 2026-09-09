@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
@@ -27,5 +28,45 @@ public sealed class IWorkflowContextExtensionsTests
         // Assert
         DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(async () => await FormatAsync());
         Assert.Contains("Cannot return sensitive workflow expression value", exception.Message);
+    }
+
+    [Fact]
+    public async Task QueueStateUpdateAsync_WithSensitivity_RebindsStateAsync()
+    {
+        // Arrange
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        state.Set("TestValue", FormulaValue.New("old-value"));
+        state.Bind();
+        DeclarativeWorkflowContext context = new(new Mock<IWorkflowContext>().Object, state);
+
+        // Act
+        await context.QueueStateUpdateAsync(PropertyPath.Create("Local.TestValue"), FormulaValue.New("new-value"), SensitivityLevel.Sensitive);
+
+        // Assert
+        Assert.Equal("new-value", state.Engine.Eval("Local.TestValue").ToObject());
+        Assert.Equal(SensitivityLevel.Sensitive, state.GetSensitivity("TestValue", VariableScopeNames.Local));
+    }
+
+    [Fact]
+    public async Task ReadStateWithSensitivityAsync_QueuesSensitiveAssignmentAsync()
+    {
+        // Arrange
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        state.Set(SystemScope.Names.LastMessageText, FormulaValue.New("secret-value"), VariableScopeNames.System, SensitivityLevel.Sensitive);
+        state.Bind();
+
+        Mock<IWorkflowContext> source = new(MockBehavior.Loose);
+        source
+            .Setup(c => c.ReadStateAsync<object>(SystemScope.Names.LastMessageText, VariableScopeNames.System, default))
+            .Returns(new ValueTask<object?>("secret-value"));
+        DeclarativeWorkflowContext context = new(source.Object, state);
+
+        // Act
+        var evaluatedValue = await context.ReadStateWithSensitivityAsync<object>(SystemScope.Names.LastMessageText, VariableScopeNames.System);
+        await context.QueueStateUpdateWithSensitivityAsync("TestValue", evaluatedValue, VariableScopeNames.Local);
+
+        // Assert
+        Assert.Equal("secret-value", state.Engine.Eval("Local.TestValue").ToObject());
+        Assert.Equal(SensitivityLevel.Sensitive, state.GetSensitivity("TestValue", VariableScopeNames.Local));
     }
 }

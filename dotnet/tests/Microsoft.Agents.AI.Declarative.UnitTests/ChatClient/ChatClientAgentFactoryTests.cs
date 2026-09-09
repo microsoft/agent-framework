@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
@@ -138,9 +138,8 @@ public sealed class ChatClientAgentFactoryTests
             })
             .Build();
         GptComponentMetadata promptAgent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithVariableReferences);
-        ChatClientPromptAgentFactory factory = new(
+        ChatClientPromptAgentFactory factory = ChatClientPromptAgentFactory.Create(
             this._mockChatClient.Object,
-            functions: null,
             options: new ChatClientPromptAgentFactoryOptions()
             {
                 Configuration = configuration,

@@ -39,7 +39,8 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
                 Engine = engine,
                 Configuration = configuration,
                 LoggerFactory = loggerFactory,
-            })
+            },
+            isValidated: true)
     {
     }
 
@@ -47,15 +48,14 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
     /// Creates a new instance of the <see cref="ChatClientPromptAgentFactory"/> class.
     /// </summary>
     /// <param name="chatClient">The chat client used by created agents.</param>
-    /// <param name="functions">Optional functions exposed as tools to created agents.</param>
     /// <param name="options">Options used to configure the created agents and declarative expression evaluation.</param>
-    public ChatClientPromptAgentFactory(
+    /// <param name="functions">Optional functions exposed as tools to created agents.</param>
+    /// <returns>The configured <see cref="ChatClientPromptAgentFactory"/> instance.</returns>
+    public static ChatClientPromptAgentFactory Create(
         IChatClient chatClient,
-        IList<AIFunction>? functions,
-        ChatClientPromptAgentFactoryOptions options) :
-        this(chatClient, functions, ValidateOptions(options), isValidated: true)
-    {
-    }
+        ChatClientPromptAgentFactoryOptions options,
+        IList<AIFunction>? functions = null) =>
+        new(chatClient, functions, ValidateOptions(options), isValidated: true);
 
     private ChatClientPromptAgentFactory(
         IChatClient chatClient,

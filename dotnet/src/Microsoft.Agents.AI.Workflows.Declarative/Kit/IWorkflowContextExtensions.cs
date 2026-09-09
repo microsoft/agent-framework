@@ -112,6 +112,55 @@ public static class IWorkflowContextExtensions
     }
 
     /// <summary>
+    /// Reads a state value together with its sensitivity metadata.
+    /// </summary>
+    /// <typeparam name="TValue">The type of the state value.</typeparam>
+    /// <param name="context">The workflow execution context used to read state.</param>
+    /// <param name="key">The key of the state value.</param>
+    /// <param name = "scopeName" > An optional name that specifies the scope to read.If null, the default scope is used.</param>
+    /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
+    /// <returns>The state value and its sensitivity metadata.</returns>
+    public static async ValueTask<EvaluationResult<TValue?>> ReadStateWithSensitivityAsync<TValue>(
+        this IWorkflowContext context,
+        string key,
+        string? scopeName = null,
+        CancellationToken cancellationToken = default)
+    {
+        TValue? value = await context.ReadStateAsync<TValue>(key, scopeName, cancellationToken).ConfigureAwait(false);
+        SensitivityLevel sensitivity = context is DeclarativeWorkflowContext declarativeContext
+            ? declarativeContext.State.GetSensitivity(key, scopeName)
+            : SensitivityLevel.None;
+
+        return new(value, sensitivity);
+    }
+
+    /// <summary>
+    /// Queues a state update using sensitivity metadata carried with the value.
+    /// </summary>
+    /// <typeparam name="TValue">The type of the state value.</typeparam>
+    /// <param name="context">The workflow execution context used to queue state updates.</param>
+    /// <param name="key">The key of the state value.</param>
+    /// <param name="value">The value and sensitivity metadata to store.</param>
+    /// <param name = "scopeName" > An optional name that specifies the scope to update.If null, the default scope is used.</param>
+    /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
+    /// <returns>A task representing the queued state update.</returns>
+    public static async ValueTask QueueStateUpdateWithSensitivityAsync<TValue>(
+        this IWorkflowContext context,
+        string key,
+        EvaluationResult<TValue> value,
+        string? scopeName = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (context is DeclarativeWorkflowContext declarativeContext)
+        {
+            await declarativeContext.QueueStateUpdateAsync(key, value.Value, scopeName, value.Sensitivity, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await context.QueueStateUpdateAsync(key, value.Value, scopeName, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Convert the result of an expression to the specified target type.
     /// </summary>
     /// <param name="context">The workflow execution context used to restore persisted state prior to formatting.</param>
