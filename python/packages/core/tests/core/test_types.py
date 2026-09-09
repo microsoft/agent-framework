@@ -2133,6 +2133,27 @@ def test_text_reasoning_content_add_conflicting_ids_raises():
         _ = t1 + t2
 
 
+def test_text_reasoning_content_add_preserves_empty_text_with_signature():
+    """Empty thinking text plus a signature delta must keep text="" (not None).
+
+    Regression for microsoft/agent-framework#8168: collapsing "" to None makes a
+    real empty signed Anthropic thinking block look like an orphan signature.
+    """
+
+    empty_thinking = Content.from_text_reasoning(text="")
+    signature_only = Content.from_text_reasoning(text=None, protected_data="synthetic-signature")
+
+    result = empty_thinking + signature_only
+    assert result.text == ""
+    assert result.protected_data == "synthetic-signature"
+
+    both_none = Content.from_text_reasoning(text=None) + Content.from_text_reasoning(
+        text=None, protected_data="orphan-sig"
+    )
+    assert both_none.text is None
+    assert both_none.protected_data == "orphan-sig"
+
+
 def test_text_reasoning_content_add_neither_has_id():
     """Test that coalescing text_reasoning Content when neither has an id results in None id."""
 

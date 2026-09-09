@@ -2690,6 +2690,98 @@ async def test_session_id_matches_thread_id_with_service_session():
     assert stub.last_session.service_session_id == "service-thread-789"
 
 
+async def test_scoped_session_id_preserves_service_session_id_thread_compatibility():
+    """Trusted scope changes internal identity without changing the provider continuation compatibility id."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        use_service_session=True,
+        service_session_id_from_thread_id=True,
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+    )
+
+    payload = {
+        "thread_id": "service-thread-789",
+        "run_id": "run-scoped-service",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    events = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id != "service-thread-789"
+    assert stub.last_session.service_session_id == "service-thread-789"
+    assert events[0].thread_id == "service-thread-789"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert events[-1].thread_id == "service-thread-789"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
+async def test_scoped_session_id_supports_deprecated_legacy_mapping():
+    """The explicit migration escape hatch warns and preserves the raw internal session id."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    with pytest.warns(DeprecationWarning, match="legacy_session_id_from_thread_id=True is deprecated"):
+        agent = AgentFrameworkAgent(
+            agent=stub,
+            snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+            legacy_session_id_from_thread_id=True,
+        )
+
+    payload = {
+        "thread_id": "legacy-thread",
+        "run_id": "run-legacy-session",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == "legacy-thread"
+
+
+async def test_scoped_session_id_is_used_to_create_service_conversation():
+    """Provider-owned conversation creation uses the scope-isolated internal session id."""
+    from agent_framework import AgentSession
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    created_session_ids: list[str] = []
+
+    def create_conversation(*, session_id: str) -> AgentSession:
+        created_session_ids.append(session_id)
+        return AgentSession(session_id=session_id, service_session_id="provider-conversation")
+
+    setattr(stub, "create_conversation", create_conversation)
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        use_service_session=True,
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+    )
+    payload = {
+        "thread_id": "service-thread-789",
+        "run_id": "run-create-scoped-service",
+        "__ag_ui_snapshot_scope": "tenant-a",
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+
+    _ = [event async for event in agent.run(payload)]
+
+    assert len(created_session_ids) == 1
+    assert created_session_ids[0] != "service-thread-789"
+    assert stub.last_session is not None
+    assert stub.last_session.session_id == created_session_ids[0]
+    assert stub.last_session.service_session_id == "provider-conversation"
+
+
 async def test_session_id_generated_when_no_thread_id():
     """Session gets a generated UUID as session_id when no thread_id is provided."""
     import uuid

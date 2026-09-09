@@ -68,7 +68,7 @@ uv run poe install
 uv run poe prek-install
 ```
 
-Alternatively, you can reinstall the venv, pacakges, dependencies and prek hooks with a single command (but this requires poe in the current env), this is especially useful if you want to switch python versions:
+Alternatively, you can reinstall the venv, packages, dependencies and prek hooks with a single command (but this requires poe in the current env), this is especially useful if you want to switch python versions:
 
 ```bash
 uv run poe setup -p 3.13

@@ -72,9 +72,19 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
 
         // Create an executor for this agent
         var executor = new AIAgentResponseExecutor(agent, mapOptions);
+
+        // Resolve the response storage settings and optional conversation storage.
         var storageOptions = endpoints.ServiceProvider.GetService<InMemoryStorageOptions>() ?? new InMemoryStorageOptions();
         var conversationStorage = endpoints.ServiceProvider.GetService<IConversationStorage>();
-        var responsesService = new InMemoryResponsesService(executor, storageOptions, conversationStorage);
+
+        // Resolve the optional caller isolation provider.
+        var isolationKeyProvider = endpoints.ServiceProvider.GetService<AgentIsolationKeyProvider>();
+
+        // Require a key whenever isolation is configured.
+        var isolationKeyResolver = new IsolationKeyResolver(isolationKeyProvider, strict: isolationKeyProvider is not null);
+
+        // Create the response service so response and conversation operations are scoped by the caller's isolation key.
+        var responsesService = new InMemoryResponsesService(executor, storageOptions, conversationStorage, isolationKeyResolver);
 
         var handlers = new ResponsesHttpHandler(responsesService);
 

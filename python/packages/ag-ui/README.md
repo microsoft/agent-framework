@@ -239,11 +239,13 @@ Review focus: whether these names are the right stable contract for Python users
 
 | Surface | Public exports |
 | --- | --- |
-| `agent_framework.ag_ui` facade | `AgentFrameworkAgent`, `AgentFrameworkWorkflow`, `AGUIChatClient`, `AGUIEventConverter`, `AGUIHttpService`, `AGUIThreadSnapshot`, `AGUIThreadSnapshotStore`, `InMemoryAGUIThreadSnapshotStore`, `SnapshotScopeResolver`, `add_agent_framework_fastapi_endpoint`, `state_update`, `__version__` |
+| `agent_framework.ag_ui` facade | `AgentFrameworkAgent`, `AgentFrameworkWorkflow`, `AGUIChatClient`, `AGUIEventConverter`, `AGUIHttpService`, `AGUIThreadSnapshot`, `AGUIThreadSnapshotStore`, `InMemoryAGUIThreadSnapshotStore`, `SnapshotScopeResolver`, `add_agent_framework_fastapi_endpoint`, `state_carrier`, `state_update`, `__version__` |
 | Direct `agent_framework_ag_ui` package | Facade exports plus `AGUIChatOptions`, `AGUIRequest`, `AGUIThreadID`, `AgentState`, `DEFAULT_MAX_THREAD_SNAPSHOTS`, `DEFAULT_TAGS`, `PredictStateConfig`, `RunMetadata`, `SnapshotScope`, `WorkflowFactory` |
 | AG-UI protocol package (`ag_ui.core`) | `Interrupt`, `ResumeEntry`, `RunFinishedInterruptOutcome`, and related run outcome models |
 
 Interrupt support is protocol data rather than a separate Agent Framework Python class. Requests accept canonical `availableInterrupts`/`available_interrupts` and `resume` values; `AGUIChatClient` and `AGUIHttpService.post_run(...)` forward those fields with AG-UI wire aliases; agent approval and workflow `request_info` pauses emit `RUN_FINISHED.outcome.interrupts`; `AGUIEventConverter` preserves canonical interrupt outcome metadata on the final `ChatResponseUpdate`; and thread snapshot hydration replays the canonical interrupt outcome when a scoped snapshot stores an unresolved pause.
+
+Use `state_carrier(...)` to mark JSON content that should be sent in the AG-UI request's `state` field rather than as a model-visible document. The client removes explicitly marked carriers from all client-controlled history and uses the most recent carrier. Ordinary `application/json` content remains a document. For migration, pass `allow_legacy_state_carrier=True` in `AGUIChatOptions` to recognize the deprecated final single-content base64 JSON convention; mixed text and document messages remain model-visible. This client-only option emits a `DeprecationWarning` when the legacy convention is used and is not sent to the remote server.
 
 ## Features
 
@@ -378,10 +380,18 @@ A frontend can then hydrate the latest stored snapshot for the scoped thread:
 
 Endpoint configuration requires `snapshot_scope_resolver` whenever a snapshot store is configured, including when
 the store is already set on a pre-wrapped `AgentFrameworkAgent` or `AgentFrameworkWorkflow`. The resolver returns
-the application-defined Snapshot Scope used with the AG-UI Thread id as the storage key. When using
-`AgentFrameworkWorkflow(workflow_factory=...)`, the same resolver also scopes the in-memory workflow cache even
-without a snapshot store; provide it in multi-user deployments so two users who submit the same `threadId` do not
-share a live `Workflow` instance.
+the application-defined Snapshot Scope used with the AG-UI Thread id as the storage key. The endpoint also derives
+the internal `AgentSession.session_id` from this trusted scope and the client-owned Thread id, so context providers
+cannot merge server-side state for equal Thread ids in different scopes. The raw Thread id remains unchanged in
+AG-UI events and snapshot operations. When using `AgentFrameworkWorkflow(workflow_factory=...)`, the same resolver
+also scopes the in-memory workflow cache even without a snapshot store; provide it in multi-user deployments so two
+users who submit the same `threadId` do not share a live `Workflow` instance.
+
+Existing applications that need time to migrate provider records from raw Thread-id keys can temporarily wrap the
+agent with `AgentFrameworkAgent(..., legacy_session_id_from_thread_id=True)`. This deprecated compatibility option
+emits a `DeprecationWarning` and disables Snapshot Scope isolation for context-provider state. Remove it after
+migrating only records whose scope provenance can be established; do not merge or fall back to legacy records that
+may already contain data from multiple scopes.
 
 For hosted agents, request Shared State is also available through `AgentSession.state` during that run, whether or
 not snapshot persistence is configured. Request values are untrusted per-run context: they overlay ordinary restored
