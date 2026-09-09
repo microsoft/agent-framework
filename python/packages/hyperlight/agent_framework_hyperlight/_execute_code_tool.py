@@ -238,7 +238,6 @@ class _SandboxWorker:
             try:
                 return build_contents(
                     result=result,
-                    sandbox=sandbox,
                     output_dir=output_dir,
                     code=code,
                     max_output_files=max_output_files,
@@ -741,33 +740,119 @@ def _populate_input_dir(*, config: _RunConfig, input_root: Path) -> None:
         _copy_path(mount.host_path, input_root / mount.mount_path, source_root=mount_root)
 
 
-def _read_output_file_bytes(
-    file_path: Path,
-    *,
-    relative_path: str,
-    max_file_bytes: int,
-    remaining_total_bytes: int,
-    max_total_bytes: int,
-) -> bytes:
-    """Read ``file_path`` without following a link, even under a TOCTOU swap.
+def _supports_secure_output_dir_fd() -> bool:
+    return (
+        os.open in os.supports_dir_fd
+        and os.stat in os.supports_dir_fd
+        and os.stat in os.supports_follow_symlinks
+        and hasattr(os, "O_DIRECTORY")
+        and hasattr(os, "O_NOFOLLOW")
+    )
 
-    The path is lstat-ed before a single no-follow open, then the opened descriptor's
-    identity and logical size are checked before a bounded read. Reading one byte past
-    the remaining allowance detects growth after fstat without trusting a second path
-    lookup or allocating according to an attacker-controlled logical size.
-    """
+
+def _open_direct_output_file(*, root: Path, file_name: str) -> tuple[int, os.stat_result]:
+    file_path = root / file_name
     pre_stat = file_path.lstat()
-    output_path = f"/output/{relative_path}"
     if _is_link_or_reparse_point(file_path, pre_stat) or not stat.S_ISREG(pre_stat.st_mode):
-        raise OSError(f"refusing to read linked or reparse-point output file: {file_path}")
+        raise OSError(f"refusing to read linked, reparse-point, or non-regular output file: {file_path}")
 
     fd = os.open(file_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    keep_fd = False
     try:
         opened_stat = os.fstat(fd)
         if (opened_stat.st_dev, opened_stat.st_ino) != (pre_stat.st_dev, pre_stat.st_ino):
             raise OSError(f"output file changed between validation and read: {file_path}")
         if not stat.S_ISREG(opened_stat.st_mode):
             raise OSError(f"refusing to read non-regular output file: {file_path}")
+        keep_fd = True
+        return fd, opened_stat
+    finally:
+        if not keep_fd:
+            os.close(fd)
+
+
+def _open_output_file_with_dir_fd(*, root: Path, path_parts: tuple[str, ...]) -> tuple[int, os.stat_result]:
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW
+    directory_fds: list[int] = []
+    file_fd = -1
+    keep_file_fd = False
+
+    try:
+        root_fd = os.open(root, directory_flags)
+        directory_fds.append(root_fd)
+        parent_fd = root_fd
+
+        for part in path_parts[:-1]:
+            pre_stat = os.stat(part, dir_fd=parent_fd, follow_symlinks=False)
+            if stat.S_ISLNK(pre_stat.st_mode) or not stat.S_ISDIR(pre_stat.st_mode):
+                raise OSError(f"refusing to traverse linked or non-directory output component: {part}")
+
+            next_fd = os.open(part, directory_flags, dir_fd=parent_fd)
+            directory_fds.append(next_fd)
+            opened_stat = os.fstat(next_fd)
+            if (opened_stat.st_dev, opened_stat.st_ino) != (pre_stat.st_dev, pre_stat.st_ino):
+                raise OSError(f"output directory changed while opening component: {part}")
+            if not stat.S_ISDIR(opened_stat.st_mode):
+                raise OSError(f"refusing to traverse non-directory output component: {part}")
+
+            parent_fd = next_fd
+
+        file_name = path_parts[-1]
+        pre_stat = os.stat(file_name, dir_fd=parent_fd, follow_symlinks=False)
+        if stat.S_ISLNK(pre_stat.st_mode) or not stat.S_ISREG(pre_stat.st_mode):
+            raise OSError(f"refusing to read linked or non-regular output file: {file_name}")
+
+        file_fd = os.open(file_name, file_flags, dir_fd=parent_fd)
+        opened_stat = os.fstat(file_fd)
+        if (opened_stat.st_dev, opened_stat.st_ino) != (pre_stat.st_dev, pre_stat.st_ino):
+            raise OSError(f"output file changed while opening: {file_name}")
+        if not stat.S_ISREG(opened_stat.st_mode):
+            raise OSError(f"refusing to read non-regular output file: {file_name}")
+
+        keep_file_fd = True
+        return file_fd, opened_stat
+    finally:
+        if file_fd >= 0 and not keep_file_fd:
+            os.close(file_fd)
+        for directory_fd in reversed(directory_fds):
+            os.close(directory_fd)
+
+
+def _open_output_file(*, root: Path, relative_path: str) -> tuple[int, os.stat_result]:
+    path_parts = tuple(PurePosixPath(relative_path).parts)
+    if not path_parts:
+        raise OSError(f"invalid output path: {relative_path}")
+    if any(part in {"", ".", ".."} for part in path_parts):
+        raise OSError(f"invalid output path: {relative_path}")
+
+    if _supports_secure_output_dir_fd():
+        return _open_output_file_with_dir_fd(root=root, path_parts=path_parts)
+
+    if len(path_parts) > 1:
+        raise _OutputMaterializationError(
+            "Nested output attachments cannot be opened safely on this platform; write files directly under /output."
+        )
+    return _open_direct_output_file(root=root, file_name=next(iter(path_parts)))
+
+
+def _read_output_file_bytes(
+    root: Path,
+    *,
+    relative_path: str,
+    max_file_bytes: int,
+    remaining_total_bytes: int,
+    max_total_bytes: int,
+) -> bytes:
+    """Open and read an output file relative to a pinned output root.
+
+    Platforms with ``dir_fd`` support walk every component relative to verified directory
+    descriptors. Other platforms accept only direct children of the trusted output root,
+    where lstat/open/fstat identity checks fail closed on final-component replacements.
+    """
+    output_path = f"/output/{relative_path}"
+    fd, opened_stat = _open_output_file(root=root, relative_path=relative_path)
+    try:
         if opened_stat.st_size > max_file_bytes:
             raise _OutputMaterializationError(
                 f"Output file {output_path[:200]!r} exceeds the {max_file_bytes}-byte per-file output limit."
@@ -815,24 +900,6 @@ def _materialize_output_files(output_files: Sequence[_ValidatedOutputFile]) -> l
             "Sandbox output could not be encoded because the host did not have enough memory."
         ) from None
     return contents
-
-
-def _normalize_output_relative_path(*, output_file: object, root: Path) -> str | None:
-    candidate_path = Path(str(output_file))
-    if candidate_path.is_absolute():
-        try:
-            return candidate_path.relative_to(root).as_posix()
-        except ValueError:
-            return None
-
-    raw_path = str(output_file).replace("\\", "/")
-    pure_path = PurePosixPath(raw_path)
-    parts = [part for part in pure_path.parts if part not in {"", "/", "."}]
-    if parts and parts[0] == "output":
-        parts = parts[1:]
-    if not parts or any(part == ".." for part in parts):
-        return None
-    return "/".join(parts)
 
 
 def _is_safe_output_file(*, root: Path, host_path: Path) -> bool:
@@ -885,47 +952,24 @@ def _is_safe_output_file(*, root: Path, host_path: Path) -> bool:
 
 def _collect_output_relative_paths(
     *,
-    sandbox: Any,
     root: Path,
     max_output_files: int = DEFAULT_MAX_OUTPUT_FILES,
 ) -> set[str]:
     relative_paths: set[str] = set()
 
-    def _add_relative_path(relative_path: str) -> None:
-        if relative_path in relative_paths:
-            return
+    # The streaming walker skips links and never materializes a whole directory.
+    for host_path in _iter_real_entries(root, files_only=True):
         if len(relative_paths) >= max_output_files:
             raise _OutputMaterializationError(
                 f"Sandbox exceeded the output file count limit of {max_output_files} while enumerating candidates."
             )
-        relative_paths.add(relative_path)
-
-    if hasattr(sandbox, "get_output_files"):
-        try:
-            output_files = cast(Iterator[object], iter(sandbox.get_output_files()))
-        except MemoryError:
-            raise
-        except Exception:
-            output_files = iter(())
-
-        for backend_items_seen, output_file in enumerate(output_files, start=1):
-            if backend_items_seen > max_output_files:
-                raise _OutputMaterializationError(
-                    f"Sandbox exceeded the output file count limit of {max_output_files} while enumerating candidates."
-                )
-            if (relative_path := _normalize_output_relative_path(output_file=output_file, root=root)) is not None:
-                _add_relative_path(relative_path)
-
-    # The streaming walker skips links and never materializes a whole directory.
-    for host_path in _iter_real_entries(root, files_only=True):
-        _add_relative_path(host_path.relative_to(root).as_posix())
+        relative_paths.add(host_path.relative_to(root).as_posix())
 
     return relative_paths
 
 
 def _parse_output_files(
     *,
-    sandbox: Any,
     output_dir: _NamedDirectory | None,
     expect_output_files: bool,
     max_output_files: int = DEFAULT_MAX_OUTPUT_FILES,
@@ -940,7 +984,6 @@ def _parse_output_files(
     for attempt in range(OUTPUT_FILE_RETRY_ATTEMPTS):
         try:
             relative_paths = _collect_output_relative_paths(
-                sandbox=sandbox,
                 root=root,
                 max_output_files=max_output_files,
             )
@@ -969,7 +1012,7 @@ def _parse_output_files(
         for relative_path, host_path in safe_output_files:
             try:
                 data = _read_output_file_bytes(
-                    host_path,
+                    root,
                     relative_path=relative_path,
                     max_file_bytes=max_output_file_bytes,
                     remaining_total_bytes=max_output_total_bytes - total_bytes_read,
@@ -1020,7 +1063,6 @@ def _result_snapshot(result: Any) -> dict[str, Any]:
 def _build_execution_contents(
     *,
     result: Any,
-    sandbox: Any,
     output_dir: TemporaryDirectory[str] | None,
     code: str,
     max_output_files: int,
@@ -1038,7 +1080,6 @@ def _build_execution_contents(
 
     try:
         output_files = _parse_output_files(
-            sandbox=sandbox,
             output_dir=output_dir,
             expect_output_files="/output" in code,
             max_output_files=max_output_files,

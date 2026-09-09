@@ -141,6 +141,10 @@ Limits are always finite. Increasing them also increases host memory use because
 file data is encoded as inline base64, and may increase model context cost when
 attachments are included in subsequent requests.
 
+Nested output paths require secure directory-relative file opening. On platforms
+without that capability, nested attachments fail closed; write attachment files
+directly under `/output` for portable behavior.
+
 ## Notes
 
 - This package is intentionally separate from `agent-framework-core` so CodeAct

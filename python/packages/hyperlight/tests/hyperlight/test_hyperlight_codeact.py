@@ -391,6 +391,10 @@ class _FakeSandboxWithBoundedOutputs(_FakeSandbox):
         elif code == "create-memory-output":
             (output_root / "memory.bin").write_bytes(b"data")
             self.output_files = ["memory.bin"]
+        elif code == "create-nested-output":
+            (output_root / "nested").mkdir()
+            (output_root / "nested" / "report.bin").write_bytes(b"data")
+            self.output_files = ["nested/report.bin"]
         else:
             return super().run(code)
 
@@ -402,18 +406,12 @@ class _FakeSandboxWithBoundedOutputsWithoutListing(_FakeSandboxWithBoundedOutput
         return []
 
 
-class _FakeSandboxWithBoundedOutputListing(_FakeSandboxWithBoundedOutputs):
-    listing_items_requested = 0
+class _FakeSandboxWithEagerOutputListing(_FakeSandboxWithBoundedOutputs):
+    listing_calls = 0
 
-    def get_output_files(self) -> Any:
-        def _iter_paths() -> Generator[str]:
-            for index in range(100):
-                type(self).listing_items_requested += 1
-                if type(self).listing_items_requested > 3:
-                    pytest.fail("backend output listing was consumed past max_output_files + 1")
-                yield f"report-{index}.txt"
-
-        return _iter_paths()
+    def get_output_files(self) -> list[str]:
+        type(self).listing_calls += 1
+        return [f"report-{index}.txt" for index in range(10_000)]
 
 
 class _FakeSessionContext:
@@ -891,14 +889,6 @@ class _OutputDirShim:
         self.name = str(path)
 
 
-class _SandboxWithListing:
-    def __init__(self, output_files: list[str]) -> None:
-        self._output_files = output_files
-
-    def get_output_files(self) -> list[str]:
-        return self._output_files
-
-
 def _decode_content_bytes(item: Content) -> bytes:
     import base64
 
@@ -928,7 +918,7 @@ def test_collect_output_relative_paths_skips_symlinked_file(tmp_path: Path) -> N
     secret.write_text("HOST_SECRET", encoding="utf-8")
     (output_root / "leak.txt").symlink_to(secret)
 
-    relative_paths = execute_code_module._collect_output_relative_paths(sandbox=object(), root=output_root)
+    relative_paths = execute_code_module._collect_output_relative_paths(root=output_root)
 
     assert "report.txt" in relative_paths
     assert "leak.txt" not in relative_paths
@@ -945,7 +935,7 @@ def test_collect_output_relative_paths_skips_symlinked_directory(tmp_path: Path)
     (outside_dir / "deep.txt").write_text("deep-secret", encoding="utf-8")
     (output_root / "linked_dir").symlink_to(outside_dir, target_is_directory=True)
 
-    relative_paths = execute_code_module._collect_output_relative_paths(sandbox=object(), root=output_root)
+    relative_paths = execute_code_module._collect_output_relative_paths(root=output_root)
 
     assert relative_paths == set()
 
@@ -959,7 +949,7 @@ def test_collect_output_relative_paths_skips_junctioned_directory(tmp_path: Path
     (outside_dir / "deep.txt").write_text("deep-secret", encoding="utf-8")
     _create_junction_or_skip(link=output_root / "linked_dir", target=outside_dir)
 
-    relative_paths = execute_code_module._collect_output_relative_paths(sandbox=object(), root=output_root)
+    relative_paths = execute_code_module._collect_output_relative_paths(root=output_root)
 
     assert relative_paths == set()
 
@@ -977,7 +967,6 @@ def test_parse_output_files_skips_symlink_to_host_file(tmp_path: Path, monkeypat
     (output_root / "leak.txt").symlink_to(secret)
 
     contents = execute_code_module._parse_output_files(
-        sandbox=object(),
         output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
         expect_output_files=False,
     )
@@ -988,10 +977,8 @@ def test_parse_output_files_skips_symlink_to_host_file(tmp_path: Path, monkeypat
     assert all(b"HOST_SECRET" not in _decode_content_bytes(item) for item in contents if item.type == "data")
 
 
-def test_parse_output_files_rejects_intermediate_dir_symlink_from_listing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A backend-listed path traversing an intermediate dir symlink must be rejected."""
+def test_parse_output_files_rejects_intermediate_dir_symlink(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A path traversing an intermediate dir symlink must be rejected."""
     if not _symlinks_supported(tmp_path):
         pytest.skip("Symlinks not supported on this platform/environment")
     monkeypatch.setattr(execute_code_module, "OUTPUT_FILE_RETRY_ATTEMPTS", 1)
@@ -1003,7 +990,6 @@ def test_parse_output_files_rejects_intermediate_dir_symlink_from_listing(
     (output_root / "sub").symlink_to(outside_dir, target_is_directory=True)
 
     contents = execute_code_module._parse_output_files(
-        sandbox=_SandboxWithListing(["output/sub/leak.txt"]),
         output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
         expect_output_files=False,
     )
@@ -1012,10 +998,8 @@ def test_parse_output_files_rejects_intermediate_dir_symlink_from_listing(
     assert all(item.additional_properties.get("path") != "/output/sub/leak.txt" for item in contents)
 
 
-def test_parse_output_files_rejects_intermediate_dir_junction_from_listing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A backend-listed path traversing an intermediate dir junction must be rejected."""
+def test_parse_output_files_rejects_intermediate_dir_junction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A path traversing an intermediate dir junction must be rejected."""
     monkeypatch.setattr(execute_code_module, "OUTPUT_FILE_RETRY_ATTEMPTS", 1)
     output_root = tmp_path / "output"
     output_root.mkdir()
@@ -1025,13 +1009,73 @@ def test_parse_output_files_rejects_intermediate_dir_junction_from_listing(
     _create_junction_or_skip(link=output_root / "sub", target=outside_dir)
 
     contents = execute_code_module._parse_output_files(
-        sandbox=_SandboxWithListing(["output/sub/leak.txt"]),
         output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
         expect_output_files=False,
     )
 
     assert all(b"HOST_SECRET" not in _decode_content_bytes(item) for item in contents if item.type == "data")
     assert all(item.additional_properties.get("path") != "/output/sub/leak.txt" for item in contents)
+
+
+def test_parse_output_files_rejects_intermediate_dir_swap_after_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    monkeypatch.setattr(execute_code_module, "OUTPUT_FILE_RETRY_ATTEMPTS", 1)
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    output_subdir = output_root / "sub"
+    output_subdir.mkdir()
+    output_file = output_subdir / "report.txt"
+    output_file.write_text("safe-report", encoding="utf-8")
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    (outside_dir / "report.txt").write_text("HOST_SECRET", encoding="utf-8")
+    original_is_safe_output_file = execute_code_module._is_safe_output_file
+    swapped = False
+
+    def swap_parent_after_validation(*, root: Path, host_path: Path) -> bool:
+        nonlocal swapped
+        is_safe = original_is_safe_output_file(root=root, host_path=host_path)
+        if is_safe and host_path == output_file and not swapped:
+            swapped = True
+            output_subdir.rename(output_root / "original-sub")
+            output_subdir.symlink_to(outside_dir, target_is_directory=True)
+        return is_safe
+
+    monkeypatch.setattr(execute_code_module, "_is_safe_output_file", swap_parent_after_validation)
+
+    contents = execute_code_module._parse_output_files(
+        output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
+        expect_output_files=False,
+    )
+
+    assert swapped
+    assert not any(item.type == "data" for item in contents)
+    assert all(b"HOST_SECRET" not in _decode_content_bytes(item) for item in contents if item.type == "data")
+
+
+async def test_execute_code_tool_fails_closed_for_nested_output_without_secure_dir_fd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+    monkeypatch.setattr(
+        execute_code_module,
+        "_supports_secure_output_dir_fd",
+        lambda: False,
+        raising=False,
+    )
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path)
+
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-nested-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    _assert_bounded_output_error(contents, "Nested output attachments cannot be opened safely")
 
 
 def test_clear_directory_removes_junction_without_deleting_target(tmp_path: Path) -> None:
@@ -1089,7 +1133,6 @@ def test_parse_output_files_collects_real_output_file(tmp_path: Path) -> None:
     (output_root / "report.txt").write_text("artifact", encoding="utf-8")
 
     contents = execute_code_module._parse_output_files(
-        sandbox=object(),
         output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
         expect_output_files=True,
     )
@@ -1155,12 +1198,12 @@ async def test_execute_code_tool_checks_output_count_before_reading(
     _assert_bounded_output_error(contents, "output file count limit")
 
 
-async def test_execute_code_tool_stops_consuming_backend_listing_at_count_limit(
+async def test_execute_code_tool_does_not_call_eager_backend_output_listing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _FakeSandboxWithBoundedOutputListing.listing_items_requested = 0
-    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputListing)
+    _FakeSandboxWithEagerOutputListing.listing_calls = 0
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithEagerOutputListing)
     execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path, max_output_files=2)
 
     try:
@@ -1168,7 +1211,7 @@ async def test_execute_code_tool_stops_consuming_backend_listing_at_count_limit(
     finally:
         _close_execute_code_registry(execute_code)
 
-    assert _FakeSandboxWithBoundedOutputListing.listing_items_requested == 3
+    assert _FakeSandboxWithEagerOutputListing.listing_calls == 0
     _assert_bounded_output_error(contents, "output file count limit")
 
 
