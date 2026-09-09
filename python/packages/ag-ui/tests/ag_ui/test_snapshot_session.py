@@ -209,6 +209,35 @@ class TestResumeSeededMessages:
         assert session.stored is not None
         assert session.stored.messages[0]["content"] == "hi"
 
+    async def test_replayed_transcript_uses_reconstructor_not_blind_prepend(self) -> None:
+        """Client-replayed history must not be naively prepended again (#8140)."""
+        from agent_framework_ag_ui._run_common import _reconstruct_messages_from_thread_snapshot
+
+        stored = [
+            {"id": "u1", "role": "user", "content": "please run the tool"},
+            {
+                "id": "a1",
+                "role": "assistant",
+                "content": "",
+                "toolCalls": [
+                    {"id": "c1", "type": "function", "function": {"name": "needs_approval", "arguments": "{}"}}
+                ],
+            },
+        ]
+        incoming = [*stored, {"id": "u2", "role": "user", "content": "approved"}]
+        reconstructed = _reconstruct_messages_from_thread_snapshot(
+            stored_messages=stored,
+            incoming_messages=incoming,
+            stored_interrupt=[{"interruptId": "int-1"}],
+        )
+        assert [message["id"] for message in reconstructed] == ["u1", "a1", "u2"]
+        # resume_seeded_messages remains blind prepend for save-time / empty seeds.
+        snapshot = AGUIThreadSnapshot(messages=stored, interrupt=[{"interruptId": "int-1"}])
+        store = await make_store_with("user-1", "t-replay", snapshot)
+        session = await ThreadSnapshotSession.open(store=store, scope="user-1", thread_id="t-replay")
+        seeded = session.resume_seeded_messages([{"id": "u2", "role": "user", "content": "approved"}])
+        assert [message["id"] for message in seeded] == ["u1", "a1", "u2"]
+
     async def test_without_stored_snapshot_returns_incoming_unchanged(self) -> None:
         session = await ThreadSnapshotSession.open(store=None, scope=None, thread_id="t1")
         incoming = [{"id": "m2", "role": "user", "content": "hello"}]

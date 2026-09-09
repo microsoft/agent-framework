@@ -22,7 +22,7 @@ from ag_ui.core import (
     StateSnapshotEvent,
 )
 
-from ._run_common import _build_run_finished_event, _reconstruct_messages_from_thread_snapshot
+from ._run_common import _build_run_finished_event
 from ._snapshots import (
     AGUIThreadSnapshot,
     AGUIThreadSnapshotStore,
@@ -132,26 +132,20 @@ class ThreadSnapshotSession:
         return state
 
     def resume_seeded_messages(self, incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Merge stored thread history with resume messages without double-persisting.
+        """Prepend copies of stored thread history to a resume request's messages.
 
-        Empty incoming prepends stored history (approval / checkpoint builders that
-        need history in the provider or snapshot input). Non-empty incoming is
-        overlapped via the thread-snapshot reconstructor so a client that replays
-        its transcript is not duplicated.
+        Resume requests often carry only the synthesized interrupt response; seeding
+        with stored history keeps the persisted thread from being truncated.
 
-        Agent confirm_changes resumes that synthesize the tool result separately
-        should keep empty incoming as empty and call this only for non-empty
-        client-replayed transcripts (or at save-time for interrupt-only resumes).
+        For non-empty client-replayed transcripts that already overlap stored
+        history, callers should use ``_reconstruct_messages_from_thread_snapshot``
+        instead so messages are not double-persisted (#8140).
         """
         if self._stored is None:
             return incoming
         if not incoming:
             return [copy.deepcopy(message) for message in self._stored.messages]
-        return _reconstruct_messages_from_thread_snapshot(
-            stored_messages=self._stored.messages,
-            incoming_messages=incoming,
-            stored_interrupt=self._stored.interrupt,
-        )
+        return [copy.deepcopy(message) for message in self._stored.messages] + incoming
 
     async def save(
         self,
