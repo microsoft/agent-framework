@@ -9,5 +9,6 @@ and index creation is authorized.
 Run it from `python/`:
 
 ```bash
-uv run packages/azure-documentdb/samples/azure_documentdb_vectors.py
+uv run --package agent-framework-azure-documentdb \
+    python packages/azure-documentdb/samples/azure_documentdb_vectors.py
 ```

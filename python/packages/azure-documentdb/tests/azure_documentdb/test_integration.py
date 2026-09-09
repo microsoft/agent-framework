@@ -84,6 +84,15 @@ async def test_managed_documentdb_two_vector_fields_with_1000_records() -> None:
         content_page = [result async for result in content_results]
         assert content_page and content_page[0]["record"]["id"] == "record-0000"
 
+        negative_filter_results = await connector.search(
+            vector=_vector(0),
+            vector_property_name="content_vector",
+            filter=Filter("category", "ne", "odd"),
+            top=5,
+        )
+        negative_filter_page = [result async for result in negative_filter_results]
+        assert negative_filter_page and all(result["record"]["category"] == "even" for result in negative_filter_page)
+
         title_results = await connector.search(
             vector=_vector(1),
             vector_property_name="title_vector",

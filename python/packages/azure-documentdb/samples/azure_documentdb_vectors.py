@@ -1,10 +1,3 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "agent-framework-azure-documentdb",
-# ]
-# ///
-
 # Copyright (c) Microsoft. All rights reserved.
 
 from __future__ import annotations
