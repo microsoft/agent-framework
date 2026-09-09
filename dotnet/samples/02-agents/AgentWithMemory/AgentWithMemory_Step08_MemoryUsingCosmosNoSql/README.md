@@ -1,6 +1,6 @@
 ﻿# Agent with Memory Using Azure Cosmos DB for NoSQL
 
-This sample uses `ChatHistoryMemoryProvider` with `CosmosNoSqlVectorStore` to persist chat history in Azure Cosmos DB for NoSQL and recall relevant messages in a new agent session.
+This sample uses `ChatHistoryMemoryProvider` with `CosmosVectorStore` to persist chat history in Azure Cosmos DB for NoSQL and recall relevant messages in a new agent session.
 
 ## Features Demonstrated
 

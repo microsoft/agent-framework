@@ -303,7 +303,7 @@ Use it when you need all of the following together:
 ```python
 from contextlib import AsyncExitStack
 
-from agent_framework import Agent
+from agent_framework import Agent, AgentSession
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.security import SecureAgentConfig, SecureMCPToolProxy
 from azure.identity import AzureCliCredential
@@ -349,13 +349,15 @@ async def run_secure_github_mcp(github_pat: str, endpoint: str) -> None:
             )
         )
 
+        session = AgentSession()
         result = await agent.run(
-            "Fetch 3 most recent open pull requests in microsoft/agent-framework."
+            "Fetch 3 most recent open pull requests in microsoft/agent-framework.",
+            session=session,
         )
         print(result.text)
 
         # Optional auditing surface for policy decisions
-        for entry in config.get_audit_log():
+        for entry in config.get_audit_log(session):
             print(entry)
 ```
 
@@ -374,7 +376,7 @@ async def run_secure_github_mcp(github_pat: str, endpoint: str) -> None:
 2. Pass `secure_mcp.tools` into `Agent(..., tools=...)`.
 3. Use `context_providers=[SecureAgentConfig(...)]` instead of manual security wiring.
 4. Keep `auto_hide_untrusted=True` unless you have a very specific reason to expose untrusted content.
-5. If write-like actions are blocked, inspect `config.get_audit_log()` first.
+5. If write-like actions are blocked, inspect `config.get_audit_log(session)` first.
 
 
 ### 7. Security Tools
@@ -492,10 +494,16 @@ agent = Agent(
 - `get_tools()` → Returns `[quarantined_llm, inspect_variable]`
 - `get_instructions()` → Returns `SECURITY_TOOL_INSTRUCTIONS` (detailed guidance for agents)
 - `get_middleware()` → Returns `[LabelTrackingFunctionMiddleware, PolicyEnforcementFunctionMiddleware]`
+- `get_audit_log(session)` / `get_variable_store(session)` / `list_variables(session)` → Read one conversation's security state
 - `get_quarantine_client()` → Returns the configured quarantine chat client (or None)
 - `before_run(context)` → Automatically injects tools, instructions, and middleware into the agent context
 
 > **Note:** When using `context_providers=[config]`, you do NOT need to manually call `get_tools()`, `get_instructions()`, or `get_middleware()`. The context provider handles everything via `before_run()`.
+
+> **Note:** Security state (context label, hidden-content variables, audit log, and pending approvals) is stored per
+> session in `AgentSession.state`. Reusing or restoring a session preserves its state; different sessions remain
+> isolated. Pass the session to the state accessors above for provider-driven runs; after provider use, omitting it
+> raises rather than reading unrelated standalone state.
 
 ### 9. Security Instructions for Agents
 
@@ -1094,9 +1102,10 @@ config = SecureAgentConfig(
 config.get_tools() -> List[FunctionTool]      # Returns [quarantined_llm, inspect_variable]
 config.get_instructions() -> str              # Returns SECURITY_TOOL_INSTRUCTIONS
 config.get_middleware() -> List[FunctionMiddleware]  # Returns configured middleware
-config.get_audit_log() -> List[Dict[str, Any]]
-config.get_variable_store() -> ContentVariableStore
-config.list_variables() -> List[str]
+config.get_audit_log(session: AgentSession | None = None) -> List[Dict[str, Any]]
+config.get_variable_store(session: AgentSession | None = None) -> ContentVariableStore
+config.list_variables(session: AgentSession | None = None) -> List[str]
+# Omit session only when using config.get_middleware() exclusively.
 ```
 
 ### quarantined_llm

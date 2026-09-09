@@ -7,7 +7,6 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.InProc;
 
@@ -57,11 +56,11 @@ public class CheckpointVersionToleranceTests
             }
         }
 
-        checkpoint.Should().NotBeNull();
-        store.MutationApplied.Should().BeFalse();
+        Assert.NotNull(checkpoint);
+        Assert.False(store.MutationApplied);
 
         // Resume against the mutated store, which rewrites every Version=X.Y.Z.W in the persisted JSON.
-        Func<Task> resume = async () =>
+        async Task resumeAsync()
         {
             await using StreamingRun resumed = await env.WithCheckpointing(checkpointManager)
                                                         .ResumeStreamingAsync(workflow, checkpoint!);
@@ -69,10 +68,10 @@ public class CheckpointVersionToleranceTests
             await foreach (WorkflowEvent _ in resumed.WatchStreamAsync(blockOnPendingRequest: false, cts.Token))
             {
             }
-        };
+        }
 
-        await resume.Should().NotThrowAsync("resume must succeed when persisted assembly versions differ from loaded ones");
-        store.MutationApplied.Should().BeTrue();
+        Assert.Null(await Record.ExceptionAsync(resumeAsync));
+        Assert.True(store.MutationApplied);
     }
 
     /// <summary>

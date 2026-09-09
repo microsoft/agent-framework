@@ -6,7 +6,6 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.UnitTests.Futures;
 using Microsoft.Extensions.AI;
 
@@ -67,10 +66,8 @@ public class ConcurrentWorkflowBuilderTests
             .Build();
 
         Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
-        designations.Where(kvp => kvp.Value.Count == 0)
-            .Should().ContainSingle("ConcurrentEndExecutor is the sole terminal output by default");
-        designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))
-            .Should().HaveCount(6, "every agent (3) and per-agent accumulator (3) is designated intermediate by default");
+        Assert.Single(designations, kvp => kvp.Value.Count == 0);
+        Assert.Equal(6, designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))?.Count());
     }
 
     [Fact]
@@ -87,12 +84,9 @@ public class ConcurrentWorkflowBuilderTests
 
         Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
 
-        designations.Should().HaveCount(2,
-            "only the two explicitly-designated agents land on the inner builder; the end + accumulator defaults are suppressed");
-        designations.Values.Where(tags => tags.Count == 0)
-            .Should().ContainSingle("agent1 is the only terminal designation");
-        designations.Values.Where(tags => tags.Contains(OutputTag.Intermediate))
-            .Should().ContainSingle("agent2 is the only intermediate designation");
+        Assert.Equal(2, designations.Count);
+        Assert.Single(designations.Values, tags => tags.Count == 0);
+        Assert.Single(designations.Values, tags => tags.Contains(OutputTag.Intermediate));
     }
 
     [Fact]
@@ -104,8 +98,8 @@ public class ConcurrentWorkflowBuilderTests
         ConcurrentWorkflowBuilder builder = new ConcurrentWorkflowBuilder(participant)
             .WithIntermediateOutputFrom([stranger]);
 
-        Action build = () => builder.Build();
-        build.Should().Throw<InvalidOperationException>().WithMessage("*stranger*");
+        void build() => builder.Build();
+        Assert.Contains("stranger", Assert.Throws<InvalidOperationException>(build).Message);
     }
 
     [Fact]
@@ -115,7 +109,7 @@ public class ConcurrentWorkflowBuilderTests
             .WithName("named-concurrent")
             .Build();
 
-        workflow.Name.Should().Be("named-concurrent");
+        Assert.Equal("named-concurrent", workflow.Name);
     }
 
     [Fact]
@@ -125,7 +119,7 @@ public class ConcurrentWorkflowBuilderTests
             .WithDescription("describes the concurrent fan-out/fan-in")
             .Build();
 
-        workflow.Description.Should().Be("describes the concurrent fan-out/fan-in");
+        Assert.Equal("describes the concurrent fan-out/fan-in", workflow.Description);
     }
 
     [Collection(FuturesSerialCollection.Name)]
@@ -156,9 +150,8 @@ public class ConcurrentWorkflowBuilderTests
                 .Select(n => n!)
                 .ToHashSet();
 
-            authoredBy.Should().Contain("agent1", "the designated agent must surface");
-            authoredBy.Should().NotContain("agent2",
-                "the undesignated agent must not surface when only one is designated under Futures-on");
+            Assert.Contains("agent1", authoredBy);
+            Assert.DoesNotContain("agent2", authoredBy);
         }
     }
 }

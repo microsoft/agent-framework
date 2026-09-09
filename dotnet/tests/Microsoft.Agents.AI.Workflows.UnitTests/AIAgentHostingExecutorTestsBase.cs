@@ -2,7 +2,6 @@
 
 using System.Collections.Generic;
 using System.Linq;
-using FluentAssertions;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -28,24 +27,24 @@ public abstract class AIAgentHostingExecutorTestsBase
             // The way TestReplayAgent is set up, it will emit one update per non-empty AIContent
             List<AIContent> expectedUpdateContents = TestMessages.SelectMany(message => message.Contents).ToList();
 
-            updates.Should().HaveCount(expectedUpdateContents.Count);
+            Assert.Equal(expectedUpdateContents.Count, updates.Length);
             for (int i = 0; i < updates.Length; i++)
             {
                 AgentResponseUpdateEvent updateEvent = updates[i];
                 AIContent expectedUpdateContent = expectedUpdateContents[i];
 
-                updateEvent.ExecutorId.Should().Be(expectedExecutorId);
+                Assert.Equal(expectedExecutorId, updateEvent.ExecutorId);
 
                 AgentResponseUpdate update = updateEvent.Update;
-                update.AuthorName.Should().Be(TestAgentName);
-                update.AgentId.Should().Be(TestAgentId);
-                update.Contents.Should().HaveCount(1);
-                update.Contents[0].Should().BeEquivalentTo(expectedUpdateContent);
+                Assert.Equal(TestAgentName, update.AuthorName);
+                Assert.Equal(TestAgentId, update.AgentId);
+                AIContent updateContent = Assert.Single(update.Contents);
+                Assert.Equivalent(expectedUpdateContent, updateContent);
             }
         }
         else
         {
-            updates.Should().BeEmpty();
+            Assert.Empty(updates);
         }
     }
 
@@ -53,27 +52,27 @@ public abstract class AIAgentHostingExecutorTestsBase
     {
         if (expectingResponse)
         {
-            updates.Should().HaveCount(1);
+            Assert.Single(updates);
 
             AgentResponseEvent responseEvent = updates[0];
-            responseEvent.ExecutorId.Should().Be(expectedExecutorId);
+            Assert.Equal(expectedExecutorId, responseEvent.ExecutorId);
 
             AgentResponse response = responseEvent.Response;
-            response.AgentId.Should().Be(TestAgentId);
-            response.Messages.Should().HaveCount(TestMessages.Count - 1);
+            Assert.Equal(TestAgentId, response.AgentId);
+            Assert.Equal(TestMessages.Count - 1, response.Messages.Count);
 
             for (int i = 0; i < response.Messages.Count; i++)
             {
                 ChatMessage responseMessage = response.Messages[i];
                 ChatMessage expectedMessage = TestMessages[i + 1]; // Skip the first empty message
 
-                responseMessage.AuthorName.Should().Be(TestAgentName);
-                responseMessage.Text.Should().Be(expectedMessage.Text);
+                Assert.Equal(TestAgentName, responseMessage.AuthorName);
+                Assert.Equal(expectedMessage.Text, responseMessage.Text);
             }
         }
         else
         {
-            updates.Should().BeEmpty();
+            Assert.Empty(updates);
         }
     }
 }

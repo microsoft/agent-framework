@@ -7,7 +7,6 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -160,7 +159,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
         {
             if (session.UnservicedRequests.TryGetValue(response.CallId, out FunctionCallContent? request))
             {
-                response.Result.As<FunctionCallContent>().Should().Be(request);
+                Assert.Equal(request, Assert.IsType<FunctionCallContent>(response.Result));
                 session.ServicedRequests.Add(response.CallId);
                 session.UnservicedRequests.Remove(response.CallId);
             }
@@ -200,8 +199,8 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
         {
             if (session.UnservicedRequests.TryGetValue(response.RequestId, out ToolApprovalRequestContent? request))
             {
-                response.Approved.Should().BeTrue();
-                ((FunctionCallContent)response.ToolCall).Should().Be((FunctionCallContent)request.ToolCall);
+                Assert.True(response.Approved);
+                Assert.Equal((FunctionCallContent)request.ToolCall, (FunctionCallContent)response.ToolCall);
                 session.ServicedRequests.Add(response.RequestId);
                 session.UnservicedRequests.Remove(response.RequestId);
             }
@@ -255,14 +254,15 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
         where TRequest : AIContent
         where TResponse : AIContent
     {
-        this.LastSession.Should().NotBeNull();
+        Assert.NotNull(this.LastSession);
         TestRequestAgentSession<TRequest, TResponse> traSession = ConvertSession<TRequest, TResponse>(this.LastSession);
 
-        requests.Should().HaveCount(traSession.UnservicedRequests.Count);
-        foreach (TRequest request in requests)
+        List<TRequest> requestList = requests.ToList();
+        Assert.Equal(traSession.UnservicedRequests.Count, requestList.Count);
+        foreach (TRequest request in requestList)
         {
             string requestId = RetrieveId(request);
-            traSession.UnservicedRequests.Should().ContainKey(requestId);
+            Assert.Contains(requestId, traSession.UnservicedRequests);
             yield return strategy.CreatePairedResponse(request);
         }
     }
@@ -310,7 +310,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
 
         static TRequest AssertAndExtractRequestContent<TRequest>(ExternalRequest request)
         {
-            request.TryGetDataAs(out TRequest? content).Should().BeTrue();
+            Assert.True(request.TryGetDataAs(out TRequest? content));
             return content!;
         }
     }

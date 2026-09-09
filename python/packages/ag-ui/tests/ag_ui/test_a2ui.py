@@ -12,7 +12,7 @@ extra; the base package does not require it).
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -1189,12 +1189,84 @@ def test_a2ui_agent_delegates_run_loop_attrs_to_inner():
         client = object()
         default_options: dict[str, Any] = {"tools": []}
         context_providers = ["cp"]
+        service_session_state_keys = frozenset({"provider_session"})
 
     inner = _Inner()
     runner = A2UIAgent(inner, _RenderSub())
     assert runner.client is inner.client
     assert runner.default_options is inner.default_options
     assert runner.context_providers is inner.context_providers
+    assert runner.service_session_state_keys is inner.service_session_state_keys
+
+
+def test_a2ui_agent_preserves_provider_state_authority_boundary():
+    from agent_framework import AgentSession
+
+    from agent_framework_ag_ui import AGUIThreadSnapshot
+    from agent_framework_ag_ui._agent_run import (
+        _provider_service_session_state_keys,
+        _request_state_protected_keys,
+        _restore_session_continuation_state,
+        _serialize_session_continuation_state,
+    )
+
+    inner = type(
+        "_Inner",
+        (),
+        {
+            "id": "i",
+            "name": "n",
+            "description": "d",
+            "context_providers": [],
+            "service_session_state_keys": frozenset({"provider_session"}),
+        },
+    )()
+    runner = A2UIAgent(inner, _RenderSub())
+
+    assert "provider_session" in _request_state_protected_keys(cast(Any, runner))
+    source = AgentSession()
+    source.state.update({"provider_session": "provider-id", "private": "preserved"})
+    serialized = _serialize_session_continuation_state(
+        source,
+        cast(Any, runner),
+        shared_state_keys=set(),
+        include_service_session_id=False,
+    )
+    assert serialized == {"private": "preserved"}
+
+    restored = AgentSession()
+    _restore_session_continuation_state(
+        restored,
+        AGUIThreadSnapshot(
+            session_state={
+                "provider_session": "client-or-stale-id",
+                "private": "preserved",
+            }
+        ),
+        restore_service_session_id=False,
+        excluded_state_keys=_provider_service_session_state_keys(cast(Any, runner)),
+    )
+    assert restored.state == {"private": "preserved"}
+
+
+def test_a2ui_agent_conditionally_delegates_conversation_creation():
+    async def create_conversation(*, session_id: str) -> str:
+        return session_id
+
+    inner = type(
+        "_Inner",
+        (),
+        {
+            "id": "i",
+            "name": "n",
+            "description": "d",
+            "create_conversation": staticmethod(create_conversation),
+        },
+    )()
+    runner = A2UIAgent(inner, _RenderSub())
+
+    assert runner.create_conversation is getattr(inner, "create_conversation")
+    assert not hasattr(A2UIAgent(type("_NoConversation", (), {})(), _RenderSub()), "create_conversation")
 
 
 def test_a2ui_agent_uses_per_request_context_over_constructor():

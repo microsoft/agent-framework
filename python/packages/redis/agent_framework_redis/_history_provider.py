@@ -9,8 +9,9 @@ This module provides ``RedisHistoryProvider``, built on the new
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
-from typing import Any, ClassVar
+from collections.abc import Awaitable, Sequence
+from inspect import isawaitable
+from typing import Any, ClassVar, TypeVar, cast
 
 import redis.asyncio as redis
 from agent_framework import Message
@@ -19,6 +20,23 @@ from agent_framework._telemetry import mark_feature_used
 from redis.credentials import CredentialProvider
 
 from ._feature_usage import FeatureIndex
+
+_T = TypeVar("_T")
+
+
+async def _redis_result(value: Awaitable[_T] | _T) -> _T:
+    """Await a redis-py command result that is annotated as the sync/async union.
+
+    Several redis-py commands are annotated as returning ``Awaitable[T] | T`` even on the asyncio
+    client, so awaiting them directly does not type-check. Newer redis-py releases narrow those
+    annotations to the awaitable alone, which makes a bare ``# type: ignore`` *required* on the
+    older annotations and *unnecessary* on the newer ones: no single ignore comment satisfies the
+    whole supported range. Normalising through this helper type-checks on every supported version
+    without an ignore comment.
+    """
+    if isawaitable(value):
+        return cast("_T", await value)
+    return cast("_T", value)
 
 
 class RedisHistoryProvider(HistoryProvider):
@@ -135,11 +153,15 @@ class RedisHistoryProvider(HistoryProvider):
         """
         mark_feature_used(FeatureIndex.REDIS)
         key = self._redis_key(session_id)
-        redis_messages: list[str] = await self._redis_client.lrange(key, 0, -1)  # type: ignore[misc]
+        # ``lrange`` is annotated with a partially unknown return type across the supported redis
+        # range, so neither keeping nor dropping an ignore comment here is correct for all of it.
+        # Reaching the method through an explicitly ``Any``-typed client makes the call site
+        # version-independent, and the outer cast pins the element type that
+        # ``decode_responses=True`` guarantees.
+        redis_messages = cast("list[str]", await _redis_result(cast("Any", self._redis_client).lrange(key, 0, -1)))
         messages: list[Message] = []
-        if redis_messages:
-            for serialized in redis_messages:  # type: ignore[union-attr]
-                messages.append(Message.from_dict(self._deserialize_json(serialized)))  # type: ignore[union-attr]
+        for serialized in redis_messages:
+            messages.append(Message.from_dict(self._deserialize_json(serialized)))
         return messages
 
     async def save_messages(
@@ -182,13 +204,13 @@ class RedisHistoryProvider(HistoryProvider):
 
         async with self._redis_client.pipeline(transaction=True) as pipe:
             for serialized in serialized_messages:
-                await pipe.rpush(key, serialized)  # type: ignore[misc]
+                await _redis_result(pipe.rpush(key, serialized))
             await pipe.execute()
 
         if self.max_messages is not None:
-            current_count = await self._redis_client.llen(key)  # type: ignore[misc]
+            current_count: int = await _redis_result(self._redis_client.llen(key))
             if current_count > self.max_messages:
-                await self._redis_client.ltrim(key, -self.max_messages, -1)  # type: ignore[misc]
+                await _redis_result(self._redis_client.ltrim(key, -self.max_messages, -1))
 
     @staticmethod
     def _serialize_json(message: Message) -> str:

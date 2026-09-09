@@ -215,7 +215,7 @@ The Responses package provides the helper-first surface for OpenAI Responses-sha
 
 - `messages_from_responses_input(input) -> list[Message]`
 - `responses_to_run(body) -> AgentRunArgs`
-- `responses_session_id(body) -> str | None`
+- `responses_session_id(body) -> tuple[str, bool] | tuple[None, None]`
 - `create_response_id() -> str`
 
 `responses_to_run(...)` returns values corresponding to `Agent.run(...)`:
@@ -233,23 +233,36 @@ It excludes protocol transport/session fields from `options` and remaps known Re
 `responses_session_id(...)` returns:
 
 - `previous_response_id` when present (`resp_*`);
-- otherwise `conversation_id` when present (`conv_*`);
-- otherwise `None`.
+- otherwise the id from `conversation` when present as a string or `{ "id": ... }` object (`conv_*`);
+- otherwise the id from deprecated `conversation_id`, with a deprecation warning;
+- otherwise `(None, None)`.
+
+The returned boolean identifies conversation-based continuation. Supplying more
+than one continuation mechanism is invalid.
 
 The helper only extracts the candidate key. App code decides whether to trust and use that key.
 
 ### Response helpers
 
-- `responses_from_run(result, *, response_id, session_id=None) -> dict[str, Any]`
-- `responses_from_streaming_run(stream, *, response_id, session_id=None) -> AsyncIterator[str]`
+- `responses_from_run(result, *, response_id, conversation_id=None) -> dict[str, Any]`
+- `responses_from_streaming_run(stream, *, response_id, conversation_id=None) -> AsyncIterator[str]`
 
 `responses_from_run(...)` renders a full Responses JSON payload from an `AgentResponse`. It renders the full set of
-OpenAI Responses output item types supported by Agent Framework content.
+OpenAI Responses output item types supported by Agent Framework content. Transport status is read from the nested raw
+Responses representation when available, rather than from free-form `AgentResponse.additional_properties`, where providers
+may flatten user metadata. Failed transport responses preserve the structured error from that same raw representation.
+A native Responses usage object from that raw representation is preserved when it validates against the installed OpenAI
+SDK; raw and Agent Framework counters are never merged. Without valid raw usage, `UsageDetails` counters map only to their
+matching Responses fields and the installed SDK validates the resulting version-specific detail shape. Missing counters
+are not cross-filled or rendered as invented zeros. An absent total alone is derived as the sum of the known input and
+output counts. Explicit zero values are preserved, while usage whose detail or total relationships cannot form a consistent
+Responses shape is omitted.
 
 `responses_from_streaming_run(...)` renders Server-Sent Event strings for a `ResponseStream`. It emits a created event,
-text deltas, and a completed event. The final completed payload is produced through `responses_from_run(...)`; the helper
-also preserves the model id observed on streaming updates when the finalized `AgentResponse` no longer carries raw model
-metadata.
+text deltas, and a terminal event matching the final `completed`, `incomplete`, or `failed` status. A stream that finalizes
+with another status is rejected and rendered as `response.failed`. The final payload is produced through
+`responses_from_run(...)`; the helper also preserves the model id observed on streaming updates when the finalized
+`AgentResponse` no longer carries raw model metadata.
 
 ## `agent-framework-hosting-a2a`
 
@@ -451,7 +464,8 @@ state = AgentState(create_agent)
 @app.post("/responses", response_model=None)
 async def responses(body: dict = Body(...)) -> JSONResponse | StreamingResponse:
     run = responses_to_run(body)
-    candidate_session_id = responses_session_id(body)
+    candidate_session_id, is_conversation_id = responses_session_id(body)
+    conversation_id = candidate_session_id if is_conversation_id else None
     response_id = create_response_id()
 
     # Verify this caller owns candidate_session_id before loading it.
@@ -468,16 +482,16 @@ async def responses(body: dict = Body(...)) -> JSONResponse | StreamingResponse:
             async for event in responses_from_streaming_run(
                 stream,
                 response_id=response_id,
-                session_id=candidate_session_id,
+                conversation_id=conversation_id,
             ):
                 yield event
-            await state.set_session(response_id, session)
+            await state.set_session(conversation_id or response_id, session)
 
         return StreamingResponse(events(), media_type="text/event-stream")
 
     result = await target.run(run["messages"], session=session, options=run["options"])
-    await state.set_session(response_id, session)
-    return JSONResponse(responses_from_run(result, response_id=response_id, session_id=candidate_session_id))
+    await state.set_session(conversation_id or response_id, session)
+    return JSONResponse(responses_from_run(result, response_id=response_id, conversation_id=conversation_id))
 ```
 
 ## Validation

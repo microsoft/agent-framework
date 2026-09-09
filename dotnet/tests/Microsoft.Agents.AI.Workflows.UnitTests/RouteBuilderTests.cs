@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Execution;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -79,17 +78,17 @@ public sealed class RouteBuilderTests
         CallResult? result = await router.RouteMessageAsync("hello", context, cancellationToken: cancellationToken);
 
         // Assert
-        result.Should().NotBeNull();
-        result!.IsSuccess.Should().BeTrue();
-        result.IsVoid.Should().BeTrue();
-        result.Result.Should().BeNull();
-        invocation.InvocationCount.Should().Be(1);
-        invocation.Message.Should().Be("hello");
-        invocation.Context.Should().BeSameAs(context);
+        Assert.NotNull(result);
+        Assert.True(result!.IsSuccess);
+        Assert.True(result.IsVoid);
+        Assert.Null(result.Result);
+        Assert.Equal(1, invocation.InvocationCount);
+        Assert.Equal("hello", invocation.Message);
+        Assert.Same(context, invocation.Context);
 
         if (UsesCancellationToken(overload))
         {
-            invocation.CancellationToken.Should().Be(cancellationToken);
+            Assert.Equal(cancellationToken, invocation.CancellationToken);
         }
     }
 
@@ -112,18 +111,18 @@ public sealed class RouteBuilderTests
         CallResult? result = await router.RouteMessageAsync("hello", context, cancellationToken: cancellationToken);
 
         // Assert
-        result.Should().NotBeNull();
-        result!.IsSuccess.Should().BeTrue();
-        result.IsVoid.Should().BeFalse();
-        result.Result.Should().Be("HELLO");
-        router.DefaultOutputTypes.Should().Contain(typeof(string));
-        invocation.InvocationCount.Should().Be(1);
-        invocation.Message.Should().Be("hello");
-        invocation.Context.Should().BeSameAs(context);
+        Assert.NotNull(result);
+        Assert.True(result!.IsSuccess);
+        Assert.False(result.IsVoid);
+        Assert.Equal("HELLO", result.Result);
+        Assert.Contains(typeof(string), router.DefaultOutputTypes);
+        Assert.Equal(1, invocation.InvocationCount);
+        Assert.Equal("hello", invocation.Message);
+        Assert.Same(context, invocation.Context);
 
         if (UsesCancellationToken(overload))
         {
-            invocation.CancellationToken.Should().Be(cancellationToken);
+            Assert.Equal(cancellationToken, invocation.CancellationToken);
         }
     }
 
@@ -147,17 +146,17 @@ public sealed class RouteBuilderTests
         CallResult? result = await router.RouteMessageAsync(payload, context, cancellationToken: cancellationToken);
 
         // Assert
-        result.Should().NotBeNull();
-        result!.IsSuccess.Should().BeTrue();
-        result.IsVoid.Should().BeTrue();
-        result.Result.Should().BeNull();
-        invocation.InvocationCount.Should().Be(1);
-        invocation.Message.Should().BeEquivalentTo(new PortableValue(payload));
-        invocation.Context.Should().BeSameAs(context);
+        Assert.NotNull(result);
+        Assert.True(result!.IsSuccess);
+        Assert.True(result.IsVoid);
+        Assert.Null(result.Result);
+        Assert.Equal(1, invocation.InvocationCount);
+        Assert.Equivalent(new PortableValue(payload), invocation.Message);
+        Assert.Same(context, invocation.Context);
 
         if (UsesCancellationToken(overload))
         {
-            invocation.CancellationToken.Should().Be(cancellationToken);
+            Assert.Equal(cancellationToken, invocation.CancellationToken);
         }
     }
 
@@ -181,17 +180,17 @@ public sealed class RouteBuilderTests
         CallResult? result = await router.RouteMessageAsync(payload, context, cancellationToken: cancellationToken);
 
         // Assert
-        result.Should().NotBeNull();
-        result!.IsSuccess.Should().BeTrue();
-        result.IsVoid.Should().BeFalse();
-        result.Result.Should().Be("HELLO");
-        invocation.InvocationCount.Should().Be(1);
-        invocation.Message.Should().BeEquivalentTo(new PortableValue(payload));
-        invocation.Context.Should().BeSameAs(context);
+        Assert.NotNull(result);
+        Assert.True(result!.IsSuccess);
+        Assert.False(result.IsVoid);
+        Assert.Equal("HELLO", result.Result);
+        Assert.Equal(1, invocation.InvocationCount);
+        Assert.Equivalent(new PortableValue(payload), invocation.Message);
+        Assert.Same(context, invocation.Context);
 
         if (UsesCancellationToken(overload))
         {
-            invocation.CancellationToken.Should().Be(cancellationToken);
+            Assert.Equal(cancellationToken, invocation.CancellationToken);
         }
     }
 
@@ -221,18 +220,18 @@ public sealed class RouteBuilderTests
         CallResult? typedResult = await router.RouteMessageAsync(41, context, cancellationToken: cancellationToken);
 
         // Assert
-        voidResult.Should().NotBeNull();
-        voidResult!.IsVoid.Should().BeTrue();
-        voidInvocation.Message.Should().Be("hello");
-        voidInvocation.Context.Should().BeSameAs(context);
-        voidInvocation.CancellationToken.Should().Be(cancellationToken);
+        Assert.NotNull(voidResult);
+        Assert.True(voidResult!.IsVoid);
+        Assert.Equal("hello", voidInvocation.Message);
+        Assert.Same(context, voidInvocation.Context);
+        Assert.Equal(cancellationToken, voidInvocation.CancellationToken);
 
-        typedResult.Should().NotBeNull();
-        typedResult!.Result.Should().Be(42);
-        router.DefaultOutputTypes.Should().Contain(typeof(int));
-        resultInvocation.Message.Should().Be(41);
-        resultInvocation.Context.Should().BeSameAs(context);
-        resultInvocation.CancellationToken.Should().Be(cancellationToken);
+        Assert.NotNull(typedResult);
+        Assert.Equal(42, typedResult!.Result);
+        Assert.Contains(typeof(int), router.DefaultOutputTypes);
+        Assert.Equal(41, resultInvocation.Message);
+        Assert.Same(context, resultInvocation.Context);
+        Assert.Equal(cancellationToken, resultInvocation.CancellationToken);
     }
 
     [Fact]
@@ -242,11 +241,10 @@ public sealed class RouteBuilderTests
         RouteBuilder routeBuilder = new(null);
 
         // Act
-        Action act = () => routeBuilder.AddHandler<PortableValue>((message, context) => { });
+        void act() => routeBuilder.AddHandler<PortableValue>((message, context) => { });
 
         // Assert
-        act.Should().Throw<InvalidOperationException>()
-           .WithMessage("*Use AddCatchAll()*");
+        Assert.Contains("Use AddCatchAll()", Assert.Throws<InvalidOperationException>(act).Message);
     }
 
     [Fact]
@@ -257,11 +255,10 @@ public sealed class RouteBuilderTests
         routeBuilder.AddHandler<string>((message, context) => { });
 
         // Act
-        Action act = () => routeBuilder.AddHandler<string>((message, context) => { });
+        void act() => routeBuilder.AddHandler<string>((message, context) => { });
 
         // Assert
-        act.Should().Throw<ArgumentException>()
-           .WithMessage("*already registered*");
+        Assert.Contains("already registered", Assert.Throws<ArgumentException>(act).Message);
     }
 
     [Fact]
@@ -271,11 +268,10 @@ public sealed class RouteBuilderTests
         RouteBuilder routeBuilder = new(null);
 
         // Act
-        Action act = () => routeBuilder.AddHandler<string>((message, context) => { }, overwrite: true);
+        void act() => routeBuilder.AddHandler<string>((message, context) => { }, overwrite: true);
 
         // Assert
-        act.Should().Throw<ArgumentException>()
-           .WithMessage("*has not yet been registered*");
+        Assert.Contains("has not yet been registered", Assert.Throws<ArgumentException>(act).Message);
     }
 
     [Fact]
@@ -292,7 +288,7 @@ public sealed class RouteBuilderTests
         _ = await router.RouteMessageAsync("hello", context);
 
         // Assert
-        context.SentMessages.Should().ContainSingle().Which.Should().Be("second");
+        Assert.Equal("second", Assert.Single(context.SentMessages));
     }
 
     [Fact]
@@ -303,11 +299,10 @@ public sealed class RouteBuilderTests
         routeBuilder.AddCatchAll((message, context) => { });
 
         // Act
-        Action act = () => routeBuilder.AddCatchAll((message, context) => { });
+        void act() => routeBuilder.AddCatchAll((message, context) => { });
 
         // Assert
-        act.Should().Throw<InvalidOperationException>()
-           .WithMessage("*already registered*");
+        Assert.Contains("already registered", Assert.Throws<InvalidOperationException>(act).Message);
     }
 
     [Fact]
@@ -324,7 +319,7 @@ public sealed class RouteBuilderTests
         _ = await router.RouteMessageAsync(new TestPayload("hello"), context);
 
         // Assert
-        context.SentMessages.Should().ContainSingle().Which.Should().Be("second");
+        Assert.Equal("second", Assert.Single(context.SentMessages));
     }
 
     [Fact]
@@ -334,11 +329,10 @@ public sealed class RouteBuilderTests
         RouteBuilder routeBuilder = new(null);
 
         // Act
-        Action act = () => routeBuilder.AddPortHandler<string, int>("port", (response, context, cancellationToken) => default, out _);
+        void act() => routeBuilder.AddPortHandler<string, int>("port", (response, context, cancellationToken) => default, out _);
 
         // Assert
-        act.Should().Throw<InvalidOperationException>()
-           .WithMessage("*external request context is required*");
+        Assert.Contains("external request context is required", Assert.Throws<InvalidOperationException>(act).Message);
     }
 
     [Fact]
@@ -363,15 +357,15 @@ public sealed class RouteBuilderTests
         CallResult? result = await router.RouteMessageAsync(response, context, cancellationToken: cancellationToken);
 
         // Assert
-        externalRequestContext.RegisteredPorts.Should().ContainSingle(port => port.Id == "port");
-        externalRequestContext.PostedRequests.Should().ContainSingle(request => request.RequestId == "req-1");
-        result.Should().NotBeNull();
-        result!.IsSuccess.Should().BeTrue();
-        result.Result.Should().BeSameAs(response);
-        invocation.InvocationCount.Should().Be(1);
-        invocation.Message.Should().Be(42);
-        invocation.Context.Should().BeSameAs(context);
-        invocation.CancellationToken.Should().Be(cancellationToken);
+        Assert.Equal("port", Assert.Single(externalRequestContext.RegisteredPorts).Id);
+        Assert.Equal("req-1", Assert.Single(externalRequestContext.PostedRequests).RequestId);
+        Assert.NotNull(result);
+        Assert.True(result!.IsSuccess);
+        Assert.Same(response, result.Result);
+        Assert.Equal(1, invocation.InvocationCount);
+        Assert.Equal(42, invocation.Message);
+        Assert.Same(context, invocation.Context);
+        Assert.Equal(cancellationToken, invocation.CancellationToken);
     }
 
     [Fact]
@@ -388,10 +382,10 @@ public sealed class RouteBuilderTests
         CallResult? result = await router.RouteMessageAsync(request.CreateResponse(42), new TestWorkflowContext("executor"));
 
         // Assert
-        result.Should().NotBeNull();
-        result!.IsSuccess.Should().BeFalse();
-        result.Exception.Should().BeOfType<InvalidOperationException>();
-        result.Exception!.Message.Should().Contain("Unknown port");
+        Assert.NotNull(result);
+        Assert.False(result!.IsSuccess);
+        InvalidOperationException exception = Assert.IsType<InvalidOperationException>(result.Exception);
+        Assert.Contains("Unknown port", exception.Message);
     }
 
     private static void RegisterVoidHandler(RouteBuilder routeBuilder, HandlerInvocation invocation, HandlerOverload overload)

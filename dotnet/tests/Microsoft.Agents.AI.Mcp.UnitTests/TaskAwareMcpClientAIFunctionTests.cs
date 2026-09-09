@@ -6,7 +6,6 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -34,10 +33,9 @@ public class TaskAwareMcpClientAIFunctionTests
         object? result = await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
 
         // Assert
-        result.Should().BeOfType<TextContent>()
-            .Which.Text.Should().Be("task-result");
-        fixture.CreatedTaskCount.Should().Be(1);
-        fixture.PollCount.Should().BeGreaterThan(0);
+        Assert.Equal("task-result", Assert.IsType<TextContent>(result).Text);
+        Assert.Equal(1, fixture.CreatedTaskCount);
+        Assert.True(fixture.PollCount > 0);
     }
 
     [Theory]
@@ -62,14 +60,14 @@ public class TaskAwareMcpClientAIFunctionTests
         AIFunction wrapped = (await fixture.Client.ListAgentToolsWithTasksAsync()).Single();
 
         // Act
-        Func<Task> act = async () => await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
+        async Task actAsync() => await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
 
         // Assert
-        await act.Should().ThrowAsync<ModelContextProtocol.McpException>()
-            .WithMessage($"*pollIntervalMs of {pollIntervalMs}*");
+        ModelContextProtocol.McpException exception = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(actAsync);
+        Assert.Contains($"pollIntervalMs of {pollIntervalMs}", exception.Message);
         await fixture.RemoteCancellationObserved.WaitAsync(TimeSpan.FromSeconds(5));
-        fixture.SuccessfulCancellationTransitionCount.Should().Be(1);
-        fixture.CancellationRequestCount.Should().Be(1);
+        Assert.Equal(1, fixture.SuccessfulCancellationTransitionCount);
+        Assert.Equal(1, fixture.CancellationRequestCount);
     }
 
     [Fact]
@@ -91,14 +89,14 @@ public class TaskAwareMcpClientAIFunctionTests
         AIFunction wrapped = (await fixture.Client.ListAgentToolsWithTasksAsync()).Single();
 
         // Act
-        Func<Task> act = async () => await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
+        async Task actAsync() => await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
 
         // Assert
-        await act.Should().ThrowAsync<ModelContextProtocol.McpException>()
-            .WithMessage("*pollIntervalMs of 0*");
+        ModelContextProtocol.McpException exception = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(actAsync);
+        Assert.Contains("pollIntervalMs of 0", exception.Message);
         await fixture.RemoteCancellationObserved.WaitAsync(TimeSpan.FromSeconds(5));
-        fixture.SuccessfulCancellationTransitionCount.Should().Be(1);
-        fixture.CancellationRequestCount.Should().Be(1);
+        Assert.Equal(1, fixture.SuccessfulCancellationTransitionCount);
+        Assert.Equal(1, fixture.CancellationRequestCount);
     }
 
     [Fact]
@@ -135,7 +133,7 @@ public class TaskAwareMcpClientAIFunctionTests
             object? result = await invocation;
 
             // Assert
-            result.Should().BeOfType<TextContent>().Which.Text.Should().Be("completed");
+            Assert.Equal("completed", Assert.IsType<TextContent>(result).Text);
         }
         finally
         {
@@ -176,7 +174,7 @@ public class TaskAwareMcpClientAIFunctionTests
             object? result = await invocation;
 
             // Assert
-            result.Should().BeOfType<TextContent>().Which.Text.Should().Be("completed");
+            Assert.Equal("completed", Assert.IsType<TextContent>(result).Text);
         }
         finally
         {
@@ -198,9 +196,8 @@ public class TaskAwareMcpClientAIFunctionTests
         object? result = await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
 
         // Assert
-        result.Should().BeOfType<TextContent>()
-            .Which.Text.Should().Be("inline-result");
-        fixture.CreatedTaskCount.Should().Be(0);
+        Assert.Equal("inline-result", Assert.IsType<TextContent>(result).Text);
+        Assert.Equal(0, fixture.CreatedTaskCount);
     }
 
     [Fact]
@@ -247,10 +244,9 @@ public class TaskAwareMcpClientAIFunctionTests
         object? result = await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
 
         // Assert
-        result.Should().BeOfType<TextContent>()
-            .Which.Text.Should().Be("accept:yes");
-        fixture.CreatedTaskCount.Should().Be(1);
-        fixture.InputRequestCount.Should().Be(1);
+        Assert.Equal("accept:yes", Assert.IsType<TextContent>(result).Text);
+        Assert.Equal(1, fixture.CreatedTaskCount);
+        Assert.Equal(1, fixture.InputRequestCount);
     }
 
     [Fact]
@@ -284,10 +280,10 @@ public class TaskAwareMcpClientAIFunctionTests
         _ = await wrapped.InvokeAsync(arguments, CancellationToken.None);
 
         // Assert
-        observedArguments.Should().NotBeNull();
-        observedArguments!["optional"].ValueKind.Should().Be(JsonValueKind.Null);
-        observedArguments["count"].GetInt32().Should().Be(3);
-        observedArguments["payload"].GetProperty("label").GetString().Should().Be("nested");
+        Assert.NotNull(observedArguments);
+        Assert.Equal(JsonValueKind.Null, observedArguments!["optional"].ValueKind);
+        Assert.Equal(3, observedArguments["count"].GetInt32());
+        Assert.Equal("nested", observedArguments["payload"].GetProperty("label").GetString());
     }
 
     [Fact]
@@ -306,7 +302,7 @@ public class TaskAwareMcpClientAIFunctionTests
         object? wrappedResult = await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
 
         // Assert
-        wrappedResult.Should().BeEquivalentTo(innerResult);
+        Assert.Equivalent(innerResult, wrappedResult);
     }
 
     [Fact]
@@ -329,9 +325,9 @@ public class TaskAwareMcpClientAIFunctionTests
         object? result = await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
 
         // Assert
-        JsonElement payload = result.Should().BeOfType<JsonElement>().Subject;
-        payload.GetProperty("isError").GetBoolean().Should().BeTrue();
-        payload.GetProperty("content")[0].GetProperty("text").GetString().Should().Be("tool failed");
+        JsonElement payload = Assert.IsType<JsonElement>(result);
+        Assert.True(payload.GetProperty("isError").GetBoolean());
+        Assert.Equal("tool failed", payload.GetProperty("content")[0].GetProperty("text").GetString());
     }
 
     [Fact]
@@ -359,13 +355,13 @@ public class TaskAwareMcpClientAIFunctionTests
                 JsonSerializer.SerializeToElement(new { code = -32603, message = "simulated failure" }));
 
             // Act
-            Func<Task> act = async () => await invocation;
+            async Task actAsync() => await invocation;
 
             // Assert
-            await act.Should().ThrowAsync<ModelContextProtocol.McpException>()
-                .WithMessage("*simulated failure*");
-            fixture.SuccessfulCancellationTransitionCount.Should().Be(0);
-            fixture.CancellationRequestCount.Should().Be(0);
+            ModelContextProtocol.McpException exception = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(actAsync);
+            Assert.Contains("simulated failure", exception.Message);
+            Assert.Equal(0, fixture.SuccessfulCancellationTransitionCount);
+            Assert.Equal(0, fixture.CancellationRequestCount);
         }
         finally
         {
@@ -397,13 +393,13 @@ public class TaskAwareMcpClientAIFunctionTests
             await fixture.CancelLatestTaskAsync();
 
             // Act
-            Func<Task> act = async () => await invocation;
+            async Task actAsync() => await invocation;
 
             // Assert
-            await act.Should().ThrowAsync<OperationCanceledException>()
-                .WithMessage("*cancelled by the server*");
-            fixture.SuccessfulCancellationTransitionCount.Should().Be(1);
-            fixture.CancellationRequestCount.Should().Be(0);
+            OperationCanceledException exception = await Assert.ThrowsAsync<OperationCanceledException>(actAsync);
+            Assert.Contains("cancelled by the server", exception.Message);
+            Assert.Equal(1, fixture.SuccessfulCancellationTransitionCount);
+            Assert.Equal(0, fixture.CancellationRequestCount);
         }
         finally
         {
@@ -443,14 +439,14 @@ public class TaskAwareMcpClientAIFunctionTests
         AIFunction wrapped = (await fixture.Client.ListAgentToolsWithTasksAsync()).Single();
 
         // Act
-        Func<Task> act = async () => await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
+        async Task actAsync() => await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
 
         // Assert
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("input handler failed");
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(actAsync);
+        Assert.Equal("input handler failed", exception.Message);
         await fixture.RemoteCancellationObserved.WaitAsync(TimeSpan.FromSeconds(5));
-        fixture.SuccessfulCancellationTransitionCount.Should().Be(1);
-        fixture.CancellationRequestCount.Should().Be(1);
+        Assert.Equal(1, fixture.SuccessfulCancellationTransitionCount);
+        Assert.Equal(1, fixture.CancellationRequestCount);
     }
 
     [Fact]
@@ -472,14 +468,14 @@ public class TaskAwareMcpClientAIFunctionTests
         AIFunction wrapped = (await fixture.Client.ListAgentToolsWithTasksAsync()).Single();
 
         // Act
-        Func<Task> act = async () => await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
+        async Task actAsync() => await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
 
         // Assert
-        await act.Should().ThrowAsync<ModelContextProtocol.McpProtocolException>()
-            .WithMessage("Request failed (remote): An error occurred.");
+        ModelContextProtocol.McpProtocolException exception = await Assert.ThrowsAsync<ModelContextProtocol.McpProtocolException>(actAsync);
+        Assert.Equal("Request failed (remote): An error occurred.", exception.Message);
         await fixture.RemoteCancellationObserved.WaitAsync(TimeSpan.FromSeconds(5));
-        fixture.SuccessfulCancellationTransitionCount.Should().Be(1);
-        fixture.CancellationRequestCount.Should().Be(1);
+        Assert.Equal(1, fixture.SuccessfulCancellationTransitionCount);
+        Assert.Equal(1, fixture.CancellationRequestCount);
     }
 
     [Fact]
@@ -515,14 +511,14 @@ public class TaskAwareMcpClientAIFunctionTests
         AIFunction wrapped = (await fixture.Client.ListAgentToolsWithTasksAsync()).Single();
 
         // Act
-        Func<Task> act = async () => await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
+        async Task actAsync() => await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
 
         // Assert
-        await act.Should().ThrowAsync<ModelContextProtocol.McpProtocolException>()
-            .WithMessage("Request failed (remote): An error occurred.");
+        ModelContextProtocol.McpProtocolException exception = await Assert.ThrowsAsync<ModelContextProtocol.McpProtocolException>(actAsync);
+        Assert.Equal("Request failed (remote): An error occurred.", exception.Message);
         await fixture.RemoteCancellationObserved.WaitAsync(TimeSpan.FromSeconds(5));
-        fixture.SuccessfulCancellationTransitionCount.Should().Be(1);
-        fixture.CancellationRequestCount.Should().Be(1);
+        Assert.Equal(1, fixture.SuccessfulCancellationTransitionCount);
+        Assert.Equal(1, fixture.CancellationRequestCount);
     }
 
     [Fact]
@@ -549,12 +545,12 @@ public class TaskAwareMcpClientAIFunctionTests
             await fixture.CompleteLatestTaskAsync(JsonSerializer.SerializeToElement("malformed"));
 
             // Act
-            Func<Task> act = async () => await invocation;
+            async Task actAsync() => await invocation;
 
             // Assert
-            await act.Should().ThrowAsync<JsonException>();
-            fixture.SuccessfulCancellationTransitionCount.Should().Be(0);
-            fixture.CancellationRequestCount.Should().Be(0);
+            await Assert.ThrowsAsync<JsonException>(actAsync);
+            Assert.Equal(0, fixture.SuccessfulCancellationTransitionCount);
+            Assert.Equal(0, fixture.CancellationRequestCount);
         }
         finally
         {
@@ -596,14 +592,14 @@ public class TaskAwareMcpClientAIFunctionTests
         AIFunction wrapped = (await fixture.Client.ListAgentToolsWithTasksAsync(options)).Single();
 
         // Act
-        Func<Task> act = async () => await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
+        async Task actAsync() => await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
 
         // Assert
-        await act.Should().ThrowAsync<ModelContextProtocol.McpException>()
-            .WithMessage("*2 consecutive polls*");
+        ModelContextProtocol.McpException exception = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(actAsync);
+        Assert.Contains("2 consecutive polls", exception.Message);
         await fixture.RemoteCancellationObserved.WaitAsync(TimeSpan.FromSeconds(5));
-        fixture.SuccessfulCancellationTransitionCount.Should().Be(1);
-        fixture.CancellationRequestCount.Should().Be(1);
+        Assert.Equal(1, fixture.SuccessfulCancellationTransitionCount);
+        Assert.Equal(1, fixture.CancellationRequestCount);
     }
 
     [Fact]
@@ -650,10 +646,10 @@ public class TaskAwareMcpClientAIFunctionTests
         object? result = await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
 
         // Assert
-        result.Should().BeOfType<TextContent>().Which.Text.Should().Be("completed");
-        handledInputRequests.Should().Be(2);
-        fixture.SuccessfulCancellationTransitionCount.Should().Be(0);
-        fixture.CancellationRequestCount.Should().Be(0);
+        Assert.Equal("completed", Assert.IsType<TextContent>(result).Text);
+        Assert.Equal(2, handledInputRequests);
+        Assert.Equal(0, fixture.SuccessfulCancellationTransitionCount);
+        Assert.Equal(0, fixture.CancellationRequestCount);
     }
 
     [Fact]
@@ -697,15 +693,15 @@ public class TaskAwareMcpClientAIFunctionTests
         AIFunction wrapped = (await fixture.Client.ListAgentToolsWithTasksAsync(options)).Single();
 
         // Act
-        Func<Task> act = async () => await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
+        async Task actAsync() => await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
 
         // Assert
-        await act.Should().ThrowAsync<ModelContextProtocol.McpException>()
-            .WithMessage("*limit of 2 unique input requests*");
-        handledInputRequests.Should().Be(2);
+        ModelContextProtocol.McpException exception = await Assert.ThrowsAsync<ModelContextProtocol.McpException>(actAsync);
+        Assert.Contains("limit of 2 unique input requests", exception.Message);
+        Assert.Equal(2, handledInputRequests);
         await fixture.RemoteCancellationObserved.WaitAsync(TimeSpan.FromSeconds(5));
-        fixture.SuccessfulCancellationTransitionCount.Should().Be(1);
-        fixture.CancellationRequestCount.Should().Be(1);
+        Assert.Equal(1, fixture.SuccessfulCancellationTransitionCount);
+        Assert.Equal(1, fixture.CancellationRequestCount);
     }
 
     [Fact]
@@ -739,16 +735,16 @@ public class TaskAwareMcpClientAIFunctionTests
 
         // Act
         cts.Cancel();
-        Func<Task> act = async () => await invocation;
+        async Task actAsync() => await invocation;
 
         // Assert
-        await act.Should().ThrowAsync<OperationCanceledException>();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(actAsync);
         await fixture.RemoteCancellationObserved.WaitAsync(TimeSpan.FromSeconds(5));
         await serverCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        fixture.CreatedTaskCount.Should().Be(1);
-        fixture.PollCount.Should().BeGreaterThan(0);
-        fixture.SuccessfulCancellationTransitionCount.Should().Be(1);
-        fixture.CancellationRequestCount.Should().Be(1);
+        Assert.Equal(1, fixture.CreatedTaskCount);
+        Assert.True(fixture.PollCount > 0);
+        Assert.Equal(1, fixture.SuccessfulCancellationTransitionCount);
+        Assert.Equal(1, fixture.CancellationRequestCount);
     }
 
     [Fact]
@@ -777,12 +773,12 @@ public class TaskAwareMcpClientAIFunctionTests
 
             // Act
             cts.Cancel();
-            Func<Task> act = async () => await invocation;
+            async Task actAsync() => await invocation;
 
             // Assert
-            await act.Should().ThrowAsync<OperationCanceledException>();
-            fixture.SuccessfulCancellationTransitionCount.Should().Be(0);
-            fixture.CancellationRequestCount.Should().Be(0);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(actAsync);
+            Assert.Equal(0, fixture.SuccessfulCancellationTransitionCount);
+            Assert.Equal(0, fixture.CancellationRequestCount);
         }
         finally
         {

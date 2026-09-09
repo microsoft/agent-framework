@@ -59,6 +59,7 @@ See [Using deployed agent](responses/using_deployed_agent.py) for service-create
 |---|--------|-------------|
 | 1 | [Basic](invocations/basic/) | A minimal agent demonstrating basic request/response using the invocations protocol. |
 | 2 | [Break Glass](invocations/break_glass/) | An agent demonstrating a "break glass" scenario where customizations of the API behaviors are needed, allowing for more direct control over how requests and responses are handled by the hosting layer. |
+| 3 | [Telegram](invocations/telegram/) | A Telegram bot routed through API Management to a direct-code hosted agent, with streaming responses and durable Cosmos DB history. |
 
 ## Running the Agent Host Locally
 
