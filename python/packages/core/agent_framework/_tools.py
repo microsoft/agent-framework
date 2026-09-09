@@ -2262,7 +2262,7 @@ def _extract_tools(
     return options.get("tools") if options else None
 
 
-def _get_tool_approval_state(invocation_session: AgentSession | None) -> dict[str, Any] | None:
+def _get_tool_approval_state(invocation_session: AgentSession | None, *, create: bool = True) -> dict[str, Any] | None:
     """Return the shared tool-approval state bag for the invocation session."""
     if not _has_authoritative_approval_session(invocation_session):
         return None
@@ -2281,6 +2281,8 @@ def _get_tool_approval_state(invocation_session: AgentSession | None) -> dict[st
             f"Session state for {_TOOL_APPROVAL_STATE_KEY!r} must be a dict or ToolApprovalState, "
             f"got {type(raw_state).__name__}."
         )
+    if not create:
+        return None
     new_state: dict[str, Any] = {}
     authoritative_session.state[_TOOL_APPROVAL_STATE_KEY] = new_state
     return new_state
@@ -2299,7 +2301,7 @@ def _content_from_state(value: Any) -> Content | None:
 
 def _load_pending_approval_requests(invocation_session: AgentSession | None) -> dict[str, Content]:
     """Load immutable approval-request snapshots keyed by request ID."""
-    state = _get_tool_approval_state(invocation_session)
+    state = _get_tool_approval_state(invocation_session, create=False)
     if state is None:
         return {}
     raw_requests = state.get(_PENDING_APPROVAL_REQUESTS_KEY, [])

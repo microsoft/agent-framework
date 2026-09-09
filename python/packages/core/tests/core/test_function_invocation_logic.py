@@ -581,6 +581,15 @@ async def test_streaming_interleaved_indexed_call_fragments_coalesce_by_occurren
     assert caught == []
 
 
+def test_loading_pending_approval_requests_does_not_create_state() -> None:
+    from agent_framework._tools import _load_pending_approval_requests
+
+    session = AgentSession(session_id="approval-read-only")
+
+    assert _load_pending_approval_requests(session) == {}
+    assert "tool_approval" not in session.state
+
+
 def test_occurrence_aware_approval_rejects_stale_reused_call_id_response(caplog: pytest.LogCaptureFixture) -> None:
     from agent_framework._tools import (
         _bind_approval_responses_to_pending_requests,
