@@ -47,11 +47,6 @@ from agent_framework_hyperlight import _instructions as instructions_module
 
 
 def _hyperlight_integration_static_skip_reason() -> str | None:
-    if sys.version_info >= (3, 14):
-        return (
-            "Hyperlight integration tests require Python < 3.14 because hyperlight-sandbox-backend-wasm is unsupported."
-        )
-
     if sys.platform not in {"linux", "win32"}:
         return "Hyperlight integration tests require Linux or Windows runners."
 
@@ -1271,7 +1266,7 @@ def test_hyperlight_integration_runtime_skip_reason_reports_missing_hypervisor(m
             return object()
         return original_find_spec(name)
 
-    monkeypatch.setattr(sys, "version_info", (3, 13, 0))
+    monkeypatch.setattr(sys, "version_info", (3, 14, 0))
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(importlib.util, "find_spec", _fake_find_spec)
     monkeypatch.setattr(importlib.metadata, "version", lambda _: "0.0.0")

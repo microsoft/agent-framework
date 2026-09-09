@@ -1,3 +1,11 @@
 ﻿#nullable enable
+*REMOVED*[MAAI001]abstract Microsoft.Agents.AI.AgentFileStore.SearchAsync(string! directory, string! regexPattern, string? globPattern = null, bool recursive = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.FileSearchResult!>!>!
 [MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.WaitTimeout.get -> System.TimeSpan
 [MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.WaitTimeout.set -> void
+[MAAI001]Microsoft.Agents.AI.FileLineEdit.ExpectedLine.get -> string?
+[MAAI001]Microsoft.Agents.AI.FileLineEdit.ExpectedLine.set -> void
+[MAAI001]const Microsoft.Agents.AI.FileAccessProvider.ReadLinesToolName = "file_access_read_lines" -> string!
+[MAAI001]static Microsoft.Agents.AI.AgentFileStore.ScanContent(string! fileName, string! content, System.Text.RegularExpressions.Regex! regex) -> Microsoft.Agents.AI.FileSearchResult?
+[MAAI001]static Microsoft.Agents.AI.AgentFileStore.SplitLines(string! content) -> System.Collections.Generic.IReadOnlyList<string!>!
+[MAAI001]virtual Microsoft.Agents.AI.AgentFileStore.FindMatchingFilesAsync(string! directory, string! regexPattern, string? globPattern = null, bool recursive = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<string!>!>!
+[MAAI001]virtual Microsoft.Agents.AI.AgentFileStore.SearchAsync(string! directory, string! regexPattern, string? globPattern = null, bool recursive = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.FileSearchResult!>!>!

@@ -16,23 +16,25 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
+import math
 import re
-import threading
 import uuid
-from collections.abc import Awaitable, Callable, MutableMapping
-from copy import deepcopy
+from collections.abc import Awaitable, Callable, Mapping, MutableMapping
+from contextvars import ContextVar, Token
+from copy import copy, deepcopy
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, NoReturn, cast
 
 from pydantic import BaseModel, Field
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
 from ._serialization import SerializationMixin
-from ._sessions import ContextProvider
+from ._sessions import AgentSession, ContextProvider
 from ._tools import FunctionTool, tool
 from ._types import Content, Message
 
@@ -67,7 +69,12 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-_BRACKETED_VAR_REF_RE = re.compile(r"^\[\s*(var_[0-9a-fA-F]+)\s*\]$")
+_BRACKETED_VAR_ID = r"var_[0-9a-fA-F]+"
+_BARE_VAR_ID = r"var_[0-9a-fA-F]{8,}"
+_EMBEDDED_VAR_REF_RE = re.compile(rf"\[\s*(?P<bracketed>{_BRACKETED_VAR_ID})\s*\]|\b(?P<bare>{_BARE_VAR_ID})\b")
+_WHOLE_VAR_REF_RE = re.compile(rf"\s*(?:\[\s*(?P<bracketed>{_BRACKETED_VAR_ID})\s*\]|(?P<bare>{_BARE_VAR_ID}))\s*")
+_BARE_REFERENCE_WARNING = "Expanded a bare variable reference in a tool argument; models should use [var_<id>] instead."
+_UNRESOLVED = object()
 
 # Tools that consume variable IDs literally (as opaque references) and therefore
 # must NOT have ``var_xxx`` arguments expanded to stored content before execution.
@@ -358,7 +365,7 @@ class ContentVariableStore:
         """
         var_id = f"var_{uuid.uuid4().hex[:16]}"
         self._storage[var_id] = (content, label)
-        logger.info(f"Stored content in variable {var_id} with label {label}")
+        logger.debug("Stored content in variable %s with label %s", var_id, label)
         return var_id
 
     def retrieve(self, var_id: str) -> tuple[Any, ContentLabel]:
@@ -377,7 +384,7 @@ class ContentVariableStore:
             raise KeyError(f"Variable {var_id} not found in store")
 
         content, label = self._storage[var_id]
-        logger.info(f"Retrieved content from variable {var_id} with label {label}")
+        logger.debug("Retrieved content from variable %s with label %s", var_id, label)
         return content, label
 
     def exists(self, var_id: str) -> bool:
@@ -395,7 +402,7 @@ class ContentVariableStore:
         """Clear all stored content."""
         count = len(self._storage)
         self._storage.clear()
-        logger.info(f"Cleared {count} variables from store")
+        logger.debug("Cleared %d variables from store", count)
 
     def list_variables(self) -> list[str]:
         """Get a list of all variable IDs in the store.
@@ -681,12 +688,442 @@ class LabeledMessage(Message):
 # Security Middleware
 # =============================================================================
 
-# Thread-local storage for current middleware instance
-_current_middleware = threading.local()
+_STATE_SCOPE_ID = "scope_id"
+_STATE_CONTEXT_LABEL = "context_label"
+_STATE_VARIABLES = "variables"
+_STATE_VARIABLE_METADATA = "variable_metadata"
+_STATE_AUDIT_LOG = "audit_log"
+_STATE_PENDING_APPROVALS = "pending_policy_approvals"
+_STANDALONE_SESSION_STATE_KEY = "__agent_framework_fides_security__"
+
+
+def _strict_json_value(
+    value: Any,
+    *,
+    path: str,
+    canonical: bool,
+    allow_content: bool = False,
+    active_container_ids: set[int] | None = None,
+) -> Any:
+    """Return a strict JSON-compatible value without string coercion."""
+    if active_container_ids is None:
+        active_container_ids = set()
+    if isinstance(value, Enum):
+        return _strict_json_value(
+            value.value,
+            path=path,
+            canonical=canonical,
+            allow_content=allow_content,
+            active_container_ids=active_container_ids,
+        )
+    if type(value) in (str, int, bool, type(None)):
+        return value
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ValueError(f"{path} contains a non-finite float")
+        return value
+    if canonical and isinstance(value, AgentSession):
+        return ["agent_session", value.session_id]
+    if allow_content and isinstance(value, Content):
+        return _strict_json_value(
+            value.to_dict(),
+            path=path,
+            canonical=canonical,
+            active_container_ids=active_container_ids,
+        )
+
+    is_list = isinstance(value, list)
+    is_tuple = isinstance(value, tuple)
+    if is_list or is_tuple:
+        container = cast(list[Any] | tuple[Any, ...], value)
+        if canonical and type(container) not in (list, tuple):
+            raise TypeError(f"{path} contains unsupported type {type(container).__name__}")
+        container_id = id(container)
+        if container_id in active_container_ids:
+            raise ValueError(f"{path} contains a circular reference")
+        active_container_ids.add(container_id)
+        try:
+            items = [
+                _strict_json_value(
+                    item,
+                    path=f"{path}[{index}]",
+                    canonical=canonical,
+                    allow_content=allow_content,
+                    active_container_ids=active_container_ids,
+                )
+                for index, item in enumerate(container)
+            ]
+        finally:
+            active_container_ids.remove(container_id)
+        return ["tuple" if is_tuple else "list", items] if canonical else items
+
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[Any, Any], cast(object, value))
+        value_type = type(cast(object, value))
+        if canonical and value_type is not dict:
+            raise TypeError(f"{path} contains unsupported type {value_type.__name__}")
+        container_id = id(cast(object, value))
+        if container_id in active_container_ids:
+            raise ValueError(f"{path} contains a circular reference")
+        active_container_ids.add(container_id)
+        try:
+            raw_keys = list(mapping.keys())
+            if any(type(key) is not str for key in raw_keys):
+                raise TypeError(f"{path} contains a non-string mapping key")
+            keys = cast(list[str], raw_keys)
+            if canonical:
+                keys.sort()
+            items = [
+                (
+                    key,
+                    _strict_json_value(
+                        mapping[key],
+                        path=f"{path}.{key}",
+                        canonical=canonical,
+                        allow_content=allow_content,
+                        active_container_ids=active_container_ids,
+                    ),
+                )
+                for key in keys
+            ]
+        finally:
+            active_container_ids.remove(container_id)
+        return ["mapping", items] if canonical else dict(items)
+
+    raise TypeError(f"{path} contains unsupported type {type(value).__name__}")
+
+
+def _durable_state_snapshot(
+    value: Any,
+    *,
+    path: str,
+    allow_content: bool = False,
+    active_container_ids: set[int] | None = None,
+) -> Any:
+    """Return a detached JSON-compatible value without coercing unsupported objects."""
+    if active_container_ids is None:
+        active_container_ids = set()
+    if type(value) in (str, int, bool, type(None)):
+        return value
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ValueError(f"{path} contains a non-finite float")
+        return value
+    if allow_content and isinstance(value, Content):
+        return _durable_state_snapshot(
+            value.to_dict(),
+            path=path,
+            active_container_ids=active_container_ids,
+        )
+    if isinstance(value, (list, tuple)):
+        container = cast(list[Any] | tuple[Any, ...], value)
+        container_id = id(container)
+        if container_id in active_container_ids:
+            raise ValueError(f"{path} contains a circular reference")
+        active_container_ids.add(container_id)
+        try:
+            return [
+                _durable_state_snapshot(
+                    item,
+                    path=f"{path}[{index}]",
+                    allow_content=allow_content,
+                    active_container_ids=active_container_ids,
+                )
+                for index, item in enumerate(container)
+            ]
+        finally:
+            active_container_ids.remove(container_id)
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[Any, Any], value)
+        container_id = id(cast(object, value))
+        if container_id in active_container_ids:
+            raise ValueError(f"{path} contains a circular reference")
+        active_container_ids.add(container_id)
+        try:
+            result: dict[str, Any] = {}
+            for key, item in mapping.items():
+                if type(key) is not str:
+                    raise TypeError(f"{path} contains a non-string mapping key")
+                result[key] = _durable_state_snapshot(
+                    item,
+                    path=f"{path}.{key}",
+                    allow_content=allow_content,
+                    active_container_ids=active_container_ids,
+                )
+            return result
+        finally:
+            active_container_ids.remove(container_id)
+    raise TypeError(f"{path} contains unsupported type {type(value).__name__}")
+
+
+def _encode_durable_state(value: Any, *, path: str, allow_content: bool = False) -> str:
+    """Encode user-controlled state so AgentSession cannot reinterpret type discriminators."""
+    snapshot = _durable_state_snapshot(value, path=path, allow_content=allow_content)
+    return json.dumps(snapshot, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
+def _decode_durable_state(value: Any, *, path: str) -> Any:
+    """Decode one opaque JSON value from session state."""
+    if not isinstance(value, str):
+        raise ValueError(f"{path} must be an encoded JSON string")
+    try:
+        decoded = json.loads(value)
+        return _durable_state_snapshot(decoded, path=path)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path} contains invalid JSON") from exc
+
+
+def _content_label_from_state(value: Any, *, path: str, durable: bool) -> ContentLabel:
+    """Restore a complete stored label without defaulting malformed state."""
+    decoded = _decode_durable_state(value, path=path) if durable else deepcopy(value)
+    if not isinstance(decoded, MutableMapping):
+        raise ValueError(f"{path} must be a mapping")
+    label_state = cast(MutableMapping[str, Any], decoded)
+    integrity = label_state.get("integrity")
+    confidentiality = label_state.get("confidentiality")
+    metadata = label_state.get("metadata", {})
+    if not isinstance(integrity, str) or not isinstance(confidentiality, str):
+        raise ValueError(f"{path} must contain integrity and confidentiality")
+    if not isinstance(metadata, dict):
+        raise ValueError(f"{path} metadata must be a mapping")
+    try:
+        return ContentLabel(
+            integrity=IntegrityLabel(integrity),
+            confidentiality=ConfidentialityLabel(confidentiality),
+            metadata=deepcopy(cast(dict[str, Any], metadata)),
+        )
+    except ValueError as exc:
+        raise ValueError(f"{path} contains an invalid security label") from exc
+
+
+class _SecurityScope:
+    """Serializable FIDES state owned by one session or standalone middleware."""
+
+    def __init__(self, state: dict[str, Any] | None = None, *, scope_id: str | None = None) -> None:
+        self._state = state if state is not None else {}
+        self._durable = state is not None
+        recorded_scope_id = self._state.get(_STATE_SCOPE_ID)
+        if recorded_scope_id is not None and (not isinstance(recorded_scope_id, str) or not recorded_scope_id):
+            raise ValueError("Security state contains an invalid scope owner.")
+        if scope_id is not None and recorded_scope_id is not None and recorded_scope_id != scope_id:
+            raise ValueError("Security state belongs to a different security scope.")
+        self._scope_id = scope_id or recorded_scope_id or f"local:{uuid.uuid4().hex}"
+        self._state[_STATE_SCOPE_ID] = self._scope_id
+
+    @property
+    def scope_id(self) -> str:
+        """Return the owner identity for variables in this scope."""
+        return self._scope_id
+
+    @property
+    def durable(self) -> bool:
+        """Return whether this scope is stored in an AgentSession."""
+        return self._durable
+
+    @property
+    def context_label(self) -> ContentLabel:
+        """Return a detached cumulative context label."""
+        if _STATE_CONTEXT_LABEL not in self._state:
+            return ContentLabel(
+                integrity=IntegrityLabel.TRUSTED,
+                confidentiality=ConfidentialityLabel.PUBLIC,
+                metadata={"initialized": True},
+            )
+        return _content_label_from_state(self._state[_STATE_CONTEXT_LABEL], path="context label", durable=self._durable)
+
+    @context_label.setter
+    def context_label(self, label: ContentLabel) -> None:
+        label_state = label.to_dict()
+        self._state[_STATE_CONTEXT_LABEL] = (
+            _encode_durable_state(label_state, path="context label") if self._durable else deepcopy(label_state)
+        )
+
+    def _mapping(self, key: str) -> dict[str, Any]:
+        section = self._state.get(key)
+        if section is None:
+            section = {}
+            self._state[key] = section
+        if not isinstance(section, dict):
+            raise ValueError(f"Security state section {key!r} must be a dictionary.")
+        return cast(dict[str, Any], section)
+
+    @property
+    def variables(self) -> dict[str, Any]:
+        """Return serialized hidden-variable entries."""
+        return self._mapping(_STATE_VARIABLES)
+
+    @property
+    def variable_metadata(self) -> dict[str, Any]:
+        """Return serialized metadata for hidden variables."""
+        return self._mapping(_STATE_VARIABLE_METADATA)
+
+    @property
+    def pending_approvals(self) -> dict[str, Any]:
+        """Return serialized pending approval records."""
+        return self._mapping(_STATE_PENDING_APPROVALS)
+
+    def variable_store(self) -> ContentVariableStore:
+        """Return an owner-aware store backed by this scope."""
+        return _ScopedVariableStore(self)
+
+    def _audit_entries(self) -> list[Any]:
+        """Return raw audit entries from scope state."""
+        entries = self._state.get(_STATE_AUDIT_LOG)
+        if entries is None:
+            entries = []
+            self._state[_STATE_AUDIT_LOG] = entries
+        if not isinstance(entries, list):
+            raise ValueError("Security audit state must be a list.")
+        return cast(list[Any], entries)
+
+    @property
+    def audit_log(self) -> list[dict[str, Any]]:
+        """Return the live standalone log or a detached durable log."""
+        if self._durable:
+            return self.get_audit_log()
+        return cast(list[dict[str, Any]], self._audit_entries())
+
+    def append_audit_entry(self, entry: dict[str, Any]) -> None:
+        """Append a detached audit entry without exposing type discriminators to AgentSession."""
+        stored_entry: Any = _encode_durable_state(entry, path="audit violation") if self._durable else deepcopy(entry)
+        self._audit_entries().append(stored_entry)
+
+    def get_audit_log(self) -> list[dict[str, Any]]:
+        """Return detached decoded audit entries."""
+        result: list[dict[str, Any]] = []
+        for entry in self._audit_entries():
+            decoded = _decode_durable_state(entry, path="audit violation") if self._durable else deepcopy(entry)
+            if not isinstance(decoded, dict):
+                raise ValueError("Security audit entry must be a mapping.")
+            result.append(cast(dict[str, Any], decoded))
+        return result
+
+    def clear_audit_log(self) -> None:
+        """Clear audit entries in this scope."""
+        self._audit_entries().clear()
+
+
+class _SecurityScopeBinding:
+    """Select task-local session state for a reusable middleware instance."""
+
+    def _initialize_security_scope(self, scope: _SecurityScope | None, *, session_state_key: str) -> None:
+        self._default_security_scope = scope if scope is not None else _SecurityScope()
+        self._security_scope_is_fixed = scope is not None
+        self._security_session_state_key = session_state_key
+        self._active_security_scope: ContextVar[_SecurityScope | None] = ContextVar(
+            f"agent_framework_security_scope_{id(self)}", default=None
+        )
+
+    @property
+    def _scope(self) -> _SecurityScope:
+        return self._active_security_scope.get() or self._default_security_scope
+
+    def _scope_for_session(self, session: AgentSession | None) -> _SecurityScope:
+        if session is None:
+            return self._scope
+        stored = session.state.get(self._security_session_state_key)
+        if stored is None:
+            stored = {}
+            session.state[self._security_session_state_key] = stored
+        if not isinstance(stored, dict):
+            raise ValueError("Security session state must be a dictionary.")
+        return _SecurityScope(cast(dict[str, Any], stored), scope_id=session.session_id)
+
+    def _activate_security_scope(self, context: FunctionInvocationContext) -> Token[_SecurityScope | None]:
+        scope = self._default_security_scope
+        if not self._security_scope_is_fixed and context.session is not None:
+            scope = self._scope_for_session(context.session)
+        return self._active_security_scope.set(scope)
+
+
+class _ScopedVariableStore(ContentVariableStore):
+    """Variable store backed by one security scope's serializable state."""
+
+    def __init__(self, scope: _SecurityScope) -> None:
+        super().__init__()
+        self._scope = scope
+
+    def store(self, content: Any, label: ContentLabel) -> str:
+        """Store a detached value stamped with the owning scope."""
+        label_state = label.to_dict()
+        if self._scope.durable:
+            stored_content = _encode_durable_state(content, path="variable content", allow_content=True)
+            stored_label = _encode_durable_state(label_state, path="label")
+        else:
+            stored_content = deepcopy(content)
+            stored_label = deepcopy(label_state)
+        variable_id = f"var_{uuid.uuid4().hex[:16]}"
+        self._scope.variables[variable_id] = {
+            "owner": self._scope.scope_id,
+            "content": stored_content,
+            "security_label": stored_label,
+        }
+        logger.debug("Stored content in variable %s with label %s", variable_id, label)
+        return variable_id
+
+    def _owned_entry(self, variable_id: str, *, warn: bool = True) -> dict[str, Any] | None:
+        entry = self._scope.variables.get(variable_id)
+        if not isinstance(entry, dict):
+            return None
+        typed_entry = cast(dict[str, Any], entry)
+        if typed_entry.get("owner") != self._scope.scope_id:
+            if warn:
+                logger.warning("Denied access to a variable owned by a different security scope.")
+            return None
+        return typed_entry
+
+    def retrieve(self, var_id: str) -> tuple[Any, ContentLabel]:
+        """Retrieve a detached value only when this scope owns it."""
+        entry = self._owned_entry(var_id)
+        if entry is None:
+            raise KeyError(f"Variable {var_id} not found in store")
+        label = _content_label_from_state(
+            entry.get("security_label"),
+            path="variable label",
+            durable=self._scope.durable,
+        )
+        stored_content = entry.get("content")
+        content = (
+            _decode_durable_state(stored_content, path="variable content")
+            if self._scope.durable
+            else deepcopy(stored_content)
+        )
+        logger.debug("Retrieved content from variable %s with label %s", var_id, label)
+        return content, label
+
+    def exists(self, var_id: str) -> bool:
+        """Return whether this scope owns the variable."""
+        return self._owned_entry(var_id, warn=False) is not None
+
+    def clear(self) -> None:
+        """Remove only variables and metadata owned by this scope."""
+        owned_ids = [
+            variable_id
+            for variable_id in self._scope.variables
+            if self._owned_entry(variable_id, warn=False) is not None
+        ]
+        for variable_id in owned_ids:
+            self._scope.variables.pop(variable_id, None)
+            self._scope.variable_metadata.pop(variable_id, None)
+        logger.debug("Cleared %d variables from store", len(owned_ids))
+
+    def list_variables(self) -> list[str]:
+        """Return variable IDs owned by this scope."""
+        return [
+            variable_id
+            for variable_id in self._scope.variables
+            if self._owned_entry(variable_id, warn=False) is not None
+        ]
+
+
+_current_middleware: ContextVar[LabelTrackingFunctionMiddleware | None] = ContextVar(
+    "agent_framework_current_security_middleware",
+    default=None,
+)
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
-class LabelTrackingFunctionMiddleware(FunctionMiddleware):
+class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding):
     """Middleware that tracks and propagates security labels through tool invocations.
 
     Tiered Label Propagation:
@@ -745,60 +1182,53 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             response = await agent.run(messages=[{"role": "user", "content": "What's the weather?"}])
     """
 
+    _requires_session_state = True
+
     def __init__(
         self,
         default_integrity: IntegrityLabel = IntegrityLabel.UNTRUSTED,
         default_confidentiality: ConfidentialityLabel = ConfidentialityLabel.PUBLIC,
         auto_hide_untrusted: bool = True,
         hide_threshold: IntegrityLabel = IntegrityLabel.UNTRUSTED,
+        *,
+        security_scope: _SecurityScope | None = None,
+        session_state_key: str = _STANDALONE_SESSION_STATE_KEY,
     ) -> None:
-        """Initialize LabelTrackingFunctionMiddleware.
-
-        Args:
-            default_integrity: Default integrity label for tools without source_integrity.
-                Defaults to UNTRUSTED for safety (tools must opt-in to TRUSTED).
-            default_confidentiality: Default confidentiality label. Defaults to PUBLIC.
-            auto_hide_untrusted: Whether to automatically hide untrusted results. Defaults to True.
-            hide_threshold: The integrity level at which to hide content. Defaults to UNTRUSTED.
-        """
+        """Initialize label tracking and bind its security-state selector."""
         self.default_integrity = default_integrity
         self.default_confidentiality = default_confidentiality
         self.auto_hide_untrusted = auto_hide_untrusted
         self.hide_threshold = hide_threshold
+        self._initialize_security_scope(security_scope, session_state_key=session_state_key)
 
-        # Context-level security label that tracks the cumulative security state
-        # Starts as TRUSTED + PUBLIC and gets updated based on content added to context
-        self._context_label = ContentLabel(
+    def _clone_for_scope(self, scope: _SecurityScope) -> LabelTrackingFunctionMiddleware:
+        """Clone customized middleware configuration into a fixed session scope."""
+        scoped = copy(self)
+        scoped._initialize_security_scope(scope, session_state_key=self._security_session_state_key)
+        return scoped
+
+    @property
+    def _context_label(self) -> ContentLabel:
+        return self._scope.context_label
+
+    @_context_label.setter
+    def _context_label(self, label: ContentLabel) -> None:
+        self._scope.context_label = label
+
+    @property
+    def _variable_metadata(self) -> dict[str, Any]:
+        return self._scope.variable_metadata
+
+    def get_context_label(self, session: AgentSession | None = None) -> ContentLabel:
+        """Get the cumulative context label for an optional explicit session."""
+        return self._scope_for_session(session).context_label
+
+    def reset_context_label(self, session: AgentSession | None = None) -> None:
+        """Reset the cumulative context label for an optional explicit session."""
+        self._scope_for_session(session).context_label = ContentLabel(
             integrity=IntegrityLabel.TRUSTED,
             confidentiality=ConfidentialityLabel.PUBLIC,
-            metadata={"initialized": True},
-        )
-
-        # Stateful variable store for this middleware instance
-        self._variable_store = ContentVariableStore()
-
-        # Metadata about stored variables
-        self._variable_metadata: dict[str, dict[str, Any]] = {}
-
-    def get_context_label(self) -> ContentLabel:
-        """Get the current context-level security label.
-
-        The context label represents the cumulative security state of the conversation.
-        It starts as TRUSTED + PUBLIC and gets "tainted" as untrusted or private
-        content is added to the context.
-
-        Returns:
-            The current context security label.
-        """
-        return self._context_label
-
-    def reset_context_label(self) -> None:
-        """Reset the context label to initial state (TRUSTED + PUBLIC).
-
-        Call this when starting a new conversation or session.
-        """
-        self._context_label = ContentLabel(
-            integrity=IntegrityLabel.TRUSTED, confidentiality=ConfidentialityLabel.PUBLIC, metadata={"reset": True}
+            metadata={"reset": True},
         )
         logger.info("Context label reset to TRUSTED + PUBLIC")
 
@@ -855,176 +1285,69 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
 
         return expanded_content
 
-    def _expand_variable_reference(self, value: Any) -> Any:
-        """Expand variable references (e.g., ``[var_abc123]``) to stored content.
+    def _resolve_variable_references(self, value: Any) -> tuple[Any, list[ContentLabel]]:
+        """Recursively resolve owned variable references and return their stored labels."""
+        labels: list[ContentLabel] = []
+        return self._resolve_value(value, labels), labels
 
-        This enables direct tool chaining where models pass variable placeholders as
-        arguments to subsequent local/MCP tool calls.
+    def _lookup_variable(self, variable_id: str, labels: list[ContentLabel]) -> Any:
+        try:
+            stored_content, stored_label = self.get_variable_store().retrieve(variable_id)
+        except KeyError:
+            return _UNRESOLVED
+        labels.append(stored_label)
+        return self._extract_primary_tool_content(stored_content)
 
-        Accepts two reference forms:
+    def _resolve_string(self, value: str, labels: list[ContentLabel]) -> Any:
+        if not _EMBEDDED_VAR_REF_RE.search(value):
+            return value
 
-        1. **Bracketed** (canonical): ``[var_abc123]`` — the documented form models
-           are instructed to emit.
-        2. **Bare** (lenient fallback): ``var_abc123`` — some models drop the
-           brackets when copying a variable id into a tool argument. To prevent
-           the literal token from leaking into a destination (e.g. a write to a
-           public README), we also resolve bare ``var_<hex>`` tokens that
-           correspond to a known stored variable. A warning is logged on every
-           bare expansion so the failure mode remains observable.
-
-        When a stored variable is a dict with a ``response`` key (e.g., from
-        ``quarantined_llm``), only the ``response`` value is extracted and
-        returned, ensuring tools receive main content without metadata fields.
-        """
-        if isinstance(value, str):
-            # Unanchored bracketed pattern (canonical form).
-            bracketed_pattern = r"\[\s*(var_[0-9a-fA-F]+)\s*\]"
-            # Word-boundary bare token. Require >=8 hex chars to limit false
-            # positives on unrelated strings that happen to contain "var_*".
-            # Variable ids generated by ContentVariableStore are 16 hex chars.
-            bare_pattern = r"\bvar_[0-9a-fA-F]{8,}\b"
-
-            bracketed_matches = re.findall(bracketed_pattern, value)
-            bare_matches = re.findall(bare_pattern, value)
-
-            if not bracketed_matches and not bare_matches:
+        whole = _WHOLE_VAR_REF_RE.fullmatch(value)
+        if whole is not None:
+            variable_id = whole.group("bracketed") or whole.group("bare")
+            resolved = self._lookup_variable(variable_id, labels)
+            if resolved is _UNRESOLVED:
                 return value
+            if whole.group("bare"):
+                logger.warning(_BARE_REFERENCE_WARNING)
+            return resolved
 
-            # Whole-string canonical match: ``[var_xxx]``
-            if len(bracketed_matches) == 1:
-                whole_bracketed = _BRACKETED_VAR_REF_RE.match(value)
-                if whole_bracketed is not None:
-                    variable_id = whole_bracketed.group(1)
-                    try:
-                        expanded_content, _ = self._variable_store.retrieve(variable_id)
-                        extracted = self._extract_primary_tool_content(expanded_content)
-                        if extracted is not expanded_content:
-                            logger.info(
-                                f"Expanded variable placeholder '{value}' for tool argument "
-                                f"(extracted primary content from stored payload)"
-                            )
-                            return extracted
-                        logger.info(f"Expanded variable placeholder '{value}' for tool argument")
-                        return expanded_content
-                    except KeyError:
-                        logger.warning(f"Variable placeholder '{value}' could not be resolved")
-                        return value
+        def replace(match: re.Match[str]) -> str:
+            variable_id = match.group("bracketed") or match.group("bare")
+            resolved = self._lookup_variable(variable_id, labels)
+            if resolved is _UNRESOLVED:
+                return match.group(0)
+            if match.group("bare"):
+                logger.warning(_BARE_REFERENCE_WARNING)
+            return str(resolved)
 
-            # Whole-string bare match: ``var_xxx`` (no brackets). Only treat as
-            # a variable reference if the id actually exists in the store; this
-            # keeps random strings that happen to look like ``var_xxx`` from
-            # being silently mangled.
-            whole_bare = re.fullmatch(r"\s*(var_[0-9a-fA-F]{8,})\s*", value)
-            if whole_bare is not None and not bracketed_matches:
-                variable_id = whole_bare.group(1)
-                try:
-                    expanded_content, _ = self._variable_store.retrieve(variable_id)
-                    extracted = self._extract_primary_tool_content(expanded_content)
-                    logger.warning(
-                        f"Expanded BARE (non-bracketed) variable reference '{value.strip()}' "
-                        "for tool argument. Models should wrap variable references in '[ ]' brackets; "
-                        "accepting bare form to prevent the literal id from leaking to a destination."
-                    )
-                    if extracted is not expanded_content:
-                        return extracted
-                    return expanded_content
-                except KeyError:
-                    # Not a known variable id; leave string untouched.
-                    return value
+        return _EMBEDDED_VAR_REF_RE.sub(replace, value)
 
-            # Embedded substitutions. Apply bracketed pass first, then bare pass
-            # on the result so that ``[var_xxx]`` is never double-handled.
-            def replace_bracketed(match_obj: Any) -> str:
-                variable_id = match_obj.group(1)
-                try:
-                    expanded_content, _ = self._variable_store.retrieve(variable_id)
-                    extracted = self._extract_primary_tool_content(expanded_content)
-                    if extracted is not expanded_content:
-                        logger.info(
-                            f"Expanded embedded variable placeholder '[{variable_id}]' in tool argument "
-                            f"(extracted primary content from stored payload)"
-                        )
-                        return str(extracted)
-                    logger.info(f"Expanded embedded variable placeholder '[{variable_id}]' in tool argument")
-                    return str(expanded_content)
-                except KeyError:
-                    logger.warning(f"Variable placeholder '[{variable_id}]' could not be resolved")
-                    return match_obj.group(0)
-
-            result = re.sub(bracketed_pattern, replace_bracketed, value)
-
-            def replace_bare(match_obj: Any) -> str:
-                variable_id = match_obj.group(0)
-                try:
-                    expanded_content, _ = self._variable_store.retrieve(variable_id)
-                    extracted = self._extract_primary_tool_content(expanded_content)
-                    logger.warning(
-                        f"Expanded embedded BARE (non-bracketed) variable reference '{variable_id}' "
-                        "in tool argument. Models should wrap variable references in '[ ]' brackets."
-                    )
-                    if extracted is not expanded_content:
-                        return str(extracted)
-                    return str(expanded_content)
-                except KeyError:
-                    # Not a known variable id; leave the token in place.
-                    return match_obj.group(0)
-
-            return re.sub(bare_pattern, replace_bare, result)
-
+    def _resolve_value(self, value: Any, labels: list[ContentLabel]) -> Any:
+        if isinstance(value, str):
+            return self._resolve_string(value, labels)
         if isinstance(value, BaseModel):
-            return self._expand_variable_reference(value.model_dump())
-
+            return self._resolve_value(value.model_dump(), labels)
         if isinstance(value, dict):
             value_dict = cast(dict[str, Any], value)
-            return {k: self._expand_variable_reference(v) for k, v in value_dict.items()}
-
+            return {key: self._resolve_value(item, labels) for key, item in value_dict.items()}
         if isinstance(value, list):
-            value_list = cast(list[Any], value)
-            return [self._expand_variable_reference(item) for item in value_list]
-
+            return [self._resolve_value(item, labels) for item in cast(list[Any], value)]
         if isinstance(value, tuple):
-            value_tuple = cast(tuple[Any, ...], value)
-            return tuple(self._expand_variable_reference(item) for item in value_tuple)
-
+            return tuple(self._resolve_value(item, labels) for item in cast(tuple[Any, ...], value))
         return value
 
-    def _expand_variable_references_in_context(self, context: FunctionInvocationContext) -> None:
-        """Resolve bracketed variable placeholders in invocation arguments in-place.
-
-        Expands [var_xxx] placeholders to their stored content before tool execution.
-        Original unexpanded arguments are preserved in metadata for message reconstruction,
-        ensuring that function_call Content messages keep placeholders hidden from the LLM.
-
-        Tools in ``_VARIABLE_ID_CONSUMERS`` (e.g. ``inspect_variable``) take variable
-        IDs as literal references and resolve them internally, so their arguments are
-        left untouched — expanding them would replace the ID with content and break
-        the lookup.
-        """
+    def _expand_variable_references_in_context(self, context: FunctionInvocationContext) -> list[ContentLabel]:
+        """Expand owned references in invocation values and return their stored labels."""
         if context.function.name in _VARIABLE_ID_CONSUMERS:
-            return
+            return []
 
+        labels: list[ContentLabel] = []
         if context.arguments:
-            args_before = str(context.arguments)[:200] if context.arguments else ""
-            context.arguments = self._expand_variable_reference(context.arguments)
-            args_after = str(context.arguments)[:200] if context.arguments else ""
-            has_var_ref_before = "[var_" in args_before
-            has_var_ref_after = "[var_" in args_after
-            if has_var_ref_before or has_var_ref_after:
-                logger.info(
-                    "Variable expansion for '%s': had_ref_before=%s, had_ref_after=%s",
-                    context.function.name,
-                    has_var_ref_before,
-                    has_var_ref_after,
-                )
-                if has_var_ref_before and not has_var_ref_after:
-                    logger.info(
-                        "Expanded variable references from: %s... to: %s...",
-                        args_before[:100],
-                        args_after[:100],
-                    )
-
+            context.arguments = self._resolve_value(context.arguments, labels)
         if context.kwargs:
-            context.kwargs = cast(dict[str, Any], self._expand_variable_reference(context.kwargs))
+            context.kwargs = cast(dict[str, Any], self._resolve_value(context.kwargs, labels))
+        return labels
 
     def _get_input_labels(self, context: FunctionInvocationContext) -> list[ContentLabel]:
         """Extract security labels from tool input arguments.
@@ -1175,64 +1498,31 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         context: FunctionInvocationContext,
         call_next: Callable[[], Awaitable[None]],
     ) -> None:
-        """Process function invocation with tiered label propagation.
-
-        Label propagation follows a strict 3-tier priority for determining the
-        result label of a tool call:
-
-        1. **Tier 1 (Highest)**: Per-item embedded labels in the tool result
-           (``additional_properties.security_label``). If present, these labels
-           are used directly for each item.
-        2. **Tier 2**: The tool's ``source_integrity`` declaration. If the tool
-           explicitly declares ``source_integrity`` in its ``additional_properties``,
-           that declaration alone determines the fallback label (input argument
-           labels are NOT combined in).
-        3. **Tier 3 (Lowest)**: The join (``combine_labels``) of all input argument
-           labels. Used only when there are no embedded labels AND no
-           ``source_integrity`` declaration.
-
-        Two metadata keys are set on the context:
-
-        - ``context.metadata["result_label"]``: The security label of THIS tool
-          call's result (per-call). Set once after result processing.
-        - ``context.metadata["context_label"]``: The cumulative conversation
-          security state (cross-call). Used by ``PolicyEnforcementFunctionMiddleware``
-          to validate subsequent tool calls.
-
-        Args:
-            context: The function invocation context.
-            call_next: Callback to continue to next middleware or function execution.
-        """
-        # Set thread-local middleware reference for tools to access
-        _current_middleware.instance = self
-
+        """Resolve hidden arguments, publish their labels, and label the result."""
+        scope_token = self._activate_security_scope(context)
+        middleware_token = _current_middleware.set(self)
         try:
             function_name = context.function.name
+            if "original_arguments_for_messages" not in context.metadata:
+                context.metadata["original_arguments_for_messages"] = deepcopy(context.arguments)
+            else:
+                context.arguments = deepcopy(context.metadata["original_arguments_for_messages"])
+            if "security_original_runtime_kwargs" not in context.metadata:
+                context.metadata["security_original_runtime_kwargs"] = dict(context.kwargs)
+            else:
+                context.kwargs = dict(cast(dict[str, Any], context.metadata["security_original_runtime_kwargs"]))
 
-            # ========== Tiered Label Propagation ==========
-            # Step 1: Extract labels from input arguments
             input_labels = self._get_input_labels(context)
-
-            # Step 2: Get tool's source_integrity declaration (may be None)
             declared_source_integrity = self._get_source_integrity(context)
-
-            # Get confidentiality from function additional_properties or use default
             confidentiality = self._get_function_confidentiality(context)
 
-            # Step 3: Build tiered fallback_label
-            # This label is used for result items that have NO embedded labels.
-            # Priority: source_integrity declaration (tier 2) > input labels join (tier 3)
             if declared_source_integrity is not None:
-                # Tier 2: Tool explicitly declared source_integrity — use it alone.
-                # Input argument labels are NOT combined in; the tool's declaration
-                # is authoritative for the trust level of its output.
                 fallback_label = ContentLabel(
                     integrity=declared_source_integrity,
                     confidentiality=confidentiality,
                     metadata={"source": "source_integrity", "function_name": function_name},
                 )
             elif input_labels:
-                # Tier 3: No source_integrity declared — join all input labels.
                 combined = combine_labels(*input_labels)
                 fallback_label = ContentLabel(
                     integrity=combined.integrity,
@@ -1240,52 +1530,26 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                     metadata={"source": "input_labels_join", "function_name": function_name},
                 )
             else:
-                # Tier 3 fallback: No source_integrity AND no input labels.
-                # Default to UNTRUSTED for safety.
                 fallback_label = ContentLabel(
                     integrity=self.default_integrity,
                     confidentiality=confidentiality,
                     metadata={"source": "default", "function_name": function_name},
                 )
 
-            # context_label: cumulative conversation security state (cross-call).
-            # Used by PolicyEnforcementFunctionMiddleware to validate tool calls.
-            context.metadata["context_label"] = self._context_label
+            resolved_labels = self._expand_variable_references_in_context(context)
+            argument_label = combine_labels(*resolved_labels) if resolved_labels else ContentLabel()
+            context_label = self._context_label
+            context.metadata["context_label"] = context_label
+            context.metadata["argument_label"] = argument_label
+            context.metadata["effective_invocation_label"] = combine_labels(context_label, argument_label)
 
-            logger.info(
-                f"Tool call '{function_name}' fallback label (tiered): "
-                f"{fallback_label.integrity.value}, {fallback_label.confidentiality.value} "
-                f"(inputs: {len(input_labels)}, source_integrity: "
-                f"{declared_source_integrity.value if declared_source_integrity else 'not declared'})"
-            )
-            logger.info(
-                f"Current context label: {self._context_label.integrity.value}, "
-                f"{self._context_label.confidentiality.value}"
-            )
-
-            # Store original unexpanded arguments for message reconstruction before expanding
-            if "original_arguments_for_messages" not in context.metadata:
-                # Deep copy to preserve original state
-                context.metadata["original_arguments_for_messages"] = deepcopy(context.arguments)
-
-            # Expand bracketed variable references in arguments BEFORE tool execution
-            # so that tools receive expanded content, but keep originals for message history
-            self._expand_variable_references_in_context(context)
-
-            # Execute the function
             await call_next()
-
-            # If middleware set a function_approval_request (e.g., policy violation approval),
-            # skip all result processing and let it pass through unchanged
             if isinstance(context.result, Content) and context.result.type == "function_approval_request":
-                logger.info(f"Tool '{function_name}' returned function_approval_request - skipping result processing")
                 return
-
-            # Label, hide, and update context label for the tool result
             self._label_result(context, function_name, fallback_label)
         finally:
-            # Clear thread-local reference
-            _current_middleware.instance = None
+            _current_middleware.reset(middleware_token)
+            self._active_security_scope.reset(scope_token)
 
     def _label_result(
         self,
@@ -1496,7 +1760,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         # Store the actual content (serialize Content to its text representation)
         stored_value: Any = item.text if item.type == "text" and item.text is not None else item.to_dict()
 
-        var_id = self._variable_store.store(stored_value, label)
+        var_id = self.get_variable_store().store(stored_value, label)
 
         # Store metadata about this variable
         self._variable_metadata[var_id] = {
@@ -1513,7 +1777,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             description=description,
         )
 
-        logger.info(f"Auto-hidden untrusted result from '{function_name}' as variable {var_id}")
+        logger.info("Auto-hidden untrusted result from '%s' behind a variable reference", function_name)
+        logger.debug("Hidden result from '%s' stored as variable %s", function_name, var_id)
 
         # Return as a Content item so it fits in list[Content]
         return Content.from_text(
@@ -1521,32 +1786,23 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             additional_properties={"_variable_reference": True, "security_label": label.to_dict()},
         )
 
-    def get_variable_store(self) -> ContentVariableStore:
-        """Get the variable store for this middleware instance.
+    def get_variable_store(self, session: AgentSession | None = None) -> ContentVariableStore:
+        """Get the owner-aware variable store for an optional explicit session."""
+        return self._scope_for_session(session).variable_store()
 
-        Returns:
-            The ContentVariableStore instance.
-        """
-        return self._variable_store
+    def get_variable_metadata(self, var_id: str, session: AgentSession | None = None) -> dict[str, Any] | None:
+        """Get variable metadata for an optional explicit session."""
+        scope = self._scope_for_session(session)
+        if not scope.variable_store().exists(var_id):
+            return None
+        metadata = scope.variable_metadata.get(var_id)
+        if not isinstance(metadata, dict):
+            return None
+        return deepcopy(cast(dict[str, Any], metadata))
 
-    def get_variable_metadata(self, var_id: str) -> dict[str, Any] | None:
-        """Get metadata for a stored variable.
-
-        Args:
-            var_id: The variable ID.
-
-        Returns:
-            Metadata dictionary or None if not found.
-        """
-        return self._variable_metadata.get(var_id)
-
-    def list_variables(self) -> list[str]:
-        """Get a list of all stored variable IDs.
-
-        Returns:
-            List of variable ID strings.
-        """
-        return self._variable_store.list_variables()
+    def list_variables(self, session: AgentSession | None = None) -> list[str]:
+        """List variable IDs for an optional explicit session."""
+        return self.get_variable_store(session).list_variables()
 
     def get_security_tools(self) -> list[FunctionTool]:
         """Get the list of security tools for agent integration.
@@ -1594,53 +1850,74 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         return SECURITY_TOOL_INSTRUCTIONS
 
     def _set_as_current(self) -> None:
-        """Set this middleware as the current thread-local instance.
+        """Set this middleware as current in this execution context.
 
         This is primarily for testing and debugging purposes.
         In normal operation, the middleware is automatically set during process().
         """
-        _current_middleware.instance = self
+        _current_middleware.set(self)
 
     def _clear_current(self) -> None:
-        """Clear the current thread-local middleware instance.
+        """Clear the current middleware in this execution context.
 
         This is primarily for testing and debugging purposes.
         In normal operation, the middleware is automatically cleared after process().
         """
-        _current_middleware.instance = None
+        _current_middleware.set(None)
 
 
 def get_current_middleware() -> LabelTrackingFunctionMiddleware | None:
-    """Get the current middleware instance from thread-local storage.
+    """Get the middleware bound to the current execution context.
 
-    This function allows tools to access the middleware's variable store.
+    This function allows tools to access the invoking middleware's variable store.
 
     Returns:
         The current LabelTrackingFunctionMiddleware instance, or None if not set.
     """
-    return getattr(_current_middleware, "instance", None)
+    return _current_middleware.get()
 
 
 class _PendingPolicyApproval(NamedTuple):
-    """Immutable binding record for a pending policy-violation approval.
-
-    Captures every dimension a granted approval is bound to so a reused ``call_id`` cannot
-    re-authorize a call that differs in any of them. ``body_signature`` covers the function name and
-    arguments; ``label_key`` the security label (integrity/confidentiality) shown for review;
-    ``session_key`` the session the approval was requested in (the isolation boundary at this layer;
-    there is no separate user identity here); ``disclosed_violations`` the canonical set of violation
-    types disclosed in the approval request, so an approval granted for one set of risks cannot wave
-    a different (e.g. larger) set that a replay computes after the tool's policy metadata changes.
-    """
+    """Exact, durable binding for one pending policy approval."""
 
     body_signature: str
+    resolved_signature: str
     label_key: str
+    effective_label_key: str
     session_key: str
     disclosed_violations: tuple[str, ...]
 
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "body_signature": self.body_signature,
+            "resolved_signature": self.resolved_signature,
+            "label_key": self.label_key,
+            "effective_label_key": self.effective_label_key,
+            "session_key": self.session_key,
+            "disclosed_violations": list(self.disclosed_violations),
+        }
+
+    @classmethod
+    def from_state(cls, payload: Any) -> _PendingPolicyApproval | None:
+        if not isinstance(payload, dict):
+            return None
+        record = cast(dict[str, Any], payload)
+        keys = ("body_signature", "resolved_signature", "label_key", "effective_label_key", "session_key")
+        values = tuple(record.get(key) for key in keys)
+        violations = record.get("disclosed_violations")
+        if not all(type(value) is str for value in values):
+            return None
+        if not isinstance(violations, list):
+            return None
+        violation_items = cast(list[Any], violations)
+        if not all(type(item) is str for item in violation_items):
+            return None
+        typed_values = cast(tuple[str, str, str, str, str], values)
+        return cls(*typed_values, tuple(cast(list[str], violation_items)))
+
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
-class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
+class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding):
     """Middleware that enforces security policies on tool invocations.
 
     This middleware:
@@ -1671,37 +1948,45 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
             )
     """
 
+    _requires_session_state = True
+
     def __init__(
         self,
         allow_untrusted_tools: set[str] | None = None,
         block_on_violation: bool = True,
         enable_audit_log: bool = True,
         approval_on_violation: bool = False,
+        *,
+        security_scope: _SecurityScope | None = None,
+        session_state_key: str = _STANDALONE_SESSION_STATE_KEY,
     ) -> None:
-        """Initialize PolicyEnforcementFunctionMiddleware.
-
-        Args:
-            allow_untrusted_tools: Set of tool names allowed to execute in an untrusted context.
-            block_on_violation: Whether to block execution on policy violations.
-                Ignored if approval_on_violation is True.
-            enable_audit_log: Whether to maintain an audit log of violations.
-            approval_on_violation: Whether to request user approval instead of blocking
-                when a policy violation is detected. If True, the middleware will return
-                a special result that triggers an approval request in the UI. After user
-                approval, the tool will execute with a warning about untrusted context.
-        """
+        """Initialize policy enforcement and bind its security-state selector."""
         self.allow_untrusted_tools = allow_untrusted_tools or set()
         self.approval_on_violation = approval_on_violation
-        # If approval_on_violation is True, we don't block - we request approval instead
         self.block_on_violation = block_on_violation if not approval_on_violation else False
         self.enable_audit_log = enable_audit_log
-        self.audit_log: list[dict[str, Any]] = []
-        # Track occurrence-aware approval ids, each mapped to a binding record capturing the exact
-        # invocation the approval was requested for: the provider call id, function name + arguments,
-        # security label shown for review, and session. Combined with consume-on-use, an approval
-        # cannot re-authorize a repeated call, a different function, changed arguments, a different
-        # security label, or a different session.
-        self._pending_policy_approvals: dict[str, _PendingPolicyApproval] = {}
+        self._initialize_security_scope(security_scope, session_state_key=session_state_key)
+
+    def _clone_for_scope(self, scope: _SecurityScope) -> PolicyEnforcementFunctionMiddleware:
+        """Clone customized middleware configuration into a fixed session scope."""
+        scoped = copy(self)
+        scoped._initialize_security_scope(scope, session_state_key=self._security_session_state_key)
+        return scoped
+
+    @property
+    def audit_log(self) -> list[dict[str, Any]]:
+        """Return the live audit log for the active scope."""
+        return self._scope.audit_log
+
+    @property
+    def _pending_policy_approvals(self) -> dict[str, Any]:
+        return self._scope.pending_approvals
+
+    def _get_pending_approval(self, approval_id: str) -> _PendingPolicyApproval | None:
+        return _PendingPolicyApproval.from_state(self._scope.pending_approvals.get(approval_id))
+
+    def _store_pending_approval(self, approval_id: str, record: _PendingPolicyApproval) -> None:
+        self._scope.pending_approvals[approval_id] = record.to_state()
 
     def _get_call_id(self, context: FunctionInvocationContext) -> str:
         """Get the tool call id for this invocation context."""
@@ -1739,31 +2024,42 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         )
 
     def _signature_from_parts(self, name: str | None, arguments: dict[str, Any]) -> str:
-        """Canonicalize a (function name, arguments) pair into a stable comparison signature."""
-        try:
-            arguments_repr = json.dumps(arguments, sort_keys=True, default=str)
-        except (TypeError, ValueError):
-            arguments_repr = repr(sorted(arguments.items()))
-        return f"{name or ''}\x00{arguments_repr}"
+        """Hash a deterministic, strictly representable invocation snapshot."""
+        canonical = _strict_json_value(
+            {"name": name or "", "arguments": arguments},
+            path="approval invocation",
+            canonical=True,
+        )
+        payload = json.dumps(
+            canonical,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode()
+        return hashlib.sha256(payload).hexdigest()
 
     def _call_body_signature(self, context: FunctionInvocationContext) -> str:
-        """Compute the (function name, arguments) signature for the current invocation.
-
-        This is the part of the binding that the approval *response*'s embedded ``function_call``
-        can also reproduce, so it is used both to validate the response body and to check that the
-        invocation about to execute matches the one that was approved.
-        """
         return self._signature_from_parts(context.function.name, self._current_arguments(context))
 
-    def _context_label_key(self, context: FunctionInvocationContext) -> str:
-        """Canonicalize the current security label (integrity/confidentiality) for binding.
+    def _resolved_arguments(self, context: FunctionInvocationContext) -> dict[str, Any]:
+        if isinstance(context.arguments, BaseModel):
+            return context.arguments.model_dump()
+        return dict(context.arguments)
 
-        Accepts a ``ContentLabel`` or its dict form from ``context.metadata['context_label']`` and
-        reduces it to the security-relevant dimensions used for policy decisions, so an approval
-        granted under one label cannot authorize the same call under a different (e.g. more
-        sensitive) label.
-        """
-        label_data = context.metadata.get("context_label")
+    def _resolved_call_signature(self, context: FunctionInvocationContext) -> str:
+        return self._signature_from_parts(
+            context.function.name,
+            {"arguments": self._resolved_arguments(context), "kwargs": dict(context.kwargs)},
+        )
+
+    def _context_label_key(self, context: FunctionInvocationContext) -> str:
+        return self._label_key(context.metadata.get("context_label"))
+
+    def _effective_label_key(self, context: FunctionInvocationContext) -> str:
+        return self._label_key(context.metadata.get("effective_invocation_label"))
+
+    @staticmethod
+    def _label_key(label_data: Any) -> str:
         if isinstance(label_data, ContentLabel):
             return f"{label_data.integrity.value}/{label_data.confidentiality.value}"
         if isinstance(label_data, dict):
@@ -1772,40 +2068,29 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         return "/"
 
     def _session_key(self, context: FunctionInvocationContext) -> str:
-        """Return the session id for binding, or empty string when there is no session."""
-        session = context.session
-        return session.session_id if session is not None else ""
+        return context.session.session_id if context.session is not None else ""
 
     def _violation_set_key(self, violations: list[dict[str, Any]]) -> tuple[str, ...]:
-        """Canonicalize the disclosed violations into a stable, order-independent key.
-
-        Each entry pairs the violation type with its canonical policy reason, so a replay that
-        trips the *same* violation type but a materially *different* risk (e.g. the tool's
-        ``max_allowed_confidentiality`` destination changed, keeping the type but changing the
-        reason) no longer matches and must re-request approval. The approval is thus bound to
-        exactly the risks disclosed to the user, not merely to their category names.
-        """
-        return tuple(sorted(f"{v['violation_type']}\x00{v['audit']['reason']}" for v in violations))
+        return tuple(sorted(f"{item['violation_type']}\x00{item['audit']['reason']}" for item in violations))
 
     def _pending_record(
         self,
         context: FunctionInvocationContext,
         violations: list[dict[str, Any]],
     ) -> _PendingPolicyApproval:
-        """Build the binding record for the current invocation and disclosed violation set."""
         return _PendingPolicyApproval(
             body_signature=self._call_body_signature(context),
+            resolved_signature=self._resolved_call_signature(context),
             label_key=self._context_label_key(context),
+            effective_label_key=self._effective_label_key(context),
             session_key=self._session_key(context),
             disclosed_violations=self._violation_set_key(violations),
         )
 
     def _signature_from_function_call(self, function_call: Any) -> str | None:
-        """Compute the body signature for a ``function_call`` Content, or None if it is not one."""
         if not (isinstance(function_call, Content) and function_call.type == "function_call"):
             return None
-        arguments = function_call.parse_arguments() or {}
-        return self._signature_from_parts(function_call.name, dict(arguments))
+        return self._signature_from_parts(function_call.name, dict(function_call.parse_arguments() or {}))
 
     def _response_matches_pending(
         self,
@@ -1814,48 +2099,27 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         call_id: str,
         body_signature: str,
     ) -> bool:
-        """Validate that the approval response itself corresponds to the pending request.
-
-        The response must carry the request id shown for review and embed the exact function call
-        (name + arguments) reconstructed from the authoritative pending snapshot. The embedded
-        ``call_id`` must match provider correlation; an occurrence-aware response and embedded call
-        must also carry the Agent Framework approval id. Legacy direct middleware callers continue
-        to use ``call_id`` for both identities.
-        """
-        embedded = getattr(approval_response, "function_call", None)
+        embedded = approval_response.function_call
         if self._signature_from_function_call(embedded) != body_signature:
             return False
-        # Both identifiers must be present and name the pending request (no None bypass).
-        response_id = getattr(approval_response, "id", None)
-        embedded_call_id = getattr(embedded, "call_id", None)
-        embedded_occurrence_id = getattr(embedded, "id", None)
+        if embedded is None:
+            return False
         return (
-            response_id == approval_id
-            and embedded_call_id == call_id
-            and (approval_id == call_id or embedded_occurrence_id == approval_id)
+            approval_response.id == approval_id
+            and embedded.call_id == call_id
+            and (approval_id == call_id or embedded.id == approval_id)
         )
 
     def _matches_pending_approval(
         self,
         context: FunctionInvocationContext,
-        current_violations: list[dict[str, Any]],
+        current_binding: _PendingPolicyApproval,
     ) -> bool:
-        """Return whether an approved, call-bound approval matches this exact invocation.
-
-        True only when an approved ``function_approval_response`` is present, the call_id is still
-        awaiting approval, the response itself (its id and embedded ``function_call``) matches the
-        pending request, and the current invocation matches every bound dimension recorded when
-        approval was requested: function + arguments, the security label, the session, and the
-        exact set of violation types disclosed to the user. If the invocation now trips a different
-        set of violations than was disclosed, this returns False so the caller re-requests approval
-        for the new set. Does not mutate state; consumption is done separately via
-        :meth:`_consume_pending_approval` once the approval actually waves the detected violations.
-        """
         call_id = self._get_call_id(context)
         approval_id = self._get_approval_id(context)
         if not call_id or not approval_id:
             return False
-        pending = self._pending_policy_approvals.get(approval_id)
+        pending = self._get_pending_approval(approval_id)
         if pending is None:
             return False
         approval_response = context.metadata.get("approval_response")
@@ -1865,23 +2129,11 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
             and approval_response.approved is True
         ):
             return False
-        # The approval response must itself match the pending request (id + embedded function_call),
-        # and the invocation about to execute must match every recorded binding dimension, including
-        # the exact set of violations that was disclosed for review.
-        return (
-            self._response_matches_pending(approval_response, approval_id, call_id, pending.body_signature)
-            and self._call_body_signature(context) == pending.body_signature
-            and self._context_label_key(context) == pending.label_key
-            and self._session_key(context) == pending.session_key
-            and self._violation_set_key(current_violations) == pending.disclosed_violations
+        return current_binding == pending and self._response_matches_pending(
+            approval_response, approval_id, call_id, pending.body_signature
         )
 
     def _consume_pending_approval(self, context: FunctionInvocationContext) -> None:
-        """Remove the pending approval for this call so it authorizes exactly one invocation.
-
-        Idempotent: safe to call for both the integrity and confidentiality checks of a single
-        invocation.
-        """
         self._pending_policy_approvals.pop(self._get_approval_id(context), None)
 
     def _mark_policy_violation_approved(
@@ -1900,6 +2152,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         *,
         context_label: ContentLabel,
         violations: list[dict[str, Any]],
+        binding: _PendingPolicyApproval,
     ) -> None:
         """Create a single policy-violation approval request disclosing every detected violation.
 
@@ -1915,8 +2168,16 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         )
         approval_id = self._get_approval_id(context)
         if approval_id:
-            self._pending_policy_approvals[approval_id] = self._pending_record(context, violations)
+            self._store_pending_approval(approval_id, binding)
+        approval_response = context.metadata.get("approval_response")
+        is_replacement = (
+            isinstance(approval_response, Content)
+            and approval_response.type == "function_approval_response"
+            and approval_response.approved is True
+        )
+        request_id = f"{approval_id}:replacement:{uuid.uuid4().hex}" if is_replacement else approval_id
         additional_properties: dict[str, Any] = {
+            "_replacement_approval_request": is_replacement,
             "policy_violation": True,
             "violation_type": primary["violation_type"],
             "reason": (
@@ -1932,7 +2193,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                 {"violation_type": v["violation_type"], "reason": v["approval_reason"]} for v in violations
             ]
         context.result = Content.from_function_approval_request(
-            id=approval_id,
+            id=request_id,
             function_call=self._build_function_call_content(context),
             additional_properties=additional_properties,
         )
@@ -1959,73 +2220,66 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         context.result = result
         raise MiddlewareTermination("Policy violation blocked tool execution")
 
+    def _block_unsafe_approval_binding(
+        self, context: FunctionInvocationContext, *, context_label: ContentLabel
+    ) -> NoReturn:
+        context.result = {
+            "error": "Policy violation: approval cannot be safely bound to this invocation",
+            "function": context.function.name,
+            "context_label": context_label.to_dict(),
+            "violation_type": "unsafe_approval_binding",
+        }
+        raise MiddlewareTermination("Unsafe policy approval binding")
+
     async def process(
         self,
         context: FunctionInvocationContext,
         call_next: Callable[[], Awaitable[None]],
     ) -> None:
-        """Process function invocation with policy enforcement.
+        """Enforce policy using the scope selected from this invocation."""
+        scope_token = self._activate_security_scope(context)
+        try:
+            await self._process_in_scope(context, call_next)
+        finally:
+            self._active_security_scope.reset(scope_token)
 
-        Policy enforcement uses the context_label (cumulative security state of the
-        conversation) to validate tool calls. This prevents indirect attacks where
-        untrusted content from previous tool calls could influence dangerous operations.
-
-        Args:
-            context: The function invocation context.
-            call_next: Callback to continue to next middleware or function execution.
-        """
+    async def _process_in_scope(
+        self,
+        context: FunctionInvocationContext,
+        call_next: Callable[[], Awaitable[None]],
+    ) -> None:
         function_name = context.function.name
-
-        # Get the context label (cumulative security state of the conversation)
-        # This is set by LabelTrackingFunctionMiddleware and represents the
-        # combined security state of all content that has entered the context
         context_label_data = context.metadata.get("context_label")
-
         if context_label_data is None:
             logger.warning(
-                f"No context label found for tool '{function_name}'. "
-                "Ensure LabelTrackingFunctionMiddleware runs before PolicyEnforcementFunctionMiddleware."
+                "No context label found for tool '%s'. Ensure LabelTrackingFunctionMiddleware runs first.",
+                function_name,
             )
-            # Continue execution without policy check
             await call_next()
             return
-
-        # Convert context label to ContentLabel if it's a dict
         if isinstance(context_label_data, dict):
             context_label = ContentLabel.from_dict(cast(dict[str, Any], context_label_data))
         elif isinstance(context_label_data, ContentLabel):
             context_label = context_label_data
         else:
-            logger.error(f"Invalid context label type: {type(context_label_data)}")
+            logger.error("Invalid context label type: %s", type(cast(object, context_label_data)).__name__)
             await call_next()
             return
 
-        logger.debug(
-            f"Policy enforcement for '{function_name}': "
-            f"context_label={context_label.integrity.value}/{context_label.confidentiality.value}"
-        )
+        argument_label = self._resolve_label(context.metadata.get("argument_label"))
+        effective_label = combine_labels(context_label, argument_label)
         function_props = _get_additional_properties(context.function)
-
-        # Detect every applicable policy violation up front so a single approval decision can
-        # disclose all of them together. Evaluating both the integrity and confidentiality checks
-        # before acting prevents an approval that was requested (and granted) for one violation
-        # from silently waving a second, undisclosed violation when the call is replayed.
+        accepts_untrusted = (
+            function_name in self.allow_untrusted_tools or function_props.get("accepts_untrusted") is True
+        )
         violations: list[dict[str, Any]] = []
 
-        # Integrity policy: an UNTRUSTED (tainted) context may not drive a tool that has not
-        # opted in to untrusted input.
-        if (
-            context_label.integrity == IntegrityLabel.UNTRUSTED
-            and function_name not in self.allow_untrusted_tools
-            and not function_props.get("accepts_untrusted", False)
-        ):
+        if context_label.integrity == IntegrityLabel.UNTRUSTED and not accepts_untrusted:
             violations.append({
                 "violation_type": "untrusted_context",
                 "approval_reason": (
                     f"Tool '{function_name}' is being called in an UNTRUSTED context. "
-                    "The conversation contains data from untrusted sources which could "
-                    "influence this operation. Approve to proceed anyway (the agent will "
-                    "continue with a warning about untrusted context)."
+                    "Approve to proceed despite possible untrusted influence."
                 ),
                 "block_error": "Policy violation: Tool cannot be called in untrusted context",
                 "block_violation_type": None,
@@ -2034,19 +2288,37 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                     "function": function_name,
                     "context_label": context_label.to_dict(),
                     "turn": context.metadata.get("turn_number", -1),
-                    "reason": "Context is UNTRUSTED and tool is not allowed to execute in an untrusted context",
+                    "reason": "Context is UNTRUSTED and the tool does not accept untrusted input",
                 },
             })
 
-        # Confidentiality policy: block writing higher-confidentiality data to a lower
-        # confidentiality destination (data exfiltration).
-        conf_result = self._check_confidentiality_policy_detailed(context, context_label)
+        if argument_label.integrity == IntegrityLabel.UNTRUSTED and not accepts_untrusted:
+            violations.append({
+                "violation_type": "untrusted_arguments",
+                "approval_reason": (
+                    f"Tool '{function_name}' would receive UNTRUSTED content resolved from a hidden variable. "
+                    "Approve to forward that content."
+                ),
+                "block_error": "Policy violation: Tool cannot receive untrusted variable content",
+                "block_violation_type": "untrusted_arguments",
+                "audit": {
+                    "type": "untrusted_arguments",
+                    "function": function_name,
+                    "context_label": context_label.to_dict(),
+                    "argument_label": argument_label.to_dict(),
+                    "effective_label": effective_label.to_dict(),
+                    "turn": context.metadata.get("turn_number", -1),
+                    "reason": "Arguments resolve to UNTRUSTED content and the tool does not accept untrusted input",
+                },
+            })
+
+        conf_result = self._check_confidentiality_policy_detailed(context, effective_label)
         if not conf_result["passed"]:
             violations.append({
                 "violation_type": conf_result["failure_type"],
                 "approval_reason": (
-                    f"Tool '{function_name}' violates confidentiality policy: "
-                    f"{conf_result['reason']}. Approve to proceed anyway."
+                    f"Tool '{function_name}' violates confidentiality policy: {conf_result['reason']}. "
+                    "Approve to proceed anyway."
                 ),
                 "block_error": f"Policy violation: {conf_result['reason']}",
                 "block_violation_type": conf_result["failure_type"],
@@ -2055,59 +2327,59 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                     "subtype": conf_result["failure_type"],
                     "function": function_name,
                     "context_label": context_label.to_dict(),
+                    "argument_label": argument_label.to_dict(),
+                    "effective_label": effective_label.to_dict(),
                     "reason": conf_result["reason"],
                     "turn": context.metadata.get("turn_number", -1),
                 },
             })
 
         if not violations:
-            # Policy check passed, continue execution
-            logger.debug(f"Policy check passed for tool '{function_name}'")
             await call_next()
             return
-
         for violation in violations:
             self._log_violation(violation["audit"])
 
-        # Resolve the approval decision against the exact violation set now detected. A pending
-        # approval only counts if it was granted for this same set; a replay that trips a
-        # different set (e.g. after the tool's policy metadata changed) falls through and
-        # re-requests approval for the new set.
-        approved = self._matches_pending_approval(context, violations)
+        binding: _PendingPolicyApproval | None = None
+        approved = False
+        if self.approval_on_violation:
+            try:
+                binding = self._pending_record(context, violations)
+            except (TypeError, ValueError, OverflowError):
+                self._block_unsafe_approval_binding(context, context_label=context_label)
+            approved = self._matches_pending_approval(context, binding)
 
-        disclosed = ", ".join(v["violation_type"] for v in violations)
-
+        disclosed = ", ".join(item["violation_type"] for item in violations)
         if approved:
-            # A single approval waves every violation it disclosed for this exact invocation;
-            # consume it once so it cannot authorize a repeated or different call.
             self._consume_pending_approval(context)
             self._mark_policy_violation_approved(
                 context,
-                warning_message=(
-                    f"APPROVED BY USER: Tool '{function_name}' executing despite policy "
-                    f"violation(s) [{disclosed}]. User acknowledged the security risk and "
-                    "approved execution."
-                ),
+                warning_message=f"APPROVED BY USER: '{function_name}' executing despite [{disclosed}].",
             )
-        elif self.approval_on_violation:
+        elif binding is not None:
             self._request_policy_violation_approval(
                 context,
                 context_label=context_label,
                 violations=violations,
+                binding=binding,
             )
-            return
         elif self.block_on_violation:
-            logger.warning(f"BLOCKED: Tool '{function_name}' policy violation(s): {disclosed}")
-            self._block_policy_violation(
-                context,
-                context_label=context_label,
-                violations=violations,
-            )
-            return
+            self._block_policy_violation(context, context_label=context_label, violations=violations)
         else:
-            logger.warning(f"WARNING: Tool '{function_name}' policy violation(s) [{disclosed}] (allowed)")
+            logger.warning("WARNING: Tool '%s' policy violation(s) [%s] (allowed)", function_name, disclosed)
 
         await call_next()
+
+    @staticmethod
+    def _resolve_label(label_data: Any) -> ContentLabel:
+        if isinstance(label_data, ContentLabel):
+            return label_data
+        if isinstance(label_data, dict):
+            try:
+                return ContentLabel.from_dict(cast(dict[str, Any], label_data))
+            except (TypeError, ValueError):
+                logger.warning("Ignoring unparseable invocation label.")
+        return ContentLabel()
 
     def _check_confidentiality_policy(
         self,
@@ -2182,21 +2454,18 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
             violation: Dictionary containing violation details.
         """
         if self.enable_audit_log:
-            self.audit_log.append(violation)
+            self._scope.append_audit_entry(violation)
 
-        logger.warning(f"Policy violation detected: {violation}")
+        logger.warning("Policy violation detected")
+        logger.debug("Policy violation details: %s", violation)
 
-    def get_audit_log(self) -> list[dict[str, Any]]:
-        """Get the audit log of policy violations.
+    def get_audit_log(self, session: AgentSession | None = None) -> list[dict[str, Any]]:
+        """Get a detached audit log for an optional explicit session."""
+        return self._scope_for_session(session).get_audit_log()
 
-        Returns:
-            List of violation records.
-        """
-        return self.audit_log.copy()
-
-    def clear_audit_log(self) -> None:
-        """Clear the audit log."""
-        self.audit_log.clear()
+    def clear_audit_log(self, session: AgentSession | None = None) -> None:
+        """Clear the audit log for an optional explicit session."""
+        self._scope_for_session(session).clear_audit_log()
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
@@ -2205,6 +2474,11 @@ class SecureAgentConfig(ContextProvider):
 
     This class extends BaseContextProvider to automatically inject security tools,
     instructions, and middleware into any agent via the context provider pipeline.
+
+    Provider runs store security state in the active ``AgentSession``: reused or
+    restored sessions persist, while explicit and generated sessions isolate. The
+    middleware returned by :meth:`get_middleware` stays standalone; after provider use,
+    state accessors require an explicit session.
 
     Attributes:
         label_tracker: The LabelTrackingFunctionMiddleware instance.
@@ -2285,28 +2559,32 @@ class SecureAgentConfig(ContextProvider):
                 Defaults to "secure_agent".
         """
         super().__init__(source_id or self.DEFAULT_SOURCE_ID)
-
+        self._auto_hide_untrusted = auto_hide_untrusted
+        self._default_integrity = default_integrity
+        self._default_confidentiality = default_confidentiality
+        self._allow_untrusted_tools = {"quarantined_llm", "inspect_variable"}
+        if allow_untrusted_tools:
+            self._allow_untrusted_tools.update(allow_untrusted_tools)
+        self._block_on_violation = block_on_violation
+        self._approval_on_violation = approval_on_violation
+        self._enable_audit_log = enable_audit_log
+        self.enable_policy_enforcement = enable_policy_enforcement
         self.label_tracker = LabelTrackingFunctionMiddleware(
             auto_hide_untrusted=auto_hide_untrusted,
             default_integrity=default_integrity,
             default_confidentiality=default_confidentiality,
         )
-
-        self.enable_policy_enforcement = enable_policy_enforcement
-        if enable_policy_enforcement:
-            # Always allow security tools to execute in an untrusted context
-            tools_allowing_untrusted = {"quarantined_llm", "inspect_variable"}
-            if allow_untrusted_tools:
-                tools_allowing_untrusted.update(allow_untrusted_tools)
-
-            self.policy_enforcer: PolicyEnforcementFunctionMiddleware | None = PolicyEnforcementFunctionMiddleware(
-                allow_untrusted_tools=tools_allowing_untrusted,
+        self.policy_enforcer = (
+            PolicyEnforcementFunctionMiddleware(
+                allow_untrusted_tools=set(self._allow_untrusted_tools),
                 block_on_violation=block_on_violation,
                 approval_on_violation=approval_on_violation,
                 enable_audit_log=enable_audit_log,
             )
-        else:
-            self.policy_enforcer = None
+            if enable_policy_enforcement
+            else None
+        )
+        self._provider_state_used = False
 
         # Store and configure quarantine client for real LLM calls
         self._quarantine_chat_client = quarantine_chat_client
@@ -2314,11 +2592,27 @@ class SecureAgentConfig(ContextProvider):
             set_quarantine_client(quarantine_chat_client)
             logger.info("Quarantine chat client configured for real LLM calls")
 
+    def _scope_for_session(self, session: AgentSession) -> _SecurityScope:
+        """Return the FIDES scope stored in an explicit session's provider state."""
+        provider_state = session.state.setdefault(self.source_id, {})
+        if not isinstance(provider_state, dict):
+            raise ValueError("Security provider state must be a dictionary.")
+        return _SecurityScope(cast(dict[str, Any], provider_state), scope_id=session.session_id)
+
+    def _middleware_for_scope(self, scope: _SecurityScope) -> list[FunctionMiddleware]:
+        """Clone the current overridable middleware stack into one scope."""
+        return [
+            middleware._clone_for_scope(scope)  # pyright: ignore[reportPrivateUsage]
+            if isinstance(middleware, (LabelTrackingFunctionMiddleware, PolicyEnforcementFunctionMiddleware))
+            else middleware
+            for middleware in self.get_middleware()
+        ]
+
     async def before_run(
         self,
         *,
         agent: Any,
-        session: Any,
+        session: AgentSession,
         context: Any,
         state: dict[str, Any],
     ) -> None:
@@ -2334,9 +2628,12 @@ class SecureAgentConfig(ContextProvider):
             context: The invocation context - tools, instructions, and middleware are added here.
             state: The provider-scoped mutable state dict.
         """
+        scope = _SecurityScope(state, scope_id=session.session_id)
+        middleware = self._middleware_for_scope(scope)
+        self._provider_state_used = True
         context.extend_tools(self.source_id, self.get_tools())
         context.extend_instructions(self.source_id, self.get_instructions())
-        context.extend_middleware(self.source_id, self.get_middleware())
+        context.extend_middleware(self.source_id, middleware)
 
     def get_tools(self) -> list[FunctionTool]:
         """Get the security tools for agent integration.
@@ -2365,31 +2662,53 @@ class SecureAgentConfig(ContextProvider):
             middleware.append(self.policy_enforcer)
         return middleware
 
-    def get_audit_log(self) -> list[dict[str, Any]]:
-        """Get the audit log from policy enforcement.
+    def get_audit_log(self, session: AgentSession | None = None) -> list[dict[str, Any]]:
+        """Get the audit log for an optional session.
+
+        Args:
+            session: Session used by provider-driven runs. Omit only for exclusive
+                standalone use through ``get_middleware``.
 
         Returns:
             List of violation records, or empty list if policy enforcement disabled.
         """
+        if session is None and self._provider_state_used:
+            raise ValueError("session is required after SecureAgentConfig is used as a context provider")
+        if not self.enable_policy_enforcement:
+            return []
+        if session is not None:
+            return self._scope_for_session(session).get_audit_log()
         if self.policy_enforcer:
             return self.policy_enforcer.get_audit_log()
         return []
 
-    def get_variable_store(self) -> ContentVariableStore:
-        """Get the variable store for this configuration.
+    def get_variable_store(self, session: AgentSession | None = None) -> ContentVariableStore:
+        """Get the variable store for an optional session.
+
+        Args:
+            session: Session used by provider-driven runs. Omit only for exclusive
+                standalone use through ``get_middleware``.
 
         Returns:
             The ContentVariableStore instance.
         """
+        if session is None and self._provider_state_used:
+            raise ValueError("session is required after SecureAgentConfig is used as a context provider")
+        if session is not None:
+            return _ScopedVariableStore(self._scope_for_session(session))
         return self.label_tracker.get_variable_store()
 
-    def list_variables(self) -> list[str]:
-        """Get a list of all stored variable IDs.
+    def list_variables(self, session: AgentSession | None = None) -> list[str]:
+        """Get variable IDs for an optional session.
+
+        Args:
+            session: Session used by provider-driven runs. Omit only for exclusive
+                standalone use through ``get_middleware``.
 
         Returns:
             List of variable ID strings.
         """
-        return self.label_tracker.list_variables()
+        return self.get_variable_store(session).list_variables()
 
     def get_quarantine_client(self) -> SupportsChatGetResponse | None:
         """Get the quarantine chat client.
@@ -2529,15 +2848,20 @@ push_files(files=[{"path": "report.md", "content": "## Summary\n[var_abc123]"}])
 write_file(path="out.txt", content="[var_abc123]")
 ```
 
-**INCORRECT** — do NOT pass the bare id, do NOT quote it, do NOT prefix it:
+**INCORRECT** — do not rely on the bare-id safety fallback, quote it, or prefix it:
 ```
-write_file(content="var_abc123")           # ❌ bare id, will be written verbatim
+write_file(content="var_abc123")           # discouraged; use brackets
 write_file(content="${var_abc123}")        # ❌ wrong syntax
 write_file(content="<var_abc123>")         # ❌ wrong syntax
 ```
 
 Always use the exact form ``[var_<hex>]``. The id is opaque — do NOT shorten,
-truncate, or modify it.
+truncate, or modify it. Known bare IDs are expanded only as a safety fallback. Unknown IDs and IDs
+owned by another session remain literal.
+
+Forwarding is allowed only when the destination tool declares `accepts_untrusted=True`; otherwise
+the call is blocked, audited, or sent for policy approval. That opt-in does not bypass the tool's
+`max_allowed_confidentiality` limit. Hidden content stays out of the model context.
 
 ### Best Practices:
 
@@ -2619,7 +2943,7 @@ async def quarantined_llm(
                 },
             )
     """
-    logger.info(f"Quarantined LLM call with prompt: {prompt[:50]}...")
+    logger.info("Quarantined LLM call requested")
 
     actual_variable_ids: list[str] = list(variable_ids or [])
     actual_labelled_data: dict[str, Any] = dict(labelled_data or {})
@@ -2637,9 +2961,9 @@ async def quarantined_llm(
             content, label = variable_store.retrieve(var_id)
             retrieved_content[var_id] = content
             labels.append(label)
-            logger.info(f"Retrieved variable {var_id} for quarantined processing")
+            logger.debug("Retrieved variable %s for quarantined processing", var_id)
         except KeyError:
-            logger.warning(f"Variable {var_id} not found in store")
+            logger.warning("A requested quarantine variable was not found in the current security scope")
             # Still add untrusted label for unknown variables
             labels.append(ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
 
@@ -2667,7 +2991,8 @@ async def quarantined_llm(
                         label = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
                     labels.append(label)
                 except Exception as e:
-                    logger.warning(f"Failed to parse label for {key}: {e}")
+                    logger.warning("Failed to parse a quarantine data security label; using UNTRUSTED")
+                    logger.debug("Quarantine label parse failure for %s: %s", key, e)
                     labels.append(ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
             else:
                 # No label provided, default to UNTRUSTED
@@ -2879,13 +3204,14 @@ async def inspect_variable(
     middleware = get_current_middleware()
     if middleware:
         variable_store = middleware.get_variable_store()
-        logger.info(f"Using middleware variable store for inspection of {variable_id}")
+        logger.debug("Using middleware variable store for inspection of %s", variable_id)
     else:
         # Fall back to global store if no middleware context
         variable_store = _global_variable_store
-        logger.warning(f"No middleware context found, using global variable store for {variable_id}")
+        logger.warning("No middleware context found; using the global variable store for inspection")
 
-    logger.warning(f"inspect_variable called for {variable_id}. Reason: {reason or 'not provided'}")
+    logger.warning("inspect_variable called")
+    logger.debug("Variable inspection reason: %s", reason or "not provided")
 
     try:
         # Retrieve content from store
@@ -2903,9 +3229,8 @@ async def inspect_variable(
                 }
 
         # Log the inspection for audit
-        logger.warning(
-            f"SECURITY AUDIT: Variable {variable_id} inspected. Label: {label}. Reason: {reason or 'not provided'}"
-        )
+        logger.warning("SECURITY AUDIT: Variable inspected. Label: %s", label)
+        logger.debug("Variable inspection audit reason: %s", reason or "not provided")
 
         result = {
             "variable_id": variable_id,
@@ -2923,8 +3248,8 @@ async def inspect_variable(
 
         return result
 
-    except KeyError as e:
-        logger.error(f"Variable {variable_id} not found: {e}")
+    except KeyError:
+        logger.error("Requested variable was not found in the active security scope")
         return {
             "variable_id": variable_id,
             "error": f"Variable not found: {variable_id}",
@@ -2975,7 +3300,7 @@ def store_untrusted_content(
     # Create and return reference
     ref = VariableReferenceContent(variable_id=var_id, label=label, description=description)
 
-    logger.info(f"Stored untrusted content as variable {var_id}")
+    logger.debug("Stored untrusted content as variable %s", var_id)
 
     return ref
 

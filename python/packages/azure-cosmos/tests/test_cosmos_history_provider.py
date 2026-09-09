@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
+from agent_framework._settings import SecretString
 from agent_framework.exceptions import SettingNotFoundError
 from azure.cosmos.aio import CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
@@ -104,15 +105,22 @@ class TestCosmosHistoryProviderInit:
         with pytest.raises(SettingNotFoundError, match="database_name"):
             CosmosHistoryProvider()
 
-    def test_constructs_client_with_string_credential(
-        self, monkeypatch: pytest.MonkeyPatch, mock_cosmos_client: MagicMock
+    @pytest.mark.parametrize(
+        "credential", [None, "key-123", SecretString("key-123"), MagicMock()], ids=["env", "str", "secret", "token"]
+    )
+    def test_constructs_client_with_credential(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_cosmos_client: MagicMock,
+        credential: str | SecretString | MagicMock | None,
     ) -> None:
         mock_factory = MagicMock(return_value=mock_cosmos_client)
         monkeypatch.setattr(history_provider_module, "CosmosClient", mock_factory)
+        monkeypatch.setenv("AZURE_COSMOS_KEY", "env-key")
 
         CosmosHistoryProvider(
             endpoint="https://account.documents.azure.com:443/",
-            credential="key-123",
+            credential=credential,
             database_name="db1",
             container_name="history",
         )
@@ -120,7 +128,11 @@ class TestCosmosHistoryProviderInit:
         mock_factory.assert_called_once()
         kwargs = mock_factory.call_args.kwargs
         assert kwargs["url"] == "https://account.documents.azure.com:443/"
-        assert kwargs["credential"] == "key-123"
+        if isinstance(credential, MagicMock):
+            assert kwargs["credential"] is credential
+        else:
+            assert type(kwargs["credential"]) is str
+            assert kwargs["credential"] == ("env-key" if credential is None else "key-123")
 
 
 class TestCosmosHistoryProviderContainerConfig:

@@ -11,7 +11,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Aspire.* -->
-    <PackageVersion Include="Anthropic" Version="12.42.0" />
+    <PackageVersion Include="Anthropic" Version="12.43.0" />
     <PackageVersion Include="Anthropic.Foundry" Version="0.7.1" />
     <PackageVersion Include="Aspire.Hosting" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="13.0.0-preview.1.25560.3" />
@@ -33,12 +33,13 @@
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
     <PackageVersion Include="Azure.Storage.Blobs" Version="12.29.1" />
     <PackageVersion Include="DotNetEnv" Version="3.1.1" />
-    <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.5.0" />
+    <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.8.3" />
     <!-- Google Gemini  -->
     <PackageVersion Include="Google.GenAI" Version="1.6.0" />
     <PackageVersion Include="Mscc.GenerativeAI.Microsoft" Version="2.9.3" />
     <!-- Microsoft.Azure.* -->
     <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.61.0" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.11" />
     <!-- Newtonsoft.Json -->
     <PackageVersion Include="Newtonsoft.Json" Version="13.0.4" />
     <!-- System.* -->
@@ -146,25 +147,25 @@
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Condition="'$(TargetFramework)' == 'net8.0'" Version="8.0.22" />
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Condition="'$(TargetFramework)' == 'net9.0'" Version="9.0.11" />
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Condition="'$(TargetFramework)' == 'net10.0'" Version="10.0.0" />
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.0.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
     <PackageVersion Include="Moq" Version="[4.18.4]" />
     <PackageVersion Include="xunit.v3.mtp-v2" Version="3.2.2" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <PackageVersion Include="xRetry.v3" Version="1.0.0-rc3" />
-    <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.4.1" />
+    <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.11.0" />
     <!-- Symbols -->
-    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="8.0.0" />
+    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.401" />
     <!-- Toolset -->
     <PackageVersion Include="ReferenceTrimmer" Version="3.4.5" />
     <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
-    <PackageVersion Include="Microsoft.CodeAnalysis.NetAnalyzers" Version="10.0.100" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.NetAnalyzers" Version="10.0.400" />
     <PackageVersion Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" Version="5.6.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.NetAnalyzers">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageVersion Include="Microsoft.VisualStudio.Threading.Analyzers" Version="17.14.15" />
+    <PackageVersion Include="Microsoft.VisualStudio.Threading.Analyzers" Version="18.7.23" />
     <PackageReference Include="Microsoft.VisualStudio.Threading.Analyzers">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

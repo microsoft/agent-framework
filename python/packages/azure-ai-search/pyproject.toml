@@ -23,9 +23,10 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.13.0,<2",
+    "agent-framework-core>=1.17.0,<2",
+    "aiohttp>=3.11.11,<4",
     # Stable/GA (12.0.0) targets Azure AI Search api-version 2026-04-01; the preview
-    # line (e.g. 12.1.0b1, installed with --pre) targets api-version 2026-05-01-preview.
+    # line (e.g. 12.1.0b2, installed with --pre) targets api-version 2026-08-01-preview.
     "azure-search-documents>=12.0.0,<13",
 ]
 
