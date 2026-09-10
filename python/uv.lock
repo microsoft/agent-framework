@@ -836,8 +836,8 @@ name = "agent-framework-monty"
 version = "1.0.0b260730"
 source = { editable = "packages/monty" }
 dependencies = [
-    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "pydantic-monty", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-core" },
+    { name = "pydantic-monty" },
 ]
 
 [package.metadata]
@@ -4728,8 +4728,8 @@ name = "pydantic-monty"
 version = "0.0.23"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pydantic-monty-client", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "pydantic-monty-runtime", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pydantic-monty-client" },
+    { name = "pydantic-monty-runtime" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/59/01/cd7927f51500a13c1661e2db6488f6ff668194c4378d0fb218928892aaba/pydantic_monty-0.0.23.tar.gz", hash = "sha256:ee674b81ed12f81cfbe0db210fe5e803c754d0682634331931f4d70d5742058d", size = 6713, upload-time = "2026-09-05T19:26:03.24Z" }
 wheels = [
@@ -4741,7 +4741,7 @@ name = "pydantic-monty-client"
 version = "0.0.23"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/29/e9/dcbf9a90ccd195be0db5257c2234d002d551d47f9d8987543eddd3095812/pydantic_monty_client-0.0.23.tar.gz", hash = "sha256:8b31f75afebb60c0416c869c8d6667a75e84b0f05b7a0b44e51b77ef98f294d7", size = 1983536, upload-time = "2026-09-05T19:26:04.167Z" }
 wheels = [
