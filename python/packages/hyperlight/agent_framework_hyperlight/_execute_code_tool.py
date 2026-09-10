@@ -57,6 +57,14 @@ class _OutputMaterializationError(RuntimeError):
     """Raised when sandbox output cannot be safely materialized."""
 
 
+class _OutputCleanupError(RuntimeError):
+    """Raised when sandbox output cannot be safely cleaned within configured bounds."""
+
+
+def _output_cleanup_error_content(error: _OutputCleanupError) -> Content:
+    return Content.from_error(message="Execution error", error_details=str(error))
+
+
 @dataclass(frozen=True, slots=True)
 class _ValidatedOutputFile:
     relative_path: str
@@ -232,16 +240,26 @@ class _SandboxWorker:
         Returns a plain ``list[Content]`` whose elements never carry strong
         references to the underlying sandbox or snapshot.
         """
+        cleanup_max_entries = _output_traversal_entry_limit(max_output_files)
 
         def _on_worker() -> list[Content]:
             sandbox = self._sandbox
             snapshot = self._snapshot
             sandbox.restore(snapshot)
-            _clear_directory(output_dir)
+            try:
+                _clear_directory(
+                    output_dir,
+                    max_entries=cleanup_max_entries,
+                    max_depth=OUTPUT_TRAVERSAL_MAX_DEPTH,
+                )
+            except _OutputCleanupError as exc:
+                return [_output_cleanup_error_content(exc)]
+
+            contents: list[Content] | None = None
             try:
                 result = sandbox.run(code=code)
                 try:
-                    return build_contents(
+                    contents = build_contents(
                         result=result,
                         output_dir=output_dir,
                         code=code,
@@ -249,13 +267,22 @@ class _SandboxWorker:
                         max_output_file_bytes=max_output_file_bytes,
                         max_output_total_bytes=max_output_total_bytes,
                     )
+                    return contents
                 finally:
                     # ``result`` may carry a back-reference to the sandbox. Force its
                     # final dec_ref on this thread so Drop runs here, not on whatever
                     # thread later GCs the ``Content`` list.
                     del result
             finally:
-                _clear_directory(output_dir)
+                try:
+                    _clear_directory(
+                        output_dir,
+                        max_entries=cleanup_max_entries,
+                        max_depth=OUTPUT_TRAVERSAL_MAX_DEPTH,
+                    )
+                except _OutputCleanupError as exc:
+                    if contents is not None and not any(item.type == "error" for item in contents):
+                        contents.append(_output_cleanup_error_content(exc))
 
         return self._run_on_worker(_on_worker)
 
@@ -1227,28 +1254,57 @@ def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
     return _callback
 
 
-def _clear_directory(output_dir: TemporaryDirectory[str] | None) -> None:
-    """Remove all contents of the output directory without deleting the directory itself."""
+def _clear_directory(
+    output_dir: TemporaryDirectory[str] | None,
+    *,
+    max_entries: int = OUTPUT_TRAVERSAL_MAX_ENTRIES,
+    max_depth: int = OUTPUT_TRAVERSAL_MAX_DEPTH,
+) -> None:
+    """Remove output entries without following links or exceeding traversal bounds."""
     if output_dir is None:
         return
+
     root = Path(output_dir.name)
-    for child in root.iterdir():
+    entries_visited = 0
+
+    def _remove_contents(path: Path, depth: int) -> None:
+        nonlocal entries_visited
         try:
-            child_stat = child.lstat()
-            if _is_link_or_reparse_point(child, child_stat):
-                if stat.S_ISDIR(child_stat.st_mode):
+            with os.scandir(path) as entries:
+                for entry in entries:
+                    entries_visited += 1
+                    if entries_visited > max_entries:
+                        raise _OutputCleanupError(f"Sandbox output exceeded the cleanup entry limit of {max_entries}.")
+
+                    child = Path(entry.path)
+                    child_stat = child.lstat()
+                    if _is_link_or_reparse_point(child, child_stat):
+                        if stat.S_ISDIR(child_stat.st_mode):
+                            child.rmdir()
+                        else:
+                            try:
+                                child.unlink()
+                            except OSError:
+                                child.rmdir()
+                        continue
+
+                    if not stat.S_ISDIR(child_stat.st_mode):
+                        child.unlink()
+                        continue
+
+                    child_depth = depth + 1
+                    if child_depth > max_depth:
+                        raise _OutputCleanupError(
+                            f"Sandbox output exceeded the cleanup nesting depth limit of {max_depth}."
+                        )
+                    _remove_contents(child, child_depth)
                     child.rmdir()
-                    continue
-                try:
-                    child.unlink()
-                except OSError:
-                    child.rmdir()
-            elif stat.S_ISREG(child_stat.st_mode):
-                child.unlink()
-            elif stat.S_ISDIR(child_stat.st_mode):
-                shutil.rmtree(child, ignore_errors=True)
-        except OSError:
-            pass
+        except _OutputCleanupError:
+            raise
+        except OSError as exc:
+            raise _OutputCleanupError("Could not clear sandbox output safely.") from exc
+
+    _remove_contents(root, 0)
 
 
 class _SandboxRegistry(SandboxRuntime):
