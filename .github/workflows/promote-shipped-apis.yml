@@ -83,7 +83,7 @@ jobs:
         id: promote
         uses: BinkyLabs/public-api-promote@d7be9ed86949de71a7442227fd02ca0c6fc11a57 # v1.0.1
         with:
-          unshipped-glob: 'src/**/*.Unshipped.txt'
+          unshipped-glob: 'dotnet/src/**/*.Unshipped.txt'
 
       - name: Check for changes
         id: check_changes
