@@ -922,6 +922,8 @@ class FoundryEvals:
 
         # Auto-create a FoundryChatClient from env vars when no client is provided
         if client is None and project_client is None:
+            from ._chat_client import FoundryChatClient
+
             client = FoundryChatClient(model=model or "gpt-4o")
 
         self._client = _resolve_openai_client(client, project_client)
