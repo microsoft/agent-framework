@@ -46,6 +46,12 @@ def test_package_vector_exports_are_lazy() -> None:
     assert "CosmosCollection" not in vars(package)
     assert package.CosmosCollection is CosmosCollection
     assert {"AzureCosmosSettings", "CosmosCollection", "CosmosStore"} <= set(dir(package))
+    assert {"AzureCosmosSettings", "CosmosCollection", "CosmosStore"} <= set(package.__all__)
+    namespace: dict[str, Any] = {}
+    exec("from agent_framework_azure_cosmos import *", namespace)
+    assert namespace["CosmosCollection"] is CosmosCollection
+    assert namespace["CosmosStore"] is CosmosStore
+    assert namespace["CosmosHistoryProvider"] is package.CosmosHistoryProvider
     export_name = "CosmosStore"
     with (
         patch.object(importlib, "import_module", side_effect=ImportError("missing vector core")),

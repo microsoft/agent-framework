@@ -4,13 +4,18 @@ import importlib
 import importlib.metadata
 from typing import TYPE_CHECKING, Any
 
+import agent_framework
+
 from ._checkpoint_storage import CosmosCheckpointStorage
 from ._history_provider import CosmosHistoryProvider
 
 if TYPE_CHECKING:
-    from ._vector_store import AzureCosmosSettings, CosmosCollection, CosmosStore
+    from ._vector_store import AzureCosmosSettings, CosmosCollection, CosmosStore  # pyright: ignore[reportUnusedImport]
 
 _VECTOR_EXPORTS = frozenset({"AzureCosmosSettings", "CosmosCollection", "CosmosStore"})
+_HAS_VECTOR_CORE = all(
+    hasattr(agent_framework, name) for name in ("BaseVectorCollection", "BaseVectorSearch", "BaseVectorStore")
+)
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -33,11 +38,18 @@ def __dir__() -> list[str]:
     return sorted((*globals(), *_VECTOR_EXPORTS))
 
 
-__all__ = [
-    "AzureCosmosSettings",
-    "CosmosCheckpointStorage",
-    "CosmosCollection",
-    "CosmosHistoryProvider",
-    "CosmosStore",
-    "__version__",
-]
+if _HAS_VECTOR_CORE:
+    __all__ = [
+        "AzureCosmosSettings",
+        "CosmosCheckpointStorage",
+        "CosmosCollection",
+        "CosmosHistoryProvider",
+        "CosmosStore",
+        "__version__",
+    ]
+else:
+    __all__ = [
+        "CosmosCheckpointStorage",
+        "CosmosHistoryProvider",
+        "__version__",
+    ]
