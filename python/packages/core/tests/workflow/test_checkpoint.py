@@ -1296,6 +1296,20 @@ async def test_file_checkpoint_storage_load_corrupted_raises_checkpoint_exceptio
             await storage.load(checkpoint.checkpoint_id)
 
 
+async def test_file_checkpoint_storage_load_invalid_utf8_raises_checkpoint_exception():
+    """`load` on a file with invalid utf-8 raises the documented exception (PR review)."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        checkpoint = WorkflowCheckpoint(workflow_name="wf", graph_signature_hash="sig", state={"x": 1})
+        await storage.save(checkpoint)
+
+        file_path = Path(temp_dir) / f"{checkpoint.checkpoint_id}.json"
+        file_path.write_bytes(b'{"workflow_name": "' + b"\xff\xfe" + b'"}')  # invalid utf-8
+
+        with pytest.raises(WorkflowCheckpointException, match="corrupted"):
+            await storage.load(checkpoint.checkpoint_id)
+
+
 async def test_file_checkpoint_storage_corrupted_file():
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)

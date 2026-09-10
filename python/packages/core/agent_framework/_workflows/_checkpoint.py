@@ -360,10 +360,11 @@ class FileCheckpointStorage:
             with open(file_path) as f:
                 try:
                     return json.load(f)
-                except json.JSONDecodeError as exc:
+                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                     # `load` is documented to raise WorkflowCheckpointException
-                    # when checkpoint decoding fails; a truncated or corrupted
-                    # file should surface as that, not a raw json error (#8181).
+                    # when checkpoint decoding fails; a truncated file or one
+                    # with invalid utf-8 should surface as that, not a raw
+                    # json/unicode error (#8181).
                     raise WorkflowCheckpointException(
                         f"Checkpoint file for ID {checkpoint_id} is corrupted: {exc}"
                     ) from exc
