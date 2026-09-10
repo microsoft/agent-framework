@@ -378,13 +378,13 @@ def _set_group_summarized_by_summary_id(message: Message, summary_id: str) -> No
 def _reconcile_compaction_summaries(  # pyright: ignore[reportUnusedFunction]
     source_messages: list[Message],
     working_messages: Sequence[Message],
-    previous_message_ids: set[int],
+    source_message_identities: set[int],
 ) -> None:
-    """Reconcile summaries of source messages without persisting unrelated rewrites."""
+    """Reconcile summaries supported by source-owned messages without persisting unrelated rewrites."""
     source_message_ids = {message.message_id for message in source_messages if message.message_id}
     candidates: list[tuple[Message, set[str]]] = []
     for message in working_messages:
-        if id(message) in previous_message_ids:
+        if id(message) in source_message_identities:
             continue
 
         annotation = _read_group_annotation_raw(message)
@@ -443,55 +443,6 @@ def _reconcile_compaction_summaries(  # pyright: ignore[reportUnusedFunction]
             default=len(source_messages),
         )
         source_messages.insert(insertion_index, message)
-
-
-def _summarized_by_summary_id(message: Message) -> str | None:
-    annotation = _read_group_annotation_raw(message)
-    if annotation is None:
-        return None
-    summary_id = annotation.get(SUMMARIZED_BY_SUMMARY_ID_KEY)
-    return summary_id if isinstance(summary_id, str) else None
-
-
-def _merge_compaction_summaries_into_transcript(  # pyright: ignore[reportUnusedFunction]
-    transcript_messages: list[Message],
-    working_messages: Sequence[Message],
-) -> None:
-    """Merge compaction summaries of transcript messages back into the transcript.
-
-    Compaction annotates shared Message objects with exclusion flags but inserts summary
-    messages only into the working (model-input) list. A caller assembling its returned
-    transcript from a separate list keeps only the exclusion flags, so the summaries must
-    be copied back or the response (and persisted history loaded with ``skip_excluded``)
-    silently loses the summarized content (issue #8099). Each summary is inserted before
-    the first transcript message whose back-link matches the summary id, which also works
-    when summarized messages carry no ``message_id``. Nested summaries resolve naturally:
-    an inner summary is merged first (it precedes the outer one in the working list), and
-    the outer summary then matches the inner one through its own back-link. Summaries of
-    caller-owned input messages stay out — those sources are not part of the returned
-    transcript, so persisting such summaries would duplicate content.
-    """
-    transcript_identities = {id(message) for message in transcript_messages}
-    for message in working_messages:
-        if id(message) in transcript_identities:
-            continue
-        annotation = _read_group_annotation_raw(message)
-        if annotation is None or not message.message_id:
-            continue
-        if SUMMARY_OF_MESSAGE_IDS_KEY not in annotation and SUMMARY_OF_GROUP_IDS_KEY not in annotation:
-            continue
-        insertion_index = next(
-            (
-                index
-                for index, transcript_message in enumerate(transcript_messages)
-                if _summarized_by_summary_id(transcript_message) == message.message_id
-            ),
-            None,
-        )
-        if insertion_index is None:
-            continue
-        transcript_messages.insert(insertion_index, message)
-        transcript_identities.add(id(message))
 
 
 def _write_group_annotation(

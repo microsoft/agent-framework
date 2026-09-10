@@ -3053,8 +3053,6 @@ async def _process_model_function_calls(
     tools = _extract_tools(options)
     function_calls = _extract_function_calls(response)
     if not (function_calls and tools):
-        if function_call_messages is not None:
-            _prepend_function_call_messages(response, function_call_messages)
         if approval_requests:
             _store_pending_approval_requests(invocation_session, approval_requests)
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row, action="return")
@@ -3250,7 +3248,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         max_errors: int,
     ) -> ChatResponse[Any]:
         """Run the non-streaming function invocation loop."""
-        from ._compaction import _merge_compaction_summaries_into_transcript  # pyright: ignore[reportPrivateUsage]
+        from ._compaction import _reconcile_compaction_summaries  # pyright: ignore[reportPrivateUsage]
         from ._middleware import MiddlewareFailure
         from ._types import ChatResponse, add_usage_details
 
@@ -3316,11 +3314,15 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 ),
             )
             # Compaction inserts summaries only into prepared_messages while its exclusion
-            # flags land on Message objects shared with the transcript; copy the summaries
-            # back before the transcript is prepended to a terminal response (issue #8099).
-            # The merge is unconditional: compaction may also come from the inner client's
-            # own default strategy, which this layer does not see as a parameter.
-            _merge_compaction_summaries_into_transcript(function_call_messages, prepared_messages)
+            # flags land on Message objects shared with the transcript. Reconcile summaries
+            # supported entirely by transcript-owned messages before returning or persisting
+            # the response (issue #8099). This is unconditional because compaction may come
+            # from the inner client's default strategy, which this layer does not see here.
+            _reconcile_compaction_summaries(
+                function_call_messages,
+                prepared_messages,
+                {id(message) for message in function_call_messages},
+            )
             if options.get("tool_choice") == "none" and _function_call_limit_reached(
                 total_function_calls, max_function_calls
             ):
@@ -3333,6 +3335,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 options=options,
             )
 
+            terminal_prefix_length = len(function_call_messages)
             try:
                 function_processing = await _process_model_function_calls(
                     response=response,
@@ -3366,6 +3369,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             )
             if function_processing.action == "return":
                 response.usage_details = aggregated_usage
+                _prepend_function_call_messages(response, function_call_messages[:terminal_prefix_length])
                 return _clear_internal_conversation_id(response)
             if function_processing.action == "stop":
                 options["tool_choice"] = "none"
@@ -3393,9 +3397,13 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 client_kwargs=request_kwargs,
             ),
         )
-        # See the Phase 2 merge: the final no-tools call can compact further groups, so its
-        # summaries must also reach the returned transcript.
-        _merge_compaction_summaries_into_transcript(function_call_messages, prepared_messages)
+        # See the Phase 2 reconciliation: the final no-tools call can compact further
+        # groups, so those summaries must also reach the returned transcript.
+        _reconcile_compaction_summaries(
+            function_call_messages,
+            prepared_messages,
+            {id(message) for message in function_call_messages},
+        )
         _ensure_function_invocation_limit_fallback_response(response)
         aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
         self._update_function_invocation_continuation_state(
