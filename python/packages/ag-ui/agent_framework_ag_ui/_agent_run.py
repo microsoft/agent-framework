@@ -2508,17 +2508,11 @@ async def run_agent_stream(
                 # must stay empty so synthesized resume tool messages are the only
                 # turn input; history is restored at save when this flag stays false.
                 seeded_resume_from_snapshot = True
-                raw_messages = _reconstruct_messages_from_thread_snapshot(
-                    stored_messages=stored_snapshot.messages,
-                    incoming_messages=raw_messages,
-                    stored_interrupt=stored_snapshot.interrupt,
-                )
-            else:
-                raw_messages = _reconstruct_messages_from_thread_snapshot(
-                    stored_messages=stored_snapshot.messages,
-                    incoming_messages=raw_messages,
-                    stored_interrupt=stored_snapshot.interrupt,
-                )
+            raw_messages = _reconstruct_messages_from_thread_snapshot(
+                stored_messages=stored_snapshot.messages,
+                incoming_messages=raw_messages,
+                stored_interrupt=stored_snapshot.interrupt,
+            )
         else:
             provider_suffix, snapshot_seed_messages = _split_service_session_input(
                 stored_snapshot_messages=stored_snapshot.messages,
