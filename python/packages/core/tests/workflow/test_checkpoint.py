@@ -1275,6 +1275,27 @@ async def test_file_checkpoint_storage_directory_creation():
         assert file_path.exists()
 
 
+async def test_file_checkpoint_storage_load_corrupted_raises_checkpoint_exception():
+    """`load` on a corrupted file raises the documented exception (#8181, item 4).
+
+    Distinct from the graceful-list behavior pinned by
+    `test_file_checkpoint_storage_corrupted_file`: loading a truncated
+    checkpoint must surface as `WorkflowCheckpointException`, per the
+    `CheckpointStorage.load` contract, not as a raw `json.JSONDecodeError`.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        checkpoint = WorkflowCheckpoint(workflow_name="wf", graph_signature_hash="sig", state={"x": 1})
+        await storage.save(checkpoint)
+
+        file_path = Path(temp_dir) / f"{checkpoint.checkpoint_id}.json"
+        raw = file_path.read_text()
+        file_path.write_text(raw[: len(raw) // 2])  # truncate mid-JSON
+
+        with pytest.raises(WorkflowCheckpointException, match="corrupted"):
+            await storage.load(checkpoint.checkpoint_id)
+
+
 async def test_file_checkpoint_storage_corrupted_file():
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)

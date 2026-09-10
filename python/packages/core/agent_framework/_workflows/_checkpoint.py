@@ -358,7 +358,15 @@ class FileCheckpointStorage:
 
         def _read() -> dict[str, Any]:
             with open(file_path) as f:
-                return json.load(f)
+                try:
+                    return json.load(f)
+                except json.JSONDecodeError as exc:
+                    # `load` is documented to raise WorkflowCheckpointException
+                    # when checkpoint decoding fails; a truncated or corrupted
+                    # file should surface as that, not a raw json error (#8181).
+                    raise WorkflowCheckpointException(
+                        f"Checkpoint file for ID {checkpoint_id} is corrupted: {exc}"
+                    ) from exc
 
         encoded_checkpoint = await asyncio.to_thread(_read)
 
