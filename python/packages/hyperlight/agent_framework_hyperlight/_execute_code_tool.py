@@ -156,7 +156,7 @@ class _SandboxWorker:
     copy (preserving message and exception type) is re-raised on the caller.
     """
 
-    __slots__ = ("_executor", "_initialized", "_sandbox", "_snapshot")
+    __slots__ = ("_executor", "_initialized", "_reusable", "_sandbox", "_snapshot")
 
     def __init__(self, *, name: str = "hl-sandbox") -> None:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=name)
@@ -164,6 +164,7 @@ class _SandboxWorker:
         self._sandbox: Any = None
         self._snapshot: Any = None
         self._initialized = False
+        self._reusable = True
 
     def _run_on_worker(self, fn: Callable[[], _T]) -> _T:
         """Run ``fn`` on the worker thread; sanitize any exception's traceback there.
@@ -243,6 +244,9 @@ class _SandboxWorker:
         cleanup_max_entries = _output_traversal_entry_limit(max_output_files)
 
         def _on_worker() -> list[Content]:
+            if not self._reusable:
+                return [_output_cleanup_error_content(_OutputCleanupError("Could not clear sandbox output safely."))]
+
             sandbox = self._sandbox
             snapshot = self._snapshot
             sandbox.restore(snapshot)
@@ -253,6 +257,7 @@ class _SandboxWorker:
                     max_depth=OUTPUT_TRAVERSAL_MAX_DEPTH,
                 )
             except _OutputCleanupError as exc:
+                self._reusable = False
                 return [_output_cleanup_error_content(exc)]
 
             contents: list[Content] | None = None
@@ -281,10 +286,14 @@ class _SandboxWorker:
                         max_depth=OUTPUT_TRAVERSAL_MAX_DEPTH,
                     )
                 except _OutputCleanupError as exc:
+                    self._reusable = False
                     if contents is not None and not any(item.type == "error" for item in contents):
                         contents.append(_output_cleanup_error_content(exc))
 
         return self._run_on_worker(_on_worker)
+
+    def is_reusable(self) -> bool:
+        return self._reusable
 
     def is_alive(self) -> bool:
         """Return ``True`` while the worker thread can still accept new submissions.
@@ -1310,6 +1319,7 @@ def _clear_directory(
 class _SandboxRegistry(SandboxRuntime):
     def __init__(self) -> None:
         self._entries: dict[tuple[Any, ...], _SandboxEntry] = {}
+        self._retired_entries: list[_SandboxEntry] = []
         self._entries_lock = threading.RLock()
 
     def execute(self, *, config: _RunConfig, code: str) -> list[Content]:
@@ -1320,16 +1330,30 @@ class _SandboxRegistry(SandboxRuntime):
         both serializes concurrent callers and satisfies the PyO3 ``unsendable`` invariant
         that the sandbox can only be touched from the thread that created it. The unsendable
         objects never escape the worker; this method returns only sendable plain Python data.
+        Entries whose output cannot be cleaned safely are evicted before another invocation.
         """
+        cache_key = config.cache_key()
         entry = self._get_or_create_entry(config)
-        return entry.worker.execute(
-            code=code,
-            output_dir=entry.output_dir,
-            build_contents=_build_execution_contents,
-            max_output_files=config.max_output_files,
-            max_output_file_bytes=config.max_output_file_bytes,
-            max_output_total_bytes=config.max_output_total_bytes,
-        )
+        try:
+            return entry.worker.execute(
+                code=code,
+                output_dir=entry.output_dir,
+                build_contents=_build_execution_contents,
+                max_output_files=config.max_output_files,
+                max_output_file_bytes=config.max_output_file_bytes,
+                max_output_total_bytes=config.max_output_total_bytes,
+            )
+        finally:
+            if not entry.worker.is_reusable():
+                self._discard_entry(cache_key=cache_key, entry=entry)
+
+    def _discard_entry(self, *, cache_key: tuple[Any, ...], entry: _SandboxEntry) -> None:
+        with self._entries_lock:
+            if self._entries.get(cache_key) is not entry:
+                return
+            del self._entries[cache_key]
+            self._retired_entries.append(entry)
+        entry.worker.dispose()
 
     def _get_or_create_entry(self, config: _RunConfig) -> _SandboxEntry:
         cache_key = config.cache_key()
@@ -1347,8 +1371,9 @@ class _SandboxRegistry(SandboxRuntime):
         worker thread that created it to honor the PyO3 ``unsendable`` invariant.
         """
         with self._entries_lock:
-            entries = list(self._entries.values())
+            entries = [*self._entries.values(), *self._retired_entries]
             self._entries.clear()
+            self._retired_entries.clear()
         try:
             for entry in entries:
                 entry.dispose()

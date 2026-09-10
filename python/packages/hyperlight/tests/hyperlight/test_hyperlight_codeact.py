@@ -398,6 +398,11 @@ class _FakeSandboxWithBoundedOutputs(_FakeSandbox):
         elif code == "create-wide-output":
             for index in range(101):
                 (output_root / f"directory-{index}").mkdir()
+        elif code == "create-deep-output":
+            current = output_root
+            for index in range(execute_code_module.OUTPUT_TRAVERSAL_MAX_DEPTH + 1):
+                current /= f"level-{index}"
+                current.mkdir()
         else:
             return super().run(code)
 
@@ -1298,10 +1303,12 @@ async def test_execute_code_tool_preserves_result_when_post_cleanup_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _FakeSandbox.instances.clear()
     monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
     execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path)
     config = execute_code._build_run_config()
-    output_root = Path(cast(Any, execute_code._registry)._get_or_create_entry(config).output_dir.name)
+    registry = cast(Any, execute_code._registry)
+    output_root = Path(registry._get_or_create_entry(config).output_dir.name)
     original_scandir = os.scandir
     output_scan_calls = 0
 
@@ -1324,11 +1331,14 @@ async def test_execute_code_tool_preserves_result_when_post_cleanup_fails(
         assert len(cleanup_errors) == 1
         assert cleanup_errors[0].error_details == "Could not clear sandbox output safely."
         assert str(output_root) not in cleanup_errors[0].error_details
+        assert registry._entries == {}
 
         recovered = await execute_code.invoke(arguments={"code": "fail"})
         assert not any(item.type == "data" for item in recovered)
         assert any(item.type == "error" and item.error_details == "sandbox boom" for item in recovered)
-        remaining_outputs = await asyncio.to_thread(lambda: list(output_root.iterdir()))
+        replacement_output_root = Path(registry._get_or_create_entry(config).output_dir.name)
+        remaining_outputs = await asyncio.to_thread(lambda: list(replacement_output_root.iterdir()))
+        assert len(_FakeSandbox.instances) == 2
         assert remaining_outputs == []
     finally:
         _close_execute_code_registry(execute_code)
@@ -1338,10 +1348,12 @@ async def test_execute_code_tool_preserves_exception_when_post_cleanup_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _FakeSandbox.instances.clear()
     monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
     execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path)
     config = execute_code._build_run_config()
-    output_root = Path(cast(Any, execute_code._registry)._get_or_create_entry(config).output_dir.name)
+    registry = cast(Any, execute_code._registry)
+    output_root = Path(registry._get_or_create_entry(config).output_dir.name)
     original_scandir = os.scandir
     output_scan_calls = 0
 
@@ -1363,6 +1375,7 @@ async def test_execute_code_tool_preserves_exception_when_post_cleanup_fails(
     try:
         with pytest.raises(RuntimeError, match="primary build failure"):
             await execute_code.invoke(arguments={"code": "create-output"})
+        assert registry._entries == {}
     finally:
         _close_execute_code_registry(execute_code)
 
@@ -1460,26 +1473,38 @@ async def test_execute_code_tool_streams_directory_enumeration_to_count_limit(
     _assert_bounded_output_error(contents, "output file count limit")
 
 
-async def test_execute_code_tool_bounds_post_run_cleanup_work(
+@pytest.mark.parametrize(
+    ("code", "error_match"),
+    [
+        ("create-wide-output", "traversal entry limit of 100"),
+        ("create-deep-output", "nesting depth limit of 32"),
+    ],
+)
+async def test_execute_code_tool_invalidates_entry_when_cleanup_exceeds_bounds(
+    code: str,
+    error_match: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _FakeSandbox.instances.clear()
     monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
     execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path, max_output_files=1)
     config = execute_code._build_run_config()
-    output_root = Path(cast(Any, execute_code._registry)._get_or_create_entry(config).output_dir.name)
+    registry = cast(Any, execute_code._registry)
+    registry._get_or_create_entry(config)
 
     try:
-        rejected = await execute_code.invoke(arguments={"code": "create-wide-output"})
-        remaining_after_rejection = await asyncio.to_thread(lambda: list(output_root.iterdir()))
+        rejected = await execute_code.invoke(arguments={"code": code})
+        assert registry._entries == {}
 
         recovered = await execute_code.invoke(arguments={"code": "create-memory-output"})
-        remaining_after_recovery = await asyncio.to_thread(lambda: list(output_root.iterdir()))
+        replacement_output_root = Path(registry._get_or_create_entry(config).output_dir.name)
+        remaining_after_recovery = await asyncio.to_thread(lambda: list(replacement_output_root.iterdir()))
     finally:
         _close_execute_code_registry(execute_code)
 
-    _assert_bounded_output_error(rejected, "traversal entry limit of 100")
-    assert len(remaining_after_rejection) == 1
+    _assert_bounded_output_error(rejected, error_match)
+    assert len(_FakeSandbox.instances) == 2
     assert [_decode_content_bytes(item) for item in recovered if item.type == "data"] == [b"data"]
     assert remaining_after_recovery == []
 
