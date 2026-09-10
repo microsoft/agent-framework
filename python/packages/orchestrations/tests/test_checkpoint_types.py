@@ -16,15 +16,18 @@ nested type left unregistered.
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
+from pathlib import Path
 from typing import Any
 
 import pytest
-from agent_framework import AgentResponse, Message, WorkflowCheckpoint
+from agent_framework import AgentResponse, Executor, Message, WorkflowCheckpoint, WorkflowContext, handler
 from agent_framework._workflows._checkpoint import FileCheckpointStorage
 
 from agent_framework_orchestrations import (
     AgentRequestInfoResponse,
+    GroupChatBuilder,
     HandoffAgentUserRequest,
     MagenticPlanReviewRequest,
     MagenticPlanReviewResponse,
@@ -153,3 +156,60 @@ def test_registration_happens_on_package_import() -> None:
         "agent_framework_orchestrations._magentic:MagenticProgressLedgerItem",
     }
     assert expected <= registered
+
+
+class _CustomParticipant(Executor):
+    """A non-agent group-chat participant.
+
+    Defined at module scope on purpose: with ``from __future__ import annotations`` a
+    handler declared inside a function body cannot resolve its own context annotation.
+    """
+
+    @handler
+    async def on_request(
+        self, message: GroupChatRequestMessage, ctx: WorkflowContext[GroupChatResponseMessage]
+    ) -> None:
+        await ctx.send_message(GroupChatResponseMessage(message=Message(role="assistant", contents=["custom reply"])))
+
+    @handler
+    async def on_broadcast(self, message: GroupChatParticipantMessage, ctx: WorkflowContext) -> None:
+        pass
+
+
+async def test_group_chat_with_a_custom_executor_participant_keeps_every_checkpoint_readable() -> None:
+    """End-to-end: the scenario that actually produces the envelopes, restored from disk.
+
+    The orchestrator only wraps traffic in the group-chat envelopes for participants that
+    are **not** agents (``_base_group_chat_orchestrator.py:434,467``); agent participants
+    get a core ``AgentExecutorRequest``, which the default allowlist already trusts. So a
+    group chat built purely from agents never hit this bug, and neither did the existing
+    suite -- which is why it shipped.
+
+    The symptom is worse than a failed ``load()``. ``list_checkpoints`` logs and skips a
+    checkpoint it cannot decode, so unregistered types make checkpoints silently vanish
+    from listings and ``get_latest`` hands back a stale one instead of raising. This test
+    therefore counts the files on disk rather than trusting the listing.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)  # deliberately no allowed_checkpoint_types
+        workflow = GroupChatBuilder(
+            participants=[_CustomParticipant(id="custom")],
+            max_rounds=2,
+            checkpoint_storage=storage,
+            selection_func=lambda state: "custom",
+        ).build()
+
+        async for _ in workflow.run("test task", stream=True):
+            pass
+
+        on_disk = await asyncio.to_thread(lambda: sorted(p.stem for p in Path(temp_dir).glob("*.json")))
+        assert on_disk, "the run produced no checkpoints, so this test proves nothing"
+
+        # Every checkpoint on disk must load individually...
+        for checkpoint_id in on_disk:
+            await storage.load(checkpoint_id)
+
+        # ...and the listing must agree with the disk, rather than quietly dropping the
+        # ones it could not decode.
+        listed = await storage.list_checkpoints(workflow_name=workflow.name)
+        assert sorted(cp.checkpoint_id for cp in listed) == on_disk
