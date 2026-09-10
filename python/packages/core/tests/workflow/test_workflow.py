@@ -834,8 +834,17 @@ async def test_workflow_with_simple_cycle_and_exit_condition():
 
 async def test_workflow_concurrent_execution_prevention():
     """Test that concurrent workflow executions are prevented."""
-    # Create a simple workflow that takes some time to execute
-    executor = IncrementExecutor(id="slow_executor", limit=3, increment=1)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class GatedExecutor(Executor):
+        @handler
+        async def handle(self, message: NumberMessage, ctx: WorkflowContext[NumberMessage, int]) -> None:
+            started.set()
+            await release.wait()
+            await ctx.yield_output(message.data)
+
+    executor = GatedExecutor(id="gated_executor")
     workflow = WorkflowBuilder(start_executor=executor).build()
 
     # Create a task that will run the workflow
@@ -845,17 +854,17 @@ async def test_workflow_concurrent_execution_prevention():
     # Start the first workflow execution
     task1 = asyncio.create_task(run_workflow())
 
-    # Give it a moment to start
-    await asyncio.sleep(0.01)
-
-    # Try to start a second concurrent execution - this should fail
-    with pytest.raises(
-        WorkflowException, match="Workflow is already running; concurrent runs are not allowed on the same instance."
-    ):
-        await workflow.run(NumberMessage(data=0))
-
-    # Wait for the first task to complete
-    result = await task1
+    try:
+        await started.wait()
+        # The first run stays active regardless of how quickly the runner schedules work.
+        with pytest.raises(
+            WorkflowException,
+            match="Workflow is already running; concurrent runs are not allowed on the same instance.",
+        ):
+            await workflow.run(NumberMessage(data=0))
+    finally:
+        release.set()
+        result = await task1
     assert result.get_final_state() == WorkflowRunState.IDLE
 
     # After the first execution completes, we should be able to run again
