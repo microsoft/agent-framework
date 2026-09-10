@@ -182,7 +182,7 @@ class TestPartitionKey:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         server.config.is_hosted = True
         with _request_context(call_id="call-1", session_id="sess-1", user_id="user-1"):
-            assert server._partition_key() == "sess-1:user-1"  # pyright: ignore[reportPrivateUsage]
+            assert server._partition_key() == '["sess-1","user-1"]'  # pyright: ignore[reportPrivateUsage]
 
 
 # endregion
@@ -258,6 +258,28 @@ class TestHandleInvoke:
         assert first_session is second_session
         assert list(server._sessions) == ["sess-1"]  # pyright: ignore[reportPrivateUsage]
         assert agent.calls[0]["session"] is agent.calls[1]["session"]
+
+    async def test_hosted_sessions_preserve_identifier_boundaries(self) -> None:
+        agent = _make_agent(response_text="ok")
+        server = InvocationsHostServer(agent)
+        server.config.is_hosted = True
+        request = _make_request({"message": "Hi"})
+
+        with _request_context(session_id="sess", user_id="user:admin"):
+            await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
+            first_session = agent.calls[-1]["session"]
+
+        with _request_context(session_id="sess:user", user_id="admin"):
+            await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
+            second_session = agent.calls[-1]["session"]
+
+        with _request_context(session_id="sess", user_id="user:admin"):
+            await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
+            repeated_session = agent.calls[-1]["session"]
+
+        assert first_session is not second_session
+        assert repeated_session is first_session
+        assert len(server._sessions) == 2  # pyright: ignore[reportPrivateUsage]
 
 
 # endregion

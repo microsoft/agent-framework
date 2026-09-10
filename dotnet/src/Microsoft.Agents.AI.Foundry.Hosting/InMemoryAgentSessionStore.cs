@@ -30,7 +30,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class InMemoryAgentSessionStore : AgentSessionStore
 {
-    private readonly ConcurrentDictionary<string, JsonElement> _sessions = new();
+    private readonly ConcurrentDictionary<SessionKey, JsonElement> _sessions = new();
 
     /// <inheritdoc/>
     public override async ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, string? userId, CancellationToken cancellationToken = default)
@@ -51,25 +51,16 @@ public sealed class InMemoryAgentSessionStore : AgentSessionStore
         return await agent.DeserializeSessionAsync(existingSession, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    // Keyed with the same a-/u-/c- prefix scheme as FileSystemAgentSessionStore so the in-memory store
-    // partitions per agent and per user identically. Like FileSystemAgentSessionStore, the agent segment
-    // uses agent.Name (a stable identity) and is omitted when no name is set; agent.Id is intentionally
-    // NOT used because it is regenerated on every startup for in-memory-defined agents, which would break
-    // session continuity for a transient or recreated agent. The user segment is omitted when no user id
-    // is supplied.
-    private static string GetKey(AIAgent agent, string conversationId, string? userId)
-    {
-        string key = string.Empty;
-        if (!string.IsNullOrEmpty(agent.Name))
-        {
-            key += $"a-{agent.Name}:";
-        }
+    // Like FileSystemAgentSessionStore, the agent segment uses agent.Name (a stable identity)
+    // and is omitted when no name is set; agent.Id is intentionally NOT used because it is
+    // regenerated on every startup for in-memory-defined agents, which would break session
+    // continuity for a transient or recreated agent. The user segment is omitted when no user
+    // id is supplied.
+    private static SessionKey GetKey(AIAgent agent, string conversationId, string? userId) =>
+        new(
+            string.IsNullOrEmpty(agent.Name) ? null : agent.Name,
+            string.IsNullOrWhiteSpace(userId) ? null : userId,
+            conversationId);
 
-        if (!string.IsNullOrWhiteSpace(userId))
-        {
-            key += $"u-{userId}:";
-        }
-
-        return key + $"c-{conversationId}";
-    }
+    private readonly record struct SessionKey(string? AgentName, string? UserId, string ConversationId);
 }

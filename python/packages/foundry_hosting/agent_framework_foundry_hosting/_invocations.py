@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
+
 from agent_framework import AgentSession, SupportsAgentRun
 from agent_framework._telemetry import mark_feature_used
 from azure.ai.agentserver.core import get_request_context
@@ -61,7 +63,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
                     "The hosted environment is missing session_id or user_id in the request context. "
                     "Please ensure that the request is coming from a valid Foundry platform service."
                 )
-            return f"{context.session_id}:{context.user_id}"
+            return json.dumps([context.session_id, context.user_id], separators=(",", ":"))
 
         if not context.session_id:
             raise RuntimeError(

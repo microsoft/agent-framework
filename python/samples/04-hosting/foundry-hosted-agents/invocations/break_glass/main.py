@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
 import os
 from collections.abc import AsyncGenerator
 
@@ -56,7 +57,7 @@ def get_session_partition_key() -> str:
             "The request context is missing session_id. Please ensure that the request is a valid request."
         )
     if context.user_id is not None:
-        return f"{context.session_id}:{context.user_id}"
+        return json.dumps([context.session_id, context.user_id], separators=(",", ":"))
     return context.session_id
 
 
