@@ -272,22 +272,16 @@ def _validate_uri(uri: str, media_type: str | None) -> dict[str, Any]:
     raise ContentError("URI must contain a scheme (e.g., http://, data:, file://)")
 
 
-def _serialize_value(value: Any, exclude_none: bool, *, include_internal: bool = False) -> Any:
+def _serialize_value(value: Any, exclude_none: bool) -> Any:
     """Recursively serialize a value for to_dict."""
     if value is None:
         return None
     if isinstance(value, Content):
-        return value.to_dict(exclude_none=exclude_none, include_internal=include_internal)
+        return value.to_dict(exclude_none=exclude_none)
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [
-            _serialize_value(item, exclude_none, include_internal=include_internal)
-            for item in cast(Iterable[Any], value)
-        ]
+        return [_serialize_value(item, exclude_none) for item in cast(Iterable[Any], value)]
     if isinstance(value, Mapping):
-        return {
-            k: _serialize_value(v, exclude_none, include_internal=include_internal)
-            for k, v in cast(Mapping[Any, Any], value).items()
-        }
+        return {k: _serialize_value(v, exclude_none) for k, v in value.items()}  # type: ignore[reportUnknownVariableType]
     if hasattr(value, "to_dict"):
         return value.to_dict()  # type: ignore[call-arg]
     return value
@@ -487,8 +481,9 @@ class Content:
     Use the class methods like `Content.from_text()`, `Content.from_data()`,
     `Content.from_uri()`, etc. to create instances.
 
-    The ``exception`` field is host-internal diagnostic state. Default dictionary
-    serialization omits it so generic response serialization cannot expose it.
+    The ``exception`` field is host-internal diagnostic state. Its value may originate from a tool, middleware,
+    provider, or caller and must always be treated as potentially sensitive. Dictionary serialization omits it;
+    channel-visible error information belongs in the appropriate public result field.
     """
 
     _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
@@ -866,8 +861,8 @@ class Content:
         Keyword Args:
             arguments: The arguments for the requested function call. May be a JSON string, a mapping that can be
                 serialized as arguments, or None when no arguments were provided.
-            exception: Error information associated with the function call, if the provider returned the call in an
-                error state.
+            exception: Host-internal diagnostic information when the provider returned the call in an error state.
+                Treat it as potentially sensitive regardless of its source; dictionary serialization omits it.
             informational_only: Whether the function call is present only for transcript fidelity and should not be
                 executed by Agent Framework function invocation.
             id: Stable Agent Framework identity for this occurrence. When omitted, the function invocation layer
@@ -916,8 +911,9 @@ class Content:
             result: The tool output.  Accepts a ``list[Content]`` (the canonical
                 form produced by :meth:`~FunctionTool.parse_result`), a plain
                 ``str``, or any other value (which is stringified).
-            exception: Host-internal diagnostic information when the function call failed. Default
-                :meth:`to_dict` serialization omits this field; use ``result`` for channel-visible error text.
+            exception: Host-internal diagnostic information when the function call failed. Treat it as potentially
+                sensitive regardless of whether it came from a tool, middleware, provider, or caller. Dictionary
+                serialization omits it; use ``result`` for channel-visible error text.
             annotations: Optional annotations for the content.
             additional_properties: Optional additional properties.
             raw_representation: Optional raw representation from the provider.
@@ -1417,19 +1413,10 @@ class Content:
             raw_representation=self.raw_representation,
         )
 
-    def to_dict(
-        self,
-        *,
-        exclude_none: bool = True,
-        exclude: set[str] | None = None,
-        include_internal: bool = False,
-    ) -> dict[str, Any]:
-        """Serialize the content to a dictionary.
+    def to_dict(self, *, exclude_none: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
+        """Serialize content without host-internal exception diagnostics.
 
-        Args:
-            exclude_none: Whether to omit fields whose value is ``None``.
-            exclude: Field names to omit.
-            include_internal: Include host-internal diagnostics. Use only for trusted local inspection.
+        Exception diagnostics are omitted regardless of their source because they may contain sensitive information.
         """
         fields_to_capture = (
             "text",
@@ -1443,7 +1430,6 @@ class Content:
             "call_id",
             "name",
             "arguments",
-            "exception",
             "informational_only",
             "result",
             "items",
@@ -1478,13 +1464,11 @@ class Content:
             value = getattr(self, field, None)
             if field in exclude:
                 continue
-            if field == "exception" and not include_internal:
-                continue
             if field == "informational_only" and (self.type != "function_call" or not value):
                 continue
             if exclude_none and value is None:
                 continue
-            result[field] = _serialize_value(value, exclude_none, include_internal=include_internal)
+            result[field] = _serialize_value(value, exclude_none)
 
         if "annotations" not in exclude and self.annotations is not None:
             result["annotations"] = [dict(annotation) for annotation in self.annotations]
@@ -1495,9 +1479,7 @@ class Content:
         """Check if two Content instances are equal by comparing their dict representations."""
         if not isinstance(other, Content):
             return False
-        return self.to_dict(exclude_none=False, include_internal=True) == other.to_dict(
-            exclude_none=False, include_internal=True
-        )
+        return self.to_dict(exclude_none=False) == other.to_dict(exclude_none=False)
 
     def __str__(self) -> str:
         """Return a string representation of the Content."""

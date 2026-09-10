@@ -2487,8 +2487,7 @@ def test_function_result_exception_is_internal_by_default() -> None:
 
     assert content.exception == diagnostic
     assert "exception" not in content.to_dict()
-    assert content.to_dict(include_internal=True)["exception"] == diagnostic
-
+    assert "exception" not in content.to_dict(exclude_none=False)
     response = AgentResponse(messages=[Message(role="tool", contents=[content])])
     assert diagnostic not in json.dumps(response.to_dict())
 
@@ -2499,9 +2498,6 @@ def test_function_result_exception_is_internal_by_default() -> None:
         "exception": diagnostic,
     })
     assert restored.exception == diagnostic
-    assert restored != Content.from_function_result(
-        call_id="call-1", result="Error: Function failed.", exception="different diagnostic"
-    )
 
 
 def test_chat_response_roundtrip_preserves_compaction_annotation_dict() -> None:

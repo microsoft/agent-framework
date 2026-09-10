@@ -773,6 +773,7 @@ def _function_call_output_item(content: Content, *, status: str) -> ResponseOutp
 
 
 def _function_result_output_item(content: Content, *, status: str) -> ResponseOutputItem:
+    """Project channel-visible output without exposing potentially sensitive exception diagnostics."""
     output_parts = _content_parts_to_input_items(content.items)
     has_visible_item = any(item.type != "text" or bool(item.text) for item in content.items or ())
     if content.exception and not content.result and not has_visible_item:

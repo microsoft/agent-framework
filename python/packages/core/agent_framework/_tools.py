@@ -1456,7 +1456,8 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
     - ``additional_tools``: Extra tools available during execution but not
       advertised to the model in the tool list.
     - ``include_detailed_errors``: Whether to include exception details in the
-      function result returned to the model.
+      function result returned to the model. Exception text may contain sensitive
+      information regardless of its source, so enable this only for a trusted channel.
 
     Note:
         ``max_iterations``, ``max_function_calls``, and ``max_duration_seconds``

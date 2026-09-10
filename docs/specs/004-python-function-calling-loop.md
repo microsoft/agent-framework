@@ -370,8 +370,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
   discarded either way and never reaches the transcript, the model, or history. Middleware must not catch
   `MiddlewareFailure` — swallowing it converts a fail-closed abort back into a running, possibly unguarded loop.
 - `Content.exception` is host-internal diagnostic state. Default `Content.to_dict()` and nested response serialization
-  omit it, and remote protocol serializers use the channel-visible `result` or `items` instead. A trusted local
-  caller may request internal serialization explicitly. `include_detailed_errors=False` keeps the channel-visible
+  omit it, while the field remains directly available to trusted local code. Remote protocol serializers use the
+  channel-visible `result` or `items` instead. `include_detailed_errors=False` keeps the channel-visible
   result generic; enabling it explicitly may place diagnostic text in the result for that configured channel.
 - Parallel calls retain model order in the returned transcript.
 - `call_id` remains the provider/service correlation id; a locally actionable `function_call` also carries a stable
