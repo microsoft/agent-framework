@@ -1,4 +1,5 @@
 ﻿#nullable enable
+*REMOVED*[MAAI001]abstract Microsoft.Agents.AI.AgentFileStore.SearchAsync(string! directory, string! regexPattern, string? globPattern = null, bool recursive = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.FileSearchResult!>!>!
 Microsoft.Agents.AI.AIAgentBuilder
 Microsoft.Agents.AI.AIAgentBuilder.AIAgentBuilder(Microsoft.Agents.AI.AIAgent! innerAgent) -> void
 Microsoft.Agents.AI.AIAgentBuilder.AIAgentBuilder(System.Func<System.IServiceProvider!, Microsoft.Agents.AI.AIAgent!>! innerAgentFactory) -> void
@@ -565,6 +566,8 @@ Microsoft.Extensions.AI.ChatClientExtensions
 [MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.BackgroundAgentsProviderOptions() -> void
 [MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.Instructions.get -> string?
 [MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.Instructions.set -> void
+[MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.WaitTimeout.get -> System.TimeSpan
+[MAAI001]Microsoft.Agents.AI.BackgroundAgentsProviderOptions.WaitTimeout.set -> void
 [MAAI001]Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluator
 [MAAI001]Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluator.BackgroundTaskCompletionLoopEvaluator(Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluatorOptions? options = null) -> void
 [MAAI001]Microsoft.Agents.AI.BackgroundTaskCompletionLoopEvaluatorOptions
@@ -691,6 +694,8 @@ Microsoft.Extensions.AI.ChatClientExtensions
 [MAAI001]Microsoft.Agents.AI.FileAccessProviderOptions.Instructions.get -> string?
 [MAAI001]Microsoft.Agents.AI.FileAccessProviderOptions.Instructions.set -> void
 [MAAI001]Microsoft.Agents.AI.FileLineEdit
+[MAAI001]Microsoft.Agents.AI.FileLineEdit.ExpectedLine.get -> string?
+[MAAI001]Microsoft.Agents.AI.FileLineEdit.ExpectedLine.set -> void
 [MAAI001]Microsoft.Agents.AI.FileLineEdit.FileLineEdit() -> void
 [MAAI001]Microsoft.Agents.AI.FileLineEdit.LineNumber.get -> int
 [MAAI001]Microsoft.Agents.AI.FileLineEdit.LineNumber.set -> void
@@ -807,6 +812,7 @@ Microsoft.Extensions.AI.ChatClientExtensions
 [MAAI001]const Microsoft.Agents.AI.FileAccessProvider.GrepToolName = "file_access_grep" -> string!
 [MAAI001]const Microsoft.Agents.AI.FileAccessProvider.LsToolName = "file_access_ls" -> string!
 [MAAI001]const Microsoft.Agents.AI.FileAccessProvider.ReadFileToolName = "file_access_read" -> string!
+[MAAI001]const Microsoft.Agents.AI.FileAccessProvider.ReadLinesToolName = "file_access_read_lines" -> string!
 [MAAI001]const Microsoft.Agents.AI.FileAccessProvider.ReplaceLinesToolName = "file_access_replace_lines" -> string!
 [MAAI001]const Microsoft.Agents.AI.FileAccessProvider.ReplaceToolName = "file_access_replace" -> string!
 [MAAI001]const Microsoft.Agents.AI.FileAccessProvider.WriteToolName = "file_access_write" -> string!
@@ -838,6 +844,8 @@ Microsoft.Extensions.AI.ChatClientExtensions
 [MAAI001]override Microsoft.Agents.AI.InMemoryAgentFileStore.WriteAsync(string! path, string! content, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
 [MAAI001]override Microsoft.Agents.AI.RoutePersistingRoutingChatClient.GetService(System.Type! serviceType, object? serviceKey = null) -> object?
 [MAAI001]override Microsoft.Agents.AI.TodoCompletionLoopEvaluator.EvaluateAsync(Microsoft.Agents.AI.LoopContext! context, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Microsoft.Agents.AI.LoopEvaluation!>
+[MAAI001]static Microsoft.Agents.AI.AgentFileStore.ScanContent(string! fileName, string! content, System.Text.RegularExpressions.Regex! regex) -> Microsoft.Agents.AI.FileSearchResult?
+[MAAI001]static Microsoft.Agents.AI.AgentFileStore.SplitLines(string! content) -> System.Collections.Generic.IReadOnlyList<string!>!
 [MAAI001]static Microsoft.Agents.AI.Compaction.ChatStrategyExtensions.AsChatReducer(this Microsoft.Agents.AI.Compaction.CompactionStrategy! strategy) -> Microsoft.Extensions.AI.IChatReducer!
 [MAAI001]static Microsoft.Agents.AI.Compaction.CompactionProvider.CompactAsync(Microsoft.Agents.AI.Compaction.CompactionStrategy! compactionStrategy, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>! messages, Microsoft.Extensions.Logging.ILogger? logger = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.ChatMessage!>!>!
 [MAAI001]static Microsoft.Agents.AI.Compaction.CompactionStrategy.EnsureNonNegative(int value) -> int
@@ -859,6 +867,8 @@ Microsoft.Extensions.AI.ChatClientExtensions
 [MAAI001]static readonly Microsoft.Agents.AI.Compaction.CompactionMessageGroup.SummaryPropertyKey -> string!
 [MAAI001]static readonly Microsoft.Agents.AI.Compaction.CompactionTriggers.Always -> Microsoft.Agents.AI.Compaction.CompactionTrigger!
 [MAAI001]static readonly Microsoft.Agents.AI.Compaction.CompactionTriggers.Never -> Microsoft.Agents.AI.Compaction.CompactionTrigger!
+[MAAI001]virtual Microsoft.Agents.AI.AgentFileStore.FindMatchingFilesAsync(string! directory, string! regexPattern, string? globPattern = null, bool recursive = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<string!>!>!
+[MAAI001]virtual Microsoft.Agents.AI.AgentFileStore.SearchAsync(string! directory, string! regexPattern, string? globPattern = null, bool recursive = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<Microsoft.Agents.AI.FileSearchResult!>!>!
 [MAAI001]virtual Microsoft.Agents.AI.Compaction.CompactionTrigger.Invoke(Microsoft.Agents.AI.Compaction.CompactionMessageIndex! index) -> bool
 abstract Microsoft.Agents.AI.AgentClassSkill<TSelf>.Instructions.get -> string!
 abstract Microsoft.Agents.AI.AgentSkill.Frontmatter.get -> Microsoft.Agents.AI.AgentSkillFrontmatter!
