@@ -81,7 +81,7 @@ jobs:
 
       - name: Promote public API exports
         id: promote
-        uses: BinkyLabs/public-api-promote@963fdd7dab6e1d9d1e5b0ddebfec5d2b7af3c110 # v1.0.2
+        uses: BinkyLabs/public-api-promote@724e672702a3e55a06e4b1355183397d44f9f390 # v1.0.3
         with:
           unshipped-glob: 'dotnet/src/**/*.Unshipped.txt'
 
