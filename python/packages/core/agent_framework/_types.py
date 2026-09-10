@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewTyp
 from typing_extensions import TypedDict
 
 from ._feature_stage import ExperimentalFeature, experimental
-from ._serialization import SerializationMixin
+from ._serialization import SerializationMixin, get_pickle_state, restore_pickle_state
 from .exceptions import AdditionItemMismatch, ContentError
 
 if sys.version_info >= (3, 13):
@@ -483,6 +483,7 @@ class Content:
     """
 
     _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
+    _PICKLE_OMIT_FIELDS: ClassVar[set[str]] = {"raw_representation"}
 
     def __init__(
         self,
@@ -609,6 +610,28 @@ class Content:
             else:
                 object.__setattr__(result, k, deepcopy(v, memo))
         return result
+
+    def __copy__(self) -> Content:
+        """Create a shallow copy while preserving provider runtime fields."""
+        cls = type(self)
+        result = cls.__new__(cls)
+        for field_name, value in self.__dict__.items():
+            object.__setattr__(result, field_name, value)
+        return result
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Return pickle state without runtime-only shallow-copy fields."""
+        state = get_pickle_state(self, self._PICKLE_OMIT_FIELDS)
+        if self.annotations is not None:
+            state["annotations"] = [
+                {key: value for key, value in annotation.items() if key != "raw_representation"}
+                for annotation in self.annotations
+            ]
+        return state
+
+    def __setstate__(self, state: dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]) -> None:
+        """Restore pickle state and reset runtime-only shallow-copy fields."""
+        restore_pickle_state(self, state, self._PICKLE_OMIT_FIELDS)
 
     @classmethod
     def from_text(
@@ -1294,6 +1317,7 @@ class Content:
             and function_call.id is not None
             and id != function_call.id
             and function_call.additional_properties.get("server_label") is None
+            and not (additional_properties or {}).get("_replacement_approval_request", False)
         ):
             warnings.warn(
                 "Creating a local function_approval_request whose id differs from function_call.id uses the legacy "
@@ -1535,7 +1559,11 @@ class Content:
             )
         combined_id = self.id or other.id
 
-        # Concatenate text, handling None values
+        # Concatenate text, handling None values.
+        # Preserve empty string "" as distinct from None. Anthropic can emit a thinking
+        # block with thinking="" followed by a signature_delta; collapsing "" to None
+        # makes a real empty signed thinking block look like an orphan signature and
+        # gets dropped on replay (see microsoft/agent-framework#8168).
         self_text = self.text or ""
         other_text = other.text or ""
         if (
@@ -1544,7 +1572,7 @@ class Content:
             and ("reasoning_text" in self.additional_properties) != ("reasoning_text" in other.additional_properties)
         ):
             raise AdditionItemMismatch("Cannot merge reasoning text with a reasoning summary")
-        combined_text = self_text + other_text if (self_text or other_text) else None
+        combined_text = None if self.text is None and other.text is None else self_text + other_text
 
         # Handle protected_data replacement
         protected_data = other.protected_data if other.protected_data is not None else self.protected_data

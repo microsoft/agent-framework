@@ -28,6 +28,61 @@ public class OpenAIResponsesTests
     }
 
     [Fact]
+    public void ToAgentRunRequest_DangerousClientFunctionOptInWithoutTools_ReturnsNullOptions()
+    {
+        // Arrange
+        using var doc = JsonDocument.Parse("""{ "input": "Hello there" }""");
+#pragma warning disable MAAI001
+        var mapOptions = new OpenAIResponsesMapOptions
+        {
+            DangerouslyAllowClientFunctionTools = true
+        };
+#pragma warning restore MAAI001
+
+        // Act
+        var request = OpenAIResponses.ToAgentRunRequest(doc.RootElement, mapOptions);
+
+        // Assert
+        Assert.Null(request.Options);
+    }
+
+    [Fact]
+    public void ToAgentRunRequest_DangerousClientFunctionOptIn_ReturnsRunOptions()
+    {
+        // Arrange
+        using var doc = JsonDocument.Parse(
+            """
+            {
+              "input": "Hello there",
+              "tools": [
+                {
+                  "type": "function",
+                  "name": "client_function",
+                  "parameters": { "type": "object" }
+                }
+              ]
+            }
+            """);
+#pragma warning disable MAAI001
+        var mapOptions = new OpenAIResponsesMapOptions
+        {
+            DangerouslyAllowClientFunctionTools = true
+        };
+#pragma warning restore MAAI001
+
+        // Act
+        OpenAIResponsesRunRequest request =
+            OpenAIResponses.ToAgentRunRequest(doc.RootElement, mapOptions);
+
+        // Assert
+        ChatClientAgentRunOptions runOptions =
+            Assert.IsType<ChatClientAgentRunOptions>(request.Options);
+        AIFunctionDeclaration function =
+            Assert.IsAssignableFrom<AIFunctionDeclaration>(Assert.Single(runOptions.ChatOptions!.Tools!));
+        Assert.Equal("client_function", function.Name);
+    }
+
+    [Fact]
     public void GetSessionStoreId_PreviousResponseId_IsReturned()
     {
         // Arrange
