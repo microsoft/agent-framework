@@ -38,13 +38,19 @@ from agent_framework import (
     SupportsAgentRun,
     WorkflowAgent,
 )
-from agent_framework._middleware import FunctionMiddlewarePipeline
+from agent_framework._middleware import (
+    FunctionMiddlewarePipeline,
+    _as_middleware_list,  # pyright: ignore[reportPrivateUsage]
+    categorize_middleware,
+)
 from agent_framework._tools import (
     _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY,  # type: ignore
+    _APPROVAL_REQUEST_ID_KEY,  # pyright: ignore[reportPrivateUsage]
     _collect_approval_responses,  # type: ignore
     _get_tool_map,  # type: ignore
     _is_hosted_tool_approval,  # type: ignore
     _replace_approval_contents_with_results,  # type: ignore
+    _store_pending_approval_requests,  # pyright: ignore[reportPrivateUsage]
     _TOOL_APPROVAL_STATE_KEY,  # type: ignore
     _try_execute_function_call_groups,  # type: ignore
     normalize_function_invocation_configuration,
@@ -72,7 +78,7 @@ from ._approval_lifecycle import (
     ResumeDecision,
 )
 from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY, InMemoryAGUIApprovalStateStore, approval_state_thread_id
-from ._message_adapters import normalize_agui_input_messages
+from ._message_adapters import _APPROVAL_DECISION_IS_BOOLEAN_KEY, normalize_agui_input_messages
 from ._predictive_state import PredictiveStateHandler
 from ._tooling import collect_server_tools, merge_tools
 from ._run_common import (
@@ -91,19 +97,27 @@ from ._run_common import (
     _new_tool_call_segment_id,  # type: ignore
     _reconstruct_messages_from_thread_snapshot,  # type: ignore
     _resume_contract_error,  # type: ignore
+    _resolve_tool_result_host_payload,  # type: ignore
     _resolve_ui_payload,  # type: ignore
-    _stringify_tool_result,  # type: ignore
     _track_tool_call_segment,  # type: ignore
 )
 from ._snapshots import (
     _DEFAULT_STATE_INPUT_KEY,
     _SNAPSHOT_SCOPE_INPUT_KEY,
+    _session_id_for_thread,
     AGUIThreadSnapshot,
 )
 from ._snapshot_session import ThreadSnapshotSession, _event_messages_to_snapshot_dicts
 from ._utils import (
+    _AGUI_MCP_TOOL_RESULT_KEY,
     _approval_interrupt_id,
+    _bound_host_payload_history,
     _function_call_server_label,
+    _mcp_host_history_fields,
+    _model_items_for_agui_replay,
+    _persistable_host_payload_history,
+    _project_host_payload_history,
+    _stringify_tool_result,
     canonical_function_arguments,
     convert_agui_tools_to_agent_framework,
     generate_event_id,
@@ -687,13 +701,22 @@ def _make_approval_tool_result_events(resolved_approval_results: list[Content]) 
         if resolved.call_id:
             raw = resolved.result if resolved.result is not None else ""
             llm_str = _stringify_tool_result(raw)
-            ui_str = _resolve_ui_payload(llm_str, _extract_tool_result_display(resolved))
+            display_result = _extract_tool_result_display(resolved)
+            has_host_payload, host_payload = _resolve_tool_result_host_payload(resolved, display_result)
+            ui_str = _resolve_ui_payload(llm_str, host_payload if has_host_payload else display_result)
+            replay_properties: dict[str, Any] = {}
+            if has_host_payload:
+                replay_properties = _mcp_host_history_fields(
+                    host_payload,
+                    _model_items_for_agui_replay(resolved, llm_str),
+                )
             events.append(
                 ToolCallResultEvent(
                     message_id=generate_event_id(),
                     tool_call_id=resolved.call_id,
                     content=ui_str,
                     role="tool",
+                    **replay_properties,
                 )
             )
     return events
@@ -876,6 +899,7 @@ def _register_server_generated_approval_response(
         call_id=str(response.function_call.call_id or response_id),
         name=response.function_call.name,
         arguments=arguments,
+        function_call_id=response.function_call.id,
         aliases=[str(response.function_call.call_id)] if response.function_call.call_id else None,
         response_id=str(response_id),
         server_label=_function_call_server_label(response.function_call),
@@ -1007,7 +1031,7 @@ def _approval_state_tool_call_ids(
     call_ids: set[str] = set()
     for occurrence in approval_state_store.lifecycle.occurrences_for_thread(thread_id=thread_id):
         call_ids.add(occurrence.identity.call_id)
-        call_ids.add(occurrence.identity.interrupt_id)
+        call_ids.add(occurrence.function_call_id)
         call_ids.update(occurrence.aliases)
         call_ids.update(_content_tool_call_ids(list(occurrence.already_approved_requests)))
     stored_state = approval_state_store.get_tool_approval_state(thread_id)
@@ -1395,6 +1419,7 @@ def _canonical_approval_resume_messages(
                 "id": response_id,
                 "call_id": pending_entry.identity.call_id,
                 "name": _pending_approval_name(pending_entry) or "",
+                "function_call_id": pending_entry.function_call_id,
                 "approved": accepted,
                 "arguments": merged_arguments,
             }
@@ -1429,6 +1454,7 @@ def _canonical_approval_resume_messages(
                 call_id=sibling_call_id,
                 name=function_call.name,
                 arguments=sibling_arguments,
+                function_call_id=function_call.id,
                 response_id=str(response_id),
                 server_label=_function_call_server_label(function_call),
             )
@@ -1445,6 +1471,7 @@ def _canonical_approval_resume_messages(
                     "id": str(response_id),
                     "call_id": str(function_call.call_id or response_id),
                     "name": function_call.name,
+                    "function_call_id": function_call.id,
                     "approved": True,
                     "arguments": make_json_safe(function_call.parse_arguments() or {}),
                 }
@@ -1494,6 +1521,49 @@ def _canonical_approval_resume_messages(
     return messages, handled_ids, cancelled_ids, None
 
 
+def _approval_resolution_middleware_pipeline(
+    agent: SupportsAgentRun,
+    session: AgentSession,
+) -> FunctionMiddlewarePipeline:
+    """Build the function middleware used for authenticated approval resolution."""
+    client = getattr(agent, "client", None)
+    configured_middleware: list[Any] = [
+        *getattr(client, "function_middleware", ()),
+        *_as_middleware_list(getattr(agent, "middleware", None)),
+    ]
+    function_middleware = categorize_middleware(configured_middleware)["function"]
+    for provider in cast(list[Any], getattr(agent, "context_providers", [])):
+        provider_middleware = getattr(provider, "_function_middleware_for_approval_resolution", None)
+        if callable(provider_middleware):
+            function_middleware.extend(cast("Sequence[Any]", provider_middleware(session)))
+    return FunctionMiddlewarePipeline(*function_middleware)
+
+
+def _approval_observer_response(
+    occurrence: ApprovalOccurrence,
+    *,
+    cancelled: bool = False,
+) -> Content:
+    """Build a trusted non-grant projection from an authenticated lifecycle occurrence."""
+    occurrence_id = occurrence.function_call_id
+    request_id = occurrence.response_id or occurrence_id
+    function_call = Content.from_function_call(
+        call_id=occurrence.identity.call_id,
+        name=occurrence.name,
+        arguments=occurrence.arguments,
+        id=occurrence_id,
+    )
+    additional_properties: dict[str, Any] = {_APPROVAL_REQUEST_ID_KEY: request_id}
+    if cancelled:
+        additional_properties["cancelled"] = True
+    return Content.from_function_approval_response(
+        approved=False,
+        id=occurrence_id,
+        function_call=function_call,
+        additional_properties=additional_properties,
+    )
+
+
 async def _resolve_approval_responses(
     messages: list[Any],
     tools: list[Any],
@@ -1502,8 +1572,10 @@ async def _resolve_approval_responses(
     invocation_session: AgentSession,
     thread_id: str = "",
     validated_approved_responses: list[Content] | None = None,
+    replacement_approval_requests: list[Content] | None = None,
     *,
     lifecycle: ApprovalLifecycle,
+    middleware_pipeline: FunctionMiddlewarePipeline,
     authorized_executions: dict[ApprovalOccurrenceIdentity, AuthorizedExecution] | None = None,
     forwarded_executions: (
         dict[str, list[tuple[ForwardedPendingToolTransitionOwner, AuthorizedExecution, Content]]] | None
@@ -1548,6 +1620,7 @@ async def _resolve_approval_responses(
     pending_local_response_content_ids = set()
     pending_response_groups: dict[object, tuple[ApprovalOccurrence, list[Content]]] = {}
     intents_by_response_content_id: dict[int, AuthorizedExecution] = {}
+    authenticated_non_grants: list[Content] = []
     for response in approval_responses:
         resp_id = response.id
         function_call_id = response.function_call.call_id if response.function_call else None
@@ -1577,7 +1650,13 @@ async def _resolve_approval_responses(
         # stale replay controls and must not authorize a malformed fresh one.
         primary_response = responses[-1]
         response_content_ids_to_strip.update(id(response) for response in responses[:-1])
-        if not isinstance(primary_response.approved, bool):
+        decision_is_boolean = (
+            primary_response.additional_properties.pop(
+                _APPROVAL_DECISION_IS_BOOLEAN_KEY, isinstance(primary_response.approved, bool)
+            )
+            is True
+        )
+        if not decision_is_boolean:
             logger.warning(
                 "Treating approval response id=%s as rejected: approved must be a boolean",
                 primary_response.id,
@@ -1629,6 +1708,12 @@ async def _resolve_approval_responses(
                 primary_response.function_call.additional_properties["server_label"] = server_label
             else:
                 primary_response.function_call.additional_properties.pop("server_label", None)
+                primary_response.function_call.id = pending_entry.function_call_id
+                primary_response.additional_properties[_APPROVAL_REQUEST_ID_KEY] = (
+                    pending_entry.response_id or pending_entry.identity.interrupt_id
+                )
+        if decision_is_boolean and primary_response.approved is False and not server_label:
+            authenticated_non_grants.append(_approval_observer_response(pending_entry))
         if (
             (primary_response.approved is True or pending_entry.owner is ApprovalExecutionOwner.DEFERRED)
             and lifecycle is not None
@@ -1654,6 +1739,11 @@ async def _resolve_approval_responses(
             pending_local_response_content_ids.add(id(primary_response))
         if validated_approved_responses is not None and primary_response.approved is True and not server_label:
             validated_approved_responses.append(primary_response)
+
+    if authenticated_non_grants:
+        middleware_pipeline._notify_approval_responses(  # pyright: ignore[reportPrivateUsage]
+            authenticated_non_grants, session=invocation_session
+        )
 
     if response_content_ids_to_strip:
         filtered_messages: list[Message] = []
@@ -1736,10 +1826,6 @@ async def _resolve_approval_responses(
     if static_approved and tools and lifecycle is not None and authorized_executions is not None:
         client = getattr(agent, "client", None)
         config = normalize_function_invocation_configuration(getattr(client, "function_invocation_configuration", None))
-        middleware_pipeline = FunctionMiddlewarePipeline(
-            *getattr(client, "function_middleware", ()),
-            *run_kwargs.get("middleware", ()),
-        )
         tool_kwargs = {k: v for k, v in run_kwargs.items() if k != "options"}
         for approval in static_approved:
             function_call = approval.function_call
@@ -1769,7 +1855,22 @@ async def _resolve_approval_responses(
 
             local_owner = LocalPendingToolTransitionOwner(execute_local_call)
             outcome = await local_owner.execute(intent, lifecycle=lifecycle)
-            approved_function_result_groups.append(list(outcome.result_group))
+            result_group = list(outcome.result_group)
+            replacement_request = next(
+                (
+                    content
+                    for content in result_group
+                    if content.type == "function_approval_request"
+                    and content.additional_properties.get("_replacement_approval_request") is True
+                ),
+                None,
+            )
+            if replacement_request is not None and replacement_request.id is not None:
+                lifecycle.rotate_request_generation(intent, request_id=replacement_request.id)
+                _store_pending_approval_requests(invocation_session, [replacement_request])
+                if replacement_approval_requests is not None:
+                    replacement_approval_requests.append(replacement_request)
+            approved_function_result_groups.append(result_group)
 
     # Normalize one group per static approval and collect only terminal results for TOOL_CALL_RESULT events.
     # Deferred provider-injected approvals are left in messages for ToolApprovalMiddleware to process.
@@ -1968,12 +2069,23 @@ def _resolved_tool_result_snapshot_messages(resolved_messages: list[Message]) ->
         ]
         for content in function_results:
             call_id = str(content.call_id)
-            result_by_call_id[call_id] = {
+            llm_result = _stringify_tool_result(content.result if content.result is not None else "")
+            display_result = _extract_tool_result_display(content)
+            has_host_payload, host_payload = _resolve_tool_result_host_payload(content, display_result)
+            snapshot_message: dict[str, Any] = {
                 "id": msg.message_id if msg.message_id and len(function_results) == 1 else generate_event_id(),
                 "role": "tool",
                 "toolCallId": call_id,
-                "content": _stringify_tool_result(content.result if content.result is not None else ""),
+                "content": llm_result,
             }
+            if has_host_payload:
+                snapshot_message.update(
+                    _mcp_host_history_fields(
+                        host_payload,
+                        _model_items_for_agui_replay(content, llm_result),
+                    )
+                )
+            result_by_call_id[call_id] = snapshot_message
     return result_by_call_id
 
 
@@ -1986,6 +2098,16 @@ def _merge_resolved_approval_results_into_snapshot(
     if not result_by_call_id:
         snapshot_messages[:] = [message for message in snapshot_messages if not message.get("function_approvals")]
         return
+
+    for message in snapshot_messages:
+        if normalize_agui_role(message.get("role", "")) != "tool":
+            continue
+        tool_call_id = message.get("toolCallId") or message.get("tool_call_id")
+        if not tool_call_id or message.get(_AGUI_MCP_TOOL_RESULT_KEY) is not True:
+            continue
+        replacement = result_by_call_id.get(str(tool_call_id))
+        if replacement is not None and replacement.get(_AGUI_MCP_TOOL_RESULT_KEY) is not True:
+            result_by_call_id.pop(str(tool_call_id))
 
     merged_messages: list[dict[str, Any]] = []
     for message in snapshot_messages:
@@ -2067,7 +2189,8 @@ def _build_messages_snapshot(
 
     if flow.snapshot_segments:
         _append_segmented_snapshot_messages(flow, all_messages)
-        return MessagesSnapshotEvent(messages=all_messages)  # type: ignore[arg-type]
+        bounded_messages = _bound_host_payload_history(_persistable_host_payload_history(all_messages))
+        return MessagesSnapshotEvent(messages=_project_host_payload_history(bounded_messages))  # type: ignore[arg-type]
 
     # Add assistant message with tool calls only (no content)
     if flow.pending_tool_calls:
@@ -2101,7 +2224,8 @@ def _build_messages_snapshot(
     # MESSAGES_SNAPSHOT retain reasoning content after streaming ends.
     all_messages.extend(flow.reasoning_messages)
 
-    return MessagesSnapshotEvent(messages=all_messages)  # type: ignore[arg-type]
+    bounded_messages = _bound_host_payload_history(_persistable_host_payload_history(all_messages))
+    return MessagesSnapshotEvent(messages=_project_host_payload_history(bounded_messages))  # type: ignore[arg-type]
 
 
 def _text_events_to_snapshot_messages(events: list[BaseEvent]) -> list[dict[str, Any]]:
@@ -2385,7 +2509,14 @@ def _legacy_tool_message_approval_resume(
                 "pending local occurrence. Retry with the canonical approval interrupt id."
             )
             continue
-        interrupt_id = pending_occurrences[0].identity.interrupt_id
+        pending_occurrence = pending_occurrences[0]
+        if pending_occurrence.active_interrupt_id != pending_occurrence.identity.interrupt_id:
+            error = (
+                f"Legacy AG-UI tool-message approval call_id '{call_id}' cannot answer a replacement approval. "
+                "Retry with the current canonical approval interrupt id."
+            )
+            continue
+        interrupt_id = pending_occurrence.active_interrupt_id
         if interrupt_id in seen_interrupt_ids:
             error = (
                 f"Legacy AG-UI tool-message approval repeats call_id '{call_id}'. "
@@ -2432,6 +2563,11 @@ async def run_agent_stream(
     thread_id = supplied_thread_id or str(uuid.uuid4())
     run_id = supplied_run_id or str(uuid.uuid4())
     snapshot_scope = cast(str | None, input_data.get(_SNAPSHOT_SCOPE_INPUT_KEY))
+    session_id = _session_id_for_thread(
+        scope=snapshot_scope,
+        thread_id=thread_id,
+        legacy_session_id_from_thread_id=config.legacy_session_id_from_thread_id,
+    )
     approval_scope = cast(str | None, input_data.get(_APPROVAL_SCOPE_INPUT_KEY))
     approval_thread_id = approval_state_thread_id(scope=approval_scope, thread_id=thread_id)
     if approval_state_store is None:
@@ -2461,11 +2597,7 @@ async def run_agent_stream(
                 interrupt_ids=list(stored_pending_approval_interrupt_ids),
             )
             retired_interrupt_ids = {
-                reconciliation.identity.interrupt_id
-                if reconciliation.identity is not None
-                else reconciliation.interrupt_id
-                for reconciliation in reconciliations
-                if reconciliation.retire_interrupt
+                reconciliation.interrupt_id for reconciliation in reconciliations if reconciliation.retire_interrupt
             }
             if retired_interrupt_ids:
                 await snapshot_session.clear_interrupts(interrupt_ids=retired_interrupt_ids)
@@ -2581,9 +2713,7 @@ async def run_agent_stream(
             _clear_tool_approval_state(approval_state_store, approval_thread_id)
         if resume_error_code == "APPROVAL_RESUME_CANCELLED":
             retired_interrupt_ids = {
-                reconciliation.identity.interrupt_id
-                if reconciliation.identity is not None
-                else reconciliation.interrupt_id
+                reconciliation.interrupt_id
                 for reconciliation in approval_snapshot_reconciliations
                 if reconciliation.retire_interrupt
             }
@@ -2604,17 +2734,7 @@ async def run_agent_stream(
             cancelled_workflow_request_ids,
             tools=tools,
         )
-    if cancelled_resume_ids and handled_resume_ids == cancelled_resume_ids:
-        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-        _clear_tool_approval_state(approval_state_store, approval_thread_id)
-        retired_interrupt_ids = {
-            reconciliation.identity.interrupt_id if reconciliation.identity is not None else reconciliation.interrupt_id
-            for reconciliation in approval_snapshot_reconciliations
-            if reconciliation.retire_interrupt
-        }
-        await snapshot_session.clear_interrupts(interrupt_ids=retired_interrupt_ids or cancelled_resume_ids)
-        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id)
-        return
+    only_cancelled_resume = bool(cancelled_resume_ids and handled_resume_ids == cancelled_resume_ids)
     resume_messages = _resume_to_tool_messages(resume_payload, exclude_interrupt_ids=handled_resume_ids)
     if available_interrupts:
         logger.debug("Received available interrupts metadata: %s", available_interrupts)
@@ -2656,7 +2776,7 @@ async def run_agent_stream(
         skip_text = response_format is not None
 
     # Handle empty messages (emit RunStarted immediately since no agent response)
-    if not messages:
+    if not messages and not only_cancelled_resume:
         logger.warning("No messages provided in AG-UI input")
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         yield _build_run_finished_event(run_id=run_id, thread_id=thread_id)
@@ -2721,7 +2841,7 @@ async def run_agent_stream(
                 "use_service_session=True requires snapshot persistence unless service_session_id_from_thread_id=True."
             )
         service_session_id = supplied_thread_id if config.service_session_id_from_thread_id else None
-        session = AgentSession(session_id=thread_id, service_session_id=service_session_id)
+        session = AgentSession(session_id=session_id, service_session_id=service_session_id)
         stored_service_session_id = (
             stored_snapshot.session_state.get(_PROVIDER_SERVICE_SESSION_ID_STATE_KEY)
             if stored_snapshot is not None and stored_snapshot.session_state is not None
@@ -2733,14 +2853,14 @@ async def run_agent_stream(
             and stored_service_session_id is None
             and callable(create_conversation)
         ):
-            created_session = create_conversation(session_id=thread_id)
+            created_session = create_conversation(session_id=session_id)
             if isinstance(created_session, Awaitable):
                 created_session = await created_session
             if not isinstance(created_session, AgentSession):
                 raise TypeError("agent.create_conversation() must return AgentSession")
             session = created_session
     else:
-        session = AgentSession(session_id=thread_id)
+        session = AgentSession(session_id=session_id)
     _restore_session_continuation_state(
         session,
         stored_snapshot,
@@ -2756,6 +2876,49 @@ async def run_agent_stream(
         }
     )
     _restore_tool_approval_state(session, approval_state_store, approval_thread_id)
+    approval_middleware_pipeline = _approval_resolution_middleware_pipeline(agent, session)
+
+    authenticated_cancellations = [
+        _approval_observer_response(occurrence, cancelled=True)
+        for interrupt_id in cancelled_resume_ids
+        if (
+            occurrence := approval_state_store.lifecycle.occurrence_for_alias(
+                thread_id=approval_thread_id,
+                interrupt_id=interrupt_id,
+            )
+        )
+        is not None
+        and occurrence.status is ApprovalStatus.CANCELLED
+    ]
+    if authenticated_cancellations:
+        approval_middleware_pipeline._notify_approval_responses(  # pyright: ignore[reportPrivateUsage]
+            authenticated_cancellations,
+            session=session,
+        )
+
+    if only_cancelled_resume:
+        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        _clear_tool_approval_state(approval_state_store, approval_thread_id)
+        retired_interrupt_ids = {
+            reconciliation.interrupt_id
+            for reconciliation in approval_snapshot_reconciliations
+            if reconciliation.retire_interrupt
+        }
+        await snapshot_session.clear_interrupts(interrupt_ids=retired_interrupt_ids or cancelled_resume_ids)
+        if (stored_after_cancellation := snapshot_session.stored) is not None:
+            await snapshot_session.save(
+                messages=stored_after_cancellation.messages,
+                state=stored_after_cancellation.state,
+                interrupt=stored_after_cancellation.interrupt,
+                session_state=_safe_serialize_session_continuation_state(
+                    session,
+                    agent,
+                    shared_state_keys=set(flow.current_state).difference(protected_session_state_keys),
+                    include_service_session_id=config.use_service_session,
+                ),
+            )
+        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id)
+        return
 
     # Inject metadata for AG-UI orchestration (Feature #2: Azure-safe truncation)
     base_metadata: dict[str, Any] = {
@@ -2829,6 +2992,7 @@ async def run_agent_stream(
         )
         return
     validated_approved_responses: list[Content] = []
+    replacement_approval_requests: list[Content] = []
     newly_resolved_approval_results = await _resolve_approval_responses(
         messages,
         tools_for_execution,
@@ -2837,7 +3001,9 @@ async def run_agent_stream(
         session,
         approval_thread_id,
         validated_approved_responses,
+        replacement_approval_requests,
         lifecycle=approval_state_store.lifecycle,
+        middleware_pipeline=approval_middleware_pipeline,
         authorized_executions=authorized_executions,
         forwarded_executions=forwarded_executions,
     )
@@ -2848,6 +3014,35 @@ async def run_agent_stream(
     _clean_resolved_approvals_from_snapshot(snapshot_messages, messages)
     if resolved_approval_results or any(message.get("function_approvals") for message in snapshot_messages):
         _merge_resolved_approval_results_into_snapshot(snapshot_messages, messages)
+
+    if replacement_approval_requests:
+        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        for request in replacement_approval_requests:
+            for event in _emit_content(
+                request,
+                flow,
+                predictive_handler,
+                skip_text,
+                config.require_confirmation,
+            ):
+                yield event
+        persisted_messages = snapshot_messages
+        if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
+            persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
+        await snapshot_session.save(
+            messages=_bound_host_payload_history(_persistable_host_payload_history(persisted_messages)),
+            state=cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None,
+            interrupt=flow.interrupts or None,
+            session_state=_safe_serialize_session_continuation_state(
+                session,
+                agent,
+                shared_state_keys=set(flow.current_state).difference(protected_session_state_keys),
+                include_service_session_id=config.use_service_session,
+            ),
+        )
+        _save_tool_approval_state(session, approval_state_store, approval_thread_id)
+        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=flow.interrupts)
+        return
 
     # Feature #3: Emit StateSnapshotEvent for approved state-changing tools before agent runs
     approved_state_updates = _extract_approved_state_updates(
@@ -2876,7 +3071,7 @@ async def run_agent_stream(
             # stored history unless this run already seeded raw messages from it.
             persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
         await snapshot_session.save(
-            messages=persisted_messages,
+            messages=_bound_host_payload_history(_persistable_host_payload_history(persisted_messages)),
             state=cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None,
             interrupt=None,
             session_state=_safe_serialize_session_continuation_state(
@@ -2963,6 +3158,21 @@ async def run_agent_stream(
             for content in update.contents:
                 content_type = getattr(content, "type", None)
                 logger.debug(f"Processing content type={content_type}, message_id={flow.message_id}")
+                forwarded_reapproval_handled = False
+
+                if (
+                    content_type == "function_approval_request"
+                    and content.call_id
+                    and content.additional_properties.get("_replacement_approval_request") is True
+                    and (forwarded_queue := forwarded_executions.get(content.call_id))
+                ):
+                    forwarded = forwarded_queue.pop(0)
+                    if not forwarded_queue:
+                        forwarded_executions.pop(content.call_id, None)
+                    owner, intent, _ = forwarded
+                    owner.record_reapproval(intent, content, lifecycle=approval_state_store.lifecycle)
+                    _store_pending_approval_requests(session, [content])
+                    forwarded_reapproval_handled = True
 
                 if (
                     content_type == "function_result"
@@ -2978,7 +3188,9 @@ async def run_agent_stream(
 
                 # Register pending approval requests so we can validate responses later
                 if content_type == "function_approval_request":
-                    if content.id and content.function_call and content.function_call.name:
+                    if forwarded_reapproval_handled:
+                        pass
+                    elif content.id and content.function_call and content.function_call.name:
                         server_label = _function_call_server_label(content.function_call)
                         canonical_interrupt_id = _approval_interrupt_id(content)
                         provider_approval_thread_id = approval_state_thread_id(
@@ -3003,6 +3215,7 @@ async def run_agent_stream(
                             "request_id": str(content.id),
                             "interrupt_id": str(canonical_interrupt_id),
                             "call_id": str(content.function_call.call_id or canonical_interrupt_id),
+                            "function_call_id": content.function_call.id,
                             "already_approved_requests": already_approved_requests,
                         }
                         approval_state_store.register(
@@ -3226,8 +3439,12 @@ async def run_agent_stream(
         # so an unrelated user tool named "generate_a2ui" keeps its snapshot.
         if a2ui_active:
             logger.info("Suppressing terminal MessagesSnapshotEvent for A2UI run to preserve streamed message order.")
-        if not a2ui_active and not _should_suppress_intermediate_snapshot(
-            last_tool_name, predict_state_config, config.require_confirmation
+        if (
+            config.emit_messages_snapshot
+            and not a2ui_active
+            and not _should_suppress_intermediate_snapshot(
+                last_tool_name, predict_state_config, config.require_confirmation
+            )
         ):
             yield snapshot_event
 
@@ -3237,7 +3454,7 @@ async def run_agent_stream(
         # stored history unless this run already seeded raw messages from it.
         persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
     await snapshot_session.save(
-        messages=persisted_messages,
+        messages=_bound_host_payload_history(_persistable_host_payload_history(persisted_messages)),
         state=latest_state_snapshot,
         interrupt=flow.interrupts or None,
         session_state=_safe_serialize_session_continuation_state(

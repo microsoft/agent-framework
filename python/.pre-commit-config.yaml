@@ -32,6 +32,7 @@ repos:
         name: Detect Private Keys
       - id: check-added-large-files
         name: Check Added Large Files
+        exclude: ^packages/lab/uv\.lock$
       - id: no-commit-to-branch
         name: Protect main branch
         args: [--branch, main]

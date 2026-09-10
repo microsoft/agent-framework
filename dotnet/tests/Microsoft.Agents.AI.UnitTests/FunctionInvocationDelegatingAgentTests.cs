@@ -8,6 +8,8 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Moq;
 
+#pragma warning disable Moq1206
+
 namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
@@ -467,16 +469,19 @@ public sealed class FunctionInvocationDelegatingAgentTests
 
         // Setup mock to directly invoke the function (bypassing FunctionInvokingChatClient)
         mockChatClient.Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .Returns<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>(async (messages, options, ct) =>
+            .Returns(GetResponseAsync);
+
+        async Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options, CancellationToken ct)
+        {
+            // Directly invoke the function to simulate null CurrentContext scenario
+            if (options?.Tools?.FirstOrDefault() is AIFunction function)
             {
-                // Directly invoke the function to simulate null CurrentContext scenario
-                if (options?.Tools?.FirstOrDefault() is AIFunction function)
-                {
-                    executionOrder.Add("Direct-Function-Invocation");
-                    await function.InvokeAsync([], ct);
-                }
-                return new ChatResponse([new ChatMessage(ChatRole.Assistant, "Response after direct invocation")]);
-            });
+                executionOrder.Add("Direct-Function-Invocation");
+                await function.InvokeAsync([], ct);
+            }
+
+            return new ChatResponse([new ChatMessage(ChatRole.Assistant, "Response after direct invocation")]);
+        }
 
         var innerAgent = new ChatClientAgent(mockChatClient.Object, new ChatClientAgentOptions
         {

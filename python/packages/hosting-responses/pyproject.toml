@@ -30,12 +30,12 @@ dependencies = [
 
 [dependency-groups]
 test = [
-    "fastapi>=0.115.0,<0.138.1",
+    "fastapi>=0.115.0,<0.142.0",
     "httpx>=0.28.1",
 ]
 
 [tool.uv]
-prerelease = "if-necessary-or-explicit"
+prerelease = "if-necessary"
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",

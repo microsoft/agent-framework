@@ -2133,6 +2133,27 @@ def test_text_reasoning_content_add_conflicting_ids_raises():
         _ = t1 + t2
 
 
+def test_text_reasoning_content_add_preserves_empty_text_with_signature():
+    """Empty thinking text plus a signature delta must keep text="" (not None).
+
+    Regression for microsoft/agent-framework#8168: collapsing "" to None makes a
+    real empty signed Anthropic thinking block look like an orphan signature.
+    """
+
+    empty_thinking = Content.from_text_reasoning(text="")
+    signature_only = Content.from_text_reasoning(text=None, protected_data="synthetic-signature")
+
+    result = empty_thinking + signature_only
+    assert result.text == ""
+    assert result.protected_data == "synthetic-signature"
+
+    both_none = Content.from_text_reasoning(text=None) + Content.from_text_reasoning(
+        text=None, protected_data="orphan-sig"
+    )
+    assert both_none.text is None
+    assert both_none.protected_data == "orphan-sig"
+
+
 def test_text_reasoning_content_add_neither_has_id():
     """Test that coalescing text_reasoning Content when neither has an id results in None id."""
 
@@ -2731,6 +2752,29 @@ def test_content_deepcopy_discards_raw_representation(caplog: pytest.LogCaptureF
     assert cloned.raw_representation is None
     assert cloned.additional_properties is not content.additional_properties
     assert caplog.messages == ["Discarding field 'raw_representation' while deep-copying Content."]
+
+
+def test_content_pickle_discards_nested_annotation_raw_representation() -> None:
+    """Pickle should omit provider objects stored on annotations."""
+    import pickle
+
+    raw = object()
+    annotation: Annotation = {"type": "citation", "url": "https://example.com", "raw_representation": raw}
+    content = Content.from_text("hello", annotations=[annotation])
+
+    restored = pickle.loads(pickle.dumps(content))
+
+    assert restored.annotations == [{"type": "citation", "url": "https://example.com"}]
+
+
+def test_content_shallow_copy_preserves_raw_representation() -> None:
+    """Shallow copies of Content retain provider runtime fields."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    cloned = copy.copy(Content.from_text("hello", raw_representation=raw))
+
+    assert cloned.raw_representation is raw
 
 
 def test_message_deepcopy_preserves_raw_representation():

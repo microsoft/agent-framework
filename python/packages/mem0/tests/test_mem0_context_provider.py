@@ -7,7 +7,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponse, Message
+from agent_framework import AgentResponse, Message, SecretString
 from agent_framework._sessions import AgentSession, SessionContext
 
 from agent_framework_mem0._context_provider import Mem0ContextProvider
@@ -82,14 +82,16 @@ class TestInit:
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
         assert provider.context_prompt == Mem0ContextProvider.DEFAULT_CONTEXT_PROMPT
 
-    def test_init_auto_creates_client_when_none(self) -> None:
+    @pytest.mark.parametrize("api_key", ["test-key", SecretString("test-key")], ids=["str", "secret"])
+    def test_init_auto_creates_client_when_none(self, api_key: str | SecretString) -> None:
         """When no client is provided, a default AsyncMemoryClient is created and flagged for closing."""
         with (
             patch("mem0.client.main.AsyncMemoryClient.__init__", return_value=None) as mock_init,
             patch("mem0.client.main.AsyncMemoryClient._validate_api_key", return_value=None),
         ):
-            provider = Mem0ContextProvider(source_id="mem0", api_key="test-key", user_id="u1")
+            provider = Mem0ContextProvider(source_id="mem0", api_key=api_key, user_id="u1")
             mock_init.assert_called_once_with(api_key="test-key")
+            assert type(mock_init.call_args.kwargs["api_key"]) is str
             assert provider._should_close_client is True
 
     def test_provided_client_not_flagged_for_close(self, mock_mem0_client: AsyncMock) -> None:

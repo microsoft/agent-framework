@@ -1366,6 +1366,50 @@ public class AgentFrameworkResponseHandlerTests
         Assert.Equal("set by the container", raw.EndUserId);
     }
 
+    [Fact]
+    public async Task CreateAsync_ChatClientAnnotationOnlyUpdate_EmitsCitationAsync()
+    {
+        // Arrange
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            Title = "Example Document",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(() => ToAsyncEnumerableUpdatesAsync(
+                new ChatResponseUpdate(ChatRole.Assistant, "Hello") { MessageId = "resp_msg_1" },
+                new ChatResponseUpdate(
+                    ChatRole.Assistant,
+                    [new AIContent { Annotations = [annotation] }])
+                {
+                    MessageId = "resp_msg_1"
+                }));
+
+        var agent = new ChatClientAgent(client.Object);
+        var handler = BuildHandlerWith(agent, new FakeHostedSessionIsolationKeyProvider(), new InMemoryAgentSessionStore());
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in handler.CreateAsync(
+            NewConversationRequest("conv-citation", "a question", store: true),
+            NewContextServing("resp_" + new string('c', 46), []),
+            CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var annotationEvent = Assert.Single(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+        var citation = Assert.IsType<UrlCitationBody>(annotationEvent.Annotation);
+        Assert.Equal(new Uri("https://example.com/doc"), citation.Url);
+        Assert.Equal("Example Document", citation.Title);
+    }
+
     private static CreateResponse NewConversationRequest(string conversationId, string text, bool store)
     {
         var request = new CreateResponse { Model = "test", Store = store };

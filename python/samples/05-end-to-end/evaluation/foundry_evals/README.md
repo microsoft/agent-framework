@@ -15,13 +15,22 @@ These samples demonstrate evaluating agent-framework agents using Microsoft Foun
 
 ### `evaluate_agent_sample.py` — Dataset Evaluation (Path 3)
 
-The dev inner loop. Two patterns from simplest to most control:
-
-1. **`evaluate_agent()`** — One call: runs agent → converts → evaluates
-2. **`FoundryEvals.evaluate()`** — Run agent yourself, convert with `AgentEvalConverter`, inspect/modify, then evaluate
+The dev inner loop. Pass existing responses or let `evaluate_agent()` run the
+agent against test queries before submitting provider-neutral `EvalItem` data
+to Foundry.
 
 ```bash
 uv run samples/05-end-to-end/evaluation/foundry_evals/evaluate_agent_sample.py
+```
+
+### `evaluate_tool_calls_sample.py` — Explicit Eval Items
+
+For more control, run the agent yourself, construct public `EvalItem` instances
+from the conversation and typed tools, inspect or modify them, and pass them to
+`FoundryEvals.evaluate()`.
+
+```bash
+uv run samples/05-end-to-end/evaluation/foundry_evals/evaluate_tool_calls_sample.py
 ```
 
 ### `evaluate_traces_sample.py` — Trace & Response Evaluation (Path 1)
@@ -71,5 +80,5 @@ Create a `.env` file with configuration as in the `.env.example` file in this fo
 
 - **"I want to test my agent during development"** → `evaluate_agent_sample.py`, Pattern 1
 - **"I want to evaluate past agent runs"** → `evaluate_traces_sample.py`
-- **"I want to inspect/modify eval data before submitting"** → `evaluate_agent_sample.py`, Pattern 2
+- **"I want to inspect/modify eval data before submitting"** → `evaluate_tool_calls_sample.py`
 - **"I want to score against a custom rubric I created in Foundry"** → `evaluate_with_rubric_sample.py`

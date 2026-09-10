@@ -20,11 +20,11 @@ More permissions mean more potential for unintended actions.
 import asyncio
 
 from agent_framework.github import GitHubCopilotAgent, GitHubCopilotOptions
-from copilot.session import PermissionHandler, PermissionRequestResult
+from copilot.session import PermissionHandler, PermissionInvocation, PermissionRequestResult
 from copilot.session_events import PermissionRequest
 
 
-def approve_and_log(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+def approve_and_log(request: PermissionRequest, context: PermissionInvocation) -> PermissionRequestResult:
     """Permission handler that auto-approves and logs each permission kind."""
     print(f"  [Permission: {request.kind}]", flush=True)
     return PermissionHandler.approve_all(request, context)

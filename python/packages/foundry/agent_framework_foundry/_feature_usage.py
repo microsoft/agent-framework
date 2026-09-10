@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 from enum import IntEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agent_framework._telemetry import (
     USER_AGENT_KEY,
@@ -13,7 +15,9 @@ from agent_framework_openai._feature_usage import (
     create_feature_usage_http_client,
 )
 from azure.core.pipeline.policies import SansIOHTTPPolicy
-from openai import DefaultAsyncHttpxClient
+
+if TYPE_CHECKING:
+    from openai import DefaultAsyncHttpxClient
 
 
 class FeatureIndex(IntEnum):
@@ -37,7 +41,7 @@ def create_foundry_feature_usage_http_client() -> DefaultAsyncHttpxClient:
     return create_feature_usage_http_client(approved_origin_suffixes=_FOUNDRY_ORIGIN_SUFFIXES)
 
 
-def create_feature_usage_policy() -> "FeatureUsagePolicy":
+def create_feature_usage_policy() -> FeatureUsagePolicy:
     """Create the destination-aware policy that stamps each actual request hop."""
     return FeatureUsagePolicy()
 
