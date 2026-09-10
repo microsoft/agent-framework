@@ -3085,3 +3085,116 @@ def test_file_checkpoint_storage_abandonment_mid_chain_keeps_the_queue_ordered(t
     while canonical in registry and time.monotonic() < deadline:
         time.sleep(0.05)
     assert canonical not in registry
+
+
+async def test_file_checkpoint_storage_replace_retry_gives_up_and_releases(monkeypatch):
+    """A destination that never becomes replaceable must fail loudly, not silently or forever.
+
+    The retry around ``os.replace`` exists for a Windows-specific transient: an indexer or
+    AV scan briefly holding a handle to the destination. It is bounded on purpose -- a
+    handle held for good has to surface as an error rather than a hang -- and giving up
+    must still release the destination, or one stuck file would wedge every later save to
+    it for the life of the process.
+
+    Both halves are asserted here because the suite only ever reached this code by
+    accident: the concurrency tests occasionally trip a real ``PermissionError`` on
+    Windows, which is environment-dependent and absent on Linux CI.
+    """
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        attempts: list[int] = []
+        real_replace = checkpoint_module.os.replace
+
+        def always_locked(src, dst):  # noqa: ANN001, ANN202 - test shim
+            attempts.append(1)
+            raise PermissionError("simulated handle held by another process")
+
+        monkeypatch.setattr(checkpoint_module.os, "replace", always_locked)
+
+        def make(name: str) -> WorkflowCheckpoint:
+            return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="locked-id")
+
+        with pytest.raises(PermissionError, match="simulated handle held"):
+            await storage.save(make("never-lands"))
+
+        assert len(attempts) == 5, f"expected the bounded retry to stop at 5 attempts, got {len(attempts)}"
+
+        registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+        assert not registry, "giving up on the replace kept the destination owned"
+
+        # No temp file survives the failure, and the path works once the lock clears.
+        leftovers = await asyncio.to_thread(lambda: list(Path(temp_dir).glob(".maf-ckpt-*.tmp")))
+        assert not leftovers, f"the abandoned write leaked temp files: {leftovers}"
+
+        monkeypatch.setattr(checkpoint_module.os, "replace", real_replace)
+        await asyncio.wait_for(storage.save(make("after-the-lock")), timeout=10)
+        assert (await storage.load("locked-id")).workflow_name == "after-the-lock"
+        assert not registry
+
+
+async def test_file_checkpoint_storage_temp_cleanup_failure_does_not_mask_the_write_error(monkeypatch, caplog):
+    """A temp file that cannot be removed must not replace the error that stranded it.
+
+    The cleanup runs in a ``finally`` while a write exception is propagating. Letting an
+    ``OSError`` out of it there would substitute a misleading "cannot remove temp file"
+    for the real disk failure the caller needs to see, and would skip the release that
+    keeps the destination usable.
+    """
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        def exploding_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+            raise OSError("the real disk failure")
+
+        real_unlink = Path.unlink
+
+        def refuse_temp_unlink(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202 - test shim
+            if self.name.startswith(".maf-ckpt-"):
+                raise OSError("temp file is not removable either")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(checkpoint_module.os, "replace", exploding_replace)
+        monkeypatch.setattr(Path, "unlink", refuse_temp_unlink)
+
+        def make(name: str) -> WorkflowCheckpoint:
+            return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="masked-id")
+
+        with (
+            caplog.at_level(logging.DEBUG, logger=checkpoint_module.logger.name),
+            pytest.raises(OSError, match="the real disk failure"),
+        ):
+            await storage.save(make("fails"))
+
+        assert any("Failed to remove checkpoint temp file" in record.message for record in caplog.records), (
+            "the swallowed cleanup failure left no diagnostic behind"
+        )
+
+        registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+        assert not registry, "a failed cleanup kept the destination owned"
+
+        monkeypatch.undo()
+        await asyncio.wait_for(storage.save(make("after-failure")), timeout=10)
+        assert (await storage.load("masked-id")).workflow_name == "after-failure"
+
+
+async def test_await_signal_through_cancellation_returns_immediately_for_a_resolved_signal():
+    """The drain must not suspend on a write that already finished.
+
+    Exercised directly because arranging the race -- a cancellation arriving in the
+    window after the worker resolved the signal but before the coroutine resumes -- is
+    not deterministic through ``save()``. The fast path only skips registering a callback
+    that would fire straight back; this pins the behaviour it is allowed to have.
+    """
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    resolved: ConcurrentFuture[None] = ConcurrentFuture()
+    resolved.set_result(None)
+
+    await asyncio.wait_for(
+        checkpoint_module._await_signal_through_cancellation(resolved),  # pyright: ignore[reportPrivateUsage]
+        timeout=5,
+    )
