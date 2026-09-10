@@ -3354,22 +3354,24 @@ class MCPStreamableHTTPTool(MCPTool):
                     if headers is None:
                         # Ambient request made outside call_tool (the initialize handshake,
                         # load_tools/load_prompts discovery, or background pings). Invoke the
-                        # provider with empty kwargs so static providers can authenticate these
-                        # requests too. A provider that indexes a required per-call kwarg (e.g.
-                        # kwargs["api_key"]) raises KeyError on the empty dict; that specific
-                        # case is tolerated so connect still succeeds. Any other error is a
-                        # genuine provider failure and is left to propagate, matching the
-                        # call_tool path which does not catch header_provider exceptions.
+                        # provider with the kwargs seeded by the run that established this
+                        # connection, so static providers and run-supplied credentials both
+                        # authenticate these requests. Provider failures propagate, matching the
+                        # call_tool path, except the one case below that no caller can avoid.
                         if self._header_provider is None:
                             raise RuntimeError("Header injection hook invoked without a header_provider.")
                         try:
                             headers = self._header_provider(self._connection_kwargs)
                         except KeyError:
-                            # A kwargs-dependent provider raises on every ambient request
-                            # (initialize, discovery, and recurring pings).
+                            # Unavoidable only when nothing was seeded: the provider wants per-call
+                            # values a connection-lifetime request cannot have. A key missing from
+                            # seeded kwargs is a misconfiguration, and silently dropping it would
+                            # send the handshake unauthenticated.
+                            if self._connection_kwargs:
+                                raise
                             logger.debug(
                                 "header_provider raised KeyError for MCP server %r on an ambient "
-                                "request (missing per-call kwargs); proceeding without headers.",
+                                "request (no connection kwargs available); proceeding without headers.",
                                 self.name,
                                 exc_info=True,
                             )

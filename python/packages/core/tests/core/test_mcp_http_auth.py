@@ -825,3 +825,29 @@ async def test_standalone_static_header_provider_authenticates_without_a_run(mcp
         assert all(request.headers.get("Authorization") == "token-a" for request in authenticated)
     finally:
         await tool.close()
+
+
+async def test_seeded_kwargs_missing_the_providers_key_fails_the_handshake(
+    mcp_http_server: MCPHTTPServer,
+) -> None:
+    """A key absent from seeded connection kwargs is a misconfiguration, not a tolerated ambient miss.
+
+    An unseeded connection legitimately has no per-call values, so a KeyError there is tolerated.
+    Once a run supplies kwargs, a provider asking for an absent key must fail loudly instead of
+    letting the handshake go out unauthenticated.
+    """
+    client, _, _ = mcp_http_server
+    tool = MCPStreamableHTTPTool(
+        name="mismatch",
+        url="https://mcp.example/mcp",
+        http_client=client,
+        load_prompts=False,
+        header_provider=lambda kwargs: {"Authorization": kwargs["credential"]},
+    )
+    tool._seed_connection_kwargs({"typo_credential": "token-a"})
+    try:
+        with pytest.raises(ToolException) as error:
+            await tool.connect()
+        assert "'credential'" in str(error.value)
+    finally:
+        await tool.close()
