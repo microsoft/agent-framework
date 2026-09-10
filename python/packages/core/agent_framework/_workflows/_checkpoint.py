@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import json
 import logging
@@ -333,9 +334,16 @@ class FileCheckpointStorage:
             # `.tmp` path, where one writer's `os.replace` consumes the file
             # another writer is about to replace (#8182).
             tmp_path = file_path.with_suffix(f".json.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-            with open(tmp_path, "w") as f:
-                json.dump(encoded_checkpoint, f, indent=2, ensure_ascii=False)
-            os.replace(tmp_path, file_path)
+            try:
+                with open(tmp_path, "w") as f:
+                    json.dump(encoded_checkpoint, f, indent=2, ensure_ascii=False)
+                os.replace(tmp_path, file_path)
+            except BaseException:
+                # A failed write must not leave its temp file behind, or
+                # repeated failures accumulate unbounded (PR review).
+                with contextlib.suppress(OSError):
+                    tmp_path.unlink(missing_ok=True)
+                raise
 
         await asyncio.to_thread(_write_atomic)
 

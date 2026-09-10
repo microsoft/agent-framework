@@ -1305,6 +1305,24 @@ async def test_file_checkpoint_storage_concurrent_saves_same_id():
         assert isinstance(loaded.state["i"], int)
 
 
+async def test_file_checkpoint_storage_failed_save_cleans_up_temp_file(monkeypatch):
+    """A save that fails mid-write must not leave its temp file behind (PR review)."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        checkpoint = WorkflowCheckpoint(workflow_name="wf", graph_signature_hash="sig", state={"x": 1})
+
+        def failing_replace(src: str, dst: str) -> None:
+            raise OSError("simulated replace failure")
+
+        monkeypatch.setattr("agent_framework._workflows._checkpoint.os.replace", failing_replace)
+        with pytest.raises(OSError, match="simulated replace failure"):
+            await storage.save(checkpoint)
+        monkeypatch.undo()
+
+        leftovers = list(Path(temp_dir).glob("*.tmp"))
+        assert not leftovers, f"temp files leaked from failed save: {leftovers}"
+
+
 async def test_file_checkpoint_storage_corrupted_file():
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
