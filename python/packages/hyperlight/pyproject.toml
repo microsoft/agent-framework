@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [tool.uv]
-prerelease = "if-necessary-or-explicit"
+prerelease = "if-necessary"
 environments = [
     "sys_platform == 'linux'",
     "sys_platform == 'win32'"

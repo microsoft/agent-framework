@@ -53,7 +53,6 @@ all = [
     "agent-framework-gemini",
     "agent-framework-github-copilot; python_version >= '3.11'",
     "agent-framework-hyperlight; (sys_platform == 'linux' and platform_machine == 'x86_64') or (sys_platform == 'win32' and platform_machine == 'AMD64')",
-    "agent-framework-lab",
     "agent-framework-mem0",
     "agent-framework-mistral",
     "agent-framework-monty",
@@ -70,10 +69,12 @@ all = [
 # runtime dependencies. They are declared here so isolated source checks can resolve their APIs.
 dev = [
     "azure-ai-agentserver-core>=2.0.0b7,<3",
+    "graphviz>=0.20,<1",
+    "opentelemetry-exporter-otlp>=1.39.0,<2",
 ]
 
 [tool.uv]
-prerelease = "if-necessary-or-explicit"
+prerelease = "if-necessary"
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
