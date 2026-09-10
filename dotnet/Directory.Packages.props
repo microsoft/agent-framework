@@ -109,7 +109,7 @@
     <PackageVersion Include="CommunityToolkit.VectorData.Qdrant" Version="1.0.0" />
     <!-- Agent SDKs -->
     <PackageVersion Include="GitHub.Copilot.SDK" Version="1.0.11" />
-    <PackageVersion Include="ResponsibleAI.AgentHooks" Version="0.1.0-alpha.4" />
+    <PackageVersion Include="ResponsibleAI.AgentHooks" Version="0.1.0-alpha.5" />
     <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.9.28-beta" />
     <!-- M365 Agents SDK -->
     <PackageVersion Include="AdaptiveCards" Version="3.1.0" />
