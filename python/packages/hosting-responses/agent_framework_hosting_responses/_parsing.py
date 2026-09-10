@@ -773,9 +773,11 @@ def _function_call_output_item(content: Content, *, status: str) -> ResponseOutp
 
 
 def _function_result_output_item(content: Content, *, status: str) -> ResponseOutputItem:
-    if content.exception:
-        output: str | list[Any] = content.exception
-    elif output_parts := _content_parts_to_input_items(content.items):
+    output_parts = _content_parts_to_input_items(content.items)
+    has_visible_item = any(item.type != "text" or bool(item.text) for item in content.items or ())
+    if content.exception and not content.result and not has_visible_item:
+        output: str | list[Any] = "Error: Function failed."
+    elif output_parts:
         output = output_parts
     elif isinstance(content.result, str):
         output = content.result

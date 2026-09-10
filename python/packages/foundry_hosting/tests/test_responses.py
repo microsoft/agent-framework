@@ -85,6 +85,7 @@ from agent_framework_foundry_hosting._state_store import (
 )
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
+_PRIVATE_ERROR_DETAIL = "test-token-value at /srv/private/tool.py"
 
 
 def _function_approval_store(request: Content) -> MagicMock:
@@ -1634,6 +1635,34 @@ class TestNonStreaming:
         assert "function_call_output" in types
         assert "message" in types
 
+    async def test_function_result_omits_internal_exception(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[Content.from_function_call("call_1", "get_weather", arguments="{}")],
+                    ),
+                    Message(
+                        role="tool",
+                        contents=[
+                            Content.from_function_result(
+                                "call_1",
+                                result="Error: Function failed.",
+                                exception=_PRIVATE_ERROR_DETAIL,
+                            )
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        resp = await _post(_make_server(agent), stream=False)
+
+        assert resp.status_code == 200
+        assert "Error: Function failed." in resp.text
+        assert _PRIVATE_ERROR_DETAIL not in resp.text
+
     @pytest.mark.parametrize(
         ("result", "expected_output"),
         [
@@ -2040,6 +2069,32 @@ class TestStreaming:
         args_done = [e for e in events if e["event"] == "response.function_call_arguments.done"]
         assert len(args_done) == 1
         assert args_done[0]["data"]["arguments"] == '{"q": "hello"}'
+
+    async def test_function_result_omits_internal_exception(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    role="assistant",
+                    contents=[Content.from_function_call("call_1", "get_weather", arguments="{}")],
+                ),
+                AgentResponseUpdate(
+                    role="tool",
+                    contents=[
+                        Content.from_function_result(
+                            "call_1",
+                            result="Error: Function failed.",
+                            exception=_PRIVATE_ERROR_DETAIL,
+                        )
+                    ],
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        assert resp.status_code == 200
+        assert "Error: Function failed." in resp.text
+        assert _PRIVATE_ERROR_DETAIL not in resp.text
 
     @pytest.mark.parametrize(("arguments", "expected_count"), [(None, 1), ("", 2)])
     async def test_declaration_only_metadata_replay_requires_none_arguments(

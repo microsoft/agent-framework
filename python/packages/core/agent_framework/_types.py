@@ -272,16 +272,22 @@ def _validate_uri(uri: str, media_type: str | None) -> dict[str, Any]:
     raise ContentError("URI must contain a scheme (e.g., http://, data:, file://)")
 
 
-def _serialize_value(value: Any, exclude_none: bool) -> Any:
+def _serialize_value(value: Any, exclude_none: bool, *, include_internal: bool = False) -> Any:
     """Recursively serialize a value for to_dict."""
     if value is None:
         return None
     if isinstance(value, Content):
-        return value.to_dict(exclude_none=exclude_none)
+        return value.to_dict(exclude_none=exclude_none, include_internal=include_internal)
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [_serialize_value(item, exclude_none) for item in cast(Iterable[Any], value)]
+        return [
+            _serialize_value(item, exclude_none, include_internal=include_internal)
+            for item in cast(Iterable[Any], value)
+        ]
     if isinstance(value, Mapping):
-        return {k: _serialize_value(v, exclude_none) for k, v in value.items()}  # type: ignore[reportUnknownVariableType]
+        return {
+            k: _serialize_value(v, exclude_none, include_internal=include_internal)
+            for k, v in cast(Mapping[Any, Any], value).items()
+        }
     if hasattr(value, "to_dict"):
         return value.to_dict()  # type: ignore[call-arg]
     return value
@@ -480,6 +486,9 @@ class Content:
     This class provides a single unified type that handles all content variants.
     Use the class methods like `Content.from_text()`, `Content.from_data()`,
     `Content.from_uri()`, etc. to create instances.
+
+    The ``exception`` field is host-internal diagnostic state. Default dictionary
+    serialization omits it so generic response serialization cannot expose it.
     """
 
     _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
@@ -907,7 +916,8 @@ class Content:
             result: The tool output.  Accepts a ``list[Content]`` (the canonical
                 form produced by :meth:`~FunctionTool.parse_result`), a plain
                 ``str``, or any other value (which is stringified).
-            exception: The exception message if the function call failed.
+            exception: Host-internal diagnostic information when the function call failed. Default
+                :meth:`to_dict` serialization omits this field; use ``result`` for channel-visible error text.
             annotations: Optional annotations for the content.
             additional_properties: Optional additional properties.
             raw_representation: Optional raw representation from the provider.
@@ -1407,8 +1417,20 @@ class Content:
             raw_representation=self.raw_representation,
         )
 
-    def to_dict(self, *, exclude_none: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
-        """Serialize the content to a dictionary."""
+    def to_dict(
+        self,
+        *,
+        exclude_none: bool = True,
+        exclude: set[str] | None = None,
+        include_internal: bool = False,
+    ) -> dict[str, Any]:
+        """Serialize the content to a dictionary.
+
+        Args:
+            exclude_none: Whether to omit fields whose value is ``None``.
+            exclude: Field names to omit.
+            include_internal: Include host-internal diagnostics. Use only for trusted local inspection.
+        """
         fields_to_capture = (
             "text",
             "protected_data",
@@ -1456,11 +1478,13 @@ class Content:
             value = getattr(self, field, None)
             if field in exclude:
                 continue
+            if field == "exception" and not include_internal:
+                continue
             if field == "informational_only" and (self.type != "function_call" or not value):
                 continue
             if exclude_none and value is None:
                 continue
-            result[field] = _serialize_value(value, exclude_none)
+            result[field] = _serialize_value(value, exclude_none, include_internal=include_internal)
 
         if "annotations" not in exclude and self.annotations is not None:
             result["annotations"] = [dict(annotation) for annotation in self.annotations]
@@ -1471,7 +1495,9 @@ class Content:
         """Check if two Content instances are equal by comparing their dict representations."""
         if not isinstance(other, Content):
             return False
-        return self.to_dict(exclude_none=False) == other.to_dict(exclude_none=False)
+        return self.to_dict(exclude_none=False, include_internal=True) == other.to_dict(
+            exclude_none=False, include_internal=True
+        )
 
     def __str__(self) -> str:
         """Return a string representation of the Content."""
