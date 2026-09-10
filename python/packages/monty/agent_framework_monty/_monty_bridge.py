@@ -229,9 +229,6 @@ class InlineCodeBridge:
         NameLookupSnapshot = monty_module.NameLookupSnapshot
 
         printer = _PrintCollector()
-        # pydantic-monty >=0.0.19 uses a worker-pool API: Monty() is the pool,
-        # checkout() configures type-check / limits, and feed_start() drives
-        # suspend/resume (replacing Monty(code).start(...)).
         checkout_kwargs: dict[str, Any] = {
             "script_name": "codeact.py",
             "type_check": self.type_stubs is not None,
