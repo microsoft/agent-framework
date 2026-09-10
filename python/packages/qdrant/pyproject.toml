@@ -4,7 +4,7 @@ description = "Qdrant vector stores for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com" }]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0a260908"
+version = "1.0.0a260910"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -22,7 +22,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.17.0,<2",
+    "agent-framework-core>=1.18.0,<2",
     "qdrant-client>=1.16.2,<2",
 ]
 

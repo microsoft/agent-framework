@@ -10,6 +10,8 @@ using Microsoft.Extensions.AI;
 using Moq;
 using Moq.Protected;
 
+#pragma warning disable Moq1206
+
 namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
@@ -1743,11 +1745,7 @@ public class BackgroundAgentsProviderTests
             .Setup<ValueTask<AgentSession>>(
                 "CreateSessionCoreAsync",
                 ItExpr.IsAny<CancellationToken>())
-            .Returns(async () =>
-            {
-                await sessionGate;
-                return new ChatClientAgentSession();
-            });
+            .Returns(CreateSessionCoreAsync);
         mock.Protected()
             .Setup<Task<AgentResponse>>(
                 "RunCoreAsync",
@@ -1757,6 +1755,12 @@ public class BackgroundAgentsProviderTests
                 ItExpr.IsAny<CancellationToken>())
             .Returns(callback);
         return mock.Object;
+
+        async ValueTask<AgentSession> CreateSessionCoreAsync()
+        {
+            await sessionGate;
+            return new ChatClientAgentSession();
+        }
     }
 
     private static async Task<(IEnumerable<AITool> Tools, BackgroundAgentsProvider Provider, AgentSession Session)> CreateToolsWithSessionAsync(AIAgent agent)

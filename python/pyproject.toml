@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.17.0"
+version = "1.18.0"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,12 +23,12 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.17.0",
+    "agent-framework-core[all]==1.18.0",
 ]
 
 [dependency-groups]
 dev = [
-    "uv==0.12.7",
+    "uv==0.12.9",
     "flit==4.0.2",
     "ruff==0.16.5",
     "pytest==9.1.1",
@@ -40,14 +40,15 @@ dev = [
     "mypy==2.3.1",
     "pyright==1.1.411",
     "pyrefly==1.2.0",
-    "ty==0.0.75",
-    "zuban==0.9.2",
+    "ty==0.0.77",
+    "zuban==0.9.3",
     "opentelemetry-sdk",
+    "pandas>=2,<4",
     #tasks
     "poethepoet==0.48.0",
     "rich>=13.7.1,<16.0.0",
     "tomli==2.4.1",
-    "prek==0.5.0",
+    "prek==0.5.2",
 ]
 test = [
     "azure-monitor-opentelemetry",
@@ -58,11 +59,8 @@ test = [
 
 [tool.uv]
 package = false
-prerelease = "if-necessary-or-explicit"
-# Security floors for transitive deps; overrides bypass litellm[proxy]'s strict pins.
-# litellm>=1.100.0 drops the `fastapi.dependencies.utils.get_flat_dependant` import removed in FastAPI 0.141.0.
-constraint-dependencies = ["litellm>=1.100.0", "fastapi-sso>=0.19.0"]
-# python-multipart>=0.0.31 overrides litellm[proxy]'s exact pin of <=0.0.27 for security.
+prerelease = "if-necessary"
+# Security floors for transitive dependencies.
 override-dependencies = ["mcp[ws]>=1.27.0,<2", "uvicorn[standard]>=0.34.0", "python-multipart>=0.0.31"]
 environments = [
     "sys_platform == 'darwin'",
@@ -72,6 +70,7 @@ environments = [
 
 [tool.uv.workspace]
 members = [ "packages/*" ]
+exclude = [ "packages/lab" ]
 
 [tool.uv.sources]
 agent-framework = { workspace = true }
@@ -98,7 +97,6 @@ agent-framework-hosting-mcp = { workspace = true }
 agent-framework-hosting-responses = { workspace = true }
 agent-framework-hosting-telegram = { workspace = true }
 agent-framework-hyperlight = { workspace = true }
-agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-mistral = { workspace = true }
 agent-framework-monty = { workspace = true }
@@ -252,7 +250,7 @@ executor.type = "uv"
 # Workspace setup
 [tool.poe.tasks.install]
 help = "Install all workspace packages, extras, and dependency groups from the lockfile."
-cmd = "uv sync --all-packages --all-extras --all-groups --frozen --prerelease=if-necessary-or-explicit"
+cmd = "uv sync --all-packages --all-extras --all-groups --frozen --prerelease=if-necessary"
 
 [tool.poe.tasks.setup]
 help = "Create the workspace virtual environment for -P/--python, install dependencies, and install prek hooks."

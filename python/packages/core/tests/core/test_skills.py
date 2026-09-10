@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from abc import ABC
 from collections.abc import Sequence
 from datetime import timedelta
@@ -45,6 +46,7 @@ from agent_framework._skills import (
     _create_resource_element,
     _create_script_element,
     _FileSkillResource,
+    _SkillPathScope,
 )
 
 from .conftest import MockAgent, MockAgentSession, create_junction_or_skip
@@ -165,6 +167,16 @@ def _write_skill(
             res_file.write_text(content, encoding="utf-8")
 
     return skill_dir
+
+
+def _scope(skill_dir: str | Path, trusted_root: str | Path | None = None) -> _SkillPathScope:
+    """Build a path scope, defaulting the trusted root to the skill directory itself."""
+    return _SkillPathScope(str(trusted_root if trusted_root is not None else skill_dir), str(skill_dir))
+
+
+def _discovered_skill_dirs(skill_paths: list[str]) -> list[str]:
+    """Discover skills and return just the skill directory paths."""
+    return [scope.skill_dir for scope in FileSkillsSource._discover_skill_directories(skill_paths)]
 
 
 def _read_and_parse_skill_file_for_test(skill_dir: Path) -> FileSkill:
@@ -979,6 +991,47 @@ class TestSymlinkDetection:
         assert "references/leak.md" not in resource_names
         assert "references/safe.md" in resource_names
 
+    async def test_read_rejects_resource_replaced_with_symlink(self, tmp_path: Path) -> None:
+        """A resource replaced after discovery must be revalidated before reading."""
+        skill_dir = _write_skill(
+            tmp_path,
+            "my-skill",
+            resources={"references/guide.md": "safe content"},
+        )
+        outside_file = tmp_path / "secret.md"
+        outside_file.write_text("secret content", encoding="utf-8")
+        skills = await _discover_file_skills_for_test([str(tmp_path)])
+        resource = next(r for r in skills["my-skill"]._resources if r.name == "references/guide.md")
+
+        resource_path = skill_dir / "references" / "guide.md"
+        resource_path.unlink()
+        resource_path.symlink_to(outside_file)
+
+        with pytest.raises(ValueError, match="symbolic link or reparse point"):
+            await resource.read()
+
+    async def test_read_rejects_skill_directory_replaced_with_symlink(self, tmp_path: Path) -> None:
+        """A skill directory replaced after discovery must be revalidated before reading."""
+        if not _symlinks_supported(tmp_path):
+            pytest.skip("Symlinks not supported on this platform/environment")
+
+        root = tmp_path / "root"
+        root.mkdir()
+        skill_dir = _write_skill(root, "my-skill", resources={"guide.md": "safe content"})
+        skills = await _discover_file_skills_for_test([str(root)])
+        resource = next(r for r in skills["my-skill"]._resources if r.name == "guide.md")
+
+        # Swap the whole skill directory for a link to an attacker-controlled directory
+        # that mirrors the discovered layout.
+        decoy = tmp_path / "decoy"
+        decoy.mkdir()
+        (decoy / "guide.md").write_text("attacker content", encoding="utf-8")
+        shutil.rmtree(skill_dir)
+        skill_dir.symlink_to(decoy, target_is_directory=True)
+
+        with pytest.raises(ValueError, match="symbolic link or reparse point"):
+            await resource.read()
+
     def test_discover_resource_files_rejects_symlinked_resource(self, tmp_path: Path) -> None:
         """_discover_resource_files should exclude a symlinked resource file."""
         skill_dir = tmp_path / "skill"
@@ -1014,6 +1067,31 @@ class TestSymlinkDetection:
         assert "scripts/safe.py" in discovered
         assert "scripts/leak.py" not in discovered
 
+    async def test_run_rejects_script_replaced_with_symlink(self, tmp_path: Path) -> None:
+        """A script replaced after discovery must be revalidated before its runner is invoked."""
+        skill_dir = _write_skill(tmp_path, "my-skill")
+        script_path = skill_dir / "scripts" / "run.py"
+        script_path.parent.mkdir()
+        script_path.write_text("print('safe')", encoding="utf-8")
+        outside_script = tmp_path / "outside.py"
+        outside_script.write_text("print('outside')", encoding="utf-8")
+        runner_called = False
+
+        def runner(skill: Skill, script: SkillScript, args: dict[str, Any] | list[str] | None = None) -> None:
+            nonlocal runner_called
+            runner_called = True
+
+        skills = await _discover_file_skills_for_test([str(tmp_path)], script_runner=runner)
+        skill = skills["my-skill"]
+        script = next(s for s in skill._scripts if s.name == "scripts/run.py")
+
+        script_path.unlink()
+        script_path.symlink_to(outside_script)
+
+        with pytest.raises(ValueError, match="symbolic link or reparse point"):
+            await script.run(skill)
+        assert runner_called is False
+
     async def test_discover_skips_symlinked_skill_directory(self, tmp_path: Path) -> None:
         """A symlinked directory below a configured root must not become a skill root."""
         root = tmp_path / "root"
@@ -1025,7 +1103,7 @@ class TestSymlinkDetection:
         (root / "evil-skill").symlink_to(outside / "evil-skill", target_is_directory=True)
         _write_skill(root, "good-skill")
 
-        assert FileSkillsSource._discover_skill_directories([str(root)]) == [str((root / "good-skill").absolute())]
+        assert _discovered_skill_dirs([str(root)]) == [str((root / "good-skill").absolute())]
 
         skills = await _discover_file_skills_for_test([str(root)])
         assert "evil-skill" not in skills
@@ -1045,7 +1123,7 @@ class TestSymlinkDetection:
         evil_dir.mkdir()
         (evil_dir / "SKILL.md").symlink_to(outside_skill_file)
 
-        assert FileSkillsSource._discover_skill_directories([str(root)]) == []
+        assert _discovered_skill_dirs([str(root)]) == []
 
     def test_discover_keeps_nested_real_skill_directories(self, tmp_path: Path) -> None:
         """Nested real skill directories are still discovered when links are present."""
@@ -1058,7 +1136,7 @@ class TestSymlinkDetection:
         outside.mkdir()
         (root / "linked").symlink_to(outside, target_is_directory=True)
 
-        assert FileSkillsSource._discover_skill_directories([str(root)]) == [str((nested / "nested-skill").absolute())]
+        assert _discovered_skill_dirs([str(root)]) == [str((nested / "nested-skill").absolute())]
 
     def test_configured_root_may_itself_be_a_link(self, tmp_path: Path) -> None:
         """The host-configured root defines the trust boundary and is not link-checked."""
@@ -1069,9 +1147,7 @@ class TestSymlinkDetection:
         linked_root = tmp_path / "linked-root"
         linked_root.symlink_to(real_root, target_is_directory=True)
 
-        assert FileSkillsSource._discover_skill_directories([str(linked_root)]) == [
-            str((linked_root / "my-skill").absolute())
-        ]
+        assert _discovered_skill_dirs([str(linked_root)]) == [str((linked_root / "my-skill").absolute())]
 
 
 class TestJunctionDetection:
@@ -1093,7 +1169,7 @@ class TestJunctionDetection:
             assert "linked/leak.md" not in _discover_resources(str(skill_dir))
             assert "linked/leak.py" not in _discover_scripts(str(skill_dir))
             with pytest.raises(ValueError, match="symbolic link or reparse point"):
-                FileSkillsSource._get_validated_resource_path(str(skill_dir), "linked/leak.md")
+                FileSkillsSource._get_validated_resource_path(_scope(skill_dir), "linked/leak.md")
         finally:
             junction.rmdir()
 
@@ -1110,7 +1186,7 @@ class TestJunctionDetection:
         create_junction_or_skip(link=junction, target=outside / "evil-skill")
 
         try:
-            assert FileSkillsSource._discover_skill_directories([str(root)]) == [str((root / "good-skill").absolute())]
+            assert _discovered_skill_dirs([str(root)]) == [str((root / "good-skill").absolute())]
             skills = await _discover_file_skills_for_test([str(root)])
             assert "evil-skill" not in skills
             assert "good-skill" in skills
@@ -1130,7 +1206,7 @@ class TestSkillDiscoveryFailsClosed:
             raise OSError("cannot inspect")
 
         with patch("agent_framework._skills._is_link_or_reparse_point", side_effect=_raise):
-            assert FileSkillsSource._discover_skill_directories([str(root)]) == []
+            assert _discovered_skill_dirs([str(root)]) == []
 
     def test_skill_file_that_cannot_be_inspected_is_skipped(self, tmp_path: Path) -> None:
         root = tmp_path / "root"
@@ -1143,7 +1219,7 @@ class TestSkillDiscoveryFailsClosed:
             return False
 
         with patch("agent_framework._skills._is_link_or_reparse_point", side_effect=_raise_for_skill_file):
-            assert FileSkillsSource._discover_skill_directories([str(root)]) == []
+            assert _discovered_skill_dirs([str(root)]) == []
 
 
 # ---------------------------------------------------------------------------
@@ -2135,14 +2211,14 @@ class TestDiscoverSkillDirectories:
 
     def test_finds_skill_at_root(self, tmp_path: Path) -> None:
         (tmp_path / "SKILL.md").write_text("---\nname: s\ndescription: d\n---\n", encoding="utf-8")
-        dirs = FileSkillsSource._discover_skill_directories([str(tmp_path)])
+        dirs = _discovered_skill_dirs([str(tmp_path)])
         assert len(dirs) == 1
 
     def test_finds_nested_skill(self, tmp_path: Path) -> None:
         sub = tmp_path / "sub"
         sub.mkdir()
         (sub / "SKILL.md").write_text("---\nname: s\ndescription: d\n---\n", encoding="utf-8")
-        dirs = FileSkillsSource._discover_skill_directories([str(tmp_path)])
+        dirs = _discovered_skill_dirs([str(tmp_path)])
         assert len(dirs) == 1
         assert str(sub.absolute()) in dirs[0]
 
@@ -2153,30 +2229,30 @@ class TestDiscoverSkillDirectories:
         (skill_dir / "SKILL.md").write_text("---\nname: parent-skill\ndescription: d\n---\n", encoding="utf-8")
         (nested_skill_dir / "SKILL.md").write_text("---\nname: nested-skill\ndescription: d\n---\n", encoding="utf-8")
 
-        dirs = FileSkillsSource._discover_skill_directories([str(tmp_path)])
+        dirs = _discovered_skill_dirs([str(tmp_path)])
 
         assert dirs == [str(skill_dir.absolute())]
 
     def test_skips_empty_path_string(self) -> None:
-        dirs = FileSkillsSource._discover_skill_directories(["", "   "])
+        dirs = _discovered_skill_dirs(["", "   "])
         assert dirs == []
 
     def test_skips_nonexistent_path(self) -> None:
-        dirs = FileSkillsSource._discover_skill_directories(["/nonexistent/does/not/exist"])
+        dirs = _discovered_skill_dirs(["/nonexistent/does/not/exist"])
         assert dirs == []
 
     def test_depth_limit_excludes_deep_skill(self, tmp_path: Path) -> None:
         deep = tmp_path / "l1" / "l2" / "l3"
         deep.mkdir(parents=True)
         (deep / "SKILL.md").write_text("---\nname: s\ndescription: d\n---\n", encoding="utf-8")
-        dirs = FileSkillsSource._discover_skill_directories([str(tmp_path)])
+        dirs = _discovered_skill_dirs([str(tmp_path)])
         assert len(dirs) == 0
 
     def test_depth_limit_includes_at_boundary(self, tmp_path: Path) -> None:
         at_boundary = tmp_path / "l1" / "l2"
         at_boundary.mkdir(parents=True)
         (at_boundary / "SKILL.md").write_text("---\nname: s\ndescription: d\n---\n", encoding="utf-8")
-        dirs = FileSkillsSource._discover_skill_directories([str(tmp_path)])
+        dirs = _discovered_skill_dirs([str(tmp_path)])
         assert len(dirs) == 1
 
 
@@ -2289,12 +2365,12 @@ class TestGetValidatedResourcePath:
         skill_dir = tmp_path / "skill"
         skill_dir.mkdir()
         (skill_dir / "doc.md").write_text("hello")
-        result = FileSkillsSource._get_validated_resource_path(str(skill_dir), "doc.md")
+        result = FileSkillsSource._get_validated_resource_path(_scope(skill_dir), "doc.md")
         assert Path(result).is_file()
 
     def test_rejects_relative_skill_dir(self) -> None:
         with pytest.raises(ValueError, match="skill_dir must be an absolute path"):
-            FileSkillsSource._get_validated_resource_path("relative/path", "doc.md")
+            FileSkillsSource._get_validated_resource_path(_scope("relative/path"), "doc.md")
 
     def test_rejects_path_outside_skill_dir(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "skill"
@@ -2302,13 +2378,13 @@ class TestGetValidatedResourcePath:
         outside_file = tmp_path / "secret.md"
         outside_file.write_text("secret")
         with pytest.raises(ValueError, match="outside the skill directory"):
-            FileSkillsSource._get_validated_resource_path(str(skill_dir), "../secret.md")
+            FileSkillsSource._get_validated_resource_path(_scope(skill_dir), "../secret.md")
 
     def test_rejects_nonexistent_file(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "skill"
         skill_dir.mkdir()
         with pytest.raises(ValueError, match="not found"):
-            FileSkillsSource._get_validated_resource_path(str(skill_dir), "missing.md")
+            FileSkillsSource._get_validated_resource_path(_scope(skill_dir), "missing.md")
 
     @pytest.mark.skipif(os.name == "nt", reason="symlinks require elevated privileges on Windows")
     def test_rejects_symlink_in_path(self, tmp_path: Path) -> None:
@@ -2320,7 +2396,7 @@ class TestGetValidatedResourcePath:
         link = skill_dir / "linked"
         link.symlink_to(real_subdir)
         with pytest.raises(ValueError, match="symbolic link or reparse point"):
-            FileSkillsSource._get_validated_resource_path(str(skill_dir), "linked/data.md")
+            FileSkillsSource._get_validated_resource_path(_scope(skill_dir), "linked/data.md")
 
 
 # ---------------------------------------------------------------------------
@@ -3306,6 +3382,44 @@ class TestSkillScriptRun:
     def test_full_path_rejects_empty(self) -> None:
         with pytest.raises(ValueError, match="cannot be empty"):
             FileSkillScript(name="run.py", full_path="")
+
+    def test_skill_dir_remains_supported(self) -> None:
+        script = FileSkillScript(
+            name="run.py",
+            full_path=f"{_ABS}/test/run.py",
+            skill_dir=f"{_ABS}/test",
+        )
+
+        assert script.full_path == f"{_ABS}/test/run.py"
+        # Without a trusted root, revalidation must stay anchored at the skill directory.
+        assert script._scope == _SkillPathScope(trusted_root=f"{_ABS}/test", skill_dir=f"{_ABS}/test")
+
+    def test_trusted_root_is_retained_alongside_skill_dir(self) -> None:
+        script = FileSkillScript(
+            name="run.py",
+            full_path=f"{_ABS}/root/test/run.py",
+            skill_dir=f"{_ABS}/root/test",
+            trusted_root=f"{_ABS}/root",
+        )
+
+        assert script._scope == _SkillPathScope(trusted_root=f"{_ABS}/root", skill_dir=f"{_ABS}/root/test")
+
+    def test_trusted_root_without_skill_dir_raises(self) -> None:
+        with pytest.raises(ValueError, match="trusted_root requires skill_dir"):
+            FileSkillScript(
+                name="run.py",
+                full_path=f"{_ABS}/test/run.py",
+                trusted_root=_ABS,
+            )
+
+    def test_skill_dir_outside_trusted_root_raises(self) -> None:
+        with pytest.raises(ValueError, match="must reside at or beneath trusted_root"):
+            FileSkillScript(
+                name="run.py",
+                full_path=f"{_ABS}/elsewhere/run.py",
+                skill_dir=f"{_ABS}/elsewhere",
+                trusted_root=f"{_ABS}/root",
+            )
 
 
 # ---------------------------------------------------------------------------

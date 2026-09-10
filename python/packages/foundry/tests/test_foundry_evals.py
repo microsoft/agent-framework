@@ -541,7 +541,7 @@ class TestFoundryEvals:
         import os
         from unittest.mock import patch
 
-        with patch.dict(os.environ, {}, clear=True), pytest.raises((ValueError, Exception)):
+        with patch.dict(os.environ, {}, clear=True), pytest.raises(ValueError):
             FoundryEvals(model="gpt-4o")
 
     def test_name_property(self) -> None:
