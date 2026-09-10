@@ -8,6 +8,8 @@ resume message seeding, and save-with-swallow semantics. These tests drive
 that interface only; runner integration is covered by the existing suite.
 """
 
+from typing import Any
+
 import pytest
 from ag_ui.core import (
     EventType,
@@ -213,7 +215,7 @@ class TestResumeSeededMessages:
         """Client-replayed history must not be naively prepended again (#8140)."""
         from agent_framework_ag_ui._run_common import _reconstruct_messages_from_thread_snapshot
 
-        stored = [
+        stored: list[dict[str, Any]] = [
             {"id": "u1", "role": "user", "content": "please run the tool"},
             {
                 "id": "a1",
@@ -224,7 +226,10 @@ class TestResumeSeededMessages:
                 ],
             },
         ]
-        incoming = [*stored, {"id": "u2", "role": "user", "content": "approved"}]
+        incoming: list[dict[str, Any]] = [
+            *stored,
+            {"id": "u2", "role": "user", "content": "approved"},
+        ]
         reconstructed = _reconstruct_messages_from_thread_snapshot(
             stored_messages=stored,
             incoming_messages=incoming,
