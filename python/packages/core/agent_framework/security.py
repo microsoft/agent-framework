@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from ._mcp import MCPTool
 
 __all__ = [
+    "PRINCIPAL_METADATA_KEY",
     "SECURITY_TOOL_INSTRUCTIONS",
     "ConfidentialityLabel",
     "ContentLabel",
@@ -76,9 +77,12 @@ _EMBEDDED_VAR_REF_RE = re.compile(rf"\[\s*(?P<bracketed>{_BRACKETED_VAR_ID})\s*\
 _WHOLE_VAR_REF_RE = re.compile(rf"\s*(?:\[\s*(?P<bracketed>{_BRACKETED_VAR_ID})\s*\]|(?P<bare>{_BARE_VAR_ID}))\s*")
 _BARE_REFERENCE_WARNING = "Expanded a bare variable reference in a tool argument; models should use [var_<id>] instead."
 _UNRESOLVED = object()
-_AUTHORITATIVE_CONFIDENTIALITY = "_security_label_authoritative_confidentiality"
+_AUTHORITATIVE_SECURITY_LABEL = "_security_label_authoritative"
 _INSPECT_VARIABLE_ERROR = "_inspect_variable_error"
 _INTERNAL_RESULT_MARKER = object()
+_MAX_VARIABLE_REFERENCE_DEPTH = 16
+_MAX_VARIABLE_REFERENCE_COUNT = 100
+PRINCIPAL_METADATA_KEY = "agent_framework.security.principals"
 
 # Tools that consume variable IDs literally (as opaque references) and therefore
 # must NOT have ``var_xxx`` arguments expanded to stored content before execution.
@@ -94,7 +98,40 @@ def _get_additional_properties(obj: Any) -> dict[str, Any]:
     return cast(dict[str, Any], props) if isinstance(props, dict) else {}
 
 
-def _parse_content_label(label_data: MutableMapping[str, Any], *, source: str) -> ContentLabel:
+def _canonical_principals(value: Any, *, source: str) -> tuple[tuple[str, str], ...]:
+    """Validate and canonicalize a principal-set declaration."""
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{source} principals must be a non-empty list")
+
+    principals: set[tuple[str, str]] = set()
+    for item in cast(list[Any], value):
+        if not isinstance(item, dict):
+            raise ValueError(f"{source} principals must contain mappings")
+        principal = cast(dict[str, Any], item)
+        if set(principal) != {"tenant_id", "user_id"}:
+            raise ValueError(f"{source} principal fields must be tenant_id and user_id")
+        tenant_id = principal.get("tenant_id")
+        user_id = principal.get("user_id")
+        if type(tenant_id) is not str or not tenant_id.strip() or type(user_id) is not str or not user_id.strip():
+            raise ValueError(f"{source} principal identifiers must be non-empty strings")
+        principals.add((tenant_id, user_id))
+    return tuple(sorted(principals))
+
+
+def _principal_list(principals: Sequence[tuple[str, str]]) -> list[dict[str, str]]:
+    """Return the serialized canonical representation of a principal set."""
+    return [{"tenant_id": tenant_id, "user_id": user_id} for tenant_id, user_id in principals]
+
+
+def _principal_binding_key(value: Any, *, source: str) -> str:
+    """Return a stable approval-binding fragment for a valid principal set."""
+    principals = _principal_list(_canonical_principals(value, source=source))
+    return json.dumps(principals, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _parse_content_label(
+    label_data: MutableMapping[str, Any], *, source: str, allow_principals: bool = False
+) -> ContentLabel:
     """Parse explicit label fields while ignoring malformed optional metadata."""
     integrity = label_data.get("integrity")
     confidentiality = label_data.get("confidentiality")
@@ -105,10 +142,19 @@ def _parse_content_label(label_data: MutableMapping[str, Any], *, source: str) -
     if metadata is not None and not isinstance(metadata, dict):
         logger.warning("Ignoring malformed metadata from %s security label", source)
         metadata = {}
+    parsed_metadata = dict(cast(dict[str, Any], metadata)) if isinstance(metadata, dict) else {}
+    if not allow_principals:
+        parsed_metadata.pop(PRINCIPAL_METADATA_KEY, None)
+    elif confidentiality == ConfidentialityLabel.USER_IDENTITY.value:
+        parsed_metadata[PRINCIPAL_METADATA_KEY] = _principal_list(
+            _canonical_principals(parsed_metadata.get(PRINCIPAL_METADATA_KEY), source=source)
+        )
+    else:
+        parsed_metadata.pop(PRINCIPAL_METADATA_KEY, None)
     return ContentLabel(
         integrity=IntegrityLabel(integrity),
         confidentiality=ConfidentialityLabel(confidentiality),
-        metadata=cast(dict[str, Any], metadata) if isinstance(metadata, dict) else None,
+        metadata=parsed_metadata or None,
     )
 
 
@@ -174,7 +220,11 @@ class ContentLabel(SerializationMixin):
             user_label = ContentLabel(
                 integrity=IntegrityLabel.TRUSTED,
                 confidentiality=ConfidentialityLabel.USER_IDENTITY,
-                metadata={"user_id": "user-123"},
+                metadata={
+                    PRINCIPAL_METADATA_KEY: [
+                        {"tenant_id": "tenant-123", "user_id": "user-123"},
+                    ]
+                },
             )
     """
 
@@ -244,7 +294,8 @@ def combine_labels(*labels: ContentLabel) -> ContentLabel:
     The combined label will be:
     - UNTRUSTED if any input is UNTRUSTED
     - Most restrictive confidentiality level (USER_IDENTITY > PRIVATE > PUBLIC)
-    - Merged metadata from all labels
+    - The union of canonical principal sets for USER_IDENTITY labels
+    - Merged non-principal metadata from all labels
 
     Args:
         *labels: Variable number of ContentLabel instances to combine.
@@ -282,11 +333,33 @@ def combine_labels(*labels: ContentLabel) -> ContentLabel:
 
     confidentiality = max((label.confidentiality for label in labels), key=lambda c: confidentiality_priority[c])
 
-    # Merge metadata
+    # Preserve ordinary metadata behavior while treating identity ownership as a set.
     merged_metadata: dict[str, Any] = {}
     for label in labels:
         if label.metadata:
-            merged_metadata.update(label.metadata)
+            merged_metadata.update({
+                key: value for key, value in label.metadata.items() if key != PRINCIPAL_METADATA_KEY
+            })
+
+    if confidentiality == ConfidentialityLabel.USER_IDENTITY:
+        principal_sets: list[tuple[tuple[str, str], ...]] = []
+        principals_valid = True
+        for label in labels:
+            if label.confidentiality != ConfidentialityLabel.USER_IDENTITY:
+                continue
+            try:
+                principal_sets.append(
+                    _canonical_principals(
+                        label.metadata.get(PRINCIPAL_METADATA_KEY),
+                        source="USER_IDENTITY label",
+                    )
+                )
+            except ValueError:
+                principals_valid = False
+                break
+        if principals_valid and principal_sets:
+            combined_principals = sorted({principal for principals in principal_sets for principal in principals})
+            merged_metadata[PRINCIPAL_METADATA_KEY] = _principal_list(combined_principals)
 
     return ContentLabel(
         integrity=integrity, confidentiality=confidentiality, metadata=merged_metadata if merged_metadata else None
@@ -296,6 +369,8 @@ def combine_labels(*labels: ContentLabel) -> ContentLabel:
 def check_confidentiality_allowed(
     context_label: ContentLabel,
     max_allowed: ConfidentialityLabel,
+    *,
+    authorized_principals: Sequence[Mapping[str, str]] | None = None,
 ) -> bool:
     """Check if writing data with context_label to a destination with max_allowed confidentiality is permitted.
 
@@ -303,12 +378,15 @@ def check_confidentiality_allowed(
     cannot be written to less secure destinations. For example, it blocks PRIVATE data
     from being sent to PUBLIC endpoints.
 
-    The check passes if context_label.confidentiality <= max_allowed in the hierarchy:
+    The rank check uses this hierarchy:
         PUBLIC (0) < PRIVATE (1) < USER_IDENTITY (2)
+    USER_IDENTITY data additionally requires a valid source principal set that is a subset
+    of the destination's authorized principals.
 
     Args:
         context_label: The label tracking the confidentiality of data in the current context.
         max_allowed: The maximum confidentiality level accepted by the destination.
+        authorized_principals: Principals accepted by a USER_IDENTITY destination.
 
     Returns:
         True if the write is allowed, False if it would be a data exfiltration.
@@ -345,7 +423,19 @@ def check_confidentiality_allowed(
         ConfidentialityLabel.USER_IDENTITY: 2,
     }
 
-    return conf_hierarchy[context_label.confidentiality] <= conf_hierarchy[max_allowed]
+    if conf_hierarchy[context_label.confidentiality] > conf_hierarchy[max_allowed]:
+        return False
+    if context_label.confidentiality != ConfidentialityLabel.USER_IDENTITY:
+        return True
+
+    try:
+        source_principals = set(
+            _canonical_principals(context_label.metadata.get(PRINCIPAL_METADATA_KEY), source="source label")
+        )
+        destination_principals = set(_canonical_principals(authorized_principals, source="destination"))
+    except ValueError:
+        return False
+    return source_principals.issubset(destination_principals)
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
@@ -1154,8 +1244,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
     +----------+------------------------------------------+----------------------------+
     | Priority | Source                                   | When used                  |
     +==========+==========================================+============================+
-    | Tier 1   | Per-item embedded labels in the result   | Always wins if present     |
-    |          | (additional_properties.security_label)    |                            |
+    | Tier 1   | Per-item embedded labels in the result   | May only restrict fallback |
+    |          | (additional_properties.security_label)    | unless framework-stamped   |
     +----------+------------------------------------------+----------------------------+
     | Tier 2   | Tool's source_integrity declaration       | No embedded labels         |
     +----------+------------------------------------------+----------------------------+
@@ -1172,10 +1262,11 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
     1. Extracts labels from tool input arguments (tier 3 input)
     2. Checks tool's source_integrity declaration (tier 2)
     3. Executes the tool
-    4. Checks for per-item embedded labels in the result (tier 1 — highest priority)
+    4. Checks per-item embedded labels against the invocation fallback
     5. Falls back to tier 2 or tier 3 when no embedded labels exist
-    6. Maintains confidentiality labels based on tool declarations
-    7. Automatically hides untrusted content using variable indirection
+    6. Accepts complete labels only from identity-stamped framework producers
+    7. Maintains confidentiality labels based on tool declarations
+    8. Automatically hides untrusted content using variable indirection
 
     Attributes:
         default_integrity: Default integrity for tools without source_integrity declaration.
@@ -1311,28 +1402,76 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
     def _resolve_variable_references(self, value: Any) -> tuple[Any, list[ContentLabel]]:
         """Recursively resolve owned variable references and return their stored labels."""
         labels: list[ContentLabel] = []
-        return self._resolve_value(value, labels), labels
+        resolved = self._resolve_value(
+            value,
+            labels,
+            depth=0,
+            active_variables=set(),
+            reference_count=[0],
+        )
+        return resolved, labels
 
-    def _lookup_variable(self, variable_id: str, labels: list[ContentLabel]) -> Any:
+    def _lookup_variable(
+        self,
+        variable_id: str,
+        labels: list[ContentLabel],
+        *,
+        depth: int,
+        active_variables: set[str],
+        reference_count: list[int],
+    ) -> Any:
+        if variable_id in active_variables:
+            raise ValueError("Variable reference cycle detected")
+        if depth >= _MAX_VARIABLE_REFERENCE_DEPTH:
+            raise ValueError("Variable reference depth limit exceeded")
         try:
             stored_content, stored_label = self.get_variable_store().retrieve(variable_id)
         except KeyError:
             return _UNRESOLVED
+
+        reference_count[0] += 1
+        if reference_count[0] > _MAX_VARIABLE_REFERENCE_COUNT:
+            raise ValueError("Variable reference count limit exceeded")
         labels.append(stored_label)
         metadata = self.get_variable_metadata(variable_id)
-        return self._extract_primary_tool_content(
+        expanded_content = self._extract_primary_tool_content(
             stored_content,
             from_quarantined_llm=metadata is not None and metadata.get("function_name") == "quarantined_llm",
         )
+        active_variables.add(variable_id)
+        try:
+            return self._resolve_value(
+                expanded_content,
+                labels,
+                depth=depth + 1,
+                active_variables=active_variables,
+                reference_count=reference_count,
+            )
+        finally:
+            active_variables.remove(variable_id)
 
-    def _resolve_string(self, value: str, labels: list[ContentLabel]) -> Any:
+    def _resolve_string(
+        self,
+        value: str,
+        labels: list[ContentLabel],
+        *,
+        depth: int,
+        active_variables: set[str],
+        reference_count: list[int],
+    ) -> Any:
         if not _EMBEDDED_VAR_REF_RE.search(value):
             return value
 
         whole = _WHOLE_VAR_REF_RE.fullmatch(value)
         if whole is not None:
             variable_id = whole.group("bracketed") or whole.group("bare")
-            resolved = self._lookup_variable(variable_id, labels)
+            resolved = self._lookup_variable(
+                variable_id,
+                labels,
+                depth=depth,
+                active_variables=active_variables,
+                reference_count=reference_count,
+            )
             if resolved is _UNRESOLVED:
                 return value
             if whole.group("bare"):
@@ -1341,7 +1480,13 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
 
         def replace(match: re.Match[str]) -> str:
             variable_id = match.group("bracketed") or match.group("bare")
-            resolved = self._lookup_variable(variable_id, labels)
+            resolved = self._lookup_variable(
+                variable_id,
+                labels,
+                depth=depth,
+                active_variables=active_variables,
+                reference_count=reference_count,
+            )
             if resolved is _UNRESOLVED:
                 return match.group(0)
             if match.group("bare"):
@@ -1350,18 +1495,59 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
 
         return _EMBEDDED_VAR_REF_RE.sub(replace, value)
 
-    def _resolve_value(self, value: Any, labels: list[ContentLabel]) -> Any:
+    def _resolve_value(
+        self,
+        value: Any,
+        labels: list[ContentLabel],
+        *,
+        depth: int,
+        active_variables: set[str],
+        reference_count: list[int],
+    ) -> Any:
         if isinstance(value, str):
-            return self._resolve_string(value, labels)
+            return self._resolve_string(
+                value,
+                labels,
+                depth=depth,
+                active_variables=active_variables,
+                reference_count=reference_count,
+            )
         if isinstance(value, BaseModel):
-            return self._resolve_value(value.model_dump(), labels)
+            value = value.model_dump()
         if isinstance(value, dict):
             value_dict = cast(dict[str, Any], value)
-            return {key: self._resolve_value(item, labels) for key, item in value_dict.items()}
+            return {
+                key: self._resolve_value(
+                    item,
+                    labels,
+                    depth=depth,
+                    active_variables=active_variables,
+                    reference_count=reference_count,
+                )
+                for key, item in value_dict.items()
+            }
         if isinstance(value, list):
-            return [self._resolve_value(item, labels) for item in cast(list[Any], value)]
+            return [
+                self._resolve_value(
+                    item,
+                    labels,
+                    depth=depth,
+                    active_variables=active_variables,
+                    reference_count=reference_count,
+                )
+                for item in cast(list[Any], value)
+            ]
         if isinstance(value, tuple):
-            return tuple(self._resolve_value(item, labels) for item in cast(tuple[Any, ...], value))
+            return tuple(
+                self._resolve_value(
+                    item,
+                    labels,
+                    depth=depth,
+                    active_variables=active_variables,
+                    reference_count=reference_count,
+                )
+                for item in cast(tuple[Any, ...], value)
+            )
         return value
 
     def _expand_variable_references_in_context(self, context: FunctionInvocationContext) -> list[ContentLabel]:
@@ -1370,10 +1556,27 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             return []
 
         labels: list[ContentLabel] = []
+        active_variables: set[str] = set()
+        reference_count = [0]
         if context.arguments:
-            context.arguments = self._resolve_value(context.arguments, labels)
+            context.arguments = self._resolve_value(
+                context.arguments,
+                labels,
+                depth=0,
+                active_variables=active_variables,
+                reference_count=reference_count,
+            )
         if context.kwargs:
-            context.kwargs = cast(dict[str, Any], self._resolve_value(context.kwargs, labels))
+            context.kwargs = cast(
+                dict[str, Any],
+                self._resolve_value(
+                    context.kwargs,
+                    labels,
+                    depth=0,
+                    active_variables=active_variables,
+                    reference_count=reference_count,
+                ),
+            )
         return labels
 
     def _get_input_labels(self, context: FunctionInvocationContext) -> list[ContentLabel]:
@@ -1552,11 +1755,16 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             argument_labels = [*input_labels, *resolved_labels]
             argument_label = combine_labels(*argument_labels) if argument_labels else ContentLabel()
 
-            # Integrity may be declared by the source, but a transformer cannot
-            # implicitly declassify data derived from its inputs.
-            result_confidentiality = combine_labels(
-                ContentLabel(confidentiality=confidentiality), argument_label
-            ).confidentiality
+            declared_confidentiality_label = ContentLabel(
+                confidentiality=confidentiality,
+                metadata=self._get_function_principal_metadata(context, confidentiality),
+            )
+            result_policy_label = combine_labels(declared_confidentiality_label, argument_label)
+            result_confidentiality = result_policy_label.confidentiality
+
+            fallback_metadata: dict[str, Any] = {"function_name": function_name}
+            if PRINCIPAL_METADATA_KEY in result_policy_label.metadata:
+                fallback_metadata[PRINCIPAL_METADATA_KEY] = result_policy_label.metadata[PRINCIPAL_METADATA_KEY]
 
             # Step 3: Build tiered fallback_label
             # This label is used for result items that have NO embedded labels.
@@ -1565,20 +1773,20 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                 fallback_label = ContentLabel(
                     integrity=declared_source_integrity,
                     confidentiality=result_confidentiality,
-                    metadata={"source": "source_integrity", "function_name": function_name},
+                    metadata={**fallback_metadata, "source": "source_integrity"},
                 )
             elif argument_labels:
                 combined = combine_labels(*argument_labels)
                 fallback_label = ContentLabel(
                     integrity=combined.integrity,
                     confidentiality=result_confidentiality,
-                    metadata={"source": "input_labels_join", "function_name": function_name},
+                    metadata={**fallback_metadata, "source": "input_labels_join"},
                 )
             else:
                 fallback_label = ContentLabel(
                     integrity=self.default_integrity,
                     confidentiality=result_confidentiality,
-                    metadata={"source": "default", "function_name": function_name},
+                    metadata={**fallback_metadata, "source": "default"},
                 )
 
             context_label = self._context_label
@@ -1636,17 +1844,27 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         # may affect integrity taint. Confidentiality still reflects the most
         # restrictive label across the entire tool result, including hidden items.
         if visible_result_label is None:
-            if result_label.confidentiality != self._context_label.confidentiality:
+            if (
+                result_label.confidentiality != self._context_label.confidentiality
+                or result_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+            ):
                 old_conf = self._context_label.confidentiality
                 hidden_label = ContentLabel(
                     integrity=self._context_label.integrity,
                     confidentiality=result_label.confidentiality,
+                    metadata=result_label.metadata,
                 )
                 self._update_context_label(hidden_label)
                 logger.info(
-                    f"Result from '{function_name}' hidden (integrity clean) but "
-                    f"confidentiality updated: {old_conf.value} -> "
-                    f"{result_label.confidentiality.value}"
+                    "Result from '%s' hidden (integrity clean) but confidentiality scope updated: %s -> %s",
+                    function_name,
+                    old_conf.value,
+                    result_label.confidentiality.value,
+                )
+                logger.debug(
+                    "Hidden result security metadata merged for '%s': %s",
+                    function_name,
+                    result_label.metadata,
                 )
             else:
                 logger.info(
@@ -1660,6 +1878,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             exposed_label = ContentLabel(
                 integrity=visible_result_label.integrity,
                 confidentiality=result_label.confidentiality,
+                metadata=result_label.metadata,
             )
             self._update_context_label(exposed_label)
             logger.info(
@@ -1692,6 +1911,25 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
 
         return self.default_confidentiality
 
+    def _get_function_principal_metadata(
+        self,
+        context: FunctionInvocationContext,
+        confidentiality: ConfidentialityLabel,
+    ) -> dict[str, Any]:
+        """Read a locally declared source principal set."""
+        if confidentiality != ConfidentialityLabel.USER_IDENTITY:
+            return {}
+        function_props = _get_additional_properties(context.function)
+        try:
+            principals = _canonical_principals(
+                function_props.get(PRINCIPAL_METADATA_KEY),
+                source=f"tool {context.function.name}",
+            )
+        except ValueError as exc:
+            logger.warning("Invalid USER_IDENTITY source principals for tool '%s': %s", context.function.name, exc)
+            return {}
+        return {PRINCIPAL_METADATA_KEY: _principal_list(principals)}
+
     def _process_result_with_embedded_labels(
         self,
         items: list[Content],
@@ -1700,11 +1938,12 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
     ) -> tuple[list[Content], ContentLabel, ContentLabel | None]:
         """Process Content items, respecting per-item embedded labels.
 
-        This implements the first tier of the label propagation priority:
-        items with embedded labels (``additional_properties.security_label``)
-        use those labels directly. Items without embedded labels fall back to
-        ``fallback_label``, which is either the tool's ``source_integrity``
-        declaration (tier 2) or the join of input argument labels (tier 3).
+        Generic embedded labels (``additional_properties.security_label``) can
+        only restrict the invocation fallback. A framework-owned producer can
+        identity-stamp a complete authoritative label after applying local policy.
+        Items without embedded labels use ``fallback_label``, which is either the
+        tool's ``source_integrity`` declaration (tier 2) or the join of input
+        argument labels (tier 3).
 
         Each item's own label is attached to its ``additional_properties``
         during processing, preserving per-item granularity.
@@ -1764,30 +2003,55 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             The resolved ContentLabel for this item.
         """
         additional_props = _get_additional_properties(item)
-        authoritative_marker = additional_props.pop(_AUTHORITATIVE_CONFIDENTIALITY, None)
+        authoritative_marker = additional_props.pop(_AUTHORITATIVE_SECURITY_LABEL, None)
+        additional_props.pop("_security_label_authoritative_confidentiality", None)
         inspect_error_marker = additional_props.pop(_INSPECT_VARIABLE_ERROR, None)
-        authoritative_confidentiality = authoritative_marker is _INTERNAL_RESULT_MARKER
+        authoritative_label = authoritative_marker is _INTERNAL_RESULT_MARKER
         inspect_error = function_name == "inspect_variable" and inspect_error_marker is _INTERNAL_RESULT_MARKER
 
         label_data = additional_props.get("security_label")
         if label_data and isinstance(label_data, dict):
+            label_map = cast(dict[str, Any], label_data)
             try:
                 embedded_label = _parse_content_label(
-                    cast(dict[str, Any], label_data),
+                    label_map,
                     source="embedded",
+                    allow_principals=authoritative_label,
                 )
+                if authoritative_label:
+                    return embedded_label
                 combined_label = combine_labels(fallback_label, embedded_label)
-                return ContentLabel(
-                    integrity=embedded_label.integrity,
-                    confidentiality=(
-                        embedded_label.confidentiality
-                        if authoritative_confidentiality
-                        else combined_label.confidentiality
-                    ),
-                    metadata=combined_label.metadata,
-                )
+                if (
+                    combined_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+                    and fallback_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+                ):
+                    try:
+                        fallback_principals = _canonical_principals(
+                            fallback_label.metadata.get(PRINCIPAL_METADATA_KEY),
+                            source="fallback label",
+                        )
+                    except ValueError:
+                        combined_label.metadata.pop(PRINCIPAL_METADATA_KEY, None)
+                    else:
+                        combined_label.metadata[PRINCIPAL_METADATA_KEY] = _principal_list(fallback_principals)
+                return combined_label
             except (TypeError, ValueError) as exc:
                 logger.warning("Failed to parse security_label from Content: %s", exc)
+                if authoritative_label:
+                    integrity = IntegrityLabel.UNTRUSTED
+                    confidentiality = fallback_label.confidentiality
+                    raw_integrity = label_map.get("integrity")
+                    raw_confidentiality = label_map.get("confidentiality")
+                    if isinstance(raw_integrity, str):
+                        with contextlib.suppress(ValueError):
+                            integrity = IntegrityLabel(raw_integrity)
+                    if isinstance(raw_confidentiality, str):
+                        with contextlib.suppress(ValueError):
+                            confidentiality = ConfidentialityLabel(raw_confidentiality)
+                    return combine_labels(
+                        fallback_label,
+                        ContentLabel(integrity=integrity, confidentiality=confidentiality),
+                    )
 
         if inspect_error:
             integrity = (
@@ -1955,8 +2219,9 @@ class _PendingPolicyApproval(NamedTuple):
     approval granted while a placeholder resolved to one payload cannot authorize a replay in
     which it resolves to something else (or no longer resolves at all); ``label_key`` the
     conversation label shown for review and ``effective_label_key`` the label of everything the
-    invocation acts on, including hidden arguments; ``session_key`` the session the approval was
-    requested in; and ``disclosed_violations`` the canonical risks shown to the user.
+    invocation acts on, including hidden arguments; ``destination_principal_key`` the locally
+    declared recipients; ``session_key`` the session the approval was requested in; and
+    ``disclosed_violations`` the canonical risks shown to the user.
     ``created_at`` is a wall-clock timestamp so TTL expiration survives session serialization and
     process restarts. Records remain isolated in the session-scoped security state.
     """
@@ -1965,6 +2230,7 @@ class _PendingPolicyApproval(NamedTuple):
     resolved_signature: str
     label_key: str
     effective_label_key: str
+    destination_principal_key: str
     session_key: str
     disclosed_violations: tuple[str, ...]
     request_id: str
@@ -1976,19 +2242,21 @@ class _PendingPolicyApproval(NamedTuple):
             "resolved_signature": self.resolved_signature,
             "label_key": self.label_key,
             "effective_label_key": self.effective_label_key,
+            "destination_principal_key": self.destination_principal_key,
             "session_key": self.session_key,
             "disclosed_violations": list(self.disclosed_violations),
             "request_id": self.request_id,
             "created_at": self.created_at,
         }
 
-    def binding_key(self) -> tuple[str, str, str, str, str, tuple[str, ...]]:
+    def binding_key(self) -> tuple[str, str, str, str, str, str, tuple[str, ...]]:
         """Return every authorization dimension except lifecycle metadata."""
         return (
             self.body_signature,
             self.resolved_signature,
             self.label_key,
             self.effective_label_key,
+            self.destination_principal_key,
             self.session_key,
             self.disclosed_violations,
         )
@@ -2005,6 +2273,7 @@ class _PendingPolicyApproval(NamedTuple):
                 record["resolved_signature"],
                 record["label_key"],
                 record["effective_label_key"],
+                record["destination_principal_key"],
                 record["session_key"],
             )
             violations = record["disclosed_violations"]
@@ -2023,13 +2292,14 @@ class _PendingPolicyApproval(NamedTuple):
             return None
         if type(created_at) not in (int, float) or not math.isfinite(created_at):
             return None
-        typed_values = cast(tuple[str, str, str, str, str], values)
+        typed_values = cast(tuple[str, str, str, str, str, str], values)
         return cls(
             body_signature=typed_values[0],
             resolved_signature=typed_values[1],
             label_key=typed_values[2],
             effective_label_key=typed_values[3],
-            session_key=typed_values[4],
+            destination_principal_key=typed_values[4],
+            session_key=typed_values[5],
             disclosed_violations=tuple(cast(list[str], violation_items)),
             request_id=request_id,
             created_at=float(created_at),
@@ -2232,11 +2502,30 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
     @staticmethod
     def _label_key(label_data: Any) -> str:
         if isinstance(label_data, ContentLabel):
-            return f"{label_data.integrity.value}/{label_data.confidentiality.value}"
+            principal_key = (
+                _principal_binding_key(label_data.metadata.get(PRINCIPAL_METADATA_KEY), source="approval label")
+                if label_data.confidentiality == ConfidentialityLabel.USER_IDENTITY
+                else ""
+            )
+            return f"{label_data.integrity.value}/{label_data.confidentiality.value}/{principal_key}"
         if isinstance(label_data, dict):
             label_dict = cast(dict[str, Any], label_data)
-            return f"{label_dict.get('integrity', '')}/{label_dict.get('confidentiality', '')}"
-        return "/"
+            confidentiality = label_dict.get("confidentiality", "")
+            metadata = label_dict.get("metadata")
+            principal_key = ""
+            if confidentiality == ConfidentialityLabel.USER_IDENTITY.value:
+                principal_value = (
+                    cast(dict[str, Any], metadata).get(PRINCIPAL_METADATA_KEY) if isinstance(metadata, dict) else None
+                )
+                principal_key = _principal_binding_key(principal_value, source="approval label")
+            return f"{label_dict.get('integrity', '')}/{confidentiality}/{principal_key}"
+        return "//"
+
+    def _destination_principal_key(self, context: FunctionInvocationContext) -> str:
+        function_props = _get_additional_properties(context.function)
+        if function_props.get("max_allowed_confidentiality") != ConfidentialityLabel.USER_IDENTITY.value:
+            return ""
+        return _principal_binding_key(function_props.get(PRINCIPAL_METADATA_KEY), source="approval destination")
 
     def _session_key(self, context: FunctionInvocationContext) -> str:
         return context.session.session_id if context.session is not None else ""
@@ -2254,6 +2543,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
             resolved_signature=self._resolved_call_signature(context),
             label_key=self._context_label_key(context),
             effective_label_key=self._effective_label_key(context),
+            destination_principal_key=self._destination_principal_key(context),
             session_key=self._session_key(context),
             disclosed_violations=self._violation_set_key(violations),
             request_id=self._get_approval_id(context),
@@ -2473,6 +2763,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
 
         argument_label = self._resolve_label(context.metadata.get("argument_label"))
         effective_label = combine_labels(context_label, argument_label)
+        context.metadata["effective_invocation_label"] = effective_label
         function_props = _get_additional_properties(context.function)
         accepts_untrusted = (
             function_name in self.allow_untrusted_tools or function_props.get("accepts_untrusted") is True
@@ -2649,6 +2940,45 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
                     }
             except ValueError:
                 logger.warning(f"Invalid max_allowed_confidentiality: {max_allowed_conf}")
+                if label.confidentiality == ConfidentialityLabel.USER_IDENTITY:
+                    return {
+                        "passed": False,
+                        "failure_type": "principal_mismatch",
+                        "reason": "USER_IDENTITY destination policy is invalid",
+                    }
+
+        if label.confidentiality == ConfidentialityLabel.USER_IDENTITY:
+            if max_allowed_conf != ConfidentialityLabel.USER_IDENTITY.value:
+                return {
+                    "passed": False,
+                    "failure_type": "principal_mismatch",
+                    "reason": "USER_IDENTITY destination does not declare an authorized principal set",
+                }
+            try:
+                source_principals = set(
+                    _canonical_principals(
+                        label.metadata.get(PRINCIPAL_METADATA_KEY),
+                        source="source label",
+                    )
+                )
+                destination_principals = set(
+                    _canonical_principals(
+                        function_props.get(PRINCIPAL_METADATA_KEY),
+                        source=f"tool {context.function.name}",
+                    )
+                )
+            except ValueError:
+                return {
+                    "passed": False,
+                    "failure_type": "principal_mismatch",
+                    "reason": "USER_IDENTITY source or destination principals are missing or invalid",
+                }
+            if not source_principals.issubset(destination_principals):
+                return {
+                    "passed": False,
+                    "failure_type": "principal_mismatch",
+                    "reason": "USER_IDENTITY source principals are not authorized for the destination",
+                }
 
         return {"passed": True, "failure_type": None, "reason": None}
 
@@ -3113,24 +3443,31 @@ def _quarantined_llm_result_parser(result: Any) -> list[Content]:
         logger.warning("quarantined_llm result label is missing confidentiality")
         return contents
 
+    parsed_metadata: dict[str, Any] = {}
     try:
         parsed_label = _parse_content_label(
             typed_label_data,
             source="quarantined_llm result",
+            allow_principals=True,
         )
+        parsed_confidentiality = parsed_label.confidentiality
+        parsed_metadata = parsed_label.metadata
     except (TypeError, ValueError) as exc:
         logger.warning("Failed to parse quarantined_llm result label: %s", exc)
-        return contents
+        try:
+            parsed_confidentiality = ConfidentialityLabel(confidentiality)
+        except ValueError:
+            parsed_confidentiality = ConfidentialityLabel.PRIVATE
 
     quarantine_label = ContentLabel(
         integrity=IntegrityLabel.UNTRUSTED,
-        confidentiality=parsed_label.confidentiality,
-        metadata=parsed_label.metadata,
+        confidentiality=parsed_confidentiality,
+        metadata=parsed_metadata,
     )
     first = contents[0]
     props = first.additional_properties or {}
     props["security_label"] = quarantine_label.to_dict()
-    props[_AUTHORITATIVE_CONFIDENTIALITY] = _INTERNAL_RESULT_MARKER
+    props[_AUTHORITATIVE_SECURITY_LABEL] = _INTERNAL_RESULT_MARKER
     first.additional_properties = props
     return contents
 
@@ -3420,6 +3757,7 @@ def _inspect_variable_result_parser(result: Any) -> list[Content]:
     label = cast(dict[str, Any], result).get("security_label") if isinstance(result, dict) else None
     if label:
         props["security_label"] = label
+        props[_AUTHORITATIVE_SECURITY_LABEL] = _INTERNAL_RESULT_MARKER
     if isinstance(result, dict) and "error" in cast(dict[str, Any], result):
         props[_INSPECT_VARIABLE_ERROR] = _INTERNAL_RESULT_MARKER
     first.additional_properties = props
@@ -3866,14 +4204,15 @@ def _stamp_mcp_content_labels(
         if not isinstance(item, Content):
             continue
         props = item.additional_properties or {}
-        props.pop(_AUTHORITATIVE_CONFIDENTIALITY, None)
+        props.pop(_AUTHORITATIVE_SECURITY_LABEL, None)
+        props.pop("_security_label_authoritative_confidentiality", None)
         server_meta = props.pop(_MCP_RESULT_META_KEY, None)
         dynamic = _label_from_mcp_meta(server_meta) if server_meta else None
         if dynamic is None:
             label = local_label
         elif trust_server_ifc:
             label = dynamic
-            props[_AUTHORITATIVE_CONFIDENTIALITY] = _INTERNAL_RESULT_MARKER
+            props[_AUTHORITATIVE_SECURITY_LABEL] = _INTERNAL_RESULT_MARKER
         else:
             label = combine_labels(local_label, dynamic)
         props["security_label"] = label.to_dict()
