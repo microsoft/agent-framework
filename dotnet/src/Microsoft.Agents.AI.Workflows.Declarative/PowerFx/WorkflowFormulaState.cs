@@ -29,6 +29,8 @@ internal sealed class WorkflowFormulaState
 
     private readonly Dictionary<string, WorkflowScope> _scopes;
 
+    private Dictionary<string, WorkflowScope> _initialScopes;
+
     private int _isInitialized;
 
     public RecalcEngine Engine { get; }
@@ -38,6 +40,7 @@ internal sealed class WorkflowFormulaState
     public WorkflowFormulaState(RecalcEngine engine)
     {
         this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => GetScopeName(scopeName), _ => new WorkflowScope());
+        this._initialScopes = this.CreateScopeSnapshot();
 
         this.Engine = engine;
         this.Evaluator = new WorkflowExpressionEngine(engine);
@@ -61,12 +64,26 @@ internal sealed class WorkflowFormulaState
 
     public bool SetInitialized() => Interlocked.CompareExchange(ref this._isInitialized, 1, 0) == 0;
 
+    public void CaptureInitialState()
+    {
+        this._initialScopes = this.CreateScopeSnapshot();
+    }
+
+    public void Reset()
+    {
+        this.RestoreInitialState();
+        Interlocked.Exchange(ref this._isInitialized, 0);
+        this.Bind();
+    }
+
     public async ValueTask RestoreAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         if (!this.SetInitialized())
         {
             return;
         }
+
+        this.RestoreInitialState();
 
         Stopwatch timer = Stopwatch.StartNew();
         Debug.WriteLine("RESTORE CHECKPOINT - BEGIN");
@@ -90,6 +107,22 @@ internal sealed class WorkflowFormulaState
             }
 
             this.Bind(scopeName);
+        }
+    }
+
+    private Dictionary<string, WorkflowScope> CreateScopeSnapshot() =>
+        this._scopes.ToDictionary(scope => scope.Key, scope => new WorkflowScope(scope.Value));
+
+    private void RestoreInitialState()
+    {
+        foreach ((string scopeName, WorkflowScope initialScope) in this._initialScopes)
+        {
+            WorkflowScope scope = this._scopes[scopeName];
+            scope.Clear();
+            foreach ((string key, FormulaValue value) in initialScope)
+            {
+                scope[key] = value;
+            }
         }
     }
 
@@ -143,5 +176,15 @@ internal sealed class WorkflowFormulaState
     /// <summary>
     /// The set of variables for a specific action scope.
     /// </summary>
-    private sealed class WorkflowScope : Dictionary<string, FormulaValue>;
+    private sealed class WorkflowScope : Dictionary<string, FormulaValue>
+    {
+        public WorkflowScope()
+        {
+        }
+
+        public WorkflowScope(IDictionary<string, FormulaValue> values)
+            : base(values)
+        {
+        }
+    }
 }
