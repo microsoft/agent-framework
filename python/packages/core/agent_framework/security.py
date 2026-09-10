@@ -3911,12 +3911,13 @@ def _wrap_mcp_function_for_ifc(func_tool: FunctionTool, default_integrity: Integ
     async def _wrapped(*args: Any, **kwargs: Any) -> Any:
         import inspect as _inspect
 
-        res = original(*args, **kwargs)
-        if _inspect.isawaitable(res):
-            res = await res
         props = func_tool.additional_properties or {}
         local_label = _current_mcp_local_label(func_tool, default_integrity)
         trust_server_ifc = props.get(_MCP_TRUST_SERVER_IFC_KEY) is True
+
+        res = original(*args, **kwargs)
+        if _inspect.isawaitable(res):
+            res = await res
         return _stamp_mcp_content_labels(res, local_label, trust_server_ifc=trust_server_ifc)
 
     _wrapped._ifc_wrapped = True  # type: ignore[attr-defined]

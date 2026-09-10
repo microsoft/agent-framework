@@ -5255,6 +5255,83 @@ class TestMCPIFCMetaLabels:
             "confidentiality": "public",
         }
 
+    @pytest.mark.parametrize(
+        ("start_properties", "refreshed_properties", "first_label", "second_label"),
+        [
+            (
+                {
+                    "source_integrity": "trusted",
+                    "confidentiality": "public",
+                    "_mcp_trust_server_ifc": False,
+                },
+                {
+                    "source_integrity": "untrusted",
+                    "confidentiality": "private",
+                    "_mcp_trust_server_ifc": False,
+                },
+                {"integrity": "trusted", "confidentiality": "public"},
+                {"integrity": "untrusted", "confidentiality": "private"},
+            ),
+            (
+                {
+                    "source_integrity": "untrusted",
+                    "confidentiality": "private",
+                    "_mcp_trust_server_ifc": True,
+                },
+                {
+                    "source_integrity": "untrusted",
+                    "confidentiality": "private",
+                    "_mcp_trust_server_ifc": False,
+                },
+                {"integrity": "trusted", "confidentiality": "public"},
+                {"integrity": "untrusted", "confidentiality": "private"},
+            ),
+        ],
+        ids=["stricter-local-policy", "revoke-server-authority"],
+    )
+    async def test_wrap_mcp_function_snapshots_policy_for_in_flight_call(
+        self,
+        start_properties: dict[str, Any],
+        refreshed_properties: dict[str, Any],
+        first_label: dict[str, str],
+        second_label: dict[str, str],
+    ):
+        from agent_framework.security import _wrap_mcp_function_for_ifc
+
+        call_started = asyncio.Event()
+        release_call = asyncio.Event()
+
+        async def fake_call(**kwargs: Any) -> list[Content]:
+            call_started.set()
+            await release_call.wait()
+            return [
+                Content.from_text(
+                    "payload",
+                    additional_properties={"_meta": {"ifc": {"integrity": "trusted", "confidentiality": "public"}}},
+                )
+            ]
+
+        function = FunctionTool(
+            func=fake_call,
+            name="remote_tool",
+            description="",
+            additional_properties={"_mcp_remote_name": "remote_tool", **start_properties},
+        )
+        _wrap_mcp_function_for_ifc(function, IntegrityLabel.UNTRUSTED)
+        assert function.func is not None
+
+        first_call = asyncio.create_task(function.func())
+        await call_started.wait()
+        assert function.additional_properties is not None
+        function.additional_properties.update(refreshed_properties)
+        release_call.set()
+
+        first_result = await first_call
+        second_result = await function.func()
+
+        assert first_result[0].additional_properties["security_label"] == first_label
+        assert second_result[0].additional_properties["security_label"] == second_label
+
     @pytest.mark.parametrize("trust_server_ifc", [False, True], ids=["default", "trusted"])
     async def test_apply_mcp_security_labels_configures_result_authority(self, trust_server_ifc: bool):
         from agent_framework.security import apply_mcp_security_labels
