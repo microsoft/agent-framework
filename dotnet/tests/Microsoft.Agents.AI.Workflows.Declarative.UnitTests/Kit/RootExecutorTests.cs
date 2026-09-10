@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
+using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.Configuration;
 using Moq;
@@ -34,6 +35,8 @@ public sealed class RootExecutorTests
         Mock<IWorkflowContext> sourceContext = new(MockBehavior.Strict);
         sourceContext.Setup(c => c.QueueStateUpdateAsync("ALLOWED", It.IsAny<object?>(), VariableScopeNames.Environment, It.IsAny<CancellationToken>()))
             .Returns(default(ValueTask));
+        sourceContext.Setup(c => c.QueueStateUpdateAsync("ALLOWED", SensitivityLevel.Sensitive, WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Environment), It.IsAny<CancellationToken>()))
+            .Returns(default(ValueTask));
 
         DeclarativeWorkflowContext context = new(sourceContext.Object, executor.Session.State);
 
@@ -42,6 +45,7 @@ public sealed class RootExecutorTests
 
         // Assert
         sourceContext.Verify(c => c.QueueStateUpdateAsync("ALLOWED", It.IsAny<object?>(), VariableScopeNames.Environment, It.IsAny<CancellationToken>()), Times.Once);
+        sourceContext.Verify(c => c.QueueStateUpdateAsync("ALLOWED", SensitivityLevel.Sensitive, WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Environment), It.IsAny<CancellationToken>()), Times.Once);
         sourceContext.Verify(c => c.QueueStateUpdateAsync("HIDDEN", It.IsAny<object?>(), VariableScopeNames.Environment, It.IsAny<CancellationToken>()), Times.Never);
     }
 

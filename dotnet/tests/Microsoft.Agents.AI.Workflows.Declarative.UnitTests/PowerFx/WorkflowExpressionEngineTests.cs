@@ -152,6 +152,23 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     }
 
     [Fact]
+    public void StringExpressionGetValueForComputedDottedAccessIsSensitive()
+    {
+        // Arrange
+        TableValue secretTable = FormulaValue.NewTable(
+            RecordType.Empty().Add("Value", FormulaType.String),
+            new RecordValue[] { FormulaValue.NewRecordFromFields(new NamedValue("Value", FormulaValue.New("secret-value"))) });
+        this.State.Set("SecretTable", secretTable, VariableScopeNames.Local, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Expression("First(Local.SecretTable).Value"),
+            expectedValue: "secret-value",
+            expectedSensitivity: SensitivityLevel.Sensitive);
+    }
+
+    [Fact]
     public void StringExpressionGetValueForEnvironmentVariableTextLiteralIsNotSensitive()
     {
         // Arrange

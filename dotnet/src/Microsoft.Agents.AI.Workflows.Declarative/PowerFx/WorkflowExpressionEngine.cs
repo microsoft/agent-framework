@@ -436,18 +436,14 @@ internal sealed class WorkflowExpressionEngine
             node = current.Left;
         }
 
-        if (node is FirstNameNode firstNameNode)
-        {
-            names.Add(firstNameNode.Ident.Name.Value);
-        }
-
-        names.Reverse();
-        if (names.Count == 0)
+        if (node is not FirstNameNode firstNameNode)
         {
             reference = default;
             return false;
         }
 
+        names.Add(firstNameNode.Ident.Name.Value);
+        names.Reverse();
         reference = names.Count > 1 && VariableScopeNames.IsValidName(names[0])
             ? (names[0], names[1])
             : (null, names[0]);

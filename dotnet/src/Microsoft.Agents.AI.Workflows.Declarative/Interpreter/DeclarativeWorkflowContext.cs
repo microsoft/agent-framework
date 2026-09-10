@@ -232,7 +232,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 
     private ValueTask QueueSensitivityUpdateAsync(string key, string? scopeName, SensitivityLevel sensitivity, CancellationToken cancellationToken)
     {
-        if (scopeName is null || !ManagedScopes.Contains(scopeName))
+        if (scopeName is null || (!ManagedScopes.Contains(scopeName) && scopeName != VariableScopeNames.Environment))
         {
             return default;
         }
