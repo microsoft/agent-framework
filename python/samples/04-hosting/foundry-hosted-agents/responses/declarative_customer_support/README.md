@@ -21,7 +21,14 @@ Each user message re-runs the workflow from the trigger. Because `Workflow.as_ag
 
 ### Agent Hosting
 
-[`main.py`](main.py) builds three `Agent` instances on top of a shared `FoundryChatClient` (one per workflow role), registers them with the `WorkflowFactory` so the YAML's `InvokeAzureAgent` actions can resolve them by name, loads the workflow, wraps it with `.as_agent(...)`, and hands the agent to `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol.
+[`main.py`](main.py) supplies `ResponsesHostServer` with an `agent_factory`. Each request builds three new `Agent`
+instances, registers them with a new `WorkflowFactory` so the YAML's `InvokeAzureAgent` actions can resolve them
+by name, loads a new workflow, and wraps it with `.as_agent(...)`. The host restores the authorized conversation's
+checkpoint into that instance when continuing a conversation.
+
+The `FoundryChatClient` is opened once in `main` and closed when the host exits. It is shared across requests,
+but the agents and workflow executors are not. The YAML's stable identifiers allow later factory-created
+workflows to restore earlier checkpoints.
 
 The triage agent is configured with `response_format=TriageResponse` (a Pydantic model) so the workflow can read its structured fields via `Local.Triage.*`. The specialist agents are plain text and use `autoSend: true` to deliver their reply straight to the caller.
 

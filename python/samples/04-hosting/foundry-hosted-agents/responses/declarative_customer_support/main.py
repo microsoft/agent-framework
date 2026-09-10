@@ -1,10 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import os
 from pathlib import Path
 from typing import Any, Literal
 
-from agent_framework import Agent
+from agent_framework import Agent, WorkflowAgent
 from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
 from agent_framework_declarative import WorkflowFactory
 from agent_framework_openai import OpenAIChatOptions
@@ -86,14 +87,9 @@ ask for them one at a time. Keep responses short and polite.
 # --- Host setup ------------------------------------------------------------------
 
 
-def main() -> None:
+def create_workflow_agent(client: FoundryChatClient) -> WorkflowAgent:
+    """Rebuild the YAML workflow and its agents for the current request."""
     workflow_path = Path(__file__).parent / "workflow.yaml"
-
-    client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=DefaultAzureCredential(),
-    )
 
     # The workflow's InvokeAzureAgent actions reference these agents by name.
     triage_agent = Agent(
@@ -128,7 +124,7 @@ def main() -> None:
     # Wrap the declarative workflow as an AIAgent so it can be served behind
     # the Responses protocol. Each user turn re-runs the workflow with the
     # full conversation history available via Conversation.messages.
-    workflow_agent = workflow.as_agent(
+    return workflow.as_agent(
         name="declarative-customer-support",
         description=(
             "A multi-turn customer-support triage workflow that routes "
@@ -137,8 +133,19 @@ def main() -> None:
         ),
     )
 
-    ResponsesHostServer(workflow_agent).run()
+
+async def main() -> None:
+    """Share only the model client while each request gets a new workflow."""
+    with DefaultAzureCredential() as credential:
+        client = FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=credential,
+        )
+        async with client.project_client, client.client:
+            server = ResponsesHostServer(agent_factory=lambda: create_workflow_agent(client))
+            await server.run_async()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

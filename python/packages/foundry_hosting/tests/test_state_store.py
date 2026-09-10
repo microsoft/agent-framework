@@ -19,6 +19,8 @@ from agent_framework_foundry_hosting._state_store import (
     FoundryCheckpointStore,
     FoundryFunctionApprovalStore,
     FunctionApprovalStoreProvider,
+    _InvocationsAgentSessionStoreProvider,
+    _InvocationsCheckpointStoreProvider,
 )
 
 
@@ -77,6 +79,30 @@ def test_storage_providers_use_public_abstraction() -> None:
     assert not issubclass(CheckpointStoreProvider, StoreProvider)
     assert issubclass(FunctionApprovalStoreProvider, StoreProvider)
     assert issubclass(AgentSessionStoreProvider, StoreProvider)
+
+
+@pytest.mark.parametrize("is_hosted", [False, True])
+async def test_invocations_namespaces_cannot_overlap_responses_records(is_hosted: bool) -> None:
+    store = _store()
+    config = _config(is_hosted=is_hosted)
+    context = _platform_context()
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(return_value=store),
+    ) as get_or_create:
+        for provider in (CheckpointStoreProvider(), _InvocationsCheckpointStoreProvider()):
+            await provider.get_store(config=config, context_id="same-id", platform_context=context).save(
+                _checkpoint("same-checkpoint")
+            )
+        for provider in (AgentSessionStoreProvider(), _InvocationsAgentSessionStoreProvider()):
+            await provider.get_store(config=config, platform_context=context).set("same-id", AgentSession())
+    assert [call.args[0] for call in get_or_create.await_args_list] == [
+        "checkpoints/same-id",
+        "invocations_checkpoints/same-id",
+        "agent_sessions",
+        "invocations_agent_sessions",
+    ]
+    assert all(call.kwargs == {"user_isolation": True} for call in get_or_create.await_args_list)
 
 
 async def test_save_uses_context_scoped_store() -> None:
