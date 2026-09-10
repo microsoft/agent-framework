@@ -99,12 +99,13 @@ standard-vector contract. Azure DocumentDB also offers higher limits with
 half-precision or product quantization; those distinct index/storage options are
 outside this connector.
 
-`score_threshold` is a minimum native score applied after `$search` selects its
-`k` candidates and before `$skip`/`$limit`. Set a larger
-`operation_options={"k": ...}` candidate window when needed. Thresholded ANN
-search can return fewer than `top`; the connector does not fetch or filter a
-client-side prefix. Algorithm tuning uses `n_probes`, `ef_search`, or `l_search`
-for IVF, HNSW, or DiskANN respectively.
+`score_threshold` uses native metric units after `$search` selects its `k`
+candidates and before `$skip`/`$limit`. It is a minimum for cosine and inner
+product scores, where larger is better, and a maximum for Euclidean distance,
+where smaller is better. Set a larger `operation_options={"k": ...}` candidate
+window when needed. Thresholded ANN search can return fewer than `top`; the
+connector does not fetch or filter a client-side prefix. Algorithm tuning uses
+`n_probes`, `ef_search`, or `l_search` for IVF, HNSW, or DiskANN respectively.
 
 See the
 [Azure DocumentDB vector search guide](https://learn.microsoft.com/azure/documentdb/vector-search),

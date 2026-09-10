@@ -1050,6 +1050,9 @@ class AzureDocumentDBCollection(
         native_filter = self._prepare_filter(filter)
         if native_filter:
             cosmos_search["filter"] = native_filter
+        metric = _METRICS[cast(str, field.distance_function)]
+        threshold_operator = "$lte" if metric == "L2" else "$gte"
+        threshold_direction = "maximum" if metric == "L2" else "minimum"
         pipeline: list[_Document] = [
             {"$search": {"cosmosSearch": cosmos_search}},
             {"$project": self._projection(include_vectors=include_vectors, score=True)},
@@ -1059,7 +1062,7 @@ class AzureDocumentDBCollection(
                 raise TypeError("Azure DocumentDB score_threshold must be a finite number.")
             if not math.isfinite(score_threshold):
                 raise ValueError("Azure DocumentDB score_threshold must be a finite number.")
-            pipeline.append({"$match": {_NATIVE_SCORE_FIELD: {"$gte": score_threshold}}})
+            pipeline.append({"$match": {_NATIVE_SCORE_FIELD: {threshold_operator: score_threshold}}})
         if skip:
             pipeline.append({"$skip": skip})
         pipeline.append({"$limit": top})
@@ -1074,8 +1077,8 @@ class AzureDocumentDBCollection(
                 "candidate_window": cosmos_search["k"],
                 "distance_function": field.distance_function or "DEFAULT",
                 "index_kind": field.index_kind,
-                "metric": _METRICS[cast(str, field.distance_function)],
-                "score_threshold_direction": "minimum",
+                "metric": metric,
+                "score_threshold_direction": threshold_direction,
             },
         )
 

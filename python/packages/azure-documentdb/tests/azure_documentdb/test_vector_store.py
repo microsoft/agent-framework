@@ -412,9 +412,31 @@ async def test_search_pipeline_threshold_before_paging_and_vector_projection(
     assert pipeline[3:] == [{"$skip": 1}, {"$limit": 2}]
     assert pymongo_objects[2].aggregate.call_args.kwargs == {"maxTimeMS": 5000}
     assert results.metadata is not None and results.metadata["candidate_window"] == 10
+    assert results.metadata["metric"] == "COS"
+    assert results.metadata["score_threshold_direction"] == "minimum"
     responses = [response async for response in results]
     assert len(responses) == 1 and responses[0]["score"] == 0.9
     assert responses[0]["record"]["id"] == "one"
+
+
+async def test_euclidean_threshold_is_maximum_before_paging(definition_factory, pymongo_objects):
+    connector = AzureDocumentDBCollection(
+        dict,
+        definition=definition_factory(distance_function="euclidean_distance"),
+        collection=pymongo_objects[2],
+    )
+    results = await connector.search(
+        vector=[1, 0, 0],
+        score_threshold=0.5,
+        top=2,
+        skip=1,
+    )
+    pipeline = pymongo_objects[2].aggregate.call_args.args[0]
+    assert pipeline[2] == {"$match": {"_af_documentdb_score": {"$lte": 0.5}}}
+    assert pipeline[3:] == [{"$skip": 1}, {"$limit": 2}]
+    assert results.metadata is not None
+    assert results.metadata["metric"] == "L2"
+    assert results.metadata["score_threshold_direction"] == "maximum"
 
 
 async def test_empty_search_results_are_supported(collection, pymongo_objects):
