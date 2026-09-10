@@ -376,7 +376,11 @@ class FileCheckpointStorage:
 
         try:
             encoded_checkpoint = await asyncio.to_thread(_read)
-        except (json.JSONDecodeError, UnicodeDecodeError) as ex:
+        except UnicodeDecodeError as ex:
+            raise WorkflowCheckpointException(
+                f"Checkpoint file for {checkpoint_id} is not valid UTF-8 and cannot be loaded."
+            ) from ex
+        except json.JSONDecodeError as ex:
             raise WorkflowCheckpointException(
                 f"Checkpoint file for {checkpoint_id} is not valid JSON and cannot be loaded."
             ) from ex

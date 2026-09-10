@@ -1308,7 +1308,7 @@ async def test_file_checkpoint_storage_load_invalid_utf8_raises():
         bad_id = "bad-utf8-checkpoint"
         bad_file = Path(temp_dir) / f"{bad_id}.json"
         bad_file.write_bytes(b'{"x": "\xff\xfe"}')
-        with pytest.raises(WorkflowCheckpointException, match="not valid JSON"):
+        with pytest.raises(WorkflowCheckpointException, match="not valid UTF-8"):
             await storage.load(bad_id)
 
 
