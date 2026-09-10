@@ -27,7 +27,7 @@
     <RootNamespace>HostedToolbox</RootNamespace>
     <AssemblyName>HostedToolbox</AssemblyName>
     <UserSecretsId>5d5195de-e14f-4130-bdad-102a5ef3f592</UserSecretsId>
-    <AgentFrameworkVersion>1.15.0-preview.260722.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.20.0-preview.260831.1</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>

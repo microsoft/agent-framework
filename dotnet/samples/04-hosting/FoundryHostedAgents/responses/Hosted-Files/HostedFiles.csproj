@@ -27,7 +27,7 @@
     <RootNamespace>HostedFiles</RootNamespace>
     <AssemblyName>HostedFiles</AssemblyName>
     <UserSecretsId>204facfe-a494-4273-a330-3ffa649bb789</UserSecretsId>
-    <AgentFrameworkVersion>1.15.0-preview.260722.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.20.0-preview.260831.1</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>

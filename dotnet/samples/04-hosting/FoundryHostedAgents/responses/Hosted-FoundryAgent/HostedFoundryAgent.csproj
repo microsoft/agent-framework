@@ -27,7 +27,7 @@
     <RootNamespace>HostedFoundryAgent</RootNamespace>
     <AssemblyName>HostedFoundryAgent</AssemblyName>
     <UserSecretsId>9c3949a1-1d2f-453e-abeb-0643b1b95e88</UserSecretsId>
-    <AgentFrameworkVersion>1.15.0-preview.260722.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.20.0-preview.260831.1</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>

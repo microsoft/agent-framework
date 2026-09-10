@@ -27,7 +27,7 @@
     <RootNamespace>HostedMcpTools</RootNamespace>
     <AssemblyName>HostedMcpTools</AssemblyName>
     <UserSecretsId>2bfa4cec-b6ef-4e75-b2ca-8f7947cb6419</UserSecretsId>
-    <AgentFrameworkVersion>1.15.0-preview.260722.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.20.0-preview.260831.1</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>

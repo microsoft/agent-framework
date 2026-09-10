@@ -27,7 +27,7 @@
     <RootNamespace>HostedTextRag</RootNamespace>
     <AssemblyName>HostedTextRag</AssemblyName>
     <UserSecretsId>39b2c04e-bcf6-42d7-aac3-ed5a24a3af75</UserSecretsId>
-    <AgentFrameworkVersion>1.15.0-preview.260722.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.20.0-preview.260831.1</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>

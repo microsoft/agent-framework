@@ -27,7 +27,7 @@
     <RootNamespace>HostedObservability</RootNamespace>
     <AssemblyName>HostedObservability</AssemblyName>
     <UserSecretsId>f401dcb9-9636-4c3d-ab4a-4fb68773a1a1</UserSecretsId>
-    <AgentFrameworkVersion>1.15.0-preview.260722.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.20.0-preview.260831.1</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>

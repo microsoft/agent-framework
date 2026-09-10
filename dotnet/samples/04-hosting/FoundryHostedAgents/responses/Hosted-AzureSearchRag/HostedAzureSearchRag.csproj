@@ -27,7 +27,7 @@
     <RootNamespace>HostedAzureSearchRag</RootNamespace>
     <AssemblyName>HostedAzureSearchRag</AssemblyName>
     <UserSecretsId>6f2c3d71-5cbd-48fa-9a66-d807dadfb310</UserSecretsId>
-    <AgentFrameworkVersion>1.15.0-preview.260722.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.20.0-preview.260831.1</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>

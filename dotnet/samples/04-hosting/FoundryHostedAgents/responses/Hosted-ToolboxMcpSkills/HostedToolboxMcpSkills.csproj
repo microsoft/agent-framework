@@ -27,7 +27,7 @@
     <RootNamespace>HostedToolboxMcpSkills</RootNamespace>
     <AssemblyName>HostedToolboxMcpSkills</AssemblyName>
     <UserSecretsId>466c2502-39a9-4548-89b5-e92e14cd7fa3</UserSecretsId>
-    <AgentFrameworkVersion>1.15.0-preview.260722.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.20.0-preview.260831.1</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>
