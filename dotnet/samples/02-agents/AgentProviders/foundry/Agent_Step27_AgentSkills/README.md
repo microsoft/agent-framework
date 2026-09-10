@@ -1,4 +1,4 @@
-# Foundry Agent Skills
+﻿# Foundry Agent Skills
 
 This sample demonstrates how to use Agent Skills with a `FoundryAgent` backed by a
 server-side versioned agent in Microsoft Foundry.
