@@ -343,7 +343,7 @@ class FileCheckpointStorage:
 
         def _write_atomic() -> None:
             tmp_path = file_path.with_suffix(".json.tmp")
-            with open(tmp_path, "w") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(encoded_checkpoint, f, indent=2, ensure_ascii=False)
             os.replace(tmp_path, file_path)
 
@@ -405,7 +405,7 @@ class FileCheckpointStorage:
             checkpoints: list[WorkflowCheckpoint] = []
             for file_path in self.storage_path.glob("*.json"):
                 try:
-                    with open(file_path) as f:
+                    with open(file_path, encoding="utf-8") as f:
                         encoded_checkpoint = json.load(f)
                         from ._checkpoint_encoding import decode_checkpoint_value
 
