@@ -1110,7 +1110,10 @@ class MCPTool:
                 case _:
                     result.append(Content.from_text(str(item), **additional_kwargs))
 
-        if mcp_type.structuredContent is not None:
+        # Prefer content blocks for the model-visible result. structuredContent is
+        # still retained on the Host payload; appending it again here duplicates
+        # what many servers already serialize into content (#7866).
+        if mcp_type.structuredContent is not None and not result:
             result.append(Content.from_text(json.dumps(mcp_type.structuredContent, default=str), **additional_kwargs))
 
         if not result:
