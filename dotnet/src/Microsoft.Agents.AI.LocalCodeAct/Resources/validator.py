@@ -81,9 +81,6 @@ ALLOWED_OS_PATH_ATTRS: set[str] = {
 ALLOWED_OS_ENVIRON_ATTRS: set[str] = {
     "copy",
     "get",
-    "items",
-    "keys",
-    "values",
 }
 
 # Builtins that consume an OS-derived value without retaining it.
@@ -93,6 +90,8 @@ _OS_VALUE_CONSUMER_BUILTINS: frozenset[str] = frozenset({"bool", "len", "print",
 _OS_ENVIRON_COPY_BUILTINS: frozenset[str] = frozenset(
     {"dict", "enumerate", "frozenset", "iter", "list", "reversed", "set", "sorted", "tuple"}
 )
+
+_OS_VALUE_BUILTINS: frozenset[str] = _OS_VALUE_CONSUMER_BUILTINS | _OS_ENVIRON_COPY_BUILTINS
 
 _SAFE_DUNDER_ATTRS: frozenset[str] = frozenset(
     {
@@ -369,6 +368,7 @@ class _CodeValidator(ast.NodeVisitor):
         self._allowed_os_attrs = allowed_os_attrs if allowed_os_attrs is not None else ALLOWED_OS_ATTRS
         self._os_aliases: dict[str, set[tuple[str, ...]]] = {"os": {_OS_ROOT_CHAIN}}
         self._os_containers: dict[str, set[tuple[str, ...]]] = {}
+        self._shadowed_os_value_builtins: set[str] = set()
 
     def validate(self, code: str) -> None:
         """Validate code and raise CodeValidationError if it violates policy."""
@@ -380,6 +380,7 @@ class _CodeValidator(ast.NodeVisitor):
         self._errors = []
         self._os_aliases = {"os": {_OS_ROOT_CHAIN}}
         self._os_containers = {}
+        self._shadowed_os_value_builtins = self._find_shadowed_os_value_builtins(tree)
         self.visit(tree)
 
         if self._errors:
@@ -704,6 +705,26 @@ class _CodeValidator(ast.NodeVisitor):
     def _format_os_chains(chains: set[tuple[str, ...]]) -> str:
         return ", ".join(".".join(chain) for chain in sorted(chains))
 
+    @staticmethod
+    def _find_shadowed_os_value_builtins(tree: ast.AST) -> set[str]:
+        bound_names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                bound_names.add(node.id)
+            elif isinstance(node, ast.arg):
+                bound_names.add(node.arg)
+            elif isinstance(node, ast.alias):
+                bound_names.add(node.asname or node.name.split(".")[0])
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                bound_names.add(node.name)
+            elif isinstance(node, ast.ExceptHandler) and node.name is not None:
+                bound_names.add(node.name)
+            elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name is not None:
+                bound_names.add(node.name)
+            elif isinstance(node, ast.MatchMapping) and node.rest is not None:
+                bound_names.add(node.rest)
+        return bound_names & _OS_VALUE_BUILTINS
+
     def visit_Call(self, node: ast.Call) -> None:
         """Validate function calls.
 
@@ -728,11 +749,17 @@ class _CodeValidator(ast.NodeVisitor):
             self._errors.append(f"Calling a value containing OS-derived objects ({chains}) is not allowed")
 
         consumer_name = node.func.id if isinstance(node.func, ast.Name) else None
+        is_unshadowed_builtin = (
+            consumer_name is not None
+            and consumer_name in _PYTHON_BUILTIN_NAMES
+            and consumer_name not in self._shadowed_os_value_builtins
+        )
         for argument in [*node.args, *(keyword_node.value for keyword_node in node.keywords)]:
             direct, contained = self._get_os_provenance(argument)
-            consumes_value = consumer_name in _OS_VALUE_CONSUMER_BUILTINS
+            consumes_value = is_unshadowed_builtin and consumer_name in _OS_VALUE_CONSUMER_BUILTINS
             copies_environment = (
-                consumer_name in _OS_ENVIRON_COPY_BUILTINS
+                is_unshadowed_builtin
+                and consumer_name in _OS_ENVIRON_COPY_BUILTINS
                 and not contained
                 and bool(direct)
                 and all(chain == _OS_ENVIRON_CHAIN for chain in direct)
