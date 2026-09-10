@@ -945,6 +945,81 @@ public class OpenTelemetryAgentTests
         Assert.Same(inputOptions, observedOptions);
         Assert.Same(token, observedOptions.ContinuationToken);
     }
+
+    [Fact]
+    public async Task RunAsync_WrappingChatClientAgent_PreservesAgentContinuationTokenAsync()
+    {
+        // Arrange
+        // The inner ChatClientAgent wraps the chat client's token in a ChatClientAgentContinuationToken. That
+        // wrapper must survive the AgentResponse -> ChatResponse -> AgentResponse round trip that this agent
+        // performs through OpenTelemetryChatClient, otherwise the caller gets the provider's raw token back and
+        // resuming with it fails.
+        var innerToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 });
+        var fakeChatClient = new AutoWireTestChatClient { ContinuationToken = innerToken };
+        var innerAgent = new ChatClientAgent(fakeChatClient);
+        using var agent = new OpenTelemetryAgent(innerAgent);
+        var session = await agent.CreateSessionAsync();
+
+        // Act
+        var response = await agent.RunAsync("hi", session, new AgentRunOptions { AllowBackgroundResponses = true });
+
+        // Assert
+        var agentToken = Assert.IsType<ChatClientAgentContinuationToken>(response.ContinuationToken);
+        Assert.Same(innerToken, agentToken.InnerToken);
+        Assert.Equal(innerAgent.Id, response.AgentId);
+    }
+
+    [Fact]
+    public async Task RunAsync_WrappingChatClientAgent_ResumesFromSerializedContinuationTokenAsync()
+    {
+        // Arrange
+        var innerToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 });
+        ChatOptions? observedChatOptions = null;
+        var fakeChatClient = new AutoWireTestChatClient
+        {
+            ContinuationToken = innerToken,
+            OnGetResponseAsync = (_, opts) => observedChatOptions = opts,
+        };
+        using var agent = new OpenTelemetryAgent(new ChatClientAgent(fakeChatClient));
+        var session = await agent.CreateSessionAsync();
+
+        var first = await agent.RunAsync("hi", session, new AgentRunOptions { AllowBackgroundResponses = true });
+
+        // Act
+        // Serialize and deserialize the token the way a caller resuming the run from another process would.
+        Assert.NotNull(first.ContinuationToken);
+        var restoredToken = ResponseContinuationToken.FromBytes(first.ContinuationToken.ToBytes());
+        _ = await agent.RunAsync(session, new AgentRunOptions { ContinuationToken = restoredToken });
+
+        // Assert
+        // The agent must have unwrapped the restored token and passed the chat client's own token back down.
+        Assert.NotNull(observedChatOptions?.ContinuationToken);
+        Assert.Equal(innerToken.ToBytes().ToArray(), observedChatOptions.ContinuationToken.ToBytes().ToArray());
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WrappingChatClientAgent_PreservesAgentContinuationTokenAsync()
+    {
+        // Arrange
+        var innerToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 });
+        var fakeChatClient = new AutoWireTestChatClient { ContinuationToken = innerToken };
+        var innerAgent = new ChatClientAgent(fakeChatClient);
+        using var agent = new OpenTelemetryAgent(innerAgent);
+        var session = await agent.CreateSessionAsync();
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in agent.RunStreamingAsync("hi", session, new AgentRunOptions { AllowBackgroundResponses = true }))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        var tokenUpdate = Assert.Single(updates, u => u.ContinuationToken is not null);
+        var agentToken = Assert.IsType<ChatClientAgentContinuationToken>(tokenUpdate.ContinuationToken);
+        Assert.Same(innerToken, agentToken.InnerToken);
+        Assert.Equal(innerAgent.Id, tokenUpdate.AgentId);
+    }
 #pragma warning restore MEAI001
 
     [Fact]
@@ -1198,18 +1273,23 @@ public class OpenTelemetryAgentTests
     {
         public Action<IEnumerable<ChatMessage>, ChatOptions?>? OnGetResponseAsync { get; set; }
 
+#pragma warning disable MEAI001 // ResponseContinuationToken is experimental.
+        /// <summary>Gets or sets the continuation token to report on the response, simulating a background response.</summary>
+        public ResponseContinuationToken? ContinuationToken { get; set; }
+
         public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
         {
             this.OnGetResponseAsync?.Invoke(messages, options);
-            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "ok")));
+            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "ok")) { ContinuationToken = this.ContinuationToken });
         }
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             this.OnGetResponseAsync?.Invoke(messages, options);
             await Task.Yield();
-            yield return new ChatResponseUpdate(ChatRole.Assistant, "ok");
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "ok") { ContinuationToken = this.ContinuationToken };
         }
+#pragma warning restore MEAI001
 
         public object? GetService(Type serviceType, object? serviceKey = null) =>
             serviceType?.IsInstanceOfType(this) == true ? this : null;

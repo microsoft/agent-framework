@@ -296,7 +296,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             var response = await parentAgent.InnerAgent.RunAsync(messages, fo?.Session, fo?.Options, cancellationToken).ConfigureAwait(false);
 
             // Wrap the response in a ChatResponse so we can pass it back through OpenTelemetryChatClient.
-            return response.AsChatResponse();
+            return ToChatResponse(response);
         }
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
@@ -312,9 +312,59 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             await foreach (var update in parentAgent.InnerAgent.RunStreamingAsync(messages, fo?.Session, fo?.Options, cancellationToken).ConfigureAwait(false))
             {
                 // Wrap the response updates in ChatResponseUpdates so we can pass them back through OpenTelemetryChatClient.
-                yield return update.AsChatResponseUpdate();
+                yield return ToChatResponseUpdate(update);
             }
         }
+
+        /// <summary>
+        /// Wraps an <see cref="AgentResponse"/> in a <see cref="ChatResponse"/> that keeps the original response as its
+        /// <see cref="ChatResponse.RawRepresentation"/>, so <see cref="RunCoreAsync"/> can hand the
+        /// inner agent's own response back to the caller unchanged.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="AgentResponseExtensions.AsChatResponse"/> isn't used here because it returns the inner agent's
+        /// <see cref="ChatResponse"/> directly whenever that is the response's raw representation. Round-tripping
+        /// through that <see cref="ChatResponse"/> discards agent-level state such as
+        /// <see cref="AgentResponse.ContinuationToken"/> and <see cref="AgentResponse.AgentId"/>, which for a
+        /// <see cref="ChatClientAgent"/> means the caller receives the underlying provider's continuation token rather
+        /// than the agent's own, and resuming with it fails.
+        /// </remarks>
+        private static ChatResponse ToChatResponse(AgentResponse response) =>
+            new()
+            {
+                AdditionalProperties = response.AdditionalProperties,
+                ContinuationToken = response.ContinuationToken,
+                ConversationId = (response.RawRepresentation as ChatResponse)?.ConversationId,
+                CreatedAt = response.CreatedAt,
+                FinishReason = response.FinishReason,
+                Messages = response.Messages,
+                RawRepresentation = response,
+                ResponseId = response.ResponseId,
+                Usage = response.Usage,
+            };
+
+        /// <summary>
+        /// Wraps an <see cref="AgentResponseUpdate"/> in a <see cref="ChatResponseUpdate"/> that keeps the original
+        /// update as its <see cref="ChatResponseUpdate.RawRepresentation"/>, so
+        /// <see cref="RunCoreStreamingAsync"/> can hand the inner agent's own update back to the
+        /// caller unchanged. See <see cref="ToChatResponse"/> for why
+        /// <see cref="AgentResponseExtensions.AsChatResponseUpdate"/> isn't used.
+        /// </summary>
+        private static ChatResponseUpdate ToChatResponseUpdate(AgentResponseUpdate update) =>
+            new()
+            {
+                AdditionalProperties = update.AdditionalProperties,
+                AuthorName = update.AuthorName,
+                Contents = update.Contents,
+                ContinuationToken = update.ContinuationToken,
+                ConversationId = (update.RawRepresentation as ChatResponseUpdate)?.ConversationId,
+                CreatedAt = update.CreatedAt,
+                FinishReason = update.FinishReason,
+                MessageId = update.MessageId,
+                RawRepresentation = update,
+                ResponseId = update.ResponseId,
+                Role = update.Role,
+            };
 
         public object? GetService(Type serviceType, object? serviceKey = null) =>
             // Delegate any inquiries made by the OpenTelemetryChatClient back to the parent agent.
