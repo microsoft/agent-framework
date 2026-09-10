@@ -1,0 +1,75 @@
+name: Python - API Compatibility
+
+on:
+  pull_request_target:
+    branches: ["main"]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    paths:
+      - "python/**"
+      - ".github/scripts/check_python_api_compatibility.py"
+      - ".github/workflows/python-api-compatibility.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  api-compatibility:
+    name: Public API Compatibility
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Compare public API with the PR base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BREAKING_CHANGE_ACKNOWLEDGED: ${{ contains(github.event.pull_request.labels.*.name, 'breaking change') }}
+        shell: bash
+        run: |
+          git show "$BASE_SHA:.github/scripts/check_python_api_compatibility.py" \
+            > "$RUNNER_TEMP/check_python_api_compatibility.py"
+          git show "$BASE_SHA:python/pyproject.toml" \
+            > "$RUNNER_TEMP/python-pyproject.toml"
+
+          griffe_requirement="$(
+            python3 - "$RUNNER_TEMP/python-pyproject.toml" <<'PY'
+          import sys
+          import tomllib
+
+          with open(sys.argv[1], "rb") as pyproject_file:
+              dev_dependencies = tomllib.load(pyproject_file)["dependency-groups"]["dev"]
+          requirements = [
+              dependency for dependency in dev_dependencies if dependency.startswith("griffe")
+          ]
+          if len(requirements) != 1:
+              raise SystemExit("Expected exactly one Griffe development dependency")
+          print(requirements[0])
+          PY
+          )"
+
+          args=(
+            --base-sha "$BASE_SHA"
+            --repo "$GITHUB_WORKSPACE"
+          )
+          if [[ "$BREAKING_CHANGE_ACKNOWLEDGED" == "true" ]]; then
+            args+=(--acknowledge-breaking-changes)
+          fi
+
+          uv run \
+            --no-project \
+            --with "$griffe_requirement" \
+            python "$RUNNER_TEMP/check_python_api_compatibility.py" "${args[@]}"
