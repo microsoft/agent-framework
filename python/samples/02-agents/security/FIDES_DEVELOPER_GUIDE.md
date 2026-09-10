@@ -103,6 +103,56 @@ is blocked. See
 [`user_identity_security_example.py`](user_identity_security_example.py) for a
 complete runnable setup.
 
+#### Migrating legacy USER_IDENTITY labels
+
+Earlier FIDES examples used a single, unnamespaced `user_id` and did not bind
+identity destinations. Releases containing principal-bound enforcement reject
+that shape. Migrate both the source label and every USER_IDENTITY destination;
+do not fill in a tenant or user from model-generated arguments.
+
+Before:
+
+```python
+legacy_label = ContentLabel(
+    confidentiality=ConfidentialityLabel.USER_IDENTITY,
+    metadata={"user_id": "alice"},
+)
+
+
+@tool(
+    description="Save identity data",
+    additional_properties={"max_allowed_confidentiality": "user_identity"},
+)
+async def save_identity_data(data: str) -> None:
+    ...
+```
+
+After:
+
+```python
+alice = [{"tenant_id": authenticated_tenant_id, "user_id": authenticated_user_id}]
+
+label = ContentLabel(
+    confidentiality=ConfidentialityLabel.USER_IDENTITY,
+    metadata={PRINCIPAL_METADATA_KEY: alice},
+)
+
+
+@tool(
+    description="Save identity data",
+    additional_properties={
+        "max_allowed_confidentiality": "user_identity",
+        PRINCIPAL_METADATA_KEY: alice,
+    },
+)
+async def save_identity_data(data: str) -> None:
+    ...
+```
+
+Combined content may contain more than one principal. A destination must list
+all authorized principals because the policy checks that the source set is a
+subset of the destination set.
+
 ### 2. Label Tracking Middleware with Tiered Label Propagation
 
 `LabelTrackingFunctionMiddleware` uses a **tiered label propagation** scheme where the result label of a tool call is determined by a strict 3-tier priority:
