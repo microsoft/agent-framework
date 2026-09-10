@@ -31,7 +31,7 @@
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.10" />
     <PackageVersion Include="Azure.Core" Version="1.62.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
-    <PackageVersion Include="Azure.Storage.Blobs" Version="12.29.1" />
+    <PackageVersion Include="Azure.Storage.Blobs" Version="12.29.2" />
     <PackageVersion Include="DotNetEnv" Version="3.2.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.9.0" />
     <!-- Google Gemini  -->
@@ -55,11 +55,11 @@
     <PackageVersion Include="System.Net.Http.Json" Version="10.0.12" />
     <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.12" />
     <!-- AG-UI .NET SDK packages (published by the AG-UI team). -->
-    <PackageVersion Include="AGUI.Abstractions" Version="0.0.5" />
-    <PackageVersion Include="AGUI.Formatting" Version="0.0.5" />
-    <PackageVersion Include="AGUI.Protobuf" Version="0.0.5" />
-    <PackageVersion Include="AGUI.Client" Version="0.0.5" />
-    <PackageVersion Include="AGUI.Server" Version="0.0.5" />
+    <PackageVersion Include="AGUI.Abstractions" Version="0.0.6" />
+    <PackageVersion Include="AGUI.Formatting" Version="0.0.6" />
+    <PackageVersion Include="AGUI.Protobuf" Version="0.0.6" />
+    <PackageVersion Include="AGUI.Client" Version="0.0.6" />
+    <PackageVersion Include="AGUI.Server" Version="0.0.6" />
     <PackageVersion Include="System.Text.Json" Version="10.0.12" />
     <PackageVersion Include="System.Threading.Channels" Version="10.0.12" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
@@ -122,8 +122,8 @@
     <PackageVersion Include="ModelContextProtocol" Version="2.2.0" />
     <PackageVersion Include="ModelContextProtocol.Extensions.Tasks" Version="2.2.0" />
     <!-- Hyperlight -->
-    <PackageVersion Include="Hyperlight.HyperlightSandbox.Api" Version="0.4.0" />
-    <PackageVersion Include="Hyperlight.HyperlightSandbox.Guest.Python" Version="0.4.0" />
+    <PackageVersion Include="Hyperlight.HyperlightSandbox.Api" Version="0.6.0" />
+    <PackageVersion Include="Hyperlight.HyperlightSandbox.Guest.Python" Version="0.6.0" />
     <!-- Inference SDKs -->
     <PackageVersion Include="Dapr.AI.Microsoft.Extensions" Version="1.18.5" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />
