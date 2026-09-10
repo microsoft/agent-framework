@@ -2271,6 +2271,75 @@ async def test_concurrent_streams_keep_approval_requests_request_local(
     assert first_call.id != second_call.id
 
 
+async def test_concurrent_non_streaming_responses_keep_tool_aliases_request_local(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Concurrent non-streaming responses must retain their request's shell alias."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    def first_shell(command: str) -> str:
+        return command
+
+    def second_shell(command: str) -> str:
+        return command
+
+    first_tool = client.get_shell_tool(func=first_shell, approval_mode="never_require")
+    second_tool = client.get_shell_tool(func=second_shell, approval_mode="never_require")
+    requests_ready = asyncio.Event()
+    request_count = 0
+
+    def tool_response(response_id: str, command: str) -> MagicMock:
+        message = MagicMock(spec=BetaMessage)
+        message.id = response_id
+        message.model = "claude-test"
+        message.content = [
+            BetaToolUseBlock(
+                type="tool_use",
+                id="shared-non-stream-call",
+                name="bash",
+                input={"command": command},
+            )
+        ]
+        message.usage = None
+        message.stop_reason = "tool_use"
+        return message
+
+    async def create(**kwargs: Any) -> Any:
+        nonlocal request_count
+        prompt = kwargs["messages"][0]["content"][0]["text"]
+        request_count += 1
+        if request_count == 2:
+            requests_ready.set()
+        await asyncio.wait_for(requests_ready.wait(), timeout=1)
+        return tool_response(f"{prompt}-response", prompt)
+
+    async def get_response(prompt: str, function_tool: FunctionTool) -> ChatResponse:
+        response = client._inner_get_response(  # type: ignore[attr-defined]
+            messages=[Message(role="user", contents=[prompt])],
+            options={"tools": [function_tool], "max_tokens": 64},
+        )
+        assert not isinstance(response, ResponseStream)
+        return await response
+
+    mock_anthropic_client.beta.messages.create.side_effect = create
+    first_response, second_response = await asyncio.gather(
+        get_response("first", first_tool),
+        get_response("second", second_tool),
+    )
+
+    def assert_response_owned(response: ChatResponse, expected_tool: FunctionTool, command: str) -> None:
+        calls = [
+            content for message in response.messages for content in message.contents if content.type == "function_call"
+        ]
+        assert len(calls) == 1
+        assert calls[0].name == expected_tool.name
+        assert calls[0].call_id == "shared-non-stream-call"
+        assert calls[0].parse_arguments() == {"command": command}
+
+    assert_response_owned(first_response, first_tool, "first")
+    assert_response_owned(second_response, second_tool, "second")
+
+
 def test_process_stream_event_message_start_sets_assistant_role(mock_anthropic_client: MagicMock) -> None:
     """Test that message_start streaming event sets role='assistant'.
 
