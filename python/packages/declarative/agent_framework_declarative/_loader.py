@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -338,7 +339,7 @@ class AgentFactory:
             yaml_path = Path(yaml_path)
         if not yaml_path.exists():
             raise DeclarativeLoaderError(f"YAML file not found at path: {yaml_path}")
-        with open(yaml_path) as f:
+        with open(yaml_path, encoding="utf-8") as f:
             yaml_str = f.read()
         return self.create_agent_from_yaml(yaml_str)
 
@@ -508,9 +509,10 @@ class AgentFactory:
         """
         if not isinstance(yaml_path, Path):
             yaml_path = Path(yaml_path)
-        if not yaml_path.exists():
-            raise DeclarativeLoaderError(f"YAML file not found at path: {yaml_path}")
-        yaml_str = yaml_path.read_text()
+        try:
+            yaml_str = await asyncio.to_thread(yaml_path.read_text, encoding="utf-8")
+        except FileNotFoundError as exc:
+            raise DeclarativeLoaderError(f"YAML file not found at path: {yaml_path}") from exc
         return await self.create_agent_from_yaml_async(yaml_str)
 
     async def create_agent_from_yaml_async(self, yaml_str: str) -> Agent:
