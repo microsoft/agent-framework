@@ -80,14 +80,14 @@
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
     <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.2.3" />
     <!-- Microsoft.Extensions.* -->
-    <PackageVersion Include="Microsoft.Extensions.AI" Version="10.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation" Version="10.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation.Quality" Version="10.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation.Safety" Version="10.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.9.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation.Quality" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation.Safety" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.10.0" />
     <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="10.0.12" />
-    <PackageVersion Include="Microsoft.Extensions.Compliance.Abstractions" Version="10.9.0" />
+    <PackageVersion Include="Microsoft.Extensions.Compliance.Abstractions" Version="10.10.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.12" />
@@ -97,12 +97,12 @@
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
-    <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.9.0" />
+    <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.10.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.12" />
-    <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.VectorData.Abstractions" Version="10.9.0" />
+    <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.VectorData.Abstractions" Version="10.10.0" />
     <!-- Vector Stores -->
     <PackageVersion Include="CommunityToolkit.VectorData.AzureCosmosDB" Version="1.0.0" />
     <PackageVersion Include="CommunityToolkit.VectorData.InMemory" Version="1.0.1" />
@@ -129,7 +129,7 @@
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />
     <PackageVersion Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
     <PackageVersion Include="OllamaSharp" Version="5.4.8" />
-    <PackageVersion Include="OpenAI" Version="2.12.0" />
+    <PackageVersion Include="OpenAI" Version="2.13.0" />
     <!-- Identity -->
     <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.84.2" />
     <!-- Workflows -->
