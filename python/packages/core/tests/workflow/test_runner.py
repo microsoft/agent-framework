@@ -567,6 +567,26 @@ async def test_runner_capture_and_restore_checkpoint_object_roundtrip():
     assert runner._previous_checkpoint_id == checkpoint.checkpoint_id  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_save_executor_states_rejects_non_dict_on_checkpoint_save():
+    """Issue #8183: non-dict on_checkpoint_save must fail at save, not only at restore."""
+
+    class BadStateExecutor(Executor):
+        @handler
+        async def handle(self, message: MockMessage, ctx: WorkflowContext[Any, int]) -> None:
+            await ctx.yield_output(message.data)
+
+        async def on_checkpoint_save(self) -> dict[str, Any]:
+            return ["not", "a", "dict"]  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
+
+    executor = BadStateExecutor(id="bad")
+    state = State()
+    ctx = InProcRunnerContext()
+    runner = Runner([], {executor.id: executor}, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    with pytest.raises(WorkflowCheckpointException, match="is not a dict\\[str, Any\\]. Unable to save"):
+        await runner._save_executor_states()  # pyright: ignore[reportPrivateUsage]
+
+
 class CollectingExecutor(Executor):
     """A fan-in target that records every aggregated batch it receives."""
 

@@ -3297,6 +3297,25 @@ def test_pending_approval_batch_filter_keeps_resolved_sibling_pair() -> None:
     ]
 
 
+def test_collect_unanswered_approval_requests_tracks_replacement_request() -> None:
+    """A replacement request with the same occurrence id starts a new unanswered round."""
+    from agent_framework._tools import _collect_unanswered_approval_requests
+
+    _, original_request, stale_response = _build_approved_tool_roundtrip(
+        call_id="call_reapproval",
+        approval_id="approval_occurrence",
+        tool_name="guarded_tool",
+    )
+    replacement_request = Content.from_dict(original_request.to_dict())
+    messages = [
+        Message(role="assistant", contents=[original_request]),
+        Message(role="user", contents=[stale_response]),
+        Message(role="assistant", contents=[replacement_request]),
+    ]
+
+    assert _collect_unanswered_approval_requests(messages) == [replacement_request]
+
+
 def test_replace_approval_contents_with_results_uses_result_call_ids_without_placeholders() -> None:
     from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
 

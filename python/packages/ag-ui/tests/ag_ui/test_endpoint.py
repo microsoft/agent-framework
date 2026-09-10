@@ -48,6 +48,7 @@ from agent_framework import (
     response_handler,
 )
 from agent_framework.orchestrations import SequentialBuilder
+from agent_framework.security import SecureAgentConfig
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.params import Depends
@@ -3134,9 +3135,10 @@ def _build_mixed_approval_batch_endpoint(
         tools=[gated_tool, sibling_tool],
     )
     app = FastAPI()
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     add_agent_framework_fastapi_endpoint(
         app,
-        AgentFrameworkAgent(agent=agent, require_confirmation=False),
+        wrapped_agent,
         path="/approval",
         snapshot_store=snapshot_store,
         snapshot_scope_resolver=(lambda _request: "tenant-a") if snapshot_store is not None else None,
@@ -3899,6 +3901,390 @@ async def test_endpoint_agent_approval_resume_distinguishes_hidden_siblings_with
     assert {occurrence.identity.call_id for occurrence in occurrences} == {"provider-shared"}
     assert len({occurrence.identity.occurrence_id for occurrence in occurrences}) == 3
     assert {occurrence.status for occurrence in occurrences} == {ApprovalStatus.SETTLED}
+
+
+def _build_fides_policy_approval_endpoint(
+    streaming_chat_client_stub: Any,
+    *,
+    multiple_guarded: bool = False,
+) -> tuple[TestClient, InMemoryAGUIThreadSnapshotStore, SecureAgentConfig, list[str], AgentFrameworkAgent]:
+    provider_calls = 0
+    executed: list[str] = []
+
+    def fetch_external() -> str:
+        return "untrusted content"
+
+    def guarded_action() -> str:
+        executed.append("guarded")
+        return "guarded result"
+
+    def guarded_action_two() -> str:
+        executed.append("guarded-two")
+        return "guarded result two"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal provider_calls
+        del messages, options, kwargs
+        provider_calls += 1
+        if provider_calls == 1:
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call-fetch", name="fetch_external", arguments={})],
+            )
+        elif provider_calls == 2:
+            guarded_calls = [Content.from_function_call(call_id="call-guarded", name="guarded_action", arguments={})]
+            if multiple_guarded:
+                guarded_calls.append(
+                    Content.from_function_call(
+                        call_id="call-guarded-two",
+                        name="guarded_action_two",
+                        arguments={},
+                    )
+                )
+            yield ChatResponseUpdate(role="assistant", contents=guarded_calls)
+        else:
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])
+
+    security = SecureAgentConfig(
+        auto_hide_untrusted=False,
+        allow_untrusted_tools={"fetch_external"},
+        approval_on_violation=True,
+    )
+    agent = Agent(
+        name="fides-approval-agent",
+        instructions="Test FIDES approval cleanup",
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[fetch_external, guarded_action, guarded_action_two],
+        context_providers=[security],
+    )
+    snapshot_store = InMemoryAGUIThreadSnapshotStore()
+    app = FastAPI()
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    add_agent_framework_fastapi_endpoint(
+        app,
+        wrapped_agent,
+        path="/approval",
+        snapshot_store=snapshot_store,
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+    )
+    return TestClient(app), snapshot_store, security, executed, wrapped_agent
+
+
+@pytest.mark.parametrize("cancelled", [False, True], ids=["rejected", "cancelled"])
+async def test_endpoint_fides_non_grant_cleans_authenticated_fixed_scope_only(
+    streaming_chat_client_stub: Any,
+    cancelled: bool,
+) -> None:
+    """AG-UI lifecycle-authenticated non-grants clean only the owning FIDES occurrence."""
+    client, snapshot_store, security, executed, wrapped_agent = _build_fides_policy_approval_endpoint(
+        streaming_chat_client_stub
+    )
+    thread_id = f"thread-fides-cleanup-{cancelled}"
+    pause = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": thread_id,
+            "messages": [{"id": "user-1", "role": "user", "content": "Run guarded action"}],
+        },
+    )
+    assert pause.status_code == 200
+    finished = [event for event in _decode_sse_events(pause) if event.get("type") == "RUN_FINISHED"]
+    interrupts = _run_finished_interrupts(finished[-1])
+    assert len(interrupts) == 1
+    approval_id = interrupts[0]["id"]
+
+    snapshot = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert snapshot is not None
+    assert snapshot.session_state is not None
+    security_state = snapshot.session_state[security.source_id]
+    pending = security_state["pending_policy_approvals"]
+    assert set(pending) == {approval_id}
+    pending["unrelated-occurrence"] = json.loads(json.dumps(pending[approval_id]))
+    await snapshot_store.save(scope="tenant-a", thread_id=thread_id, snapshot=snapshot)
+
+    unauthorized = client.post(
+        "/approval",
+        json={
+            "runId": "run-unauthorized",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": [{"interruptId": "unknown-approval", "status": "cancelled"}],
+        },
+    )
+    unauthorized_errors = [event for event in _decode_sse_events(unauthorized) if event.get("type") == "RUN_ERROR"]
+    assert [error["code"] for error in unauthorized_errors] == ["APPROVAL_RESUME_NOT_FOUND"]
+    unchanged = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert unchanged is not None and unchanged.session_state is not None
+    assert set(unchanged.session_state[security.source_id]["pending_policy_approvals"]) == {
+        approval_id,
+        "unrelated-occurrence",
+    }
+
+    resume_entry: dict[str, Any] = {"interruptId": approval_id}
+    if cancelled:
+        resume_entry["status"] = "cancelled"
+    else:
+        resume_entry.update({"status": "resolved", "payload": {"approved": False}})
+    completed = client.post(
+        "/approval",
+        json={
+            "runId": "run-non-grant",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": [resume_entry],
+        },
+    )
+    assert completed.status_code == 200
+    assert not [event for event in _decode_sse_events(completed) if event.get("type") == "RUN_ERROR"]
+
+    cleaned = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert cleaned is not None and cleaned.session_state is not None
+    assert set(cleaned.session_state[security.source_id]["pending_policy_approvals"]) == {"unrelated-occurrence"}
+    assert executed == []
+
+
+async def test_endpoint_fides_mixed_cancel_and_reject_clean_each_authenticated_occurrence(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A mixed AG-UI resume notifies FIDES for both cancelled and rejected occurrences."""
+    client, snapshot_store, security, executed, _ = _build_fides_policy_approval_endpoint(
+        streaming_chat_client_stub,
+        multiple_guarded=True,
+    )
+    thread_id = "thread-fides-mixed-non-grants"
+    pause = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": thread_id,
+            "messages": [{"id": "user-1", "role": "user", "content": "Run guarded actions"}],
+        },
+    )
+    interrupts = _run_finished_interrupts(
+        [event for event in _decode_sse_events(pause) if event.get("type") == "RUN_FINISHED"][-1]
+    )
+    assert len(interrupts) == 2
+    snapshot = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert snapshot is not None and snapshot.session_state is not None
+    pending = snapshot.session_state[security.source_id]["pending_policy_approvals"]
+    interrupt_ids = [interrupt["id"] for interrupt in interrupts]
+    assert set(pending) == set(interrupt_ids)
+    pending["unrelated-occurrence"] = json.loads(json.dumps(pending[interrupt_ids[0]]))
+    await snapshot_store.save(scope="tenant-a", thread_id=thread_id, snapshot=snapshot)
+
+    mixed = client.post(
+        "/approval",
+        json={
+            "runId": "run-mixed",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": [
+                {"interruptId": interrupt_ids[0], "status": "cancelled"},
+                {
+                    "interruptId": interrupt_ids[1],
+                    "status": "resolved",
+                    "payload": {"approved": False},
+                },
+            ],
+        },
+    )
+
+    assert mixed.status_code == 200
+    assert not [event for event in _decode_sse_events(mixed) if event.get("type") == "RUN_ERROR"]
+    assert executed == []
+    cleaned = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert cleaned is not None and cleaned.session_state is not None
+    assert set(cleaned.session_state[security.source_id]["pending_policy_approvals"]) == {"unrelated-occurrence"}
+
+
+async def test_endpoint_fides_malformed_legacy_non_grant_does_not_clean_policy_authority(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A non-boolean legacy control cannot trigger FIDES cleanup."""
+    client, snapshot_store, security, executed, wrapped_agent = _build_fides_policy_approval_endpoint(
+        streaming_chat_client_stub
+    )
+    thread_id = "thread-fides-malformed-legacy"
+    pause = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": thread_id,
+            "messages": [{"id": "user-1", "role": "user", "content": "Run guarded action"}],
+        },
+    )
+    interrupt = _run_finished_interrupts(
+        [event for event in _decode_sse_events(pause) if event.get("type") == "RUN_FINISHED"][-1]
+    )[0]
+    approval_id = interrupt["id"]
+
+    malformed = client.post(
+        "/approval",
+        json={
+            "runId": "run-malformed",
+            "threadId": thread_id,
+            "messages": [
+                {
+                    "id": "malformed-response",
+                    "role": "user",
+                    "function_approvals": [
+                        {
+                            "id": approval_id,
+                            "call_id": interrupt["toolCallId"],
+                            "name": "guarded_action",
+                            "approved": "false",
+                            "arguments": {},
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert malformed.status_code == 200
+    assert executed == []
+    snapshot = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert snapshot is not None and snapshot.session_state is not None
+    assert set(snapshot.session_state[security.source_id]["pending_policy_approvals"]) == {approval_id}
+
+
+async def test_endpoint_fides_replacement_rotates_lifecycle_generation(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """An expired FIDES grant becomes a visible fresh AG-UI interrupt before execution."""
+    client, snapshot_store, security, executed, wrapped_agent = _build_fides_policy_approval_endpoint(
+        streaming_chat_client_stub
+    )
+    thread_id = "thread-fides-replacement-generation"
+    pause = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": thread_id,
+            "messages": [{"id": "user-1", "role": "user", "content": "Run guarded action"}],
+        },
+    )
+    original_interrupt = _run_finished_interrupts(
+        [event for event in _decode_sse_events(pause) if event.get("type") == "RUN_FINISHED"][-1]
+    )[0]
+    original_id = original_interrupt["id"]
+    snapshot = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert snapshot is not None and snapshot.session_state is not None
+    snapshot.session_state[security.source_id]["pending_policy_approvals"][original_id]["created_at"] = 0.0
+    await snapshot_store.save(scope="tenant-a", thread_id=thread_id, snapshot=snapshot)
+
+    stale = client.post(
+        "/approval",
+        json={
+            "runId": "run-stale",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": [{"interruptId": original_id, "status": "resolved", "payload": {"approved": True}}],
+        },
+    )
+
+    assert stale.status_code == 200
+    replacement_interrupts = _run_finished_interrupts(
+        [event for event in _decode_sse_events(stale) if event.get("type") == "RUN_FINISHED"][-1]
+    )
+    assert len(replacement_interrupts) == 1
+    replacement_id = replacement_interrupts[0]["id"]
+    assert replacement_id != original_id
+    assert replacement_interrupts[0]["toolCallId"] == "call-guarded"
+    assert executed == []
+    approval_state = wrapped_agent._approval_state_store.get_tool_approval_state(
+        approval_state_thread_id(scope="tenant-a", thread_id=thread_id)
+    )
+    assert approval_state is not None
+    pending_snapshots = approval_state["pending_approval_requests"]
+    assert [(item["id"], item["function_call"]["id"]) for item in pending_snapshots] == [(replacement_id, original_id)]
+
+    legacy_stale = client.post(
+        "/approval",
+        json={
+            "runId": "run-legacy-stale",
+            "threadId": thread_id,
+            "messages": [
+                {
+                    "role": "tool",
+                    "toolCallId": "call-guarded",
+                    "content": json.dumps({"accepted": True}),
+                }
+            ],
+        },
+    )
+    legacy_errors = [event for event in _decode_sse_events(legacy_stale) if event.get("type") == "RUN_ERROR"]
+    assert [error["code"] for error in legacy_errors] == ["APPROVAL_RESUME_INVALID"]
+    assert executed == []
+
+    stale_again = client.post(
+        "/approval",
+        json={
+            "runId": "run-stale-again",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": [{"interruptId": original_id, "status": "resolved", "payload": {"approved": True}}],
+        },
+    )
+    stale_errors = [event for event in _decode_sse_events(stale_again) if event.get("type") == "RUN_ERROR"]
+    assert [error["code"] for error in stale_errors] == ["APPROVAL_RESUME_NOT_FOUND"]
+    assert executed == []
+
+    approved = client.post(
+        "/approval",
+        json={
+            "runId": "run-fresh",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": [{"interruptId": replacement_id, "status": "resolved", "payload": {"approved": True}}],
+        },
+    )
+    results = [event for event in _decode_sse_events(approved) if event.get("type") == "TOOL_CALL_RESULT"]
+    assert [(event["toolCallId"], event["content"]) for event in results] == [("call-guarded", "guarded result")]
+    assert executed == ["guarded"]
+
+
+async def test_endpoint_fides_approval_uses_lifecycle_bound_request_generation(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """AG-UI preserves trusted request generation while rebinding to occurrence identity."""
+    client, snapshot_store, security, executed, wrapped_agent = _build_fides_policy_approval_endpoint(
+        streaming_chat_client_stub
+    )
+    thread_id = "thread-fides-approved-generation"
+    pause = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": thread_id,
+            "messages": [{"id": "user-1", "role": "user", "content": "Run guarded action"}],
+        },
+    )
+    finished = [event for event in _decode_sse_events(pause) if event.get("type") == "RUN_FINISHED"]
+    approval_id = _run_finished_interrupts(finished[-1])[0]["id"]
+
+    approved = client.post(
+        "/approval",
+        json={
+            "runId": "run-approved",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": [{"interruptId": approval_id, "status": "resolved", "payload": {"approved": True}}],
+        },
+    )
+
+    assert approved.status_code == 200
+    results = [event for event in _decode_sse_events(approved) if event.get("type") == "TOOL_CALL_RESULT"]
+    assert [(event["toolCallId"], event["content"]) for event in results] == [("call-guarded", "guarded result")]
+    assert executed == ["guarded"]
+    snapshot = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert snapshot is not None and snapshot.session_state is not None
+    assert snapshot.session_state[security.source_id]["pending_policy_approvals"] == {}
 
 
 async def test_endpoint_agent_approval_resume_persists_replayable_tool_results(streaming_chat_client_stub):

@@ -359,6 +359,61 @@ class _FakeSandboxWithDelayedUnlistedOutput(_FakeSandboxWithoutOutputListing):
         return super().run(code)
 
 
+class _FakeSandboxWithBoundedOutputs(_FakeSandbox):
+    def run(self, code: str) -> _FakeResult:
+        if code == "None":
+            return _FakeResult(success=True)
+        if self.output_dir is None:
+            raise AssertionError("Expected output directory for bounded output test.")
+
+        output_root = Path(self.output_dir)
+        if code == "create-sparse-output":
+            sparse_file = output_root / "sparse.bin"
+            with sparse_file.open("wb") as handle:
+                handle.seek((2 << 30) - 1)
+                handle.write(b"X")
+            self.output_files = ["sparse.bin"]
+        elif code == "create-count-output":
+            for index in range(3):
+                (output_root / f"report-{index}.txt").write_bytes(b"x")
+            self.output_files = [f"report-{index}.txt" for index in range(3)]
+        elif code == "create-cumulative-output":
+            (output_root / "first.bin").write_bytes(b"abc")
+            (output_root / "second.bin").write_bytes(b"def")
+            self.output_files = ["first.bin", "second.bin"]
+        elif code == "create-exact-output":
+            (output_root / "first.bin").write_bytes(b"abc")
+            (output_root / "second.bin").write_bytes(b"de")
+            self.output_files = ["first.bin", "second.bin"]
+        elif code == "create-growing-output":
+            (output_root / "growing.bin").write_bytes(b"data")
+            self.output_files = ["growing.bin"]
+        elif code == "create-memory-output":
+            (output_root / "memory.bin").write_bytes(b"data")
+            self.output_files = ["memory.bin"]
+        elif code == "create-nested-output":
+            (output_root / "nested").mkdir()
+            (output_root / "nested" / "report.bin").write_bytes(b"data")
+            self.output_files = ["nested/report.bin"]
+        else:
+            return super().run(code)
+
+        return _FakeResult(success=True, stdout="guest-finished\n")
+
+
+class _FakeSandboxWithBoundedOutputsWithoutListing(_FakeSandboxWithBoundedOutputs):
+    def get_output_files(self) -> list[str]:
+        return []
+
+
+class _FakeSandboxWithEagerOutputListing(_FakeSandboxWithBoundedOutputs):
+    listing_calls = 0
+
+    def get_output_files(self) -> list[str]:
+        type(self).listing_calls += 1
+        return [f"report-{index}.txt" for index in range(10_000)]
+
+
 class _FakeSessionContext:
     def __init__(self, *, tools: list[Any] | None = None) -> None:
         self.options: dict[str, Any] = {}
@@ -834,20 +889,22 @@ class _OutputDirShim:
         self.name = str(path)
 
 
-class _SandboxWithListing:
-    def __init__(self, output_files: list[str]) -> None:
-        self._output_files = output_files
-
-    def get_output_files(self) -> list[str]:
-        return self._output_files
-
-
 def _decode_content_bytes(item: Content) -> bytes:
     import base64
 
     assert item.uri is not None
     _, _, encoded = item.uri.partition("base64,")
     return base64.b64decode(encoded)
+
+
+def _assert_bounded_output_error(contents: list[Content], match: str) -> None:
+    assert any(item.type == "text" and item.text == "guest-finished\n" for item in contents)
+    assert not any(item.type == "data" for item in contents)
+    errors = [item for item in contents if item.type == "error"]
+    assert len(errors) == 1
+    assert errors[0].message == "Execution error"
+    assert errors[0].error_details is not None
+    assert match in errors[0].error_details
 
 
 def test_collect_output_relative_paths_skips_symlinked_file(tmp_path: Path) -> None:
@@ -861,7 +918,7 @@ def test_collect_output_relative_paths_skips_symlinked_file(tmp_path: Path) -> N
     secret.write_text("HOST_SECRET", encoding="utf-8")
     (output_root / "leak.txt").symlink_to(secret)
 
-    relative_paths = execute_code_module._collect_output_relative_paths(sandbox=object(), root=output_root)
+    relative_paths = execute_code_module._collect_output_relative_paths(root=output_root)
 
     assert "report.txt" in relative_paths
     assert "leak.txt" not in relative_paths
@@ -878,7 +935,7 @@ def test_collect_output_relative_paths_skips_symlinked_directory(tmp_path: Path)
     (outside_dir / "deep.txt").write_text("deep-secret", encoding="utf-8")
     (output_root / "linked_dir").symlink_to(outside_dir, target_is_directory=True)
 
-    relative_paths = execute_code_module._collect_output_relative_paths(sandbox=object(), root=output_root)
+    relative_paths = execute_code_module._collect_output_relative_paths(root=output_root)
 
     assert relative_paths == set()
 
@@ -892,9 +949,69 @@ def test_collect_output_relative_paths_skips_junctioned_directory(tmp_path: Path
     (outside_dir / "deep.txt").write_text("deep-secret", encoding="utf-8")
     _create_junction_or_skip(link=output_root / "linked_dir", target=outside_dir)
 
-    relative_paths = execute_code_module._collect_output_relative_paths(sandbox=object(), root=output_root)
+    relative_paths = execute_code_module._collect_output_relative_paths(root=output_root)
 
     assert relative_paths == set()
+
+
+def test_collect_output_relative_paths_bounds_directory_only_breadth(tmp_path: Path) -> None:
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    for index in range(101):
+        (output_root / f"directory-{index}").mkdir()
+
+    with pytest.raises(execute_code_module._OutputMaterializationError, match="traversal entry limit of 100"):
+        execute_code_module._collect_output_relative_paths(root=output_root, max_output_files=1)
+
+
+def test_collect_output_relative_paths_bounds_nesting_depth(tmp_path: Path) -> None:
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    current = output_root
+    for index in range(execute_code_module.OUTPUT_TRAVERSAL_MAX_DEPTH + 1):
+        current /= f"level-{index}"
+        current.mkdir()
+
+    with pytest.raises(execute_code_module._OutputMaterializationError, match="nesting depth limit"):
+        execute_code_module._collect_output_relative_paths(root=output_root)
+
+
+def test_collect_output_relative_paths_surfaces_scandir_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    original_scandir = os.scandir
+
+    def fail_output_scan(path: str | os.PathLike[str]) -> Any:
+        if Path(path) == output_root:
+            raise PermissionError("simulated output scan failure")
+        return original_scandir(path)
+
+    monkeypatch.setattr(execute_code_module.os, "scandir", fail_output_scan)
+
+    with pytest.raises(execute_code_module._OutputMaterializationError, match="Could not enumerate output directory"):
+        execute_code_module._collect_output_relative_paths(root=output_root)
+
+
+def test_parse_output_files_collects_legitimate_nested_file(tmp_path: Path) -> None:
+    if not execute_code_module._supports_secure_output_dir_fd():
+        pytest.skip("Nested output attachments require secure dir_fd support")
+    output_root = tmp_path / "output"
+    nested_dir = output_root / "nested"
+    nested_dir.mkdir(parents=True)
+    (nested_dir / "report.txt").write_bytes(b"nested-report")
+
+    contents = execute_code_module._parse_output_files(
+        output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
+        expect_output_files=True,
+    )
+
+    data_items = [item for item in contents if item.type == "data"]
+    assert len(data_items) == 1
+    assert data_items[0].additional_properties["path"] == "/output/nested/report.txt"
+    assert _decode_content_bytes(data_items[0]) == b"nested-report"
 
 
 def test_parse_output_files_skips_symlink_to_host_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -910,7 +1027,6 @@ def test_parse_output_files_skips_symlink_to_host_file(tmp_path: Path, monkeypat
     (output_root / "leak.txt").symlink_to(secret)
 
     contents = execute_code_module._parse_output_files(
-        sandbox=object(),
         output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
         expect_output_files=False,
     )
@@ -921,10 +1037,8 @@ def test_parse_output_files_skips_symlink_to_host_file(tmp_path: Path, monkeypat
     assert all(b"HOST_SECRET" not in _decode_content_bytes(item) for item in contents if item.type == "data")
 
 
-def test_parse_output_files_rejects_intermediate_dir_symlink_from_listing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A backend-listed path traversing an intermediate dir symlink must be rejected."""
+def test_parse_output_files_rejects_intermediate_dir_symlink(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A path traversing an intermediate dir symlink must be rejected."""
     if not _symlinks_supported(tmp_path):
         pytest.skip("Symlinks not supported on this platform/environment")
     monkeypatch.setattr(execute_code_module, "OUTPUT_FILE_RETRY_ATTEMPTS", 1)
@@ -936,7 +1050,6 @@ def test_parse_output_files_rejects_intermediate_dir_symlink_from_listing(
     (output_root / "sub").symlink_to(outside_dir, target_is_directory=True)
 
     contents = execute_code_module._parse_output_files(
-        sandbox=_SandboxWithListing(["output/sub/leak.txt"]),
         output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
         expect_output_files=False,
     )
@@ -945,10 +1058,8 @@ def test_parse_output_files_rejects_intermediate_dir_symlink_from_listing(
     assert all(item.additional_properties.get("path") != "/output/sub/leak.txt" for item in contents)
 
 
-def test_parse_output_files_rejects_intermediate_dir_junction_from_listing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A backend-listed path traversing an intermediate dir junction must be rejected."""
+def test_parse_output_files_rejects_intermediate_dir_junction(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A path traversing an intermediate dir junction must be rejected."""
     monkeypatch.setattr(execute_code_module, "OUTPUT_FILE_RETRY_ATTEMPTS", 1)
     output_root = tmp_path / "output"
     output_root.mkdir()
@@ -958,13 +1069,75 @@ def test_parse_output_files_rejects_intermediate_dir_junction_from_listing(
     _create_junction_or_skip(link=output_root / "sub", target=outside_dir)
 
     contents = execute_code_module._parse_output_files(
-        sandbox=_SandboxWithListing(["output/sub/leak.txt"]),
         output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
         expect_output_files=False,
     )
 
     assert all(b"HOST_SECRET" not in _decode_content_bytes(item) for item in contents if item.type == "data")
     assert all(item.additional_properties.get("path") != "/output/sub/leak.txt" for item in contents)
+
+
+def test_parse_output_files_rejects_intermediate_dir_swap_after_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if not _symlinks_supported(tmp_path):
+        pytest.skip("Symlinks not supported on this platform/environment")
+    if not execute_code_module._supports_secure_output_dir_fd():
+        pytest.skip("Atomic intermediate-directory swap test requires secure dir_fd support")
+    monkeypatch.setattr(execute_code_module, "OUTPUT_FILE_RETRY_ATTEMPTS", 1)
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    output_subdir = output_root / "sub"
+    output_subdir.mkdir()
+    output_file = output_subdir / "report.txt"
+    output_file.write_text("safe-report", encoding="utf-8")
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    (outside_dir / "report.txt").write_text("HOST_SECRET", encoding="utf-8")
+    original_is_safe_output_file = execute_code_module._is_safe_output_file
+    swapped = False
+
+    def swap_parent_after_validation(*, root: Path, host_path: Path) -> bool:
+        nonlocal swapped
+        is_safe = original_is_safe_output_file(root=root, host_path=host_path)
+        if is_safe and host_path == output_file and not swapped:
+            swapped = True
+            output_subdir.rename(output_root / "original-sub")
+            output_subdir.symlink_to(outside_dir, target_is_directory=True)
+        return is_safe
+
+    monkeypatch.setattr(execute_code_module, "_is_safe_output_file", swap_parent_after_validation)
+
+    contents = execute_code_module._parse_output_files(
+        output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
+        expect_output_files=False,
+    )
+
+    assert swapped
+    assert not any(item.type == "data" for item in contents)
+    assert all(b"HOST_SECRET" not in _decode_content_bytes(item) for item in contents if item.type == "data")
+
+
+async def test_execute_code_tool_fails_closed_for_nested_output_without_secure_dir_fd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+    monkeypatch.setattr(
+        execute_code_module,
+        "_supports_secure_output_dir_fd",
+        lambda: False,
+        raising=False,
+    )
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path)
+
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-nested-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    _assert_bounded_output_error(contents, "Nested output attachments cannot be opened safely")
 
 
 def test_clear_directory_removes_junction_without_deleting_target(tmp_path: Path) -> None:
@@ -1022,7 +1195,6 @@ def test_parse_output_files_collects_real_output_file(tmp_path: Path) -> None:
     (output_root / "report.txt").write_text("artifact", encoding="utf-8")
 
     contents = execute_code_module._parse_output_files(
-        sandbox=object(),
         output_dir=cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
         expect_output_files=True,
     )
@@ -1031,6 +1203,337 @@ def test_parse_output_files_collects_real_output_file(tmp_path: Path) -> None:
     assert len(data_items) == 1
     assert data_items[0].additional_properties["path"] == "/output/report.txt"
     assert _decode_content_bytes(data_items[0]) == b"artifact"
+
+
+async def test_execute_code_tool_rejects_sparse_output_without_unbounded_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+    original_fdopen = os.fdopen
+
+    class _BoundedReadGuard:
+        def __init__(self, handle: Any) -> None:
+            self._handle = handle
+
+        def __enter__(self) -> _BoundedReadGuard:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self._handle.close()
+
+        def read(self, size: int = -1) -> bytes:
+            assert size >= 0, "output reads must always be bounded"
+            assert size <= 5 * 1024 * 1024 + 1
+            return cast(bytes, self._handle.read(size))
+
+    def guarded_fdopen(fd: int, *args: Any, **kwargs: Any) -> _BoundedReadGuard:
+        return _BoundedReadGuard(original_fdopen(fd, *args, **kwargs))
+
+    monkeypatch.setattr(execute_code_module.os, "fdopen", guarded_fdopen)
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path)
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-sparse-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    _assert_bounded_output_error(contents, "per-file output limit")
+
+
+async def test_execute_code_tool_checks_output_count_before_reading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+
+    def fail_if_read(*args: Any, **kwargs: Any) -> bytes:
+        del args, kwargs
+        pytest.fail("output files were read before enforcing the count limit")
+
+    monkeypatch.setattr(execute_code_module, "_read_output_file_bytes", fail_if_read)
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path, max_output_files=2)
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-count-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    _assert_bounded_output_error(contents, "output file count limit")
+
+
+async def test_execute_code_tool_does_not_call_eager_backend_output_listing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeSandboxWithEagerOutputListing.listing_calls = 0
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithEagerOutputListing)
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path, max_output_files=2)
+
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-count-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    assert _FakeSandboxWithEagerOutputListing.listing_calls == 0
+    _assert_bounded_output_error(contents, "output file count limit")
+
+
+async def test_execute_code_tool_streams_directory_enumeration_to_count_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        execute_code_module,
+        "_load_sandbox_class",
+        lambda: _FakeSandboxWithBoundedOutputsWithoutListing,
+    )
+    original_scandir = os.scandir
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path, max_output_files=2)
+    config = execute_code._build_run_config()
+    output_root = Path(cast(Any, execute_code._registry)._get_or_create_entry(config).output_dir.name)
+    scanned_entries = 0
+
+    class _BoundedScandir:
+        def __init__(self, path: str | os.PathLike[str]) -> None:
+            self._entries = original_scandir(path)
+            self._track = Path(path) == output_root
+
+        def __enter__(self) -> _BoundedScandir:
+            self._entries.__enter__()
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self._entries.__exit__(*args)
+
+        def close(self) -> None:
+            self._entries.close()
+
+        def __iter__(self) -> _BoundedScandir:
+            return self
+
+        def __next__(self) -> os.DirEntry[str]:
+            nonlocal scanned_entries
+            entry = next(self._entries)
+            if self._track:
+                scanned_entries += 1
+                if scanned_entries > 3:
+                    pytest.fail("output directory enumeration continued past max_output_files + 1")
+            return entry
+
+    monkeypatch.setattr(execute_code_module.os, "scandir", _BoundedScandir)
+
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-count-output"})
+    finally:
+        monkeypatch.setattr(execute_code_module.os, "scandir", original_scandir)
+        _close_execute_code_registry(execute_code)
+
+    assert scanned_entries == 3
+    _assert_bounded_output_error(contents, "output file count limit")
+
+
+async def test_execute_code_tool_reads_only_observed_file_size_with_large_limits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+    original_fdopen = os.fdopen
+    read_sizes: list[int] = []
+
+    class _ReadSizeGuard:
+        def __init__(self, handle: Any) -> None:
+            self._handle = handle
+
+        def __enter__(self) -> _ReadSizeGuard:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self._handle.close()
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            if size > 5:
+                pytest.fail("small output requested a quota-sized read")
+            return cast(bytes, self._handle.read(size))
+
+    monkeypatch.setattr(
+        execute_code_module.os,
+        "fdopen",
+        lambda fd, *args, **kwargs: _ReadSizeGuard(original_fdopen(fd, *args, **kwargs)),
+    )
+    execute_code = HyperlightExecuteCodeTool(
+        workspace_root=tmp_path,
+        max_output_file_bytes=sys.maxsize,
+        max_output_total_bytes=sys.maxsize,
+    )
+
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-memory-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    assert read_sizes == [5]
+    assert [_decode_content_bytes(item) for item in contents if item.type == "data"] == [b"data"]
+
+
+async def test_execute_code_tool_rejects_cumulative_output_overflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+    execute_code = HyperlightExecuteCodeTool(
+        workspace_root=tmp_path,
+        max_output_file_bytes=3,
+        max_output_total_bytes=5,
+    )
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-cumulative-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    _assert_bounded_output_error(contents, "cumulative output limit")
+
+
+async def test_execute_code_tool_accepts_output_at_exact_limits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+    execute_code = HyperlightExecuteCodeTool(
+        workspace_root=tmp_path,
+        max_output_files=2,
+        max_output_file_bytes=3,
+        max_output_total_bytes=5,
+    )
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-exact-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    data_items = [item for item in contents if item.type == "data"]
+    assert [_decode_content_bytes(item) for item in data_items] == [b"abc", b"de"]
+    assert not any(item.type == "error" for item in contents)
+
+
+async def test_execute_code_tool_bounds_file_growth_after_fstat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+    original_fdopen = os.fdopen
+    read_sizes: list[int] = []
+
+    class _GrowingHandle:
+        def __init__(self, handle: Any, file_path: Path) -> None:
+            self._handle = handle
+            self._file_path = file_path
+
+        def __enter__(self) -> _GrowingHandle:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self._handle.close()
+
+        def read(self, size: int = -1) -> bytes:
+            read_sizes.append(size)
+            with self._file_path.open("ab") as growing_file:
+                growing_file.write(b"X")
+            return cast(bytes, self._handle.read(size))
+
+    execute_code = HyperlightExecuteCodeTool(
+        workspace_root=tmp_path,
+        max_output_file_bytes=8,
+        max_output_total_bytes=8,
+    )
+    try:
+        config = execute_code._build_run_config()
+        output_root = Path(cast(Any, execute_code._registry)._get_or_create_entry(config).output_dir.name)
+        monkeypatch.setattr(
+            execute_code_module.os,
+            "fdopen",
+            lambda fd, *args, **kwargs: _GrowingHandle(
+                original_fdopen(fd, *args, **kwargs), output_root / "growing.bin"
+            ),
+        )
+        contents = await execute_code.invoke(arguments={"code": "create-growing-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    assert read_sizes == [5]
+    _assert_bounded_output_error(contents, "grew while it was being read")
+
+
+@pytest.mark.parametrize("stage", ["read_memory", "read_overflow", "content_memory"])
+async def test_execute_code_tool_converts_output_allocation_error_to_content_error(
+    stage: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+
+    if stage != "content_memory":
+        original_fdopen = os.fdopen
+
+        class _MemoryErrorHandle:
+            def __init__(self, handle: Any) -> None:
+                self._handle = handle
+
+            def __enter__(self) -> _MemoryErrorHandle:
+                return self
+
+            def __exit__(self, *args: Any) -> None:
+                self._handle.close()
+
+            def read(self, size: int = -1) -> bytes:
+                del size
+                if stage == "read_memory":
+                    raise MemoryError("simulated allocation failure")
+                raise OverflowError("simulated read size overflow")
+
+        monkeypatch.setattr(
+            execute_code_module.os,
+            "fdopen",
+            lambda fd, *args, **kwargs: _MemoryErrorHandle(original_fdopen(fd, *args, **kwargs)),
+        )
+    else:
+
+        def raise_memory_error(*args: Any, **kwargs: Any) -> Any:
+            del args, kwargs
+            raise MemoryError("simulated allocation failure")
+
+        monkeypatch.setattr(execute_code_module.Content, "from_data", raise_memory_error)
+
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path)
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-memory-output"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    _assert_bounded_output_error(
+        contents,
+        "configured byte limits" if stage != "content_memory" else "enough memory",
+    )
+
+
+@pytest.mark.parametrize(
+    ("option", "value", "error_type"),
+    [
+        ("max_output_files", 0, ValueError),
+        ("max_output_file_bytes", -1, ValueError),
+        ("max_output_total_bytes", True, TypeError),
+        ("max_output_files", 1.5, TypeError),
+        ("max_output_file_bytes", "1024", TypeError),
+    ],
+)
+def test_hyperlight_output_limit_options_require_positive_integers(
+    option: str,
+    value: Any,
+    error_type: type[Exception],
+) -> None:
+    kwargs = {option: value}
+    with pytest.raises(error_type, match=option):
+        HyperlightExecuteCodeTool(**kwargs)
+    with pytest.raises(error_type, match=option):
+        HyperlightCodeActProvider(**kwargs)
 
 
 def test_execute_code_tool_allowed_domains_use_structured_entries_and_replace_by_target() -> None:
@@ -1304,6 +1807,75 @@ async def test_provider_injects_run_scoped_execute_code_tool() -> None:
     assert [tool_obj.name for tool_obj in run_tool.get_tools()] == ["compute"]
 
 
+async def test_provider_forwards_output_limits_to_run_tool_and_serializable_state() -> None:
+    runtime = _FakeRuntime()
+    provider = HyperlightCodeActProvider(
+        max_output_files=7,
+        max_output_file_bytes=11,
+        max_output_total_bytes=13,
+        _registry=runtime,
+    )
+    context = _FakeSessionContext()
+    state: dict[str, Any] = {}
+
+    await provider.before_run(agent=object(), session=None, context=cast(Any, context), state=state)
+    run_tool = context.tools[0][1][0]
+    assert isinstance(run_tool, HyperlightExecuteCodeTool)
+
+    result = await run_tool.invoke(arguments={"code": "None"})
+
+    assert result[0].text == "ok"
+    config = runtime.calls[0][0]
+    assert config.max_output_files == 7
+    assert config.max_output_file_bytes == 11
+    assert config.max_output_total_bytes == 13
+    assert state[provider.source_id]["max_output_files"] == 7
+    assert state[provider.source_id]["max_output_file_bytes"] == 11
+    assert state[provider.source_id]["max_output_total_bytes"] == 13
+    json.dumps(state)
+
+
+async def test_output_limits_are_invocation_scoped_when_registry_is_shared(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+    registry = execute_code_module._SandboxRegistry()
+    restrictive_tool = HyperlightExecuteCodeTool(
+        workspace_root=tmp_path,
+        max_output_file_bytes=3,
+        max_output_total_bytes=10,
+        _registry=registry,
+    )
+    permissive_tool = HyperlightExecuteCodeTool(
+        workspace_root=tmp_path,
+        max_output_file_bytes=4,
+        max_output_total_bytes=10,
+        _registry=registry,
+    )
+
+    try:
+        rejected = await restrictive_tool.invoke(arguments={"code": "create-growing-output"})
+        accepted = await permissive_tool.invoke(arguments={"code": "create-growing-output"})
+    finally:
+        registry.close()
+
+    _assert_bounded_output_error(rejected, "per-file output limit")
+    assert [_decode_content_bytes(item) for item in accepted if item.type == "data"] == [b"data"]
+    assert len(_FakeSandbox.instances) == 1
+
+
+def test_execute_code_tool_uses_finite_default_output_limits() -> None:
+    execute_code = HyperlightExecuteCodeTool(_registry=_FakeRuntime())
+
+    state = execute_code.build_serializable_state()
+
+    assert state["max_output_files"] == 20
+    assert state["max_output_file_bytes"] == 5 * 1024 * 1024
+    assert state["max_output_total_bytes"] == 20 * 1024 * 1024
+
+
 def test_provider_delegates_file_mounts_and_allowed_domains_to_internal_tool(tmp_path: Path) -> None:
     provider = HyperlightCodeActProvider()
 
@@ -1423,6 +1995,30 @@ async def test_provider_run_tool_writes_files_with_real_sandbox(tmp_path: Path) 
         _close_execute_code_registry(run_tool)
 
 
+@pytest.mark.integration
+@skip_if_hyperlight_integration_tests_disabled
+async def test_execute_code_tool_rejects_sparse_file_with_real_sandbox(tmp_path: Path) -> None:
+    _skip_if_hyperlight_integration_runtime_disabled()
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path)
+
+    try:
+        contents = await execute_code.invoke(
+            arguments={
+                "code": (
+                    'with open("/output/sparse.bin", "wb") as output:\n'
+                    "    output.seek((2 << 30) - 1)\n"
+                    '    output.write(b"X")\n'
+                    'print("guest-finished")\n'
+                )
+            }
+        )
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    _assert_bounded_output_error(contents, "per-file output limit")
+
+
+@pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
 @pytest.mark.skipif(sys.platform == "win32", reason="Hyperlight WASM sandbox lacks encodings.idna on Windows")

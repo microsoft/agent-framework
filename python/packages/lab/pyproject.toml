@@ -4,7 +4,7 @@ description = "Experimental modules for Microsoft Agent Framework"
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260730"
+version = "1.0.0b260910"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -57,9 +57,12 @@ math = [
 
 [dependency-groups]
 dev = [
-    "uv==0.12.7",
+    "agent-framework-openai>=1.14.2,<2",
+    "uv==0.12.9",
     "ruff==0.16.5",
     "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
     "mypy==2.3.1",
     "pyright==1.1.411",
     #tasks
@@ -67,12 +70,28 @@ dev = [
     "rich>=13.7.1,<15.0.0",
     "tomli==2.4.1",
     "tomli-w==1.2.0",
-    "prek==0.5.0",
+    "prek==0.5.2",
 ]
 # tau2 is an executable optional feature fetched from source because it is not available on PyPI.
 tau2 = [
     "tau2@ git+https://github.com/sierra-research/tau2-bench@5ba9e3e56db57c5e4114bf7f901291f09b2c5619",
 ]
+
+[tool.uv]
+prerelease = "if-necessary"
+# Security floors for transitive dependencies from agentlightning and Tau2.
+# litellm>=1.100.0 drops the `fastapi.dependencies.utils.get_flat_dependant` import removed in FastAPI 0.141.0.
+constraint-dependencies = ["litellm>=1.100.0", "fastapi-sso>=0.19.0"]
+# python-multipart>=0.0.31 overrides litellm[proxy]'s exact pin of <=0.0.27 for security.
+override-dependencies = ["mcp[ws]>=1.27.0,<2", "uvicorn[standard]>=0.34.0", "python-multipart>=0.0.31"]
+environments = [
+    "sys_platform == 'darwin'",
+    "sys_platform == 'linux'",
+    "sys_platform == 'win32'",
+]
+
+[tool.uv.workspace]
+members = []
 
 [project.scripts]
 gaia_viewer = "agent_framework_lab_gaia:viewer_main"

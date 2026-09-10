@@ -31,7 +31,7 @@ jobs:
           version-file: "python/pyproject.toml"
           enable-cache: true
           cache-suffix: ${{ runner.os }}-${{ env.UV_PYTHON }}
-          cache-dependency-glob: "**/uv.lock"
+          cache-dependency-glob: "python/uv.lock"
       - name: Install dependencies
         run: uv sync --all-packages --dev --docs
       - name: Build the docs

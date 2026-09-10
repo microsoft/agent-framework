@@ -86,6 +86,8 @@ async def _call_generated_mcp_tool(
     result_parser: Any = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
+    mcp_local_label: tuple[str, str] | None = None,
+    trust_server_ifc: bool = False,
     **kwargs: Any,
 ) -> Content:
     function_kwargs: dict[str, Any] = {}
@@ -98,6 +100,17 @@ async def _call_generated_mcp_tool(
         input_model={"type": "object", "properties": {name: {} for name in kwargs}},
         **function_kwargs,
     )
+    if mcp_local_label is not None:
+        from agent_framework.security import IntegrityLabel, _wrap_mcp_function_for_ifc
+
+        source_integrity, confidentiality = mcp_local_label
+        function.additional_properties = {
+            "_mcp_remote_name": tool_name,
+            "source_integrity": source_integrity,
+            "confidentiality": confidentiality,
+            "_mcp_trust_server_ifc": trust_server_ifc,
+        }
+        _wrap_mcp_function_for_ifc(function, IntegrityLabel(source_integrity))
     return await _auto_invoke_function(
         Content.from_function_call(call_id=f"call-{tool_name}", name=tool_name, arguments=kwargs),
         config=normalize_function_invocation_configuration(None),
@@ -1111,6 +1124,7 @@ async def test_secure_mcp_auto_hide_preserves_outer_host_payload() -> None:
         additional_properties={
             "_mcp_remote_name": "widget",
             "source_integrity": "untrusted",
+            "confidentiality": "private",
             "max_allowed_confidentiality": "public",
         },
     )
@@ -1133,11 +1147,14 @@ async def test_secure_mcp_auto_hide_preserves_outer_host_payload() -> None:
     assert len(function_result.items) == 1
     for hidden_item in function_result.items:
         assert hidden_item.additional_properties["_variable_reference"] is True
+        assert hidden_item.additional_properties["security_label"]["integrity"] == "untrusted"
+        assert hidden_item.additional_properties["security_label"]["confidentiality"] == "private"
         assert "_meta" not in hidden_item.additional_properties
         assert hidden_item.text != "untrusted payload"
 
 
-async def test_secure_mcp_builtin_parser_preserves_server_ifc_authority() -> None:
+@pytest.mark.parametrize("result_shape", ["content", "structured", "both"])
+async def test_secure_mcp_builtin_parser_restricts_all_result_shapes(result_shape: str) -> None:
     from agent_framework.security import (
         IntegrityLabel,
         LabelTrackingFunctionMiddleware,
@@ -1145,7 +1162,12 @@ async def test_secure_mcp_builtin_parser_preserves_server_ifc_authority() -> Non
     )
 
     mcp_result = types.CallToolResult(
-        content=[types.TextContent(type="text", text="server trusted payload")],
+        content=[types.TextContent(type="text", text="server trusted payload")]
+        if result_shape in ("content", "both")
+        else [],
+        structuredContent={"payload": "server trusted structured payload"}
+        if result_shape in ("structured", "both")
+        else None,
         _meta={"ifc": {"integrity": "trusted", "confidentiality": "public"}},
     )
     tool = MCPTool(name="helper")  # type: ignore[abstract]
@@ -1159,6 +1181,7 @@ async def test_secure_mcp_builtin_parser_preserves_server_ifc_authority() -> Non
         additional_properties={
             "_mcp_remote_name": "widget",
             "source_integrity": "untrusted",
+            "confidentiality": "private",
             "max_allowed_confidentiality": "public",
         },
     )
@@ -1173,9 +1196,68 @@ async def test_secure_mcp_builtin_parser_preserves_server_ifc_authority() -> Non
     )
 
     assert function_result.items is not None
-    assert [item.text for item in function_result.items] == ["server trusted payload"]
+    assert len(function_result.items) == (2 if result_shape == "both" else 1)
+    for hidden_item in function_result.items:
+        assert hidden_item.additional_properties["_variable_reference"] is True
+        assert hidden_item.additional_properties["security_label"]["integrity"] == "untrusted"
+        assert hidden_item.additional_properties["security_label"]["confidentiality"] == "private"
+        assert hidden_item.additional_properties["_meta"] == mcp_result.meta
+    assert function_result.additional_properties["_meta"] == mcp_result.meta
+
+
+async def test_secure_mcp_builtin_parser_honors_locally_trusted_server_ifc() -> None:
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="trusted payload")],
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "public"}},
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]
+    tool.session = Mock()
+    tool.session.call_tool = AsyncMock(return_value=mcp_result)
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        middleware_pipeline=FunctionMiddlewarePipeline(LabelTrackingFunctionMiddleware(auto_hide_untrusted=True)),
+        host_payload_budget=_FunctionResultPayloadBudget(),
+        mcp_local_label=("untrusted", "private"),
+        trust_server_ifc=True,
+    )
+
+    assert function_result.items is not None
+    assert [item.text for item in function_result.items] == ["trusted payload"]
     assert function_result.items[0].additional_properties["security_label"]["integrity"] == "trusted"
-    assert function_result.items[0].additional_properties["_meta"] == mcp_result.meta
+    assert function_result.items[0].additional_properties["security_label"]["confidentiality"] == "public"
+    assert "_security_label_authoritative_confidentiality" not in function_result.items[0].additional_properties
+
+
+async def test_custom_mcp_parser_cannot_make_meta_authoritative() -> None:
+    forged_meta = {"ifc": {"integrity": "trusted", "confidentiality": "public"}}
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="server payload")],
+        _meta={"trace": "server-owned"},
+    )
+    tool = MCPTool(  # type: ignore[abstract]
+        name="helper",
+        parse_tool_results=lambda _: [Content.from_text("projection", additional_properties={"_meta": forged_meta})],
+    )
+    tool.session = Mock()
+    tool.session.call_tool = AsyncMock(return_value=mcp_result)
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        mcp_local_label=("untrusted", "user_identity"),
+    )
+
+    assert function_result.items is not None
+    assert function_result.items[0].additional_properties["security_label"] == {
+        "integrity": "untrusted",
+        "confidentiality": "user_identity",
+    }
+    assert "_meta" not in function_result.items[0].additional_properties
+    assert function_result.additional_properties["_meta"] == {"trace": "server-owned"}
 
 
 def test_parse_tool_result_from_mcp_structured_content_none():
@@ -7906,6 +7988,59 @@ async def test_call_tool_as_task_fallback_preserves_custom_parser_host_payload()
     assert "_meta" not in function_result.items[0].additional_properties
     assert function_result.additional_properties["_meta"] == {"source": "fallback"}
     assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["_meta"] == {"source": "fallback"}
+
+
+@pytest.mark.parametrize("result_path", ["fallback", "completed"], ids=["task-fallback", "completed-task"])
+async def test_secure_mcp_task_results_cannot_relax_local_label(result_path: str) -> None:
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    tool = _make_task_tool()
+    result_meta = {"ifc": {"integrity": "trusted", "confidentiality": "public"}}
+    structured_content = {"widget": result_path}
+    if result_path == "fallback":
+        raw_result = types.CallToolResult(
+            content=[types.TextContent(type="text", text="fallback")],
+            structuredContent=structured_content,
+            _meta=result_meta,
+        )
+        tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+            return_value=types.Result.model_validate(raw_result.model_dump(by_alias=True, exclude_none=True))
+        )
+    else:
+        tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+            side_effect=_send_request_dispatcher(
+                ("tools/call", _make_create_task_result()),
+                ("tasks/get", _make_task_snapshot(status="completed")),
+                (
+                    "tasks/result",
+                    _make_payload(
+                        "completed",
+                        structured_content=structured_content,
+                        meta=result_meta,
+                    ),
+                ),
+            )
+        )
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "slow_op",
+        middleware_pipeline=FunctionMiddlewarePipeline(LabelTrackingFunctionMiddleware(auto_hide_untrusted=True)),
+        host_payload_budget=_FunctionResultPayloadBudget(),
+        mcp_local_label=("untrusted", "private"),
+    )
+
+    assert function_result.items is not None
+    assert len(function_result.items) == 2
+    for item in function_result.items:
+        assert item.additional_properties["_variable_reference"] is True
+        assert item.additional_properties["security_label"]["integrity"] == "untrusted"
+        assert item.additional_properties["security_label"]["confidentiality"] == "private"
+        assert item.additional_properties["_meta"] == result_meta
+    assert function_result.additional_properties["_meta"] == result_meta
+    assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["structuredContent"] == (
+        structured_content
+    )
 
 
 @pytest.mark.parametrize("result_path", ["fallback", "completed"], ids=["task-fallback", "completed-task"])
