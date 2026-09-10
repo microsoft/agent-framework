@@ -263,6 +263,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
         super().__init__(id=id, name=name, description=description, **kwargs)
         self._http_client: httpx.AsyncClient | None = http_client
+        # By default, leave a caller-supplied HTTP client open; specific paths may override this below.
         # every construction path must set this before __aexit__ can run
         self._close_http_client = False
         self._timeout_config = self._create_timeout_config(timeout)
