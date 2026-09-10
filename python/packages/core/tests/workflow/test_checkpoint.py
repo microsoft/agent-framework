@@ -1301,6 +1301,17 @@ async def test_file_checkpoint_storage_load_invalid_json_raises():
             await storage.load(bad_id)
 
 
+async def test_file_checkpoint_storage_load_invalid_utf8_raises():
+    """Issue #8181: load wraps UnicodeDecodeError as WorkflowCheckpointException."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        bad_id = "bad-utf8-checkpoint"
+        bad_file = Path(temp_dir) / f"{bad_id}.json"
+        bad_file.write_bytes(b'{"x": "\xff\xfe"}')
+        with pytest.raises(WorkflowCheckpointException, match="not valid JSON"):
+            await storage.load(bad_id)
+
+
 async def test_file_checkpoint_storage_list_ids_matches_list_decode_filter():
     """Issue #8181: list_checkpoint_ids skips undecodable files like list_checkpoints."""
     from tests.workflow.test_checkpoint_unrestricted_pickle import _AllowedTestState
