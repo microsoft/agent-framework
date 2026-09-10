@@ -53,7 +53,7 @@ async def _run_server() -> None:
     server: Server[Any, Any] = Server("mcp-long-running-task-demo")
     # Auto-registers handlers for tasks/get, tasks/result, tasks/cancel, tasks/list
     # backed by an in-memory store.
-    server.experimental.enable_tasks()
+    server.experimental.enable_tasks()  # ty: ignore[deprecated]
 
     @server.list_tools()
     async def _list_tools() -> list[types.Tool]:  # pyright: ignore[reportUnusedFunction]
