@@ -43,13 +43,15 @@ internal static class IWorkflowContextExtensions
         PropertyPath variablePath,
         TValue? value,
         SensitivityLevel sensitivity,
-        CancellationToken cancellationToken = default) =>
-        DeclarativeContext(context).QueueStateUpdateAsync(
-            Throw.IfNull(variablePath.VariableName),
-            value,
-            Throw.IfNull(variablePath.NamespaceAlias),
-            sensitivity,
-            cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        string variableName = Throw.IfNull(variablePath.VariableName);
+        string namespaceAlias = Throw.IfNull(variablePath.NamespaceAlias);
+
+        return context is DeclarativeWorkflowContext declarativeContext
+            ? declarativeContext.QueueStateUpdateAsync(variableName, value, namespaceAlias, sensitivity, cancellationToken)
+            : context.QueueStateUpdateAsync(variableName, value, namespaceAlias, cancellationToken);
+    }
 
     public static async ValueTask QueueEnvironmentUpdateAsync<TValue>(this IWorkflowContext context, string key, TValue? value, CancellationToken cancellationToken = default)
     {
