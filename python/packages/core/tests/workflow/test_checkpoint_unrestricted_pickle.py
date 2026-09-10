@@ -11,6 +11,7 @@ unpickler by default:
 - Built-in safe types and framework types are always allowed
 """
 
+import asyncio
 import base64
 import enum
 import os
@@ -301,7 +302,7 @@ async def test_file_storage_rejects_unlisted_user_type_at_save():
         )
         with pytest.raises(WorkflowCheckpointException, match="deserialization blocked|Unable to save|cannot be restored|cannot be encoded"):
             await storage.save(checkpoint)
-        assert list(Path(tmpdir).glob("*.json")) == []
+        assert not await asyncio.to_thread(lambda: list(Path(tmpdir).glob("*.json")))
 
 
 async def test_file_storage_allows_listed_user_type():
