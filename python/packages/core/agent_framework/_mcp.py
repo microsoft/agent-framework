@@ -1699,6 +1699,11 @@ class MCPTool:
         error path holding only a bare cancellation can still describe it.
         """
         cleanup_error = await self._safe_close_exit_stack()
+        # Every abandoned connection attempt lands here, so a rejected handshake cannot
+        # leave one run's credentials visible to a later unseeded reconnect. Deliberately
+        # not in _safe_close_exit_stack: connect(reset=True) closes through that path and
+        # must keep its kwargs to re-authenticate the new connection.
+        self._release_connection_kwargs()
         return _should_propagate_cancelled_error(ex), cleanup_error
 
     def _reset_session_state(self) -> None:
@@ -1892,6 +1897,10 @@ class MCPTool:
 
     def _seed_connection_kwargs(self, kwargs: Mapping[str, Any]) -> None:
         """Offer run-scoped kwargs to connection-lifetime header resolution."""
+        return
+
+    def _release_connection_kwargs(self) -> None:
+        """Drop any run-scoped kwargs held for connection-lifetime header resolution."""
         return
 
     async def _sampling_request_approved(self, params: types.CreateMessageRequestParams) -> bool:
@@ -3553,6 +3562,18 @@ class MCPStreamableHTTPTool(MCPTool):
                 of HTTP headers to inject into every outbound request to the MCP server.
                 Use this to forward per-request context (e.g. authentication tokens set in
                 agent middleware) without creating a separate ``httpx.AsyncClient``.
+                Only tool calls carry a run's kwargs. Connection-lifetime requests - the
+                ``initialize`` handshake, tool and prompt discovery, and background pings -
+                belong to no call, so they reuse the kwargs of the run that established the
+                connection until the tool is closed; a later run's kwargs do not reach them.
+                A tool connected outside any run (eagerly via ``async with``, or standalone)
+                has no kwargs to reuse and the provider is called with an empty mapping, in
+                which case a ``KeyError`` from the provider is tolerated and the request is
+                sent without headers. Once a run has supplied kwargs, a ``KeyError`` is
+                raised instead, since a key missing there is a misconfiguration rather than
+                an unavoidable gap. A credential that must authenticate the handshake should
+                therefore come from somewhere the provider can read without a run - a closure
+                or a ``ContextVar`` - rather than from run kwargs alone.
                 The framework attaches these headers only to requests whose origin (scheme,
                 host, port) matches the configured ``url``, so they are not leaked to other
                 origins on cross-origin redirects; headers injected this way are also removed
@@ -3630,7 +3651,9 @@ class MCPStreamableHTTPTool(MCPTool):
         # when a header_provider is set: parallel invocations on the same instance would
         # otherwise overwrite each other's snapshot and attach the wrong per-call headers.
         self._active_call_headers: dict[str, str] | None = None
-        self._connection_kwargs: dict[str, Any] = {}
+        # None means no run seeded this connection, which an empty mapping cannot express:
+        # a run that supplies no kwargs still expects a missing provider key to be an error.
+        self._connection_kwargs: dict[str, Any] | None = None
         self._call_headers_lock = asyncio.Lock()
         self._header_request_owner = object()
         self._header_hook_client: AsyncClient | None = None
@@ -3701,13 +3724,13 @@ class MCPStreamableHTTPTool(MCPTool):
                         if self._header_provider is None:
                             raise RuntimeError("Header injection hook invoked without a header_provider.")
                         try:
-                            headers = self._header_provider(self._connection_kwargs)
+                            headers = self._header_provider(self._connection_kwargs or {})
                         except KeyError:
-                            # Unavoidable only when nothing was seeded: the provider wants per-call
-                            # values a connection-lifetime request cannot have. A key missing from
-                            # seeded kwargs is a misconfiguration, and silently dropping it would
-                            # send the handshake unauthenticated.
-                            if self._connection_kwargs:
+                            # Unavoidable only when no run seeded this connection: the provider
+                            # wants per-call values a connection-lifetime request cannot have. Once
+                            # a run has seeded kwargs a missing key is a misconfiguration, and
+                            # silently dropping it would send the handshake unauthenticated.
+                            if self._connection_kwargs is not None:
                                 raise
                             logger.debug(
                                 "header_provider raised KeyError for MCP server %r on an ambient "
@@ -3767,13 +3790,16 @@ class MCPStreamableHTTPTool(MCPTool):
         try:
             await super()._close_on_owner()
         finally:
-            self._connection_kwargs = {}
+            self._release_connection_kwargs()
             self._remove_header_hook()
 
     def _seed_connection_kwargs(self, kwargs: Mapping[str, Any]) -> None:
         if self._header_provider is None or self.is_connected:
             return
         self._connection_kwargs = dict(kwargs)
+
+    def _release_connection_kwargs(self) -> None:
+        self._connection_kwargs = None
 
     async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call a tool, injecting headers from the header_provider if configured.

@@ -790,7 +790,7 @@ async def test_connection_kwargs_are_fixed_for_the_connection_and_cleared_on_clo
         ]
         assert [request.headers.get("Authorization") for request in initializes] == ["token-a"]
         assert [request.headers.get("Authorization") for request in _calls(requests)] == ["token-c"]
-        assert tool._connection_kwargs == {}
+        assert tool._connection_kwargs is None
         # The credential was released on close, so an unseeded reconnect is rejected.
         with pytest.raises(ToolException):
             await tool.connect()
@@ -849,5 +849,49 @@ async def test_seeded_kwargs_missing_the_providers_key_fails_the_handshake(
         with pytest.raises(ToolException) as error:
             await tool.connect()
         assert "'credential'" in str(error.value)
+    finally:
+        await tool.close()
+
+
+async def test_run_supplying_no_kwargs_still_fails_a_kwargs_dependent_provider(
+    mcp_http_server: MCPHTTPServer,
+) -> None:
+    """Seeding an empty mapping is still seeding, so the provider's missing key must not be tolerated.
+
+    An empty mapping cannot distinguish a run that supplied no kwargs from a connection no run
+    ever seeded; only the latter has no way to carry the key and may proceed unauthenticated.
+    """
+    client, _, _ = mcp_http_server
+    tool = _kwargs_dependent_tool(client)
+    tool._seed_connection_kwargs({})
+    try:
+        with pytest.raises(ToolException) as error:
+            await tool.connect()
+        assert "'credential'" in str(error.value)
+    finally:
+        await tool.close()
+
+
+async def test_failed_connect_releases_the_seeded_credential(mcp_http_server: MCPHTTPServer) -> None:
+    """An abandoned connection attempt must not leave its credential for a later unseeded connect.
+
+    A rejected handshake unwinds without going through close(), so the release has to happen on
+    the failure path too; otherwise a standalone reconnect re-sends the failed run's credential.
+    """
+    client, requests, _ = mcp_http_server
+    tool = _kwargs_dependent_tool(client)
+    tool._seed_connection_kwargs({"credential": "token-rejected"})
+    try:
+        with pytest.raises(ToolException):
+            await tool.connect()
+        assert tool._connection_kwargs is None
+        with pytest.raises(ToolException):
+            await tool.connect()
+        initializes = [
+            request
+            for request in requests
+            if request.method == "POST" and json.loads(request.content).get("method") == "initialize"
+        ]
+        assert [request.headers.get("Authorization") for request in initializes] == ["token-rejected", None]
     finally:
         await tool.close()
