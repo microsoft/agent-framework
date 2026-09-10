@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from datetime import timedelta
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
@@ -4615,7 +4615,10 @@ class TestPerItemEmbeddedLabels:
         assert middleware.get_context_label().integrity == IntegrityLabel.TRUSTED
         assert middleware.get_context_label().confidentiality == ConfidentialityLabel.USER_IDENTITY
 
-    async def test_hidden_user_identity_result_unions_principals_at_same_rank(self, middleware, mock_function) -> None:
+    async def test_hidden_user_identity_result_unions_principals_at_same_rank(
+        self, middleware, mock_function, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG, logger="agent_framework.security")
         middleware._context_label = ContentLabel(
             confidentiality=ConfidentialityLabel.USER_IDENTITY,
             metadata=_principal_metadata("user-a"),
@@ -4637,6 +4640,10 @@ class TestPerItemEmbeddedLabels:
             {"tenant_id": "tenant-a", "user_id": "user-a"},
             {"tenant_id": "tenant-a", "user_id": "user-b"},
         ]
+
+        assert "user-a" not in caplog.text
+        assert "user-b" not in caplog.text
+        caplog.clear()
 
         destination = _identity_destination(_principal_metadata("user-a")[_PRINCIPALS_KEY])
         policy_context = FunctionInvocationContext(function=destination, arguments={})
@@ -5463,6 +5470,24 @@ class TestCheckConfidentialityAllowed:
                 ui_label,
                 ConfidentialityLabel.USER_IDENTITY,
                 authorized_principals=_principal_metadata("user-a")[_PRINCIPALS_KEY],
+            )
+            is True
+        )
+
+    def test_user_identity_accepts_sequence_and_mapping_implementations(self) -> None:
+        from agent_framework.security import check_confidentiality_allowed
+
+        principal = MappingProxyType({"tenant_id": "tenant-a", "user_id": "user-a"})
+        ui_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata={_PRINCIPALS_KEY: (principal,)},
+        )
+
+        assert (
+            check_confidentiality_allowed(
+                ui_label,
+                ConfidentialityLabel.USER_IDENTITY,
+                authorized_principals=(principal,),
             )
             is True
         )

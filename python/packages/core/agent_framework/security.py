@@ -100,14 +100,14 @@ def _get_additional_properties(obj: Any) -> dict[str, Any]:
 
 def _canonical_principals(value: Any, *, source: str) -> tuple[tuple[str, str], ...]:
     """Validate and canonicalize a principal-set declaration."""
-    if not isinstance(value, list) or not value:
-        raise ValueError(f"{source} principals must be a non-empty list")
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)) or not value:
+        raise ValueError(f"{source} principals must be a non-empty sequence")
 
     principals: set[tuple[str, str]] = set()
-    for item in cast(list[Any], value):
-        if not isinstance(item, dict):
+    for item in cast(Sequence[Any], value):
+        if not isinstance(item, Mapping):
             raise ValueError(f"{source} principals must contain mappings")
-        principal = cast(dict[str, Any], item)
+        principal = cast(Mapping[str, Any], item)
         if set(principal) != {"tenant_id", "user_id"}:
             raise ValueError(f"{source} principal fields must be tenant_id and user_id")
         tenant_id = principal.get("tenant_id")
@@ -1861,11 +1861,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                     old_conf.value,
                     result_label.confidentiality.value,
                 )
-                logger.debug(
-                    "Hidden result security metadata merged for '%s': %s",
-                    function_name,
-                    result_label.metadata,
-                )
+                logger.debug("Hidden result security metadata merged for '%s'", function_name)
             else:
                 logger.info(
                     f"Result from '{function_name}' fully hidden - context label "
