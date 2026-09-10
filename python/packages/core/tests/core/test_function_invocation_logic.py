@@ -2965,6 +2965,121 @@ async def test_mixed_batch_unknown_call_fails_closed_before_approval(
     assert safe_calls == 0
 
 
+async def test_removed_tool_approval_response_does_not_trigger_unknown_termination():
+    """An approval response for a removed tool is inert even when new unknown calls are fatal."""
+    from agent_framework._tools import _try_execute_function_call_groups
+
+    function_call = Content.from_function_call(
+        call_id="removed-call",
+        name="removed_function",
+        arguments={},
+    )
+    approval_request = Content.from_function_approval_request(
+        id="removed-request",
+        function_call=function_call,
+    )
+    approval_response = approval_request.to_function_approval_response(approved=True)
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[approval_response],
+        tools=[],
+        config={"terminate_on_unknown_calls": True},
+    )
+
+    assert should_terminate is False
+    assert result_groups == [[approval_response]]
+
+
+async def test_legacy_declaration_only_approval_response_is_reclassified_before_execution():
+    """An old approval wrapper cannot make a declaration-only call executable after an upgrade."""
+    from agent_framework import FunctionTool
+    from agent_framework._middleware import FunctionMiddlewarePipeline
+    from agent_framework._tools import _try_execute_function_call_groups
+
+    middleware_calls = 0
+
+    class RejectUnexpectedInvocationMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Any) -> None:
+            nonlocal middleware_calls
+            middleware_calls += 1
+            pytest.fail("declaration-only calls must not enter local function middleware")
+
+    declaration_func = FunctionTool(
+        name="declaration_func",
+        func=None,
+        description="A declaration-only function for testing",
+        input_model={"type": "object", "properties": {"arg1": {"type": "string"}}, "required": ["arg1"]},
+    )
+    function_call = Content.from_function_call(
+        call_id="legacy-declaration",
+        name="declaration_func",
+        arguments={"arg1": "value"},
+    )
+    legacy_request = Content.from_function_approval_request(
+        id="legacy-request",
+        function_call=function_call,
+    )
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[legacy_request.to_function_approval_response(approved=True)],
+        tools=[declaration_func],
+        config={},
+        middleware_pipeline=FunctionMiddlewarePipeline(RejectUnexpectedInvocationMiddleware()),
+    )
+
+    assert should_terminate is False
+    assert len(result_groups) == 1
+    assert len(result_groups[0]) == 1
+    result = result_groups[0][0]
+    assert result.type == "function_call"
+    assert result.call_id == "legacy-declaration"
+    assert result.user_input_request is True
+    assert middleware_calls == 0
+    assert function_call.user_input_request is None
+
+
+async def test_legacy_additional_tool_approval_response_is_reclassified_before_execution():
+    """An old approval wrapper cannot hide an additional-tool user-input pause after an upgrade."""
+    from agent_framework._tools import _execute_function_calls
+
+    additional_tool_calls = 0
+
+    @tool(name="additional_func")
+    def additional_func(arg1: str) -> str:
+        nonlocal additional_tool_calls
+        additional_tool_calls += 1
+        return arg1
+
+    function_call = Content.from_function_call(
+        call_id="legacy-additional",
+        name="additional_func",
+        arguments={"arg1": "value"},
+    )
+    legacy_request = Content.from_function_approval_request(
+        id="legacy-additional-request",
+        function_call=function_call,
+    )
+
+    execution = await _execute_function_calls(
+        custom_args={},
+        function_calls=[legacy_request.to_function_approval_response(approved=True)],
+        options=None,
+        config={"additional_tools": [additional_func]},
+    )
+
+    assert execution.should_terminate is False
+    assert len(execution.result_groups) == 1
+    assert len(execution.result_groups[0]) == 1
+    result = execution.result_groups[0][0]
+    assert result.type == "function_call"
+    assert result.call_id == "legacy-additional"
+    assert result.user_input_request is True
+    assert additional_tool_calls == 0
+    assert function_call.user_input_request is None
+
+
 async def test_mixed_batch_declaration_only_not_executed_after_approval_resume(
     chat_client_base: SupportsChatGetResponse,
 ):

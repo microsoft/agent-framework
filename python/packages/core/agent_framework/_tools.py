@@ -1697,6 +1697,17 @@ async def _execute_single_function_call(
     from ._sessions import _suspend_run_persistence_gate  # pyright: ignore[reportPrivateUsage]
     from ._types import Content
 
+    # Older persisted batches can contain an approval wrapper around a
+    # declaration-only call. Reclassify it before the execution boundary so
+    # host-owned calls never enter local middleware or a tool implementation.
+    source_function_call = _underlying_function_call(function_call)
+    source_tool = tool_map.get(source_function_call.name) if source_function_call.name is not None else None
+    additional_tool_names = {tool.name for tool in config.get("additional_tools") or []}
+    if (source_tool is not None and source_tool.declaration_only) or source_function_call.name in additional_tool_names:
+        declaration_only_call = copy.copy(source_function_call)
+        _mark_user_input_pause(declaration_only_call)
+        return [declaration_only_call], False
+
     try:
         # A run-persistence gate defers only the gated run's own persistence; nested
         # agent runs persist inline at their own boundaries. Run-identity ownership
@@ -1819,7 +1830,12 @@ async def _try_execute_function_call_groups(
         ):
             has_declaration_only_call = True
             continue
-        if not unknown_call_found and config.get("terminate_on_unknown_calls", False) and function_name not in tool_map:
+        if (
+            _is_actionable_function_call(function_call)
+            and not unknown_call_found
+            and config.get("terminate_on_unknown_calls", False)
+            and function_name not in tool_map
+        ):
             unknown_call_found = True
             unknown_call_name = function_name
     # Fail-closed precedence: an unknown call in a batch configured to terminate aborts the whole batch
@@ -1954,7 +1970,7 @@ async def _execute_function_calls(
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
 ) -> _FunctionExecutionBatch:
     tools = _extract_tools(options)
-    if not tools:
+    if not tools and not config.get("additional_tools"):
         return _FunctionExecutionBatch(result_groups=[])
     result_groups, should_terminate = await _try_execute_function_call_groups(
         custom_args=custom_args,
