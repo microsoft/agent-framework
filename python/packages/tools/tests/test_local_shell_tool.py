@@ -261,6 +261,15 @@ async def test_persistent_powershell_does_not_inherit_previous_exit_code() -> No
         assert succeeding.exit_code == 0, f"inherited stale rc {succeeding.exit_code} from the previous command"
         assert "ok" in succeeding.stdout
 
+        # The fix must not cost the session state persistent mode exists for:
+        # the user's own command can still read the previous native exit code,
+        # while the command reporting it exits 0 itself.
+        readback = await tool.run("Write-Output $LASTEXITCODE")
+        assert readback.exit_code == 0
+        assert readback.stdout.strip() == "3", (
+            f"$LASTEXITCODE no longer visible to the user's command: {readback.stdout!r}"
+        )
+
 
 @pytest.mark.skipif(sys.platform != "win32", reason="PowerShell-specific encoding")
 async def test_persistent_powershell_utf8_roundtrip() -> None:
