@@ -79,9 +79,11 @@ jobs:
           git checkout $prBranch
           git merge origin/$branch -m "Merge $branch into promote-shipped-apis branch"
 
-      - name: Run public API promotion script
-        shell: pwsh
-        run: ./dotnet/eng/scripts/promote-shipped-apis.ps1
+      - name: Promote public API exports
+        id: promote
+        uses: BinkyLabs/public-api-promote@d7be9ed86949de71a7442227fd02ca0c6fc11a57 # v1.0.1
+        with:
+          unshipped-glob: 'src/**/*.Unshipped.txt'
 
       - name: Check for changes
         id: check_changes
