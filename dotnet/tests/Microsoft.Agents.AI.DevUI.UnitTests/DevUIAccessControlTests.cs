@@ -12,6 +12,8 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 
+[assembly: Xunit.v3.Parallelization(Mode = Xunit.Sdk.ParallelMode.None)]
+
 namespace Microsoft.Agents.AI.DevUI.UnitTests;
 
 public class DevUIAccessControlTests
