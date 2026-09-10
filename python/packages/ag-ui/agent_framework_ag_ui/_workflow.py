@@ -61,6 +61,61 @@ _REQUEST_OWNER_ATTRIBUTE = "_ag_ui_request_owner"
 _CHECKPOINT_REQUEST_OWNER_KEY = "ag_ui_workflow_request_owner"
 
 
+def _snapshot_messages_from_resume_value(value: Any) -> list[dict[str, Any]]:
+    """Convert a resolved workflow resume value into snapshot chat messages when user-visible.
+
+    Approval / structured tool payloads are skipped. Conversational HITL replies
+    (message lists or plain text) become replayable ``role: user`` turns for hydrate.
+    """
+    if isinstance(value, bool) or value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [{"role": "user", "content": text}] if text else []
+    if isinstance(value, dict):
+        # Function-approval style payloads are not chat turns.
+        if any(key in value for key in ("approved", "accepted", "functionCall", "function_call")):
+            return []
+        if value.get("role") in {"user", "assistant", "system", "tool"}:
+            return agui_messages_to_snapshot_format([_resume_message_to_agui_dict(value)])
+        return []
+    if isinstance(value, list):
+        message_like = [
+            _resume_message_to_agui_dict(item)
+            for item in value
+            if isinstance(item, dict) and item.get("role")
+        ]
+        if message_like:
+            return agui_messages_to_snapshot_format(message_like)
+    return []
+
+
+def _resume_message_to_agui_dict(message: dict[str, Any]) -> dict[str, Any]:
+    """Normalize resume message shapes (``contents`` or ``content``) for snapshot encoding."""
+    normalized = dict(message)
+    if normalized.get("content") not in (None, ""):
+        return normalized
+    contents = normalized.get("contents")
+    if isinstance(contents, list):
+        texts: list[str] = []
+        for part in contents:
+            if isinstance(part, dict) and part.get("type") in {"text", "input_text"}:
+                texts.append(str(part.get("text") or ""))
+        if texts:
+            normalized["content"] = "".join(texts)
+    return normalized
+
+
+def _snapshot_messages_from_workflow_resume(resume_payload: Any) -> list[dict[str, Any]]:
+    """Collect user-visible snapshot messages from a workflow resume payload."""
+    messages: list[dict[str, Any]] = []
+    for interrupt in _normalize_resume_interrupts(resume_payload):
+        if interrupt.get("status") not in {None, "resolved"}:
+            continue
+        messages.extend(_snapshot_messages_from_resume_value(interrupt.get("value")))
+    return messages
+
+
 def _checkpoint_id_from_input(input_data: dict[str, Any]) -> str | None:
     """Read an optional checkpoint id to resume from out of the AG-UI forwarded props."""
     forwarded_props = input_data.get("forwarded_props") or input_data.get("forwardedProps")
@@ -472,6 +527,12 @@ class AgentFrameworkWorkflow:
             # checkpoint-only resume carries no new messages at all; in both cases seed
             # the builder with stored history to avoid persisting a truncated thread.
             builder_seed_messages = snapshot_session.resume_seeded_messages(builder_seed_messages)
+        if resume_payload is not None and snapshot_session.enabled:
+            # Conversational HITL resumes put the user reply in interrupt.value with
+            # messages:[]; fold that text into the snapshot so hydrate keeps it (#8160).
+            hitl_messages = _snapshot_messages_from_workflow_resume(resume_payload)
+            if hitl_messages:
+                builder_seed_messages = [*builder_seed_messages, *hitl_messages]
         snapshot_builder = _WorkflowSnapshotBuilder(builder_seed_messages) if snapshot_session.enabled else None
         if snapshot_builder is not None and effective_state:
             # Seed builder state so a run that emits no StateSnapshotEvent still
