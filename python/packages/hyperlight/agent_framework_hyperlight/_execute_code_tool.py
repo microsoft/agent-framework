@@ -238,21 +238,24 @@ class _SandboxWorker:
             snapshot = self._snapshot
             sandbox.restore(snapshot)
             _clear_directory(output_dir)
-            result = sandbox.run(code=code)
             try:
-                return build_contents(
-                    result=result,
-                    output_dir=output_dir,
-                    code=code,
-                    max_output_files=max_output_files,
-                    max_output_file_bytes=max_output_file_bytes,
-                    max_output_total_bytes=max_output_total_bytes,
-                )
+                result = sandbox.run(code=code)
+                try:
+                    return build_contents(
+                        result=result,
+                        output_dir=output_dir,
+                        code=code,
+                        max_output_files=max_output_files,
+                        max_output_file_bytes=max_output_file_bytes,
+                        max_output_total_bytes=max_output_total_bytes,
+                    )
+                finally:
+                    # ``result`` may carry a back-reference to the sandbox. Force its
+                    # final dec_ref on this thread so Drop runs here, not on whatever
+                    # thread later GCs the ``Content`` list.
+                    del result
             finally:
-                # ``result`` may carry a back-reference to the sandbox. Force its
-                # final dec_ref on this thread so Drop runs here, not on whatever
-                # thread later GCs the ``Content`` list.
-                del result
+                _clear_directory(output_dir)
 
         return self._run_on_worker(_on_worker)
 

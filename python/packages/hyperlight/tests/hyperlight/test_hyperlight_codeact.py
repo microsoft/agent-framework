@@ -1240,6 +1240,28 @@ async def test_execute_code_tool_rejects_sparse_output_without_unbounded_read(
     _assert_bounded_output_error(contents, "per-file output limit")
 
 
+async def test_execute_code_tool_clears_output_after_rejection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+    execute_code = HyperlightExecuteCodeTool(
+        workspace_root=tmp_path,
+        max_output_file_bytes=3,
+    )
+    config = execute_code._build_run_config()
+    output_root = Path(cast(Any, execute_code._registry)._get_or_create_entry(config).output_dir.name)
+
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-memory-output"})
+
+        _assert_bounded_output_error(contents, "per-file output limit")
+        remaining_outputs = await asyncio.to_thread(lambda: list(output_root.iterdir()))
+        assert remaining_outputs == []
+    finally:
+        _close_execute_code_registry(execute_code)
+
+
 async def test_execute_code_tool_checks_output_count_before_reading(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1295,7 +1317,7 @@ async def test_execute_code_tool_streams_directory_enumeration_to_count_limit(
     class _BoundedScandir:
         def __init__(self, path: str | os.PathLike[str]) -> None:
             self._entries = original_scandir(path)
-            self._track = Path(path) == output_root
+            self._track = Path(path) == output_root and scanned_entries == 0
 
         def __enter__(self) -> _BoundedScandir:
             self._entries.__enter__()
