@@ -1766,9 +1766,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         additional_props = _get_additional_properties(item)
         authoritative_marker = additional_props.pop(_AUTHORITATIVE_CONFIDENTIALITY, None)
         inspect_error_marker = additional_props.pop(_INSPECT_VARIABLE_ERROR, None)
-        authoritative_confidentiality = (
-            function_name == "quarantined_llm" and authoritative_marker is _INTERNAL_RESULT_MARKER
-        )
+        authoritative_confidentiality = authoritative_marker is _INTERNAL_RESULT_MARKER
         inspect_error = function_name == "inspect_variable" and inspect_error_marker is _INTERNAL_RESULT_MARKER
 
         label_data = additional_props.get("security_label")
@@ -3634,6 +3632,10 @@ def get_security_tools() -> list[FunctionTool]:
 # MCP Auto-Labeling
 # =============================================================================
 
+# Written only from local application configuration. MCP result metadata is
+# attached to Content instances and cannot mutate FunctionTool properties.
+_MCP_TRUST_SERVER_IFC_KEY = "_mcp_trust_server_ifc"
+
 
 def _map_mcp_annotations_to_labels(
     annotations: Any | None,
@@ -3676,6 +3678,7 @@ async def apply_mcp_security_labels(
     default_integrity: IntegrityLabel = IntegrityLabel.UNTRUSTED,
     annotation_overrides: dict[str, tuple[IntegrityLabel, ConfidentialityLabel | None]] | None = None,
     mark_write_tools_as_sinks: bool = True,
+    trust_server_ifc: bool = False,
 ) -> None:
     """Auto-assign FIDES security labels to every tool loaded from an MCP server.
 
@@ -3687,7 +3690,10 @@ async def apply_mcp_security_labels(
     (Tier 2 label propagation), so **no middleware changes are needed**.
 
     Server annotations cannot relax local policy. Use ``annotation_overrides``
-    for explicit local per-tool label authority.
+    for explicit local per-tool static policy. Server result ``_meta.ifc`` is
+    also restriction-only unless ``trust_server_ifc=True`` is configured
+    locally, in which case a complete valid server label is authoritative for
+    that result. ToolAnnotations remain non-authoritative in both modes.
 
     Call this **after** the ``MCPTool`` is connected (tools already loaded).
 
@@ -3700,9 +3706,12 @@ async def apply_mcp_security_labels(
             *remote* MCP tool names (as the server exposes them).  Values are
             ``(IntegrityLabel, ConfidentialityLabel | None)`` tuples that
             replace the annotation-derived labels entirely.
-        mark_write_tools_as_sinks: When ``True`` (default), non-read-only
-            tools get ``max_allowed_confidentiality=PUBLIC`` to prevent data
-            exfiltration via tool arguments.
+        mark_write_tools_as_sinks: When ``True`` (default), apply the
+            annotation-derived ``max_allowed_confidentiality=PUBLIC`` cap.
+        trust_server_ifc: Whether complete, valid server ``_meta.ifc`` labels
+            are authoritative for tool results. Defaults to ``False``, which
+            combines remote labels with current local policy so they can only
+            add restrictions.
 
     Raises:
         RuntimeError: If the ``MCPTool`` is not connected.
@@ -3774,9 +3783,16 @@ async def apply_mcp_security_labels(
         # Patch sink constraint
         if mark_write_tools_as_sinks and max_conf is not None:
             props["max_allowed_confidentiality"] = max_conf.value
+        else:
+            props.pop("max_allowed_confidentiality", None)
 
         # Server annotations cannot authorize tainted input.
         props["accepts_untrusted"] = accepts_untrusted
+
+        # Local configuration controls result-label authority; MCP result
+        # metadata is attached to Content and cannot mutate tool properties.
+        props[_MCP_TRUST_SERVER_IFC_KEY] = trust_server_ifc
+        _wrap_mcp_function_for_ifc(func, default_integrity)
 
         logger.info(
             "MCP auto-label: tool=%s integrity=%s max_confidentiality=%s accepts_untrusted=%s",
@@ -3827,14 +3843,21 @@ def _label_from_mcp_meta(meta: Any) -> ContentLabel | None:
     return ContentLabel(integrity=integrity, confidentiality=confidentiality)
 
 
-def _stamp_mcp_content_labels(contents: Any, static_label: ContentLabel) -> Any:
+def _stamp_mcp_content_labels(
+    contents: Any,
+    local_label: ContentLabel,
+    *,
+    trust_server_ifc: bool = False,
+) -> Any:
     """Stamp ``security_label`` on each Content in an MCP tool result.
 
     A parseable server label from ``additional_properties["_meta"]`` can only
-    restrict ``static_label`` through standard FIDES label combination. The
-    local label is used unchanged when metadata is missing or malformed. The
-    sentinel ``_meta`` key is consumed regardless so downstream layers do not
-    re-process it.
+    restrict ``local_label`` through standard FIDES label combination by
+    default. When ``trust_server_ifc`` is enabled locally, a complete valid
+    server label is authoritative for that result. The local label is used
+    unchanged when metadata is missing, partial, or malformed. The sentinel
+    ``_meta`` key is consumed regardless so downstream layers do not re-process
+    it.
     """
     if not isinstance(contents, list):
         return contents
@@ -3843,12 +3866,33 @@ def _stamp_mcp_content_labels(contents: Any, static_label: ContentLabel) -> Any:
         if not isinstance(item, Content):
             continue
         props = item.additional_properties or {}
+        props.pop(_AUTHORITATIVE_CONFIDENTIALITY, None)
         server_meta = props.pop(_MCP_RESULT_META_KEY, None)
         dynamic = _label_from_mcp_meta(server_meta) if server_meta else None
-        label = combine_labels(static_label, dynamic) if dynamic is not None else static_label
+        if dynamic is None:
+            label = local_label
+        elif trust_server_ifc:
+            label = dynamic
+            props[_AUTHORITATIVE_CONFIDENTIALITY] = _INTERNAL_RESULT_MARKER
+        else:
+            label = combine_labels(local_label, dynamic)
         props["security_label"] = label.to_dict()
         item.additional_properties = props
     return contents_list
+
+
+def _current_mcp_local_label(func_tool: FunctionTool, default_integrity: IntegrityLabel) -> ContentLabel:
+    """Read the current local MCP output policy from a FunctionTool."""
+    props = func_tool.additional_properties or {}
+    try:
+        integrity = IntegrityLabel(props.get("source_integrity", default_integrity.value))
+    except ValueError:
+        integrity = default_integrity
+    try:
+        confidentiality = ConfidentialityLabel(props.get("confidentiality", ConfidentialityLabel.PUBLIC.value))
+    except ValueError:
+        confidentiality = ConfidentialityLabel.PUBLIC
+    return ContentLabel(integrity=integrity, confidentiality=confidentiality)
 
 
 def _wrap_mcp_function_for_ifc(func_tool: FunctionTool, default_integrity: IntegrityLabel) -> None:
@@ -3864,26 +3908,16 @@ def _wrap_mcp_function_for_ifc(func_tool: FunctionTool, default_integrity: Integ
     if original is None or getattr(original, "_ifc_wrapped", False):
         return
 
-    # Derive the static fallback label from the FunctionTool's own
-    # additional_properties (populated by apply_mcp_security_labels above).
-    props = func_tool.additional_properties or {}
-    try:
-        static_integrity = IntegrityLabel(props.get("source_integrity", default_integrity.value))
-    except ValueError:
-        static_integrity = default_integrity
-    try:
-        static_conf = ConfidentialityLabel(props.get("max_allowed_confidentiality", ConfidentialityLabel.PUBLIC.value))
-    except ValueError:
-        static_conf = ConfidentialityLabel.PUBLIC
-    static_label = ContentLabel(integrity=static_integrity, confidentiality=static_conf)
-
     async def _wrapped(*args: Any, **kwargs: Any) -> Any:
         import inspect as _inspect
 
         res = original(*args, **kwargs)
         if _inspect.isawaitable(res):
             res = await res
-        return _stamp_mcp_content_labels(res, static_label)
+        props = func_tool.additional_properties or {}
+        local_label = _current_mcp_local_label(func_tool, default_integrity)
+        trust_server_ifc = props.get(_MCP_TRUST_SERVER_IFC_KEY) is True
+        return _stamp_mcp_content_labels(res, local_label, trust_server_ifc=trust_server_ifc)
 
     _wrapped._ifc_wrapped = True  # type: ignore[attr-defined]
     func_tool.func = _wrapped
@@ -3941,8 +3975,12 @@ class SecureMCPToolProxy:
         default_integrity: Default integrity for tools without annotations.
         annotation_overrides: Per-tool-name label overrides (keyed by remote
             MCP tool name).
-        mark_write_tools_as_sinks: Whether to restrict write tools to PUBLIC
-            confidentiality.
+        mark_write_tools_as_sinks: Whether to apply the annotation-derived
+            PUBLIC confidentiality cap.
+        trust_server_ifc: Whether complete, valid server ``_meta.ifc`` labels
+            are authoritative for results. Defaults to ``False`` so remote
+            labels can only add restrictions. This does not grant authority to
+            server ToolAnnotations.
     """
 
     def __init__(
@@ -3956,6 +3994,7 @@ class SecureMCPToolProxy:
         default_integrity: IntegrityLabel = IntegrityLabel.UNTRUSTED,
         annotation_overrides: dict[str, tuple[IntegrityLabel, ConfidentialityLabel | None]] | None = None,
         mark_write_tools_as_sinks: bool = True,
+        trust_server_ifc: bool = False,
     ) -> None:
         """Initialize a secure proxy for an MCP tool or MCP URL endpoint.
 
@@ -3975,8 +4014,12 @@ class SecureMCPToolProxy:
             default_integrity: Default integrity for tools without annotations.
                 Defaults to ``IntegrityLabel.UNTRUSTED``.
             annotation_overrides: Per-tool-name label overrides keyed by remote MCP tool name.
-            mark_write_tools_as_sinks: Whether to restrict write tools to PUBLIC
-                confidentiality. Defaults to ``True``.
+            mark_write_tools_as_sinks: Whether to apply the annotation-derived
+                PUBLIC confidentiality cap. Defaults to ``True``.
+            trust_server_ifc: Whether complete, valid server ``_meta.ifc``
+                labels are authoritative for results. Defaults to ``False``;
+                ToolAnnotations remain restriction-only hints regardless of
+                this setting.
 
         Raises:
             ValueError: If both ``mcp_tool`` and ``url`` are provided, or if neither is provided.
@@ -4015,10 +4058,11 @@ class SecureMCPToolProxy:
 
         # The validation above guarantees a tool is set (passed directly or built
         # from ``url``); declare the attribute as non-optional ``MCPTool``.
-        self._mcp_tool: MCPTool = cast(MCPTool, mcp_tool)
+        self._mcp_tool: MCPTool = cast("MCPTool", mcp_tool)
         self._default_integrity = default_integrity
         self._annotation_overrides = annotation_overrides
         self._mark_write_tools_as_sinks = mark_write_tools_as_sinks
+        self._trust_server_ifc = trust_server_ifc
 
     # -- Async context manager --
 
@@ -4089,12 +4133,5 @@ class SecureMCPToolProxy:
             default_integrity=self._default_integrity,
             annotation_overrides=self._annotation_overrides,
             mark_write_tools_as_sinks=self._mark_write_tools_as_sinks,
+            trust_server_ifc=self._trust_server_ifc,
         )
-        # After static labels are stamped on each FunctionTool, install a
-        # per-tool wrapper that consumes any server-provided ``_meta.ifc``
-        # payload propagated by MCPTool and translates it into per-Content
-        # ``security_label`` entries. Server labels can restrict the static
-        # label but cannot relax it; the static label is the fallback when
-        # ``_meta`` is missing or cannot be parsed.
-        for func_tool in getattr(self._mcp_tool, "functions", []):
-            _wrap_mcp_function_for_ifc(func_tool, self._default_integrity)
