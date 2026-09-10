@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import json
 import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -1256,6 +1259,35 @@ async def test_file_checkpoint_storage_delete():
         # Try to delete again
         result = await storage.delete(checkpoint.checkpoint_id)
         assert result is False
+
+
+async def test_file_checkpoint_storage_concurrent_delete():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="test-workflow",
+            graph_signature_hash="test-hash",
+            checkpoint_id="same",
+        )
+        await storage.save(checkpoint)
+
+        file_path = (Path(temp_dir) / "same.json").resolve()
+        original_exists = Path.exists
+        barrier = threading.Barrier(2)
+
+        def synchronized_exists(path: Path) -> bool:
+            result = original_exists(path)
+            if path.resolve() == file_path:
+                barrier.wait(timeout=5)
+            return result
+
+        with patch.object(Path, "exists", synchronized_exists):
+            results = await asyncio.gather(
+                storage.delete(checkpoint.checkpoint_id),
+                storage.delete(checkpoint.checkpoint_id),
+            )
+
+        assert sorted(results) == [False, True]
 
 
 async def test_file_checkpoint_storage_directory_creation():
