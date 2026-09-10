@@ -58,7 +58,7 @@ else:
     from typing_extensions import Self  # pragma: no cover
 
 if TYPE_CHECKING:
-    from httpx import AsyncClient
+    from httpx import AsyncClient, Request, Response
     from mcp import types
     from mcp.client.session import ClientSession
     from mcp.shared.context import RequestContext
@@ -436,6 +436,10 @@ class _MCPHeaderScopedClient:
 
     def stream(self, *args: Any, **kwargs: Any) -> Any:
         return self._client.stream(*args, **self._tagged_kwargs(kwargs))
+
+    async def send(self, request: Request, **kwargs: Any) -> Response:
+        request.extensions[_MCP_HEADER_OWNER_EXTENSION] = self._owner
+        return await self._client.send(request, **kwargs)
 
     async def delete(self, *args: Any, **kwargs: Any) -> Any:
         return await self._client.delete(*args, **self._tagged_kwargs(kwargs))
@@ -3682,7 +3686,7 @@ class MCPStreamableHTTPTool(MCPTool):
         Returns:
             An async context manager for the streamable HTTP client transport.
         """
-        from httpx import URL, AsyncClient, Request, Timeout
+        from httpx import URL, AsyncClient, Timeout
 
         http_client = self._httpx_client
         if self._header_provider is not None:
