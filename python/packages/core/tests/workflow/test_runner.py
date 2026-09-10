@@ -576,7 +576,7 @@ async def test_save_executor_states_rejects_non_dict_on_checkpoint_save():
             await ctx.yield_output(message.data)
 
         async def on_checkpoint_save(self) -> dict[str, Any]:
-            return ["not", "a", "dict"]  # type: ignore[return-value]
+            return ["not", "a", "dict"]  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
 
     executor = BadStateExecutor(id="bad")
     state = State()
