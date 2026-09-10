@@ -1545,6 +1545,7 @@ def _is_server_managed_tool(tool: FunctionTool) -> bool:
     """Check if a tool is server-managed and should not be executed locally."""
     return bool(tool.additional_properties and tool.additional_properties.get("server_label"))
 
+
 def _finalize_function_result(
     *,
     call_id: str,
@@ -1850,8 +1851,7 @@ async def _execute_single_function_call(
     tool_name = source_function_call.name
 
     if (
-        source_function_call.additional_properties
-        and source_function_call.additional_properties.get("server_label")
+        source_function_call.additional_properties and source_function_call.additional_properties.get("server_label")
     ) or tool_name not in tool_map:
         exc = KeyError(f'Function "{tool_name}" not found.')
         return [
@@ -2070,7 +2070,7 @@ async def _try_execute_function_call_groups(
             except BaseException:
                 task.cancel()
                 raise
-                
+
             execution_results.append(res)
             if res[1]:
                 for skipped in function_calls[idx + 1 :]:
@@ -2554,8 +2554,8 @@ def _store_already_approved_approval_requests(
         if isinstance(item, tuple):
             idx, request = item
         else:
-            idx, request = i, item  
-            
+            idx, request = i, item
+
         serialized_requests.append(request.to_dict())
         request_indices.append(idx)
 
@@ -2590,16 +2590,27 @@ def _pop_already_approved_approval_responses(
         group = raw_group
         raw_ids = group.get("approval_request_ids")
         group_ids: set[str] = {str(item) for item in cast("list[Any]", raw_ids)} if isinstance(raw_ids, list) else set()
-        if group_ids.isdisjoint(approval_response_ids):
+
+        answered_ids = group_ids.intersection(approval_response_ids)
+        if not answered_ids:
             remaining_groups.append(group)
             continue
+
+        remaining_visible_ids = list(group_ids - answered_ids)
+
+        if remaining_visible_ids:
+            updated_group = dict(group)
+            updated_group["approval_request_ids"] = remaining_visible_ids
+            remaining_groups.append(updated_group)
+            continue
+
         raw_requests = group.get("approval_requests")
         if not isinstance(raw_requests, list):
             continue
-            
+
         raw_indices = group.get("approval_request_indices")
         indices = cast("list[int]", raw_indices) if isinstance(raw_indices, list) else []
-        
+
         for i, raw_request in enumerate(cast(list[Any], raw_requests)):
             if isinstance(raw_request, Mapping) and "original_index" in raw_request:
                 req_map = cast("Mapping[str, Any]", raw_request)
@@ -2623,6 +2634,7 @@ def _pop_already_approved_approval_responses(
     else:
         state.pop(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY, None)
     return responses
+
 
 def _collect_approval_responses(
     messages: list[Message],
