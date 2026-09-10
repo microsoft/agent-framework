@@ -622,6 +622,7 @@ class MongoDBCollection(
             embedding_generator=embedding_generator,
             managed_client=async_client is None,
         )
+        self._validate_unique_index_names()
         self.async_client, self._database, self.database_name, self._owns_client = _create_client(
             uri=uri,
             database_name=database_name,
@@ -697,6 +698,12 @@ class MongoDBCollection(
             if configured is not None
             else _default_index_name(self.collection_name, field.storage_name or field.name)
         )
+
+    def _validate_unique_index_names(self) -> None:
+        names = [self._index_name(field) for field in self.definition.vector_fields]
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        if duplicates:
+            raise ValueError(f"MongoDB vector index names must be unique: {', '.join(duplicates)}.")
 
     def _index_definition(self, field: VectorStoreField) -> MongoDocument:
         fields: list[MongoDocument] = [
@@ -829,7 +836,7 @@ class MongoDBCollection(
     @staticmethod
     def _to_builtin_mapping(record: Any) -> Mapping[str, Any]:
         if isinstance(record, Mapping):
-            return cast(Mapping[str, Any], _prepare_bson_value(record, name="MongoDB record"))
+            return dict(cast(Mapping[str, Any], record))
         raise TypeError("MongoDB vector records must serialize to mappings.")
 
     def _serialize_dicts_to_store_models(

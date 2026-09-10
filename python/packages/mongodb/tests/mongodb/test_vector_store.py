@@ -23,7 +23,11 @@ from pymongo import ReplaceOne
 from pymongo.errors import OperationFailure
 
 from agent_framework_mongodb import MongoDBCollection, MongoDBStore
-from agent_framework_mongodb._vector_store import _BSON_INT64_MAX, _semantic_index_definition
+from agent_framework_mongodb._vector_store import (
+    _BSON_INT64_MAX,
+    _default_index_name,
+    _semantic_index_definition,
+)
 
 
 def _ready_index(collection: MongoDBCollection[Any, Any], field_name: str) -> dict[str, Any]:
@@ -81,6 +85,39 @@ def test_non_key_fields_cannot_use_reserved_id_storage_name(mongo_mocks, field_t
             database_name="vectors",
         )
     native_collection.bulk_write.assert_not_awaited()
+
+
+@pytest.mark.parametrize("include_default_collision", [False, True])
+def test_duplicate_resolved_index_names_fail_before_client_access(mongo_mocks, include_default_collision):
+    client, _, native_collection = mongo_mocks
+    collection_name = "duplicate_indexes"
+    first_name = _default_index_name(collection_name, "first") if include_default_collision else "shared"
+    first_annotations = {} if include_default_collision else {"mongodb.index_name": first_name}
+    definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id", type_="int"),
+        VectorStoreField(
+            "vector",
+            name="first",
+            dimensions=2,
+            provider_annotations=first_annotations,
+        ),
+        VectorStoreField(
+            "vector",
+            name="second",
+            dimensions=2,
+            provider_annotations={"mongodb.index_name": first_name},
+        ),
+    ])
+    with pytest.raises(ValueError, match="vector index names must be unique"):
+        MongoDBCollection(
+            dict,
+            definition=definition,
+            collection_name=collection_name,
+            async_client=client,
+            database_name="vectors",
+        )
+    client.get_database.assert_not_called()
+    native_collection.create_search_index.assert_not_awaited()
 
 
 def test_invalid_dimensions_rejected(mongo_mocks):
@@ -180,6 +217,60 @@ async def test_late_invalid_batch_has_no_write(collection, mongo_mocks, record):
             [record(1), record(2, integer=2**63)],
             generate_vectors=False,
         )
+    native_collection.bulk_write.assert_not_awaited()
+
+
+async def test_undeclared_non_bson_dict_field_is_ignored(collection, mongo_mocks, record):
+    _, _, native_collection = mongo_mocks
+    value = record(1) | {"application_only": object()}
+    assert await collection.upsert([value], generate_vectors=False) == [1]
+    document = native_collection.bulk_write.await_args.args[0][0]._doc
+    assert "application_only" not in document
+
+
+async def test_undeclared_non_bson_custom_encoder_field_is_ignored(mongo_mocks):
+    client, _, native_collection = mongo_mocks
+
+    @dataclass
+    class External:
+        key: int
+        text: str
+
+    register_vectorstoremodel(
+        External,
+        definition=VectorStoreCollectionDefinition([
+            VectorStoreField("key", name="key", type_="int"),
+            VectorStoreField("data", name="text", type_="str"),
+        ]),
+        encoder=lambda item: {"key": item.key, "text": item.text, "application_only": object()},
+        decoder=lambda item: External(item["key"], item["text"]),
+    )
+    collection = MongoDBCollection(
+        External,
+        collection_name="custom_extra",
+        async_client=client,
+        database_name="vectors",
+    )
+    assert await collection.upsert([External(1, "hello")], generate_vectors=False) == [1]
+    document = native_collection.bulk_write.await_args.args[0][0]._doc
+    assert document == {"_id": 1, "text": "hello"}
+
+
+async def test_declared_non_bson_value_still_fails_before_io(mongo_mocks):
+    client, _, native_collection = mongo_mocks
+    definition = VectorStoreCollectionDefinition([
+        VectorStoreField("key", name="id", type_="int"),
+        VectorStoreField("data", name="value"),
+    ])
+    collection = MongoDBCollection(
+        dict,
+        definition=definition,
+        collection_name="declared_invalid",
+        async_client=client,
+        database_name="vectors",
+    )
+    with pytest.raises(TypeError, match="unsupported BSON value"):
+        await collection.upsert([{"id": 1, "value": object()}], generate_vectors=False)
     native_collection.bulk_write.assert_not_awaited()
 
 
