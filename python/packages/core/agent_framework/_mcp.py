@@ -3796,6 +3796,11 @@ class MCPStreamableHTTPTool(MCPTool):
     def _seed_connection_kwargs(self, kwargs: Mapping[str, Any]) -> None:
         if self._header_provider is None or self.is_connected:
             return
+        # is_connected stays false until initialize returns, so it alone would let a second
+        # concurrent run swap the credential out from under the first run's in-flight
+        # handshake. The claim is released when the connection closes or its setup fails.
+        if self._connection_kwargs is not None:
+            return
         self._connection_kwargs = dict(kwargs)
 
     def _release_connection_kwargs(self) -> None:

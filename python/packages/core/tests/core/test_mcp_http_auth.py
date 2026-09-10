@@ -895,3 +895,27 @@ async def test_failed_connect_releases_the_seeded_credential(mcp_http_server: MC
         assert [request.headers.get("Authorization") for request in initializes] == ["token-rejected", None]
     finally:
         await tool.close()
+
+
+async def test_a_second_run_cannot_replace_an_unconnected_claim(mcp_http_server: MCPHTTPServer) -> None:
+    """The first run to seed owns the connection, even before its handshake completes.
+
+    is_connected only turns true after initialize returns, so it cannot by itself stop a
+    concurrent run from swapping the credential mid-handshake and authenticating the shared
+    connection as the wrong caller.
+    """
+    client, requests, _ = mcp_http_server
+    tool = _kwargs_dependent_tool(client)
+    tool._seed_connection_kwargs({"credential": "token-a"})
+    tool._seed_connection_kwargs({"credential": "token-b"})
+    try:
+        async with tool:
+            pass
+        initializes = [
+            request
+            for request in requests
+            if request.method == "POST" and json.loads(request.content).get("method") == "initialize"
+        ]
+        assert [request.headers.get("Authorization") for request in initializes] == ["token-a"]
+    finally:
+        await tool.close()
