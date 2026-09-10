@@ -41,6 +41,7 @@ from azure.core.credentials_async import AsyncTokenCredential
 
 from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
 
+from ._constants import FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY
 from ._feature_usage import (
     FeatureIndex,
     create_feature_usage_policy,
@@ -92,9 +93,6 @@ class FoundryAgentSettings(TypedDict, total=False):
     project_endpoint: str | None
     agent_name: str | None
     agent_version: str | None
-
-
-FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY = "foundry_hosted_agent_session_id"
 
 
 class FoundryAgentOptions(OpenAIChatOptions, total=False):
