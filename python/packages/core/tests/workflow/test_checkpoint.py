@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import json
 import tempfile
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1273,6 +1275,34 @@ async def test_file_checkpoint_storage_directory_creation():
 
         file_path = nested_path / f"{checkpoint.checkpoint_id}.json"
         assert file_path.exists()
+
+
+async def test_file_checkpoint_storage_concurrent_saves_same_id():
+    """Concurrent saves of the same checkpoint id must all succeed (#8182).
+
+    A fixed temporary filename made writers race on the shared `.tmp` path:
+    one writer's `os.replace` consumed the file another writer was about to
+    replace, failing that save with a raw `FileNotFoundError`.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        checkpoint_id = str(uuid.uuid4())
+        checkpoints = [
+            WorkflowCheckpoint(
+                workflow_name="concurrent-test",
+                graph_signature_hash="sig",
+                checkpoint_id=checkpoint_id,
+                state={"i": i},
+            )
+            for i in range(10)
+        ]
+
+        results = await asyncio.gather(*[storage.save(cp) for cp in checkpoints], return_exceptions=True)
+        errors = [r for r in results if isinstance(r, Exception)]
+        assert not errors, f"concurrent same-id saves failed: {errors}"
+
+        loaded = await storage.load(checkpoint_id)
+        assert isinstance(loaded.state["i"], int)
 
 
 async def test_file_checkpoint_storage_corrupted_file():

@@ -328,7 +328,11 @@ class FileCheckpointStorage:
         encoded_checkpoint = encode_checkpoint_value(checkpoint_dict)
 
         def _write_atomic() -> None:
-            tmp_path = file_path.with_suffix(".json.tmp")
+            # Use a unique temporary filename per writer: a fixed name makes
+            # concurrent saves of the same checkpoint id race on the shared
+            # `.tmp` path, where one writer's `os.replace` consumes the file
+            # another writer is about to replace (#8182).
+            tmp_path = file_path.with_suffix(f".json.{os.getpid()}.{uuid.uuid4().hex}.tmp")
             with open(tmp_path, "w") as f:
                 json.dump(encoded_checkpoint, f, indent=2, ensure_ascii=False)
             os.replace(tmp_path, file_path)
