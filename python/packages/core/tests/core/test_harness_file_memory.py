@@ -26,6 +26,8 @@ from agent_framework._harness._file_memory import (
 )
 from agent_framework._sessions import SessionContext
 
+from .test_filesystem import COLLIDING_IDENTIFIERS
+
 
 def _tool_by_name(tools: list[object], name: str) -> FunctionTool:
     """Return the tool with the requested name from a prepared tool list."""
@@ -479,6 +481,145 @@ async def test_memory_replace_lines() -> None:
         }
     )
     assert "Duplicate" in _text(dup)
+
+
+# region Session isolation (MSRC): the working folder derivation must be injective
+
+
+async def test_colliding_session_ids_resolve_to_distinct_working_folders() -> None:
+    """Session IDs that a path normalizer folds together must stay separate.
+
+    The provider previously ran the session ID through a lossy path normalizer,
+    so ``"customer-42"`` and ``"customer-42/"`` shared one working folder. An
+    application that treats the session ID as part of its authorization boundary
+    would then have that decision silently undone by the storage layer.
+    """
+    provider = FileMemoryProvider(store=InMemoryAgentFileStore())
+    folders = {
+        session_id: provider._resolve_working_folder(  # pyright: ignore[reportPrivateUsage]
+            SessionContext(session_id=session_id, input_messages=[])
+        )
+        for session_id in COLLIDING_IDENTIFIERS
+    }
+    assert len(set(folders.values())) == len(COLLIDING_IDENTIFIERS), folders
+    # Case-insensitive too: NTFS and APFS fold names that differ only in case.
+    assert len({folder.lower() for folder in folders.values()}) == len(COLLIDING_IDENTIFIERS), folders
+
+
+async def test_colliding_scopes_resolve_to_distinct_working_folders() -> None:
+    """An explicitly configured scope gets the same injectivity guarantee."""
+    folders = {
+        scope: FileMemoryProvider(store=InMemoryAgentFileStore(), scope=scope)._resolve_working_folder(  # pyright: ignore[reportPrivateUsage]
+            SessionContext(session_id="session-1", input_messages=[])
+        )
+        for scope in COLLIDING_IDENTIFIERS
+    }
+    assert len(set(folders.values())) == len(COLLIDING_IDENTIFIERS), folders
+    assert len({folder.lower() for folder in folders.values()}) == len(COLLIDING_IDENTIFIERS), folders
+
+
+async def test_safe_session_id_keeps_its_literal_working_folder() -> None:
+    """Canonical IDs are unchanged, so existing stores need no migration."""
+    provider = FileMemoryProvider(store=InMemoryAgentFileStore())
+    folder = provider._resolve_working_folder(  # pyright: ignore[reportPrivateUsage]
+        SessionContext(session_id="customer-42", input_messages=[])
+    )
+    assert folder == "customer-42"
+
+
+async def test_working_folder_is_never_the_store_root() -> None:
+    """Without a scope or session ID the provider fails closed.
+
+    An empty working folder is the store root, from which every other scope's
+    directory is visible and writable.
+    """
+    provider = FileMemoryProvider(store=InMemoryAgentFileStore())
+    with pytest.raises(ValueError, match="requires a memory scope"):
+        provider._resolve_working_folder(  # pyright: ignore[reportPrivateUsage]
+            SessionContext(session_id=None, input_messages=[])
+        )
+    with pytest.raises(ValueError, match="requires a memory scope"):
+        provider._resolve_working_folder(  # pyright: ignore[reportPrivateUsage]
+            SessionContext(session_id="", input_messages=[])
+        )
+
+
+async def test_before_run_fails_closed_without_a_scope() -> None:
+    """The failure surfaces through the public provider entry point too."""
+    provider = FileMemoryProvider(store=InMemoryAgentFileStore())
+    with pytest.raises(ValueError, match="requires a memory scope"):
+        await provider.before_run(
+            agent=None,
+            session=AgentSession(session_id="ignored"),
+            context=SessionContext(session_id=None, input_messages=[]),
+            state={},
+        )
+
+
+@pytest.mark.parametrize(
+    "attacker_session_id",
+    ["customer-42/", "customer-42//", "customer-42\\", " customer-42 ", "customer-42/."],
+)
+async def test_colliding_session_cannot_read_write_or_delete_victim_memory(attacker_session_id: str) -> None:
+    """End-to-end: every public memory tool stays scoped to its own session.
+
+    Mirrors the reported attack: the victim owns ``customer-42`` and the
+    attacker is authorized only for a normalization variant of it.
+    """
+    store = InMemoryAgentFileStore()
+    provider = FileMemoryProvider(store=store)
+
+    _, victim = await _prepare(provider, session_id="customer-42")
+    await victim["file_memory_write"].invoke(
+        arguments={"file_name": "secret.md", "content": "VICTIM_TOKEN=demo-secret"}
+    )
+
+    _, attacker = await _prepare(provider, session_id=attacker_session_id)
+
+    # Discovery surfaces must not reveal the victim's memory.
+    assert json.loads(_text(await attacker["file_memory_ls"].invoke())) == []
+    assert json.loads(_text(await attacker["file_memory_grep"].invoke(arguments={"regex_pattern": "VICTIM"}))) == []
+
+    # Read must not return the victim's content.
+    read_result = _text(await attacker["file_memory_read"].invoke(arguments={"file_name": "secret.md"}))
+    assert "demo-secret" not in read_result
+
+    # Mutations must not reach the victim's file.
+    await attacker["file_memory_write"].invoke(
+        arguments={"file_name": "secret.md", "content": "ATTACKER_REPLACED_MEMORY"}
+    )
+    await attacker["file_memory_replace"].invoke(
+        arguments={"file_name": "secret.md", "old_string": "ATTACKER", "new_string": "OVERWRITTEN"}
+    )
+    await attacker["file_memory_replace_lines"].invoke(
+        arguments={"file_name": "secret.md", "edits": [{"line_number": 1, "new_line": "CLOBBERED\n"}]}
+    )
+    await attacker["file_memory_delete"].invoke(arguments={"file_name": "secret.md"})
+
+    # The victim's memory is intact and unchanged.
+    _, victim_after = await _prepare(provider, session_id="customer-42")
+    assert [e["name"] for e in json.loads(_text(await victim_after["file_memory_ls"].invoke()))] == ["secret.md"]
+    assert (
+        _text(await victim_after["file_memory_read"].invoke(arguments={"file_name": "secret.md"}))
+        == "VICTIM_TOKEN=demo-secret"
+    )
+
+
+async def test_multi_segment_scope_becomes_a_single_folder() -> None:
+    """A scope is an opaque key, so it never expands into a nested directory."""
+    provider = FileMemoryProvider(store=InMemoryAgentFileStore(), scope="tenants/alice")
+    folder = provider._resolve_working_folder(  # pyright: ignore[reportPrivateUsage]
+        SessionContext(session_id="session-1", input_messages=[])
+    )
+    assert "/" not in folder
+    # ...and it must not share a folder with the sibling tenant.
+    sibling = FileMemoryProvider(store=InMemoryAgentFileStore(), scope="tenants/bob")._resolve_working_folder(  # pyright: ignore[reportPrivateUsage]
+        SessionContext(session_id="session-1", input_messages=[])
+    )
+    assert folder != sibling
+
+
+# endregion
 
 
 # region file-memory guards

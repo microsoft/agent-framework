@@ -116,6 +116,34 @@ updates:
     cooldown:
       default-days: 7
 
+  - package-ecosystem: "uv"
+    directory: "python/packages/lab/"
+    schedule:
+      interval: "weekly"
+      day: "thursday"
+    groups:
+      basics:
+        patterns:
+          - "uv"
+          - "ruff"
+          - "prek"
+          - "poethepoet"
+          - "tomli"
+          - "rich"
+      pytest:
+        patterns:
+          - "pytest*"
+      python-type-checkers:
+        patterns:
+          - "mypy"
+          - "pyright"
+    labels:
+      - "python"
+      - "lab"
+      - "dependencies"
+    cooldown:
+      default-days: 7
+
   # Maintain dependencies for github-actions
   - package-ecosystem: "github-actions"
     # Cover both the standard workflow location and our composite actions.
