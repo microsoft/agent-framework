@@ -550,6 +550,96 @@ def test_prepare_message_for_anthropic_attaches_signature_only_reasoning(
     ]
 
 
+def test_prepare_message_for_anthropic_empty_signed_thinking_is_replayed(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Empty signed thinking blocks must serialize as thinking, not be skipped.
+
+    Anthropic requires thinking blocks (including empty thinking text) to be
+    replayed unchanged before tool results. See microsoft/agent-framework#8168.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text_reasoning(text="", protected_data="synthetic-signature"),
+            Content.from_function_call(
+                call_id="toolu_test",
+                name="lookup",
+                arguments={},
+            ),
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["content"][0] == {
+        "type": "thinking",
+        "thinking": "",
+        "signature": "synthetic-signature",
+    }
+    assert result["content"][1]["type"] == "tool_use"
+    assert result["content"][1]["id"] == "toolu_test"
+
+
+def test_streaming_replay_preserves_empty_signed_thinking_block(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Stream empty thinking + signature_delta + tool_use, then replay via from_updates.
+
+    Offline synthetic SDK events — no network. Regression for #8168.
+    """
+    from anthropic.types.beta import (
+        BetaRawContentBlockDeltaEvent,
+        BetaRawContentBlockStartEvent,
+        BetaRawMessageStreamEvent,
+    )
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    events: list[BetaRawMessageStreamEvent] = [
+        BetaRawContentBlockStartEvent.model_validate(
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "thinking", "thinking": "", "signature": ""},
+            }
+        ),
+        BetaRawContentBlockDeltaEvent.model_validate(
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "signature_delta", "signature": "synthetic-signature"},
+            }
+        ),
+        BetaRawContentBlockStartEvent.model_validate(
+            {
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_test",
+                    "name": "lookup",
+                    "input": {},
+                },
+            }
+        ),
+    ]
+
+    updates = [client._process_stream_event(event) for event in events]
+    response = ChatResponse.from_updates([u for u in updates if u is not None])
+    message = response.messages[0]
+    reasoning = next(c for c in message.contents if c.type == "text_reasoning")
+    assert reasoning.text == ""
+    assert reasoning.protected_data == "synthetic-signature"
+
+    prepared = client._prepare_message_for_anthropic(message)
+    assert prepared["content"][0]["type"] == "thinking"
+    assert prepared["content"][0]["thinking"] == ""
+    assert prepared["content"][0]["signature"] == "synthetic-signature"
+    assert prepared["content"][1]["type"] == "tool_use"
+
+
 def test_prepare_message_for_anthropic_skips_orphan_signature_only_reasoning(
     mock_anthropic_client: MagicMock,
 ) -> None:

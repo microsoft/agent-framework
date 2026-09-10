@@ -451,6 +451,60 @@ def test_filter_approval_controls_keeps_response_for_pending_placeholder() -> No
     assert any(placeholder in message.contents for message in filtered)
 
 
+def _replacement_approval_round(
+    *,
+    call_id: str,
+    occurrence_id: str,
+    request_id: str,
+) -> tuple[Content, Content]:
+    function_call = Content.from_function_call(
+        call_id=call_id,
+        name="guarded",
+        arguments="{}",
+        id=occurrence_id,
+    )
+    request = Content.from_function_approval_request(
+        id=request_id,
+        function_call=function_call,
+        additional_properties={"_replacement_approval_request": True},
+    )
+    return function_call, request
+
+
+def test_filter_approval_controls_correlates_replacement_by_occurrence() -> None:
+    """Resolving one reused-call-id replacement must leave its sibling pending."""
+    first_call, first_request = _replacement_approval_round(
+        call_id="reused",
+        occurrence_id="occurrence-1",
+        request_id="replacement-1",
+    )
+    second_call, second_request = _replacement_approval_round(
+        call_id="reused",
+        occurrence_id="occurrence-2",
+        request_id="replacement-2",
+    )
+    second_response = Content.from_function_approval_response(
+        approved=True,
+        id="occurrence-2",
+        function_call=second_call,
+    )
+
+    filtered = _filter_approval_control_messages([
+        Message(role="assistant", contents=[first_call, first_request]),
+        Message(role="assistant", contents=[second_call, second_request]),
+        Message(role="user", contents=[second_response]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="reused", result="done")]),
+    ])
+
+    controls = [
+        content
+        for message in filtered
+        for content in message.contents
+        if content.type in {"function_approval_request", "function_approval_response"}
+    ]
+    assert controls == [first_request]
+
+
 class TestHistoryProviderBase:
     def test_default_flags(self) -> None:
         provider = ConcreteHistoryProvider("mem")

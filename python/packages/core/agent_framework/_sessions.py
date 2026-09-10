@@ -836,20 +836,34 @@ def _is_approval_placeholder_result(content: Content) -> bool:
 
 def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
     unresolved_requests_by_id: dict[str, Content] = {}
+    local_request_ids_by_call_id: dict[str, deque[str]] = {}
+    local_request_ids_by_occurrence: dict[str, str] = {}
     unresolved_local_responses_by_id: dict[str, Content] = {}
-    local_response_ids_by_call_id: dict[str, deque[str]] = {}
+    local_responses_by_call_id: dict[str, deque[tuple[str, str | None]]] = {}
 
     for message in messages:
         for content in message.contents:
             if content.type == "function_approval_request":
                 function_call = content.function_call
                 if content.id is not None and function_call is not None and function_call.call_id is not None:
-                    unresolved_requests_by_id.setdefault(content.id, content)
+                    if content.id not in unresolved_requests_by_id:
+                        unresolved_requests_by_id[content.id] = content
+                        local_request_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
+                        if function_call.id is not None:
+                            local_request_ids_by_occurrence[function_call.id] = content.id
+                    # A replacement request supersedes the decision that triggered
+                    # reapproval; that old decision is no longer executable authority.
+                    unresolved_local_responses_by_id.pop(content.id, None)
+                    if (
+                        content.additional_properties.get("_replacement_approval_request") is True
+                        and function_call.id is not None
+                    ):
+                        unresolved_local_responses_by_id.pop(function_call.id, None)
                 continue
             if content.type == "function_approval_response":
                 function_call = content.function_call
                 if content.id is not None:
-                    unresolved_requests_by_id.pop(content.id, None)
+                    unresolved_requests_by_id.pop(local_request_ids_by_occurrence.get(content.id, content.id), None)
                 if (
                     content.id is not None
                     and function_call is not None
@@ -858,7 +872,11 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                     and content.id not in unresolved_local_responses_by_id
                 ):
                     unresolved_local_responses_by_id[content.id] = content
-                    local_response_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
+                    request_id = local_request_ids_by_occurrence.get(content.id)
+                    local_responses_by_call_id.setdefault(function_call.call_id, deque()).append((
+                        content.id,
+                        request_id,
+                    ))
                 continue
             if content.call_id is None:
                 continue
@@ -869,8 +887,21 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
             }
             if not (is_terminal_result or is_follow_up_request):
                 continue
-            if response_ids := local_response_ids_by_call_id.get(content.call_id):
-                unresolved_local_responses_by_id.pop(response_ids.popleft(), None)
+            resolved_response = False
+            if responses := local_responses_by_call_id.get(content.call_id):
+                while responses and responses[0][0] not in unresolved_local_responses_by_id:
+                    responses.popleft()
+                if responses:
+                    response_id, request_id = responses.popleft()
+                    unresolved_local_responses_by_id.pop(response_id, None)
+                    if request_id is not None:
+                        unresolved_requests_by_id.pop(request_id, None)
+                    resolved_response = True
+            if not resolved_response and (request_ids := local_request_ids_by_call_id.get(content.call_id)):
+                while request_ids and request_ids[0] not in unresolved_requests_by_id:
+                    request_ids.popleft()
+                if request_ids:
+                    unresolved_requests_by_id.pop(request_ids.popleft(), None)
 
     return {
         id(content) for content in (*unresolved_requests_by_id.values(), *unresolved_local_responses_by_id.values())

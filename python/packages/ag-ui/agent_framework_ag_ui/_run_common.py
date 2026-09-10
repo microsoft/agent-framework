@@ -37,7 +37,17 @@ from agent_framework import Content, ResponseStream
 
 from ._predictive_state import PredictiveStateHandler
 from ._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
-from ._utils import _approval_interrupt_id, generate_event_id, make_json_safe, normalize_agui_role
+from ._utils import (
+    _approval_interrupt_id,
+    _extract_mcp_tool_result_host_payload,
+    _extract_tool_result_marker_values,
+    _mcp_host_history_fields,
+    _model_items_for_agui_replay,
+    _stringify_tool_result,
+    generate_event_id,
+    make_json_safe,
+    normalize_agui_role,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -696,22 +706,6 @@ def _emit_tool_call(
     return events
 
 
-def _extract_tool_result_marker_values(content: Content, key: str) -> list[Any]:
-    """Extract marker values from outer and inner tool-result content."""
-    values: list[Any] = []
-
-    outer_ap = getattr(content, "additional_properties", None) or {}
-    if key in outer_ap:
-        values.append(outer_ap[key])
-
-    for item in content.items or ():
-        item_ap = getattr(item, "additional_properties", None) or {}
-        if key in item_ap:
-            values.append(item_ap[key])
-
-    return values
-
-
 def _extract_tool_result_state(content: Content) -> dict[str, Any] | None:
     """Extract a deterministic AG-UI state update from a tool-result ``Content``.
 
@@ -745,13 +739,17 @@ def _extract_tool_result_display(content: Content) -> Any:  # noqa: ANN401
     return display_values[-1] if display_values else _UNSET
 
 
-def _stringify_tool_result(raw_result: Any) -> str:  # noqa: ANN401
-    return raw_result if isinstance(raw_result, str) else json.dumps(make_json_safe(raw_result))
-
-
 def _resolve_ui_payload(llm_str: str, display_result: Any) -> str:  # noqa: ANN401
     """Pick the UI-bound string: the serialized display payload when set, else the LLM string."""
     return llm_str if display_result is _UNSET else _stringify_tool_result(display_result)
+
+
+def _resolve_tool_result_host_payload(content: Content, display_result: Any) -> tuple[bool, Any]:  # noqa: ANN401
+    """Resolve an MCP Host payload, preferring an explicit display projection."""
+    has_host_payload, host_payload = _extract_mcp_tool_result_host_payload(content)
+    if has_host_payload and display_result is not _UNSET:
+        host_payload = display_result
+    return has_host_payload, host_payload
 
 
 def _emit_tool_result_common(
@@ -762,6 +760,8 @@ def _emit_tool_result_common(
     *,
     state_update: Mapping[str, Any] | None = None,
     display_result: Any = _UNSET,  # noqa: ANN401
+    snapshot_result: Any = _UNSET,  # noqa: ANN401
+    model_items: list[dict[str, Any]] | None = None,
 ) -> list[BaseEvent]:
     """Shared helper for emitting ToolCallEnd + ToolCallResult events and performing FlowState cleanup.
 
@@ -789,6 +789,7 @@ def _emit_tool_result_common(
 
     result_content = _stringify_tool_result(raw_result)
     ui_result_content = _resolve_ui_payload(result_content, display_result)
+    snapshot_result_content = _resolve_ui_payload(result_content, snapshot_result)
     message_id = generate_event_id()
     events.append(
         ToolCallResultEvent(
@@ -799,14 +800,27 @@ def _emit_tool_result_common(
         )
     )
 
-    flow.tool_results.append(
-        {
-            "id": message_id,
-            "role": "tool",
-            "toolCallId": call_id,
-            "content": result_content,
-        }
-    )
+    snapshot_message: dict[str, Any] = {
+        "id": message_id,
+        "role": "tool",
+        "toolCallId": call_id,
+        "content": result_content,
+    }
+    event_replay_properties: dict[str, Any] = {}
+    if snapshot_result is not _UNSET:
+        event_replay_properties = _mcp_host_history_fields(
+            snapshot_result_content,
+            [{"type": "text", "text": result_content}] if model_items is None else model_items,
+        )
+        snapshot_message.update(event_replay_properties)
+        events[-1] = ToolCallResultEvent(
+            message_id=message_id,
+            tool_call_id=call_id,
+            content=ui_result_content,
+            role="tool",
+            **event_replay_properties,
+        )
+    flow.tool_results.append(snapshot_message)
     # A result closes the current tool-call segment: a later call opens a new
     # one, so `call A -> result A -> call B` snapshots as two call/result pairs
     # in stream order instead of grouping B with A (moonbox3's replay concern).
@@ -851,6 +865,9 @@ def _emit_tool_result(
     raw_result = content.result if content.result is not None else ""
     state_update = _extract_tool_result_state(content)
     display_result = _extract_tool_result_display(content)
+    has_host_payload, host_payload = _resolve_tool_result_host_payload(content, display_result)
+    if has_host_payload and display_result is _UNSET:
+        display_result = host_payload
     return _emit_tool_result_common(
         content.call_id,
         raw_result,
@@ -858,6 +875,10 @@ def _emit_tool_result(
         predictive_handler,
         state_update=state_update,
         display_result=display_result,
+        snapshot_result=host_payload if has_host_payload else _UNSET,
+        model_items=(
+            _model_items_for_agui_replay(content, _stringify_tool_result(raw_result)) if has_host_payload else None
+        ),
     )
 
 
@@ -1022,6 +1043,9 @@ def _emit_mcp_tool_result(
     raw_output = content.output if content.output is not None else ""
     state_update = _extract_tool_result_state(content)
     display_result = _extract_tool_result_display(content)
+    has_host_payload, host_payload = _resolve_tool_result_host_payload(content, display_result)
+    if has_host_payload and display_result is _UNSET:
+        display_result = host_payload
     return _emit_tool_result_common(
         content.call_id,
         raw_output,
@@ -1029,6 +1053,10 @@ def _emit_mcp_tool_result(
         predictive_handler,
         state_update=state_update,
         display_result=display_result,
+        snapshot_result=host_payload if has_host_payload else _UNSET,
+        model_items=(
+            _model_items_for_agui_replay(content, _stringify_tool_result(raw_output)) if has_host_payload else None
+        ),
     )
 
 
