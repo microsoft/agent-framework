@@ -335,6 +335,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
                 AdditionalProperties = response.AdditionalProperties,
                 ContinuationToken = response.ContinuationToken,
                 ConversationId = (response.RawRepresentation as ChatResponse)?.ConversationId,
+                ModelId = (response.RawRepresentation as ChatResponse)?.ModelId,
                 CreatedAt = response.CreatedAt,
                 FinishReason = response.FinishReason,
                 Messages = response.Messages,
