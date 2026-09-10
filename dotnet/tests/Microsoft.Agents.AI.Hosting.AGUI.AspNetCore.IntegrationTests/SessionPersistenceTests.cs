@@ -22,6 +22,8 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests;
 
 public sealed class SessionPersistenceTests : IAsyncDisposable
 {
+    private static readonly JsonSerializerOptions AGUIJsonSerializerOptions = CreateAGUIJsonSerializerOptions();
+
     private WebApplication? _app;
     private HttpClient? _client;
 
@@ -59,6 +61,7 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
         Assert.False(string.IsNullOrEmpty(previousRunId));
 
         ChatMessage secondUserMessage = new(ChatRole.User, "Second message");
+        JsonSerializerOptions aguiSerializerOptions = JsonSerializerOptions.Web;
         var continuationOptions = new ChatClientAgentRunOptions
         {
             ChatOptions = new ChatOptions
@@ -67,11 +70,11 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
                 {
                     ThreadId = threadId,
                     ParentRunId = previousRunId,
-                    Messages = new[] { secondUserMessage }.AsAGUIMessages().ToList(),
+                    Messages = new[] { secondUserMessage }.AsAGUIMessages(aguiSerializerOptions).ToList(),
                 },
             },
         };
-        List<AgentResponseUpdate> secondTurnUpdates = [];
+                    Messages = new[] { secondUserMessage }.AsAGUIMessages(AGUIJsonSerializerOptions).ToList(),
         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([secondUserMessage], session, continuationOptions, CancellationToken.None))
         {
             secondTurnUpdates.Add(update);
@@ -151,6 +154,14 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
         {
             await this._app.DisposeAsync();
         }
+    }
+
+    private static JsonSerializerOptions CreateAGUIJsonSerializerOptions()
+    {
+        JsonSerializerOptions options = new(AgentAbstractionsJsonUtilities.DefaultOptions);
+        options.TypeInfoResolverChain.Add(AGUIJsonSerializerContext.Default.Options.TypeInfoResolver!);
+        options.MakeReadOnly();
+        return options;
     }
 }
 
