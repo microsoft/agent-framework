@@ -54,7 +54,7 @@ async def api_key_auth_example(api_key: str) -> None:
             name="MCP tool",
             description="MCP tool description.",
             url="<your authenticated server url>",
-            header_provider=lambda _kwargs: {"Authorization": f"Bearer {api_key}"},
+            header_provider=lambda _: {"Authorization": f"Bearer {api_key}"},
         ),
     ) as agent:
         query = "Use your MCP tool to tell me what tools are available to you."
