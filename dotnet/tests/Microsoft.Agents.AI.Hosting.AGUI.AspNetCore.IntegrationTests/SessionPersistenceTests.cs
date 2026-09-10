@@ -22,7 +22,7 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests;
 
 public sealed class SessionPersistenceTests : IAsyncDisposable
 {
-    private static readonly JsonSerializerOptions AGUIJsonSerializerOptions = CreateAGUIJsonSerializerOptions();
+    private static readonly JsonSerializerOptions s_aguiJsonSerializerOptions = CreateAGUIJsonSerializerOptions();
 
     private WebApplication? _app;
     private HttpClient? _client;
@@ -61,7 +61,6 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
         Assert.False(string.IsNullOrEmpty(previousRunId));
 
         ChatMessage secondUserMessage = new(ChatRole.User, "Second message");
-        JsonSerializerOptions aguiSerializerOptions = JsonSerializerOptions.Web;
         var continuationOptions = new ChatClientAgentRunOptions
         {
             ChatOptions = new ChatOptions
@@ -70,11 +69,12 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
                 {
                     ThreadId = threadId,
                     ParentRunId = previousRunId,
-                    Messages = new[] { secondUserMessage }.AsAGUIMessages(aguiSerializerOptions).ToList(),
+                    Messages = new[] { secondUserMessage }.AsAGUIMessages(s_aguiJsonSerializerOptions).ToList(),
                 },
             },
         };
-                    Messages = new[] { secondUserMessage }.AsAGUIMessages(AGUIJsonSerializerOptions).ToList(),
+
+        List<AgentResponseUpdate> secondTurnUpdates = [];
         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([secondUserMessage], session, continuationOptions, CancellationToken.None))
         {
             secondTurnUpdates.Add(update);
