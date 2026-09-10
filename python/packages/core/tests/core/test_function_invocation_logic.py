@@ -2858,7 +2858,9 @@ async def test_mixed_batch_approval_enforced_regardless_of_call_order(
         content
         for msg in response.messages
         for content in msg.contents
-        if content.type == "function_approval_request" and content.function_call.name == "approval_func"
+        if content.type == "function_approval_request"
+        and content.function_call is not None
+        and content.function_call.name == "approval_func"
     ]
     assert len(approval_requests) == 1, "approval gate must be surfaced regardless of call order"
     # The declaration-only sibling must be surfaced as user input, never wrapped as an approval request,
@@ -2867,7 +2869,9 @@ async def test_mixed_batch_approval_enforced_regardless_of_call_order(
         content
         for msg in response.messages
         for content in msg.contents
-        if content.type == "function_approval_request" and content.function_call.name == "declaration_func"
+        if content.type == "function_approval_request"
+        and content.function_call is not None
+        and content.function_call.name == "declaration_func"
     ]
     assert not declaration_as_approval, "declaration-only call must not be wrapped as an approval request"
     declaration_user_input = [
@@ -2908,10 +2912,14 @@ async def test_mixed_batch_pause_groups_preserve_model_call_order():
         config={},
     )
 
-    ordered_call_ids = [
-        group[0].function_call.call_id if group[0].type == "function_approval_request" else group[0].call_id
-        for group in result_groups
-    ]
+    ordered_call_ids: list[str | None] = []
+    for group in result_groups:
+        content = group[0]
+        if content.type == "function_approval_request":
+            assert content.function_call is not None
+            ordered_call_ids.append(content.function_call.call_id)
+        else:
+            ordered_call_ids.append(content.call_id)
     assert ordered_call_ids == ["d1", "a1", "d2"]
     assert should_terminate is False
 
