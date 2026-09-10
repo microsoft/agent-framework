@@ -369,9 +369,9 @@ that manually replay messages own the equivalent rule: do not resend an approval
   already executing in a worker thread cannot be interrupted and may complete its side effects — its result is
   discarded either way and never reaches the transcript, the model, or history. Middleware must not catch
   `MiddlewareFailure` — swallowing it converts a fail-closed abort back into a running, possibly unguarded loop.
-- `Content.exception` is host-internal diagnostic state. Default `Content.to_dict()` and nested response serialization
-  omit it, while the field remains directly available to trusted local code. Remote protocol serializers use the
-  channel-visible `result` or `items` instead. `include_detailed_errors=False` keeps the channel-visible
+- `Content.exception` is host-internal diagnostic state. Default `Content.to_dict()` and nested response serialization replace it with a fixed non-sensitive failure marker,
+  while the original field remains directly available to trusted local code. Remote protocol serializers use the
+  marker only for status and use the channel-visible `result` or `items` for output text. `include_detailed_errors=False` keeps the channel-visible
   result generic; enabling it explicitly may place diagnostic text in the result for that configured channel.
 - Parallel calls retain model order in the returned transcript.
 - `call_id` remains the provider/service correlation id; a locally actionable `function_call` also carries a stable
@@ -586,7 +586,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 |---|---|---|
 | Rejected execution | Rejection is a normal terminal result, not an exception to the caller. | `test_unapproved_tool_execution_raises_exception` |
 | Approved tool exception | Generic and detailed error modes preserve one result and one execution. | `test_approved_function_call_with_error_without_detailed_errors`, `test_approved_function_call_with_error_with_detailed_errors` |
-| Tool exception diagnostics | Internal diagnostics remain available to trusted local code, default response serialization omits them in both response modes, and explicit detailed-error configuration affects only the channel-visible result. | `packages/core/tests/core/test_types.py::test_function_result_exception_is_internal_by_default`, `packages/core/tests/core/test_function_invocation_logic.py::test_function_invocation_config_include_detailed_errors_false`, `test_function_invocation_config_include_detailed_errors_true`, `test_streaming_function_invocation_config_include_detailed_errors_false`, `test_streaming_function_invocation_config_include_detailed_errors_true` |
+| Tool exception diagnostics | Internal diagnostics remain available to trusted local code, serialization preserves only a fixed failure marker, and explicit detailed-error configuration affects only the channel-visible result. | `packages/core/tests/core/test_types.py::test_function_result_exception_is_internal_by_default`, `packages/core/tests/core/test_function_invocation_logic.py::test_function_invocation_config_include_detailed_errors_false`, `test_function_invocation_config_include_detailed_errors_true`, `test_streaming_function_invocation_config_include_detailed_errors_false`, `test_streaming_function_invocation_config_include_detailed_errors_true` |
 | Approved validation error | Validation failure returns one result without invoking the function body. | `test_approved_function_call_with_validation_error` |
 | Approved success | Successful approved execution returns one result. | `test_approved_function_call_successful_execution` |
 | Consecutive error cap | Error threshold stops repeated failures, submits collected results, and makes only the required final no-tool model call. | `test_function_invocation_config_max_consecutive_errors`, `test_streaming_function_invocation_config_max_consecutive_errors`, `test_approval_resume_error_limit_forces_final_no_tool_response` |

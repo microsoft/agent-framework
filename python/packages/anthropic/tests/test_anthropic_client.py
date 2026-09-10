@@ -373,6 +373,31 @@ def test_prepare_message_for_anthropic_function_result(
     assert result["content"][0]["is_error"] is False
 
 
+def test_prepare_message_for_anthropic_preserves_redacted_error_status(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Persisted tool failures retain error status without exposing diagnostics."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    diagnostic = "test-token-value at /srv/private/tool.py"
+    failed_result = Content.from_function_result(
+        call_id="call_123",
+        result="Error: Function failed.",
+        exception=diagnostic,
+    )
+    restored_result = Content.from_dict(failed_result.to_dict())
+    message = Message(role="tool", contents=[restored_result])
+
+    result = client._prepare_message_for_anthropic(message)
+
+    tool_result = result["content"][0]
+    assert tool_result["type"] == "tool_result"
+    assert tool_result["is_error"] is True
+    assert diagnostic not in str(tool_result)
+    tool_content = tool_result["content"]
+    assert isinstance(tool_content, list)
+    assert tool_content[0]["text"] == "Error: Function failed."
+
+
 def test_prepare_message_for_anthropic_function_result_with_data_image(
     mock_anthropic_client: MagicMock,
 ) -> None:
@@ -598,20 +623,16 @@ def test_streaming_replay_preserves_empty_signed_thinking_block(
     client = create_test_anthropic_client(mock_anthropic_client)
 
     events: list[BetaRawMessageStreamEvent] = [
-        BetaRawContentBlockStartEvent.model_validate(
-            {
-                "type": "content_block_start",
-                "index": 0,
-                "content_block": {"type": "thinking", "thinking": "", "signature": ""},
-            }
-        ),
-        BetaRawContentBlockDeltaEvent.model_validate(
-            {
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {"type": "signature_delta", "signature": "synthetic-signature"},
-            }
-        ),
+        BetaRawContentBlockStartEvent.model_validate({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "thinking", "thinking": "", "signature": ""},
+        }),
+        BetaRawContentBlockDeltaEvent.model_validate({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "signature_delta", "signature": "synthetic-signature"},
+        }),
         BetaRawContentBlockStartEvent.model_validate(
             {
                 "type": "content_block_start",
@@ -622,7 +643,7 @@ def test_streaming_replay_preserves_empty_signed_thinking_block(
                     "name": "lookup",
                     "input": {},
                 },
-            }
+            },
         ),
     ]
 

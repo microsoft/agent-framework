@@ -2486,18 +2486,38 @@ def test_function_result_exception_is_internal_by_default() -> None:
     )
 
     assert content.exception == diagnostic
-    assert "exception" not in content.to_dict()
-    assert "exception" not in content.to_dict(exclude_none=False)
+    assert content.to_dict()["exception"] == "FunctionInvocationError"
+    assert content.to_dict(exclude_none=False)["exception"] == "FunctionInvocationError"
     response = AgentResponse(messages=[Message(role="tool", contents=[content])])
-    assert diagnostic not in json.dumps(response.to_dict())
+    serialized = json.dumps(response.to_dict())
+    assert diagnostic not in serialized
+    assert "FunctionInvocationError" in serialized
 
-    restored = Content.from_dict({
-        "type": "function_result",
-        "call_id": "call-1",
-        "result": "Error: Function failed.",
-        "exception": diagnostic,
-    })
-    assert restored.exception == diagnostic
+    restored = Content.from_dict(content.to_dict())
+    assert restored.exception == "FunctionInvocationError"
+    assert restored != Content.from_function_result(
+        call_id="call-1",
+        result="Error: Function failed.",
+        exception="different diagnostic",
+    )
+
+    empty_diagnostic = Content.from_function_result(call_id="call-2", exception="")
+    assert empty_diagnostic.to_dict()["exception"] == "FunctionInvocationError"
+
+
+def test_content_equality_compares_nested_raw_exception_diagnostics() -> None:
+    first = Content(
+        "function_result",
+        call_id="outer",
+        items=[Content.from_function_result(call_id="inner", exception="diagnostic-a")],
+    )
+    second = Content(
+        "function_result",
+        call_id="outer",
+        items=[Content.from_function_result(call_id="inner", exception="diagnostic-b")],
+    )
+
+    assert first != second
 
 
 def test_chat_response_roundtrip_preserves_compaction_annotation_dict() -> None:

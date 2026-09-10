@@ -40,6 +40,8 @@ else:
 
 logger = logging.getLogger("agent_framework")
 
+_SERIALIZED_EXCEPTION_MARKER: Final[str] = "FunctionInvocationError"
+
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
@@ -272,16 +274,24 @@ def _validate_uri(uri: str, media_type: str | None) -> dict[str, Any]:
     raise ContentError("URI must contain a scheme (e.g., http://, data:, file://)")
 
 
-def _serialize_value(value: Any, exclude_none: bool) -> Any:
+def _serialize_value(value: Any, exclude_none: bool, *, redact_exception: bool = True) -> Any:
     """Recursively serialize a value for to_dict."""
     if value is None:
         return None
     if isinstance(value, Content):
-        return value.to_dict(exclude_none=exclude_none)
+        return value._to_dict(  # pyright: ignore[reportPrivateUsage]
+            exclude_none=exclude_none, redact_exception=redact_exception
+        )
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [_serialize_value(item, exclude_none) for item in cast(Iterable[Any], value)]
+        return [
+            _serialize_value(item, exclude_none, redact_exception=redact_exception)
+            for item in cast(Iterable[Any], value)
+        ]
     if isinstance(value, Mapping):
-        return {k: _serialize_value(v, exclude_none) for k, v in value.items()}  # type: ignore[reportUnknownVariableType]
+        return {
+            k: _serialize_value(v, exclude_none, redact_exception=redact_exception)
+            for k, v in cast(Mapping[Any, Any], value).items()
+        }
     if hasattr(value, "to_dict"):
         return value.to_dict()  # type: ignore[call-arg]
     return value
@@ -482,8 +492,8 @@ class Content:
     `Content.from_uri()`, etc. to create instances.
 
     The ``exception`` field is host-internal diagnostic state. Its value may originate from a tool, middleware,
-    provider, or caller and must always be treated as potentially sensitive. Dictionary serialization omits it;
-    channel-visible error information belongs in the appropriate public result field.
+    provider, or caller and must always be treated as potentially sensitive. Dictionary serialization replaces it
+    with a fixed marker that preserves failure state; channel-visible error information belongs in the public result.
     """
 
     _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
@@ -862,7 +872,7 @@ class Content:
             arguments: The arguments for the requested function call. May be a JSON string, a mapping that can be
                 serialized as arguments, or None when no arguments were provided.
             exception: Host-internal diagnostic information when the provider returned the call in an error state.
-                Treat it as potentially sensitive regardless of its source; dictionary serialization omits it.
+                Treat it as potentially sensitive regardless of its source; serialization replaces it with a marker.
             informational_only: Whether the function call is present only for transcript fidelity and should not be
                 executed by Agent Framework function invocation.
             id: Stable Agent Framework identity for this occurrence. When omitted, the function invocation layer
@@ -912,8 +922,8 @@ class Content:
                 form produced by :meth:`~FunctionTool.parse_result`), a plain
                 ``str``, or any other value (which is stringified).
             exception: Host-internal diagnostic information when the function call failed. Treat it as potentially
-                sensitive regardless of whether it came from a tool, middleware, provider, or caller. Dictionary
-                serialization omits it; use ``result`` for channel-visible error text.
+                sensitive regardless of whether it came from a tool, middleware, provider, or caller. Serialization
+                replaces it with a fixed failure marker; use ``result`` for channel-visible error text.
             annotations: Optional annotations for the content.
             additional_properties: Optional additional properties.
             raw_representation: Optional raw representation from the provider.
@@ -1416,8 +1426,19 @@ class Content:
     def to_dict(self, *, exclude_none: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
         """Serialize content without host-internal exception diagnostics.
 
-        Exception diagnostics are omitted regardless of their source because they may contain sensitive information.
+        Exception diagnostics are replaced with a fixed marker regardless of their source because they may contain
+        sensitive information. The marker preserves failure status across persistence round-trips.
         """
+        return self._to_dict(exclude_none=exclude_none, exclude=exclude, redact_exception=True)
+
+    def _to_dict(
+        self,
+        *,
+        exclude_none: bool,
+        exclude: set[str] | None = None,
+        redact_exception: bool,
+    ) -> dict[str, Any]:
+        """Serialize content with explicit control over internal exception redaction."""
         fields_to_capture = (
             "text",
             "protected_data",
@@ -1430,6 +1451,7 @@ class Content:
             "call_id",
             "name",
             "arguments",
+            "exception",
             "informational_only",
             "result",
             "items",
@@ -1464,11 +1486,13 @@ class Content:
             value = getattr(self, field, None)
             if field in exclude:
                 continue
+            if field == "exception" and value is not None and redact_exception:
+                value = _SERIALIZED_EXCEPTION_MARKER
             if field == "informational_only" and (self.type != "function_call" or not value):
                 continue
             if exclude_none and value is None:
                 continue
-            result[field] = _serialize_value(value, exclude_none)
+            result[field] = _serialize_value(value, exclude_none, redact_exception=redact_exception)
 
         if "annotations" not in exclude and self.annotations is not None:
             result["annotations"] = [dict(annotation) for annotation in self.annotations]
@@ -1479,7 +1503,10 @@ class Content:
         """Check if two Content instances are equal by comparing their dict representations."""
         if not isinstance(other, Content):
             return False
-        return self.to_dict(exclude_none=False) == other.to_dict(exclude_none=False)
+        return self._to_dict(exclude_none=False, redact_exception=False) == other._to_dict(
+            exclude_none=False,
+            redact_exception=False,
+        )
 
     def __str__(self) -> str:
         """Return a string representation of the Content."""

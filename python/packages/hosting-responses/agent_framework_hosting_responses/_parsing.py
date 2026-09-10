@@ -775,8 +775,11 @@ def _function_call_output_item(content: Content, *, status: str) -> ResponseOutp
 def _function_result_output_item(content: Content, *, status: str) -> ResponseOutputItem:
     """Project channel-visible output without exposing potentially sensitive exception diagnostics."""
     output_parts = _content_parts_to_input_items(content.items)
-    has_visible_item = any(item.type != "text" or bool(item.text) for item in content.items or ())
-    if content.exception and not content.result and not has_visible_item:
+    has_visible_output = any(
+        getattr(part, "type", None) != "input_text" or bool(getattr(part, "text", None)) for part in output_parts
+    )
+    result_is_empty = content.result is None or (isinstance(content.result, str) and not content.result)
+    if content.exception is not None and result_is_empty and not has_visible_output:
         output: str | list[Any] = "Error: Function failed."
     elif output_parts:
         output = output_parts
