@@ -2,6 +2,12 @@
 
 This package contains the Microsoft Foundry integrations for Microsoft Agent Framework, including Foundry chat clients, preconfigured Foundry agents, Foundry embedding clients, and Foundry memory providers.
 
+## SDK compatibility
+
+This package supports `azure-ai-projects>=2.2.0,<2.7.0`. Projects 2.5 and later require
+`openai>=3.0.0`, so `agent-framework-foundry` requires `agent-framework-openai>=1.14.2`,
+which supports both OpenAI 2.x and 3.x.
+
 ## Evaluations
 
 `FoundryEvals` implements the provider-neutral `Evaluator` protocol with
@@ -49,7 +55,9 @@ Toolboxes can be authored two ways:
 - **Foundry portal** — create and version toolboxes through the UI without touching code.
 - **Programmatically** — use the [`azure-ai-projects`](https://pypi.org/project/azure-ai-projects/) SDK to create, update, and version toolboxes from Python.
 
-> Toolbox authoring APIs (`ToolboxVersionObject`, `ToolboxObject`, `project_client.beta.toolboxes.*`) require `azure-ai-projects>=2.1.0`. Earlier versions can only consume toolboxes that already exist.
+> In `azure-ai-projects` 2.2, toolbox authoring is available through
+> `project_client.beta.toolboxes`. Projects 2.3 and later expose stable
+> `project_client.toolboxes` operations.
 
 ### Using toolboxes with `FoundryAgent`
 

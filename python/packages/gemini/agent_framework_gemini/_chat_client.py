@@ -345,7 +345,7 @@ class RawGeminiChatClient(
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretString | None = None,
         model: str | None = None,
         vertexai: bool | None = None,
         project: str | None = None,
@@ -1390,7 +1390,7 @@ class GeminiChatClient(
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretString | None = None,
         model: str | None = None,
         vertexai: bool | None = None,
         project: str | None = None,

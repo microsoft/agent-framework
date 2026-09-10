@@ -45,7 +45,7 @@ all = [
 devui = "agent_framework_devui:main"
 
 [tool.uv]
-prerelease = "if-necessary-or-explicit"
+prerelease = "if-necessary"
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",

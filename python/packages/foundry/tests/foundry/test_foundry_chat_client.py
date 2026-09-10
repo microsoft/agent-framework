@@ -9,12 +9,12 @@ import os
 import sys
 import warnings
 from functools import wraps
+from importlib import import_module
 from pathlib import Path
 from typing import Annotated, Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import agent_framework._telemetry as telemetry
-import httpx
 import pytest
 from agent_framework import (
     Agent,
@@ -36,12 +36,14 @@ from azure.core.pipeline import Pipeline
 from azure.core.pipeline.policies import RedirectPolicy, UserAgentPolicy
 from azure.core.pipeline.transport import HttpRequest, HttpResponse, HttpTransport
 from azure.identity import AzureCliCredential
-from openai import AsyncOpenAI, BadRequestError
+from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
 from pydantic import BaseModel
 from pytest import param
 
 from agent_framework_foundry import FoundryChatClient, RawFoundryChatClient
 from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsagePolicy
+
+_OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 
 
 class OutputStruct(BaseModel):
@@ -1719,7 +1721,7 @@ class _ResponsesTransport:
         self.max_active_requests = 0
         self._both_calls_started = asyncio.Event()
 
-    async def __call__(self, request: httpx.Request) -> httpx.Response:
+    async def __call__(self, request: Any) -> Any:
         body = request.content.decode()
         marker = next((marker for marker in _CONCURRENCY_MARKERS if marker in body), None)
         if marker is None:
@@ -1738,12 +1740,12 @@ class _ResponsesTransport:
                 content = "".join(
                     f"data: {json.dumps(event)}\n\n" for event in _concurrency_stream_events(marker, self.model)
                 )
-                return httpx.Response(
+                return _OPENAI_HTTPX.Response(
                     200,
                     headers={"content-type": "text/event-stream"},
                     content=f"{content}data: [DONE]\n\n",
                 )
-            return httpx.Response(200, json=_concurrency_response(marker, self.model))
+            return _OPENAI_HTTPX.Response(200, json=_concurrency_response(marker, self.model))
         finally:
             self.active_requests -= 1
 
@@ -1765,7 +1767,7 @@ def _build_concurrency_client(
     async_client = AsyncOpenAI(
         api_key="test-key",
         base_url="https://example.test/v1",
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(transport)),
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(transport)),
     )
     function_invocation_configuration: FunctionInvocationConfiguration = {"enabled": False}
     if provider == "foundry":

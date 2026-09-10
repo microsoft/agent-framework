@@ -79,6 +79,7 @@ python/
 │   │   ├── agent_framework/  # Public API exports
 │   │   └── tests/
 │   ├── foundry/              # agent-framework-foundry
+│   ├── lab/                  # Standalone experimental Lab project
 │   ├── anthropic/            # agent-framework-anthropic
 │   ├── ollama/               # agent-framework-ollama
 │   └── ...                   # Other provider packages
@@ -134,5 +135,5 @@ Durable Task and Azure Functions integrations are maintained in the [Durable Age
 - [purview](packages/purview/AGENTS.md) - Data governance
 
 ### Experimental
-- [lab](packages/lab/AGENTS.md) - Experimental features
+- [lab](packages/lab/AGENTS.md) - Experimental features; standalone uv project with its own lockfile
 - [monty](packages/monty/AGENTS.md) - Monty-backed CodeAct integrations (alpha)

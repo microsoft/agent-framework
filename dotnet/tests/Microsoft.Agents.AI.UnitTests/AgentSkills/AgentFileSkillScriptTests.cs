@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.IO;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,14 +11,27 @@ namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 /// <summary>
 /// Unit tests for <see cref="AgentFileSkillScript"/>.
 /// </summary>
-public sealed class AgentFileSkillScriptTests
+public sealed class AgentFileSkillScriptTests : IDisposable
 {
+    private readonly string _testRoot;
+
+    public AgentFileSkillScriptTests()
+    {
+        this._testRoot = Path.Combine(Path.GetTempPath(), "file-skill-script-tests-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(this._testRoot);
+    }
+
+    public void Dispose()
+    {
+        Directory.Delete(this._testRoot, recursive: true);
+    }
+
     [Fact]
     public async Task RunAsync_SkillIsNotAgentFileSkill_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
         static Task<object?> RunnerAsync(AgentFileSkill s, AgentFileSkillScript sc, JsonElement? a, IServiceProvider? sp, CancellationToken ct) => Task.FromResult<object?>("result");
-        var script = CreateScript("test-script", "/path/to/script.py", RunnerAsync);
+        var script = this.CreateScript("test-script", "/path/to/script.py", RunnerAsync);
         var nonFileSkill = new TestAgentSkill("my-skill", "A skill", "Instructions.");
 
         // Act & Assert
@@ -35,7 +49,7 @@ public sealed class AgentFileSkillScriptTests
             runnerCalled = true;
             return Task.FromResult<object?>("executed");
         }
-        var script = CreateScript("run-me", "/scripts/run-me.sh", runnerAsync);
+        var script = this.CreateScript("run-me", "/scripts/run-me.sh", runnerAsync);
         var fileSkill = new AgentFileSkill(
             new AgentSkillFrontmatter("my-skill", "A file skill"),
             "---\nname: my-skill\n---\nContent",
@@ -61,7 +75,7 @@ public sealed class AgentFileSkillScriptTests
             capturedScript = scriptArg;
             return Task.FromResult<object?>(null);
         }
-        var script = CreateScript("capture", "/scripts/capture.py", runnerAsync);
+        var script = this.CreateScript("capture", "/scripts/capture.py", runnerAsync);
         var fileSkill = new AgentFileSkill(
             new AgentSkillFrontmatter("owner-skill", "Owner"),
             "Content",
@@ -80,11 +94,11 @@ public sealed class AgentFileSkillScriptTests
     {
         // Arrange & Act
         static Task<object?> RunnerAsync(AgentFileSkill s, AgentFileSkillScript sc, JsonElement? a, IServiceProvider? sp, CancellationToken ct) => Task.FromResult<object?>(null);
-        var script = CreateScript("my-script", "/path/to/my-script.py", RunnerAsync);
+        var script = this.CreateScript("my-script", "/path/to/my-script.py", RunnerAsync);
 
         // Assert
         Assert.Equal("my-script", script.Name);
-        Assert.Equal("/path/to/my-script.py", script.FullPath);
+        Assert.Equal(Path.Combine(this._testRoot, "my-script.py"), script.FullPath);
     }
 
     [Fact]
@@ -92,7 +106,7 @@ public sealed class AgentFileSkillScriptTests
     {
         // Arrange
         static Task<object?> RunnerAsync(AgentFileSkill s, AgentFileSkillScript sc, JsonElement? a, IServiceProvider? sp, CancellationToken ct) => Task.FromResult<object?>(null);
-        var script = CreateScript("my-script", "/path/to/script.py", RunnerAsync);
+        var script = this.CreateScript("my-script", "/path/to/script.py", RunnerAsync);
 
         // Act
         var schema = script.ParametersSchema;
@@ -109,8 +123,8 @@ public sealed class AgentFileSkillScriptTests
     {
         // Arrange
         static Task<object?> RunnerAsync(AgentFileSkill s, AgentFileSkillScript sc, JsonElement? a, IServiceProvider? sp, CancellationToken ct) => Task.FromResult<object?>(null);
-        var script1 = CreateScript("build", "/scripts/build.sh", RunnerAsync);
-        var script2 = CreateScript("deploy", "/scripts/deploy.sh", RunnerAsync);
+        var script1 = this.CreateScript("build", "/scripts/build.sh", RunnerAsync);
+        var script2 = this.CreateScript("deploy", "/scripts/deploy.sh", RunnerAsync);
         var fileSkill = new AgentFileSkill(
             new AgentSkillFrontmatter("my-skill", "A skill"),
             "Original content",
@@ -183,7 +197,7 @@ public sealed class AgentFileSkillScriptTests
             "Original content",
             "/skills/my-skill",
             resources: [new AgentInlineSkillResource("reference", "value")],
-            scripts: [CreateScript("build", "/scripts/build.sh", RunnerAsync)]);
+            scripts: [this.CreateScript("build", "/scripts/build.sh", RunnerAsync)]);
 
         // Act
         var content = await fileSkill.GetContentAsync();
@@ -200,7 +214,7 @@ public sealed class AgentFileSkillScriptTests
     {
         // Arrange
         static Task<object?> RunnerAsync(AgentFileSkill s, AgentFileSkillScript sc, JsonElement? a, IServiceProvider? sp, CancellationToken ct) => Task.FromResult<object?>(null);
-        var script = CreateScript("test", "/scripts/test.sh", RunnerAsync);
+        var script = this.CreateScript("test", "/scripts/test.sh", RunnerAsync);
         var fileSkill = new AgentFileSkill(
             new AgentSkillFrontmatter("my-skill", "A skill"),
             "Content",
@@ -225,7 +239,7 @@ public sealed class AgentFileSkillScriptTests
             capturedArgs = args;
             return Task.FromResult<object?>("done");
         }
-        var script = CreateScript("array-test", "/scripts/test.sh", runnerAsync);
+        var script = this.CreateScript("array-test", "/scripts/test.sh", runnerAsync);
         var fileSkill = new AgentFileSkill(
             new AgentSkillFrontmatter("my-skill", "A skill"),
             "Content",
@@ -252,7 +266,7 @@ public sealed class AgentFileSkillScriptTests
             capturedProvider = sp;
             return Task.FromResult<object?>("done");
         }
-        var script = CreateScript("sp-test", "/scripts/test.sh", runnerAsync);
+        var script = this.CreateScript("sp-test", "/scripts/test.sh", runnerAsync);
         var fileSkill = new AgentFileSkill(
             new AgentSkillFrontmatter("my-skill", "A skill"),
             "Content",
@@ -270,7 +284,7 @@ public sealed class AgentFileSkillScriptTests
     public async Task RunAsync_NoRunner_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange — create script without a runner
-        var script = CreateScript("no-runner", "/scripts/test.sh", runner: null);
+        var script = this.CreateScript("no-runner", "/scripts/test.sh", runner: null);
         var fileSkill = new AgentFileSkill(
             new AgentSkillFrontmatter("my-skill", "A skill"),
             "Content",
@@ -286,7 +300,7 @@ public sealed class AgentFileSkillScriptTests
     {
         // Arrange
         static Task<object?> RunnerAsync(AgentFileSkill s, AgentFileSkillScript sc, JsonElement? a, IServiceProvider? sp, CancellationToken ct) => Task.FromResult<object?>(null);
-        var script = CreateScript("test", "/scripts/test.sh", RunnerAsync);
+        var script = this.CreateScript("test", "/scripts/test.sh", RunnerAsync);
         var fileSkill = new AgentFileSkill(
             new AgentSkillFrontmatter("my-skill", "A skill"),
             "Original content",
@@ -301,17 +315,14 @@ public sealed class AgentFileSkillScriptTests
     }
 
     /// <summary>
-    /// Helper to create an <see cref="AgentFileSkillScript"/> via reflection since the constructor is internal.
+    /// Helper to create an <see cref="AgentFileSkillScript"/> rooted in the test directory.
     /// </summary>
-    private static AgentFileSkillScript CreateScript(string name, string fullPath, AgentFileSkillScriptRunner? runner)
+    private AgentFileSkillScript CreateScript(string name, string fullPath, AgentFileSkillScriptRunner? runner)
     {
-        var ctor = typeof(AgentFileSkillScript).GetConstructor(
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
-            null,
-            [typeof(string), typeof(string), typeof(AgentFileSkillScriptRunner)],
-            null) ?? throw new InvalidOperationException("Could not find internal constructor.");
+        string resolvedPath = Path.Combine(this._testRoot, Path.GetFileName(fullPath));
+        File.WriteAllText(resolvedPath, string.Empty);
 
-        return (AgentFileSkillScript)ctor.Invoke([name, fullPath, runner]);
+        return new AgentFileSkillScript(name, resolvedPath, new AgentFileSkillPathScope(this._testRoot, this._testRoot), runner);
     }
 
     /// <summary>

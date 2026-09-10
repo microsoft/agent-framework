@@ -7,12 +7,12 @@ import json
 import os
 import sys
 from collections.abc import Awaitable, Callable
+from importlib import import_module
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-import httpx
 import pytest
 from agent_framework import (
     Agent,
@@ -39,7 +39,7 @@ from azure.ai.projects import models as projects_models
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
 from agent_framework_foundry._agent import (
     FoundryAgent,
@@ -49,6 +49,8 @@ from agent_framework_foundry._agent import (
 )
 from agent_framework_foundry._chat_client import FoundryChatClient
 from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsagePolicy
+
+_OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 
 skip_if_foundry_agent_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("FOUNDRY_PROJECT_ENDPOINT", "") in ("", "https://test-project.services.ai.azure.com/")
@@ -1372,12 +1374,12 @@ async def test_foundry_agent_workflow_replays_parallel_reasoning_function_group(
             "tools": [],
         }
 
-    async def foundry_responses_boundary(request: httpx.Request) -> httpx.Response:
+    async def foundry_responses_boundary(request: Any) -> Any:
         payload = json.loads(request.content)
         agent_name = payload["agent_reference"]["name"]
 
         if agent_name == "research-agent" and "previous_response_id" not in payload:
-            return httpx.Response(
+            return _OPENAI_HTTPX.Response(
                 200,
                 json=_response(
                     "resp_research_tool",
@@ -1409,7 +1411,7 @@ async def test_foundry_agent_workflow_replays_parallel_reasoning_function_group(
             )
 
         if agent_name == "research-agent":
-            return httpx.Response(
+            return _OPENAI_HTTPX.Response(
                 200,
                 json=_response(
                     "resp_research_final",
@@ -1421,7 +1423,7 @@ async def test_foundry_agent_workflow_replays_parallel_reasoning_function_group(
         summary_inputs.append(input_items)
         input_types = {item.get("type") for item in input_items if isinstance(item, dict)}
         if "function_call" in input_types and "reasoning" not in input_types:
-            return httpx.Response(
+            return _OPENAI_HTTPX.Response(
                 400,
                 json={
                     "error": {
@@ -1435,7 +1437,7 @@ async def test_foundry_agent_workflow_replays_parallel_reasoning_function_group(
                 },
             )
 
-        return httpx.Response(
+        return _OPENAI_HTTPX.Response(
             200,
             json=_response(
                 "resp_summary",
@@ -1462,10 +1464,10 @@ async def test_foundry_agent_workflow_replays_parallel_reasoning_function_group(
                 raise MiddlewareTermination("Policy blocked tool execution")
             await call_next()
 
-    transport = httpx.MockTransport(foundry_responses_boundary)
+    transport = _OPENAI_HTTPX.MockTransport(foundry_responses_boundary)
     responses_client = AsyncOpenAI(
         api_key="test-key",
-        http_client=httpx.AsyncClient(transport=transport),
+        http_client=DefaultAsyncHttpxClient(transport=transport),
         max_retries=0,
     )
     project_client = MagicMock()

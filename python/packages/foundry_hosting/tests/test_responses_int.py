@@ -24,8 +24,9 @@ import re
 import socket
 import time
 from collections.abc import Callable
+from importlib import import_module
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 from unittest.mock import MagicMock
 
 import httpx
@@ -46,10 +47,12 @@ from agent_framework import (
 from agent_framework.foundry import FoundryChatClient
 from azure.ai.agentserver.responses import InMemoryResponseProvider, ResponsesServerOptions
 from azure.identity import AzureCliCredential
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 from typing_extensions import Never
 
 from agent_framework_foundry_hosting import ResponsesHostServer
+
+_OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 
 # ---------------------------------------------------------------------------
 # Skip / marker helpers
@@ -652,7 +655,7 @@ class TestReasoningHostedMcpReplay:
                 "status": "completed",
             }
 
-        def _streaming_response(response_id: str, output: list[dict[str, Any]]) -> httpx.Response:
+        def _streaming_response(response_id: str, output: list[dict[str, Any]]) -> Any:
             response = _response(response_id, output)
             events: list[dict[str, Any]] = []
             for output_index, item in enumerate(output):
@@ -676,9 +679,9 @@ class TestReasoningHostedMcpReplay:
                 "sequence_number": len(events),
             })
             body = "".join(f"data: {json.dumps(event)}\n\n" for event in events) + "data: [DONE]\n\n"
-            return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+            return _OPENAI_HTTPX.Response(200, text=body, headers={"content-type": "text/event-stream"})
 
-        async def foundry_responses_boundary(request: httpx.Request) -> httpx.Response:
+        async def foundry_responses_boundary(request: Any) -> Any:
             nonlocal call_count
             call_count += 1
             payload = json.loads(request.content)
@@ -715,7 +718,7 @@ class TestReasoningHostedMcpReplay:
                 or len(mcp_calls) != 1
                 or mcp_calls[0].get("output") != "Microsoft Agent Framework"
             ):
-                return httpx.Response(
+                return _OPENAI_HTTPX.Response(
                     400,
                     json={
                         "error": {
@@ -731,10 +734,10 @@ class TestReasoningHostedMcpReplay:
 
             return _streaming_response("resp_second", [_message("msg_second")])
 
-        transport = httpx.MockTransport(foundry_responses_boundary)
+        transport = _OPENAI_HTTPX.MockTransport(foundry_responses_boundary)
         responses_client = AsyncOpenAI(
             api_key="test-key",
-            http_client=httpx.AsyncClient(transport=transport),
+            http_client=DefaultAsyncHttpxClient(transport=transport),
             max_retries=0,
         )
         project_client = MagicMock()

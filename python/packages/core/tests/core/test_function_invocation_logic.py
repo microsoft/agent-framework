@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import json
 import logging
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
@@ -56,6 +57,48 @@ def _build_approved_tool_roundtrip(
     approval_request = Content.from_function_approval_request(id=approval_id, function_call=function_call)
     approval_response = approval_request.to_function_approval_response(approved=True)
     return function_call, approval_request, approval_response
+
+
+def test_collect_unanswered_replacement_requests_correlates_reused_call_id_by_occurrence() -> None:
+    """A resolved replacement must not consume a pending reused-call-id sibling."""
+    from agent_framework._tools import _collect_unanswered_approval_requests
+
+    first_call = Content.from_function_call(
+        call_id="reused",
+        name="guarded",
+        arguments="{}",
+        id="occurrence-1",
+    )
+    first_request = Content.from_function_approval_request(
+        id="replacement-1",
+        function_call=first_call,
+        additional_properties={"_replacement_approval_request": True},
+    )
+    second_call = Content.from_function_call(
+        call_id="reused",
+        name="guarded",
+        arguments="{}",
+        id="occurrence-2",
+    )
+    second_request = Content.from_function_approval_request(
+        id="replacement-2",
+        function_call=second_call,
+        additional_properties={"_replacement_approval_request": True},
+    )
+    second_response = Content.from_function_approval_response(
+        approved=True,
+        id="occurrence-2",
+        function_call=second_call,
+    )
+
+    unanswered = _collect_unanswered_approval_requests([
+        Message(role="assistant", contents=[first_request]),
+        Message(role="assistant", contents=[second_request]),
+        Message(role="user", contents=[second_response]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="reused", result="done")]),
+    ])
+
+    assert unanswered == [first_request]
 
 
 def test_session_approval_binding_rebinds_consumes_and_rejects_duplicates() -> None:
@@ -536,6 +579,15 @@ async def test_streaming_interleaved_indexed_call_fragments_coalesce_by_occurren
         assert streamed_by_index[index][0] == streamed_by_index[index][1]
         assert streamed_by_index[index][0][1] == provider_call_id
     assert caught == []
+
+
+def test_loading_pending_approval_requests_does_not_create_state() -> None:
+    from agent_framework._tools import _load_pending_approval_requests
+
+    session = AgentSession(session_id="approval-read-only")
+
+    assert _load_pending_approval_requests(session) == {}
+    assert "tool_approval" not in session.state
 
 
 def test_occurrence_aware_approval_rejects_stale_reused_call_id_response(caplog: pytest.LogCaptureFixture) -> None:
@@ -3243,6 +3295,25 @@ def test_pending_approval_batch_filter_keeps_resolved_sibling_pair() -> None:
         ("tool", [local_result]),
         ("user", [unrelated_content]),
     ]
+
+
+def test_collect_unanswered_approval_requests_tracks_replacement_request() -> None:
+    """A replacement request with the same occurrence id starts a new unanswered round."""
+    from agent_framework._tools import _collect_unanswered_approval_requests
+
+    _, original_request, stale_response = _build_approved_tool_roundtrip(
+        call_id="call_reapproval",
+        approval_id="approval_occurrence",
+        tool_name="guarded_tool",
+    )
+    replacement_request = Content.from_dict(original_request.to_dict())
+    messages = [
+        Message(role="assistant", contents=[original_request]),
+        Message(role="user", contents=[stale_response]),
+        Message(role="assistant", contents=[replacement_request]),
+    ]
+
+    assert _collect_unanswered_approval_requests(messages) == [replacement_request]
 
 
 def test_replace_approval_contents_with_results_uses_result_call_ids_without_placeholders() -> None:
@@ -6912,3 +6983,402 @@ def test_progressive_tools_helpers_raise_without_live_tools():
 
 
 # endregion
+
+
+# region max_duration_seconds
+
+
+@pytest.mark.parametrize("max_iterations", [10])
+async def test_max_duration_seconds_non_streaming_triggers_graceful_degradation(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """When max_duration_seconds is exceeded mid-loop, tools are disabled and the model
+    produces a final text response (same graceful-degradation path as max_function_calls)."""
+    exec_counter = 0
+
+    @tool(name="step", approval_mode="never_require")
+    def step_func() -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        current_time[0] = 10.0  # Advance time so the next check triggers expiration
+        return "done"
+
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 5.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="c1", name="step", arguments="{}")],
+            )
+        ),
+        # model would call again, but duration check fires first
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="c2", name="step", arguments="{}")],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["giving up"])),
+    ]
+
+    current_time = [0.0]
+
+    def fake_perf_counter() -> float:
+        return current_time[0]
+
+    from unittest.mock import patch
+
+    with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
+        await chat_client_base.get_response(
+            [Message(role="user", contents=["go"])], options={"tool_choice": "auto", "tools": [step_func]}
+        )
+
+    # Only first tool call executes; duration fires before second iteration's tool call
+    assert exec_counter == 1
+
+
+@pytest.mark.parametrize("max_iterations", [10])
+async def test_max_duration_seconds_streaming_triggers_graceful_degradation(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """max_duration_seconds also triggers graceful degradation in the streaming path."""
+    exec_counter = 0
+
+    @tool(name="step", approval_mode="never_require")
+    def step_func() -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        current_time[0] = 10.0  # Advance time so the next check triggers expiration
+        return "done"
+
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 5.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="s1", name="step", arguments="{}")],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+        ],
+        # duration fires after iteration 1; second batch never executes tool
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="s2", name="step", arguments="{}")],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+        ],
+    ]
+
+    current_time = [0.0]
+
+    def fake_perf_counter() -> float:
+        return current_time[0]
+
+    from unittest.mock import patch
+
+    with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
+        stream = chat_client_base.get_response(
+            [Message(role="user", contents=["go"])],
+            stream=True,
+            options={"tool_choice": "auto", "tools": [step_func]},
+        )
+        async for _ in stream:
+            pass
+        await stream.get_final_response()
+
+    assert exec_counter == 1
+
+
+def test_normalize_rejects_non_positive_max_duration_seconds():
+    """normalize_function_invocation_configuration raises ValueError for max_duration_seconds <= 0."""
+    from agent_framework import normalize_function_invocation_configuration
+
+    with pytest.raises(ValueError, match="max_duration_seconds"):
+        normalize_function_invocation_configuration({"max_duration_seconds": 0.0})
+
+    with pytest.raises(ValueError, match="max_duration_seconds"):
+        normalize_function_invocation_configuration({"max_duration_seconds": -1.0})
+
+    # None and positive values are accepted.
+    cfg = normalize_function_invocation_configuration({"max_duration_seconds": None})
+    assert cfg["max_duration_seconds"] is None
+
+    cfg = normalize_function_invocation_configuration({"max_duration_seconds": 30.0})
+    assert cfg["max_duration_seconds"] == 30.0
+
+
+# endregion
+
+
+def test_max_duration_seconds_rejects_nan():
+    from agent_framework._tools import normalize_function_invocation_configuration
+
+    with pytest.raises(ValueError, match="max_duration_seconds must be greater than 0 or None"):
+        normalize_function_invocation_configuration({"max_duration_seconds": float("nan")})
+
+
+async def test_phase1_duration_expiry_prevents_approval_execution(chat_client_base: SupportsChatGetResponse):
+    from agent_framework._harness._tool_approval import ToolApprovalMiddleware
+    from agent_framework._sessions import AgentSession
+
+    tool_executed = False
+
+    @tool(name="op", approval_mode="always_require")
+    def op() -> str:
+        nonlocal tool_executed
+        tool_executed = True
+        return "done"
+
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 1.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    call = Content.from_function_call(call_id="op1", name="op", arguments="{}")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=[Message(role="assistant", contents=[call])], finish_reason="tool_calls"),
+        ChatResponse(
+            messages=[Message(role="assistant", contents=[Content.from_text("fallback")])], finish_reason="stop"
+        ),
+    ]
+
+    current_time = [0.0]
+
+    def fake_perf_counter() -> float:
+        return current_time[0]
+
+    session = AgentSession()
+    middleware = ToolApprovalMiddleware()
+    agent = Agent(client=chat_client_base, tools=[op], middleware=[middleware])
+
+    from unittest.mock import patch
+
+    with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
+        # First run: getting the approval request. Time is 0.0, so duration is not exceeded.
+        first_response = await agent.run("Go", session=session)
+
+        # Find the approval request in the response
+        approval_request = next(
+            c for c in first_response.messages[-1].contents if c.type == "function_approval_request"
+        )
+
+        # Now advance time to exceed max_duration_seconds (1.0s limit)
+        current_time[0] = 10.0
+
+        # Second run: user provides the approval response, but duration is exceeded.
+        resume_message = Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])
+        await agent.run(resume_message, session=session)
+
+    # The tool should NOT have executed — the phase 1 check should have blocked it.
+    assert not tool_executed
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_duration_expiry_drops_unexecutable_provider_call(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+):
+    @tool(name="op")
+    def op() -> str:
+        return "done"
+
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 1.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    call = Content.from_function_call(call_id="op1", name="op", arguments="{}")
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(contents=[call], role="assistant", finish_reason="tool_calls")],
+            [ChatResponseUpdate(contents=[call], role="assistant", finish_reason="tool_calls")],
+            [ChatResponseUpdate(contents=[Content.from_text("fallback")], role="assistant", finish_reason="stop")],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=[Message(role="assistant", contents=[call])], finish_reason="tool_calls"),
+            ChatResponse(messages=[Message(role="assistant", contents=[call])], finish_reason="tool_calls"),
+            ChatResponse(
+                messages=[Message(role="assistant", contents=[Content.from_text("fallback")])], finish_reason="stop"
+            ),
+        ]
+
+    agent = Agent(client=chat_client_base, tools=[op])
+    current_time = [0.0]
+
+    def fake_perf_counter() -> float:
+        res = current_time[0]
+        current_time[0] = 10.0  # Advance time so the next check triggers expiration
+        return res
+
+    from unittest.mock import patch
+
+    with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
+        if streaming:
+            stream = agent.run("Go", stream=True)
+            async for _ in stream:
+                pass
+            response = await stream.get_final_response()
+        else:
+            response = await agent.run("Go")
+
+    # Duration has already expired before the first call, so tools are disabled from the
+    # start and the loop terminates on the first (tool-less) response without executing "op".
+    assert response.text == "I broke out of the function invocation loop..."
+    assert not any(content.type == "function_call" for message in response.messages for content in message.contents)
+
+
+async def test_session_budget_state_persists_during_approval_and_cleans_up_on_completion(
+    chat_client_base: SupportsChatGetResponse,
+):
+    from agent_framework._harness._tool_approval import ToolApprovalMiddleware
+    from agent_framework._sessions import AgentSession
+    from agent_framework._tools import (
+        _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
+        _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY,
+    )
+
+    @tool(name="op", approval_mode="always_require")
+    def op(ctx: FunctionInvocationContext) -> str:
+        assert ctx.session is not None
+        budget_state = ctx.session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY]
+        assert isinstance(budget_state, dict)
+        payload_budget_state = budget_state[_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY]
+        assert isinstance(payload_budget_state, dict)
+        observed_payload_budget_states.append(dict(payload_budget_state))
+        return "done"
+
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 100.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    call = Content.from_function_call(call_id="op1", name="op", arguments="{}")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=[Message(role="assistant", contents=[call])], finish_reason="tool_calls"),
+        ChatResponse(
+            messages=[Message(role="assistant", contents=[Content.from_text("fallback")])], finish_reason="stop"
+        ),
+    ]
+
+    session = AgentSession()
+    middleware = ToolApprovalMiddleware()
+    agent = Agent(client=chat_client_base, tools=[op], middleware=[middleware])
+    observed_payload_budget_states: list[dict[str, Any]] = []
+
+    current_time = [0.0]
+
+    def fake_perf_counter() -> float:
+        res = current_time[0]
+        current_time[0] = 10.0  # Advance time so the next check triggers expiration
+        return res
+
+    from unittest.mock import patch
+
+    with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
+        first_response = await agent.run("Go", session=session)
+        assert any(c.type == "function_approval_request" for c in first_response.messages[-1].contents)
+
+        assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY in session.state
+        budget_state = session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY]
+        assert isinstance(budget_state, dict)
+        assert "start_time" in budget_state
+        payload_budget_state = budget_state[_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY]
+        assert isinstance(payload_budget_state, dict)
+        payload_budget_state.update({"limit_bytes": 512, "retained_bytes": 128})
+
+        serialized_session = json.dumps(session.to_dict())
+        session = AgentSession.from_dict(json.loads(serialized_session))
+
+        approval_request = next(
+            c for c in first_response.messages[-1].contents if c.type == "function_approval_request"
+        )
+        resume_message = Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])
+
+        await agent.run(resume_message, session=session)
+
+    assert observed_payload_budget_states == [{"limit_bytes": 512, "retained_bytes": 128}]
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+
+
+async def test_plain_session_multiturn_has_isolated_budget_state_per_invocation(
+    chat_client_base: SupportsChatGetResponse,
+):
+    from agent_framework._sessions import AgentSession
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+
+    @tool(name="op")
+    def op() -> str:
+        return "done"
+
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 100.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=[Message(role="assistant", contents=[Content.from_text("first")])], finish_reason="stop"),
+        ChatResponse(
+            messages=[Message(role="assistant", contents=[Content.from_text("second")])], finish_reason="stop"
+        ),
+    ]
+
+    session = AgentSession()
+    agent = Agent(client=chat_client_base, tools=[op])
+
+    await agent.run("Go", session=session)
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+
+    await agent.run("Go again", session=session)
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+
+
+async def test_streaming_pending_approval_survives_budget_state_pop(chat_client_base: SupportsChatGetResponse):
+    from agent_framework._harness._tool_approval import ToolApprovalMiddleware
+    from agent_framework._sessions import AgentSession
+    from agent_framework._tools import (
+        _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
+        _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY,
+    )
+
+    @tool(name="op", approval_mode="always_require")
+    def op(ctx: FunctionInvocationContext) -> str:
+        assert ctx.session is not None
+        budget_state = ctx.session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY]
+        assert isinstance(budget_state, dict)
+        payload_budget_state = budget_state[_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY]
+        assert isinstance(payload_budget_state, dict)
+        observed_payload_budget_states.append(dict(payload_budget_state))
+        return "done"
+
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 100.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    call = Content.from_function_call(call_id="op1", name="op", arguments="{}")
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [ChatResponseUpdate(contents=[call], role="assistant", finish_reason="tool_calls")],
+        [ChatResponseUpdate(contents=[Content.from_text("fallback")], role="assistant", finish_reason="stop")],
+    ]
+
+    session = AgentSession()
+    middleware = ToolApprovalMiddleware()
+    agent = Agent(client=chat_client_base, tools=[op], middleware=[middleware])
+    observed_payload_budget_states: list[dict[str, Any]] = []
+
+    from unittest.mock import patch
+
+    with patch("agent_framework._tools.perf_counter", return_value=0.0):
+        stream = agent.run("Go", session=session, stream=True)
+
+        async for _ in stream:
+            pass
+
+        first_response = await stream.get_final_response()
+        assert any(c.type == "function_approval_request" for c in first_response.messages[-1].contents)
+        assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY in session.state
+        budget_state = session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY]
+        assert isinstance(budget_state, dict)
+        payload_budget_state = budget_state[_FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY]
+        assert isinstance(payload_budget_state, dict)
+        payload_budget_state.update({"limit_bytes": 512, "retained_bytes": 128})
+
+        serialized_session = json.dumps(session.to_dict())
+        session = AgentSession.from_dict(json.loads(serialized_session))
+
+        approval_request = next(
+            c for c in first_response.messages[-1].contents if c.type == "function_approval_request"
+        )
+        resume_message = Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])
+
+        stream2 = agent.run(resume_message, session=session, stream=True)
+        async for _ in stream2:
+            pass
+        await stream2.get_final_response()
+
+    assert observed_payload_budget_states == [{"limit_bytes": 512, "retained_bytes": 128}]
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
