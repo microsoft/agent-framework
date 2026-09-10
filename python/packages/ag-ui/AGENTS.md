@@ -8,6 +8,8 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - **`AgentFrameworkWorkflow`** - Wraps native `Workflow` objects, or accepts `workflow_factory(thread_id)` for thread-scoped workflow instances without subclassing
 - **`AGUIChatClient`** - Chat client that speaks AG-UI protocol
 - **`AGUIHttpService`** - HTTP service for AG-UI endpoints
+- **`agent_framework_messages_to_agui_host_history()`** - Converts persisted Agent Framework messages to bounded
+  AG-UI Host history while retaining MCP widget payloads and model replay metadata
 - **`AGUIEventConverter`** - Converts between Agent Framework and AG-UI events
 - **`add_agent_framework_fastapi_endpoint()`** - Add AG-UI endpoint to FastAPI app (`SupportsAgentRun` or `Workflow`)
 - **`InMemoryAGUIThreadSnapshotStore`** - Memory-only latest AG-UI Thread Snapshot store for local development, demos, and tests
@@ -54,7 +56,9 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   `AgentSession.session_id`. Keep the raw Thread id for protocol events and snapshot addressing so equal Thread ids
   in different trusted scopes cannot collide in context-provider state. The deprecated
   `legacy_session_id_from_thread_id=True` compatibility option preserves raw provider keys only for explicit
-  migrations and must warn because it disables that isolation.
+  migrations and must warn because it disables that isolation; it is unsafe for shared multi-tenant deployments.
+  A configured endpoint resolver must return a non-empty string. Reject invalid results before accessing state or
+  invoking the runner; absence of a resolver, not an invalid result, selects intentionally unscoped operation.
 - `confirm_changes` snapshot cleanup resolves the synthetic confirmation back to its original `function_call_id`;
   it must never concatenate unrelated tool results or record accepted changes without a matching real result.
 - SSE keepalive is endpoint-owned transport behavior configured through

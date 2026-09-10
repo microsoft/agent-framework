@@ -10,7 +10,13 @@ from agent_framework import AgentSession, ContextProvider, FunctionTool, Session
 from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import ApprovalMode
 
-from ._execute_code_tool import HyperlightExecuteCodeTool, SandboxRuntime
+from ._execute_code_tool import (
+    DEFAULT_MAX_OUTPUT_FILE_BYTES,
+    DEFAULT_MAX_OUTPUT_FILES,
+    DEFAULT_MAX_OUTPUT_TOTAL_BYTES,
+    HyperlightExecuteCodeTool,
+    SandboxRuntime,
+)
 from ._feature_usage import FeatureIndex
 from ._types import AllowedDomain, AllowedDomainInput, FileMount, FileMountInput
 
@@ -29,6 +35,9 @@ class HyperlightCodeActProvider(ContextProvider):
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         allowed_domains: AllowedDomainInput | Sequence[AllowedDomainInput] | None = None,
+        max_output_files: int = DEFAULT_MAX_OUTPUT_FILES,
+        max_output_file_bytes: int = DEFAULT_MAX_OUTPUT_FILE_BYTES,
+        max_output_total_bytes: int = DEFAULT_MAX_OUTPUT_TOTAL_BYTES,
         backend: str = "wasm",
         module: str | None = "python_guest.path",
         module_path: str | None = None,
@@ -41,6 +50,9 @@ class HyperlightCodeActProvider(ContextProvider):
             workspace_root=workspace_root,
             file_mounts=file_mounts,
             allowed_domains=allowed_domains,
+            max_output_files=max_output_files,
+            max_output_file_bytes=max_output_file_bytes,
+            max_output_total_bytes=max_output_total_bytes,
             backend=backend,
             module=module,
             module_path=module_path,

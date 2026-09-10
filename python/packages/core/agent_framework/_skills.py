@@ -230,6 +230,45 @@ class InlineSkillResource(SkillResource):
         return result
 
 
+@dataclass(frozen=True)
+class _SkillPathScope:
+    """The path trust boundary of a discovered file-backed skill.
+
+    Pairs the host-configured discovery root with the skill directory found at or
+    beneath it. The root is retained so that a file can be revalidated immediately
+    before use against every directory from the root down to the file, rather than
+    only the segments below the skill directory. Without the root, a skill directory
+    (or a directory between it and the root) that was swapped for a link after
+    discovery would never be inspected.
+
+    The configured root itself is never inspected: the host chose it explicitly, so it
+    defines the trust boundary rather than sitting inside it, and it is allowed to be a link.
+
+    Containment is enforced here rather than at use time so that a mismatched pair fails
+    at construction, and so that every later check can rely on the invariant.
+
+    Attributes:
+        trusted_root: Absolute path of the host-configured discovery root.
+        skill_dir: Absolute path of the skill directory, at or beneath ``trusted_root``.
+
+    Raises:
+        ValueError: If ``skill_dir`` does not reside at or beneath ``trusted_root``.
+    """
+
+    trusted_root: str
+    skill_dir: str
+
+    def __post_init__(self) -> None:
+        within_root = FileSkillsSource._is_path_within_directory(  # pyright: ignore[reportPrivateUsage]
+            os.path.normpath(self.skill_dir),
+            os.path.normpath(self.trusted_root),
+        )
+        if not within_root:
+            raise ValueError(
+                f"skill_dir '{self.skill_dir}' must reside at or beneath trusted_root '{self.trusted_root}'."
+            )
+
+
 class _FileSkillResource(SkillResource):
     """A file-path-backed skill resource that reads content from disk.
 
@@ -248,6 +287,7 @@ class _FileSkillResource(SkillResource):
         name: str,
         full_path: str,
         description: str | None = None,
+        scope: _SkillPathScope | None = None,
     ) -> None:
         """Initialize a _FileSkillResource.
 
@@ -255,6 +295,7 @@ class _FileSkillResource(SkillResource):
             name: Relative path of the resource within the skill directory.
             full_path: Absolute path to the resource file.
             description: Optional human-readable summary.
+            scope: Trusted path scope used to revalidate discovered resources before reading.
 
         Raises:
             ValueError: If ``full_path`` is empty.
@@ -265,6 +306,7 @@ class _FileSkillResource(SkillResource):
             raise ValueError("full_path cannot be empty.")
 
         self.full_path = full_path
+        self._scope = scope
 
     async def read(self, **kwargs: Any) -> Any:
         """Read the resource content from disk.
@@ -278,11 +320,22 @@ class _FileSkillResource(SkillResource):
         Raises:
             ValueError: If the resource file does not exist.
         """
-        if not await asyncio.to_thread(Path(self.full_path).is_file):
+        return await asyncio.to_thread(self._read_validated_resource)
+
+    def _read_validated_resource(self) -> str:
+        validated_path = self.full_path
+        if self._scope is not None:
+            validated_path = FileSkillsSource._validate_file_path_for_use(  # pyright: ignore[reportPrivateUsage]
+                self._scope,
+                self.full_path,
+                self.name,
+                "Resource",
+            )
+        elif not Path(self.full_path).is_file():
             raise ValueError(f"Resource file '{self.name}' not found at '{self.full_path}'.")
 
         logger.info("Reading resource '%s' from '%s'", self.name, self.full_path)
-        return await asyncio.to_thread(Path(self.full_path).read_text, encoding="utf-8")
+        return Path(validated_path).read_text(encoding="utf-8")
 
 
 class SkillScript(ABC):
@@ -478,6 +531,8 @@ class FileSkillScript(SkillScript):
         description: str | None = None,
         full_path: str,
         runner: SkillScriptRunner | None = None,
+        skill_dir: str | None = None,
+        trusted_root: str | None = None,
     ) -> None:
         """Initialize a FileSkillScript.
 
@@ -487,9 +542,15 @@ class FileSkillScript(SkillScript):
             full_path: Absolute path to the script file.
             runner: Strategy for running file-based scripts.  Required for
                 execution; an error is raised from :meth:`run` if not provided.
+            skill_dir: Trusted skill directory used to revalidate the script before execution.
+            trusted_root: Configured discovery root used to include the skill directory and
+                intermediate directories in revalidation. Requires ``skill_dir``. When omitted,
+                revalidation starts at ``skill_dir`` for backward compatibility.
 
         Raises:
-            ValueError: If ``full_path`` is empty or not an absolute path.
+            ValueError: If ``full_path`` is empty or not an absolute path, if
+                ``trusted_root`` is provided without ``skill_dir``, or if ``skill_dir``
+                does not reside at or beneath ``trusted_root``.
         """
         super().__init__(name=name, description=description)
 
@@ -497,9 +558,19 @@ class FileSkillScript(SkillScript):
             raise ValueError("full_path cannot be empty.")
         if not os.path.isabs(full_path):
             raise ValueError(f"full_path must be an absolute path, got: '{full_path}'")
+        if trusted_root is not None and skill_dir is None:
+            raise ValueError("trusted_root requires skill_dir.")
 
         self.full_path = full_path
         self._runner = runner
+        self._scope = (
+            _SkillPathScope(
+                trusted_root=trusted_root if trusted_root is not None else skill_dir,
+                skill_dir=skill_dir,
+            )
+            if skill_dir is not None
+            else None
+        )
 
     @property
     def parameters_schema(self) -> dict[str, Any] | None:
@@ -533,6 +604,14 @@ class FileSkillScript(SkillScript):
             )
         if self._runner is None:
             raise ValueError(f"Script '{self.name}' requires a runner. Provide a script_runner for file-based scripts.")
+        if self._scope is not None:
+            await asyncio.to_thread(
+                FileSkillsSource._validate_file_path_for_use,  # pyright: ignore[reportPrivateUsage]
+                self._scope,
+                self.full_path,
+                self.name,
+                "Script",
+            )
         result = self._runner(skill, self, args)
         if inspect.isawaitable(result):
             return await result
@@ -2915,7 +2994,8 @@ class FileSkillsSource(SkillsSource):
         discovered = FileSkillsSource._discover_skill_directories(self._skill_paths)
         logger.info("Discovered %d potential skills", len(discovered))
 
-        for skill_path in discovered:
+        for scope in discovered:
+            skill_path = scope.skill_dir
             parsed = FileSkillsSource._read_and_parse_skill_file(skill_path)
             if parsed is None:
                 continue
@@ -2933,14 +3013,22 @@ class FileSkillsSource(SkillsSource):
             # Discover file-based resources
             resources: list[SkillResource] = []
             for rn in self._discover_resource_files(skill_path, frontmatter.name):
-                resource_full_path = FileSkillsSource._get_validated_resource_path(skill_path, rn)
-                resources.append(_FileSkillResource(name=rn, full_path=resource_full_path))
+                resource_full_path = FileSkillsSource._get_validated_resource_path(scope, rn)
+                resources.append(_FileSkillResource(name=rn, full_path=resource_full_path, scope=scope))
 
             # Discover file-based scripts
             scripts: list[SkillScript] = []
             for sn in self._discover_script_files(skill_path, frontmatter.name):
                 script_full_path = os.path.normpath(os.path.join(skill_path, sn))  # ruff:ignore[blocking-path-method-in-async-function]
-                scripts.append(FileSkillScript(name=sn, full_path=script_full_path, runner=self._script_runner))
+                scripts.append(
+                    FileSkillScript(
+                        name=sn,
+                        full_path=script_full_path,
+                        runner=self._script_runner,
+                        skill_dir=scope.skill_dir,
+                        trusted_root=scope.trusted_root,
+                    )
+                )
 
             file_skill = FileSkill(
                 frontmatter=frontmatter,
@@ -3337,46 +3425,68 @@ class FileSkillsSource(SkillsSource):
                 )
 
     @staticmethod
-    def _get_validated_resource_path(skill_dir: str, resource_name: str) -> str:
+    def _get_validated_resource_path(scope: _SkillPathScope, resource_name: str) -> str:
         """Resolve and validate a resource file path within a skill directory.
 
-        Normalizes *resource_name*, resolves it against *skill_dir*, and
-        validates that the result stays within the skill directory and does
+        Normalizes *resource_name*, resolves it against the scope's skill directory,
+        and validates that the result stays within the skill directory and does
         not traverse any symlinks.
 
         Args:
-            skill_dir: Absolute path to the owning skill directory.
+            scope: Trusted path scope of the owning skill.
             resource_name: Relative path of the resource within the skill directory.
 
         Returns:
             The validated absolute path to the resource file.
 
         Raises:
-            ValueError: If *skill_dir* is not an absolute path, the resolved path
+            ValueError: If the scope's paths are not absolute, the resolved path
                 escapes the skill directory, the file does not exist, or a symlink
                 is detected in the path.
         """
-        if not os.path.isabs(skill_dir):
-            raise ValueError(f"skill_dir must be an absolute path, got: '{skill_dir}'")
-
         resource_name = FileSkillsSource._normalize_resource_path(resource_name)
+        resource_full_path = os.path.normpath(Path(scope.skill_dir) / resource_name)
+        return FileSkillsSource._validate_file_path_for_use(
+            scope,
+            resource_full_path,
+            resource_name,
+            "Resource",
+        )
 
-        resource_full_path = os.path.normpath(Path(skill_dir) / resource_name)
-        root_directory_path = os.path.normpath(skill_dir)
+    @staticmethod
+    def _validate_file_path_for_use(scope: _SkillPathScope, full_path: str, file_name: str, file_kind: str) -> str:
+        """Validate a discovered file immediately before it is read or executed."""
+        # Require anchored trust boundaries, e.g. "/skills/weather", not "skills/weather".
+        if not os.path.isabs(scope.skill_dir):
+            raise ValueError(f"skill_dir must be an absolute path, got: '{scope.skill_dir}'")
+        if not os.path.isabs(scope.trusted_root):
+            raise ValueError(f"trusted_root must be an absolute path, got: '{scope.trusted_root}'")
 
-        if not FileSkillsSource._is_path_within_directory(resource_full_path, root_directory_path):
-            raise ValueError(f"Resource file '{resource_name}' references a path outside the skill directory.")
+        # Collapse lexical segments, e.g. "/skills/weather/refs/../guide.md" -> "/skills/weather/guide.md".
+        normalized_full_path = os.path.normpath(full_path)
+        skill_directory_path = os.path.normpath(scope.skill_dir)
+        trusted_root_path = os.path.normpath(scope.trusted_root)
 
-        if not Path(resource_full_path).is_file():
-            raise ValueError(f"Resource file '{resource_name}' not found in skill directory '{skill_dir}'.")
+        # Reject lexical escapes, e.g. "/skills/weather/../secret.md" resolves outside the skill root.
+        if not FileSkillsSource._is_path_within_directory(normalized_full_path, skill_directory_path):
+            raise ValueError(f"{file_kind} file '{file_name}' references a path outside the skill directory.")
 
-        if FileSkillsSource._has_link_or_reparse_point_in_path(resource_full_path, root_directory_path):
+        # The skill directory sitting at or beneath the configured root is a scope invariant,
+        # so the file is transitively within the root and the scan below is well-anchored.
+
+        # Reject files deleted or replaced with non-files after discovery.
+        if not Path(normalized_full_path).is_file():
+            raise ValueError(f"{file_kind} file '{file_name}' not found in skill directory '{scope.skill_dir}'.")
+
+        # Reject links in any segment below the configured root, e.g. the skill directory
+        # "weather" or the child segment "refs" in "/skills/weather/refs/guide.md".
+        if FileSkillsSource._has_link_or_reparse_point_in_path(normalized_full_path, trusted_root_path):
             raise ValueError(
-                f"Resource file '{resource_name}' has a symbolic link or reparse point in its path; "
+                f"{file_kind} file '{file_name}' has a symbolic link or reparse point in its path; "
                 "links and reparse points are not allowed."
             )
 
-        return resource_full_path
+        return normalized_full_path
 
     @staticmethod
     def _validate_skill_metadata(
@@ -3542,8 +3652,8 @@ class FileSkillsSource(SkillsSource):
         return frontmatter, content
 
     @staticmethod
-    def _discover_skill_directories(skill_paths: Sequence[str]) -> list[str]:
-        """Return absolute paths of all directories that contain a ``SKILL.md`` file.
+    def _discover_skill_directories(skill_paths: Sequence[str]) -> list[_SkillPathScope]:
+        """Return the path scopes of all directories that contain a ``SKILL.md`` file.
 
         Recursively searches each root path up to :data:`MAX_SEARCH_DEPTH`. Once a
         ``SKILL.md`` is found in a directory, that directory is the skill root and the
@@ -3563,9 +3673,10 @@ class FileSkillsSource(SkillsSource):
             skill_paths: Root directory paths to search.
 
         Returns:
-            Absolute paths to directories containing ``SKILL.md``.
+            One :class:`_SkillPathScope` per directory containing ``SKILL.md``, each pairing
+            the configured root it was found under with the skill directory itself.
         """
-        discovered: list[str] = []
+        discovered: list[_SkillPathScope] = []
 
         def _is_unsafe_link(path: Path) -> bool:
             try:
@@ -3573,7 +3684,7 @@ class FileSkillsSource(SkillsSource):
             except OSError:
                 return True
 
-        def _search(directory: str, current_depth: int) -> None:
+        def _search(directory: str, trusted_root: str, current_depth: int) -> None:
             dir_path = Path(directory)
             skill_file = dir_path / SKILL_FILE_NAME
             if skill_file.is_file():
@@ -3587,7 +3698,7 @@ class FileSkillsSource(SkillsSource):
                         SKILL_FILE_NAME,
                     )
                     return
-                discovered.append(str(dir_path.absolute()))
+                discovered.append(_SkillPathScope(trusted_root=trusted_root, skill_dir=str(dir_path.absolute())))
                 return
 
             if current_depth >= MAX_SEARCH_DEPTH:
@@ -3607,12 +3718,12 @@ class FileSkillsSource(SkillsSource):
                     )
                     continue
                 if entry.is_dir():
-                    _search(str(entry), current_depth + 1)
+                    _search(str(entry), trusted_root, current_depth + 1)
 
         for root_dir in skill_paths:
             if not root_dir or not root_dir.strip() or not Path(root_dir).is_dir():
                 continue
-            _search(root_dir, current_depth=0)
+            _search(root_dir, str(Path(root_dir).absolute()), current_depth=0)
 
         return discovered
 

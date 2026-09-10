@@ -635,11 +635,15 @@ agent = Agent(
     middleware=[label_tracker, policy_enforcer],
 )
 
-# Run agent - security is automatic
+# Omitting session uses isolated state for this run.
 response = await agent.run(messages=[
     {"role": "user", "content": "Search the web for Python tutorials"}
 ])
 ```
+
+Reusable manual middleware uses one private security scope for the complete run when `session` is omitted, so tool
+chains within that run share hidden variables while separate runs remain isolated. Pass an explicit `AgentSession`
+when labels, variables, audit records, or FIDES policy-approval authority must survive across distinct `Agent.run` calls. Ordinary tool approval responses retain their no-session pass-through behavior.
 
 ### Example 3: Agent Processing Hidden Content
 
@@ -928,6 +932,12 @@ Configure tool security requirements in the `@tool` decorator:
 )
 ```
 
+Hidden variable references in tool arguments are expanded recursively, but their stored labels remain attached to
+the invocation. A tool with `accepts_untrusted=False` is blocked, audited, or sent for policy approval before it can
+receive hidden untrusted data. `accepts_untrusted=True` permits blind forwarding without exposing that data to the
+model context. It does not bypass `max_allowed_confidentiality`; hidden private data still cannot flow to a public
+sink. Argument labels do not rewrite result labels.
+
 **Approval model:**
 - Use `approval_mode="always_require"` for normal human-in-the-loop approval on a specific tool.
 - Use `SecureAgentConfig(..., approval_on_violation=True)` to request approval only when a secure-policy check would otherwise block a call.
@@ -961,7 +971,7 @@ Configure tool security requirements in the `@tool` decorator:
 Access the audit log:
 
 ```python
-audit_log = policy_enforcer.get_audit_log()
+audit_log = policy_enforcer.get_audit_log(session)
 
 for violation in audit_log:
     print(f"Type: {violation['type']}")
@@ -984,7 +994,7 @@ Access the middleware's variable store to list or inspect stored variables:
 
 ```python
 # Get all stored variables
-variables = label_tracker.list_variables()
+variables = label_tracker.list_variables(session)
 print(f"Stored variables: {variables}")
 
 # Get variable metadata

@@ -38,12 +38,10 @@ from agent_framework import Content, ResponseStream
 from ._predictive_state import PredictiveStateHandler
 from ._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
 from ._utils import (
-    _AGUI_MCP_TOOL_RESULT_KEY,
-    _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY,
-    _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY,
     _approval_interrupt_id,
     _extract_mcp_tool_result_host_payload,
     _extract_tool_result_marker_values,
+    _mcp_host_history_fields,
     _model_items_for_agui_replay,
     _stringify_tool_result,
     generate_event_id,
@@ -810,16 +808,11 @@ def _emit_tool_result_common(
     }
     event_replay_properties: dict[str, Any] = {}
     if snapshot_result is not _UNSET:
-        snapshot_message[_AGUI_MCP_TOOL_RESULT_KEY] = True
-        snapshot_message[_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY] = snapshot_result_content
-        snapshot_message[_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY] = (
-            [{"type": "text", "text": result_content}] if model_items is None else model_items
+        event_replay_properties = _mcp_host_history_fields(
+            snapshot_result_content,
+            [{"type": "text", "text": result_content}] if model_items is None else model_items,
         )
-        event_replay_properties = {
-            _AGUI_MCP_TOOL_RESULT_KEY: True,
-            _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY: snapshot_result_content,
-            _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: snapshot_message[_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY],
-        }
+        snapshot_message.update(event_replay_properties)
         events[-1] = ToolCallResultEvent(
             message_id=message_id,
             tool_call_id=call_id,

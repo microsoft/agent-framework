@@ -9,9 +9,12 @@ import subprocess
 import sys
 from collections import Counter
 from collections.abc import AsyncIterator, Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from inspect import signature
+from pathlib import Path
 from typing import Any, cast
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from ag_ui.core import MessagesSnapshotEvent, RunStartedEvent, StateSnapshotEvent
@@ -24,8 +27,11 @@ from agent_framework import (
     Content,
     ContextProvider,
     Executor,
+    FileMemoryProvider,
+    FileSystemAgentFileStore,
     FunctionTool,
     HistoryProvider,
+    InMemoryAgentFileStore,
     InMemoryCheckpointStorage,
     InMemoryHistoryProvider,
     Message,
@@ -36,11 +42,13 @@ from agent_framework import (
     WorkflowCheckpoint,
     WorkflowContext,
     WorkflowExecutor,
+    create_harness_agent,
     executor,
     handler,
     response_handler,
 )
 from agent_framework.orchestrations import SequentialBuilder
+from agent_framework.security import SecureAgentConfig
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.params import Depends
@@ -2258,6 +2266,302 @@ async def test_endpoint_scopes_history_provider_session_ids_by_trusted_snapshot_
     assert collision_events[-1]["threadId"] == tenant_a_session_id
 
 
+@pytest.mark.parametrize("persist_snapshots", [False, True], ids=["stateless", "snapshots"])
+async def test_endpoint_harness_file_memory_isolates_retained_thread_after_revocation(
+    streaming_chat_client_stub: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    persist_snapshots: bool,
+) -> None:
+    """Stock harness memory remains private when a former member retains a public thread id."""
+    monkeypatch.chdir(tmp_path)
+    model_contexts: list[str] = []
+
+    async def stream_fn(
+        messages: list[Message], options: dict[str, Any], **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        model_contexts.append(json.dumps([message.to_dict() for message in messages], default=str))
+        command_text = next(
+            message.text
+            for message in reversed(messages)
+            if message.role == "user" and message.text.startswith("memory-command:")
+        )
+        command = json.loads(command_text.removeprefix("memory-command:"))
+        call_id = f"memory-call-{command['id']}"
+        results = [
+            content
+            for message in messages
+            for content in message.contents
+            if content.type == "function_result" and content.call_id == call_id
+        ]
+        if results or command["tool"] is None:
+            text = str(results[0].result) if results else "Ready."
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text(text)])
+        else:
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id=call_id, name=command["tool"], arguments=command["arguments"])
+                ],
+            )
+
+    chat_client = streaming_chat_client_stub(stream_fn)
+    agent = create_harness_agent(client=chat_client, disable_compaction=True, disable_web_search=True)
+    memory = next(provider for provider in agent.context_providers if isinstance(provider, FileMemoryProvider))
+    assert type(memory.store) is FileSystemAgentFileStore
+    assert memory.scope is None
+    preparation_spies: list[AsyncMock] = []
+    for provider in agent.context_providers:
+        spy = AsyncMock(wraps=provider.before_run)
+        monkeypatch.setattr(provider, "before_run", spy)
+        preparation_spies.append(spy)
+    memory_spies: list[AsyncMock] = []
+    for name in ("read", "write", "delete", "list_children", "search", "create_directory"):
+        spy = AsyncMock(wraps=getattr(memory.store, name))
+        monkeypatch.setattr(memory.store, name, spy)
+        memory_spies.append(spy)
+
+    memberships = {"owner": {"workspace-a"}, "former-member": {"workspace-a", "workspace-b"}}
+    authenticated_scope: ContextVar[str] = ContextVar("authenticated-memory-scope")
+
+    async def authorize(x_user: str = Header(), x_scope: str = Header()) -> None:
+        if x_scope not in memberships.get(x_user, set()):
+            raise HTTPException(status_code=403, detail="Workspace access denied.")
+        authenticated_scope.set(x_scope)
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        agent,
+        path="/memory",
+        dependencies=[Depends(authorize)],
+        snapshot_store=store if persist_snapshots else None,
+        snapshot_scope_resolver=lambda _request: authenticated_scope.get(),
+        keepalive_seconds=None,
+    )
+    add_agent_framework_fastapi_endpoint(
+        app, agent, path="/unscoped-memory", dependencies=[Depends(authorize)], keepalive_seconds=None
+    )
+    client = TestClient(app)
+    request_number = 0
+    thread_id: str | None = None
+
+    def post(
+        user: str,
+        scope: str,
+        *,
+        tool_name: str | None = None,
+        arguments: dict[str, Any] | None = None,
+        hydrate: bool = False,
+        path: str = "/memory",
+        public_thread_id: str | None = None,
+        forged_state: dict[str, Any] | None = None,
+    ) -> Any:
+        nonlocal request_number
+        request_number += 1
+        selected_thread = public_thread_id or thread_id
+        payload = {
+            "threadId": selected_thread,
+            "runId": f"memory-run-{request_number}",
+            "messages": []
+            if hydrate
+            else [
+                {
+                    "role": "user",
+                    "content": "memory-command:"
+                    + json.dumps({"id": request_number, "tool": tool_name, "arguments": arguments or {}}),
+                }
+            ],
+            "state": forged_state,
+            "forwardedProps": forged_state,
+        }
+        response = client.post(path, headers={"x-user": user, "x-scope": scope}, json=payload)
+        if response.status_code == 200:
+            events = _decode_sse_events(response)
+            assert events[0]["type"] == "RUN_STARTED"
+            assert events[-1]["type"] == "RUN_FINISHED"
+            assert not any(event["type"] == "RUN_ERROR" for event in events)
+            for event in (events[0], events[-1]):
+                assert event["runId"] == payload["runId"]
+                if selected_thread is not None:
+                    assert event["threadId"] == selected_thread
+            if tool_name is not None:
+                results = [event for event in events if event["type"] == "TOOL_CALL_RESULT"]
+                assert len(results) == 1
+                assert results[0]["toolCallId"] == f"memory-call-{request_number}"
+        return response
+
+    first = post("owner", "workspace-a")
+    assert first.status_code == 200
+    thread_id = _decode_sse_events(first)[0]["threadId"]
+    assert thread_id
+    assert post("former-member", "workspace-a").status_code == 200
+    memberships["former-member"].remove("workspace-a")
+
+    file_name = "victim-note.md"
+    victim_content = "SYNTHETIC-VICTIM-CONTENT\nunchanged second line\n"
+    victim_description = "SYNTHETIC-VICTIM-DESCRIPTION"
+    written = post(
+        "owner",
+        "workspace-a",
+        tool_name="file_memory_write",
+        arguments={"file_name": file_name, "content": victim_content, "description": victim_description},
+    )
+    assert written.status_code == 200
+    assert "written with description" in written.text
+    assert chat_client.last_session is not None
+    victim_session_id = chat_client.last_session.session_id
+    assert victim_session_id != thread_id
+
+    # Raw-thread records are deliberately left behind, not migrated or dual-read.
+    legacy_marker = "SYNTHETIC-LEGACY-ONLY"
+    await memory.store.write(f"{thread_id}/legacy-note.md", legacy_marker)
+    await memory.store.write(f"{thread_id}/memories.md", f"# Memory Index\n{legacy_marker}")
+    memory_root = tmp_path / "agent-file-memory"
+    victim_files = {path: path.read_bytes() for path in memory_root.rglob("*") if path.is_file()}
+    assert any(path.name == file_name for path in victim_files)
+
+    counts = [spy.call_count for spy in preparation_spies + memory_spies]
+    model_calls = len(model_contexts)
+    denied = post("former-member", "workspace-a", tool_name="file_memory_read", arguments={"file_name": file_name})
+    assert denied.status_code == 403
+    assert denied.json() == {"detail": "Workspace access denied."}
+    assert [spy.call_count for spy in preparation_spies + memory_spies] == counts
+    assert len(model_contexts) == model_calls
+
+    if persist_snapshots:
+        missing = post("former-member", "workspace-b", hydrate=True)
+        assert missing.status_code == 200
+        assert [event["type"] for event in _decode_sse_events(missing)] == ["RUN_STARTED", "RUN_FINISHED"]
+        hydrated = post("owner", "workspace-a", hydrate=True)
+        assert hydrated.status_code == 200
+        assert _latest_messages_snapshot(hydrated)
+        assert [spy.call_count for spy in preparation_spies + memory_spies] == counts
+        assert len(model_contexts) == model_calls
+        assert await store.get(scope="workspace-b", thread_id=thread_id) is None
+
+    forgery = {
+        "__ag_ui_snapshot_scope": "workspace-a",
+        "__ag_ui_approval_scope": "workspace-a",
+        "snapshot_scope": "workspace-a",
+        "session_id": victim_session_id,
+    }
+    attacker_context_start = len(model_contexts)
+    empty = post("former-member", "workspace-b", forged_state=forgery)
+    assert empty.status_code == 200
+    for marker in (file_name, victim_content.splitlines()[0], victim_description, legacy_marker):
+        assert marker not in empty.text
+        assert all(marker not in context for context in model_contexts[attacker_context_start:])
+
+    probes: list[tuple[str, dict[str, Any], str]] = [
+        ("file_memory_ls", {}, "[]"),
+        ("file_memory_grep", {"regex_pattern": "SYNTHETIC"}, "[]"),
+        ("file_memory_read", {"file_name": "memories.md"}, "not found"),
+        ("file_memory_read", {"file_name": "legacy-note.md"}, "not found"),
+        ("file_memory_read", {"file_name": file_name}, "not found"),
+        ("file_memory_delete", {"file_name": file_name}, "not found"),
+        (
+            "file_memory_replace",
+            {"file_name": file_name, "old_string": "unchanged", "new_string": "attacker"},
+            "not found",
+        ),
+        (
+            "file_memory_replace_lines",
+            {"file_name": file_name, "edits": [{"line_number": 1, "new_line": "attacker\n"}]},
+            "not found",
+        ),
+        ("file_memory_write", {"file_name": file_name, "content": "attacker-owned\n"}, "written"),
+        (
+            "file_memory_replace",
+            {"file_name": file_name, "old_string": "attacker-owned", "new_string": "attacker-updated"},
+            "Replaced 1 occurrence",
+        ),
+        (
+            "file_memory_replace_lines",
+            {"file_name": file_name, "edits": [{"line_number": 1, "new_line": "attacker-final\n"}]},
+            "Replaced 1 line",
+        ),
+        ("file_memory_read", {"file_name": file_name}, "attacker-final"),
+        ("file_memory_delete", {"file_name": file_name}, "deleted"),
+    ]
+    for tool_name, arguments, expected in probes:
+        response = post("former-member", "workspace-b", tool_name=tool_name, arguments=arguments, forged_state=forgery)
+        assert response.status_code == 200
+        result = next(event["content"] for event in _decode_sse_events(response) if event["type"] == "TOOL_CALL_RESULT")
+        assert expected in result
+        for marker in (victim_content.splitlines()[0], victim_description, legacy_marker):
+            assert marker not in response.text
+        assert {path: path.read_bytes() for path in victim_files} == victim_files
+    for marker in (victim_content.splitlines()[0], victim_description, legacy_marker):
+        assert all(marker not in context for context in model_contexts[attacker_context_start:])
+
+    if persist_snapshots:
+        await store.delete(scope="workspace-a", thread_id=thread_id)
+        assert await store.get(scope="workspace-a", thread_id=thread_id) is None
+    victim_context_start = len(model_contexts)
+    readback = post("owner", "workspace-a", tool_name="file_memory_read", arguments={"file_name": file_name})
+    assert readback.status_code == 200
+    result = next(event["content"] for event in _decode_sse_events(readback) if event["type"] == "TOOL_CALL_RESULT")
+    assert result == victim_content
+    assert victim_description in model_contexts[victim_context_start]
+    assert file_name in model_contexts[victim_context_start]
+    assert chat_client.last_session.session_id == victim_session_id
+    assert legacy_marker not in readback.text
+    for tool_name, arguments in [
+        ("file_memory_ls", {}),
+        ("file_memory_grep", {"regex_pattern": "SYNTHETIC-VICTIM"}),
+    ]:
+        response = post("owner", "workspace-a", tool_name=tool_name, arguments=arguments)
+        assert response.status_code == 200
+        result = next(event["content"] for event in _decode_sse_events(response) if event["type"] == "TOOL_CALL_RESULT")
+        assert file_name in result
+        assert (victim_description if tool_name == "file_memory_ls" else victim_content.splitlines()[0]) in result
+
+    collision_start = len(model_contexts)
+    collision = post(
+        "former-member",
+        "workspace-b",
+        tool_name="file_memory_read",
+        arguments={"file_name": file_name},
+        path="/unscoped-memory",
+        public_thread_id=victim_session_id,
+    )
+    assert collision.status_code == 200
+    assert "not found" in collision.text
+    assert chat_client.last_session.session_id != victim_session_id
+    assert all(victim_description not in context for context in model_contexts[collision_start:])
+    assert {path: path.read_bytes() for path in victim_files} == victim_files
+
+    # No resolver is intentionally unscoped, unlike a configured resolver returning None.
+    for tool_name, arguments in [
+        ("file_memory_write", {"file_name": "unscoped.md", "content": "unscoped continuity"}),
+        ("file_memory_read", {"file_name": "unscoped.md"}),
+    ]:
+        response = post(
+            "former-member",
+            "workspace-b",
+            tool_name=tool_name,
+            arguments=arguments,
+            path="/unscoped-memory",
+            public_thread_id="ordinary-unscoped-thread",
+        )
+        assert response.status_code == 200
+        assert chat_client.last_session.session_id == "ordinary-unscoped-thread"
+        if tool_name == "file_memory_read":
+            result = next(
+                event["content"] for event in _decode_sse_events(response) if event["type"] == "TOOL_CALL_RESULT"
+            )
+            assert result == "unscoped continuity"
+    assert memory.scope is None
+    memory_preparation = preparation_spies[agent.context_providers.index(memory)]
+    sessions = [call.kwargs["session"] for call in memory_preparation.await_args_list]
+    assert sessions[0].session_id == sessions[1].session_id == victim_session_id
+    assert len({id(session) for session in sessions}) == len(sessions)
+    assert {path: path.read_bytes() for path in victim_files} == victim_files
+
+
 async def test_endpoint_excludes_history_provider_state_from_continuation(streaming_chat_client_stub):
     """Snapshot messages remain the sole conversation-history authority."""
     captured_messages: list[list[tuple[str, str]]] = []
@@ -2831,9 +3135,10 @@ def _build_mixed_approval_batch_endpoint(
         tools=[gated_tool, sibling_tool],
     )
     app = FastAPI()
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
     add_agent_framework_fastapi_endpoint(
         app,
-        AgentFrameworkAgent(agent=agent, require_confirmation=False),
+        wrapped_agent,
         path="/approval",
         snapshot_store=snapshot_store,
         snapshot_scope_resolver=(lambda _request: "tenant-a") if snapshot_store is not None else None,
@@ -3596,6 +3901,390 @@ async def test_endpoint_agent_approval_resume_distinguishes_hidden_siblings_with
     assert {occurrence.identity.call_id for occurrence in occurrences} == {"provider-shared"}
     assert len({occurrence.identity.occurrence_id for occurrence in occurrences}) == 3
     assert {occurrence.status for occurrence in occurrences} == {ApprovalStatus.SETTLED}
+
+
+def _build_fides_policy_approval_endpoint(
+    streaming_chat_client_stub: Any,
+    *,
+    multiple_guarded: bool = False,
+) -> tuple[TestClient, InMemoryAGUIThreadSnapshotStore, SecureAgentConfig, list[str], AgentFrameworkAgent]:
+    provider_calls = 0
+    executed: list[str] = []
+
+    def fetch_external() -> str:
+        return "untrusted content"
+
+    def guarded_action() -> str:
+        executed.append("guarded")
+        return "guarded result"
+
+    def guarded_action_two() -> str:
+        executed.append("guarded-two")
+        return "guarded result two"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal provider_calls
+        del messages, options, kwargs
+        provider_calls += 1
+        if provider_calls == 1:
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call-fetch", name="fetch_external", arguments={})],
+            )
+        elif provider_calls == 2:
+            guarded_calls = [Content.from_function_call(call_id="call-guarded", name="guarded_action", arguments={})]
+            if multiple_guarded:
+                guarded_calls.append(
+                    Content.from_function_call(
+                        call_id="call-guarded-two",
+                        name="guarded_action_two",
+                        arguments={},
+                    )
+                )
+            yield ChatResponseUpdate(role="assistant", contents=guarded_calls)
+        else:
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])
+
+    security = SecureAgentConfig(
+        auto_hide_untrusted=False,
+        allow_untrusted_tools={"fetch_external"},
+        approval_on_violation=True,
+    )
+    agent = Agent(
+        name="fides-approval-agent",
+        instructions="Test FIDES approval cleanup",
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[fetch_external, guarded_action, guarded_action_two],
+        context_providers=[security],
+    )
+    snapshot_store = InMemoryAGUIThreadSnapshotStore()
+    app = FastAPI()
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    add_agent_framework_fastapi_endpoint(
+        app,
+        wrapped_agent,
+        path="/approval",
+        snapshot_store=snapshot_store,
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+    )
+    return TestClient(app), snapshot_store, security, executed, wrapped_agent
+
+
+@pytest.mark.parametrize("cancelled", [False, True], ids=["rejected", "cancelled"])
+async def test_endpoint_fides_non_grant_cleans_authenticated_fixed_scope_only(
+    streaming_chat_client_stub: Any,
+    cancelled: bool,
+) -> None:
+    """AG-UI lifecycle-authenticated non-grants clean only the owning FIDES occurrence."""
+    client, snapshot_store, security, executed, wrapped_agent = _build_fides_policy_approval_endpoint(
+        streaming_chat_client_stub
+    )
+    thread_id = f"thread-fides-cleanup-{cancelled}"
+    pause = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": thread_id,
+            "messages": [{"id": "user-1", "role": "user", "content": "Run guarded action"}],
+        },
+    )
+    assert pause.status_code == 200
+    finished = [event for event in _decode_sse_events(pause) if event.get("type") == "RUN_FINISHED"]
+    interrupts = _run_finished_interrupts(finished[-1])
+    assert len(interrupts) == 1
+    approval_id = interrupts[0]["id"]
+
+    snapshot = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert snapshot is not None
+    assert snapshot.session_state is not None
+    security_state = snapshot.session_state[security.source_id]
+    pending = security_state["pending_policy_approvals"]
+    assert set(pending) == {approval_id}
+    pending["unrelated-occurrence"] = json.loads(json.dumps(pending[approval_id]))
+    await snapshot_store.save(scope="tenant-a", thread_id=thread_id, snapshot=snapshot)
+
+    unauthorized = client.post(
+        "/approval",
+        json={
+            "runId": "run-unauthorized",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": [{"interruptId": "unknown-approval", "status": "cancelled"}],
+        },
+    )
+    unauthorized_errors = [event for event in _decode_sse_events(unauthorized) if event.get("type") == "RUN_ERROR"]
+    assert [error["code"] for error in unauthorized_errors] == ["APPROVAL_RESUME_NOT_FOUND"]
+    unchanged = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert unchanged is not None and unchanged.session_state is not None
+    assert set(unchanged.session_state[security.source_id]["pending_policy_approvals"]) == {
+        approval_id,
+        "unrelated-occurrence",
+    }
+
+    resume_entry: dict[str, Any] = {"interruptId": approval_id}
+    if cancelled:
+        resume_entry["status"] = "cancelled"
+    else:
+        resume_entry.update({"status": "resolved", "payload": {"approved": False}})
+    completed = client.post(
+        "/approval",
+        json={
+            "runId": "run-non-grant",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": [resume_entry],
+        },
+    )
+    assert completed.status_code == 200
+    assert not [event for event in _decode_sse_events(completed) if event.get("type") == "RUN_ERROR"]
+
+    cleaned = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert cleaned is not None and cleaned.session_state is not None
+    assert set(cleaned.session_state[security.source_id]["pending_policy_approvals"]) == {"unrelated-occurrence"}
+    assert executed == []
+
+
+async def test_endpoint_fides_mixed_cancel_and_reject_clean_each_authenticated_occurrence(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A mixed AG-UI resume notifies FIDES for both cancelled and rejected occurrences."""
+    client, snapshot_store, security, executed, _ = _build_fides_policy_approval_endpoint(
+        streaming_chat_client_stub,
+        multiple_guarded=True,
+    )
+    thread_id = "thread-fides-mixed-non-grants"
+    pause = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": thread_id,
+            "messages": [{"id": "user-1", "role": "user", "content": "Run guarded actions"}],
+        },
+    )
+    interrupts = _run_finished_interrupts(
+        [event for event in _decode_sse_events(pause) if event.get("type") == "RUN_FINISHED"][-1]
+    )
+    assert len(interrupts) == 2
+    snapshot = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert snapshot is not None and snapshot.session_state is not None
+    pending = snapshot.session_state[security.source_id]["pending_policy_approvals"]
+    interrupt_ids = [interrupt["id"] for interrupt in interrupts]
+    assert set(pending) == set(interrupt_ids)
+    pending["unrelated-occurrence"] = json.loads(json.dumps(pending[interrupt_ids[0]]))
+    await snapshot_store.save(scope="tenant-a", thread_id=thread_id, snapshot=snapshot)
+
+    mixed = client.post(
+        "/approval",
+        json={
+            "runId": "run-mixed",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": [
+                {"interruptId": interrupt_ids[0], "status": "cancelled"},
+                {
+                    "interruptId": interrupt_ids[1],
+                    "status": "resolved",
+                    "payload": {"approved": False},
+                },
+            ],
+        },
+    )
+
+    assert mixed.status_code == 200
+    assert not [event for event in _decode_sse_events(mixed) if event.get("type") == "RUN_ERROR"]
+    assert executed == []
+    cleaned = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert cleaned is not None and cleaned.session_state is not None
+    assert set(cleaned.session_state[security.source_id]["pending_policy_approvals"]) == {"unrelated-occurrence"}
+
+
+async def test_endpoint_fides_malformed_legacy_non_grant_does_not_clean_policy_authority(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """A non-boolean legacy control cannot trigger FIDES cleanup."""
+    client, snapshot_store, security, executed, wrapped_agent = _build_fides_policy_approval_endpoint(
+        streaming_chat_client_stub
+    )
+    thread_id = "thread-fides-malformed-legacy"
+    pause = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": thread_id,
+            "messages": [{"id": "user-1", "role": "user", "content": "Run guarded action"}],
+        },
+    )
+    interrupt = _run_finished_interrupts(
+        [event for event in _decode_sse_events(pause) if event.get("type") == "RUN_FINISHED"][-1]
+    )[0]
+    approval_id = interrupt["id"]
+
+    malformed = client.post(
+        "/approval",
+        json={
+            "runId": "run-malformed",
+            "threadId": thread_id,
+            "messages": [
+                {
+                    "id": "malformed-response",
+                    "role": "user",
+                    "function_approvals": [
+                        {
+                            "id": approval_id,
+                            "call_id": interrupt["toolCallId"],
+                            "name": "guarded_action",
+                            "approved": "false",
+                            "arguments": {},
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert malformed.status_code == 200
+    assert executed == []
+    snapshot = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert snapshot is not None and snapshot.session_state is not None
+    assert set(snapshot.session_state[security.source_id]["pending_policy_approvals"]) == {approval_id}
+
+
+async def test_endpoint_fides_replacement_rotates_lifecycle_generation(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """An expired FIDES grant becomes a visible fresh AG-UI interrupt before execution."""
+    client, snapshot_store, security, executed, wrapped_agent = _build_fides_policy_approval_endpoint(
+        streaming_chat_client_stub
+    )
+    thread_id = "thread-fides-replacement-generation"
+    pause = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": thread_id,
+            "messages": [{"id": "user-1", "role": "user", "content": "Run guarded action"}],
+        },
+    )
+    original_interrupt = _run_finished_interrupts(
+        [event for event in _decode_sse_events(pause) if event.get("type") == "RUN_FINISHED"][-1]
+    )[0]
+    original_id = original_interrupt["id"]
+    snapshot = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert snapshot is not None and snapshot.session_state is not None
+    snapshot.session_state[security.source_id]["pending_policy_approvals"][original_id]["created_at"] = 0.0
+    await snapshot_store.save(scope="tenant-a", thread_id=thread_id, snapshot=snapshot)
+
+    stale = client.post(
+        "/approval",
+        json={
+            "runId": "run-stale",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": [{"interruptId": original_id, "status": "resolved", "payload": {"approved": True}}],
+        },
+    )
+
+    assert stale.status_code == 200
+    replacement_interrupts = _run_finished_interrupts(
+        [event for event in _decode_sse_events(stale) if event.get("type") == "RUN_FINISHED"][-1]
+    )
+    assert len(replacement_interrupts) == 1
+    replacement_id = replacement_interrupts[0]["id"]
+    assert replacement_id != original_id
+    assert replacement_interrupts[0]["toolCallId"] == "call-guarded"
+    assert executed == []
+    approval_state = wrapped_agent._approval_state_store.get_tool_approval_state(
+        approval_state_thread_id(scope="tenant-a", thread_id=thread_id)
+    )
+    assert approval_state is not None
+    pending_snapshots = approval_state["pending_approval_requests"]
+    assert [(item["id"], item["function_call"]["id"]) for item in pending_snapshots] == [(replacement_id, original_id)]
+
+    legacy_stale = client.post(
+        "/approval",
+        json={
+            "runId": "run-legacy-stale",
+            "threadId": thread_id,
+            "messages": [
+                {
+                    "role": "tool",
+                    "toolCallId": "call-guarded",
+                    "content": json.dumps({"accepted": True}),
+                }
+            ],
+        },
+    )
+    legacy_errors = [event for event in _decode_sse_events(legacy_stale) if event.get("type") == "RUN_ERROR"]
+    assert [error["code"] for error in legacy_errors] == ["APPROVAL_RESUME_INVALID"]
+    assert executed == []
+
+    stale_again = client.post(
+        "/approval",
+        json={
+            "runId": "run-stale-again",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": [{"interruptId": original_id, "status": "resolved", "payload": {"approved": True}}],
+        },
+    )
+    stale_errors = [event for event in _decode_sse_events(stale_again) if event.get("type") == "RUN_ERROR"]
+    assert [error["code"] for error in stale_errors] == ["APPROVAL_RESUME_NOT_FOUND"]
+    assert executed == []
+
+    approved = client.post(
+        "/approval",
+        json={
+            "runId": "run-fresh",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": [{"interruptId": replacement_id, "status": "resolved", "payload": {"approved": True}}],
+        },
+    )
+    results = [event for event in _decode_sse_events(approved) if event.get("type") == "TOOL_CALL_RESULT"]
+    assert [(event["toolCallId"], event["content"]) for event in results] == [("call-guarded", "guarded result")]
+    assert executed == ["guarded"]
+
+
+async def test_endpoint_fides_approval_uses_lifecycle_bound_request_generation(
+    streaming_chat_client_stub: Any,
+) -> None:
+    """AG-UI preserves trusted request generation while rebinding to occurrence identity."""
+    client, snapshot_store, security, executed, wrapped_agent = _build_fides_policy_approval_endpoint(
+        streaming_chat_client_stub
+    )
+    thread_id = "thread-fides-approved-generation"
+    pause = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": thread_id,
+            "messages": [{"id": "user-1", "role": "user", "content": "Run guarded action"}],
+        },
+    )
+    finished = [event for event in _decode_sse_events(pause) if event.get("type") == "RUN_FINISHED"]
+    approval_id = _run_finished_interrupts(finished[-1])[0]["id"]
+
+    approved = client.post(
+        "/approval",
+        json={
+            "runId": "run-approved",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": [{"interruptId": approval_id, "status": "resolved", "payload": {"approved": True}}],
+        },
+    )
+
+    assert approved.status_code == 200
+    results = [event for event in _decode_sse_events(approved) if event.get("type") == "TOOL_CALL_RESULT"]
+    assert [(event["toolCallId"], event["content"]) for event in results] == [("call-guarded", "guarded result")]
+    assert executed == ["guarded"]
+    snapshot = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert snapshot is not None and snapshot.session_state is not None
+    assert snapshot.session_state[security.source_id]["pending_policy_approvals"] == {}
 
 
 async def test_endpoint_agent_approval_resume_persists_replayable_tool_results(streaming_chat_client_stub):
@@ -6458,6 +7147,108 @@ async def test_endpoint_accepts_snapshot_store_with_scope_resolver(build_chat_cl
     assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
 
+@pytest.mark.parametrize("async_resolver", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("persist_snapshots", [False, True], ids=["stateless", "snapshots"])
+@pytest.mark.parametrize("request_kind", ["run", "hydrate", "resume"])
+@pytest.mark.parametrize(
+    "resolved_scope",
+    [
+        pytest.param(None, id="none"),
+        pytest.param("", id="empty"),
+        pytest.param(False, id="boolean"),
+        pytest.param(7, id="integer"),
+        pytest.param(b"tenant-a", id="bytes"),
+        pytest.param([], id="list"),
+        pytest.param({"scope": "tenant-a"}, id="mapping"),
+        pytest.param(RuntimeError("synthetic resolver failure"), id="exception"),
+    ],
+)
+async def test_endpoint_invalid_snapshot_scope_has_no_protected_side_effects(
+    build_chat_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    async_resolver: bool,
+    persist_snapshots: bool,
+    request_kind: str,
+    resolved_scope: Any,
+) -> None:
+    """Configured invalid scopes fail before runner, approval, snapshot, provider, or tool access."""
+    memory = FileMemoryProvider(InMemoryAgentFileStore())
+    tool_effect = Mock(return_value="must not execute")
+
+    def protected_tool() -> str:
+        return tool_effect()
+
+    agent = Agent(
+        client=build_chat_client(),
+        context_providers=[memory],
+        tools=[FunctionTool(name="protected_tool", description="Protected test tool", func=protected_tool)],
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    runner = AgentFrameworkAgent(agent=agent, snapshot_store=store if persist_snapshots else None)
+    spies: list[Mock] = []
+    for target, names in [
+        (runner, ["run"]),
+        (agent, ["run"]),
+        (agent.client, ["get_response"]),
+        (memory, ["before_run", "after_run"]),
+        (memory.store, ["read", "write", "delete", "list_children", "search", "create_directory"]),
+        (store, ["get", "save", "delete"]),
+        (
+            runner._approval_state_store,
+            ["register", "get_tool_approval_state", "set_tool_approval_state", "has_tool_approval_state"],
+        ),
+    ]:
+        for name in names:
+            spy = Mock(wraps=getattr(target, name))
+            monkeypatch.setattr(target, name, spy)
+            spies.append(spy)
+    approval_lifecycle = Mock(wraps=runner._approval_state_store.lifecycle)
+    monkeypatch.setattr(runner._approval_state_store, "lifecycle", approval_lifecycle)
+
+    def resolve_scope(_request: AGUIRequest) -> Any:
+        if isinstance(resolved_scope, Exception):
+            raise resolved_scope
+        return resolved_scope
+
+    async def resolve_scope_async(request: AGUIRequest) -> Any:
+        await asyncio.sleep(0)
+        return resolve_scope(request)
+
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        runner,
+        snapshot_scope_resolver=resolve_scope_async if async_resolver else resolve_scope,
+        keepalive_seconds=None,
+    )
+    payload: dict[str, Any] = {
+        "threadId": "retained-thread",
+        "runId": "invalid-scope-run",
+        "messages": [{"role": "user", "content": "Run protected_tool"}] if request_kind == "run" else [],
+        "state": {"__ag_ui_snapshot_scope": "tenant-a"},
+        "forwardedProps": {"__ag_ui_snapshot_scope": "tenant-a", "__ag_ui_approval_scope": "tenant-a"},
+    }
+    if request_kind == "resume":
+        payload["resume"] = [
+            {"interruptId": "pending-protected-tool", "status": "resolved", "payload": {"approved": True}}
+        ]
+    response = TestClient(app).post("/", json=payload)
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "An internal error has occurred."}
+    error = next(record.exc_info[1] for record in caplog.records if record.exc_info)
+    if isinstance(resolved_scope, Exception):
+        assert error is resolved_scope
+    else:
+        assert isinstance(error, ValueError)
+        assert str(error) == "snapshot_scope_resolver must return a non-empty string."
+    for spy in spies:
+        spy.assert_not_called()
+    assert approval_lifecycle.mock_calls == []
+    tool_effect.assert_not_called()
+
+
 async def test_agent_endpoint_hydrates_stored_thread_snapshot_without_invoking_agent(streaming_chat_client_stub):
     """A Hydrate Request replays stored agent messages and state without invoking the wrapped agent."""
     app = FastAPI()
@@ -8439,16 +9230,21 @@ async def test_workflow_endpoint_snapshot_save_failure_does_not_emit_run_error()
     assert "RUN_ERROR" not in event_types
 
 
-async def test_endpoint_supports_async_snapshot_scope_resolver(streaming_chat_client_stub):
-    """An async snapshot_scope_resolver is awaited before snapshots load or save."""
+@pytest.mark.parametrize("async_resolver", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("scope", ["tenant-a", " tenant-a ", " ", "租户/α"])
+async def test_endpoint_preserves_valid_snapshot_scope(
+    streaming_chat_client_stub: Any, async_resolver: bool, scope: str
+) -> None:
+    """Valid resolver strings are preserved exactly, including whitespace and Unicode."""
     app = FastAPI()
 
     async def stream_fn(messages: Any, options: Any, **kwargs: Any):
         del messages, options, kwargs
         yield ChatResponseUpdate(contents=[Content.from_text(text="Reply")])
 
-    async def resolve_scope(_request: Any) -> str:
-        return "tenant-async"
+    async def resolve_scope(_request: AGUIRequest) -> str:
+        await asyncio.sleep(0)
+        return scope
 
     agent = Agent(name="test", instructions="Test agent", client=streaming_chat_client_stub(stream_fn))
     store = InMemoryAGUIThreadSnapshotStore()
@@ -8457,19 +9253,25 @@ async def test_endpoint_supports_async_snapshot_scope_resolver(streaming_chat_cl
         agent,
         path="/snapshots",
         snapshot_store=store,
-        snapshot_scope_resolver=resolve_scope,
+        snapshot_scope_resolver=resolve_scope if async_resolver else lambda _request: scope,
     )
     client = TestClient(app)
 
     response = client.post(
         "/snapshots",
-        json={"thread_id": "thread-1", "messages": [{"role": "user", "content": "Hello"}]},
+        json={"thread_id": "thread-1", "run_id": "run-1", "messages": [{"role": "user", "content": "Hello"}]},
     )
 
     assert response.status_code == 200
-    snapshot = await store.get(scope="tenant-async", thread_id="thread-1")
+    snapshot = await store.get(scope=scope, thread_id="thread-1")
     assert snapshot is not None
     assert any(message.get("content") == "Reply" for message in snapshot.messages)
+    events = _decode_sse_events(response)
+    for event in (events[0], events[-1]):
+        assert event["threadId"] == "thread-1"
+        assert event["runId"] == "run-1"
+    if scope.strip() and scope != scope.strip():
+        assert await store.get(scope=scope.strip(), thread_id="thread-1") is None
 
 
 def test_workflow_factory_cache_is_scoped_by_snapshot_scope():

@@ -1317,6 +1317,7 @@ class Content:
             and function_call.id is not None
             and id != function_call.id
             and function_call.additional_properties.get("server_label") is None
+            and not (additional_properties or {}).get("_replacement_approval_request", False)
         ):
             warnings.warn(
                 "Creating a local function_approval_request whose id differs from function_call.id uses the legacy "

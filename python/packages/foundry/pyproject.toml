@@ -24,15 +24,15 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.17.0,<2",
-    "agent-framework-openai>=1.10.0,<2",
+    "agent-framework-openai>=1.14.2,<2",
     "aiohttp>=3.9,<4",
     "azure-ai-inference>=1.0.0b9,<1.0.0b10",
-    "azure-ai-projects>=2.2.0,<2.4.0",
+    "azure-ai-projects>=2.2.0,<2.7.0",
     "httpx>=0.28,<1",
 ]
 
 [tool.uv]
-prerelease = "if-necessary-or-explicit"
+prerelease = "if-necessary"
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",

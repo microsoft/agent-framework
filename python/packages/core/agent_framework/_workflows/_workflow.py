@@ -222,9 +222,7 @@ class WorkflowInvocationKwargs:
     """
 
     global_kwargs: Mapping[str, Any] = field(default_factory=lambda: dict[str, Any]())
-    executor_kwargs: Mapping[str, Mapping[str, Any]] = field(
-        default_factory=lambda: dict[str, Mapping[str, Any]]()
-    )
+    executor_kwargs: Mapping[str, Mapping[str, Any]] = field(default_factory=lambda: dict[str, Mapping[str, Any]]())
 
 
 class Workflow(DictConvertible):
@@ -727,10 +725,7 @@ class Workflow(DictConvertible):
         | Mapping[str, Mapping[str, Any]]
         | Mapping[str, Any]
         | None = None,
-        client_kwargs: WorkflowInvocationKwargs
-        | Mapping[str, Mapping[str, Any]]
-        | Mapping[str, Any]
-        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> ResponseStream[WorkflowEvent, WorkflowRunResult]: ...
 
     @overload
