@@ -2808,3 +2808,280 @@ def test_release_write_does_not_recurse_per_deferred_link():
     unresolved = [index for index, ticket in enumerate(tickets) if not ticket.completion.done()]
     assert not unresolved, f"{len(unresolved)} links never released, first at index {unresolved[0]}"
     assert all(ticket.released for ticket in tickets)
+
+
+def test_file_checkpoint_storage_abandoned_loop_while_queued_releases_the_destination(monkeypatch, tmp_path):
+    """A save whose loop dies while it is still queued must not strand the destination.
+
+    Reviewer follow-up on #7757: the submitted write is released by its worker thread, but
+    a ticket still *waiting* for its predecessor has no worker. If that waiter's loop
+    closes, `call_soon_threadsafe` raises and the coroutine never resumes, so nothing
+    resolves its hand-off signal and every later save for the destination waits forever.
+    The predecessor's callback now performs the release itself in that case.
+
+    Deliberately not an async test: it needs two loops and has to close one of them.
+    """
+    import threading
+    import time
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    real_replace = checkpoint_module.os.replace
+    parked = threading.Event()
+    release_parked = threading.Event()
+
+    def gated_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+        parked.set()
+        assert release_parked.wait(timeout=20)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(checkpoint_module.os, "replace", gated_replace)
+
+    def make(name: str) -> WorkflowCheckpoint:
+        return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="shared-id")
+
+    canonical = (tmp_path / "shared-id.json").resolve()
+    registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+
+    holder_loop = asyncio.new_event_loop()
+    queued_loop = asyncio.new_event_loop()
+    queued_loop.set_exception_handler(lambda loop, context: None)
+    try:
+        holder_storage = FileCheckpointStorage(str(tmp_path))
+
+        async def start_holder() -> asyncio.Task[str]:
+            task = holder_loop.create_task(holder_storage.save(make("holder")))
+            await asyncio.to_thread(parked.wait, 20)
+            return task
+
+        holder = holder_loop.run_until_complete(start_holder())
+
+        # A second save queues behind the parked holder on its own loop.
+        queued_storage = FileCheckpointStorage(str(tmp_path))
+
+        async def start_queued() -> None:
+            queued_loop.create_task(queued_storage.save(make("queued")))
+            for _ in range(400):
+                entry = registry.get(canonical)
+                if entry is not None and entry.pending == 2:
+                    return
+                await asyncio.sleep(0.005)
+            raise AssertionError("the second save never queued behind the holder")
+
+        queued_loop.run_until_complete(start_queued())
+    finally:
+        # Abandoned while its ticket is still queued and nothing has been submitted.
+        queued_loop.close()
+
+    release_parked.set()
+    holder_loop.run_until_complete(asyncio.gather(holder, return_exceptions=True))
+    holder_loop.close()
+
+    deadline = time.monotonic() + 10
+    while canonical in registry and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert canonical not in registry, "the abandoned queued save left the destination owned"
+
+    # And the destination is usable again from a fresh loop.
+    outcome: dict[str, bool] = {}
+
+    def later_save() -> None:
+        async def main() -> None:
+            storage = FileCheckpointStorage(str(tmp_path))
+            try:
+                await asyncio.wait_for(storage.save(make("later")), timeout=10)
+                outcome["saved"] = True
+            except asyncio.TimeoutError:
+                outcome["saved"] = False
+
+        asyncio.run(main())
+
+    thread = threading.Thread(target=later_save)
+    thread.start()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+    assert outcome.get("saved") is True, "a later save to the abandoned destination hung"
+
+
+def test_file_checkpoint_storage_graceful_shutdown_releases_a_queued_save(tmp_path, monkeypatch):
+    """A queued save released through the normal shutdown path, which is the guarantee.
+
+    `asyncio.run` cancels pending tasks before closing, so a save still waiting for its
+    predecessor takes its cancellation path and defers the hand-off onto that
+    predecessor. Pinning it because the `on_abandoned` hook only covers a loop that is
+    already closed when the signal resolves -- this is the path that has to stay safe
+    without it.
+    """
+    import threading
+    import time
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    real_replace = checkpoint_module.os.replace
+    parked = threading.Event()
+    release_parked = threading.Event()
+
+    def gated_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+        parked.set()
+        assert release_parked.wait(timeout=20)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(checkpoint_module.os, "replace", gated_replace)
+
+    def make(name: str) -> WorkflowCheckpoint:
+        return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="shared-id")
+
+    canonical = (tmp_path / "shared-id.json").resolve()
+    registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+
+    holder_loop = asyncio.new_event_loop()
+    try:
+        holder_storage = FileCheckpointStorage(str(tmp_path))
+
+        async def start_holder() -> asyncio.Task[str]:
+            task = holder_loop.create_task(holder_storage.save(make("holder")))
+            await asyncio.to_thread(parked.wait, 20)
+            return task
+
+        holder = holder_loop.run_until_complete(start_holder())
+
+        # A second save queues behind it, on a loop that exits the normal way.
+        def run_queued() -> None:
+            async def main() -> None:
+                storage = FileCheckpointStorage(str(tmp_path))
+                asyncio.create_task(storage.save(make("queued")))
+                for _ in range(400):
+                    entry = registry.get(canonical)
+                    if entry is not None and entry.pending == 2:
+                        return
+                    await asyncio.sleep(0.005)
+                raise AssertionError("the second save never queued behind the holder")
+
+            asyncio.run(main())
+
+        thread = threading.Thread(target=run_queued)
+        thread.start()
+        thread.join(timeout=30)
+        assert not thread.is_alive()
+
+        release_parked.set()
+        holder_loop.run_until_complete(asyncio.gather(holder, return_exceptions=True))
+    finally:
+        holder_loop.close()
+
+    deadline = time.monotonic() + 10
+    while canonical in registry and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert canonical not in registry, "a gracefully cancelled queued save left the destination owned"
+
+
+def test_file_checkpoint_storage_abandonment_mid_chain_keeps_the_queue_ordered(tmp_path, monkeypatch):
+    """Releasing an abandoned queued ticket must hand off to its successor, in order.
+
+    The two-ticket case only shows the entry clearing. With a live save queued *behind*
+    the abandoned one, the release has to propagate through that link and still serialize
+    the writes -- if it handed off early, the successor's `os.replace` would run beside
+    the holder's.
+    """
+    import threading
+    import time
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    real_replace = checkpoint_module.os.replace
+    parked = threading.Event()
+    release_parked = threading.Event()
+    inside_replace = 0
+    peak_inside_replace = 0
+    completed: list[str] = []
+    guard = threading.Lock()
+
+    def gated_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+        nonlocal inside_replace, peak_inside_replace
+        with guard:
+            inside_replace += 1
+            peak_inside_replace = max(peak_inside_replace, inside_replace)
+            park = inside_replace == 1 and not parked.is_set()
+        try:
+            if park:
+                parked.set()
+                assert release_parked.wait(timeout=25)
+            real_replace(src, dst)
+            with guard:
+                completed.append(os.path.basename(str(dst)))
+        finally:
+            with guard:
+                inside_replace -= 1
+
+    monkeypatch.setattr(checkpoint_module.os, "replace", gated_replace)
+
+    def make(name: str) -> WorkflowCheckpoint:
+        return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="shared-id")
+
+    canonical = (tmp_path / "shared-id.json").resolve()
+    registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+
+    def wait_for_pending(count: int, timeout: float = 20.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            entry = registry.get(canonical)
+            if entry is not None and entry.pending == count:
+                return
+            time.sleep(0.005)
+        entry = registry.get(canonical)
+        raise AssertionError(f"expected {count} queued, saw {entry.pending if entry else 0}")
+
+    holder_loop = asyncio.new_event_loop()
+    abandoned_loop = asyncio.new_event_loop()
+    abandoned_loop.set_exception_handler(lambda loop, context: None)
+    successor: dict[str, bool] = {}
+    try:
+        holder_storage = FileCheckpointStorage(str(tmp_path))
+
+        async def start_holder() -> asyncio.Task[str]:
+            task = holder_loop.create_task(holder_storage.save(make("holder")))
+            await asyncio.to_thread(parked.wait, 25)
+            return task
+
+        holder = holder_loop.run_until_complete(start_holder())
+
+        async def start_abandoned() -> None:
+            storage = FileCheckpointStorage(str(tmp_path))
+            abandoned_loop.create_task(storage.save(make("abandoned")))
+            await asyncio.sleep(0)
+
+        abandoned_loop.run_until_complete(start_abandoned())
+        wait_for_pending(2)
+
+        def run_successor() -> None:
+            async def main() -> None:
+                storage = FileCheckpointStorage(str(tmp_path))
+                try:
+                    await asyncio.wait_for(storage.save(make("successor")), timeout=25)
+                    successor["saved"] = True
+                except asyncio.TimeoutError:
+                    successor["saved"] = False
+
+            asyncio.run(main())
+
+        thread = threading.Thread(target=run_successor)
+        thread.start()
+        wait_for_pending(3)
+
+        abandoned_loop.close()
+
+        release_parked.set()
+        holder_loop.run_until_complete(asyncio.gather(holder, return_exceptions=True))
+        thread.join(timeout=30)
+        assert not thread.is_alive()
+    finally:
+        holder_loop.close()
+
+    assert successor.get("saved") is True, "the save queued behind the abandoned one never ran"
+    with guard:
+        assert peak_inside_replace == 1, "writes overlapped across the abandoned link"
+        assert len(completed) == 2, f"expected holder + successor, got {completed}"
+    deadline = time.monotonic() + 10
+    while canonical in registry and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert canonical not in registry

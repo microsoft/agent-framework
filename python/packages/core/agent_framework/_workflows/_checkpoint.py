@@ -11,7 +11,7 @@ import os
 import threading
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
@@ -331,7 +331,11 @@ def _enqueue_write(file_path: Path) -> _WriteTicket:
     return _WriteTicket(path=file_path, predecessor=predecessor, completion=completion)
 
 
-def _wait_for_signal(source: Future[None]) -> asyncio.Future[None]:
+def _wait_for_signal(
+    source: Future[None],
+    *,
+    on_abandoned: Callable[[], None] | None = None,
+) -> asyncio.Future[None]:
     """Return a fresh awaitable that completes when *source* does.
 
     Deliberately not ``asyncio.wrap_future``: that chains cancellation into the future it
@@ -347,9 +351,24 @@ def _wait_for_signal(source: Future[None]) -> asyncio.Future[None]:
             if not waiter.done():
                 waiter.set_result(None)
 
-        # A closed loop means nobody is left to wake.
-        with contextlib.suppress(RuntimeError):
+        try:
             loop.call_soon_threadsafe(_set)
+        except RuntimeError:
+            # The waiter's loop has closed, so the coroutine suspended here will never
+            # resume and cannot do anything on its way out. Whatever it owed -- releasing
+            # its place in the queue, above all -- has to happen here instead, on the
+            # thread that resolved the signal.
+            #
+            # This catches a loop that is already closed when the signal resolves. It
+            # cannot catch one that closes in the window after `call_soon_threadsafe`
+            # succeeded but before the callback runs, nor one abandoned without being
+            # closed at all: both leave a queued ticket unreleased. Reaching either needs
+            # a loop closed with tasks still pending, which asyncio already reports as an
+            # error, and a graceful shutdown is unaffected -- `asyncio.run` cancels
+            # pending tasks first, which drives the queued save through its cancellation
+            # path and defers the hand-off onto the predecessor.
+            if on_abandoned is not None:
+                on_abandoned()
 
     source.add_done_callback(_resolve)
     return waiter
@@ -383,7 +402,10 @@ async def _await_signal_through_cancellation(source: Future[None]) -> None:
             if waiter is not None and not waiter.done():
                 waiter.set_result(None)
 
-        # A closed loop means nobody is left to wake.
+        # Safe to swallow here, unlike the queued wait in `_wait_for_signal`. By the
+        # time anything drains, the write has been submitted, so the worker thread and
+        # the submitted future's callback both release the ticket without needing this
+        # loop; a closed loop only means there is nobody left to wake.
         with contextlib.suppress(RuntimeError):
             loop.call_soon_threadsafe(_set)
 
@@ -623,7 +645,14 @@ class FileCheckpointStorage:
             # behind every earlier one for the same destination even when they were
             # enqueued from a different loop.
             try:
-                await _wait_for_signal(ticket.predecessor)
+                await _wait_for_signal(
+                    ticket.predecessor,
+                    # If this loop dies while we are queued, nothing else would release
+                    # this ticket: the write was never submitted, so there is no worker
+                    # thread to fall back on, and every later save for the destination
+                    # would wait on a signal nobody resolves.
+                    on_abandoned=lambda: _release_write(ticket),
+                )
             except BaseException:
                 # Nothing was submitted and nothing written, but the hand-off cannot
                 # happen yet: an earlier writer still owns the destination, and resolving
