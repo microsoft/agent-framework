@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.IO.Pipelines;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -30,6 +31,131 @@ namespace Aspire.Hosting.AgentFramework.DevUI.UnitTests;
 /// </summary>
 public class AspireDashboardTracingTests
 {
+    [Theory]
+    [InlineData("{\"id\":\"resp_valid\",\"output\":[]}", "resp_valid")]
+    [InlineData("{\"output\":[{\"id\":\"nested\"}],\"id\":\"resp_outer\"}", "resp_outer")]
+    [InlineData("{\"output\":[{\"id\":\"nested\"}]}", null)]
+    [InlineData("{\"id\":\"resp_invalid\",not-json}", null)]
+    [InlineData("{\"id\":\"resp_incomplete\"", null)]
+    [InlineData("[{\"id\":\"resp_array\"}]", null)]
+    [InlineData("{\"id\":42}", null)]
+    [InlineData("{\"id\":\"\"}", null)]
+    public void JsonResponseIdCapture_FragmentedBody_OnlyCapturesValidTopLevelId(string json, string? expectedId)
+    {
+        // Arrange
+        var capture = new JsonResponseIdCapture();
+
+        // Act
+        foreach (var value in Encoding.UTF8.GetBytes(json))
+        {
+            capture.Append([value]);
+        }
+
+        // Assert
+        Assert.Equal(expectedId, capture.Complete());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void JsonResponseIdCapture_LargeBody_OnlyCapturesIdWithinBoundedPrefix(bool idBeforeOutput)
+    {
+        // Arrange
+        var capture = new JsonResponseIdCapture();
+        var output = new string('x', 2 * 1024 * 1024);
+        var json = idBeforeOutput
+            ? $"{{\"id\":\"resp_large\",\"output\":\"{output}\"}}"
+            : $"{{\"output\":\"{output}\",\"id\":\"resp_large\"}}";
+        var bytes = Encoding.UTF8.GetBytes(json);
+
+        // Act
+        for (var offset = 0; offset < bytes.Length; offset += 1024)
+        {
+            capture.Append(bytes.AsSpan(offset, Math.Min(1024, bytes.Length - offset)));
+        }
+
+        // Assert
+        Assert.Equal(idBeforeOutput ? "resp_large" : null, capture.Complete());
+    }
+
+    [Fact]
+    public async Task CopyResponseAsync_LargeBody_ForwardsPrefixBeforeReturningIdAsync()
+    {
+        // Arrange
+        var pipe = new Pipe();
+        using var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(pipe.Reader.AsStream()) };
+        using var output = new MemoryStream();
+        var context = new DefaultHttpContext();
+        context.Response.Body = output;
+        var prefix = "{\"id\":\"resp_copy\",\"output\":\""u8.ToArray();
+        var suffix = Encoding.UTF8.GetBytes(new string('x', 2 * 1024 * 1024) + "\"}");
+        await pipe.Writer.WriteAsync(prefix);
+
+        // Act
+#pragma warning disable CA2025 // The copy intentionally overlaps producer writes and is awaited in finally before disposal.
+        var copy = DevUIAggregatorHostedService.CopyResponseAsync(response, context, captureResponseId: true);
+#pragma warning restore CA2025
+        string? responseId;
+        try
+        {
+            // The backend is still open: forwarding must already have started, but no ID can be returned yet.
+            Assert.False(copy.IsCompleted);
+            Assert.Equal(prefix, output.ToArray());
+            await pipe.Writer.WriteAsync(suffix);
+        }
+        finally
+        {
+            await pipe.Writer.CompleteAsync();
+            responseId = await copy;
+        }
+
+        // Assert
+        Assert.Equal("resp_copy", responseId);
+        Assert.Equal(prefix.Concat(suffix), output.ToArray());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CopyResponseAsync_InterruptedBody_DoesNotReturnCapturedIdAsync(bool cancelRequest)
+    {
+        // Arrange
+        var pipe = new Pipe();
+        using var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(pipe.Reader.AsStream()) };
+        using var output = new MemoryStream();
+        using var cancellation = new CancellationTokenSource();
+        var context = new DefaultHttpContext { RequestAborted = cancellation.Token };
+        context.Response.Body = output;
+        var prefix = "{\"id\":\"resp_interrupted\","u8.ToArray();
+        await pipe.Writer.WriteAsync(prefix);
+#pragma warning disable CA2025 // The interrupted copy is awaited in finally before disposing the response.
+        var copy = DevUIAggregatorHostedService.CopyResponseAsync(response, context, captureResponseId: true);
+#pragma warning restore CA2025
+
+        // Act / Assert
+        try
+        {
+            Assert.False(copy.IsCompleted);
+            Assert.Equal(prefix, output.ToArray());
+            if (cancelRequest)
+            {
+                cancellation.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => copy);
+            }
+            else
+            {
+                await pipe.Writer.CompleteAsync(new IOException("The backend disconnected."));
+                await Assert.ThrowsAsync<IOException>(() => copy);
+            }
+        }
+        finally
+        {
+            cancellation.Cancel();
+            await pipe.Writer.CompleteAsync();
+            await Record.ExceptionAsync(async () => await copy);
+        }
+    }
+
     [Fact]
     public void SseResponseIdCapture_FragmentedResponseCreatedEvent_CapturesResponseId()
     {
@@ -210,7 +336,7 @@ public class AspireDashboardTracingTests
     }
 
     [Fact]
-    public async Task GetTraceEventsAsync_UsesTraceByIdEndpointAndKeepsDashboardKeyServerSide()
+    public async Task GetTraceEventsAsync_UsesTraceByIdEndpointAndKeepsDashboardKeyServerSideAsync()
     {
         // Arrange
         HttpRequestMessage? observedRequest = null;
@@ -261,7 +387,7 @@ public class AspireDashboardTracingTests
     }
 
     [Fact]
-    public async Task GetTraceEventsAsync_TruncatedTraceResponse_ReturnsUnavailable()
+    public async Task GetTraceEventsAsync_TruncatedTraceResponse_ReturnsUnavailableAsync()
     {
         // Arrange
         using var client = new HttpClient(new StubHttpMessageHandler(_ =>
@@ -291,7 +417,7 @@ public class AspireDashboardTracingTests
     }
 
     [Fact]
-    public async Task GetTraceEventsAsync_DashboardFailure_ReturnsUnavailableWithoutThrowing()
+    public async Task GetTraceEventsAsync_DashboardFailure_ReturnsUnavailableWithoutThrowingAsync()
     {
         // Arrange
         using var client = new HttpClient(new StubHttpMessageHandler(_ =>
@@ -504,6 +630,55 @@ public class AspireDashboardTracingTests
     }
 
     [Fact]
+    public async Task Aggregator_LargeNonStreamingResponse_ForwardsBeforeCompletionAndThenRegistersTraceAsync()
+    {
+        // Arrange
+        await using var context = await TracingProxyTestContext.StartAsync(pauseNonStreamingResponseAfterId: true);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var request = CreateAgentRequest("resp_large", streaming: false);
+
+        // Act: the backend waits for the test before sending the large output field.
+        using var response = await context.Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation.Token);
+        using var responseStream = await response.Content.ReadAsStreamAsync(cancellation.Token);
+        using var reader = new StreamReader(responseStream);
+        var prefix = await reader.ReadLineAsync(cancellation.Token);
+        using var pendingTraces = await context.Client.GetAsync(new Uri("/v1/responses/resp_large/traces", UriKind.Relative));
+        context.ReleaseNonStreamingResponse();
+        var remainder = await reader.ReadToEndAsync(cancellation.Token);
+        using var completedTraces = await context.Client.GetAsync(new Uri("/v1/responses/resp_large/traces", UriKind.Relative));
+
+        // Assert
+        Assert.Equal("{\"id\":\"resp_large\",", prefix);
+        Assert.Equal($"\"output\":\"{new string('x', 2 * 1024 * 1024)}\"}}", remainder);
+        Assert.Equal(HttpStatusCode.NotFound, pendingTraces.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, completedTraces.StatusCode);
+        Assert.Equal(context.AgentTraceParents["resp_large"][3..35], context.DashboardTraceId);
+    }
+
+    [Fact]
+    public async Task Aggregator_CancelledNonStreamingResponse_DoesNotRegisterTraceMappingAsync()
+    {
+        // Arrange
+        await using var context = await TracingProxyTestContext.StartAsync(pauseNonStreamingResponseAfterId: true);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var request = CreateAgentRequest("resp_cancelled_json", streaming: false);
+        using var response = await context.Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation.Token);
+        using var responseStream = await response.Content.ReadAsStreamAsync(cancellation.Token);
+        using var reader = new StreamReader(responseStream);
+        Assert.Contains("resp_cancelled_json", await reader.ReadLineAsync(cancellation.Token), StringComparison.Ordinal);
+
+        // Act
+        cancellation.Cancel();
+        response.Dispose();
+        await context.WaitForNonStreamingRequestCancellationAsync();
+        using var tracesResponse = await context.Client.GetAsync(new Uri("/v1/responses/resp_cancelled_json/traces", UriKind.Relative));
+
+        // Assert
+        Assert.Equal(HttpStatusCode.NotFound, tracesResponse.StatusCode);
+        Assert.Null(context.DashboardTraceId);
+    }
+
+    [Fact]
     public async Task Aggregator_DashboardTraceTimeout_ReturnsServiceUnavailableAsync()
     {
         // Arrange
@@ -634,6 +809,10 @@ public class AspireDashboardTracingTests
         private readonly DevUIAggregatorHostedService _aggregator;
         private readonly TaskCompletionSource<bool> _streamingRequestCancelled =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> _nonStreamingResponseReleased =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> _nonStreamingRequestCancelled =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _dashboardResourceProbeCount;
         private volatile bool _failDashboardResourceProbe;
 
@@ -668,11 +847,17 @@ public class AspireDashboardTracingTests
         public Task<bool> WaitForStreamingRequestCancellationAsync()
             => this._streamingRequestCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
+        public void ReleaseNonStreamingResponse() => this._nonStreamingResponseReleased.TrySetResult(true);
+
+        public Task<bool> WaitForNonStreamingRequestCancellationAsync()
+            => this._nonStreamingRequestCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         public static async Task<TracingProxyTestContext> StartAsync(
             bool dashboardUnavailable = false,
             bool dashboardTraceTimeout = false,
             bool pauseStreamingResponseAfterCreated = false,
-            string? responseCompressionEncoding = null)
+            string? responseCompressionEncoding = null,
+            bool pauseNonStreamingResponseAfterId = false)
         {
             var agentBackend = CreateWebApplication();
             var dashboard = CreateWebApplication();
@@ -694,6 +879,24 @@ public class AspireDashboardTracingTests
                 if (requestDocument.RootElement.TryGetProperty("stream", out var stream) && !stream.GetBoolean())
                 {
                     context.Response.ContentType = "application/json";
+                    if (pauseNonStreamingResponseAfterId)
+                    {
+                        await context.Response.WriteAsync($"{{\"id\":\"{responseId}\",\n", context.RequestAborted);
+                        await context.Response.Body.FlushAsync(context.RequestAborted);
+                        try
+                        {
+                            await testContext._nonStreamingResponseReleased.Task.WaitAsync(context.RequestAborted);
+                        }
+                        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+                        {
+                            testContext._nonStreamingRequestCancelled.TrySetResult(true);
+                            throw;
+                        }
+
+                        await context.Response.WriteAsync($"\"output\":\"{new string('x', 2 * 1024 * 1024)}\"}}", context.RequestAborted);
+                        return;
+                    }
+
                     await WriteAgentResponseAsync(
                         context,
                         JsonSerializer.SerializeToUtf8Bytes(new { id = responseId, output = Array.Empty<object>() }),

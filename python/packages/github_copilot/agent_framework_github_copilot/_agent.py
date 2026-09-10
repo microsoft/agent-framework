@@ -10,6 +10,7 @@ import logging
 import sys
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
+from pathlib import Path
 from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
 from urllib.parse import urlparse
 
@@ -30,6 +31,7 @@ from agent_framework import (
     add_usage_details,
     normalize_messages,
 )
+from agent_framework._mcp import MCPTool
 from agent_framework._settings import load_settings
 from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import FunctionTool, ToolTypes
@@ -77,6 +79,7 @@ try:
         Attachment,
         BlobAttachment,
         MCPServerConfig,
+        PermissionInvocation,
         PermissionRequestResult,
         PreToolUseHandler,
         PreToolUseHookOutput,
@@ -110,13 +113,23 @@ except ImportError as _copilot_import_error:
 DEFAULT_TIMEOUT_SECONDS: float = 60.0
 """Default timeout in seconds for Copilot requests."""
 
+_PermissionHandlerContext = Any
+"""Compatibility context accepted by permission handlers across SDK versions."""
+
 PermissionHandlerType = Callable[
-    [PermissionRequest, dict[str, str]], "PermissionRequestResult | Awaitable[PermissionRequestResult]"
+    [PermissionRequest, _PermissionHandlerContext],
+    "PermissionRequestResult | Awaitable[PermissionRequestResult]",
 ]
 """Type for permission request handlers. Supports both sync and async callbacks."""
 
-AsyncPermissionHandlerType = Callable[[PermissionRequest, dict[str, str]], "Awaitable[PermissionRequestResult]"]
+AsyncPermissionHandlerType = Callable[
+    [PermissionRequest, _PermissionHandlerContext], "Awaitable[PermissionRequestResult]"
+]
 """Type for permission request handlers that are always asynchronous."""
+
+_SdkAsyncPermissionHandlerType = Callable[
+    [PermissionRequest, PermissionInvocation], "Awaitable[PermissionRequestResult]"
+]
 
 
 FunctionApprovalCallback = Callable[[Content], "bool | Awaitable[bool]"]
@@ -168,10 +181,26 @@ async def _resolve_function_approval(
 
 logger = logging.getLogger("agent_framework.github_copilot")
 
+_MCP_TOOL_MESSAGE = (
+    "MCP server '{name}' cannot be passed to GitHubCopilotAgent as a tool: the Copilot SDK "
+    "connects to MCP servers itself, so a framework-managed MCPTool would keep none of its "
+    "framework behavior. Configure the server natively instead, for example "
+    "default_options={{'mcp_servers': {{'{name}': {{'type': 'stdio', 'command': 'python', "
+    "'args': ['server.py'], 'tools': ['*']}}}}}}, or use a ChatAgent, where the framework owns "
+    "the connection."
+)
+
+
+def _reject_mcp_tools(tools: Sequence[Any]) -> None:
+    """Refuse MCP servers handed in as tools, from whichever option carried them."""
+    for tool in tools:
+        if isinstance(tool, MCPTool):
+            raise TypeError(_MCP_TOOL_MESSAGE.format(name=tool.name))
+
 
 def _deny_all_permissions(
     _request: PermissionRequest,
-    _invocation: dict[str, str],
+    _invocation: _PermissionHandlerContext,
 ) -> PermissionRequestResult:
     """Default permission handler that denies all requests."""
     return PermissionDecisionUserNotAvailable()
@@ -322,7 +351,7 @@ def _normalize_permission_decision(
     return PermissionDecisionApproveForSession(approval=approval)
 
 
-def _with_normalized_permission_decisions(handler: PermissionHandlerType) -> AsyncPermissionHandlerType:
+def _with_normalized_permission_decisions(handler: PermissionHandlerType) -> _SdkAsyncPermissionHandlerType:
     """Wrap a permission handler so its decisions are normalized before reaching the SDK.
 
     Exceptions raised by ``handler`` deliberately propagate: the SDK already catches them
@@ -335,8 +364,10 @@ def _with_normalized_permission_decisions(handler: PermissionHandlerType) -> Asy
         An async handler delegating to ``handler`` and normalizing its result.
     """
 
-    async def normalized_handler(request: PermissionRequest, invocation: dict[str, str]) -> PermissionRequestResult:
-        result = handler(request, invocation)
+    async def normalized_handler(
+        request: PermissionRequest, invocation: PermissionInvocation
+    ) -> PermissionRequestResult:
+        result = handler(request, cast(PermissionInvocation, dict(invocation)))
         if inspect.isawaitable(result):
             result = await result
         return _normalize_permission_decision(result, request)
@@ -362,6 +393,45 @@ def _parse_telemetry_config(raw: str) -> TelemetryConfig | None:
         )
         return None
     return cast(TelemetryConfig, parsed)
+
+
+def _client_working_directory(client: CopilotClient | None) -> str | None:
+    """Best-effort read of the working directory an injected client configured.
+
+    A client created with ``CopilotClient(working_directory=...)`` spawns the CLI process
+    in that directory, so the CLI resolves ``.github/hooks/`` relative to it rather than to
+    this process. The SDK keeps the value on a private options object, so this is read
+    defensively: if the attribute ever moves, hook detection falls back to the process
+    working directory instead of failing.
+    """
+    options = getattr(client, "_options", None)
+    working_directory = getattr(options, "working_directory", None)
+    return working_directory if isinstance(working_directory, str) else None
+
+
+def _resolve_effective_working_directory(session_working_directory: str | None, client: CopilotClient | None) -> Path:
+    """Resolve the directory the CLI will treat as the workspace, mirroring the SDK.
+
+    The SDK resolves in this order: the session's ``working_directory`` when supplied,
+    otherwise the CLI process's own directory, which is the injected client's configured
+    ``working_directory`` when it set one and this process's directory otherwise.
+    """
+    if session_working_directory:
+        return Path(session_working_directory)
+    client_working_directory = _client_working_directory(client)
+    if client_working_directory:
+        return Path(client_working_directory)
+    return Path.cwd()
+
+
+def _has_file_hooks(working_directory: Path) -> bool:
+    """Return whether ``.github/hooks/`` holds hook definitions the CLI would otherwise load."""
+    try:
+        return any((working_directory / ".github" / "hooks").iterdir())
+    except OSError:
+        # Missing directory, unreadable path, or a file where the directory would be:
+        # there is nothing the caller needs to know about.
+        return False
 
 
 class GitHubCopilotSettings(TypedDict, total=False):
@@ -467,6 +537,14 @@ class GitHubCopilotOptions(TypedDict, total=False):
 
     base_directory: str
     """Directory where the CLI stores session state, configuration, and other persistent data."""
+
+    enable_file_hooks: bool
+    """Whether the CLI loads file hooks from the working directory's ``.github/hooks/``.
+
+    Defaults to ``False``: hook definitions checked into the working directory are ignored
+    unless you opt in, so a session behaves the same way regardless of which checkout it
+    runs in. Unrelated to the SDK callback hooks configured through ``on_pre_tool_use``.
+    """
 
     telemetry: TelemetryConfig
     """OpenTelemetry configuration for the Copilot CLI process."""
@@ -641,6 +719,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         )
 
         self._tools = normalize_tools(tools)
+        _reject_mcp_tools(self._tools)
         self._permission_handler = on_permission_request
         self._on_pre_tool_use: PreToolUseHandler | None = on_pre_tool_use
         self._function_approval_handler: FunctionApprovalCallback | None = on_function_approval
@@ -649,6 +728,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         # are forwarded verbatim to the Copilot SDK by _build_session_kwargs.
         self._default_options = opts
         self._started = False
+        self._file_hooks_warning_emitted = False
 
     async def __aenter__(self) -> Self:
         """Start the agent when entering async context."""
@@ -1428,6 +1508,27 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         except Exception as ex:
             raise AgentException(f"Failed to create GitHub Copilot session: {ex}") from ex
 
+    def _warn_once_about_unloaded_file_hooks(self, session_working_directory: str | None) -> None:
+        """Warn once when the effective working directory defines file hooks that will not run.
+
+        Without this the default is silent: hooks simply stop running, with nothing to
+        point at the cause. The warning fires at most once per agent so a long-lived agent
+        does not repeat it on every run.
+        """
+        if self._file_hooks_warning_emitted:
+            return
+        working_directory = _resolve_effective_working_directory(session_working_directory, self._client)
+        if not _has_file_hooks(working_directory):
+            return
+        self._file_hooks_warning_emitted = True
+        logger.warning(
+            "Not loading the file hooks defined in '%s': GitHubCopilotAgent leaves "
+            "enable_file_hooks off so a session behaves the same way in every working "
+            "directory. Set enable_file_hooks=True in default_options (or in per-run "
+            "options) to run them.",
+            working_directory / ".github" / "hooks",
+        )
+
     def _build_session_kwargs(
         self,
         streaming: bool,
@@ -1439,11 +1540,12 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         ``runtime_options`` which override them. Every key is forwarded verbatim to
         the Copilot SDK, so any ``create_session`` parameter is supported without a
         dedicated mapping here (an unknown name surfaces as a ``TypeError`` from the
-        SDK). A few keys are handled specially because they need a secure default
-        (``on_permission_request`` defaults to denying all requests, and is wrapped so
-        under-specified ``approve-for-session`` decisions are scoped to the request that
-        triggered them) or transforming: ``tools`` are merged with the agent's tools and
-        converted to SDK tools, and approval callbacks are turned into ``hooks``.
+        SDK). A few keys are handled specially because they need a specific default or
+        transforming: ``on_permission_request`` defaults to denying all requests and is
+        wrapped so under-specified ``approve-for-session`` decisions are scoped to the
+        request that triggered them, ``enable_file_hooks`` defaults to off, ``tools`` are
+        merged with the agent's tools and converted to SDK tools, and approval callbacks
+        are turned into ``hooks``.
 
         Args:
             streaming: Whether to enable streaming for the session.
@@ -1459,7 +1561,10 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         # Merge agent-level tools with any caller-supplied tools (from default_options
         # or per-run options, the latter winning) and convert to SDK tools.
-        all_tools = list(self._tools or []) + list(kwargs.get("tools") or [])
+        # Normalize the option-supplied tools the way the constructor does: it converts callables
+        # and flattens tool-collection wrappers, which can otherwise hide an MCPTool.
+        all_tools = normalize_tools(list(self._tools or []) + list(kwargs.get("tools") or []))
+        _reject_mcp_tools(all_tools)
         kwargs["tools"] = self._prepare_tools(all_tools) if all_tools else None
 
         kwargs["streaming"] = streaming
@@ -1468,8 +1573,17 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         if not kwargs.get("model"):
             kwargs["model"] = self._settings.get("model") or None
         kwargs["on_permission_request"] = _with_normalized_permission_decisions(
-            opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions
+            cast(
+                PermissionHandlerType,
+                opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions,
+            )
         )
+        # File hooks let the working directory's checked-in configuration influence what the
+        # CLI does on the host, so the agent leaves them off for a consistent session in every
+        # checkout. Callers opt in through ``default_options`` or per-run options.
+        if kwargs.get("enable_file_hooks") is None:
+            kwargs["enable_file_hooks"] = False
+            self._warn_once_about_unloaded_file_hooks(kwargs.get("working_directory"))
         kwargs["hooks"] = self._build_session_hooks(all_tools, kwargs)
 
         # Strip agent-internal and client-level keys that are consumed here or in the

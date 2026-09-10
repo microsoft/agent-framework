@@ -62,11 +62,13 @@ The aggregator publishes its URL to the Aspire dashboard, where it appears as a 
 
 ## Tracing
 
-Tracing is enabled automatically when the running Aspire Dashboard exposes its telemetry API, available in Aspire 13.2 and later. DevUI checks this capability at startup, so older or unavailable dashboards do not delay agent responses or produce trace errors in the UI. The current Agent Framework dependency is Aspire 13.5.2.
+Tracing is enabled automatically when the running Aspire Dashboard exposes its telemetry API, available in Aspire 13.2 and later. DevUI checks this capability at startup, so older or unavailable dashboards do not delay agent responses or produce trace errors in the UI.
 
 Agent services must still be configured to emit and export OpenTelemetry spans to Aspire. This normally means using Aspire service defaults and registering the Agent Framework activity sources used by the service. The aggregator keeps the dashboard API key server-side; it is never returned to the browser.
 
 Aspire commonly exports spans in batches, so trace events may appear shortly after an answer completes. Trace retrieval works for streaming and non-streaming responses, happens in the background, and does not keep the chat response in a streaming state.
+
+DevUI merges trace snapshots throughout a bounded polling window of about six seconds. Spans exported after that window may be missing. For non-streaming responses, the aggregator forwards the body as it arrives and captures the top-level response ID from only the first 64 KiB. An ID outside that prefix leaves the response unchanged but cannot be correlated with traces.
 
 OpenTelemetry attributes can contain sensitive prompts, responses, tool arguments, or results when sensitive-data capture is enabled. Only enable sensitive telemetry in an appropriately secured development environment.
 

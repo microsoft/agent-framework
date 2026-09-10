@@ -56,7 +56,7 @@ Explore new MAF capabilities and real implementation patterns on the [official b
 - **Declarative Agents**: Define agents using YAML for faster setup and versioning
   - [Declarative agent samples](./declarative-agents/)
 - **Agent Skills**: Build domain-specific knowledge bases from multiple sources—files, inline code, class libraries—for agents to discover and use
-  - [Skills design](./docs/decisions/0021-agent-skills-design.md)
+  - [Skills design](./docs/decisions/0037-agent-skills-design.md)
 - **AF Labs**: Experimental packages for cutting-edge features including benchmarking, reinforcement learning, and research initiatives
   - [Labs directory](./python/packages/lab/)
 - **DevUI**: Interactive developer UI for agent development, testing, and debugging workflows
@@ -81,7 +81,7 @@ Python
 
 ```bash
 pip install agent-framework
-# This will install all sub-packages, see `python/packages` for individual packages.
+# This installs the standard package set; install `agent-framework-lab` separately for experimental modules.
 # It may take a minute on first install on Windows.
 ```
 

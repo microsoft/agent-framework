@@ -248,7 +248,7 @@ public sealed class A2AEndpointRouteBuilderExtensionsTests
         IChatClient mockChatClient = new DummyChatClient();
         builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
         IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        agentBuilder.AddA2AServer(options => options.AgentRunMode = AgentRunMode.AllowBackgroundIfSupported);
+        agentBuilder.AddA2AServer(options => options.AgentRunMode = AgentRunMode.ReturnTask);
         builder.Services.AddLogging();
         using WebApplication app = builder.Build();
 

@@ -116,7 +116,6 @@ export default function App() {
           deployment: meta.capabilities.deployment,
         };
 
-        apiClient.setTracingEnabled(meta.capabilities.trace_retrieval ?? false);
         useDevUIStore.getState().setServerMeta({
           uiMode: meta.ui_mode,
           runtime: meta.runtime,

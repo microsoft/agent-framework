@@ -2,6 +2,48 @@
 
 This package contains the Microsoft Foundry integrations for Microsoft Agent Framework, including Foundry chat clients, preconfigured Foundry agents, Foundry embedding clients, and Foundry memory providers.
 
+## SDK compatibility
+
+This package supports `azure-ai-projects>=2.2.0,<2.7.0`. Projects 2.5 and later require
+`openai>=3.0.0`, so `agent-framework-foundry` requires `agent-framework-openai>=1.14.2`,
+which supports both OpenAI 2.x and 3.x.
+
+## Evaluations
+
+`FoundryEvals` implements the provider-neutral `Evaluator` protocol with
+Microsoft Foundry's built-in and generated evaluators. Core owns `EvalItem`,
+local evaluation, and the `evaluate_agent()` / `evaluate_workflow()`
+orchestration functions; this package owns the Foundry Evals data mappings,
+wire serialization, submission, polling, and result parsing.
+
+Use `evaluate_agent()` for the common run-and-evaluate path:
+
+```python
+from agent_framework import evaluate_agent
+from agent_framework.foundry import FoundryEvals
+
+results = await evaluate_agent(
+    agent=agent,
+    queries=["What's the weather in Seattle?"],
+    evaluators=FoundryEvals(),
+)
+```
+
+For manual control, construct public `EvalItem` instances and pass them to
+`FoundryEvals.evaluate()`. The Foundry wire format is private to this package.
+`evaluate_traces()` and `evaluate_foundry_target()` provide Foundry-specific
+entry points for existing traces, response IDs, and registered targets.
+
+## Concurrent reuse
+
+A `FoundryChatClient` instance can be shared by concurrent asynchronous calls on the same event loop. Streaming,
+non-streaming, and mixed calls are supported. Keep mutable run state isolated by creating a separate `Agent` and
+`AgentSession` for each concurrent run and by passing separate messages and options.
+
+This guarantee does not extend to user-supplied middleware, tools, or callbacks unless those implementations are
+also safe for concurrent use. Do not share one client across OS threads or event loops, and do not mutate its
+configuration while calls are active.
+
 ## Toolboxes
 
 A *toolbox* is a named, versioned bundle of hosted tool configurations — code interpreter, file search, image generation, MCP, web search, and so on — stored inside a Microsoft Foundry project. Toolboxes let you manage tool configuration once and reuse it across agents.
@@ -13,7 +55,9 @@ Toolboxes can be authored two ways:
 - **Foundry portal** — create and version toolboxes through the UI without touching code.
 - **Programmatically** — use the [`azure-ai-projects`](https://pypi.org/project/azure-ai-projects/) SDK to create, update, and version toolboxes from Python.
 
-> Toolbox authoring APIs (`ToolboxVersionObject`, `ToolboxObject`, `project_client.beta.toolboxes.*`) require `azure-ai-projects>=2.1.0`. Earlier versions can only consume toolboxes that already exist.
+> In `azure-ai-projects` 2.2, toolbox authoring is available through
+> `project_client.beta.toolboxes`. Projects 2.3 and later expose stable
+> `project_client.toolboxes` operations.
 
 ### Using toolboxes with `FoundryAgent`
 

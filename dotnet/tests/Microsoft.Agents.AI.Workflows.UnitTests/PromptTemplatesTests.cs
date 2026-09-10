@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Specialized.Magentic;
 using Microsoft.Extensions.AI;
 
@@ -72,8 +71,8 @@ public class PromptTemplatesTests
         string prompt = RenderProsePrompt(context, promptName);
 
         // Assert - no language directive by default (built-in English prompts are used as-is).
-        prompt.Should().NotContain("Write your entire response in");
-        prompt.Should().NotContain("Do not use any other language");
+        Assert.DoesNotContain("Write your entire response in", prompt);
+        Assert.DoesNotContain("Do not use any other language", prompt);
     }
 
     [Fact]
@@ -86,9 +85,9 @@ public class PromptTemplatesTests
         string prompt = context.ToTaskLedgerFactsPrompt();
 
         // Assert - reverted to the original English template (no per-language heading instruction); task substituted.
-        prompt.Should().Contain("Your answer should use headings:");
-        prompt.Should().Contain("GIVEN OR VERIFIED FACTS");
-        prompt.Should().Contain(TaskText);
+        Assert.Contains("Your answer should use headings:", prompt);
+        Assert.Contains("GIVEN OR VERIFIED FACTS", prompt);
+        Assert.Contains(TaskText, prompt);
     }
 
     [Fact]
@@ -101,10 +100,10 @@ public class PromptTemplatesTests
         string prompt = context.ToProgressLedgerPrompt();
 
         // Assert - schema/routing contract present; no language directive by default.
-        prompt.Should().Contain("DO NOT OUTPUT ANYTHING OTHER THAN JSON");
-        prompt.Should().Contain("next_speaker");
-        prompt.Should().Contain("instruction_or_question");
-        prompt.Should().NotContain("Do not translate the JSON keys");
+        Assert.Contains("DO NOT OUTPUT ANYTHING OTHER THAN JSON", prompt);
+        Assert.Contains("next_speaker", prompt);
+        Assert.Contains("instruction_or_question", prompt);
+        Assert.DoesNotContain("Do not translate the JSON keys", prompt);
     }
 
     [Theory]
@@ -118,7 +117,7 @@ public class PromptTemplatesTests
         string prompt = RenderProsePrompt(context, promptName);
 
         // Assert - the concrete language directive is appended after the body.
-        prompt.Should().Contain("Write your entire response in Esperanto");
+        Assert.Contains("Write your entire response in Esperanto", prompt);
     }
 
     [Fact]
@@ -131,14 +130,14 @@ public class PromptTemplatesTests
         string prompt = context.ToProgressLedgerPrompt();
 
         // Assert - concrete language pinned for the free-text values...
-        prompt.Should().Contain(ConcreteLanguageMarker);
+        Assert.Contains(ConcreteLanguageMarker, prompt);
 
         // ...while the JSON-key/next_speaker protections and schema contract remain intact.
-        prompt.Should().Contain("Do not translate the JSON keys");
-        prompt.Should().Contain("must not be translated");
-        prompt.Should().Contain("DO NOT OUTPUT ANYTHING OTHER THAN JSON");
-        prompt.Should().Contain("next_speaker");
-        prompt.Should().Contain("instruction_or_question");
+        Assert.Contains("Do not translate the JSON keys", prompt);
+        Assert.Contains("must not be translated", prompt);
+        Assert.Contains("DO NOT OUTPUT ANYTHING OTHER THAN JSON", prompt);
+        Assert.Contains("next_speaker", prompt);
+        Assert.Contains("instruction_or_question", prompt);
     }
 
     [Fact]
@@ -151,10 +150,10 @@ public class PromptTemplatesTests
         string prompt = context.ToTaskLedgerFullPrompt();
 
         // Assert
-        prompt.Should().NotContain("Write your entire response in");
-        prompt.Should().Contain(TaskText);
-        prompt.Should().Contain(FactsText);
-        prompt.Should().Contain(PlanText);
+        Assert.DoesNotContain("Write your entire response in", prompt);
+        Assert.Contains(TaskText, prompt);
+        Assert.Contains(FactsText, prompt);
+        Assert.Contains(PlanText, prompt);
     }
 
     [Fact]
@@ -168,9 +167,9 @@ public class PromptTemplatesTests
         string prompt = context.ToTaskLedgerFactsPrompt();
 
         // Assert - the override body is used with placeholders substituted, and the default template is gone.
-        prompt.Should().Contain("CUSTOM facts request for");
-        prompt.Should().Contain(TaskText);
-        prompt.Should().NotContain("Ken Jennings-level");
+        Assert.Contains("CUSTOM facts request for", prompt);
+        Assert.Contains(TaskText, prompt);
+        Assert.DoesNotContain("Ken Jennings-level", prompt);
     }
 
     [Fact]
@@ -184,9 +183,9 @@ public class PromptTemplatesTests
         string prompt = context.ToFinalAnswerPrompt();
 
         // Assert - override body + the concrete language directive appended after it.
-        prompt.Should().Contain("CUSTOM final answer for");
-        prompt.Should().Contain(TaskText);
-        prompt.Should().Contain(ConcreteLanguageMarker);
+        Assert.Contains("CUSTOM final answer for", prompt);
+        Assert.Contains(TaskText, prompt);
+        Assert.Contains(ConcreteLanguageMarker, prompt);
     }
 
     [Fact]
@@ -200,10 +199,10 @@ public class PromptTemplatesTests
         string prompt = context.ToProgressLedgerPrompt();
 
         // Assert - the framework injects the JSON schema (keys) into the override via {schema}.
-        prompt.Should().Contain("CUSTOM ledger for");
-        prompt.Should().Contain(TaskText);
-        prompt.Should().Contain("next_speaker");
-        prompt.Should().Contain("instruction_or_question");
+        Assert.Contains("CUSTOM ledger for", prompt);
+        Assert.Contains(TaskText, prompt);
+        Assert.Contains("next_speaker", prompt);
+        Assert.Contains("instruction_or_question", prompt);
     }
 
     [Fact]
@@ -225,10 +224,10 @@ public class PromptTemplatesTests
         string prompt = context.ToProgressLedgerPrompt();
 
         // Assert - the task's literal {schema}/{team} tokens survive verbatim (not clobbered by later replacements)...
-        prompt.Should().Contain("Design a {schema} for the {team} data");
+        Assert.Contains("Design a {schema} for the {team} data", prompt);
         // ...while the real template placeholders were still substituted (team description + schema JSON keys).
-        prompt.Should().Contain("Researcher");
-        prompt.Should().Contain("next_speaker");
+        Assert.Contains("Researcher", prompt);
+        Assert.Contains("next_speaker", prompt);
     }
 
     [Fact]
@@ -243,20 +242,27 @@ public class PromptTemplatesTests
         string finalAnswerPrompt = context.ToFinalAnswerPrompt();
 
         // Assert - the rendered prompt is the public default with {task} substituted.
-        factsPrompt.Should().Be(MagenticDefaultPrompts.TaskLedgerFactsPrompt.Replace("{task}", context.Task));
-        finalAnswerPrompt.Should().Be(MagenticDefaultPrompts.FinalAnswerPrompt.Replace("{task}", context.Task));
+        Assert.Equal(MagenticDefaultPrompts.TaskLedgerFactsPrompt.Replace("{task}", context.Task), factsPrompt);
+        Assert.Equal(MagenticDefaultPrompts.FinalAnswerPrompt.Replace("{task}", context.Task), finalAnswerPrompt);
     }
 
     [Fact]
     public void MagenticDefaultPrompts_ExposeExpectedPlaceholders()
     {
         // Assert - the published defaults keep the placeholders callers rely on when tailoring an override.
-        MagenticDefaultPrompts.TaskLedgerFactsPrompt.Should().Contain("{task}");
-        MagenticDefaultPrompts.TaskLedgerFactsUpdatePrompt.Should().Contain("{task}").And.Contain("{old_facts}");
-        MagenticDefaultPrompts.TaskLedgerPlanPrompt.Should().Contain("{team}");
-        MagenticDefaultPrompts.TaskLedgerPlanUpdatePrompt.Should().Contain("{team}");
-        MagenticDefaultPrompts.TaskLedgerFullPrompt.Should().Contain("{task}").And.Contain("{team}").And.Contain("{facts}").And.Contain("{plan}");
-        MagenticDefaultPrompts.ProgressLedgerPrompt.Should().Contain("{task}").And.Contain("{team}").And.Contain("{questions}").And.Contain("{schema}");
-        MagenticDefaultPrompts.FinalAnswerPrompt.Should().Contain("{task}");
+        Assert.Contains("{task}", MagenticDefaultPrompts.TaskLedgerFactsPrompt);
+        Assert.Contains("{task}", MagenticDefaultPrompts.TaskLedgerFactsUpdatePrompt);
+        Assert.Contains("{old_facts}", MagenticDefaultPrompts.TaskLedgerFactsUpdatePrompt);
+        Assert.Contains("{team}", MagenticDefaultPrompts.TaskLedgerPlanPrompt);
+        Assert.Contains("{team}", MagenticDefaultPrompts.TaskLedgerPlanUpdatePrompt);
+        Assert.Contains("{task}", MagenticDefaultPrompts.TaskLedgerFullPrompt);
+        Assert.Contains("{team}", MagenticDefaultPrompts.TaskLedgerFullPrompt);
+        Assert.Contains("{facts}", MagenticDefaultPrompts.TaskLedgerFullPrompt);
+        Assert.Contains("{plan}", MagenticDefaultPrompts.TaskLedgerFullPrompt);
+        Assert.Contains("{task}", MagenticDefaultPrompts.ProgressLedgerPrompt);
+        Assert.Contains("{team}", MagenticDefaultPrompts.ProgressLedgerPrompt);
+        Assert.Contains("{questions}", MagenticDefaultPrompts.ProgressLedgerPrompt);
+        Assert.Contains("{schema}", MagenticDefaultPrompts.ProgressLedgerPrompt);
+        Assert.Contains("{task}", MagenticDefaultPrompts.FinalAnswerPrompt);
     }
 }

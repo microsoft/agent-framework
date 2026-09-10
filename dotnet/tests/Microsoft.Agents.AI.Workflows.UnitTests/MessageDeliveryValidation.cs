@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Execution;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -19,7 +18,7 @@ internal static class MessageDeliveryValidation
         {
             string receiverId = grouping.Key;
 
-            receiverIds.Should().Contain(receiverId);
+            Assert.Contains(receiverId, receiverIds);
             unseenReceivers.Remove(grouping.Key);
 
             foreach (MessageDelivery delivery in grouping)
@@ -27,7 +26,7 @@ internal static class MessageDeliveryValidation
                 object messageValue;
                 if (delivery.Envelope.Message is PortableValue portableValue)
                 {
-                    portableValue.IsDelayedDeserialization.Should().BeFalse();
+                    Assert.False(portableValue.IsDelayedDeserialization);
                     messageValue = portableValue.Value;
                 }
                 else
@@ -35,18 +34,18 @@ internal static class MessageDeliveryValidation
                     messageValue = delivery.Envelope.Message;
                 }
 
-                messages.Should().Contain(messageValue);
+                Assert.Contains(messageValue, messages);
                 unseenMessages.Remove(messageValue);
             }
         }
 
-        unseenReceivers.Should().BeEmpty();
-        unseenMessages.Should().BeEmpty();
+        Assert.Empty(unseenReceivers ?? []);
+        Assert.Empty(unseenMessages ?? []);
     }
 
     public static void CheckForwarded(Dictionary<string, List<MessageEnvelope>> queuedMessages, params (string expectedSender, List<string> expectedMessages)[] expectedForwards)
     {
-        queuedMessages.Should().HaveCount(expectedForwards.Length);
+        Assert.Equal(expectedForwards.Length, queuedMessages.Count);
 
         IEnumerable<Action<string>> perSenderValidations = expectedForwards.Select(
                 (forward) =>
@@ -56,11 +55,11 @@ internal static class MessageDeliveryValidation
                     return (Action<string>)(
                         senderId =>
                         {
-                            senderId.Should().Be(expectedSender);
-                            queuedMessages[senderId].Should().HaveCount(expectedMessages.Count);
+                            Assert.Equal(expectedSender, senderId);
+                            Assert.Equal(expectedMessages.Count, queuedMessages[senderId].Count);
 
                             Action<MessageEnvelope>[] validations
-                                = expectedMessages.Select(message => (Action<MessageEnvelope>)(envelope => envelope!.Message.Should().Be(message)))
+                                = expectedMessages.Select(message => (Action<MessageEnvelope>)(envelope => Assert.Equal(message, envelope!.Message)))
                                                   .ToArray();
 
                             Assert.Collection(queuedMessages[senderId], validations);

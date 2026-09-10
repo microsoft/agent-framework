@@ -109,6 +109,84 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
     }
 
     [Fact]
+    public async Task ExecuteCode_DefaultEnvironmentDoesNotInheritParentVariablesAsync()
+    {
+        SkipIfNoPython();
+
+        // Arrange
+        var variableName = $"AF_LOCALCODEACT_PARENT_{Guid.NewGuid():N}";
+        var parentValue = $"parent-value-{Guid.NewGuid():N}";
+        var originalValue = Environment.GetEnvironmentVariable(variableName);
+        Environment.SetEnvironmentVariable(variableName, parentValue);
+
+        try
+        {
+            var function = new LocalExecuteCodeFunction(s_python!);
+            var args = new AIFunctionArguments
+            {
+                ["code"] = $"import os\nprint(os.environ.get('{variableName}', 'NOT_FOUND'))",
+            };
+
+            // Act
+            var result = await function.InvokeAsync(args, CancellationToken.None);
+
+            // Assert
+            var combined = GetResultText(result);
+            Assert.Contains("NOT_FOUND", combined, StringComparison.Ordinal);
+            Assert.DoesNotContain(parentValue, combined, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(variableName, originalValue);
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteCode_ExplicitEnvironmentDoesNotInheritOtherParentVariablesAsync()
+    {
+        SkipIfNoPython();
+
+        // Arrange
+        var parentVariableName = $"AF_LOCALCODEACT_PARENT_{Guid.NewGuid():N}";
+        var childVariableName = $"AF_LOCALCODEACT_CHILD_{Guid.NewGuid():N}";
+        var parentValue = $"parent-value-{Guid.NewGuid():N}";
+        var childValue = $"child-value-{Guid.NewGuid():N}";
+        var originalValue = Environment.GetEnvironmentVariable(parentVariableName);
+        Environment.SetEnvironmentVariable(parentVariableName, parentValue);
+
+        try
+        {
+            var options = new LocalCodeActProviderOptions
+            {
+                Environment = new Dictionary<string, string>
+                {
+                    [childVariableName] = childValue,
+                },
+            };
+            var function = new LocalExecuteCodeFunction(s_python!, options);
+            var args = new AIFunctionArguments
+            {
+                ["code"] =
+                    $"import os\nprint(os.environ.get('{childVariableName}', 'NOT_FOUND'))\n" +
+                    $"print(os.environ.get('{parentVariableName}', 'NOT_FOUND'))",
+            };
+
+            // Act
+            var result = await function.InvokeAsync(args, CancellationToken.None);
+
+            // Assert
+            var combined = GetResultText(result);
+            Assert.Contains(childValue, combined, StringComparison.Ordinal);
+            Assert.Contains("NOT_FOUND", combined, StringComparison.Ordinal);
+            Assert.DoesNotContain(parentValue, combined, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(parentVariableName, originalValue);
+        }
+    }
+
+    [Fact]
     public async Task ExecuteCode_CapturesFilesInWritableMountAsync()
     {
         SkipIfNoPython();

@@ -6,7 +6,6 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Extensions.AI;
 
 #pragma warning disable SYSLIB1045 // Use GeneratedRegex
@@ -61,9 +60,9 @@ public class AgentWorkflowBuilderTests
         (_, List<ChatMessage>? result, _, _) =
             await OrchestrationTestHelpers.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
 
-        result.Should().NotBeNull();
-        result!.Should().ContainSingle();
-        result[0].AuthorName.Should().Be("agent2");
+        Assert.NotNull(result);
+        Assert.Single(result!);
+        Assert.Equal("agent2", result[0].AuthorName);
     }
 
     [Fact]
@@ -73,7 +72,7 @@ public class AgentWorkflowBuilderTests
             "static-sequential",
             new OrchestrationTestHelpers.DoubleEchoAgent("agent1"));
 
-        workflow.Name.Should().Be("static-sequential");
+        Assert.Equal("static-sequential", workflow.Name);
     }
 
     [Fact]
@@ -114,7 +113,7 @@ public class AgentWorkflowBuilderTests
             "static-concurrent",
             [new OrchestrationTestHelpers.DoubleEchoAgent("agent1")]);
 
-        workflow.Name.Should().Be("static-concurrent");
+        Assert.Equal("static-concurrent", workflow.Name);
     }
 
     [Fact]
@@ -131,8 +130,9 @@ public class AgentWorkflowBuilderTests
         (_, List<ChatMessage>? result, _, _) =
             await OrchestrationTestHelpers.RunWorkflowAsync(workflow, [new ChatMessage(ChatRole.User, "abc")]);
 
-        result.Should().NotBeNull().And.ContainSingle();
-        result![0].Text.Should().Be("custom-aggregator-result");
+        Assert.NotNull(result);
+        Assert.Single(result);
+        Assert.Equal("custom-aggregator-result", result![0].Text);
     }
 
     [Fact]
@@ -149,7 +149,7 @@ public class AgentWorkflowBuilderTests
         SequentialWorkflowBuilder builder = AgentWorkflowBuilder.CreateSequentialBuilderWith(agent);
         Workflow workflow = builder.WithName("via-factory").Build();
 
-        workflow.Name.Should().Be("via-factory");
+        Assert.Equal("via-factory", workflow.Name);
     }
 
     [Fact]
@@ -166,7 +166,7 @@ public class AgentWorkflowBuilderTests
         ConcurrentWorkflowBuilder builder = AgentWorkflowBuilder.CreateConcurrentBuilderWith(agent);
         Workflow workflow = builder.WithName("via-factory").Build();
 
-        workflow.Name.Should().Be("via-factory");
+        Assert.Equal("via-factory", workflow.Name);
     }
 
     [Fact]

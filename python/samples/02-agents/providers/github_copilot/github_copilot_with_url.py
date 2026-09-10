@@ -15,11 +15,11 @@ import asyncio
 
 from agent_framework.github import GitHubCopilotAgent, GitHubCopilotOptions
 from copilot.generated.rpc import PermissionDecisionUserNotAvailable
-from copilot.session import PermissionHandler, PermissionRequestResult
+from copilot.session import PermissionHandler, PermissionInvocation, PermissionRequestResult
 from copilot.session_events import PermissionRequest
 
 
-def approve_and_log(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+def approve_and_log(request: PermissionRequest, context: PermissionInvocation) -> PermissionRequestResult:
     """Permission handler that approves only URL requests and logs them."""
     if request.kind == "url":
         print(f"\n  [Permission: {request.kind}]", flush=True)

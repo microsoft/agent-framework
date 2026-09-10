@@ -76,7 +76,6 @@ const MAX_RETRY_ATTEMPTS = 10; // Max 10 retries (~30 seconds with exponential b
 const STREAMING_STATE_SAVE_INTERVAL_MS = 250;
 const TRACE_POLL_ATTEMPTS = 12;
 const TRACE_POLL_INTERVAL_MS = 500;
-const TRACE_STABLE_SNAPSHOT_COUNT = 3;
 
 // Get backend URL from localStorage or default
 function getBackendUrl(): string {
@@ -129,27 +128,9 @@ function getTraceSpanData(event: ExtendedResponseStreamEvent): TraceSpanSnapshot
   return event.data as TraceSpanSnapshotData;
 }
 
-function getTraceSnapshotSignature(events: ExtendedResponseStreamEvent[]): string {
-  return events
-    .map((event) => {
-      const data = getTraceSpanData(event);
-      if (!data) return "";
-
-      return [
-        data.span_id,
-        data.parent_span_id,
-        data.end_time,
-        data.status,
-      ].join(":");
-    })
-    .sort()
-    .join("|");
-}
-
 class ApiClient {
   private baseUrl: string;
   private authToken: string | null = null;
-  private tracingEnabled = false;
 
   constructor(baseUrl?: string) {
     this.baseUrl = baseUrl || getBackendUrl();
@@ -164,10 +145,6 @@ class ApiClient {
 
   getBaseUrl(): string {
     return this.baseUrl;
-  }
-
-  setTracingEnabled(enabled: boolean): void {
-    this.tracingEnabled = enabled;
   }
 
   // Set auth token and persist to localStorage
@@ -244,9 +221,10 @@ class ApiClient {
 
   async getTraceEvents(
     responseId: string,
+    traceRetrievalEnabled: boolean,
     signal?: AbortSignal
   ): Promise<ExtendedResponseStreamEvent[]> {
-    if (!this.tracingEnabled) return [];
+    if (!traceRetrievalEnabled) return [];
 
     const headers: Record<string, string> = {};
     if (this.authToken) {
@@ -254,11 +232,9 @@ class ApiClient {
     }
 
     const spansById = new Map<string, ExtendedResponseStreamEvent>();
-    let previousSignature: string | undefined;
-    let stableSnapshotCount = 0;
 
-    // Aspire's batch exporter can make completed spans visible shortly after the response stream ends.
-    // Publish after three identical merged snapshots, with a bounded wait if the trace keeps changing.
+    // An unchanged subset does not mean the trace is complete: Aspire's batch exporter
+    // can hold later spans for several seconds. Merge through the entire bounded window.
     for (let attempt = 0; attempt < TRACE_POLL_ATTEMPTS; attempt++) {
       try {
         const response = await fetch(
@@ -272,17 +248,6 @@ class ApiClient {
             for (const event of result.data) {
               const spanId = getTraceSpanData(event)?.span_id;
               if (spanId) spansById.set(spanId, event);
-            }
-
-            const mergedEvents = Array.from(spansById.values());
-            const signature = getTraceSnapshotSignature(mergedEvents);
-            stableSnapshotCount = signature === previousSignature
-              ? stableSnapshotCount + 1
-              : 1;
-            previousSignature = signature;
-
-            if (stableSnapshotCount >= TRACE_STABLE_SNAPSHOT_COUNT) {
-              return mergedEvents;
             }
           }
         } else if (response.status === 401) {
@@ -645,6 +610,8 @@ class ApiClient {
           lastSequenceNumber,
           accumulatedText: storedState?.accumulatedText,
           accumulatedTextIsPreview: storedState?.accumulatedTextIsPreview,
+          accumulatedTextType: storedState?.accumulatedTextType,
+          accumulatedParts: storedState?.accumulatedParts,
         }),
         event,
         currentResponseId,
@@ -652,7 +619,7 @@ class ApiClient {
       );
 
       const isTextDelta =
-        event.type === "response.output_text.delta" &&
+        (event.type === "response.output_text.delta" || event.type === "response.refusal.delta") &&
         "delta" in event &&
         typeof event.delta === "string" &&
         event.delta.length > 0;

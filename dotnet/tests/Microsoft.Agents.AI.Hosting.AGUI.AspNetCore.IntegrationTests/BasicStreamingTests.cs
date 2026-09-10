@@ -12,7 +12,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using AGUI.Abstractions;
 using AGUI.Client;
-using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
@@ -45,16 +44,16 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         }
 
         // Assert
-        session.Should().NotBeNull();
+        Assert.NotNull(session);
 
-        updates.Should().NotBeEmpty();
-        updates.Should().AllSatisfy(u => u.Role.Should().Be(ChatRole.Assistant));
+        Assert.NotEmpty(updates);
+        Assert.All(updates, u => Assert.Equal(ChatRole.Assistant, u.Role));
 
         // Verify assistant response message
         AgentResponse response = updates.ToAgentResponse();
-        response.Messages.Should().HaveCount(1);
-        response.Messages[0].Role.Should().Be(ChatRole.Assistant);
-        response.Messages[0].Text.Should().Be("Hello from fake agent!");
+        ChatMessage responseMessage = Assert.Single(response.Messages);
+        Assert.Equal(ChatRole.Assistant, responseMessage.Role);
+        Assert.Equal("Hello from fake agent!", responseMessage.Text);
     }
 
     [Fact]
@@ -76,39 +75,39 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         }
 
         // Assert - RunStarted should be the first update
-        updates.Should().NotBeEmpty();
-        updates[0].ResponseId.Should().NotBeNullOrEmpty();
+        Assert.NotEmpty(updates);
+        Assert.False(string.IsNullOrEmpty(updates[0].ResponseId));
         ChatResponseUpdate firstUpdate = updates[0].AsChatResponseUpdate();
         // The AG-UI thread id is surfaced on the RUN_STARTED event (the new AGUI.Client keeps the
         // client stateless and never populates ChatResponseUpdate.ConversationId).
         string? threadId = (firstUpdate.RawRepresentation as RunStartedEvent)?.ThreadId;
         string? runId = updates[0].ResponseId;
-        threadId.Should().NotBeNullOrEmpty();
-        runId.Should().NotBeNullOrEmpty();
+        Assert.False(string.IsNullOrEmpty(threadId));
+        Assert.False(string.IsNullOrEmpty(runId));
 
         // Should have received text updates
-        updates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
+        Assert.Contains(updates, u => !string.IsNullOrEmpty(u.Text));
 
         // All text content updates should have the same message ID
         List<AgentResponseUpdate> textUpdates = updates.Where(u => !string.IsNullOrEmpty(u.Text)).ToList();
-        textUpdates.Should().NotBeEmpty();
+        Assert.NotEmpty(textUpdates);
         string? firstMessageId = textUpdates.FirstOrDefault()?.MessageId;
-        firstMessageId.Should().NotBeNullOrEmpty();
-        textUpdates.Should().AllSatisfy(u => u.MessageId.Should().Be(firstMessageId));
+        Assert.False(string.IsNullOrEmpty(firstMessageId));
+        Assert.All(textUpdates, u => Assert.Equal(firstMessageId, u.MessageId));
 
         // RunFinished should be the last update
         AgentResponseUpdate lastUpdate = updates[^1];
-        lastUpdate.ResponseId.Should().Be(runId);
+        Assert.Equal(runId, lastUpdate.ResponseId);
         ChatResponseUpdate lastChatUpdate = lastUpdate.AsChatResponseUpdate();
         // The stateless client never populates ChatResponseUpdate.ConversationId; thread identity stays
         // on the AG-UI wire events instead, so verify the RUN_FINISHED event carries the same ids.
-        lastChatUpdate.ConversationId.Should().BeNull();
+        Assert.Null(lastChatUpdate.ConversationId);
         RunFinishedEvent? runFinished = updates
             .Select(u => u.AsChatResponseUpdate().RawRepresentation as RunFinishedEvent)
             .FirstOrDefault(e => e is not null);
-        runFinished.Should().NotBeNull();
-        runFinished!.ThreadId.Should().Be(threadId);
-        runFinished.RunId.Should().Be(runId);
+        Assert.NotNull(runFinished);
+        Assert.Equal(threadId, runFinished!.ThreadId);
+        Assert.Equal(runId, runFinished.RunId);
     }
 
     [Fact]
@@ -125,9 +124,9 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         AgentResponse response = await agent.RunAsync([userMessage], session, new AgentRunOptions(), CancellationToken.None);
 
         // Assert
-        response.Messages.Should().NotBeEmpty();
-        response.Messages.Should().Contain(m => m.Role == ChatRole.Assistant);
-        response.Messages.Should().Contain(m => m.Text == "Hello from fake agent!");
+        Assert.NotEmpty(response.Messages);
+        Assert.Contains(response.Messages, m => m.Role == ChatRole.Assistant);
+        Assert.Contains(response.Messages, m => m.Text == "Hello from fake agent!");
     }
 
     [Fact]
@@ -148,9 +147,9 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         }
 
         // Assert first turn completed
-        firstTurnUpdates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
-        firstTurnUpdates.Should().AllSatisfy(u => u.AsChatResponseUpdate().ConversationId.Should().BeNull());
-        chatClientSession.ConversationId.Should().BeNull();
+        Assert.Contains(firstTurnUpdates, u => !string.IsNullOrEmpty(u.Text));
+        Assert.All(firstTurnUpdates, u => Assert.Null(u.AsChatResponseUpdate().ConversationId));
+        Assert.Null(chatClientSession.ConversationId);
 
         // Act - Second turn with another message
         ChatMessage secondUserMessage = new(ChatRole.User, "Second question");
@@ -161,34 +160,34 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         }
 
         // Assert second turn completed
-        secondTurnUpdates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
-        secondTurnUpdates.Should().AllSatisfy(u => u.AsChatResponseUpdate().ConversationId.Should().BeNull());
-        chatClientSession.ConversationId.Should().BeNull();
+        Assert.Contains(secondTurnUpdates, u => !string.IsNullOrEmpty(u.Text));
+        Assert.All(secondTurnUpdates, u => Assert.Null(u.AsChatResponseUpdate().ConversationId));
+        Assert.Null(chatClientSession.ConversationId);
 
         // Verify the local provider retained both turns.
-        InMemoryChatHistoryProvider historyProvider = agent.ChatHistoryProvider.Should().BeOfType<InMemoryChatHistoryProvider>().Subject;
+        InMemoryChatHistoryProvider historyProvider = Assert.IsType<InMemoryChatHistoryProvider>(agent.ChatHistoryProvider);
         List<ChatMessage> history = historyProvider.GetMessages(chatClientSession);
-        history.Should().HaveCount(4);
-        history[0].Role.Should().Be(ChatRole.User);
-        history[0].Text.Should().Be("First question");
-        history[1].Role.Should().Be(ChatRole.Assistant);
-        history[1].Text.Should().Be("Hello from fake agent!");
-        history[2].Role.Should().Be(ChatRole.User);
-        history[2].Text.Should().Be("Second question");
-        history[3].Role.Should().Be(ChatRole.Assistant);
-        history[3].Text.Should().Be("Hello from fake agent!");
+        Assert.Equal(4, history.Count);
+        Assert.Equal(ChatRole.User, history[0].Role);
+        Assert.Equal("First question", history[0].Text);
+        Assert.Equal(ChatRole.Assistant, history[1].Role);
+        Assert.Equal("Hello from fake agent!", history[1].Text);
+        Assert.Equal(ChatRole.User, history[2].Role);
+        Assert.Equal("Second question", history[2].Text);
+        Assert.Equal(ChatRole.Assistant, history[3].Role);
+        Assert.Equal("Hello from fake agent!", history[3].Text);
 
         // Verify first turn assistant response.
         AgentResponse firstResponse = firstTurnUpdates.ToAgentResponse();
-        firstResponse.Messages.Should().HaveCount(1);
-        firstResponse.Messages[0].Role.Should().Be(ChatRole.Assistant);
-        firstResponse.Messages[0].Text.Should().Be("Hello from fake agent!");
+        ChatMessage firstResponseMessage = Assert.Single(firstResponse.Messages);
+        Assert.Equal(ChatRole.Assistant, firstResponseMessage.Role);
+        Assert.Equal("Hello from fake agent!", firstResponseMessage.Text);
 
         // Verify second turn assistant response.
         AgentResponse secondResponse = secondTurnUpdates.ToAgentResponse();
-        secondResponse.Messages.Should().HaveCount(1);
-        secondResponse.Messages[0].Role.Should().Be(ChatRole.Assistant);
-        secondResponse.Messages[0].Text.Should().Be("Hello from fake agent!");
+        ChatMessage secondResponseMessage = Assert.Single(secondResponse.Messages);
+        Assert.Equal(ChatRole.Assistant, secondResponseMessage.Role);
+        Assert.Equal("Hello from fake agent!", secondResponseMessage.Text);
     }
 
     [Fact]
@@ -211,16 +210,16 @@ public sealed class BasicStreamingTests : IAsyncDisposable
 
         // Assert - Should have received text updates with different message IDs
         List<AgentResponseUpdate> textUpdates = updates.Where(u => !string.IsNullOrEmpty(u.Text)).ToList();
-        textUpdates.Should().NotBeEmpty();
+        Assert.NotEmpty(textUpdates);
 
         // Extract unique message IDs
         List<string> messageIds = textUpdates.Select(u => u.MessageId).Where(id => !string.IsNullOrEmpty(id)).Distinct().ToList()!;
-        messageIds.Should().HaveCountGreaterThan(1, "agent should send multiple messages");
+        Assert.True(messageIds.Count > 1);
 
         // Verify assistant messages from updates
         AgentResponse response = updates.ToAgentResponse();
-        response.Messages.Should().HaveCountGreaterThan(1);
-        response.Messages.Should().AllSatisfy(m => m.Role.Should().Be(ChatRole.Assistant));
+        Assert.True(response.Messages.Count > 1);
+        Assert.All(response.Messages, m => Assert.Equal(ChatRole.Assistant, m.Role));
     }
 
     [Fact]
@@ -249,14 +248,14 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         }
 
         // Assert - Should have received assistant response
-        updates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
-        updates.Should().Contain(u => u.Role == ChatRole.Assistant);
+        Assert.Contains(updates, u => !string.IsNullOrEmpty(u.Text));
+        Assert.Contains(updates, u => u.Role == ChatRole.Assistant);
 
         // Verify assistant response message
         AgentResponse response = updates.ToAgentResponse();
-        response.Messages.Should().HaveCount(1);
-        response.Messages[0].Role.Should().Be(ChatRole.Assistant);
-        response.Messages[0].Text.Should().Be("Hello from fake agent!");
+        ChatMessage responseMessage = Assert.Single(response.Messages);
+        Assert.Equal(ChatRole.Assistant, responseMessage.Role);
+        Assert.Equal("Hello from fake agent!", responseMessage.Text);
     }
 
     [Fact]
@@ -276,8 +275,8 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         using HttpResponseMessage emptyResponse = await this._client!.PostAsync(endpoint, empty);
 
         // Assert - the hosting glue rejects both with 400 rather than 5xx.
-        malformedResponse.StatusCode.Should().Be(System.Net.HttpStatusCode.BadRequest);
-        emptyResponse.StatusCode.Should().Be(System.Net.HttpStatusCode.BadRequest);
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, malformedResponse.StatusCode);
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, emptyResponse.StatusCode);
     }
 
     private async Task SetupTestServerAsync(bool useMultiMessageAgent = false)

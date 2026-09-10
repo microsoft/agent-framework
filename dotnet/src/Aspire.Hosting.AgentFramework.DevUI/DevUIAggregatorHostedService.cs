@@ -590,15 +590,14 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             ? $"00-{traceId}-{ActivitySpanId.CreateRandom().ToHexString()}-01"
             : null;
 
-        string? responseId = null;
-        await ProxyRequestAsync(
+        var responseId = await ProxyRequestAsync(
             context,
             backendUrl,
             "/v1/responses",
             rewrittenBody,
             streaming: true,
             traceParent,
-            capturedResponseId => responseId = capturedResponseId).ConfigureAwait(false);
+            captureResponseId: traceId is not null).ConfigureAwait(false);
 
         if (traceId is not null && responseId is not null && resourceName is not null)
         {
@@ -860,14 +859,14 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         }
     }
 
-    private static async Task ProxyRequestAsync(
+    private static async Task<string?> ProxyRequestAsync(
         HttpContext context,
         string backendUrl,
         string path,
         byte[]? bodyBytes,
         bool streaming = false,
         string? traceParent = null,
-        Action<string>? onResponseId = null)
+        bool captureResponseId = false)
     {
         var httpClientFactory = context.RequestServices.GetRequiredService<IHttpClientFactory>();
         using var client = httpClientFactory.CreateClient("devui-proxy");
@@ -877,7 +876,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             await context.Response.WriteAsync("Invalid proxy target.", context.RequestAborted).ConfigureAwait(false);
-            return;
+            return null;
         }
 
         using var request = new HttpRequestMessage(new HttpMethod(context.Request.Method), targetUri);
@@ -892,7 +891,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             request.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
         }
 
-        if (onResponseId is not null)
+        if (captureResponseId)
         {
             // Response ID capture parses SSE or JSON, so keep the upstream body uncompressed.
             request.Headers.Remove("Accept-Encoding");
@@ -916,7 +915,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             }
         }
 
-        var completionOption = streaming
+        var completionOption = streaming || captureResponseId
             ? HttpCompletionOption.ResponseHeadersRead
             : HttpCompletionOption.ResponseContentRead;
 
@@ -930,29 +929,25 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             context.Response.Headers.CacheControl = "no-cache";
 
             using var stream = await response.Content.ReadAsStreamAsync(context.RequestAborted).ConfigureAwait(false);
-            var responseIdCapture = new SseResponseIdCapture();
+            var responseIdCapture = captureResponseId && response.IsSuccessStatusCode ? new SseResponseIdCapture() : null;
             var buffer = new byte[16 * 1024];
             int bytesRead;
             while ((bytesRead = await stream.ReadAsync(buffer, context.RequestAborted).ConfigureAwait(false)) > 0)
             {
                 var bytes = buffer.AsMemory(0, bytesRead);
-                responseIdCapture.Append(bytes.Span);
+                responseIdCapture?.Append(bytes.Span);
                 await context.Response.Body.WriteAsync(bytes, context.RequestAborted).ConfigureAwait(false);
                 await context.Response.Body.FlushAsync(context.RequestAborted).ConfigureAwait(false);
             }
 
-            if (responseIdCapture.ResponseId is not null)
-            {
-                onResponseId?.Invoke(responseIdCapture.ResponseId);
-            }
+            context.RequestAborted.ThrowIfCancellationRequested();
+            return responseIdCapture?.ResponseId;
         }
-        else
-        {
-            await CopyResponseAsync(
-                response,
-                context,
-                response.IsSuccessStatusCode ? onResponseId : null).ConfigureAwait(false);
-        }
+
+        return await CopyResponseAsync(
+            response,
+            context,
+            captureResponseId && response.IsSuccessStatusCode).ConfigureAwait(false);
     }
 
     private (string? BackendUrl, string ActualPath) ResolveBackend(string prefixedId)
@@ -1071,10 +1066,10 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         return ms.ToArray();
     }
 
-    private static async Task CopyResponseAsync(
+    internal static async Task<string?> CopyResponseAsync(
         HttpResponseMessage response,
         HttpContext context,
-        Action<string>? onResponseId = null)
+        bool captureResponseId = false)
     {
         context.Response.StatusCode = (int)response.StatusCode;
 
@@ -1088,29 +1083,27 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             context.Response.Headers[header.Key] = header.Value.ToArray();
         }
 
-        if (onResponseId is null)
+        if (!captureResponseId)
         {
             await response.Content.CopyToAsync(context.Response.Body, context.RequestAborted).ConfigureAwait(false);
-            return;
+            return null;
         }
 
-        var responseBody = await response.Content.ReadAsByteArrayAsync(context.RequestAborted).ConfigureAwait(false);
-        try
+        using var stream = await response.Content.ReadAsStreamAsync(context.RequestAborted).ConfigureAwait(false);
+        var responseIdCapture = new JsonResponseIdCapture();
+        var buffer = new byte[16 * 1024];
+        int bytesRead;
+        while ((bytesRead = await stream.ReadAsync(buffer, context.RequestAborted).ConfigureAwait(false)) > 0)
         {
-            using var document = JsonDocument.Parse(responseBody);
-            if (document.RootElement.TryGetProperty("id", out var responseId) &&
-                responseId.ValueKind == JsonValueKind.String &&
-                responseId.GetString() is { Length: > 0 } value)
-            {
-                onResponseId(value);
-            }
-        }
-        catch (JsonException)
-        {
-            // Best-effort capture only. The proxied response must remain unchanged.
+            var bytes = buffer.AsMemory(0, bytesRead);
+            responseIdCapture.Append(bytes.Span);
+            await context.Response.Body.WriteAsync(bytes, context.RequestAborted).ConfigureAwait(false);
+            await context.Response.Body.FlushAsync(context.RequestAborted).ConfigureAwait(false);
         }
 
-        await context.Response.Body.WriteAsync(responseBody, context.RequestAborted).ConfigureAwait(false);
+        // Only expose the captured ID after the entire response has been forwarded successfully.
+        context.RequestAborted.ThrowIfCancellationRequested();
+        return responseIdCapture.Complete();
     }
 
     private static bool IsHopByHopHeader(string headerName)

@@ -28,7 +28,7 @@ from ._snapshots import (
     AGUIThreadSnapshotStore,
     _clear_thread_snapshot_interrupt,
 )
-from ._utils import make_json_safe
+from ._utils import _project_host_payload_history, make_json_safe
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ class ThreadSnapshotSession:
         if snapshot.state is not None:
             yield StateSnapshotEvent(snapshot=snapshot.state)
         if snapshot.messages:
-            yield MessagesSnapshotEvent(messages=snapshot.messages)  # type: ignore[arg-type]
+            yield MessagesSnapshotEvent(messages=_project_host_payload_history(snapshot.messages))  # type: ignore[arg-type]
         yield _build_run_finished_event(run_id=run_id, thread_id=self._thread_id, interrupts=snapshot.interrupt)
 
     def effective_state(
