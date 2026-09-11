@@ -115,13 +115,13 @@ internal sealed class WorkflowFormulaState
 
     private void RestoreInitialState()
     {
-        foreach ((string scopeName, WorkflowScope initialScope) in this._initialScopes)
+        foreach (KeyValuePair<string, WorkflowScope> initialScopeEntry in this._initialScopes)
         {
-            WorkflowScope scope = this._scopes[scopeName];
+            WorkflowScope scope = this._scopes[initialScopeEntry.Key];
             scope.Clear();
-            foreach ((string key, FormulaValue value) in initialScope)
+            foreach (KeyValuePair<string, FormulaValue> initialValueEntry in initialScopeEntry.Value)
             {
-                scope[key] = value;
+                scope[initialValueEntry.Key] = initialValueEntry.Value;
             }
         }
     }
