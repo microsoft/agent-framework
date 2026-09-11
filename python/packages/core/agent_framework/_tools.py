@@ -8,6 +8,7 @@ import copy
 import inspect
 import json
 import logging
+import struct
 import sys
 import typing
 import warnings
@@ -144,42 +145,38 @@ class _FunctionArgumentsChangedAfterApproval(Exception):
 
     def __init__(self, arguments: Mapping[str, Any]) -> None:
         super().__init__("Function arguments changed after approval.")
-        self.arguments = copy.deepcopy(dict(arguments))
+        self.arguments = dict(arguments)
 
 
-def _type_aware_equal(left: Any, right: Any) -> bool:
-    """Compare nested argument values without collapsing distinct JSON types."""
-    if type(left) is not type(right):
-        return False
-    if isinstance(left, dict):
-        left_dict = cast(dict[Any, Any], left)
-        right_dict = cast(dict[Any, Any], right)
-        right_items: list[tuple[Any, Any]] = list(right_dict.items())
-        if len(left_dict) != len(right_items):
-            return False
-        for left_key, left_value in left_dict.items():
-            match_index = next(
-                (
-                    index
-                    for index, (right_key, _) in enumerate(right_items)
-                    if type(left_key) is type(right_key) and left_key == right_key
-                ),
-                None,
-            )
-            if match_index is None:
-                return False
-            _, right_value = right_items.pop(match_index)
-            if not _type_aware_equal(left_value, right_value):
-                return False
-        return True
-    if isinstance(left, list | tuple):
-        left_sequence = cast(list[Any] | tuple[Any, ...], left)
-        right_sequence = cast(list[Any] | tuple[Any, ...], right)
-        return len(left_sequence) == len(right_sequence) and all(
-            _type_aware_equal(left_item, right_item)
-            for left_item, right_item in zip(left_sequence, right_sequence, strict=True)
+def _argument_comparison_token(value: Any) -> Any:
+    """Build an immutable, type-aware token without copying argument objects."""
+    if isinstance(value, BaseModel):
+        return _argument_comparison_token(value.model_dump(exclude_unset=True))
+    if isinstance(value, dict):
+        return (
+            "dict",
+            frozenset(
+                (_argument_comparison_token(key), _argument_comparison_token(item))
+                for key, item in cast(dict[Any, Any], value).items()
+            ),
         )
-    return bool(left == right)
+    if isinstance(value, list):
+        return ("list", tuple(_argument_comparison_token(item) for item in cast(list[Any], value)))
+    if isinstance(value, tuple):
+        return ("tuple", tuple(_argument_comparison_token(item) for item in cast(tuple[Any, ...], value)))
+    if isinstance(value, float):
+        return ("float", struct.pack("!d", value))
+    if value is None or isinstance(value, bool | int | str | bytes):
+        return (type(value), value)
+    return ("object", type(value), id(value))
+
+
+@dataclass(frozen=True)
+class _PreparedArgumentsState:
+    """Exact prepared arguments and their immutable comparison token."""
+
+    arguments: dict[str, Any]
+    token: Any
 
 
 ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
@@ -784,17 +781,21 @@ class FunctionTool(SerializationMixin):
     ) -> dict[str, Any]:
         """Prepare current context arguments once, reusing an unchanged prepared snapshot."""
         current_arguments = self._arguments_as_mapping(arguments)
-        prepared_arguments = context.metadata.get(_PREPARED_ARGUMENTS_CONTEXT_KEY)
+        prepared_state = context.metadata.get(_PREPARED_ARGUMENTS_CONTEXT_KEY)
         if (
             current_arguments is not None
-            and isinstance(prepared_arguments, Mapping)
-            and _type_aware_equal(current_arguments, dict(cast(Mapping[str, Any], prepared_arguments)))
+            and isinstance(prepared_state, _PreparedArgumentsState)
+            and _argument_comparison_token(current_arguments) == prepared_state.token
         ):
-            return current_arguments
+            context.arguments = prepared_state.arguments
+            return prepared_state.arguments
 
         validated_arguments = self._prepare_arguments(arguments)
         context.arguments = validated_arguments
-        context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = copy.deepcopy(validated_arguments)
+        context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = _PreparedArgumentsState(
+            arguments=validated_arguments,
+            token=_argument_comparison_token(validated_arguments),
+        )
         return validated_arguments
 
     @staticmethod
@@ -805,10 +806,9 @@ class FunctionTool(SerializationMixin):
         """Fail closed when arguments change after security middleware processed them."""
         if context is None:
             return
-        security_arguments = context.metadata.get(_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY)
-        if isinstance(security_arguments, Mapping) and (
-            current_arguments is None
-            or not _type_aware_equal(dict(cast(Mapping[str, Any], security_arguments)), dict(current_arguments))
+        security_token = context.metadata.get(_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY)
+        if security_token is not None and (
+            current_arguments is None or _argument_comparison_token(dict(current_arguments)) != security_token
         ):
             from ._middleware import MiddlewareFailure
 
@@ -827,13 +827,10 @@ class FunctionTool(SerializationMixin):
             return
         if approval_visible_arguments is None:
             return
-        approved_arguments = context.metadata.get(_APPROVED_ARGUMENTS_CONTEXT_KEY)
-        if not isinstance(approved_arguments, Mapping):
+        approved_token = context.metadata.get(_APPROVED_ARGUMENTS_CONTEXT_KEY)
+        if approved_token is None:
             return
-        if not _type_aware_equal(
-            dict(cast(Mapping[str, Any], approved_arguments)),
-            dict(approval_visible_arguments),
-        ):
+        if _argument_comparison_token(dict(approval_visible_arguments)) != approved_token:
             raise _FunctionArgumentsChangedAfterApproval(approval_visible_arguments)
 
     @overload
@@ -947,7 +944,6 @@ class FunctionTool(SerializationMixin):
             effective_context.function = self
             effective_context.arguments = validated_arguments
             effective_context.kwargs = dict(runtime_kwargs)
-            effective_context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = copy.deepcopy(validated_arguments)
 
         self._ensure_approved_arguments_unchanged(effective_context, approval_visible_arguments)
 
@@ -1969,7 +1965,10 @@ async def _auto_invoke_function(
         middleware_context.metadata[_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY] = host_payload_budget
     middleware_context.metadata[_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY] = True
     if arguments_prepared:
-        middleware_context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = copy.deepcopy(args)
+        middleware_context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = _PreparedArgumentsState(
+            arguments=args,
+            token=_argument_comparison_token(args),
+        )
 
     call_id = function_call_content.call_id
     if call_id is None:
@@ -1984,7 +1983,7 @@ async def _auto_invoke_function(
     # this replay corresponds to a middleware-specific approval flow.
     if approval_response is not None:
         middleware_context.metadata["approval_response"] = approval_response
-        middleware_context.metadata[_APPROVED_ARGUMENTS_CONTEXT_KEY] = copy.deepcopy(parsed_args)
+        middleware_context.metadata[_APPROVED_ARGUMENTS_CONTEXT_KEY] = _argument_comparison_token(args)
 
     final_handler_started = False
 

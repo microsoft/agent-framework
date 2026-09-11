@@ -5,6 +5,7 @@
 import asyncio
 import json
 import logging
+import math
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any, cast
@@ -5913,21 +5914,30 @@ class TestVariableArgumentPolicy:
         assert "secret payload" not in str(result.exception)
         assert result.exception == "Invalid arguments for 'validator_type_error_sink'."
 
-    async def test_argument_mutation_after_security_middleware_fails_closed(self) -> None:
-        """A later middleware cannot change arguments after security policy has inspected them."""
+    @pytest.mark.parametrize(
+        ("inspected_value", "changed_value"),
+        [(True, 1), (-0.0, 0.0)],
+        ids=["boolean-to-integer", "negative-zero-to-positive-zero"],
+    )
+    async def test_argument_mutation_after_security_middleware_fails_closed(
+        self,
+        inspected_value: Any,
+        changed_value: Any,
+    ) -> None:
+        """A later type or float-bit change fails closed after policy inspection."""
         tracker = LabelTrackingFunctionMiddleware()
         policy = PolicyEnforcementFunctionMiddleware()
         sink = self._sink(accepts_untrusted=True)
 
         class LateRepairMiddleware(FunctionMiddleware):
             async def process(self, context, call_next):
-                context.arguments = {"value": 1}
+                context.arguments = {"value": changed_value}
                 await call_next()
 
         function_call = Content.from_function_call(
             call_id="late-repair",
             name=sink.name,
-            arguments={"value": True},
+            arguments={"value": inspected_value},
         )
 
         with pytest.raises(MiddlewareFailure, match="Install argument-repair middleware before security middleware"):
@@ -5937,6 +5947,41 @@ class TestVariableArgumentPolicy:
                 tool_map={sink.name: sink},
                 middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy, LateRepairMiddleware()),
             )
+
+    async def test_security_snapshot_accepts_unchanged_nan(self) -> None:
+        """An unchanged NaN remains stable through security snapshot comparison."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        received: list[float] = []
+
+        class FloatArgs(BaseModel):
+            value: float
+
+        def nan_sink(value: float) -> str:
+            received.append(value)
+            return "nan"
+
+        nan_tool = FunctionTool(
+            func=nan_sink,
+            name="nan_sink",
+            input_model=FloatArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="security-nan",
+            name=nan_tool.name,
+            arguments={"value": "NaN"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={nan_tool.name: nan_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert len(received) == 1 and math.isnan(received[0])
 
     async def test_security_policy_observes_custom_validator_transform_once(self) -> None:
         """Security middleware inspects the exact normalized value delivered to the tool."""

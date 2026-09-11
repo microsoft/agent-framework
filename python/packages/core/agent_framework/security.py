@@ -41,6 +41,7 @@ from ._tools import (
     _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     FunctionTool,
+    _argument_comparison_token,  # pyright: ignore[reportPrivateUsage]
     tool,
 )
 from ._types import Content, Message
@@ -1555,13 +1556,15 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
 
             # Expand hidden references before execution and retain their stored labels.
             resolved_labels = self._expand_variable_references_in_context(context)
-            context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY] = deepcopy(context.arguments)
+            context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY] = _argument_comparison_token(context.arguments)
             if context.metadata.get(_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY) is True:
                 context.function._prepare_context_arguments(  # pyright: ignore[reportPrivateUsage]
                     context,
                     context.arguments,
                 )
-                context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY] = deepcopy(context.arguments)
+                context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY] = _argument_comparison_token(
+                    context.arguments
+                )
             argument_labels = [*input_labels, *resolved_labels]
             argument_label = combine_labels(*argument_labels) if argument_labels else ContentLabel()
 

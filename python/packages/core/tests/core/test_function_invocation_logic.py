@@ -3,6 +3,8 @@
 import asyncio
 import json
 import logging
+import math
+import threading
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, Literal
@@ -3231,6 +3233,151 @@ async def test_function_middleware_keeps_normalized_arguments_for_valid_calls(
     assert validation_count == 1
 
 
+async def test_approved_coercing_arguments_execute_without_replacement() -> None:
+    """Approval binds to the normalized middleware-entry representation."""
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    class CountArgs(BaseModel):
+        count: int
+
+    class PassthroughMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert context.arguments == {"count": 3}
+            await call_next()
+
+    received: list[int] = []
+
+    @tool(name="approved_count", schema=CountArgs, approval_mode="always_require")
+    def approved_count(count: int) -> str:
+        received.append(count)
+        return str(count)
+
+    function_call = Content.from_function_call(
+        call_id="approved-coercion",
+        id="approved-coercion-occurrence",
+        name=approved_count.name,
+        arguments={"count": "3"},
+    )
+    approval_response = Content.from_function_approval_request(
+        id="approved-coercion-occurrence",
+        function_call=function_call,
+    ).to_function_approval_response(approved=True)
+
+    result = await _auto_invoke_function(
+        approval_response,
+        config=normalize_function_invocation_configuration(None),
+        tool_map={approved_count.name: approved_count},
+        middleware_pipeline=FunctionMiddlewarePipeline(PassthroughMiddleware()),
+    )
+
+    assert result.type == "function_result"
+    assert result.result == "3"
+    assert received == [3]
+
+
+async def test_prepared_arguments_support_noncopyable_validator_output() -> None:
+    """Prepared argument reuse does not require validator outputs to be deepcopyable."""
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    validation_count = 0
+    received: list[Any] = []
+
+    class LockArgs(BaseModel):
+        value: Any
+
+        @field_validator("value")
+        @classmethod
+        def create_lock(cls, value: Any) -> Any:
+            nonlocal validation_count
+            validation_count += 1
+            return threading.Lock() if value == "lock" else value
+
+    class PassthroughMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            await call_next()
+
+    @tool(name="lock_tool", schema=LockArgs, approval_mode="never_require")
+    def lock_tool(value: Any) -> str:
+        received.append(value)
+        return "locked" if value.locked() else "unlocked"
+
+    result = await _auto_invoke_function(
+        Content.from_function_call(call_id="noncopyable", name=lock_tool.name, arguments={"value": "lock"}),
+        config=normalize_function_invocation_configuration(None),
+        tool_map={lock_tool.name: lock_tool},
+        middleware_pipeline=FunctionMiddlewarePipeline(PassthroughMiddleware()),
+    )
+
+    assert result.type == "function_result"
+    assert result.result == "unlocked"
+    assert len(received) == 1
+    assert validation_count == 1
+
+
+async def test_nan_prepared_and_approval_snapshots_are_stable() -> None:
+    """An unchanged NaN survives prepared and approval snapshot comparison."""
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    validation_count = 0
+    received: list[float] = []
+
+    class FloatArgs(BaseModel):
+        value: float
+
+        @field_validator("value")
+        @classmethod
+        def track_validation(cls, value: float) -> float:
+            nonlocal validation_count
+            validation_count += 1
+            return value
+
+    class PassthroughMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            assert math.isnan(context.arguments["value"])
+            await call_next()
+
+    @tool(name="nan_tool", schema=FloatArgs, approval_mode="always_require")
+    def nan_tool(value: float) -> str:
+        received.append(value)
+        return "nan"
+
+    function_call = Content.from_function_call(
+        call_id="nan-call",
+        id="nan-occurrence",
+        name=nan_tool.name,
+        arguments={"value": "NaN"},
+    )
+    approval_response = Content.from_function_approval_request(
+        id="nan-occurrence",
+        function_call=function_call,
+    ).to_function_approval_response(approved=True)
+
+    result = await _auto_invoke_function(
+        approval_response,
+        config=normalize_function_invocation_configuration(None),
+        tool_map={nan_tool.name: nan_tool},
+        middleware_pipeline=FunctionMiddlewarePipeline(PassthroughMiddleware()),
+    )
+
+    assert result.type == "function_result"
+    assert result.result == "nan"
+    assert len(received) == 1 and math.isnan(received[0])
+    assert validation_count == 1
+
+
 async def test_function_middleware_can_short_circuit_before_argument_validation(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
@@ -3538,8 +3685,16 @@ async def test_approved_argument_repair_short_circuit_requires_replacement_appro
     assert result.result == "handled by middleware"
 
 
-async def test_approval_snapshot_distinguishes_boolean_from_integer() -> None:
-    """A boolean-to-integer mutation requires replacement approval."""
+@pytest.mark.parametrize(
+    ("approved_value", "changed_value"),
+    [(True, 1), (-0.0, 0.0)],
+    ids=["boolean-to-integer", "negative-zero-to-positive-zero"],
+)
+async def test_approval_snapshot_distinguishes_exact_values(
+    approved_value: Any,
+    changed_value: Any,
+) -> None:
+    """A type or floating-point bit change requires replacement approval."""
     from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
 
     class ChangeTypeMiddleware(FunctionMiddleware):
@@ -3548,7 +3703,7 @@ async def test_approval_snapshot_distinguishes_boolean_from_integer() -> None:
             context: FunctionInvocationContext,
             call_next: Callable[[], Awaitable[None]],
         ) -> None:
-            context.arguments = {"value": 1}
+            context.arguments = {"value": changed_value}
             await call_next()
 
     @tool(name="typed_value", approval_mode="always_require")
@@ -3559,7 +3714,7 @@ async def test_approval_snapshot_distinguishes_boolean_from_integer() -> None:
         call_id="typed-approval",
         id="typed-approval-occurrence",
         name=typed_value.name,
-        arguments={"value": True},
+        arguments={"value": approved_value},
     )
     approval_response = Content.from_function_approval_request(
         id="typed-approval-occurrence",
@@ -3578,7 +3733,14 @@ async def test_approval_snapshot_distinguishes_boolean_from_integer() -> None:
     assert isinstance(replacement, Content)
     assert replacement.type == "function_approval_request"
     assert replacement.function_call is not None
-    assert replacement.function_call.parse_arguments() == {"value": 1}
+    replacement_arguments = replacement.function_call.parse_arguments()
+    assert replacement_arguments is not None
+    replacement_value = replacement_arguments["value"]
+    if isinstance(changed_value, float):
+        assert isinstance(replacement_value, float)
+        assert math.copysign(1.0, replacement_value) == math.copysign(1.0, changed_value)
+    else:
+        assert replacement_value == changed_value
 
 
 async def test_hosted_tool_approval_response(chat_client_base: SupportsChatGetResponse):
