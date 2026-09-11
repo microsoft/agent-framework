@@ -131,7 +131,7 @@
     <PackageVersion Include="OllamaSharp" Version="5.4.30" />
     <PackageVersion Include="OpenAI" Version="2.13.0" />
     <!-- Identity -->
-    <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.88.0" />
+    <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.89.0" />
     <!-- Workflows -->
     <PackageVersion Include="Microsoft.Agents.ObjectModel" Version="2026.5.5" />
     <PackageVersion Include="Microsoft.Agents.ObjectModel.Json" Version="2026.5.5" />
