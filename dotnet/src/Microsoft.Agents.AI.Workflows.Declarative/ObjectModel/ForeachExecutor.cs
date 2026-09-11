@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,6 +10,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.ObjectModel.Abstractions;
+using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
@@ -29,36 +32,213 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
 
     private int _index;
     private FormulaValue[] _values;
+    private readonly ForeachExecutionOptions _executionOptions;
+    private readonly DeclarativeWorkflowOptions? _workflowOptions;
+    private readonly WorkflowFormulaState _workflowState;
 
-    public ForeachExecutor(Foreach model, WorkflowFormulaState state)
+    public ForeachExecutor(Foreach model, WorkflowFormulaState state, DeclarativeWorkflowOptions? workflowOptions = null)
         : base(model, state)
     {
         this._values = [];
+        this._executionOptions = ForeachExecutionOptions.Parse(model);
+        this._workflowOptions = workflowOptions;
+        this._workflowState = state;
+
+        if (this._executionOptions.IsParallel)
+        {
+            if (workflowOptions is null)
+            {
+                throw new DeclarativeModelException($"Parallel Foreach '{model.Id.Value}' requires workflow execution options.");
+            }
+
+            ParallelForeachIterationRunner.ValidateBody(model);
+        }
     }
 
     public bool HasValue { get; private set; }
 
-    protected override bool IsDiscreteAction => false;
+    public bool IsParallel => this._executionOptions.IsParallel;
+
+    protected override bool IsDiscreteAction => this.IsParallel;
 
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        return this.IsParallel
+            ? await this.ExecuteParallelAsync(context, cancellationToken).ConfigureAwait(false)
+            : await this.ExecuteSequentialAsync(context, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<object?> ExecuteSequentialAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         Throw.IfNull(this.Model.Items, $"{nameof(this.Model)}.{nameof(this.Model.Items)}");
 
         this._index = 0;
-
-        EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(this.Model.Items);
-        if (expressionResult.Value is TableDataValue tableValue)
-        {
-            this._values = [.. tableValue.Values.Select(ToLoopValue)];
-        }
-        else
-        {
-            this._values = [expressionResult.Value.ToFormula()];
-        }
+        this._values = this.GetValues();
 
         await this.ResetStateAsync(context, cancellationToken).ConfigureAwait(false);
 
         return default;
+    }
+
+    private async ValueTask<object?> ExecuteParallelAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        Throw.IfNull(this.Model.Items, $"{nameof(this.Model)}.{nameof(this.Model.Items)}");
+        DeclarativeWorkflowOptions workflowOptions = Throw.IfNull(this._workflowOptions);
+        FormulaValue[] values = this.GetValues();
+
+        await this.ResetStateAsync(context, cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            if (values.Length == 0)
+            {
+                return default;
+            }
+
+            WorkflowStateSnapshot stateSnapshot = this._workflowState.CaptureSnapshot();
+            ParallelForeachIterationResult?[] iterationResults = new ParallelForeachIterationResult?[values.Length];
+            Exception?[] iterationFailures = new Exception?[values.Length];
+            int nextIndex = -1;
+
+            void RecordIterationFailure(int index, Exception exception) =>
+                Interlocked.CompareExchange(ref iterationFailures[index], exception, null);
+
+            using CancellationTokenSource groupCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            int workerCount = Math.Min(values.Length, this._executionOptions.MaxParallelism);
+            Task[] workers =
+            [
+                .. Enumerable.Range(0, workerCount).Select(_ => RunWorkerAsync()),
+            ];
+
+            await Task.WhenAll(workers).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            List<Exception> failures = [];
+            for (int index = 0; index < iterationFailures.Length; index++)
+            {
+                if (iterationFailures[index] is Exception exception)
+                {
+                    failures.Add(
+                        new DeclarativeActionException(
+                            $"Parallel Foreach '{this.Id}' iteration {index} failed.",
+                            exception));
+                }
+            }
+
+            if (failures.Count > 0)
+            {
+                throw new AggregateException($"Parallel Foreach '{this.Id}' failed.", failures);
+            }
+
+            WorkflowConversationMessageBuffer? parentConversationBuffer =
+                (context as DeclarativeWorkflowContext)?.ConversationMessageBuffer;
+            string? workflowConversationId = parentConversationBuffer is null ? context.GetWorkflowConversation() : null;
+
+            foreach (ParallelForeachIterationResult iterationResult in iterationResults.Cast<ParallelForeachIterationResult>())
+            {
+                foreach (WorkflowStateChange stateChange in iterationResult.StateChanges)
+                {
+                    await CommitStateChangeAsync(context, stateChange, cancellationToken).ConfigureAwait(false);
+                }
+
+                foreach (WorkflowEvent workflowEvent in iterationResult.Events)
+                {
+                    await context.AddEventAsync(workflowEvent, cancellationToken).ConfigureAwait(false);
+                }
+
+                if (iterationResult.ConversationMessages.Length > 0)
+                {
+                    if (parentConversationBuffer is not null)
+                    {
+                        foreach (ChatMessage message in iterationResult.ConversationMessages)
+                        {
+                            parentConversationBuffer.Add(message);
+                        }
+                    }
+                    else if (workflowConversationId is null)
+                    {
+                        throw new DeclarativeActionException(
+                            $"Parallel Foreach '{this.Id}' produced workflow-conversation messages without a workflow conversation.");
+                    }
+                    else
+                    {
+                        foreach (ChatMessage message in iterationResult.ConversationMessages)
+                        {
+                            await workflowOptions.AgentProvider.CreateMessageAsync(
+                                workflowConversationId,
+                                message,
+                                cancellationToken).ConfigureAwait(false);
+                        }
+                    }
+                }
+            }
+
+            return default;
+
+            async Task RunWorkerAsync()
+            {
+                while (!groupCancellation.IsCancellationRequested)
+                {
+                    int iterationIndex = Interlocked.Increment(ref nextIndex);
+                    // Use an unsigned comparison so an exhausted allocator cannot wrap around and
+                    // address a negative array index when an extreme item count is combined with
+                    // multiple workers.
+                    if ((uint)iterationIndex >= (uint)values.Length)
+                    {
+                        return;
+                    }
+
+                    try
+                    {
+                        iterationResults[iterationIndex] = await ParallelForeachIterationRunner.RunAsync(
+                            this.Model,
+                            values[iterationIndex],
+                            iterationIndex,
+                            stateSnapshot,
+                            workflowOptions,
+                            this._executionOptions.IterationTimeout,
+                            exception => RecordIterationFailure(iterationIndex, exception),
+                            groupCancellation.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (groupCancellation.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                    {
+                        return;
+                    }
+                    catch (Exception exception)
+                    {
+                        RecordIterationFailure(iterationIndex, exception);
+                        groupCancellation.Cancel();
+                        return;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            await this.ResetStateAsync(context, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
+    private static ValueTask CommitStateChangeAsync(
+        IWorkflowContext context,
+        WorkflowStateChange stateChange,
+        CancellationToken cancellationToken)
+    {
+        FormulaValue value = stateChange.Value.ToFormula();
+        return stateChange.ScopeName switch
+        {
+            VariableScopeNames.System => context.QueueSystemUpdateAsync(stateChange.VariableName, value, cancellationToken),
+            VariableScopeNames.Environment => context.QueueEnvironmentUpdateAsync(stateChange.VariableName, value, cancellationToken),
+            _ => context.QueueStateUpdateAsync(stateChange.VariableName, value, stateChange.ScopeName, cancellationToken),
+        };
+    }
+
+    private FormulaValue[] GetValues()
+    {
+        EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(Throw.IfNull(this.Model.Items));
+        return expressionResult.Value is TableDataValue tableValue
+            ? [.. tableValue.Values.Select(ToLoopValue)]
+            : [expressionResult.Value.ToFormula()];
     }
 
     public async ValueTask TakeNextAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
@@ -117,6 +297,12 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
     /// </remarks>
     protected override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
+        if (this.IsParallel)
+        {
+            await base.OnCheckpointingAsync(context, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         PortableValue[] portableValues = [.. this._values.Select(value => new PortableValue(value.AsPortable()))];
 
         await context.QueueStateUpdateAsync(IndexStateKey, this._index, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -136,6 +322,11 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
     protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
+
+        if (this.IsParallel)
+        {
+            return;
+        }
 
         PortableValue[]? savedValues =
             await context.ReadStateAsync<PortableValue[]>(ValuesStateKey, cancellationToken: cancellationToken).ConfigureAwait(false);

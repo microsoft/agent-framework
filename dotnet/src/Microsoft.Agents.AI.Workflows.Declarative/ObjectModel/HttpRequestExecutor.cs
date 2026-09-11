@@ -39,6 +39,12 @@ internal sealed class HttpRequestExecutor(
         string? conversationId = this.GetConversationId();
         string? connectionName = this.GetConnectionName();
 
+        if (context.IsParallelForeachBranch() && conversationId is not null)
+        {
+            throw new DeclarativeActionException(
+                $"Parallel Foreach action '{this.Id}' cannot copy an HTTP response into a conversation immediately.");
+        }
+
         HttpRequestInfo requestInfo = new()
         {
             Method = method,

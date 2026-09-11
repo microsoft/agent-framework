@@ -77,6 +77,12 @@ internal sealed class InvokeMcpToolExecutor(
     [SendsMessage(typeof(ExternalInputRequest))]
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
+        if (context.IsParallelForeachBranch())
+        {
+            throw new DeclarativeActionException(
+                $"Parallel Foreach action '{this.Id}' cannot execute an MCP tool because its approval and conversation effects are not stageable.");
+        }
+
         string serverUrl = this.GetServerUrl();
         string? serverLabel = this.GetServerLabel();
         string toolName = this.GetToolName();

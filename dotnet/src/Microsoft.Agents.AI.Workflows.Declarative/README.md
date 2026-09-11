@@ -57,4 +57,47 @@ we've provided a console application that is able to execute any declarative wor
 |**Foreach**|Iterates through a collection of items, executing a set of actions for each. Ideal for processing lists or batch operations.
 |**GotoAction**|Jumps directly to a specified action within the workflow. Enables non-linear navigation in the logic flow.
 
+## Parallel Foreach
 
+`Foreach` remains sequential when execution options are omitted. Set `mode` to `Parallel` to opt in, and use
+`maxParallelism` to bound the number of active iterations. The default maximum in parallel mode is 4.
+`timeoutInMilliseconds`, when present, applies to each iteration.
+
+```yaml
+- kind: Foreach
+  id: translate_languages
+  items: =Local.TargetLanguages
+  value: Local.TargetLanguage
+  index: Local.TargetLanguageIndex
+  mode: Parallel
+  maxParallelism: 4
+  timeoutInMilliseconds: 30000
+  actions:
+    - kind: InvokeAzureAgent
+      id: translate
+      agent:
+        name: TranslatorAgent
+      input:
+        arguments:
+          language: =Local.TargetLanguage
+```
+
+Each iteration receives an isolated copy of workflow state. After all iterations succeed, state writes and emitted
+events are replayed in source-index order; writes to the same variable therefore use deterministic last-index-wins
+semantics. Agent responses copied to the workflow conversation are staged per iteration and replayed serially in the
+same order. A failure or timeout cancels outstanding iterations and discards staged state, events, and workflow
+conversation copies. Provider-side effects that happen while an iteration is running are external to this staging
+boundary and are not rolled back.
+
+`maxParallelism` is a per-`Foreach` limit. Nested parallel loops can therefore use the product of their individual
+limits; the option is not a workflow-wide concurrency budget. Iteration timeouts use cooperative cancellation, so a
+provider that ignores its cancellation token can delay completion beyond the configured duration.
+
+Parallel iterations cannot suspend for external input because an in-flight parallel set cannot be safely represented
+by a parent workflow checkpoint. `Question`, `RequestExternalInput`, `InvokeFunctionTool`, and `InvokeMcpTool` are
+rejected when the workflow is built. Direct conversation mutations (`AddConversationMessage` and
+`CopyConversationMessages`), explicit conversation targets on `InvokeAzureAgent`, and HTTP response copies to a
+conversation are also rejected in a parallel body. An agent response that conditionally requests external input is
+rejected at runtime instead of creating an unsafe checkpoint. Global termination/cancellation actions and
+cross-body `GotoAction` targets are rejected as well. `BreakLoop` and `ContinueLoop` cannot target a parallel
+`Foreach`, although they remain available for nested sequential loops.

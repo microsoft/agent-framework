@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.ObjectModel;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
@@ -18,6 +19,11 @@ internal sealed class WorkflowElementWalker : BotElementWalker
         if (definition is DialogAction action)
         {
             action.Accept(this._visitor);
+
+            if (action is Foreach foreachAction && ForeachExecutionOptions.Parse(foreachAction).IsParallel)
+            {
+                return false;
+            }
         }
 
         return true;

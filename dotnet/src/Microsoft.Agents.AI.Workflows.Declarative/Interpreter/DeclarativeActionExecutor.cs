@@ -98,13 +98,23 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
         }
         catch (DeclarativeActionException exception)
         {
+            if (!IsCanceled(exception, cancellationToken))
+            {
+                this._state.ParallelFailureReporter?.Invoke(exception);
+            }
             Debug.WriteLine($"ERROR [{this.Id}] {exception.GetType().Name}\n{exception.Message}");
             throw;
         }
         catch (Exception exception)
         {
+            DeclarativeActionException wrappedException =
+                new($"Unhandled workflow failure - #{this.Id} ({this.Model.GetType().Name})", exception);
+            if (!IsCanceled(exception, cancellationToken))
+            {
+                this._state.ParallelFailureReporter?.Invoke(wrappedException);
+            }
             Debug.WriteLine($"ERROR [{this.Id}] {exception.GetType().Name}\n{exception.Message}");
-            throw new DeclarativeActionException($"Unhandled workflow failure - #{this.Id} ({this.Model.GetType().Name})", exception);
+            throw wrappedException;
         }
         finally
         {
@@ -116,6 +126,24 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
     }
 
     protected abstract ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default);
+
+    private static bool IsCanceled(Exception exception, CancellationToken cancellationToken)
+    {
+        if (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is OperationCanceledException)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Restore the state of the executor from a checkpoint.
