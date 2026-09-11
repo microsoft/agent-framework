@@ -2959,18 +2959,24 @@ def _same_pause_response_payload(left: Mapping[str, Any], right: Mapping[str, An
     return left_payload == right_payload
 
 
-def _stateless_mixed_pause_batch_status(messages: Sequence[Message]) -> tuple[bool, set[int]]:
-    """Return stateless mixed-barrier completeness and matched Host result identities."""
+def _stateless_mixed_pause_batch_status(messages: list[Message]) -> tuple[bool, set[int]]:
+    """Return stateless mixed-barrier completeness and rebuild a complete batch in occurrence order."""
+    from ._types import Message
+
     approval_requests: list[Content] = []
     host_requests: list[Content] = []
     approval_responses: list[Content] = []
     host_responses: list[Content] = []
+    pause_order_contents: list[Content] = []
     for message in messages:
         for content in message.contents:
-            if content.type == "function_approval_request":
+            if content.type == "function_call":
+                pause_order_contents.append(content)
+                if content.user_input_request:
+                    host_requests.append(content)
+            elif content.type == "function_approval_request":
+                pause_order_contents.append(content)
                 approval_requests.append(content)
-            elif content.type == "function_call" and content.user_input_request:
-                host_requests.append(content)
             elif content.type == "function_approval_response":
                 approval_responses.append(content)
             elif content.type == "function_result":
@@ -2997,6 +3003,7 @@ def _stateless_mixed_pause_batch_status(messages: Sequence[Message]) -> tuple[bo
         approval_request_identities.append(identities)
 
     unmatched_approval_requests = set(range(len(approval_requests)))
+    matched_approval_responses: dict[int, Content] = {}
     for response in approval_responses:
         if response.id is None:
             continue
@@ -3004,10 +3011,13 @@ def _stateless_mixed_pause_batch_status(messages: Sequence[Message]) -> tuple[bo
             index for index in unmatched_approval_requests if response.id in approval_request_identities[index]
         ]
         if len(matching_indexes) == 1:
-            unmatched_approval_requests.remove(matching_indexes[0])
+            matching_index = matching_indexes[0]
+            unmatched_approval_requests.remove(matching_index)
+            matched_approval_responses[matching_index] = response
     approval_complete = not unmatched_approval_requests
 
     unmatched_host_requests = list(host_requests)
+    matched_host_responses: dict[int, Content] = {}
     matched_host_result_ids: set[int] = set()
     for response in (candidate for candidate in host_responses if candidate.id is not None):
         matching_index = next(
@@ -3019,7 +3029,8 @@ def _stateless_mixed_pause_batch_status(messages: Sequence[Message]) -> tuple[bo
             None,
         )
         if matching_index is not None:
-            unmatched_host_requests.pop(matching_index)
+            request = unmatched_host_requests.pop(matching_index)
+            matched_host_responses[id(request)] = response
             matched_host_result_ids.add(id(response))
 
     for response in (candidate for candidate in host_responses if candidate.id is None):
@@ -3027,9 +3038,51 @@ def _stateless_mixed_pause_batch_status(messages: Sequence[Message]) -> tuple[bo
             index for index, request in enumerate(unmatched_host_requests) if request.call_id == response.call_id
         ]
         if len(matching_indexes) == 1:
-            unmatched_host_requests.pop(matching_indexes[0])
+            request = unmatched_host_requests.pop(matching_indexes[0])
+            matched_host_responses[id(request)] = response
             matched_host_result_ids.add(id(response))
-    return not approval_complete or bool(unmatched_host_requests), matched_host_result_ids
+
+    if not approval_complete or unmatched_host_requests:
+        return True, matched_host_result_ids
+
+    approval_indexes_by_occurrence_id = {
+        request.function_call.id: index
+        for index, request in enumerate(approval_requests)
+        if request.function_call is not None and request.function_call.id is not None
+    }
+    approval_indexes_by_request_object = {id(request): index for index, request in enumerate(approval_requests)}
+    ordered_responses: list[Content] = []
+    ordered_approval_indexes: set[int] = set()
+    for content in pause_order_contents:
+        host_response = matched_host_responses.get(id(content))
+        if host_response is not None:
+            ordered_responses.append(host_response)
+            continue
+        approval_index = approval_indexes_by_request_object.get(id(content))
+        if approval_index is None and content.type == "function_call" and content.id is not None:
+            approval_index = approval_indexes_by_occurrence_id.get(content.id)
+        if approval_index is not None and approval_index not in ordered_approval_indexes:
+            ordered_responses.append(matched_approval_responses[approval_index])
+            ordered_approval_indexes.add(approval_index)
+
+    # Malformed legacy histories may contain an approval response without either its
+    # original standalone function_call or its request wrapper. Keep any such response
+    # deterministic after all model occurrences that can be identified explicitly.
+    ordered_responses.extend(
+        matched_approval_responses[index]
+        for index in range(len(approval_requests))
+        if index not in ordered_approval_indexes
+    )
+
+    matched_response_ids = {id(response) for response in ordered_responses}
+    filtered_messages: list[Message] = []
+    for message in messages:
+        message.contents = [content for content in message.contents if id(content) not in matched_response_ids]
+        if message.contents:
+            filtered_messages.append(message)
+    filtered_messages.append(Message(role="user", contents=ordered_responses))
+    messages[:] = filtered_messages
+    return False, matched_host_result_ids
 
 
 def _bind_approval_response_to_pending_request(
