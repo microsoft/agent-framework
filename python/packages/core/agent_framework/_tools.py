@@ -123,6 +123,8 @@ _FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY: Final[str] = "_function_result_payl
 _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY: Final[str] = "_function_result_payload_budget"
 _APPROVED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_approved_function_arguments"
 _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY: Final[str] = "_security_function_arguments"
+_PREPARED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_prepared_function_arguments"
+_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: Final[str] = "_auto_prepare_function_arguments"
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
 )
@@ -143,6 +145,41 @@ class _FunctionArgumentsChangedAfterApproval(Exception):
     def __init__(self, arguments: Mapping[str, Any]) -> None:
         super().__init__("Function arguments changed after approval.")
         self.arguments = copy.deepcopy(dict(arguments))
+
+
+def _type_aware_equal(left: Any, right: Any) -> bool:
+    """Compare nested argument values without collapsing distinct JSON types."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        left_dict = cast(dict[Any, Any], left)
+        right_dict = cast(dict[Any, Any], right)
+        right_items: list[tuple[Any, Any]] = list(right_dict.items())
+        if len(left_dict) != len(right_items):
+            return False
+        for left_key, left_value in left_dict.items():
+            match_index = next(
+                (
+                    index
+                    for index, (right_key, _) in enumerate(right_items)
+                    if type(left_key) is type(right_key) and left_key == right_key
+                ),
+                None,
+            )
+            if match_index is None:
+                return False
+            _, right_value = right_items.pop(match_index)
+            if not _type_aware_equal(left_value, right_value):
+                return False
+        return True
+    if isinstance(left, list | tuple):
+        left_sequence = cast(list[Any] | tuple[Any, ...], left)
+        right_sequence = cast(list[Any] | tuple[Any, ...], right)
+        return len(left_sequence) == len(right_sequence) and all(
+            _type_aware_equal(left_item, right_item)
+            for left_item, right_item in zip(left_sequence, right_sequence, strict=True)
+        )
+    return bool(left == right)
 
 
 ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
@@ -734,6 +771,26 @@ class FunctionTool(SerializationMixin):
             return cls._arguments_as_mapping(context.metadata["original_arguments_for_messages"])
         return cls._arguments_as_mapping(arguments)
 
+    def _prepare_context_arguments(
+        self,
+        context: FunctionInvocationContext,
+        arguments: BaseModel | Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Prepare current context arguments once, reusing an unchanged prepared snapshot."""
+        current_arguments = self._arguments_as_mapping(arguments)
+        prepared_arguments = context.metadata.get(_PREPARED_ARGUMENTS_CONTEXT_KEY)
+        if (
+            current_arguments is not None
+            and isinstance(prepared_arguments, Mapping)
+            and _type_aware_equal(current_arguments, dict(cast(Mapping[str, Any], prepared_arguments)))
+        ):
+            return current_arguments
+
+        validated_arguments = self._prepare_arguments(arguments)
+        context.arguments = validated_arguments
+        context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = copy.deepcopy(validated_arguments)
+        return validated_arguments
+
     @staticmethod
     def _ensure_security_arguments_unchanged(
         context: FunctionInvocationContext | None,
@@ -744,7 +801,8 @@ class FunctionTool(SerializationMixin):
             return
         security_arguments = context.metadata.get(_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY)
         if isinstance(security_arguments, Mapping) and (
-            current_arguments is None or dict(cast(Mapping[str, Any], security_arguments)) != dict(current_arguments)
+            current_arguments is None
+            or not _type_aware_equal(dict(cast(Mapping[str, Any], security_arguments)), dict(current_arguments))
         ):
             from ._middleware import MiddlewareFailure
 
@@ -766,7 +824,10 @@ class FunctionTool(SerializationMixin):
         approved_arguments = context.metadata.get(_APPROVED_ARGUMENTS_CONTEXT_KEY)
         if not isinstance(approved_arguments, Mapping):
             return
-        if dict(cast(Mapping[str, Any], approved_arguments)) != dict(approval_visible_arguments):
+        if not _type_aware_equal(
+            dict(cast(Mapping[str, Any], approved_arguments)),
+            dict(approval_visible_arguments),
+        ):
             raise _FunctionArgumentsChangedAfterApproval(approval_visible_arguments)
 
     @overload
@@ -863,7 +924,11 @@ class FunctionTool(SerializationMixin):
         current_arguments = self._arguments_as_mapping(arguments)
         approval_visible_arguments = self._approval_visible_arguments(arguments, context)
         self._ensure_security_arguments_unchanged(context, current_arguments)
-        validated_arguments = self._prepare_arguments(arguments)
+        validated_arguments = (
+            self._prepare_context_arguments(context, arguments)
+            if context is not None
+            else self._prepare_arguments(arguments)
+        )
 
         effective_context = context
         if effective_context is None and self._context_parameter_name is not None:
@@ -876,6 +941,7 @@ class FunctionTool(SerializationMixin):
             effective_context.function = self
             effective_context.arguments = validated_arguments
             effective_context.kwargs = dict(runtime_kwargs)
+            effective_context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = copy.deepcopy(validated_arguments)
 
         self._ensure_approved_arguments_unchanged(effective_context, approval_visible_arguments)
 
@@ -1877,6 +1943,15 @@ async def _auto_invoke_function(
         except Exception as exc:
             return _function_execution_error_result(function_call_content, tool.name, exc, config, direct_context)
     # Execute through middleware pipeline if available
+    arguments_prepared = False
+    try:
+        args = tool._prepare_arguments(args)  # pyright: ignore[reportPrivateUsage]
+        arguments_prepared = True
+    except _FunctionArgumentValidationError:
+        # Invalid provider arguments are intentionally exposed to middleware so
+        # it has a supported opportunity to repair them before final validation.
+        pass
+
     middleware_context = FunctionInvocationContext(
         function=tool,
         arguments=args,
@@ -1886,6 +1961,9 @@ async def _auto_invoke_function(
     )
     if host_payload_budget is not None:
         middleware_context.metadata[_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY] = host_payload_budget
+    middleware_context.metadata[_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY] = True
+    if arguments_prepared:
+        middleware_context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = copy.deepcopy(args)
 
     call_id = function_call_content.call_id
     if call_id is None:

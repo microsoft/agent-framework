@@ -371,12 +371,14 @@ class FunctionInvocationContext:
     Attributes:
         function: The function being invoked.
         arguments: The function arguments. In the automatic function-calling loop,
-                middleware initially receives the raw JSON-parsed mapping from the
-                provider and may repair it before calling ``call_next()``. The innermost
-                handler validates and normalizes the current value immediately before
+                schema-compatible provider arguments retain the existing normalized
+                mapping contract. If provisional normalization rejects provider
+                arguments, middleware instead receives the raw JSON-parsed mapping and
+                may repair it before calling ``call_next()``. The innermost handler
+                validates changed or previously invalid arguments immediately before
                 execution, then stores the normalized mapping back on this attribute.
-                Middleware that short-circuits without calling ``call_next()`` also skips
-                final schema validation and function execution.
+                Middleware that short-circuits without calling ``call_next()`` skips
+                final validation and function execution.
         session: The agent session for this invocation, if any.
         metadata: Metadata dictionary for sharing data between function middleware.
         result: Function execution result. This attribute carries no guaranteed type.
@@ -444,9 +446,9 @@ class FunctionInvocationContext:
 
         Args:
             function: The function being invoked.
-            arguments: The function arguments. Automatic invocation supplies the raw
-                JSON-parsed mapping; final validation occurs after middleware, immediately
-                before function execution.
+            arguments: The function arguments. Automatic invocation supplies a normalized
+                mapping when provisional validation succeeds, otherwise the raw JSON-parsed
+                mapping so middleware can repair it before final validation.
             session: The agent session for this invocation, if any.
             metadata: Metadata dictionary for sharing data between function middleware.
             result: Function execution result. Observed and overridden values do not
@@ -722,11 +724,12 @@ class FunctionMiddleware(ABC):
     """Abstract base class for function middleware that can intercept function invocations.
 
     Function middleware allows you to intercept and modify function/tool invocations before
-    and after execution. On entry, automatic function invocation exposes the raw JSON-parsed
-    arguments so middleware can repair provider-specific deviations before calling
-    ``call_next()``. The innermost handler performs final validation immediately before
-    execution and updates ``context.arguments`` with the normalized values. You can also
-    cache results, log invocations, or override function execution.
+    and after execution. On entry, schema-compatible calls retain normalized arguments.
+    When provisional normalization rejects provider arguments, middleware receives the raw
+    JSON-parsed mapping so it can repair provider-specific deviations before calling
+    ``call_next()``. The innermost handler validates changed or previously invalid arguments
+    immediately before execution and updates ``context.arguments`` with normalized values.
+    You can also cache results, log invocations, or override function execution.
 
     Argument-repair middleware must run before security or policy middleware so those
     layers inspect the effective invocation. Changing arguments after security middleware
@@ -783,11 +786,13 @@ class FunctionMiddleware(ABC):
 
         Args:
             context: Function invocation context containing function, arguments, and metadata.
-                    Before ``call_next()``, automatic invocation exposes raw JSON-parsed
-                    arguments that middleware may inspect or replace. After ``call_next()``
-                    reaches the function, arguments contain their validated, normalized
-                    values. MiddlewareTypes can set context.result to override execution,
-                    or observe the actual execution result after calling call_next().
+                    Before ``call_next()``, automatic invocation exposes normalized
+                    arguments for schema-compatible calls and raw JSON-parsed arguments
+                    when provisional validation failed. Middleware may inspect or replace
+                    either mapping. After ``call_next()`` reaches the function, arguments
+                    contain their validated, normalized values. MiddlewareTypes can set
+                    context.result to override execution, or observe the actual execution
+                    result after calling call_next().
             call_next: Function to call the next middleware or final function execution.
                   Does not return anything - all data flows through the context.
 

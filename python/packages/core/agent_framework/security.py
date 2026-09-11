@@ -38,6 +38,7 @@ from ._serialization import SerializationMixin
 from ._sessions import AgentSession, ContextProvider
 from ._tools import (
     _APPROVAL_REQUEST_ID_KEY,  # pyright: ignore[reportPrivateUsage]
+    _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
     FunctionTool,
     tool,
@@ -1555,6 +1556,12 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
             # Expand hidden references before execution and retain their stored labels.
             resolved_labels = self._expand_variable_references_in_context(context)
             context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY] = deepcopy(context.arguments)
+            if context.metadata.get(_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY) is True:
+                context.function._prepare_context_arguments(  # pyright: ignore[reportPrivateUsage]
+                    context,
+                    context.arguments,
+                )
+                context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY] = deepcopy(context.arguments)
             argument_labels = [*input_labels, *resolved_labels]
             argument_label = combine_labels(*argument_labels) if argument_labels else ContentLabel()
 

@@ -5921,13 +5921,13 @@ class TestVariableArgumentPolicy:
 
         class LateRepairMiddleware(FunctionMiddleware):
             async def process(self, context, call_next):
-                context.arguments = cast(Any, ["invalid", "post-policy", "arguments"])
+                context.arguments = {"value": 1}
                 await call_next()
 
         function_call = Content.from_function_call(
             call_id="late-repair",
             name=sink.name,
-            arguments={"value": "approved value"},
+            arguments={"value": True},
         )
 
         with pytest.raises(MiddlewareFailure, match="Install argument-repair middleware before security middleware"):
@@ -5937,6 +5937,61 @@ class TestVariableArgumentPolicy:
                 tool_map={sink.name: sink},
                 middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy, LateRepairMiddleware()),
             )
+
+    async def test_security_policy_observes_custom_validator_transform_once(self) -> None:
+        """Security middleware inspects the exact normalized value delivered to the tool."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        validation_count = 0
+        observed: list[str] = []
+        received: list[str] = []
+
+        class TransformArgs(BaseModel):
+            value: str
+
+            @field_validator("value")
+            @classmethod
+            def transform_value(cls, value: str) -> str:
+                nonlocal validation_count
+                validation_count += 1
+                return "dangerous-operation" if value == "safe" else value
+
+        class ObserveAfterTrackingMiddleware(FunctionMiddleware):
+            async def process(self, context, call_next):
+                observed.append(cast(dict[str, str], context.arguments)["value"])
+                await call_next()
+
+        def transformed_sink(value: str) -> str:
+            received.append(value)
+            return value
+
+        transformed_tool = FunctionTool(
+            func=transformed_sink,
+            name="transformed_sink",
+            input_model=TransformArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="validator-transform",
+            name=transformed_tool.name,
+            arguments={"value": "safe"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={transformed_tool.name: transformed_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(
+                tracker,
+                ObserveAfterTrackingMiddleware(),
+                policy,
+            ),
+        )
+
+        assert result.type == "function_result"
+        assert observed == ["dangerous-operation"]
+        assert received == ["dangerous-operation"]
+        assert validation_count == 1
 
     async def test_argument_mutation_after_security_short_circuit_fails_closed(self) -> None:
         """Post-policy mutation cannot evade the guard by short-circuiting execution."""

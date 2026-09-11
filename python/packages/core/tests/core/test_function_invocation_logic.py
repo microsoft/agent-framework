@@ -8,6 +8,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, Literal
 
 import pytest
+from pydantic import BaseModel, field_validator
 
 from agent_framework import (
     Agent,
@@ -32,7 +33,12 @@ from agent_framework._compaction import (
     annotate_message_groups,
     included_token_count,
 )
-from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
+from agent_framework._middleware import (
+    FunctionInvocationContext,
+    FunctionMiddleware,
+    FunctionMiddlewarePipeline,
+    MiddlewareTermination,
+)
 
 _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT = (
     "Function invocation limit reached before a final answer could be produced."
@@ -3172,6 +3178,59 @@ async def test_function_middleware_repairs_raw_arguments_before_validation(
     assert executed_arguments == [3]
 
 
+async def test_function_middleware_keeps_normalized_arguments_for_valid_calls(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Valid calls preserve the existing normalized middleware argument contract."""
+    validation_count = 0
+    observed_arguments: list[dict[str, Any]] = []
+
+    class CountArgs(BaseModel):
+        count: int
+
+        @field_validator("count")
+        @classmethod
+        def track_validation(cls, value: int) -> int:
+            nonlocal validation_count
+            validation_count += 1
+            return value
+
+    class ObserveArgumentsMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            observed_arguments.append(dict(context.arguments))
+            await call_next()
+
+    @tool(name="count_items", schema=CountArgs, approval_mode="never_require")
+    def count_items(count: int) -> str:
+        return str(count)
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="valid-1", name="count_items", arguments='{"count": "3"}')
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["count"])],
+        options={"tools": [count_items]},
+        client_kwargs={"middleware": [ObserveArgumentsMiddleware()]},
+    )
+
+    assert observed_arguments == [{"count": 3}]
+    assert validation_count == 1
+
+
 async def test_function_middleware_can_short_circuit_before_argument_validation(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
@@ -3477,6 +3536,49 @@ async def test_approved_argument_repair_short_circuit_requires_replacement_appro
         if content.type == "function_result"
     )
     assert result.result == "handled by middleware"
+
+
+async def test_approval_snapshot_distinguishes_boolean_from_integer() -> None:
+    """A boolean-to-integer mutation requires replacement approval."""
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    class ChangeTypeMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            context.arguments = {"value": 1}
+            await call_next()
+
+    @tool(name="typed_value", approval_mode="always_require")
+    def typed_value(value: Any) -> str:
+        return f"{type(value).__name__}:{value}"
+
+    function_call = Content.from_function_call(
+        call_id="typed-approval",
+        id="typed-approval-occurrence",
+        name=typed_value.name,
+        arguments={"value": True},
+    )
+    approval_response = Content.from_function_approval_request(
+        id="typed-approval-occurrence",
+        function_call=function_call,
+    ).to_function_approval_response(approved=True)
+
+    with pytest.raises(MiddlewareTermination) as exc_info:
+        await _auto_invoke_function(
+            approval_response,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={typed_value.name: typed_value},
+            middleware_pipeline=FunctionMiddlewarePipeline(ChangeTypeMiddleware()),
+        )
+
+    replacement = exc_info.value.result
+    assert isinstance(replacement, Content)
+    assert replacement.type == "function_approval_request"
+    assert replacement.function_call is not None
+    assert replacement.function_call.parse_arguments() == {"value": 1}
 
 
 async def test_hosted_tool_approval_response(chat_client_base: SupportsChatGetResponse):
