@@ -5,7 +5,7 @@
 import asyncio
 from unittest.mock import MagicMock, patch
 
-from agent_framework import FunctionTool, ContextProvider
+from agent_framework import ContextProvider, FunctionTool
 
 
 class TestBedrockKnowledgeBaseTool:
@@ -31,7 +31,11 @@ class TestBedrockKnowledgeBaseTool:
         mock_client.retrieve.return_value = {
             "retrievalResults": [
                 {"content": {"text": "Result 1"}, "score": 0.95, "location": {"s3Location": {"uri": "s3://b/k"}}},
-                {"content": {"text": "Result 2"}, "score": 0.80, "location": {"webLocation": {"url": "https://example.com"}}},
+                {
+                    "content": {"text": "Result 2"},
+                    "score": 0.80,
+                    "location": {"webLocation": {"url": "https://example.com"}},
+                },
             ]
         }
 
@@ -53,9 +57,11 @@ class TestBedrockKnowledgeBaseTool:
 
         mock_client = MagicMock()
         mock_client.agentic_retrieve_stream.side_effect = Exception("Not available")
-        mock_client.retrieve.return_value = {"retrievalResults": [
-            {"content": {"text": "Fallback"}, "score": 0.7, "location": {}},
-        ]}
+        mock_client.retrieve.return_value = {
+            "retrievalResults": [
+                {"content": {"text": "Fallback"}, "score": 0.7, "location": {}},
+            ]
+        }
 
         tool = BedrockKnowledgeBaseTool(
             knowledge_base_id="TEST_KB",
@@ -74,15 +80,19 @@ class TestBedrockKnowledgeBaseTool:
         mock_client = MagicMock()
         mock_client.agentic_retrieve_stream.return_value = {
             "stream": [
-                {"result": {"results": [
-                    # AgenticRetrieveStream schema: content/metadata/sourceRetriever
-                    # (no score, no location). Source URI comes from metadata._source_uri.
-                    {
-                        "content": {"mimeType": "text/plain", "text": "Agentic result"},
-                        "metadata": {"_source_uri": "s3://b/doc", "_document_title": "Doc"},
-                        "sourceRetriever": {"identifier": "TEST_KB"},
-                    },
-                ]}}
+                {
+                    "result": {
+                        "results": [
+                            # AgenticRetrieveStream schema: content/metadata/sourceRetriever
+                            # (no score, no location). Source URI comes from metadata._source_uri.
+                            {
+                                "content": {"mimeType": "text/plain", "text": "Agentic result"},
+                                "metadata": {"_source_uri": "s3://b/doc", "_document_title": "Doc"},
+                                "sourceRetriever": {"identifier": "TEST_KB"},
+                            },
+                        ]
+                    }
+                }
             ]
         }
 
@@ -133,7 +143,11 @@ class TestBedrockKnowledgeBaseTool:
         mock_client = MagicMock()
         mock_client.retrieve.return_value = {
             "retrievalResults": [
-                {"content": {"text": "Invoked result"}, "score": 0.88, "location": {"s3Location": {"uri": "s3://b/invoke"}}}
+                {
+                    "content": {"text": "Invoked result"},
+                    "score": 0.88,
+                    "location": {"s3Location": {"uri": "s3://b/invoke"}},
+                }
             ]
         }
 
@@ -162,9 +176,7 @@ class TestBedrockKnowledgeBaseProvider:
         from agent_framework_bedrock._knowledge_base_provider import BedrockKnowledgeBaseProvider
 
         mock_client = MagicMock()
-        provider = BedrockKnowledgeBaseProvider(
-            knowledge_base_id="TEST_KB", source_id="my-kb", client=mock_client
-        )
+        provider = BedrockKnowledgeBaseProvider(knowledge_base_id="TEST_KB", source_id="my-kb", client=mock_client)
         assert provider.source_id == "my-kb"
 
     def test_retrieve_returns_formatted_context(self):
@@ -218,12 +230,17 @@ class TestBedrockKnowledgeBaseProvider:
 
     def test_before_run_injects_context(self):
         from agent_framework import Message, SessionContext
+
         from agent_framework_bedrock._knowledge_base_provider import BedrockKnowledgeBaseProvider
 
         mock_client = MagicMock()
         mock_client.retrieve.return_value = {
             "retrievalResults": [
-                {"content": {"text": "Relevant passage"}, "score": 0.9, "location": {"s3Location": {"uri": "s3://b/doc"}}},
+                {
+                    "content": {"text": "Relevant passage"},
+                    "score": 0.9,
+                    "location": {"s3Location": {"uri": "s3://b/doc"}},
+                },
             ]
         }
 
@@ -241,12 +258,14 @@ class TestBedrockKnowledgeBaseProvider:
         assert len(context.context_messages) == 0
 
         # Run before_run
-        asyncio.run(provider.before_run(
-            agent=MagicMock(),
-            session=MagicMock(),
-            context=context,
-            state={},
-        ))
+        asyncio.run(
+            provider.before_run(
+                agent=MagicMock(),
+                session=MagicMock(),
+                context=context,
+                state={},
+            )
+        )
 
         # Verify context injected as an untrusted user-role message (matches repo
         # convention; role alternation is handled by _prepare_bedrock_messages coalescing)
@@ -259,6 +278,7 @@ class TestBedrockKnowledgeBaseProvider:
 
     def test_before_run_skips_empty_input(self):
         from agent_framework import SessionContext
+
         from agent_framework_bedrock._knowledge_base_provider import BedrockKnowledgeBaseProvider
 
         mock_client = MagicMock()
@@ -267,12 +287,14 @@ class TestBedrockKnowledgeBaseProvider:
         # Empty input messages
         context = SessionContext(input_messages=[])
 
-        asyncio.run(provider.before_run(
-            agent=MagicMock(),
-            session=MagicMock(),
-            context=context,
-            state={},
-        ))
+        asyncio.run(
+            provider.before_run(
+                agent=MagicMock(),
+                session=MagicMock(),
+                context=context,
+                state={},
+            )
+        )
 
         # Should not call retrieve
         mock_client.retrieve.assert_not_called()

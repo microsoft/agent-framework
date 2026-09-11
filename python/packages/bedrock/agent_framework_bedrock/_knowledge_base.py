@@ -22,15 +22,19 @@ try:
     from botocore.config import Config as BotoConfig
 except ImportError as e:
     raise ImportError(
-        "boto3 is required for BedrockKnowledgeBaseTool. "
-        "Install it with: pip install boto3>=1.43.32"
+        "boto3 is required for BedrockKnowledgeBaseTool. Install it with: pip install boto3>=1.43.32"
     ) from e
 
 logger = logging.getLogger("agent_framework.bedrock")
 
 
 def _get_source_uri(result: dict[str, Any]) -> str:
-    """Extract source URI from a retrieval result."""
+    """Extract source URI from a standard Retrieve result location.
+
+    Handles every location variant in the Bedrock Retrieve response union
+    (per the boto3 >= 1.43.32 schema). Agentic results use a different schema
+    and derive their source from ``metadata._source_uri`` instead.
+    """
     location = result.get("location", {})
     if "s3Location" in location:
         return location["s3Location"].get("uri", "")
@@ -40,6 +44,16 @@ def _get_source_uri(result: dict[str, Any]) -> str:
         return location["confluenceLocation"].get("url", "")
     if "sharePointLocation" in location:
         return location["sharePointLocation"].get("url", "")
+    if "googleDriveLocation" in location:
+        return location["googleDriveLocation"].get("url", "")
+    if "oneDriveLocation" in location:
+        return location["oneDriveLocation"].get("url", "")
+    if "salesforceLocation" in location:
+        return location["salesforceLocation"].get("url", "")
+    if "kendraDocumentLocation" in location:
+        return location["kendraDocumentLocation"].get("uri", "")
+    if "sqlLocation" in location:
+        return location["sqlLocation"].get("query", "")
     if "customDocumentLocation" in location:
         return location["customDocumentLocation"].get("id", "")
     return ""
@@ -143,14 +157,16 @@ class BedrockKnowledgeBaseTool(FunctionTool):
             # generating a response (streamed responseEvents we would discard),
             # so disable it explicitly to avoid unnecessary generation latency/cost.
             generateResponse=False,
-            retrievers=[{
-                "configuration": {
-                    "knowledgeBase": {
-                        "knowledgeBaseId": self.knowledge_base_id,
-                        "retrievalOverrides": {"maxNumberOfResults": self.number_of_results},
+            retrievers=[
+                {
+                    "configuration": {
+                        "knowledgeBase": {
+                            "knowledgeBaseId": self.knowledge_base_id,
+                            "retrievalOverrides": {"maxNumberOfResults": self.number_of_results},
+                        }
                     }
                 }
-            }],
+            ],
             agenticRetrieveConfiguration={
                 "foundationModelType": "MANAGED",
                 "rerankingModelType": "MANAGED",

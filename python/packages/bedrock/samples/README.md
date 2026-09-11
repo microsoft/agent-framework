@@ -27,12 +27,16 @@ This folder contains examples demonstrating how to use Amazon Bedrock Knowledge 
     "Statement": [
         {
             "Effect": "Allow",
-            "Action": [
-                "bedrock:Retrieve",
-                "bedrock:AgenticRetrieveStream"
-            ],
+            "Action": "bedrock:Retrieve",
             "Resource": "arn:aws:bedrock:*:*:knowledge-base/*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": "bedrock:AgenticRetrieveStream",
+            "Resource": "*"
         }
     ]
 }
 ```
+
+> `bedrock:AgenticRetrieveStream` has no resource-level permission type and must be granted with `Resource: "*"`; scoping it to a Knowledge Base ARN implicitly denies the agentic call and forces a fallback to standard retrieval.

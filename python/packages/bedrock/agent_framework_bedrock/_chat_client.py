@@ -469,10 +469,6 @@ class BedrockChatClient(
         prompts: list[dict[str, str]] = []
         conversation: list[dict[str, Any]] = []
         pending_tool_use_ids: deque[str] = deque()
-        # Track the original role of the last appended conversation turn so we only
-        # coalesce genuine user-role messages (see below), never tool/system turns
-        # that merely map to the Bedrock "user" role.
-        last_appended_role: str | None = None
         for message in messages:
             if message.role == "system":
                 text_value = message.text
@@ -499,23 +495,7 @@ class BedrockChatClient(
             else:
                 pending_tool_use_ids.clear()
 
-            # Coalesce adjacent genuine user-role turns only. Context providers
-            # (e.g. the Bedrock Knowledge Base provider) inject retrieved passages as
-            # separate user messages that would otherwise sit next to the real user
-            # input and violate Bedrock's role-alternation requirement. We restrict
-            # this to messages whose ORIGINAL role is "user" so that tool-result turns
-            # (message.role == "tool", which also map to the Bedrock "user" role) are
-            # never merged — preserving function-call/tool-result serialization.
-            if (
-                message.role == "user"
-                and last_appended_role == "user"
-                and conversation
-                and conversation[-1]["role"] == "user"
-            ):
-                conversation[-1]["content"].extend(content_blocks)
-            else:
-                conversation.append({"role": role, "content": content_blocks})
-                last_appended_role = message.role
+            conversation.append({"role": role, "content": content_blocks})
 
         return prompts, conversation
 

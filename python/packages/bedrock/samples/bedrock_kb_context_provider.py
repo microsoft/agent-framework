@@ -14,6 +14,7 @@ Prerequisites:
 import asyncio
 
 from agent_framework import Agent
+
 from agent_framework_bedrock import BedrockChatClient, BedrockChatOptions, BedrockKnowledgeBaseProvider
 
 
@@ -28,9 +29,7 @@ async def main() -> None:
     )
 
     # Create a Bedrock chat client
-    chat_client = BedrockChatClient(
-        options=BedrockChatOptions(model_id="us.anthropic.claude-sonnet-4-20250514-v1:0")
-    )
+    chat_client = BedrockChatClient(options=BedrockChatOptions(model_id="us.anthropic.claude-sonnet-4-20250514-v1:0"))
 
     # Create an agent with the context provider — context is injected automatically
     agent = Agent(

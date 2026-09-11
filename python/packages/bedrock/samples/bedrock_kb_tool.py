@@ -15,6 +15,7 @@ Prerequisites:
 import asyncio
 
 from agent_framework import Agent
+
 from agent_framework_bedrock import BedrockChatClient, BedrockChatOptions, BedrockKnowledgeBaseTool
 
 
@@ -28,9 +29,7 @@ async def main() -> None:
     )
 
     # Create a Bedrock chat client
-    chat_client = BedrockChatClient(
-        options=BedrockChatOptions(model_id="us.anthropic.claude-sonnet-4-20250514-v1:0")
-    )
+    chat_client = BedrockChatClient(options=BedrockChatOptions(model_id="us.anthropic.claude-sonnet-4-20250514-v1:0"))
 
     # Create an agent with the KB tool — Agent will call it when it needs context
     agent = Agent(

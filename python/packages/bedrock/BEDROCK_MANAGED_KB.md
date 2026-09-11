@@ -51,15 +51,19 @@ All configuration is via constructor parameters:
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": [
-        "bedrock:Retrieve",
-        "bedrock:AgenticRetrieveStream"
-      ],
+      "Action": "bedrock:Retrieve",
       "Resource": "arn:aws:bedrock:<region>:<account-id>:knowledge-base/<kb-id>"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "bedrock:AgenticRetrieveStream",
+      "Resource": "*"
     }
   ]
 }
 ```
+
+> Note: `bedrock:AgenticRetrieveStream` has no resource-level permission type, so it must be granted with `Resource: "*"`. Scoping it to a Knowledge Base ARN implicitly denies the call and silently forces a fallback to standard `Retrieve`. `bedrock:Retrieve` remains scoped to the Knowledge Base ARN.
 
 ## References
 - [Build a Managed Knowledge Base](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-build-managed.html)
