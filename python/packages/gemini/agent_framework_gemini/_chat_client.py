@@ -334,8 +334,12 @@ def _resolve_finish_reason(
     function_calls_committed: bool,
 ) -> FinishReasonLiteral | FinishReason | None:
     """Resolve the public finish reason without authorizing uncommitted function calls."""
-    if has_function_calls and function_calls_committed:
+    if not has_function_calls:
+        return provider_finish_reason
+    if function_calls_committed:
         return "tool_calls"
+    if provider_finish_reason == "tool_calls":
+        return None
     return provider_finish_reason
 
 

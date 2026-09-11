@@ -11,7 +11,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import Agent, Content, FunctionTool, Message
+from agent_framework import Agent, Content, FinishReason, FunctionTool, Message
 from agent_framework._settings import SecretString
 from agent_framework.exceptions import (
     ChatClientException,
@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from typing_extensions import NotRequired, TypedDict
 
 from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, RawGeminiChatClient, ThinkingConfig
+from agent_framework_gemini._chat_client import _resolve_finish_reason
 from agent_framework_gemini._feature_usage import FeatureIndex
 
 
@@ -639,6 +640,17 @@ async def test_non_streaming_function_calls_require_authoritative_terminal_commi
     assert function_call.call_id == "call-1"
     assert function_call.name == "search"
     assert function_call.arguments == {"q": "framework"}
+
+
+def test_resolve_finish_reason_does_not_trust_uncommitted_tool_calls_reason() -> None:
+    assert (
+        _resolve_finish_reason(
+            FinishReason("tool_calls"),
+            has_function_calls=True,
+            function_calls_committed=False,
+        )
+        is None
+    )
 
 
 async def test_non_streaming_server_side_tool_call_does_not_override_finish_reason() -> None:
