@@ -5,7 +5,7 @@ import inspect
 import json
 import logging
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableSequence, Sequence
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -3305,7 +3305,9 @@ class _PscSpyChatClient(MockBaseChatClient):
         store_and_echo = self._effective_store(options) and self._echo_conversation_id
         conv_id = _PSC_SERVICE_CONVERSATION_ID if store_and_echo else None
         contents = self._next_contents()
-        finish_reason = "tool_calls" if any(content.type == "function_call" for content in contents) else "stop"
+        finish_reason: Literal["tool_calls", "stop"] = (
+            "tool_calls" if any(content.type == "function_call" for content in contents) else "stop"
+        )
 
         if stream:
 
