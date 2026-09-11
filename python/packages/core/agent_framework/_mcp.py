@@ -642,11 +642,13 @@ def _inject_otel_into_mcp_meta(
     return meta
 
 
-def _url_origin(url: Any) -> tuple[str, str, int | None]:
+def _url_origin(url: Any) -> tuple[str, str, int]:
+    if url.scheme not in {"http", "https"} or not url.host:
+        raise ValueError("MCP URL must be an absolute HTTP(S) URL with a host.")
     port = url.port
     if port is None:
-        port = 443 if url.scheme == "https" else 80 if url.scheme == "http" else None
-    return (url.scheme, url.host or "", port)
+        port = 443 if url.scheme == "https" else 80
+    return (url.scheme, url.host, port)
 
 
 # Internal polling bounds for MCP long-running tasks. Not user-tunable today;
