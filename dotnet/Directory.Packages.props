@@ -36,7 +36,7 @@
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.9.0" />
     <!-- Google Gemini  -->
     <PackageVersion Include="Google.GenAI" Version="1.21.0" />
-    <PackageVersion Include="Mscc.GenerativeAI.Microsoft" Version="2.9.3" />
+    <PackageVersion Include="Mscc.GenerativeAI.Microsoft" Version="3.1.0" />
     <!-- Microsoft.Azure.* -->
     <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.63.0" />
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.12" />
