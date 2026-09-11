@@ -3392,7 +3392,7 @@ async def test_mixed_batch_pause_groups_preserve_model_call_order():
         Content.from_function_call(call_id="d2", name="declaration_func", arguments={"arg1": "3"}),
     ]
 
-    result_groups, should_terminate = await _try_execute_function_call_groups(
+    result_groups, should_terminate, executed_call_count = await _try_execute_function_call_groups(
         custom_args={},
         function_calls=calls,
         tools=[approval_func, declaration_func],
@@ -3409,6 +3409,7 @@ async def test_mixed_batch_pause_groups_preserve_model_call_order():
             ordered_call_ids.append(content.call_id)
     assert ordered_call_ids == ["d1", "a1", "d2"]
     assert should_terminate is False
+    assert executed_call_count == 0
 
 
 @pytest.mark.parametrize("unknown_first", [True, False], ids=["unknown-first", "approval-first"])
@@ -3467,7 +3468,7 @@ async def test_removed_tool_approval_response_does_not_trigger_unknown_terminati
     )
     approval_response = approval_request.to_function_approval_response(approved=True)
 
-    result_groups, should_terminate = await _try_execute_function_call_groups(
+    result_groups, should_terminate, executed_call_count = await _try_execute_function_call_groups(
         custom_args={},
         function_calls=[approval_response],
         tools=[],
@@ -3475,6 +3476,7 @@ async def test_removed_tool_approval_response_does_not_trigger_unknown_terminati
     )
 
     assert should_terminate is False
+    assert executed_call_count == 0
     assert result_groups == [[approval_response]]
 
 
@@ -3508,7 +3510,7 @@ async def test_legacy_declaration_only_approval_response_is_reclassified_before_
         function_call=function_call,
     )
 
-    result_groups, should_terminate = await _try_execute_function_call_groups(
+    result_groups, should_terminate, executed_call_count = await _try_execute_function_call_groups(
         custom_args={},
         function_calls=[legacy_request.to_function_approval_response(approved=True)],
         tools=[declaration_func],
@@ -3517,6 +3519,7 @@ async def test_legacy_declaration_only_approval_response_is_reclassified_before_
     )
 
     assert should_terminate is False
+    assert executed_call_count == 0
     assert len(result_groups) == 1
     assert len(result_groups[0]) == 1
     result = result_groups[0][0]
@@ -3565,6 +3568,231 @@ async def test_legacy_additional_tool_approval_response_is_reclassified_before_e
     assert result.user_input_request is True
     assert additional_tool_calls == 0
     assert function_call.user_input_request is None
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_additional_tools_only_are_classified_as_user_input(
+    chat_client_base: SupportsChatGetResponse, streaming: bool
+):
+    """Additional tools remain host-owned when no visible tool list is supplied."""
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+
+    additional_tool_calls = 0
+
+    @tool(name="host_only")
+    def host_only() -> str:
+        nonlocal additional_tool_calls
+        additional_tool_calls += 1
+        return "unexpected"
+
+    call = Content.from_function_call(call_id="host-only-call", name="host_only", arguments={})
+    chat_client_base.function_invocation_configuration["additional_tools"] = [host_only]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    session = AgentSession()
+    budget_state: dict[str, Any] = {"total_function_calls": 0, "start_time": 0.0}
+    session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY] = budget_state
+    client_kwargs = {
+        "session": session,
+        _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
+    }
+    streaming_updates: list[ChatResponseUpdate] = []
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(contents=[call], role="assistant", finish_reason="tool_calls")]
+        ]
+        stream = chat_client_base.get_response(
+            [Message(role="user", contents=["hello"])],
+            stream=True,
+            options={"tool_choice": "auto"},
+            client_kwargs=client_kwargs,
+        )
+        streaming_updates = [update async for update in stream]
+        response = await stream.get_final_response()
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[call]))
+        ]
+        response = await chat_client_base.get_response(
+            [Message(role="user", contents=["hello"])],
+            options={"tool_choice": "auto"},
+            client_kwargs=client_kwargs,
+        )
+
+    host_calls = [
+        content
+        for message in response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.name == "host_only"
+    ]
+    assert len(host_calls) == 1
+    assert host_calls[0].user_input_request is True
+    assert host_calls[0].call_id == "host-only-call"
+    assert host_calls[0].id is not None
+    if streaming:
+        terminal_host_updates = [
+            content
+            for update in streaming_updates
+            for content in update.contents
+            if content.type == "function_call" and content.user_input_request
+        ]
+        assert len(terminal_host_updates) == 1
+        assert terminal_host_updates[0].call_id == host_calls[0].call_id
+        assert terminal_host_updates[0].id == host_calls[0].id
+        assert terminal_host_updates[0].name == host_calls[0].name
+    assert additional_tool_calls == 0
+    assert budget_state["total_function_calls"] == 0
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+    assert not any(content.type == "function_result" for message in response.messages for content in message.contents)
+
+
+def test_host_pause_replacement_preserves_duplicate_call_arguments():
+    """Fallback matching consumes repeated provider identities in model order."""
+    from agent_framework._tools import _as_user_input_pause, _handle_function_call_results
+
+    first = Content("function_call", call_id="duplicate", name="host_only", arguments={"value": 1})
+    second = Content("function_call", call_id="duplicate", name="host_only", arguments={"value": 2})
+    response = ChatResponse(messages=Message(role="assistant", contents=[first, second]))
+
+    processing = _handle_function_call_results(
+        response=response,
+        execution_results=[_as_user_input_pause(first), _as_user_input_pause(second)],
+        function_call_count=0,
+        function_call_messages=None,
+        errors_in_a_row=0,
+        had_errors=False,
+        max_errors=3,
+    )
+
+    host_calls = [content for message in response.messages for content in message.contents]
+    assert processing.action == "return"
+    assert [content.arguments for content in host_calls] == [{"value": 1}, {"value": 2}]
+    assert all(content.user_input_request for content in host_calls)
+    assert first.user_input_request is None
+    assert second.user_input_request is None
+
+
+async def test_legacy_host_approval_resume_does_not_count_as_execution():
+    """Reclassifying a legacy Host approval wrapper must not consume execution budget."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import _execute_function_calls, _resolve_approval_responses
+
+    declaration_func = FunctionTool(
+        name="declaration_func",
+        func=None,
+        description="A declaration-only function for testing",
+        input_model={"type": "object", "properties": {}},
+    )
+    function_call = Content.from_function_call(
+        call_id="legacy-budget",
+        name="declaration_func",
+        arguments={},
+    )
+    request = Content.from_function_approval_request(id="legacy-budget-request", function_call=function_call)
+    response = request.to_function_approval_response(approved=True)
+
+    async def execute_function_calls(*, function_calls: list[Content], options: dict[str, Any] | None):
+        return await _execute_function_calls(
+            custom_args={},
+            function_calls=function_calls,
+            options={"tools": [declaration_func]},
+            config={},
+        )
+
+    processing = await _resolve_approval_responses(
+        prepared_messages=[
+            Message(role="assistant", contents=[function_call, request]),
+            Message(role="user", contents=[response]),
+        ],
+        options={"tools": [declaration_func]},
+        errors_in_a_row=0,
+        max_errors=3,
+        execute_function_calls=execute_function_calls,
+    )
+
+    assert processing.action == "return"
+    assert processing.function_call_count == 0
+    assert any(
+        content.type == "function_call" and content.user_input_request
+        for message in processing.response_messages
+        for content in message.contents
+    )
+
+
+async def test_tool_execution_that_requests_follow_up_approval_still_counts():
+    """A tool body that starts and then requests approval still consumes one execution unit."""
+    from agent_framework._tools import _execute_function_calls
+    from agent_framework.exceptions import UserInputRequiredException
+
+    calls = 0
+
+    @tool(name="follow_up_tool")
+    def follow_up_tool() -> str:
+        nonlocal calls
+        calls += 1
+        follow_up_call = Content.from_function_call(
+            call_id="follow-up-call",
+            name="follow_up_action",
+            arguments={},
+        )
+        raise UserInputRequiredException(
+            contents=[
+                Content.from_function_approval_request(
+                    id="follow-up-request",
+                    function_call=follow_up_call,
+                )
+            ]
+        )
+
+    execution = await _execute_function_calls(
+        custom_args={},
+        function_calls=[Content.from_function_call(call_id="outer-call", name="follow_up_tool", arguments={})],
+        options={"tools": [follow_up_tool]},
+        config={},
+    )
+
+    assert calls == 1
+    assert execution.executed_call_count == 1
+    assert execution.contents[0].type == "function_approval_request"
+
+
+async def test_streaming_terminal_approval_resume_clears_budget(chat_client_base: SupportsChatGetResponse):
+    """Streaming clears persisted run budget when phase-1 approval handling returns terminally."""
+    from unittest.mock import AsyncMock, patch
+
+    from agent_framework._tools import (
+        _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
+        _FunctionProcessingResult,
+    )
+
+    session = AgentSession()
+    budget_state: dict[str, Any] = {"total_function_calls": 0, "start_time": 0.0}
+    session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY] = budget_state
+
+    async def unused_execute_function_calls(**kwargs: Any):
+        pytest.fail(f"function execution was not expected: {kwargs}")
+
+    with patch(
+        "agent_framework._tools._resolve_approval_responses",
+        new=AsyncMock(return_value=_FunctionProcessingResult(errors_in_a_row=0, action="return")),
+    ):
+        updates = [
+            update
+            async for update in chat_client_base._stream_response_with_function_invocation(  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+                super_get_response=lambda **kwargs: pytest.fail(f"provider call was not expected: {kwargs}"),
+                messages=[],
+                options={},
+                request_kwargs={},
+                compaction_strategy=None,
+                tokenizer=None,
+                execute_function_calls=unused_execute_function_calls,
+                invocation_session=session,
+                budget_state=budget_state,
+                max_errors=3,
+                invalidation_error=[],
+            )
+        ]
+
+    assert updates == []
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
 
 
 async def test_mixed_batch_declaration_only_not_executed_after_approval_resume(

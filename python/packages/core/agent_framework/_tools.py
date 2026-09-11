@@ -2130,17 +2130,18 @@ def _underlying_function_call(content: Content) -> Content:
     return content
 
 
-def _mark_user_input_pause(function_call: Content) -> None:
-    """Surface a declaration-only/additional call as a user-input pause instead of executing it.
+def _as_user_input_pause(function_call: Content) -> Content:
+    """Copy a declaration-only/additional call and surface it as a user-input pause.
 
     These tools have no local implementation (spec 004); AgentExecutor emits its request_info events off
-    ``user_input_request``, and the id is backfilled from ``call_id`` so the resume can correlate the reply.
-    Both the approval-pausing batch branch and the standalone declaration-only branch route through here so
-    the two pause surfaces cannot silently diverge if one is later changed in isolation.
+    user_input_request, and the id is backfilled from call_id so the resume can correlate the reply.
+    Copying avoids mutating a Content object that may already have been yielded in a streaming update.
     """
-    function_call.user_input_request = True
-    if function_call.id is None:
-        function_call.id = function_call.call_id
+    user_input_call = copy.copy(function_call)
+    user_input_call.user_input_request = True
+    if user_input_call.id is None:
+        user_input_call.id = user_input_call.call_id
+    return user_input_call
 
 
 async def _execute_single_function_call(
@@ -2153,7 +2154,7 @@ async def _execute_single_function_call(
     middleware_pipeline: FunctionMiddlewarePipeline | None,
     live_tools: list[ToolTypes] | None,
     host_payload_budget: _FunctionResultPayloadBudget | None,
-) -> tuple[list[Content], bool]:
+) -> tuple[list[Content], bool, bool]:
     from ._middleware import MiddlewareTermination
     from ._sessions import _suspend_run_persistence_gate  # pyright: ignore[reportPrivateUsage]
     from ._types import Content
@@ -2165,9 +2166,8 @@ async def _execute_single_function_call(
     source_tool = tool_map.get(source_function_call.name) if source_function_call.name is not None else None
     additional_tool_names = {tool.name for tool in config.get("additional_tools") or []}
     if (source_tool is not None and source_tool.declaration_only) or source_function_call.name in additional_tool_names:
-        declaration_only_call = copy.copy(source_function_call)
-        _mark_user_input_pause(declaration_only_call)
-        return [declaration_only_call], False
+        declaration_only_call = _as_user_input_pause(source_function_call)
+        return [declaration_only_call], False, False
 
     try:
         # A run-persistence gate defers only the gated run's own persistence; nested
@@ -2187,17 +2187,28 @@ async def _execute_single_function_call(
                 live_tools=live_tools,
                 host_payload_budget=host_payload_budget,
             )
-        return [result], False
+        is_replacement_approval = (
+            result.type == "function_approval_request"
+            and result.additional_properties.get("_replacement_approval_request") is True
+        )
+        was_executed = not (
+            is_replacement_approval or (function_call.type == "function_approval_response" and source_tool is None)
+        )
+        return [result], False, was_executed
     except MiddlewareTermination as exc:
         if isinstance(exc.result, Content):
-            return [exc.result], True
+            return [exc.result], True, True
         source_function_call = _underlying_function_call(function_call)
-        return [
-            Content.from_function_result(
-                call_id=source_function_call.call_id,  # type: ignore[arg-type]
-                result=exc.result,
-            )
-        ], True
+        return (
+            [
+                Content.from_function_result(
+                    call_id=source_function_call.call_id,  # type: ignore[arg-type]
+                    result=exc.result,
+                )
+            ],
+            True,
+            True,
+        )
     except UserInputRequiredException as exc:
         source_function_call = _underlying_function_call(function_call)
         call_id = source_function_call.call_id
@@ -2207,14 +2218,23 @@ async def _execute_single_function_call(
             if not item.id:
                 item.id = call_id
         if propagated_contents:
-            return propagated_contents, False
-        return [
-            Content.from_function_result(
-                call_id=call_id,  # type: ignore[arg-type]
-                result="Tool requires user input but no request details were provided.",
-                exception="UserInputRequiredException",
+            is_replacement_approval = all(
+                item.type == "function_approval_request"
+                and item.additional_properties.get("_replacement_approval_request") is True
+                for item in propagated_contents
             )
-        ], False
+            return propagated_contents, False, not is_replacement_approval
+        return (
+            [
+                Content.from_function_result(
+                    call_id=call_id,  # type: ignore[arg-type]
+                    result="Tool requires user input but no request details were provided.",
+                    exception="UserInputRequiredException",
+                )
+            ],
+            False,
+            True,
+        )
 
 
 async def _try_execute_function_call_groups(
@@ -2225,7 +2245,7 @@ async def _try_execute_function_call_groups(
     invocation_session: AgentSession | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
-) -> tuple[list[list[Content]], bool]:
+) -> tuple[list[list[Content]], bool, int]:
     """Execute multiple function calls concurrently while preserving per-call result groups.
 
     Args:
@@ -2241,6 +2261,7 @@ async def _try_execute_function_call_groups(
         A tuple of:
         - One ordered content group per function call.
         - True when function middleware requested loop termination.
+        - Number of calls that crossed the execution boundary.
     """
     from ._types import Content
 
@@ -2251,7 +2272,7 @@ async def _try_execute_function_call_groups(
         if function_call.type == "function_approval_response" or _is_actionable_function_call(function_call)
     ]
     if not function_calls:
-        return [], False
+        return [], False, 0
 
     tool_map = _get_tool_map(tools)
     # The live tools list (when tools is the run-local list) is exposed on the
@@ -2327,8 +2348,7 @@ async def _try_execute_function_call_groups(
             if tool_name is not None and (
                 tool_name in declaration_only_tool_names or tool_name in additional_tool_names
             ):
-                _mark_user_input_pause(function_call)
-                pause_groups.append([function_call])
+                pause_groups.append([_as_user_input_pause(function_call)])
                 continue
             approval_request = Content.from_function_approval_request(
                 id=function_call.id or function_call.call_id,  # type: ignore[arg-type]
@@ -2352,7 +2372,7 @@ async def _try_execute_function_call_groups(
         _store_pending_approval_requests(invocation_session, visible_requests)
         # Surface approval pauses and declaration-only user-input pauses together so a mixed batch neither
         # bypasses approval nor executes a declaration-only call.
-        return pause_groups, False
+        return pause_groups, False, 0
     if has_declaration_only_call:
         # Declaration-only calls are returned as user input rather than executed locally.
         # return the declaration only tools to the user, since we cannot execute them.
@@ -2360,9 +2380,8 @@ async def _try_execute_function_call_groups(
         declaration_only_calls: list[Content] = []
         for function_call in function_calls:
             if function_call.type == "function_call":
-                _mark_user_input_pause(function_call)
-                declaration_only_calls.append(function_call)
-        return [[function_call] for function_call in declaration_only_calls], False
+                declaration_only_calls.append(_as_user_input_pause(function_call))
+        return [[function_call] for function_call in declaration_only_calls], False, 0
 
     # Only a fully executable batch reaches this point; run calls concurrently but retain per-call result groups.
     # Create each task inside a copied context so the active agent span is
@@ -2398,8 +2417,9 @@ async def _try_execute_function_call_groups(
         await asyncio.gather(*execution_tasks, return_exceptions=True)
         raise
 
-    should_terminate = any(terminate for _, terminate in execution_results)
-    return [result_contents for result_contents, _ in execution_results], should_terminate
+    should_terminate = any(terminate for _, terminate, _ in execution_results)
+    executed_call_count = sum(1 for _, _, was_executed in execution_results if was_executed)
+    return [result_contents for result_contents, _, _ in execution_results], should_terminate, executed_call_count
 
 
 @dataclass
@@ -2414,21 +2434,7 @@ class _FunctionExecutionBatch:
         """Flatten the ordered result groups for ordinary response processing."""
         return [content for result_group in self.result_groups for content in result_group]
 
-    @property
-    def executed_call_count(self) -> int:
-        """Count of result groups that were actually invoked.
-
-        Excludes groups still deferred on an approval request (the tool body never ran,
-        unlike a ``UserInputRequiredException`` raised mid-execution, which did run and
-        still counts) or left as a bare declaration because the batch as a whole was
-        deferred, so a call is only charged against ``max_function_calls`` once it
-        actually executes, rather than again when it was merely requested.
-        """
-        return sum(
-            1
-            for result_group in self.result_groups
-            if not any(content.type in {"function_approval_request", "function_call"} for content in result_group)
-        )
+    executed_call_count: int = 0
 
     @property
     def had_errors(self) -> bool:
@@ -2454,7 +2460,7 @@ async def _execute_function_calls(
     tools = _extract_tools(options)
     if not tools and not config.get("additional_tools"):
         return _FunctionExecutionBatch(result_groups=[])
-    result_groups, should_terminate = await _try_execute_function_call_groups(
+    result_groups, should_terminate, executed_call_count = await _try_execute_function_call_groups(
         custom_args=custom_args,
         function_calls=function_calls,
         tools=tools,
@@ -2466,6 +2472,7 @@ async def _execute_function_calls(
     return _FunctionExecutionBatch(
         result_groups=result_groups,
         should_terminate=should_terminate,
+        executed_call_count=executed_call_count,
     )
 
 
@@ -3588,6 +3595,30 @@ def _handle_function_call_results(
         result.type in {"function_approval_request", "function_call"} or result.user_input_request
         for result in execution_results
     ):
+        user_input_calls = [result for result in execution_results if result.type == "function_call"]
+        user_input_by_occurrence: dict[str, deque[Content]] = {}
+        user_input_by_provider_call: dict[tuple[str | None, str | None], deque[Content]] = {}
+        for item in user_input_calls:
+            if item.id is not None:
+                user_input_by_occurrence.setdefault(item.id, deque()).append(item)
+            user_input_by_provider_call.setdefault((item.call_id, item.name), deque()).append(item)
+        consumed_user_input_calls: set[int] = set()
+        for message in response.messages:
+            for index, content in enumerate(message.contents):
+                if content.type != "function_call":
+                    continue
+                occurrence_candidates = user_input_by_occurrence.get(content.id) if content.id is not None else None
+                while occurrence_candidates and id(occurrence_candidates[0]) in consumed_user_input_calls:
+                    occurrence_candidates.popleft()
+                replacement = occurrence_candidates.popleft() if occurrence_candidates else None
+                if replacement is None and content.id is None:
+                    provider_candidates = user_input_by_provider_call.get((content.call_id, content.name))
+                    while provider_candidates and id(provider_candidates[0]) in consumed_user_input_calls:
+                        provider_candidates.popleft()
+                    replacement = provider_candidates.popleft() if provider_candidates else None
+                if replacement is not None:
+                    consumed_user_input_calls.add(id(replacement))
+                    message.contents[index] = replacement
         # Only add items that aren't already in the message (e.g. function_approval_request wrappers).
         # Declaration-only function_call items are already present from the LLM response.
         new_items = [result for result in execution_results if result.type != "function_call"]
@@ -3694,6 +3725,7 @@ async def _resolve_approval_responses(
             responses_not_granted, session=invocation_session
         )
     execution_result_groups: list[list[Content]] = []
+    executed_function_count = 0
     should_terminate = False
     reached_error_limit = False
     if responses_to_execute and not (options and options.get("tool_choice") == "none"):
@@ -3710,6 +3742,7 @@ async def _resolve_approval_responses(
                 await settle_dangling_calls(responses_to_execute)
             raise
         execution_result_groups = execution.result_groups
+        executed_function_count = execution.executed_call_count
         should_terminate = execution.should_terminate
         errors_in_a_row, reached_error_limit = _update_consecutive_error_count(
             errors_in_a_row,
@@ -3754,7 +3787,6 @@ async def _resolve_approval_responses(
         _store_pending_approval_requests(invocation_session, list(pending_by_id.values()))
 
     # 5. Return role-correct output and tell the outer loop whether to return, stop tools, or call the model.
-    executed_function_count = len(execution_result_groups)
     requires_user_input = any(
         result.type == "function_call" or result.user_input_request for result in terminal_contents
     )
@@ -3781,6 +3813,7 @@ async def _process_model_function_calls(
     errors_in_a_row: int,
     max_errors: int,
     execute_function_calls: _FunctionCallExecutor,
+    config: FunctionInvocationConfiguration,
     invocation_session: AgentSession | None = None,
 ) -> _FunctionProcessingResult:
     """Execute function calls from a newly completed model response."""
@@ -3793,7 +3826,7 @@ async def _process_model_function_calls(
     # 1. Extract only actionable, unanswered calls from this model turn.
     tools = _extract_tools(options)
     function_calls = _extract_function_calls(response)
-    if not (function_calls and tools):
+    if not (function_calls and (tools or config.get("additional_tools"))):
         if function_call_messages is not None:
             _prepend_function_call_messages(response, function_call_messages)
         if approval_requests:
@@ -4096,6 +4129,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     errors_in_a_row=errors_in_a_row,
                     max_errors=max_errors,
                     execute_function_calls=execute_function_calls,
+                    config=self.function_invocation_configuration,
                     invocation_session=invocation_session,
                 )
             except MiddlewareFailure:
@@ -4238,6 +4272,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         for update in approval_processing.streaming_updates:
             yield update
         if approval_processing.action == "return":
+            _clear_budget_state_from_session(invocation_session)
             return
 
         if options.get("tool_choice") != "none":
@@ -4358,6 +4393,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     errors_in_a_row=errors_in_a_row,
                     max_errors=max_errors,
                     execute_function_calls=execute_function_calls,
+                    config=self.function_invocation_configuration,
                     invocation_session=invocation_session,
                 )
             except MiddlewareFailure:
@@ -4385,6 +4421,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 yield update
             if function_processing.action != "continue" and function_processing.action != "stop":
                 # "return" action: model produced a terminal response.
+                _clear_budget_state_from_session(invocation_session)
                 return
             _apply_batch_limit_decision(
                 function_processing.action,
