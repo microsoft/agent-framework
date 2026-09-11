@@ -3439,6 +3439,203 @@ def test_same_host_response_occurrence_replay_is_idempotent_across_optional_id(i
     assert incomplete is True
 
 
+async def test_same_staged_approval_response_replay_is_idempotent_and_executes_once() -> None:
+    """An identical approval replay keeps the mixed barrier intact and authorizes one execution."""
+    from agent_framework._tools import (
+        _FunctionExecutionBatch,
+        _resolve_approval_responses,
+        _store_pending_approval_requests,
+        _store_pending_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={"value": 1},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host-call",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_pause_batch(session, [[approval_request], [host_request]])
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    executions = 0
+
+    async def execute_function_calls(*, function_calls: list[Content], **kwargs: Any) -> Any:
+        nonlocal executions
+        executions += 1
+        assert len(function_calls) == 1
+        assert function_calls[0].approved is True
+        return _FunctionExecutionBatch(
+            result_groups=[[Content.from_function_result(call_id="approval-call", result="approved")]],
+            executed_call_count=1,
+        )
+
+    for response in (approval_response, Content.from_dict(approval_response.to_dict())):
+        result = await _resolve_approval_responses(
+            prepared_messages=[Message(role="user", contents=[response])],
+            options=None,
+            errors_in_a_row=0,
+            max_errors=3,
+            execute_function_calls=execute_function_calls,
+            invocation_session=session,
+        )
+        assert result.action == "return"
+        assert executions == 0
+
+    host_result = Content.from_function_result(call_id="host-call", result="host")
+    host_result.id = "host-occurrence"
+    result = await _resolve_approval_responses(
+        prepared_messages=[Message(role="tool", contents=[host_result])],
+        options=None,
+        errors_in_a_row=0,
+        max_errors=3,
+        execute_function_calls=execute_function_calls,
+        invocation_session=session,
+    )
+
+    assert executions == 1
+    assert result.function_call_count == 1
+
+
+@pytest.mark.parametrize("conflict", ["approved", "payload"])
+async def test_conflicting_staged_approval_response_fails_closed_before_execution(conflict: str) -> None:
+    """A later decision or payload cannot replace an approval already staged in a mixed barrier."""
+    from agent_framework._tools import (
+        _FunctionExecutionBatch,
+        _resolve_approval_responses,
+        _store_pending_approval_requests,
+        _store_pending_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={"value": 1},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host-call",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_pause_batch(session, [[approval_request], [host_request]])
+    executions = 0
+
+    async def execute_function_calls(**kwargs: Any) -> Any:
+        nonlocal executions
+        executions += 1
+        return _FunctionExecutionBatch(result_groups=[], executed_call_count=0)
+
+    approved = approval_request.to_function_approval_response(approved=True)
+    result = await _resolve_approval_responses(
+        prepared_messages=[Message(role="user", contents=[approved])],
+        options=None,
+        errors_in_a_row=0,
+        max_errors=3,
+        execute_function_calls=execute_function_calls,
+        invocation_session=session,
+    )
+    assert result.action == "return"
+
+    conflicting = approval_request.to_function_approval_response(approved=conflict != "approved")
+    if conflict == "payload":
+        conflicting.additional_properties["proof"] = "different"
+    with pytest.raises(RuntimeError, match="Conflicting approval response"):
+        await _resolve_approval_responses(
+            prepared_messages=[Message(role="user", contents=[conflicting])],
+            options=None,
+            errors_in_a_row=0,
+            max_errors=3,
+            execute_function_calls=execute_function_calls,
+            invocation_session=session,
+        )
+
+    assert executions == 0
+
+
+@pytest.mark.parametrize("duplicate_identity", ["request", "occurrence"])
+async def test_stateless_mixed_pause_duplicate_approval_identity_with_too_few_responses_fails_closed(
+    duplicate_identity: str,
+) -> None:
+    """One response cannot satisfy two stateless approval occurrences sharing a correlation identity."""
+    from agent_framework._tools import _resolve_approval_responses
+
+    approval_calls: list[Content] = []
+    approval_requests: list[Content] = []
+    for occurrence in (1, 2):
+        occurrence_id = f"approval-occurrence-{occurrence}"
+        function_call = Content.from_function_call(
+            call_id=f"approval-call-{occurrence}",
+            name="approval_func",
+            arguments={"value": occurrence},
+            id=occurrence_id,
+        )
+        approval_calls.append(function_call)
+        approval_request = Content.from_function_approval_request(
+            id=occurrence_id,
+            function_call=function_call,
+        )
+        if duplicate_identity == "request":
+            approval_request.id = "duplicate-request"
+        else:
+            function_call.id = "duplicate-occurrence"
+        approval_requests.append(approval_request)
+    host_request = Content.from_function_call(
+        call_id="host-call",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    host_result = Content.from_function_result(call_id="host-call", result="host")
+    host_result.id = "host-occurrence"
+    response_id = "duplicate-request" if duplicate_identity == "request" else "duplicate-occurrence"
+    approval_response = Content.from_function_approval_response(
+        approved=True,
+        id=response_id,
+        function_call=approval_calls[0],
+    )
+    executions = 0
+
+    async def execute_function_calls(**kwargs: Any) -> Any:
+        nonlocal executions
+        executions += 1
+        pytest.fail(f"ambiguous stateless mixed batch must not execute: {kwargs}")
+
+    with pytest.raises(RuntimeError, match="AgentSession.*mixed pause batch"):
+        await _resolve_approval_responses(
+            prepared_messages=[
+                Message(role="assistant", contents=[*approval_calls, *approval_requests, host_request]),
+                Message(role="user", contents=[approval_response, host_result]),
+            ],
+            options=None,
+            errors_in_a_row=0,
+            max_errors=3,
+            execute_function_calls=execute_function_calls,
+        )
+
+    assert executions == 0
+
+
 @pytest.mark.parametrize("initial_has_id", [False, True], ids=["idless-first", "identified-first"])
 def test_conflicting_host_response_for_same_occurrence_fails_closed(initial_has_id: bool) -> None:
     """A conflicting replay cannot mutate another same-call-id pause slot."""

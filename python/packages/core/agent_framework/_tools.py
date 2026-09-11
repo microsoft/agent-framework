@@ -2859,8 +2859,13 @@ def _stage_pending_pause_batch_responses(
                     item = approval_items.get(rebound.id)
                 if item is None:
                     continue
-                if item.get("response") is None:
-                    item["response"] = rebound.to_dict()
+                candidate_state = rebound.to_dict()
+                stored_response = item.get("response")
+                if stored_response is not None:
+                    if not isinstance(stored_response, dict) or stored_response != candidate_state:
+                        raise RuntimeError(f"Conflicting approval response for occurrence {rebound.id!r}.")
+                else:
+                    item["response"] = candidate_state
                 matched_content_ids.add(id(content))
             elif content.type == "function_result" and content.call_id in host_items_by_call_id:
                 host_candidates_by_call_id.setdefault(content.call_id, []).append(content)
@@ -2974,16 +2979,33 @@ def _stateless_mixed_pause_batch_status(messages: Sequence[Message]) -> tuple[bo
     if not approval_requests or not host_requests or not (approval_responses or host_responses):
         return False, set()
 
-    answered_approval_ids = {response.id for response in approval_responses if response.id is not None}
-    approval_complete = all(
-        request.id in answered_approval_ids
-        or (
-            request.function_call is not None
-            and request.function_call.id is not None
-            and request.function_call.id in answered_approval_ids
-        )
-        for request in approval_requests
-    )
+    approval_identity_owners: dict[str, int] = {}
+    approval_request_identities: list[set[str]] = []
+    for index, request in enumerate(approval_requests):
+        identities = {
+            identity
+            for identity in (
+                request.id,
+                request.function_call.id if request.function_call is not None else None,
+            )
+            if identity is not None
+        }
+        for identity in identities:
+            previous_owner = approval_identity_owners.setdefault(identity, index)
+            if previous_owner != index:
+                return True, set()
+        approval_request_identities.append(identities)
+
+    unmatched_approval_requests = set(range(len(approval_requests)))
+    for response in approval_responses:
+        if response.id is None:
+            continue
+        matching_indexes = [
+            index for index in unmatched_approval_requests if response.id in approval_request_identities[index]
+        ]
+        if len(matching_indexes) == 1:
+            unmatched_approval_requests.remove(matching_indexes[0])
+    approval_complete = not unmatched_approval_requests
 
     unmatched_host_requests = list(host_requests)
     matched_host_result_ids: set[int] = set()
