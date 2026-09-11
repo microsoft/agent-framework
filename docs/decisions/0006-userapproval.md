@@ -510,7 +510,7 @@ sequenceDiagram
 
     note right of Developer: Developer approves one function call and rejects the other.
     Developer->>+ApprovalGeneratingChatClient: [FunctionApprovalResponseContent(GetMenu, approved=true)]<br/>[FunctionApprovalResponseContent(GetSpecials, approved=false)]
-    note right of ApprovalGeneratingChatClient: AGCC turns turns approval requests<br/>into FCC or failed function calls
+    note right of ApprovalGeneratingChatClient: AGCC turns approval requests<br/>into FCC or failed function calls
     ApprovalGeneratingChatClient->>+FunctionInvokingChatClient: [FunctionCallContent(GetMenu)]<br/>[FunctionCallContent(GetSpecials)<br/>[FunctionResultContent(GetSpecials, "Function invocation denied"))]
     note right of FunctionInvokingChatClient: FICC invokes GetMenu since it's the only remaining one.
     FunctionInvokingChatClient->>+ResponseChatClient: [FunctionCallContent(GetMenu)]<br/>[FunctionResultContent(GetMenu, "mains.... deserts...")]<br/>[FunctionCallContent(GetSpecials)<br/>[FunctionResultContent(GetSpecials, "Function invocation denied"))]
