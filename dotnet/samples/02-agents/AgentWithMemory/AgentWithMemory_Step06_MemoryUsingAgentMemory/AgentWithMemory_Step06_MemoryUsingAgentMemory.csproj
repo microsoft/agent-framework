@@ -49,7 +49,7 @@
          version it would otherwise resolve to, 1.12.0, has a known moderate severity vulnerability
          (GHSA-g94r-2vxg-569j) that fails the repo's NuGet audit (NU1902 as error). Matches the version
          pinned in dotnet/Directory.Packages.props. -->
-    <PackageReference Include="OpenTelemetry.Api" Version="1.15.3" />
+    <PackageReference Include="OpenTelemetry.Api" Version="1.18.0" />
   </ItemGroup>
 
   <ItemGroup>
