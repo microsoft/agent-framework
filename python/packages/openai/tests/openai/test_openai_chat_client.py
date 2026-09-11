@@ -7,7 +7,7 @@ import os
 from collections.abc import AsyncGenerator, Iterator, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -42,6 +42,16 @@ from agent_framework.exceptions import (
     SettingNotFoundError,
 )
 from openai import AsyncOpenAI, BadRequestError
+from openai.types.responses import (
+    Response,
+    ResponseCompletedEvent,
+    ResponseFailedEvent,
+    ResponseFunctionCallArgumentsDoneEvent,
+    ResponseFunctionToolCall,
+    ResponseIncompleteEvent,
+    ResponseOutputItemAddedEvent,
+    ResponseOutputItemDoneEvent,
+)
 from openai.types.responses.response_reasoning_item import Summary
 from openai.types.responses.response_reasoning_summary_text_delta_event import (
     ResponseReasoningSummaryTextDeltaEvent,
@@ -60,7 +70,10 @@ from pydantic import BaseModel
 from pytest import param
 
 from agent_framework_openai import OpenAIChatClient, OpenAIChatOptions, RawOpenAIChatClient
-from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
+from agent_framework_openai._chat_client import (
+    OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY,
+    _resolve_finish_reason,
+)
 from agent_framework_openai._exceptions import OpenAIContentFilterException
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
@@ -7364,6 +7377,34 @@ def test_streaming_response_completed_sets_created_at() -> None:
 
 
 @pytest.mark.parametrize(
+    ("provider_finish_reason", "has_function_calls", "function_calls_committed", "expected_finish_reason"),
+    [
+        ("stop", False, False, "stop"),
+        ("length", False, True, "length"),
+        ("tool_calls", False, False, None),
+        ("stop", True, True, "tool_calls"),
+        ("length", True, True, "tool_calls"),
+        ("tool_calls", True, False, None),
+        ("stop", True, False, "stop"),
+    ],
+)
+def test_resolve_finish_reason_requires_committed_function_calls(
+    provider_finish_reason: str,
+    has_function_calls: bool,
+    function_calls_committed: bool,
+    expected_finish_reason: str | None,
+) -> None:
+    """Function-call evidence controls authorization while ordinary reasons pass through."""
+    finish_reason = _resolve_finish_reason(
+        cast(Any, provider_finish_reason),
+        has_function_calls=has_function_calls,
+        function_calls_committed=function_calls_committed,
+    )
+
+    assert finish_reason == expected_finish_reason
+
+
+@pytest.mark.parametrize(
     ("status", "incomplete_reason", "output_type", "expected_finish_reason"),
     [
         ("completed", None, None, "stop"),
@@ -7385,7 +7426,7 @@ def test_get_finish_reason_from_openai_response(
     mock_response = MagicMock()
     mock_response.status = status
     mock_response.incomplete_details = MagicMock(reason=incomplete_reason) if incomplete_reason is not None else None
-    mock_response.output = [MagicMock(type=output_type)] if output_type is not None else []
+    mock_response.output = [MagicMock(type=output_type, status="completed")] if output_type is not None else []
 
     finish_reason = client._get_finish_reason_from_openai_response(mock_response)
 
@@ -7409,6 +7450,250 @@ def test_parse_response_from_openai_sets_finish_reason() -> None:
     response = client._parse_response_from_openai(mock_response, options={})  # type: ignore[arg-type]
 
     assert response.finish_reason == "stop"
+
+
+def _typed_function_call(
+    index: int,
+    *,
+    status: Literal["in_progress", "completed", "incomplete"] = "completed",
+) -> ResponseFunctionToolCall:
+    return ResponseFunctionToolCall(
+        arguments=json.dumps({"index": index}),
+        call_id=f"call_{index}",
+        id=f"fc_{index}",
+        name="lookup",
+        status=status,
+        type="function_call",
+    )
+
+
+def _typed_terminal_response(
+    function_calls: Sequence[ResponseFunctionToolCall],
+    *,
+    status: str = "completed",
+    incomplete_reason: str | None = None,
+) -> Response:
+    return Response.model_validate({
+        "id": "resp_done",
+        "created_at": 1000000000,
+        "incomplete_details": {"reason": incomplete_reason} if incomplete_reason else None,
+        "model": "test-model",
+        "object": "response",
+        "output": function_calls,
+        "parallel_tool_calls": True,
+        "status": status,
+        "tool_choice": "auto",
+        "tools": [],
+    })
+
+
+def test_parse_response_requires_completed_function_call_items_for_tool_calls() -> None:
+    """A completed response must not commit an incomplete local function call."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    response = _typed_terminal_response([
+        _typed_function_call(0),
+        _typed_function_call(1, status="incomplete"),
+    ])
+
+    parsed = client._parse_response_from_openai(response, options={})  # type: ignore[arg-type]
+
+    assert parsed.finish_reason == "stop"
+
+
+def _typed_function_call_events(
+    function_calls: Sequence[ResponseFunctionToolCall],
+    *,
+    arguments_done: set[int],
+    output_items_done: set[int],
+) -> list[object]:
+    events: list[object] = []
+    sequence_number = 0
+    for index, function_call in enumerate(function_calls):
+        events.append(
+            ResponseOutputItemAddedEvent(
+                item=function_call,
+                output_index=index,
+                sequence_number=sequence_number,
+                type="response.output_item.added",
+            )
+        )
+        sequence_number += 1
+        if index in arguments_done:
+            events.append(
+                ResponseFunctionCallArgumentsDoneEvent(
+                    arguments=function_call.arguments,
+                    item_id=function_call.id or "",
+                    output_index=index,
+                    sequence_number=sequence_number,
+                    type="response.function_call_arguments.done",
+                )
+            )
+            sequence_number += 1
+        if index in output_items_done:
+            events.append(
+                ResponseOutputItemDoneEvent(
+                    item=function_call,
+                    output_index=index,
+                    sequence_number=sequence_number,
+                    type="response.output_item.done",
+                )
+            )
+            sequence_number += 1
+    return events
+
+
+async def _parse_typed_response_stream(events: Sequence[object]) -> list[ChatResponseUpdate]:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    with (
+        patch.object(client, "_prepare_request", new=AsyncMock(return_value=(client.client, {}, {}))),
+        patch.object(client.client.responses, "create", new=AsyncMock(return_value=_FakeAsyncEventStream(events))),
+    ):
+        stream = _as_chat_response_stream(
+            client._inner_get_response(messages=[Message(role="user", contents=["Hi"])], options={}, stream=True)
+        )
+        return [update async for update in stream]
+
+
+@pytest.mark.parametrize(
+    ("arguments_done", "output_items_done", "expected_finish_reason"),
+    [
+        ({0, 1}, {0, 1}, "tool_calls"),
+        ({0}, {0, 1}, "stop"),
+        ({0, 1}, {0}, "stop"),
+        (set(), set(), "stop"),
+    ],
+)
+async def test_streaming_parallel_function_calls_commit_all_or_nothing(
+    arguments_done: set[int],
+    output_items_done: set[int],
+    expected_finish_reason: str,
+) -> None:
+    """Every parallel call needs both done events before the terminal response commits the batch."""
+    function_calls = [_typed_function_call(0), _typed_function_call(1)]
+    events = _typed_function_call_events(
+        function_calls,
+        arguments_done=arguments_done,
+        output_items_done=output_items_done,
+    )
+    events.append(
+        ResponseCompletedEvent(
+            response=_typed_terminal_response(function_calls),
+            sequence_number=len(events),
+            type="response.completed",
+        )
+    )
+
+    updates = await _parse_typed_response_stream(events)
+
+    assert [update.raw_representation for update in updates] == events
+    assert updates[-1].finish_reason == expected_finish_reason
+
+
+async def test_streaming_function_call_done_event_order_is_independent() -> None:
+    """The two required done events may arrive in either order without changing commitment."""
+    function_call = _typed_function_call(0)
+    events: list[object] = [
+        ResponseOutputItemAddedEvent(
+            item=function_call,
+            output_index=0,
+            sequence_number=0,
+            type="response.output_item.added",
+        ),
+        ResponseOutputItemDoneEvent(
+            item=function_call,
+            output_index=0,
+            sequence_number=1,
+            type="response.output_item.done",
+        ),
+        ResponseFunctionCallArgumentsDoneEvent(
+            arguments=function_call.arguments,
+            item_id=function_call.id or "",
+            output_index=0,
+            sequence_number=2,
+            type="response.function_call_arguments.done",
+        ),
+        ResponseCompletedEvent(
+            response=_typed_terminal_response([function_call]),
+            sequence_number=3,
+            type="response.completed",
+        ),
+    ]
+
+    updates = await _parse_typed_response_stream(events)
+
+    assert [update.raw_representation for update in updates] == events
+    assert updates[-1].finish_reason == "tool_calls"
+
+
+async def test_streaming_terminal_event_does_not_wait_for_late_function_call_evidence() -> None:
+    """The existing terminal update resolves immediately and later events cannot retroactively commit it."""
+    function_call = _typed_function_call(0)
+    commitment_events = _typed_function_call_events(
+        [function_call],
+        arguments_done={0},
+        output_items_done=set(),
+    )
+    terminal_event = ResponseCompletedEvent(
+        response=_typed_terminal_response([function_call]),
+        sequence_number=len(commitment_events),
+        type="response.completed",
+    )
+    late_done_event = ResponseOutputItemDoneEvent(
+        item=function_call,
+        output_index=0,
+        sequence_number=len(commitment_events) + 1,
+        type="response.output_item.done",
+    )
+    events = [*commitment_events, terminal_event, late_done_event]
+
+    updates = await _parse_typed_response_stream(events)
+
+    assert [update.raw_representation for update in updates] == events
+    assert updates[-2].finish_reason == "stop"
+    assert updates[-1].finish_reason is None
+
+
+@pytest.mark.parametrize(("terminal_status", "event_type"), [("incomplete", "incomplete"), ("failed", "failed")])
+async def test_streaming_noncompleted_terminal_never_commits_function_calls(
+    terminal_status: str,
+    event_type: str,
+) -> None:
+    """Done evidence cannot authorize calls when the provider response did not complete."""
+    function_call = _typed_function_call(0)
+    events = _typed_function_call_events([function_call], arguments_done={0}, output_items_done={0})
+    response = _typed_terminal_response(
+        [function_call],
+        status=terminal_status,
+        incomplete_reason="max_output_tokens" if terminal_status == "incomplete" else None,
+    )
+    terminal_event: object
+    if event_type == "incomplete":
+        terminal_event = ResponseIncompleteEvent(
+            response=response,
+            sequence_number=len(events),
+            type="response.incomplete",
+        )
+    else:
+        terminal_event = ResponseFailedEvent(
+            response=response,
+            sequence_number=len(events),
+            type="response.failed",
+        )
+    events.append(terminal_event)
+
+    updates = await _parse_typed_response_stream(events)
+
+    assert updates[-1].finish_reason != "tool_calls"
+
+
+async def test_streaming_missing_terminal_event_never_commits_function_calls() -> None:
+    """A stream ending after both done events has no finish reason to authorize execution."""
+    function_call = _typed_function_call(0)
+    events = _typed_function_call_events([function_call], arguments_done={0}, output_items_done={0})
+
+    updates = await _parse_typed_response_stream(events)
+
+    assert all(update.finish_reason != "tool_calls" for update in updates)
 
 
 @pytest.mark.parametrize(
@@ -7441,7 +7726,7 @@ def test_streaming_terminal_response_sets_finish_reason(
     mock_event.response.incomplete_details = (
         MagicMock(reason=incomplete_reason) if incomplete_reason is not None else None
     )
-    mock_event.response.output = [MagicMock(type=output_type)] if output_type is not None else []
+    mock_event.response.output = [MagicMock(type=output_type, status="completed")] if output_type is not None else []
 
     update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids={})
 

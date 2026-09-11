@@ -156,6 +156,25 @@ _AZURE_AI_SEARCH_CALL_OUTPUT_TYPE = "azure_ai_search_call_output"
 _AZURE_AI_SEARCH_OUTPUT_EVENT_TYPES = {"response.output_item.added", "response.output_item.done"}
 _AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX = "response.azure_ai_search_call_output."
 
+_FUNCTION_CALL_ARGUMENTS_DONE = 1
+_FUNCTION_CALL_OUTPUT_ITEM_DONE = 2
+_FUNCTION_CALL_COMMITTED = _FUNCTION_CALL_ARGUMENTS_DONE | _FUNCTION_CALL_OUTPUT_ITEM_DONE
+
+
+def _resolve_finish_reason(
+    provider_finish_reason: FinishReason | None,
+    *,
+    has_function_calls: bool,
+    function_calls_committed: bool,
+) -> FinishReason | None:
+    """Resolve function-call authorization without trusting a speculative provider reason."""
+    if has_function_calls and function_calls_committed:
+        return FinishReason("tool_calls")
+    if provider_finish_reason == "tool_calls":
+        return None
+    return provider_finish_reason
+
+
 # Internal marker emitted by `_prepare_content_for_openai` for an
 # `mcp_server_tool_result` Content. The Responses API expects an `mcp_call`
 # input item to carry both arguments and output as one item, so result
@@ -716,6 +735,37 @@ class RawOpenAIChatClient(
             # Captured once request options are validated/prepared so the streaming finalizer can
             # still parse the aggregated response into structured output after the stream completes.
             response_format: Any | None = None
+            function_call_commitments: dict[tuple[int, str], int] = {}
+
+            def _parse_stream_chunk(chunk: OpenAIResponseStreamEvent) -> ChatResponseUpdate:
+                terminal_response: Any | None = None
+                match chunk.type:
+                    case "response.function_call_arguments.done":
+                        key = (chunk.output_index, chunk.item_id)
+                        function_call_commitments[key] = (
+                            function_call_commitments.get(key, 0) | _FUNCTION_CALL_ARGUMENTS_DONE
+                        )
+                    case "response.output_item.done" if getattr(chunk.item, "type", None) == "function_call":
+                        key = (chunk.output_index, getattr(chunk.item, "id", None) or "")
+                        function_call_commitments[key] = (
+                            function_call_commitments.get(key, 0) | _FUNCTION_CALL_OUTPUT_ITEM_DONE
+                        )
+                    case "response.completed" | "response.incomplete" | "response.failed":
+                        terminal_response = chunk.response
+                    case _:
+                        pass
+                update = self._parse_chunk_from_openai(
+                    chunk,
+                    options=validated_options or {},
+                    function_call_ids=function_call_ids,
+                    seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
+                )
+                if terminal_response is not None:
+                    update.finish_reason = self._get_finish_reason_from_openai_response(
+                        terminal_response,
+                        function_call_commitments=function_call_commitments,
+                    )
+                return update
 
             def _finalize_with_captured_format(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
                 # ResponseStream only calls the finalizer after iterating or draining `_stream()`,
@@ -745,12 +795,7 @@ class RawOpenAIChatClient(
                         served_model = self._extract_served_model(getattr(raw_stream_response, "headers", None))
                         async with _open_event_stream(raw_stream_response) as stream_response:
                             async for chunk in stream_response:
-                                update = self._parse_chunk_from_openai(
-                                    chunk,
-                                    options=validated_options,
-                                    function_call_ids=function_call_ids,
-                                    seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
-                                )
+                                update = _parse_stream_chunk(chunk)
                                 if served_model is not None:
                                     update.model = served_model
                                 yield update
@@ -775,12 +820,7 @@ class RawOpenAIChatClient(
                             # surface the served-model header.
                             async with client.responses.stream(**run_options) as response:
                                 async for chunk in response:
-                                    yield self._parse_chunk_from_openai(
-                                        chunk,
-                                        options=validated_options,
-                                        function_call_ids=function_call_ids,
-                                        seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
-                                    )
+                                    yield _parse_stream_chunk(chunk)
                         else:
                             raw_create_response = await client.responses.with_raw_response.create(
                                 stream=True, **run_options
@@ -789,12 +829,7 @@ class RawOpenAIChatClient(
                             served_model = self._extract_served_model(getattr(raw_create_response, "headers", None))
                             async with _open_event_stream(raw_create_response) as stream_response:
                                 async for chunk in stream_response:
-                                    update = self._parse_chunk_from_openai(
-                                        chunk,
-                                        options=validated_options,
-                                        function_call_ids=function_call_ids,
-                                        seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
-                                    )
+                                    update = _parse_stream_chunk(chunk)
                                     if served_model is not None:
                                         update.model = served_model
                                     yield update
@@ -2629,18 +2664,43 @@ class RawOpenAIChatClient(
         )
 
     # region Parse methods
-    def _get_finish_reason_from_openai_response(self, response: Any) -> FinishReason | None:
+    def _get_finish_reason_from_openai_response(
+        self,
+        response: Any,
+        *,
+        function_call_commitments: Mapping[tuple[int, str], int] | None = None,
+    ) -> FinishReason | None:
         """Get the framework finish reason from a terminal Responses API response."""
         incomplete_reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
         if incomplete_reason == "content_filter":
-            return FinishReason("content_filter")
-        if incomplete_reason == "max_output_tokens":
-            return FinishReason("length")
-        if getattr(response, "status", None) != "completed":
-            return None
-        if any(getattr(item, "type", None) == "function_call" for item in getattr(response, "output", ())):
-            return FinishReason("tool_calls")
-        return FinishReason("stop")
+            provider_finish_reason = FinishReason("content_filter")
+        elif incomplete_reason == "max_output_tokens":
+            provider_finish_reason = FinishReason("length")
+        elif getattr(response, "status", None) == "completed":
+            provider_finish_reason = FinishReason("stop")
+        else:
+            provider_finish_reason = None
+
+        function_calls = [
+            (output_index, item)
+            for output_index, item in enumerate(getattr(response, "output", ()))
+            if getattr(item, "type", None) == "function_call"
+        ]
+        if function_call_commitments is None:
+            function_calls_committed = getattr(response, "status", None) == "completed" and all(
+                getattr(item, "status", None) == "completed" for _, item in function_calls
+            )
+        else:
+            function_calls_committed = getattr(response, "status", None) == "completed" and all(
+                function_call_commitments.get((output_index, getattr(item, "id", None) or ""), 0)
+                == _FUNCTION_CALL_COMMITTED
+                for output_index, item in function_calls
+            )
+        return _resolve_finish_reason(
+            provider_finish_reason,
+            has_function_calls=bool(function_calls),
+            function_calls_committed=function_calls_committed,
+        )
 
     def _parse_response_from_openai(
         self,
