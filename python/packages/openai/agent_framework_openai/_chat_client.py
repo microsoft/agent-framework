@@ -3279,7 +3279,10 @@ class RawOpenAIChatClient(
                 created_at = datetime.fromtimestamp(event.response.created_at, tz=timezone.utc).strftime(
                     "%Y-%m-%dT%H:%M:%S.%fZ"
                 )
-                finish_reason = self._get_finish_reason_from_openai_response(event.response)
+                finish_reason = self._get_finish_reason_from_openai_response(
+                    event.response,
+                    function_call_commitments={},
+                )
                 if event.response.usage:
                     usage = self._parse_usage_from_openai(event.response.usage)
                     if usage:

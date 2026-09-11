@@ -513,6 +513,7 @@ class AGUIChatClient(
 
         converter = AGUIEventConverter()
         has_function_calls = False
+        open_client_tool_call_ids: set[str] = set()
 
         available_interrupts = options.get("available_interrupts", options.get("availableInterrupts"))
 
@@ -526,6 +527,14 @@ class AGUIChatClient(
             resume=_serialize_resume(options.get("resume")),
         ):
             logger.debug(f"[AGUIChatClient] Raw AG-UI event: {event}")
+            event_type = str(event.get("type", "")).upper()
+            event_tool_call_id = str(event.get("toolCallId") or event.get("tool_call_id") or "")
+            if event_type == "TOOL_CALL_START":
+                event_tool_name = event.get("toolName") or event.get("toolCallName") or event.get("tool_call_name")
+                if event_tool_name in client_tool_set:
+                    open_client_tool_call_ids.add(event_tool_call_id)
+            elif event_type == "TOOL_CALL_END":
+                open_client_tool_call_ids.discard(event_tool_call_id)
             update = converter.convert_event(event)
             if update is not None:
                 logger.debug(
@@ -553,6 +562,6 @@ class AGUIChatClient(
                 update.finish_reason = _resolve_finish_reason(
                     cast(FinishReason | None, update.finish_reason),
                     has_function_calls=has_function_calls,
-                    function_calls_committed=str(event.get("type", "")).upper() == "RUN_FINISHED",
+                    function_calls_committed=event_type == "RUN_FINISHED" and not open_client_tool_call_ids,
                 )
                 yield update

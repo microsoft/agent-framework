@@ -66,6 +66,21 @@ logger = logging.getLogger("agent_framework")
 _UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY = "_agent_framework_uncommitted_function_calls"
 
 
+def _filter_uncommitted_function_call_messages(messages: Sequence[Message]) -> list[Message]:
+    return [
+        message
+        for message in messages
+        if message.role != "assistant"
+        or (
+            _UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY not in message.additional_properties
+            and not any(
+                _UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY in content.additional_properties
+                for content in message.contents
+            )
+        )
+    ]
+
+
 # region SupportsChatGetResponse Protocol
 
 # Contravariant for the Protocol
@@ -376,18 +391,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
     ) -> list[Message]:
-        prepared_messages = [
-            message
-            for message in messages
-            if message.role != "assistant"
-            or (
-                _UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY not in message.additional_properties
-                and not any(
-                    _UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY in content.additional_properties
-                    for content in message.contents
-                )
-            )
-        ]
+        prepared_messages = _filter_uncommitted_function_call_messages(messages)
         if compaction_strategy is None:
             if tokenizer is None:
                 return prepared_messages
@@ -403,7 +407,11 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         # the function-invocation tool loop reuses across iterations; otherwise inserted
         # summaries would be lost on a throwaway copy while exclusions persisted, silently
         # dropping older groups (issue #4991).
-        working_messages = messages if isinstance(messages, list) else prepared_messages
+        if isinstance(messages, list):
+            messages[:] = prepared_messages
+            working_messages = messages
+        else:
+            working_messages = prepared_messages
         return await apply_compaction(
             working_messages,
             strategy=compaction_strategy,
@@ -529,10 +537,11 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             tokenizer=tokenizer,
         )
         merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        filtered_messages = _filter_uncommitted_function_call_messages(messages)
 
         if not compaction_overrides:
             return self._inner_get_response(
-                messages=messages,
+                messages=filtered_messages,
                 stream=stream,
                 options=options or {},
                 **merged_client_kwargs,

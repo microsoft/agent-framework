@@ -7899,7 +7899,7 @@ async def test_streaming_missing_terminal_event_never_commits_function_calls() -
     ("event_type", "status", "incomplete_reason", "output_type", "expected_finish_reason"),
     [
         ("response.completed", "completed", None, None, "stop"),
-        ("response.completed", "completed", None, "function_call", "tool_calls"),
+        ("response.completed", "completed", None, "function_call", "stop"),
         ("response.incomplete", "incomplete", "max_output_tokens", None, "length"),
         ("response.incomplete", "incomplete", "content_filter", None, "content_filter"),
         ("response.failed", "failed", None, None, None),

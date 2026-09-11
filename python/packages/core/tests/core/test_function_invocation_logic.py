@@ -6,6 +6,7 @@ import logging
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, Literal, cast
+from unittest.mock import patch
 
 import pytest
 
@@ -444,6 +445,85 @@ async def test_function_calls_require_tool_calls_finish_reason(
 
     prepared_messages = await client._prepare_messages_for_model_call(response.messages)
     assert prepared_messages == []
+
+    replayed_messages: list[Message] = []
+    if stream:
+
+        def capture_stream(
+            *,
+            messages: Sequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            replayed_messages.extend(messages)
+
+            async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(
+                    contents=[Content.from_text("done")],
+                    role="assistant",
+                    finish_reason="stop",
+                )
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        with patch.object(client, "_get_streaming_response", side_effect=capture_stream):
+            replay_stream = client.get_response(response.messages, stream=True)
+            _ = [update async for update in replay_stream]
+    else:
+
+        async def capture_response(
+            *,
+            messages: Sequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ChatResponse:
+            replayed_messages.extend(messages)
+            return ChatResponse(
+                messages=[Message(role="assistant", contents=["done"])],
+                finish_reason="stop",
+            )
+
+        with patch.object(client, "_get_non_streaming_response", side_effect=capture_response):
+            await client.get_response(response.messages)
+
+    assert replayed_messages == []
+
+
+async def test_uncommitted_function_call_turn_is_filtered_before_compaction(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    client = cast(Any, chat_client_base)
+    client.compaction_strategy = SlidingWindowStrategy(keep_last_groups=2)
+    client.tokenizer = CharacterEstimatorTokenizer()
+    uncommitted_call = Content.from_function_call(call_id="call_1", name="guarded_write", arguments={})
+    response = ChatResponse(
+        messages=[
+            Message(role="assistant", contents=[Content.from_text_reasoning(text="I should write")]),
+            Message(role="assistant", contents=[uncommitted_call]),
+        ]
+    )
+    from agent_framework._tools import _mark_uncommitted_function_call_messages
+
+    _mark_uncommitted_function_call_messages(response)
+    replayed_messages: list[Message] = []
+
+    async def capture_response(
+        *,
+        messages: Sequence[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        replayed_messages.extend(messages)
+        return ChatResponse(
+            messages=[Message(role="assistant", contents=["done"])],
+            finish_reason="stop",
+        )
+
+    with patch.object(client, "_get_non_streaming_response", side_effect=capture_response):
+        await client.get_response(response.messages)
+
+    assert replayed_messages == []
+    assert response.messages == []
 
 
 @pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
