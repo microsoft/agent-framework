@@ -377,6 +377,15 @@ that manually replay messages own the equivalent rule: do not resend an approval
   not invent one.
 - A completed function call/result pair is inert on later turns.
 - Informational-only and declaration-only calls are not executed as local tools.
+- For automatic local execution, provider arguments are JSON-parsed before function middleware but are not schema
+  validated yet. Middleware may inspect or repair that raw mapping before calling `call_next()`. The innermost handler
+  performs final validation immediately before the tool body and writes the validated, normalized mapping back to
+  `FunctionInvocationContext.arguments`. Middleware that short-circuits without `call_next()` also skips final
+  validation and tool execution.
+- Argument-repair middleware must precede security or policy middleware so enforcement observes the effective
+  invocation. Changing arguments after security middleware has processed them fails closed with `MiddlewareFailure`.
+- Argument-validation failures after middleware retain the established `Argument parsing failed` result contract.
+  Exceptions raised by middleware or the tool body retain the separate `Function failed` contract.
 
 ### Reasoning-bound calls
 
@@ -414,6 +423,11 @@ that manually replay messages own the equivalent rule: do not resend an approval
 - If policy middleware detects that the exact resolved invocation changed after approval, the old response executes
   nothing and yields a caller-visible, session-persisted replacement request for the same occurrence; execution
   requires a second approval and happens exactly once.
+- If function middleware repairs an approval-bound call, the old response likewise executes nothing and yields a
+  caller-visible, session-persisted replacement request containing the repaired approval-visible arguments. The
+  replacement retains the call occurrence identity, rotates request-generation identity, and requires a second
+  approval before exactly-once execution. Security middleware transformations that preserve an approval-visible
+  placeholder do not disclose the resolved value or trigger a spurious replacement.
 - If session-bound middleware no longer holds the reviewed authority because it expired or was evicted, the matched
   response executes nothing and produces a replacement approval request with the same occurrence identity and a fresh
   request generation. The replacement is caller-visible, becomes the authoritative pending session snapshot, and
@@ -583,6 +597,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Rejected execution | Rejection is a normal terminal result, not an exception to the caller. | `test_unapproved_tool_execution_raises_exception` |
 | Approved tool exception | Generic and detailed error modes preserve one result and one execution. | `test_approved_function_call_with_error_without_detailed_errors`, `test_approved_function_call_with_error_with_detailed_errors` |
 | Approved validation error | Validation failure returns one result without invoking the function body. | `test_approved_function_call_with_validation_error` |
+| Pre-validation middleware repair | Function middleware observes raw parsed arguments, may repair them before final validation, and the body receives validated normalized values exactly once; short-circuiting skips validation and execution. Repair after security middleware fails closed, including invalid and short-circuited mutations. Validation errors after hidden-value resolution do not disclose the resolved value, while ordinary final Pydantic normalization remains allowed. | `test_function_middleware_repairs_raw_arguments_before_validation`, `test_function_middleware_can_short_circuit_before_argument_validation`, `test_invalid_arguments_produced_by_middleware_keep_argument_error_contract`, `packages/core/tests/test_security.py::TestVariableArgumentPolicy::test_argument_mutation_after_security_middleware_fails_closed`, `test_argument_mutation_after_security_short_circuit_fails_closed`, `test_hidden_argument_validation_error_does_not_disclose_resolved_value`, `test_hidden_argument_can_be_normalized_after_security_check` |
+| Approved middleware repair | A changed approval-bound call executes zero times under the old grant, returns a persisted occurrence-bound replacement request in both response modes, and executes once only after the replacement is approved. Security expansion preserves approval-visible placeholders. | `test_approved_argument_repair_requires_replacement_approval`, `packages/core/tests/test_security.py::TestVariableArgumentPolicy::test_hidden_argument_resolution_does_not_require_reapproval` |
 | Approved success | Successful approved execution returns one result. | `test_approved_function_call_successful_execution` |
 | Consecutive error cap | Error threshold stops repeated failures, submits collected results, and makes only the required final no-tool model call. | `test_function_invocation_config_max_consecutive_errors`, `test_streaming_function_invocation_config_max_consecutive_errors`, `test_approval_resume_error_limit_forces_final_no_tool_response` |
 | Unknown call handling | Configured false returns an error result; configured true raises. | `test_function_invocation_config_terminate_on_unknown_calls_false`, `test_function_invocation_config_terminate_on_unknown_calls_true`, streaming equivalents |

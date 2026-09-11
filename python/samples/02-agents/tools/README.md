@@ -8,13 +8,19 @@ injection, and dynamic (progressive) tool exposure.
 
 | File | Demonstrates |
 |------|--------------|
-| [`function_tool_with_explicit_schema.py`](function_tool_with_explicit_schema.py) | Defining a tool with an explicit JSON schema. |
+| [`function_tool_with_explicit_schema.py`](function_tool_with_explicit_schema.py) | Choosing between Pydantic validation and a trusted, non-sensitive JSON schema declaration. |
 | [`function_tool_declaration_only.py`](function_tool_declaration_only.py) | A declaration-only tool (schema without a local implementation). |
 | [`function_tool_with_kwargs.py`](function_tool_with_kwargs.py) | Passing extra keyword arguments into a tool. |
 | [`function_tool_from_dict_with_dependency_injection.py`](function_tool_from_dict_with_dependency_injection.py) | Dependency injection into a tool defined from a dict. |
 | [`function_tool_with_session_injection.py`](function_tool_with_session_injection.py) | Injecting the session into a tool. |
 | [`tool_in_class.py`](tool_in_class.py) | Using a method on a class as a tool. |
 | [`agent_as_tool_with_session_propagation.py`](agent_as_tool_with_session_propagation.py) | Exposing an agent as a tool with session propagation. |
+
+> [!WARNING]
+> Caller-supplied JSON schema mappings receive only lightweight top-level runtime
+> checks. Nested constraints and other JSON Schema keywords are not comprehensively
+> enforced, so mappings must not be used as an authorization or security boundary.
+> Use a Pydantic model for sensitive tools or whenever runtime validation matters.
 
 ## Approvals & invocation control
 

@@ -23,7 +23,7 @@ from agent_framework import (
     Message,
     SessionContext,
 )
-from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareTermination
+from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareFailure, MiddlewareTermination
 from agent_framework._tools import (
     FunctionTool,
     _auto_invoke_function,
@@ -5724,6 +5724,168 @@ class TestVariableArgumentPolicy:
         assert received == ["payload"]
         assert context.metadata["argument_label"].integrity == IntegrityLabel.UNTRUSTED
         assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
+
+    async def test_hidden_argument_resolution_does_not_require_reapproval(self) -> None:
+        """Security expansion preserves the approval-visible placeholder."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        sink = self._sink(accepts_untrusted=True)
+        function_call = Content.from_function_call(
+            call_id="approved-hidden-value",
+            id="approved-hidden-value-occurrence",
+            name=sink.name,
+            arguments={"value": f"[{variable_id}]"},
+        )
+        approval_response = Content.from_function_approval_request(
+            id="approved-hidden-value-occurrence",
+            function_call=function_call,
+        ).to_function_approval_response(approved=True)
+
+        result = await _auto_invoke_function(
+            approval_response,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={sink.name: sink},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert result.result == "payload"
+
+    async def test_hidden_argument_can_be_normalized_after_security_check(self) -> None:
+        """Final Pydantic coercion is not mistaken for post-policy mutation."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "3",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+
+        class StrictArgs(BaseModel):
+            value: int
+
+        received: list[int] = []
+
+        def strict_sink(value: int) -> str:
+            received.append(value)
+            return str(value)
+
+        strict_tool = FunctionTool(
+            func=strict_sink,
+            name="strict_sink",
+            input_model=StrictArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="hidden-normalization",
+            name=strict_tool.name,
+            arguments={"value": f"[{variable_id}]"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={strict_tool.name: strict_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert result.exception is None
+        assert received == [3]
+
+    @pytest.mark.parametrize("include_detailed_errors", [False, True])
+    async def test_hidden_argument_validation_error_does_not_disclose_resolved_value(
+        self,
+        include_detailed_errors: bool,
+    ) -> None:
+        """Validation failures redact values resolved by security middleware."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "secret payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+
+        class StrictArgs(BaseModel):
+            value: int
+
+        strict_tool = FunctionTool(
+            func=lambda value: str(value),
+            name="strict_sink",
+            input_model=StrictArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="hidden-validation-error",
+            name=strict_tool.name,
+            arguments={"value": f"[{variable_id}]"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration({"include_detailed_errors": include_detailed_errors}),
+            tool_map={strict_tool.name: strict_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert "secret payload" not in str(result.result)
+        assert "secret payload" not in str(result.exception)
+        assert result.exception == "Invalid arguments for 'strict_sink'. Invalid field(s): value."
+
+    async def test_argument_mutation_after_security_middleware_fails_closed(self) -> None:
+        """A later middleware cannot change arguments after security policy has inspected them."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        sink = self._sink(accepts_untrusted=True)
+
+        class LateRepairMiddleware(FunctionMiddleware):
+            async def process(self, context, call_next):
+                context.arguments = cast(Any, ["invalid", "post-policy", "arguments"])
+                await call_next()
+
+        function_call = Content.from_function_call(
+            call_id="late-repair",
+            name=sink.name,
+            arguments={"value": "approved value"},
+        )
+
+        with pytest.raises(MiddlewareFailure, match="Install argument-repair middleware before security middleware"):
+            await _auto_invoke_function(
+                function_call,
+                config=normalize_function_invocation_configuration(None),
+                tool_map={sink.name: sink},
+                middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy, LateRepairMiddleware()),
+            )
+
+    async def test_argument_mutation_after_security_short_circuit_fails_closed(self) -> None:
+        """Post-policy mutation cannot evade the guard by short-circuiting execution."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        sink = self._sink(accepts_untrusted=True)
+
+        class LateShortCircuitMiddleware(FunctionMiddleware):
+            async def process(self, context, call_next):
+                del call_next
+                context.arguments = {"value": "changed after policy"}
+                context.result = "short-circuited"
+
+        function_call = Content.from_function_call(
+            call_id="late-short-circuit",
+            name=sink.name,
+            arguments={"value": "approved value"},
+        )
+
+        with pytest.raises(MiddlewareFailure, match="Install argument-repair middleware before security middleware"):
+            await _auto_invoke_function(
+                function_call,
+                config=normalize_function_invocation_configuration(None),
+                tool_map={sink.name: sink},
+                middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy, LateShortCircuitMiddleware()),
+            )
 
     async def test_private_hidden_argument_is_blocked_from_public_sink(self) -> None:
         tracker = LabelTrackingFunctionMiddleware()
