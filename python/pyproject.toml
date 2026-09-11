@@ -124,7 +124,6 @@ preview = true
 [tool.ruff.lint]
 fixable = ["ALL"]
 unfixable = []
-# Ruff 0.16.6 flags these exact rule codes; category prefixes remain codes.
 select = [
     "ASYNC", # async checks
     "B", # bugbear checks
@@ -146,28 +145,27 @@ select = [
     "T20", # flake8-print checks
     "TD", # todos
     "W", # pycodestyle warning checks
-    # Exact rule selectors.
-    "debugger", # T100: Debugger
+    "T100", # Debugger
 ]
 ignore = [
-    "undocumented-public-module", # D100: allow missing docstring in public module
-    "undocumented-public-package", # D104: allow missing docstring in public package
-    "property-docstring-starts-with-verb", # D421: allow property docstrings that start with a verb
-    "overload-with-docstring", # D418: allow overload to have a docstring
-    "missing-todo-link", # TD003: allow missing link to todo issue
-    "line-contains-todo", # FIX002: allow todo
-    "yield-in-context-manager-in-async-generator", # ASYNC119: allow yielding inside async-generator context managers
-    "empty-method-without-abstract-decorator", # B027: allow empty non-abstract method in ABC
-    "zip-without-explicit-strict", # B905: `zip()` without an explicit `strict=` parameter
-    "non-empty-init-module", # RUF067: allow version detection in __init__.py
+    "D100", # allow missing docstring in public module
+    "D104", # allow missing docstring in public package
+    "D421", # allow property docstrings that start with a verb
+    "D418", # allow overload to have a docstring
+    "TD003", # allow missing link to todo issue
+    "FIX002", # allow todo
+    "ASYNC119", # allow yielding inside async-generator context managers
+    "B027", # allow empty non-abstract method in ABC
+    "B905", # `zip()` without an explicit `strict=` parameter
+    "RUF067", # allow version detection in __init__.py
+    "rule-codes-in-selectors", # allow stable rule codes in Ruff selectors
 ]
 
 [tool.ruff.lint.per-file-ignores]
 # Ignore all directories named `tests` and `samples`.
-# Ruff 0.16.6 flags these exact per-file rule codes; category prefixes remain codes.
-"**/tests/**" = ["D", "INP", "TD", "commented-out-code", "RUF", "S"] # commented-out-code is ERA001.
-"samples/**" = ["D", "INP", "commented-out-code", "RUF", "S", "print", "CPY"] # print is T201.
-"*.ipynb" = ["CPY", "line-too-long"] # line-too-long is E501.
+"**/tests/**" = ["D", "INP", "TD", "ERA001", "RUF", "S"]
+"samples/**" = ["D", "INP", "ERA001", "RUF", "S", "T201", "CPY"]
+"*.ipynb" = ["CPY", "E501"]
 
 [tool.ruff.format]
 docstring-code-format = true
