@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, overload
 
 import pytest
-from typing_extensions import Never
+from typing_extensions import Never, assert_type
 
 from agent_framework import (
     AgentExecutorRequest,
@@ -31,6 +31,13 @@ from agent_framework import (
     response_handler,
 )
 from agent_framework._workflows._typing_utils import deserialize_type
+
+
+def _assert_workflow_agent_run_return_types(agent: WorkflowAgent) -> None:
+    """Verify WorkflowAgent.run overloads expose distinct non-streaming and streaming types."""
+    assert_type(agent.run(), Awaitable[AgentResponse])
+    assert_type(agent.run(stream=False), Awaitable[AgentResponse])
+    assert_type(agent.run(stream=True), ResponseStream[AgentResponseUpdate, AgentResponse])
 
 
 @dataclass
