@@ -7,7 +7,6 @@ from __future__ import annotations
 import base64
 import io
 import json
-import tarfile
 import zipfile
 from unittest.mock import AsyncMock
 
@@ -714,25 +713,6 @@ def _make_zip(files: dict[str, bytes]) -> bytes:
     return buffer.getvalue()
 
 
-def _make_tar(files: dict[str, bytes], *, gzipped: bool) -> bytes:
-    """Build an in-memory TAR (optionally gzip-compressed) archive."""
-    buffer = io.BytesIO()
-
-    def _write(archive: tarfile.TarFile) -> None:
-        for name, data in files.items():
-            info = tarfile.TarInfo(name=name)
-            info.size = len(data)
-            archive.addfile(info, io.BytesIO(data))
-
-    if gzipped:
-        with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-            _write(archive)
-    else:
-        with tarfile.open(fileobj=buffer, mode="w:") as archive:
-            _write(archive)
-    return buffer.getvalue()
-
-
 ARCHIVE_SKILL_MD = """\
 ---
 name: packaged-skill
@@ -795,30 +775,28 @@ class TestMCPSkillsSourceArchive:
         assert "Instructions from an archive." in content
 
     @pytest.mark.asyncio
-    async def test_targz_archive_discovered(self) -> None:
+    async def test_targz_archive_is_rejected(self) -> None:
         url = "skill://archives/packaged-skill.tar.gz"
         index = _make_archive_index("packaged-skill", url)
-        archive = _make_tar({"SKILL.md": ARCHIVE_SKILL_MD.encode()}, gzipped=True)
+        archive = b"\x1f\x8b"
         client = _archive_client(index, url, archive, "application/gzip")
 
         source = MCPSkillsSource(client=client)
         skills = await source.get_skills(_SOURCE_CTX)
 
-        assert len(skills) == 1
-        assert skills[0].frontmatter.name == "packaged-skill"
+        assert skills == []
 
     @pytest.mark.asyncio
-    async def test_tar_archive_discovered(self) -> None:
+    async def test_tar_archive_is_rejected(self) -> None:
         url = "skill://archives/packaged-skill.tar"
         index = _make_archive_index("packaged-skill", url)
-        archive = _make_tar({"SKILL.md": ARCHIVE_SKILL_MD.encode()}, gzipped=False)
+        archive = b"tar"
         client = _archive_client(index, url, archive, "application/x-tar")
 
         source = MCPSkillsSource(client=client)
         skills = await source.get_skills(_SOURCE_CTX)
 
-        assert len(skills) == 1
-        assert skills[0].frontmatter.name == "packaged-skill"
+        assert skills == []
 
     @pytest.mark.asyncio
     async def test_archive_reference_resource_is_readable(self) -> None:
@@ -1055,22 +1033,22 @@ class TestArchiveExtractor:
     def test_detect_format_from_magic_bytes(self) -> None:
         from agent_framework._skills import _ArchiveFormat, _detect_archive_format
 
-        assert _detect_archive_format(b"\x1f\x8b\x08\x00", None, None) is _ArchiveFormat.TAR_GZ
+        assert _detect_archive_format(b"\x1f\x8b\x08\x00", None, None) is _ArchiveFormat.UNKNOWN
         assert _detect_archive_format(b"PK\x03\x04rest", None, None) is _ArchiveFormat.ZIP
 
     def test_detect_format_from_media_type(self) -> None:
         from agent_framework._skills import _ArchiveFormat, _detect_archive_format
 
         assert _detect_archive_format(b"xx", "application/zip", None) is _ArchiveFormat.ZIP
-        assert _detect_archive_format(b"xx", "application/x-tar", None) is _ArchiveFormat.TAR
-        assert _detect_archive_format(b"xx", "application/gzip", None) is _ArchiveFormat.TAR_GZ
+        assert _detect_archive_format(b"xx", "application/x-tar", None) is _ArchiveFormat.UNKNOWN
+        assert _detect_archive_format(b"xx", "application/gzip", None) is _ArchiveFormat.UNKNOWN
 
     def test_detect_format_from_url_suffix(self) -> None:
         from agent_framework._skills import _ArchiveFormat, _detect_archive_format
 
         assert _detect_archive_format(b"xx", None, "skill://a.zip") is _ArchiveFormat.ZIP
-        assert _detect_archive_format(b"xx", None, "skill://a.tgz") is _ArchiveFormat.TAR_GZ
-        assert _detect_archive_format(b"xx", None, "skill://a.tar") is _ArchiveFormat.TAR
+        assert _detect_archive_format(b"xx", None, "skill://a.tgz") is _ArchiveFormat.UNKNOWN
+        assert _detect_archive_format(b"xx", None, "skill://a.tar") is _ArchiveFormat.UNKNOWN
 
     def test_detect_format_unknown(self) -> None:
         from agent_framework._skills import _ArchiveFormat, _detect_archive_format
@@ -1127,21 +1105,8 @@ class TestArchiveExtractor:
         with pytest.raises(ValueError, match="uncompressed size"):
             _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 10)
 
-    def test_tar_symlink_member_is_skipped(self) -> None:
+    def test_unknown_format_is_rejected(self) -> None:
         from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
 
-        buffer = io.BytesIO()
-        with tarfile.open(fileobj=buffer, mode="w:") as archive:
-            link = tarfile.TarInfo(name="link")
-            link.type = tarfile.SYMTYPE
-            link.linkname = "/etc/passwd"
-            archive.addfile(link)
-            data = b"regular"
-            reg = tarfile.TarInfo(name="regular.md")
-            reg.size = len(data)
-            archive.addfile(reg, io.BytesIO(data))
-
-        files = _extract_archive_to_memory(buffer.getvalue(), _ArchiveFormat.TAR, 20, 1024 * 1024)
-
-        assert "link" not in files
-        assert files == {"regular.md": b"regular"}
+        with pytest.raises(ValueError, match="Unsupported skill archive format"):
+            _extract_archive_to_memory(b"", _ArchiveFormat.UNKNOWN, 20, 1024 * 1024)
