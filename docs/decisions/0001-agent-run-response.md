@@ -212,7 +212,7 @@ we add helpers to process the streaming responses and extract information from i
 var responses = agent.RunStreamingAsync("Do Something");
 // E.g. an extension method that builds the primary content text.
 Console.WriteLine(await responses.AggregateFinalResult());
-// Or an extention method that builds complete messages from the updates.
+// Or an extension method that builds complete messages from the updates.
 Console.WriteLine(await responses.BuildMessage().Text);
 
 // Callers can also iterate through all updates if needed
