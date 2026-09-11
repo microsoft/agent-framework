@@ -266,6 +266,7 @@ internal enum FunctionToolCallOutputItemResourceStatus
 [JsonDerivedType(typeof(ItemContentOutputText), "output_text")]
 [JsonDerivedType(typeof(ItemContentOutputAudio), "output_audio")]
 [JsonDerivedType(typeof(ItemContentRefusal), "refusal")]
+[JsonDerivedType(typeof(ItemContentFunctionApprovalResponse), "function_approval_response")]
 internal abstract class ItemContent
 {
     /// <summary>
@@ -441,6 +442,58 @@ internal sealed class ItemContentRefusal : ItemContent
     /// </summary>
     [JsonPropertyName("refusal")]
     public required string Refusal { get; init; }
+}
+
+/// <summary>
+/// Represents function call information for approval response item.
+/// </summary>
+internal sealed class FunctionCall
+{
+    /// <summary>
+    /// Gets or initializes the function call ID.
+    /// </summary>
+    [JsonPropertyName("id")]
+    public required string Id { get; init; }
+
+    /// <summary>
+    /// Gets or initializes the function name.
+    /// </summary>
+    [JsonPropertyName("name")]
+    public required string Name { get; init; }
+
+    /// <summary>
+    /// Gets or initializes the function arguments.
+    /// </summary>
+    [JsonPropertyName("arguments")]
+    public required JsonElement Arguments { get; init; }
+}
+
+/// <summary>
+/// Function approval response content.
+/// </summary>
+internal sealed class ItemContentFunctionApprovalResponse : ItemContent
+{
+    /// <inheritdoc/>
+    [JsonIgnore]
+    public override string Type => "function_approval_response";
+
+    /// <summary>
+    /// Gets or initializes the value indicating whether the function call was approved for execution.
+    /// </summary>
+    [JsonPropertyName("approved")]
+    public required bool Approved { get; init; }
+
+    /// <summary>
+    /// Gets or initializes the function call that was subject to approval.
+    /// </summary>
+    [JsonPropertyName("function_call")]
+    public required FunctionCall FunctionCall { get; init; }
+
+    /// <summary>
+    /// Gets or initializes the unique identifier that correlates this response with its corresponding request.
+    /// </summary>
+    [JsonPropertyName("request_id")]
+    public required string RequestId { get; init; }
 }
 
 // Additional ItemResource types from TypeSpec
