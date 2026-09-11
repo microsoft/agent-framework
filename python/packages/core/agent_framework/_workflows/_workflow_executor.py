@@ -15,6 +15,7 @@ from ._const import (
     RAW_CLIENT_KWARGS_KEY,
     RAW_FUNCTION_INVOCATION_KWARGS_KEY,
     WORKFLOW_RUN_KWARGS_KEY,
+    ResolvedWorkflowInvocationKwargs,
 )
 from ._edge_runner import gather_cancelling_siblings_on_error
 from ._events import (
@@ -394,7 +395,9 @@ class WorkflowExecutor(Executor):
                 resolved = cast(WorkflowInvocationKwargs | Mapping[str, Any], raw_value)
             else:
                 normalized: Any = parent_kwargs.get(key)
-                if isinstance(normalized, dict):
+                if isinstance(normalized, ResolvedWorkflowInvocationKwargs):
+                    normalized = normalized.global_kwargs
+                elif isinstance(normalized, dict):
                     normalized_dict = cast(dict[str, Any], normalized)
                     if len(normalized_dict) == 1 and GLOBAL_KWARGS_KEY in normalized_dict:
                         normalized = normalized_dict[GLOBAL_KWARGS_KEY]

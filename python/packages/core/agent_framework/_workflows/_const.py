@@ -1,5 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from dataclasses import dataclass
+from typing import Any
+
 # Default maximum iterations for workflow execution.
 DEFAULT_MAX_ITERATIONS = 100
 
@@ -21,9 +24,16 @@ WORKFLOW_RUN_KWARGS_KEY = "_workflow_run_kwargs"
 RAW_FUNCTION_INVOCATION_KWARGS_KEY = "_raw_function_invocation_kwargs"
 RAW_CLIENT_KWARGS_KEY = "_raw_client_kwargs"
 
-# Sentinel key used in resolved invocation kwargs dicts to denote global kwargs
-# that apply to all executors (as opposed to per-executor keyed entries).
+# Legacy state key used to denote global kwargs in pre-structured run state.
 GLOBAL_KWARGS_KEY = "__global__"
+
+
+@dataclass(frozen=True)
+class ResolvedWorkflowInvocationKwargs:
+    """Keep resolved global and executor-specific kwargs in separate namespaces."""
+
+    global_kwargs: dict[str, Any] | None = None
+    executor_kwargs: dict[str, Any] | None = None
 
 
 def INTERNAL_SOURCE_ID(executor_id: str) -> str:

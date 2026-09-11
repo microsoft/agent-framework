@@ -23,11 +23,11 @@ from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._checkpoint import CheckpointStorage
 from ._const import (
     DEFAULT_MAX_ITERATIONS,
-    GLOBAL_KWARGS_KEY,
     INTERNAL_SOURCE_ID,
     RAW_CLIENT_KWARGS_KEY,
     RAW_FUNCTION_INVOCATION_KWARGS_KEY,
     WORKFLOW_RUN_KWARGS_KEY,
+    ResolvedWorkflowInvocationKwargs,
 )
 from ._edge import (
     EdgeGroup,
@@ -1124,29 +1124,31 @@ class Workflow(DictConvertible):
         self,
         kwargs: WorkflowInvocationKwargs | Mapping[str, Any],
         param_name: str,
-    ) -> dict[str, Any]:
+    ) -> ResolvedWorkflowInvocationKwargs:
         """Resolve invocation kwargs into a normalized per-executor or global format.
 
         Detects whether the provided kwargs dict uses per-executor targeting by checking
         if any top-level key matches a known executor ID in the workflow. If at least one
         key matches, all entries are treated as per-executor. Otherwise the dict is treated
-        as global kwargs that apply to every executor. The ``"__global__"`` key can be used
-        explicitly to combine global kwargs with per-executor overrides.
+        as global kwargs that apply to every executor. Use ``WorkflowInvocationKwargs`` to
+        combine global kwargs with per-executor overrides.
 
         Args:
             kwargs: The raw invocation kwargs from the caller.
             param_name: The parameter name (for logging), e.g. ``"function_invocation_kwargs"``.
 
         Returns:
-            A dict containing normalized global or per-executor mappings.
+            A collision-free internal representation of global and per-executor mappings.
         """
         if isinstance(kwargs, WorkflowInvocationKwargs):
-            resolved = {GLOBAL_KWARGS_KEY: dict(kwargs.global_kwargs)}
-            resolved.update({
-                executor_id: dict(executor_kwargs) for executor_id, executor_kwargs in kwargs.executor_kwargs.items()
-            })
             logger.info("Explicit global %s provided with executor-specific overrides.", param_name)
-            return resolved
+            return ResolvedWorkflowInvocationKwargs(
+                global_kwargs=dict(kwargs.global_kwargs),
+                executor_kwargs={
+                    executor_id: dict(executor_kwargs)
+                    for executor_id, executor_kwargs in kwargs.executor_kwargs.items()
+                },
+            )
 
         executor_ids = set(self.executors.keys())
         matched_ids = kwargs.keys() & executor_ids
@@ -1157,13 +1159,13 @@ class Workflow(DictConvertible):
                 param_name,
                 matched_ids,
             )
-            return dict(kwargs)
+            return ResolvedWorkflowInvocationKwargs(executor_kwargs=dict(kwargs))
 
         logger.info(
             "No executor IDs found in %s keys; treating as global kwargs for all executors.",
             param_name,
         )
-        return {GLOBAL_KWARGS_KEY: dict(kwargs)}
+        return ResolvedWorkflowInvocationKwargs(global_kwargs=dict(kwargs))
 
     # Graph signature helpers
 

@@ -15,7 +15,7 @@ from .._agents import SupportsAgentRun
 from .._sessions import AgentSession
 from .._types import AgentResponse, AgentResponseUpdate, Message, ResponseStream
 from ._agent_utils import resolve_agent_id
-from ._const import GLOBAL_KWARGS_KEY, INTERNAL_SOURCE_ID, WORKFLOW_RUN_KWARGS_KEY
+from ._const import GLOBAL_KWARGS_KEY, INTERNAL_SOURCE_ID, WORKFLOW_RUN_KWARGS_KEY, ResolvedWorkflowInvocationKwargs
 from ._executor import Executor, handler
 from ._message_utils import normalize_messages_input
 from ._request_info_mixin import response_handler
@@ -585,11 +585,10 @@ class AgentExecutor(Executor):
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         """Prepare function_invocation_kwargs and client_kwargs for agent.run().
 
-        Extracts ``function_invocation_kwargs`` and ``client_kwargs`` from the
-        workflow state dict, resolving per-executor entries using ``self.id``. The
-        ``__global__`` sentinel key (set by ``Workflow._resolve_invocation_kwargs``) denotes
-        global kwargs that apply to all executors. Per-executor dicts use executor IDs as
-        keys; this executor extracts only its own entry.
+        Extracts ``function_invocation_kwargs`` and ``client_kwargs`` from workflow
+        run state and resolves the global and executor-specific namespaces for this
+        executor. Newly resolved state uses ``ResolvedWorkflowInvocationKwargs``;
+        legacy dict state remains readable for checkpoint compatibility.
 
         Returns:
             A 2-tuple of (function_invocation_kwargs, client_kwargs).
@@ -601,21 +600,30 @@ class AgentExecutor(Executor):
 
         return function_invocation_kwargs, client_kwargs
 
-    def _resolve_executor_kwargs(self, resolved: dict[str, Any] | None) -> dict[str, Any] | None:
+    def _resolve_executor_kwargs(
+        self,
+        resolved: dict[str, Any] | ResolvedWorkflowInvocationKwargs | None,
+    ) -> dict[str, Any] | None:
         """Extract this executor's kwargs from a resolved invocation kwargs dict.
 
         Args:
-            resolved: The resolved dict produced by ``Workflow._resolve_invocation_kwargs``,
-                containing either a ``__global__`` key (global kwargs) or executor-ID keys
-                (per-executor kwargs). May also be ``None``.
+            resolved: The resolved representation produced by ``Workflow._resolve_invocation_kwargs``.
+                May also be ``None``.
 
         Returns:
             The kwargs for this executor, or ``None`` if not applicable.
         """
-        if not isinstance(resolved, dict):
+        if isinstance(resolved, ResolvedWorkflowInvocationKwargs):
+            global_kwargs: Any = resolved.global_kwargs
+            executor_kwargs: Any = (
+                resolved.executor_kwargs.get(self.id) if resolved.executor_kwargs is not None else None
+            )
+        elif isinstance(resolved, dict):
+            global_kwargs = resolved.get(GLOBAL_KWARGS_KEY)
+            executor_kwargs = resolved.get(self.id)
+        else:
             return None
-        global_kwargs: Any = resolved.get(GLOBAL_KWARGS_KEY)
-        executor_kwargs: Any = resolved.get(self.id)
+
         if global_kwargs is None and executor_kwargs is None:
             return None
 
