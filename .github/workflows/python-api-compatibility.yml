@@ -1,0 +1,135 @@
+name: Python - API Compatibility
+
+on:
+  pull_request_target:
+    branches: ["main"]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    paths:
+      - "python/**"
+      - ".github/scripts/check_python_api_compatibility.py"
+      - ".github/workflows/python-api-compatibility.yml"
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  api-compatibility:
+    name: Public API Compatibility
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
+          version: "0.12.9"
+
+      - name: Verify breaking change acknowledgement
+        id: breaking-change-ack
+        if: contains(github.event.pull_request.labels.*.name, 'breaking change')
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const labelName = 'breaking change';
+            const events = await github.paginate(github.rest.issues.listEvents, {
+              ...context.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const latestLabelEvent = events
+              .filter((event) =>
+                ['labeled', 'unlabeled'].includes(event.event)
+                && event.label?.name?.toLowerCase() === labelName
+              )
+              .sort((left, right) => left.id - right.id)
+              .at(-1);
+
+            if (!latestLabelEvent || latestLabelEvent.event !== 'labeled') {
+              core.setOutput('acknowledged', 'false');
+              core.warning('The breaking change label has no matching label event.');
+              return;
+            }
+
+            const actor = latestLabelEvent.actor?.login;
+            if (!actor) {
+              core.setOutput('acknowledged', 'false');
+              core.warning('The breaking change label event has no actor.');
+              return;
+            }
+
+            let permissionData;
+            try {
+              const response = await github.rest.repos.getCollaboratorPermissionLevel({
+                ...context.repo,
+                username: actor,
+              });
+              permissionData = response.data;
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+            }
+
+            const acknowledged = permissionData?.user?.permissions?.push === true
+              || ['admin', 'maintain', 'write'].includes(permissionData?.permission);
+            core.setOutput('acknowledged', acknowledged ? 'true' : 'false');
+            if (acknowledged) {
+              core.info(`Breaking changes were acknowledged by write-capable collaborator ${actor}.`);
+            } else {
+              core.warning(`The breaking change label was last applied by ${actor}, who does not have write permission.`);
+            }
+
+      - name: Compare public API with the PR base
+        working-directory: ${{ runner.temp }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BREAKING_CHANGE_ACKNOWLEDGED: ${{ steps.breaking-change-ack.outputs.acknowledged == 'true' }}
+          UV_NO_CONFIG: "1"
+        shell: bash
+        run: |
+          git -C "$GITHUB_WORKSPACE" show "$BASE_SHA:.github/scripts/check_python_api_compatibility.py" \
+            > "$RUNNER_TEMP/check_python_api_compatibility.py"
+          git -C "$GITHUB_WORKSPACE" show "$BASE_SHA:python/pyproject.toml" \
+            > "$RUNNER_TEMP/python-pyproject.toml"
+
+          griffe_requirement="$(
+            python3 - "$RUNNER_TEMP/python-pyproject.toml" <<'PY'
+          import sys
+          import tomllib
+
+          with open(sys.argv[1], "rb") as pyproject_file:
+              dev_dependencies = tomllib.load(pyproject_file)["dependency-groups"]["dev"]
+          requirements = [
+              dependency for dependency in dev_dependencies if dependency.startswith("griffe")
+          ]
+          if len(requirements) != 1:
+              raise SystemExit("Expected exactly one Griffe development dependency")
+          print(requirements[0])
+          PY
+          )"
+
+          args=(
+            --base-sha "$BASE_SHA"
+            --repo "$GITHUB_WORKSPACE"
+          )
+          if [[ "$BREAKING_CHANGE_ACKNOWLEDGED" == "true" ]]; then
+            args+=(--acknowledge-breaking-changes)
+          fi
+
+          uv --no-config run \
+            --no-project \
+            --with "$griffe_requirement" \
+            python "$RUNNER_TEMP/check_python_api_compatibility.py" "${args[@]}"
