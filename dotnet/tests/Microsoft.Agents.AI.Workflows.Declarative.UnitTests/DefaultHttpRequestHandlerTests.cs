@@ -290,7 +290,7 @@ public sealed class DefaultHttpRequestHandlerTests
     {
         // Arrange
         TestHttpMessageHandler messageHandler = new((_, _) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
+            throw new InvalidOperationException("The request should be rejected before transport."));
         using HttpClient httpClient = new(messageHandler);
         await using DefaultHttpRequestHandler handler = new(httpClient);
         HttpRequestInfo request = new()
@@ -1152,7 +1152,11 @@ public sealed class DefaultHttpRequestHandlerTests
 
         public async ValueTask DisposeAsync()
         {
+#if NET
             this._listener.Dispose();
+#else
+            this._listener.Stop();
+#endif
             await this._rawRequestTask.ConfigureAwait(false);
         }
 
