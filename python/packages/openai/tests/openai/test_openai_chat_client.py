@@ -7778,7 +7778,12 @@ async def test_committed_malformed_arguments_fail_before_tool_body() -> None:
 
     assert executions == 0
     assert create.await_count == 2
-    results = [content for message in final.messages for content in message.contents if content.type == "function_result"]
+    results = [
+        content
+        for message in final.messages
+        for content in message.contents
+        if content.type == "function_result"
+    ]
     assert len(results) == 1
     assert results[0].exception is not None
 
