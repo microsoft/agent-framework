@@ -44,8 +44,8 @@ class InvocationsHostServer(InvocationAgentServerHost):
     def _partition_key(self) -> str:
         """Get the partition key for the current request.
 
-        A partition key is made up of the session ID and user ID. If the request is not
-        from a hosted environment, the partition key will be just the session ID. In the
+        A hosted partition key is a JSON array string containing the session ID and user ID,
+        preserving their boundaries and escaping. Locally, the key is just the session ID. In the
         Foundry hosted environment, the partition key is used to maintain isolation between
         different sessions and users, such that one user cannot access another user's sessions.
 

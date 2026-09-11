@@ -11,8 +11,10 @@ patching, matching the style used in ``test_toolbox.py``.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
+from itertools import product
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -169,11 +171,20 @@ class TestPartitionKey:
         with _request_context(), pytest.raises(RuntimeError, match="missing session_id"):
             server._partition_key()  # pyright: ignore[reportPrivateUsage]
 
-    def test_hosted_missing_user_id_raises(self) -> None:
+    def test_local_ignores_user_id(self) -> None:
+        server = InvocationsHostServer(_make_agent(response_text="hi"))
+        with _request_context(session_id="sess-1", user_id="user-1"):
+            assert server._partition_key() == "sess-1"  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.parametrize(
+        ("session_id", "user_id"),
+        [(None, "user-1"), ("", "user-1"), ("sess-1", None), ("sess-1", ""), (None, None)],
+    )
+    def test_hosted_requires_both_identifiers(self, session_id: str | None, user_id: str | None) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         server.config.is_hosted = True
         with (
-            _request_context(call_id="call-1", session_id="sess-1"),
+            _request_context(call_id="call-1", session_id=session_id, user_id=user_id),
             pytest.raises(RuntimeError, match="missing session_id or user_id"),
         ):
             server._partition_key()  # pyright: ignore[reportPrivateUsage]
@@ -183,6 +194,20 @@ class TestPartitionKey:
         server.config.is_hosted = True
         with _request_context(call_id="call-1", session_id="sess-1", user_id="user-1"):
             assert server._partition_key() == '["sess-1","user-1"]'  # pyright: ignore[reportPrivateUsage]
+
+    def test_hosted_keys_preserve_identifier_values(self) -> None:
+        server = InvocationsHostServer(_make_agent(response_text="hi"))
+        server.config.is_hosted = True
+        identifiers = ["part", "part:part", "part,part", "[part]", 'part"\\', "part\n\t", "\u00e9", r"\u00e9", " part "]
+        keys: set[str] = set()
+
+        for session_id, user_id in product(identifiers, repeat=2):
+            with _request_context(call_id="call-1", session_id=session_id, user_id=user_id):
+                key = server._partition_key()  # pyright: ignore[reportPrivateUsage]
+
+            assert json.loads(key) == [session_id, user_id]
+            assert key not in keys
+            keys.add(key)
 
 
 # endregion
@@ -259,27 +284,64 @@ class TestHandleInvoke:
         assert list(server._sessions) == ["sess-1"]  # pyright: ignore[reportPrivateUsage]
         assert agent.calls[0]["session"] is agent.calls[1]["session"]
 
-    async def test_hosted_sessions_preserve_identifier_boundaries(self) -> None:
-        agent = _make_agent(response_text="ok")
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize(
+        ("first_session_id", "first_user_id", "second_session_id", "second_user_id"),
+        [
+            ("session:segment", "user", "session", "segment:user"),
+            ("session,segment", "user", "session", "segment,user"),
+            ("session", "first-user", "session", "second-user"),
+            ("first-session", "user", "second-session", "user"),
+        ],
+    )
+    async def test_hosted_sessions_preserve_identifier_boundaries(
+        self,
+        stream: bool,
+        first_session_id: str,
+        first_user_id: str,
+        second_session_id: str,
+        second_user_id: str,
+    ) -> None:
+        agent = _make_agent(response_text="ok", stream_texts=["ok"])
         server = InvocationsHostServer(agent)
         server.config.is_hosted = True
-        request = _make_request({"message": "Hi"})
+        identifiers = [(first_session_id, first_user_id), (second_session_id, second_user_id)]
+        sessions: list[AgentSession] = []
 
-        with _request_context(session_id="sess", user_id="user:admin"):
-            await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
-            first_session = agent.calls[-1]["session"]
+        for session_id, user_id in identifiers:
+            with _request_context(call_id="call-1", session_id=session_id, user_id=user_id):
+                response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+                    _make_request({"message": "Hi", "stream": stream})
+                )
+                if isinstance(response, StreamingResponse):
+                    assert await _collect_stream(response) == "ok"
+                else:
+                    assert bytes(response.body).decode() == "ok"
+                assert response.status_code == 200
 
-        with _request_context(session_id="sess:user", user_id="admin"):
-            await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
-            second_session = agent.calls[-1]["session"]
+            session = agent.calls[-1]["session"]
+            assert isinstance(session, AgentSession)
+            assert session.state == {}
+            session.state["turn"] = (session_id, user_id)
+            sessions.append(session)
 
-        with _request_context(session_id="sess", user_id="user:admin"):
-            await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
-            repeated_session = agent.calls[-1]["session"]
-
-        assert first_session is not second_session
-        assert repeated_session is first_session
+        assert sessions[0] is not sessions[1]
+        assert sessions[0].session_id != sessions[1].session_id
         assert len(server._sessions) == 2  # pyright: ignore[reportPrivateUsage]
+
+        for (session_id, user_id), session in zip(identifiers, sessions):
+            with _request_context(call_id="call-2", session_id=session_id, user_id=user_id):
+                response = await server._handle_invoke(  # pyright: ignore[reportPrivateUsage]
+                    _make_request({"message": "Continue", "stream": stream})
+                )
+                if isinstance(response, StreamingResponse):
+                    assert await _collect_stream(response) == "ok"
+                else:
+                    assert bytes(response.body).decode() == "ok"
+                assert response.status_code == 200
+
+            assert agent.calls[-1]["session"] is session
+            assert session.state == {"turn": (session_id, user_id)}
 
 
 # endregion
