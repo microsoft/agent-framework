@@ -2,10 +2,20 @@
 
 """Tests for the graph-based declarative workflow executors."""
 
+from collections.abc import Awaitable, Mapping, Sequence
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from agent_framework import (
+    Agent,
+    BaseChatClient,
+    ChatResponse,
+    ChatResponseUpdate,
+    Message,
+    ResponseStream,
+    WorkflowInvocationKwargs,
+)
 
 try:
     import powerfx  # noqa: F401
@@ -15,6 +25,7 @@ except (ImportError, RuntimeError):
     _powerfx_available = False
 
 _requires_powerfx = pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
+
 
 from agent_framework_declarative._workflows import (  # noqa: E402
     ALL_ACTION_EXECUTORS,
@@ -28,6 +39,65 @@ from agent_framework_declarative._workflows import (  # noqa: E402
     SendActivityExecutor,
     SetValueExecutor,
 )
+
+
+class _RecordingChatClient(BaseChatClient[Any]):
+    """Return a deterministic response without using a provider or network."""
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        assert not stream
+
+        async def get_response() -> ChatResponse:
+            return ChatResponse(messages=Message(role="assistant", contents=["response text"]))
+
+        return get_response()
+
+
+def _build_agent_workflow(executor_agents: Mapping[str, str]) -> tuple[Any, dict[str, Agent[Any]]]:
+    agents = {
+        agent_name: Agent(client=_RecordingChatClient(), name=agent_name) for agent_name in executor_agents.values()
+    }
+    workflow = DeclarativeWorkflowBuilder(
+        {
+            "name": "kwargs_workflow",
+            "actions": [
+                {
+                    "kind": "InvokeAzureAgent",
+                    "id": executor_id,
+                    "agent": agent_name,
+                    "input": "hello",
+                }
+                for executor_id, agent_name in executor_agents.items()
+            ],
+        },
+        agents=agents,
+    ).build()
+    return workflow, agents
+
+
+async def _run_workflow_with_kwargs(
+    workflow: Any,
+    kwargs_channel: str,
+    invocation_kwargs: Mapping[str, Any] | WorkflowInvocationKwargs,
+) -> None:
+    if kwargs_channel == "function_invocation_kwargs":
+        await workflow.run(ActionTrigger(), function_invocation_kwargs=invocation_kwargs)
+    else:
+        await workflow.run(ActionTrigger(), client_kwargs=invocation_kwargs)
+
+
+def _assert_forwarded_kwargs(run_agent: MagicMock, kwargs_channel: str, expected: dict[str, Any]) -> None:
+    forwarded_kwargs = run_agent.call_args.kwargs[kwargs_channel]
+    assert forwarded_kwargs == expected
+    assert isinstance(forwarded_kwargs, dict)
+    assert run_agent.call_args.kwargs["options"]["additional_function_arguments"] == {kwargs_channel: expected}
 
 
 class TestDeclarativeWorkflowState:
@@ -1745,6 +1815,59 @@ class TestPowerFxConditionalImport:
 
 class TestExecutorKwargsForwarding:
     """Workflow run kwargs should be forwarded through executor agent invocations."""
+
+    @pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+    async def test_workflow_run_forwards_structured_kwargs_to_agent(self, kwargs_channel: str) -> None:
+        """Workflow.run should pass ordinary mappings through a declarative agent executor."""
+        workflow, agents = _build_agent_workflow({"__global__": "test_agent"})
+        agent = agents["test_agent"]
+        invocation_kwargs = {"shared": "global-value"}
+
+        with patch.object(agent, "run", wraps=agent.run) as run_agent:
+            await _run_workflow_with_kwargs(workflow, kwargs_channel, invocation_kwargs)
+
+        _assert_forwarded_kwargs(run_agent, kwargs_channel, invocation_kwargs)
+
+    @pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+    async def test_workflow_run_merges_structured_kwargs_for_global_executor(self, kwargs_channel: str) -> None:
+        """A declarative __global__ executor receives merged kwargs without unrelated leakage."""
+        workflow, agents = _build_agent_workflow({"__global__": "global_agent", "sibling": "sibling_agent"})
+        global_agent = agents["global_agent"]
+        sibling_agent = agents["sibling_agent"]
+        invocation_kwargs = WorkflowInvocationKwargs(
+            global_kwargs={"shared": "G", "overridden": "global"},
+            executor_kwargs={
+                "__global__": {"special": "A", "overridden": "specific"},
+                "sibling": {"sibling_only": "B"},
+            },
+        )
+        expected_global = {"shared": "G", "special": "A", "overridden": "specific"}
+        expected_sibling = {"shared": "G", "sibling_only": "B", "overridden": "global"}
+
+        with (
+            patch.object(global_agent, "run", wraps=global_agent.run) as run_global_agent,
+            patch.object(sibling_agent, "run", wraps=sibling_agent.run) as run_sibling_agent,
+        ):
+            await _run_workflow_with_kwargs(workflow, kwargs_channel, invocation_kwargs)
+
+        global_kwargs = run_global_agent.call_args.kwargs[kwargs_channel]
+        sibling_kwargs = run_sibling_agent.call_args.kwargs[kwargs_channel]
+        _assert_forwarded_kwargs(run_global_agent, kwargs_channel, expected_global)
+        _assert_forwarded_kwargs(run_sibling_agent, kwargs_channel, expected_sibling)
+        assert "sibling_only" not in global_kwargs
+        assert "special" not in sibling_kwargs
+
+    @pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+    async def test_workflow_run_preserves_global_application_kwarg(self, kwargs_channel: str) -> None:
+        """An application kwarg named __global__ remains data when it is not an executor ID."""
+        workflow, agents = _build_agent_workflow({"invoke": "test_agent"})
+        agent = agents["test_agent"]
+        invocation_kwargs = {"__global__": "tenant-a", "shared": "global-value"}
+
+        with patch.object(agent, "run", wraps=agent.run) as run_agent:
+            await _run_workflow_with_kwargs(workflow, kwargs_channel, invocation_kwargs)
+
+        _assert_forwarded_kwargs(run_agent, kwargs_channel, invocation_kwargs)
 
     @pytest.mark.asyncio
     async def test_invoke_agent_forwards_kwargs(self):

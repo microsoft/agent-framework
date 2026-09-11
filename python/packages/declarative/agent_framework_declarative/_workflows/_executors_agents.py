@@ -788,9 +788,31 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
             _validate_conversation_history(messages_for_agent, agent_name)
 
         # Retrieve kwargs passed to workflow.run() so they propagate to agent tools
-        from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
+        from agent_framework._workflows._const import (
+            RAW_CLIENT_KWARGS_KEY,
+            RAW_FUNCTION_INVOCATION_KWARGS_KEY,
+            WORKFLOW_RUN_KWARGS_KEY,
+            ResolvedWorkflowInvocationKwargs,
+        )
 
         run_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
+        if any(
+            isinstance(run_kwargs.get(key), ResolvedWorkflowInvocationKwargs)
+            for key in ("function_invocation_kwargs", "client_kwargs")
+        ):
+            run_kwargs = dict(run_kwargs)
+            for key in ("function_invocation_kwargs", "client_kwargs"):
+                resolved = run_kwargs.get(key)
+                if not isinstance(resolved, ResolvedWorkflowInvocationKwargs):
+                    continue
+                executor_kwargs = resolved.for_executor(self.id)
+                if executor_kwargs is None:
+                    run_kwargs.pop(key)
+                else:
+                    run_kwargs[key] = executor_kwargs
+            run_kwargs.pop(RAW_FUNCTION_INVOCATION_KWARGS_KEY, None)
+            run_kwargs.pop(RAW_CLIENT_KWARGS_KEY, None)
+
         options: dict[str, Any] | None = None
         if run_kwargs:
             # Merge caller-provided options to avoid duplicate keyword argument

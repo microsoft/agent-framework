@@ -35,6 +35,20 @@ class ResolvedWorkflowInvocationKwargs:
     global_kwargs: dict[str, Any] | None = None
     executor_kwargs: dict[str, Any] | None = None
 
+    def for_executor(self, executor_id: str) -> dict[str, Any] | None:
+        """Resolve ordinary kwargs for one executor, with specific values taking precedence."""
+        global_kwargs = self.global_kwargs
+        executor_kwargs: Any = self.executor_kwargs.get(executor_id) if self.executor_kwargs is not None else None
+
+        if global_kwargs is None and executor_kwargs is None:
+            return None
+        if global_kwargs is not None and not isinstance(global_kwargs, dict):
+            return None
+        if executor_kwargs is not None and not isinstance(executor_kwargs, dict):
+            return None
+
+        return {**(global_kwargs or {}), **(executor_kwargs or {})}
+
 
 def INTERNAL_SOURCE_ID(executor_id: str) -> str:
     """Generate an internal source ID for a given executor."""

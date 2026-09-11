@@ -614,11 +614,8 @@ class AgentExecutor(Executor):
             The kwargs for this executor, or ``None`` if not applicable.
         """
         if isinstance(resolved, ResolvedWorkflowInvocationKwargs):
-            global_kwargs: Any = resolved.global_kwargs
-            executor_kwargs: Any = (
-                resolved.executor_kwargs.get(self.id) if resolved.executor_kwargs is not None else None
-            )
-        elif isinstance(resolved, dict):
+            return resolved.for_executor(self.id)
+        if isinstance(resolved, dict):
             global_kwargs = resolved.get(GLOBAL_KWARGS_KEY)
             executor_kwargs = resolved.get(self.id)
         else:
