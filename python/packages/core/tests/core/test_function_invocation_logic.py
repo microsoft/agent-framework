@@ -2987,6 +2987,174 @@ async def test_mixed_batch_pause_groups_preserve_model_call_order():
     assert executed_call_count == 0
 
 
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("host_kind", ["declaration", "additional"])
+async def test_mixed_approval_host_batch_stages_partial_responses_in_original_order(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+    streaming: bool,
+    host_kind: str,
+):
+    """A mixed approval/Host batch is resumed atomically after serialized, out-of-order replies."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import _PENDING_PAUSE_BATCH_KEY, _TOOL_APPROVAL_STATE_KEY
+
+    approval_calls = 0
+    host_calls = 0
+    provider_inputs: list[list[Message]] = []
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal approval_calls
+        approval_calls += 1
+        return "approved"
+
+    def execute_host(value: int) -> str:
+        nonlocal host_calls
+        host_calls += 1
+        return f"unexpected-{value}"
+
+    host_func = FunctionTool(
+        name="host_func",
+        func=None if host_kind == "declaration" else execute_host,
+        description="A Host-owned function",
+        input_model={"type": "object", "properties": {"value": {"type": "integer"}}},
+    )
+    if host_kind == "additional":
+        chat_client_base.function_invocation_configuration["additional_tools"] = [host_func]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    calls = [
+        Content.from_function_call(
+            call_id="reused-call-id",
+            name="host_func",
+            arguments={"value": 1},
+            id="host-occurrence-1",
+        ),
+        Content.from_function_call(
+            call_id="reused-call-id",
+            name="approval_func",
+            arguments={},
+            id="approval-occurrence",
+        ),
+        Content.from_function_call(
+            call_id="reused-call-id",
+            name="host_func",
+            arguments={"value": 2},
+            id="host-occurrence-2",
+        ),
+    ]
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=calls, finish_reason="tool_calls")],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")], finish_reason="stop")],
+        ]
+        original_stream = chat_client_base._get_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+        def record_stream(*, messages: list[Message], **kwargs: Any):
+            provider_inputs.append([Message.from_dict(message.to_dict()) for message in messages])
+            return original_stream(messages=messages, **kwargs)
+
+        monkeypatch.setattr(chat_client_base, "_get_streaming_response", record_stream)
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=calls), finish_reason="tool_calls"),
+            ChatResponse(messages=Message(role="assistant", contents=["done"]), finish_reason="stop"),
+        ]
+        original_get = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+        async def record_get(*, messages: list[Message], **kwargs: Any):
+            provider_inputs.append([Message.from_dict(message.to_dict()) for message in messages])
+            return await original_get(messages=messages, **kwargs)
+
+        monkeypatch.setattr(chat_client_base, "_get_non_streaming_response", record_get)
+
+    async def run(contents: list[Content], session: AgentSession) -> ChatResponse:
+        visible_tools = [approval_func, host_func] if host_kind == "declaration" else [approval_func]
+        result = chat_client_base.get_response(
+            [Message(role="user", contents=contents)],
+            stream=streaming,
+            options={"tool_choice": "auto", "tools": visible_tools},
+            client_kwargs={"session": session},
+        )
+        if not streaming:
+            return await result  # type: ignore[misc]
+        updates = [update async for update in result]  # type: ignore[union-attr]
+        response = await result.get_final_response()  # type: ignore[union-attr]
+        if not response.messages and updates:
+            return ChatResponse.from_updates(updates)
+        return response
+
+    session = AgentSession()
+    first_response = await run([Content.from_text("go")], session)
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    host_requests = [
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.user_input_request
+    ]
+    assert [content.id for content in host_requests] == ["host-occurrence-1", "host-occurrence-2"]
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    partial_response = await run([approval_response], session)
+    assert partial_response.messages == []
+    assert approval_calls == 0
+    assert host_calls == 0
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    unrelated_response = await run([Content.from_text("unrelated")], session)
+    assert unrelated_response.messages == []
+    assert approval_calls == 0
+    assert host_calls == 0
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    stale_host_result = Content.from_function_result(call_id="reused-call-id", result="stale")
+    stale_host_result.id = "unknown-host-occurrence"
+    stale_response = await run([stale_host_result], session)
+    assert stale_response.messages == []
+    assert approval_calls == 0
+    assert host_calls == 0
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    host_two_result = Content.from_function_result(call_id="reused-call-id", result="host-two")
+    host_two_result.id = "host-occurrence-2"
+    partial_response = await run([host_two_result], session)
+    assert partial_response.messages == []
+    assert approval_calls == 0
+    assert host_calls == 0
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
+    assert isinstance(tool_state, dict)
+    assert _PENDING_PAUSE_BATCH_KEY in tool_state
+
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    host_one_result = Content.from_function_result(call_id="reused-call-id", result="host-one")
+    host_one_result.id = "host-occurrence-1"
+    final_response = await run([host_one_result], session)
+
+    assert final_response.text == "done"
+    assert approval_calls == 1
+    assert host_calls == 0
+    assert chat_client_base.call_count == 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    submitted_results = [
+        content for message in provider_inputs[-1] for content in message.contents if content.type == "function_result"
+    ]
+    assert [(content.id, content.result) for content in submitted_results] == [
+        ("host-occurrence-1", "host-one"),
+        (None, "approved"),
+        ("host-occurrence-2", "host-two"),
+    ]
+    final_tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
+    assert isinstance(final_tool_state, dict)
+    assert _PENDING_PAUSE_BATCH_KEY not in final_tool_state
+
+
 @pytest.mark.parametrize("unknown_first", [True, False], ids=["unknown-first", "approval-first"])
 async def test_mixed_batch_unknown_call_fails_closed_before_approval(
     chat_client_base: SupportsChatGetResponse, unknown_first: bool

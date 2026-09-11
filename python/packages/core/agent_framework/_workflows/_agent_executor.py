@@ -315,6 +315,13 @@ class AgentExecutor(Executor):
             response: The user's response to the function approval request.
             ctx: The workflow context for emitting events and outputs.
         """
+        # Workflow responses are correlated by request_info id, while a function
+        # result normally carries only the provider call_id. Preserve the
+        # authoritative request occurrence so reused call_id values stay
+        # unambiguous when a mixed pause batch is resumed.
+        if response.type == "function_result" and original_request.type == "function_call":
+            response = Content.from_dict(response.to_dict())
+            response.id = original_request.id
         self._pending_responses_to_agent.append(response)
         self._pending_agent_requests.pop(original_request.id, None)  # type: ignore[arg-type]
 
