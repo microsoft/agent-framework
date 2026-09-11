@@ -51,7 +51,7 @@ from typing import Any, Generic, Literal, TypeVar, overload
 
 from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import make_json_safe
-from .._types import AgentResponse, AgentResponseUpdate, ResponseStream
+from .._types import AgentResponse, AgentResponseUpdate, Content, ResponseStream
 from ..observability import (
     OtelAttr,
     _activate_span,
@@ -65,6 +65,7 @@ from ._events import (
     WorkflowRunState,
     _framework_event,
 )
+from ._typing_utils import is_instance_of, try_coerce_to_type
 from ._workflow import WorkflowRunResult
 
 logger = logging.getLogger(__name__)
@@ -244,6 +245,15 @@ class RunContext:
         found, value = self._get_response(rid)
         if found:
             self._pending_requests.pop(rid, None)
+            # Functional workflows intentionally allow None responses; _set_responses logs a warning for them.
+            if value is not None:
+                if response_type is Content and isinstance(value, str):
+                    value = Content.from_text(text=value)
+                value = try_coerce_to_type(value, response_type)
+                if not is_instance_of(value, response_type):
+                    raise ValueError(
+                        f"Response type mismatch for request ID {rid}: expected {response_type}, got {type(value)}"
+                    )
             return value
 
         # No response — emit event and interrupt

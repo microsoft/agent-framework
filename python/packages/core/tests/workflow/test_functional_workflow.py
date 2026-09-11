@@ -332,6 +332,17 @@ class TestHITL:
         assert outputs == ["Final: Looks great!"]
         assert result2.get_final_state() == WorkflowRunState.IDLE
 
+    async def test_request_info_resume_rejects_response_type_mismatch(self):
+        @built_workflow
+        async def typed_wf(data: str, ctx: RunContext) -> str:
+            answer = await ctx.request_info("number", response_type=int, request_id="typed")
+            return f"{answer}:{type(answer).__name__}"
+
+        await typed_wf.run("input")
+
+        with pytest.raises(ValueError, match="Response type mismatch for request ID typed"):
+            await typed_wf.run(responses={"typed": "not-an-int"})
+
     async def test_fresh_message_while_pending_requests_warns(self, caplog: pytest.LogCaptureFixture) -> None:
         """A fresh message while request_info events are pending is allowed but logs a warning."""
 
