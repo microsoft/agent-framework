@@ -124,7 +124,7 @@ preview = true
 [tool.ruff.lint]
 fixable = ["ALL"]
 unfixable = []
-# Exact rule selectors use names to satisfy RUF102; category prefixes remain codes.
+# Ruff 0.16.6 flags these exact rule codes; category prefixes remain codes.
 select = [
     "ASYNC", # async checks
     "B", # bugbear checks
@@ -143,10 +143,11 @@ select = [
     "RUF", # RUF specific rules
     "S", # Bandit checks
     "SIM", # flake8-simplify check
-    "debugger", # T100: Debugger
-    "T20", # typing checks
+    "T20", # flake8-print checks
     "TD", # todos
     "W", # pycodestyle warning checks
+    # Exact rule selectors.
+    "debugger", # T100: Debugger
 ]
 ignore = [
     "undocumented-public-module", # D100: allow missing docstring in public module
@@ -163,10 +164,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # Ignore all directories named `tests` and `samples`.
-# Exact per-file selectors use names to satisfy RUF102; category prefixes remain codes.
-"**/tests/**" = ["D", "INP", "TD", "commented-out-code", "RUF", "S"]
+# Ruff 0.16.6 flags these exact per-file rule codes; category prefixes remain codes.
+"**/tests/**" = ["D", "INP", "TD", "commented-out-code", "RUF", "S"] # commented-out-code is ERA001.
 "samples/**" = ["D", "INP", "commented-out-code", "RUF", "S", "print", "CPY"] # print is T201.
-"*.ipynb" = ["CPY", "line-too-long"]
+"*.ipynb" = ["CPY", "line-too-long"] # line-too-long is E501.
 
 [tool.ruff.format]
 docstring-code-format = true
