@@ -14,7 +14,7 @@
     <PackageVersion Include="Anthropic" Version="12.45.0" />
     <PackageVersion Include="Anthropic.Foundry" Version="0.7.1" />
     <PackageVersion Include="Aspire.Hosting" Version="$(AspireAppHostSdkVersion)" />
-    <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="13.0.0-preview.1.25560.3" />
+    <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="13.5.3-preview.1.26425.3" />
     <PackageVersion Include="Aspire.Azure.AI.Inference" Version="13.5.3-preview.1.26425.3" />
     <PackageVersion Include="Aspire.Hosting.Azure.AIFoundry" Version="13.1.3-preview.1.26166.8" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireAppHostSdkVersion)" />
