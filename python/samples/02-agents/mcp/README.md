@@ -71,6 +71,59 @@ The output lists `web_search` and `web_fetch`, followed by their results, includ
 
 To make these tools available to an existing agent, pass the MCP tool as `tools` when constructing `Agent`. The agent can then choose to invoke them during a run; remove that tool to disable access. This example does not change any configured providers or defaults.
 
+## Keyed web search with Serply MCP
+
+Use `MCPStreamableHTTPTool` with the [Serply MCP server](https://serply.io/docs) to search Google, Bing, Google News, Google Scholar, Google Maps, and more, or to scrape a page. [Serply](https://serply.io) requires an API key, which the example passes through `header_provider`, the same pattern as [`mcp_api_key_auth.py`](mcp_api_key_auth.py), so the key is attached only to requests for `api.serply.io`. The tools are called directly, so no model provider account is needed.
+
+Install the client dependencies in a Python 3.10+ environment:
+
+```bash
+pip install agent-framework-core "mcp>=1.24,<2"
+```
+
+Set `SERPLY_API_KEY`, save this as `serply_search.py`, and run `python serply_search.py`:
+
+```python
+import asyncio
+import os
+
+from agent_framework import MCPStreamableHTTPTool
+
+
+async def main() -> None:
+    api_key = os.environ["SERPLY_API_KEY"]
+    async with MCPStreamableHTTPTool(
+        name="serply",
+        url="https://api.serply.io/mcp",
+        # Sent only with requests to api.serply.io; see mcp_api_key_auth.py.
+        header_provider=lambda _: {"X-Api-Key": api_key},
+        load_prompts=False,
+        request_timeout=30,
+        # Use the text payload once; Serply also returns it as structured content.
+        parse_tool_results=lambda result: "\n".join(c.text for c in result.content if c.type == "text"),
+    ) as mcp:
+        print("Tools:", [tool.name for tool in mcp.functions])
+        search_result = await mcp.call_tool(
+            "google_search",
+            query="Microsoft Agent Framework MCP tools",
+            num=3,
+        )
+        news_result = await mcp.call_tool(
+            "google_news_search",
+            query="Microsoft Agent Framework",
+        )
+        for result in (search_result, news_result):
+            print(result)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+The output lists the Serply tools (`google_search`, `google_maps_search`, `bing_search`, `google_video_search`, `google_news_search`, `google_jobs_search`, `google_scholar_search`, `amazon_product_search`, `scrape_url`), then three web results with title, URL, and snippet, followed by news articles with source, date, and link. Queries are sent to Serply when the calls run, and the API key travels only in the request header. The context manager closes the connection afterward.
+
+To make these tools available to an existing agent, pass the MCP tool as `tools` when constructing `Agent`. The agent can then choose to invoke them during a run; remove that tool to disable access. This example does not change any configured providers or defaults.
+
 ## Prerequisites
 
 Most samples in this folder use OpenAI:
@@ -84,6 +137,9 @@ Run `mcp_api_key_auth.py` with the MCP API key as the first command-line argumen
 
 For `mcp_github_pat.py`:
 - `GITHUB_PAT` - Your GitHub Personal Access Token (create at https://github.com/settings/tokens)
+
+For the Serply example:
+- `SERPLY_API_KEY` - Your Serply API key (create at https://serply.io)
 
 For `mcp_long_running_task.py` (uses Azure OpenAI via Entra-ID):
 - Run `az login` once
