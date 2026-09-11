@@ -3162,7 +3162,7 @@ async def test_mixed_approval_host_batch_stages_partial_responses_in_original_or
 @pytest.mark.parametrize("identified_first", [True, False], ids=["identified-first", "idless-first"])
 def test_stateless_complete_mixed_pause_matches_identified_host_responses_first(identified_first: bool) -> None:
     """An identified response reserves its occurrence before an id-less sibling is matched."""
-    from agent_framework._tools import _has_partial_mixed_pause_batch_without_session
+    from agent_framework._tools import _stateless_mixed_pause_batch_status
 
     approval_call = Content.from_function_call(
         call_id="approval-call",
@@ -3193,24 +3193,24 @@ def test_stateless_complete_mixed_pause_matches_identified_host_responses_first(
     idless_result = Content.from_function_result(call_id="duplicate-call", result="first")
     host_responses = [identified_result, idless_result] if identified_first else [idless_result, identified_result]
 
-    assert (
-        _has_partial_mixed_pause_batch_without_session([
-            Message(
-                role="assistant",
-                contents=[approval_call, approval_request, first_host_request, second_host_request],
-            ),
-            Message(
-                role="user",
-                contents=[approval_request.to_function_approval_response(approved=True), *host_responses],
-            ),
-        ])
-        is False
-    )
+    partial, host_result_ids = _stateless_mixed_pause_batch_status([
+        Message(
+            role="assistant",
+            contents=[approval_call, approval_request, first_host_request, second_host_request],
+        ),
+        Message(
+            role="user",
+            contents=[approval_request.to_function_approval_response(approved=True), *host_responses],
+        ),
+    ])
+
+    assert partial is False
+    assert host_result_ids == {id(identified_result), id(idless_result)}
 
 
 def test_stateless_complete_mixed_pause_with_ambiguous_idless_responses_fails_closed() -> None:
     """Id-less responses cannot be assigned when duplicate call-id occurrences remain."""
-    from agent_framework._tools import _has_partial_mixed_pause_batch_without_session
+    from agent_framework._tools import _stateless_mixed_pause_batch_status
 
     approval_call = Content.from_function_call(
         call_id="approval-call",
@@ -3233,7 +3233,7 @@ def test_stateless_complete_mixed_pause_with_ambiguous_idless_responses_fails_cl
         request.user_input_request = True
         host_requests.append(request)
 
-    assert _has_partial_mixed_pause_batch_without_session([
+    partial, host_result_ids = _stateless_mixed_pause_batch_status([
         Message(role="assistant", contents=[approval_call, approval_request, *host_requests]),
         Message(
             role="user",
@@ -3244,6 +3244,57 @@ def test_stateless_complete_mixed_pause_with_ambiguous_idless_responses_fails_cl
             ],
         ),
     ])
+    assert partial is True
+    assert host_result_ids == set()
+
+
+async def test_stateless_complete_mixed_pause_excludes_host_result_with_reused_approval_call_id() -> None:
+    """A Host result sharing the approval call_id must not suppress approval execution."""
+    from agent_framework._tools import _FunctionExecutionBatch, _resolve_approval_responses
+
+    approval_call = Content.from_function_call(
+        call_id="reused-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="reused-call",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    host_result = Content.from_function_result(call_id="reused-call", result="host")
+    host_result.id = "host-occurrence"
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    executed: list[Content] = []
+
+    async def execute_function_calls(*, function_calls: list[Content], **kwargs: Any) -> Any:
+        executed.extend(function_calls)
+        return _FunctionExecutionBatch(
+            result_groups=[[Content.from_function_result(call_id="reused-call", result="approved")]],
+            executed_call_count=1,
+        )
+
+    result = await _resolve_approval_responses(
+        prepared_messages=[
+            Message(role="assistant", contents=[approval_call, approval_request, host_request]),
+            Message(role="user", contents=[approval_response, host_result]),
+        ],
+        options=None,
+        errors_in_a_row=0,
+        max_errors=3,
+        execute_function_calls=execute_function_calls,
+    )
+
+    assert executed == [approval_response]
+    assert result.function_call_count == 1
+    assert [content.result for message in result.response_messages for content in message.contents] == ["approved"]
 
 
 async def test_mixed_pause_partial_resume_without_session_fails_closed() -> None:
@@ -3347,6 +3398,99 @@ def test_idless_duplicate_call_id_replay_does_not_fill_another_pause_occurrence(
     items = batch["items"]
     assert isinstance(items, list)
     assert items[0]["response"] == first_result.to_dict()
+    assert "response" not in items[2]
+
+
+@pytest.mark.parametrize("initial_has_id", [False, True], ids=["idless-first", "identified-first"])
+def test_same_host_response_occurrence_replay_is_idempotent_across_optional_id(initial_has_id: bool) -> None:
+    """The same response payload may be replayed with or without its occurrence id."""
+    from agent_framework._tools import _stage_pending_pause_batch_responses, _store_pending_pause_batch
+
+    session = AgentSession()
+    host_request = Content.from_function_call(
+        call_id="host-call",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    _store_pending_pause_batch(session, [[host_request], [approval_request]])
+
+    initial = Content.from_function_result(call_id="host-call", result={"value": 1})
+    if initial_has_id:
+        initial.id = "host-occurrence"
+    incomplete, _ = _stage_pending_pause_batch_responses([Message(role="tool", contents=[initial])], session)
+    assert incomplete is True
+
+    replay = Content.from_function_result(call_id="host-call", result={"value": 1})
+    if not initial_has_id:
+        replay.id = "host-occurrence"
+    incomplete, _ = _stage_pending_pause_batch_responses([Message(role="tool", contents=[replay])], session)
+    assert incomplete is True
+
+
+@pytest.mark.parametrize("initial_has_id", [False, True], ids=["idless-first", "identified-first"])
+def test_conflicting_host_response_for_same_occurrence_fails_closed(initial_has_id: bool) -> None:
+    """A conflicting replay cannot mutate another same-call-id pause slot."""
+    from agent_framework._tools import (
+        _PENDING_PAUSE_BATCH_KEY,
+        _TOOL_APPROVAL_STATE_KEY,
+        _stage_pending_pause_batch_responses,
+        _store_pending_pause_batch,
+    )
+
+    session = AgentSession()
+    host_requests: list[Content] = []
+    for occurrence in (1, 2):
+        request = Content.from_function_call(
+            call_id="reused-call",
+            name="host_func",
+            arguments={"value": occurrence},
+            id=f"host-occurrence-{occurrence}",
+        )
+        request.user_input_request = True
+        host_requests.append(request)
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    _store_pending_pause_batch(session, [[host_requests[0]], [approval_request], [host_requests[1]]])
+
+    initial = Content.from_function_result(call_id="reused-call", result={"value": 1})
+    if initial_has_id:
+        initial.id = "host-occurrence-1"
+    incomplete, _ = _stage_pending_pause_batch_responses([Message(role="tool", contents=[initial])], session)
+    assert incomplete is True
+
+    conflicting = Content.from_function_result(call_id="reused-call", result={"value": 999})
+    if not initial_has_id:
+        conflicting.id = "host-occurrence-1"
+    with pytest.raises(RuntimeError, match="Conflicting .*Host response"):
+        _stage_pending_pause_batch_responses([Message(role="tool", contents=[conflicting])], session)
+
+    tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
+    assert isinstance(tool_state, dict)
+    batch = tool_state[_PENDING_PAUSE_BATCH_KEY]
+    assert isinstance(batch, dict)
+    items = batch["items"]
+    assert isinstance(items, list)
+    assert items[0]["response"] == initial.to_dict()
     assert "response" not in items[2]
 
 

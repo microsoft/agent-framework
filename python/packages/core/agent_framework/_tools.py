@@ -2819,11 +2819,12 @@ def _stage_pending_pause_batch_responses(
         state.pop(_PENDING_PAUSE_BATCH_KEY, None)
         return False, set()
 
-    items = [cast(dict[str, Any], item) for item in cast(list[Any], raw_items) if isinstance(item, dict)]
+    items = [copy.deepcopy(cast(dict[str, Any], item)) for item in cast(list[Any], raw_items) if isinstance(item, dict)]
     if not items:
         state.pop(_PENDING_PAUSE_BATCH_KEY, None)
         return False, set()
 
+    preexisting_response_slot_ids = {id(item) for item in items if item.get("response") is not None}
     matched_content_ids: set[int] = set()
     approval_items: dict[str, dict[str, Any]] = {}
     host_items_by_call_id: dict[str, list[dict[str, Any]]] = {}
@@ -2867,7 +2868,9 @@ def _stage_pending_pause_batch_responses(
     for call_id, candidates in host_candidates_by_call_id.items():
         slots = host_items_by_call_id[call_id]
         observed_stored_slots: set[int] = set()
-        for candidate in candidates:
+        identified_candidates = [candidate for candidate in candidates if candidate.id is not None]
+        idless_candidates = [candidate for candidate in candidates if candidate.id is None]
+        for candidate in (*identified_candidates, *idless_candidates):
             item = host_items_by_occurrence_id.get(candidate.id) if candidate.id is not None else None
             if item is not None:
                 matched_request = _content_from_state(item.get("request"))
@@ -2875,12 +2878,15 @@ def _stage_pending_pause_batch_responses(
                     item = None
             if candidate.id is not None and item is None:
                 continue
+            candidate_state = candidate.to_dict()
             if item is None:
                 # History can replay responses staged on an earlier run. Consume those
                 # occurrences before assigning later same-call_id results.
-                candidate_state = candidate.to_dict()
                 matching_stored_slots = [
-                    slot for slot in slots if slot.get("response") is not None and slot["response"] == candidate_state
+                    slot
+                    for slot in slots
+                    if slot.get("response") is not None
+                    and _same_pause_response_payload(cast(dict[str, Any], slot["response"]), candidate_state)
                 ]
                 item = next(
                     (slot for slot in matching_stored_slots if id(slot) not in observed_stored_slots),
@@ -2895,10 +2901,22 @@ def _stage_pending_pause_batch_responses(
                     continue
                 else:
                     item = next((slot for slot in slots if slot.get("response") is None), None)
+                    if item is not None and any(id(slot) in preexisting_response_slot_ids for slot in slots):
+                        raise RuntimeError(
+                            f"Conflicting id-less Host response for a previously answered {call_id!r} occurrence."
+                        )
             if item is None:
+                if any(slot.get("response") is not None for slot in slots):
+                    raise RuntimeError(f"Conflicting Host response for an already answered {call_id!r} occurrence.")
                 continue
-            if item.get("response") is None:
-                item["response"] = candidate.to_dict()
+            stored_response = item.get("response")
+            if stored_response is not None:
+                if not isinstance(stored_response, dict) or not _same_pause_response_payload(
+                    cast(dict[str, Any], stored_response), candidate_state
+                ):
+                    raise RuntimeError(f"Conflicting Host response for occurrence {candidate.id!r}.")
+            else:
+                item["response"] = candidate_state
             matched_content_ids.add(id(candidate))
 
     if matched_content_ids:
@@ -2927,8 +2945,17 @@ def _stage_pending_pause_batch_responses(
     return False, host_result_ids
 
 
-def _has_partial_mixed_pause_batch_without_session(messages: Sequence[Message]) -> bool:
-    """Return whether a stateless transcript partially answers a mixed pause barrier."""
+def _same_pause_response_payload(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    """Compare pause responses while treating the optional occurrence id as correlation metadata."""
+    left_payload = dict(left)
+    right_payload = dict(right)
+    left_payload.pop("id", None)
+    right_payload.pop("id", None)
+    return left_payload == right_payload
+
+
+def _stateless_mixed_pause_batch_status(messages: Sequence[Message]) -> tuple[bool, set[int]]:
+    """Return stateless mixed-barrier completeness and matched Host result identities."""
     approval_requests: list[Content] = []
     host_requests: list[Content] = []
     approval_responses: list[Content] = []
@@ -2945,7 +2972,7 @@ def _has_partial_mixed_pause_batch_without_session(messages: Sequence[Message]) 
                 host_responses.append(content)
 
     if not approval_requests or not host_requests or not (approval_responses or host_responses):
-        return False
+        return False, set()
 
     answered_approval_ids = {response.id for response in approval_responses if response.id is not None}
     approval_complete = all(
@@ -2959,6 +2986,7 @@ def _has_partial_mixed_pause_batch_without_session(messages: Sequence[Message]) 
     )
 
     unmatched_host_requests = list(host_requests)
+    matched_host_result_ids: set[int] = set()
     for response in (candidate for candidate in host_responses if candidate.id is not None):
         matching_index = next(
             (
@@ -2970,6 +2998,7 @@ def _has_partial_mixed_pause_batch_without_session(messages: Sequence[Message]) 
         )
         if matching_index is not None:
             unmatched_host_requests.pop(matching_index)
+            matched_host_result_ids.add(id(response))
 
     for response in (candidate for candidate in host_responses if candidate.id is None):
         matching_indexes = [
@@ -2977,7 +3006,8 @@ def _has_partial_mixed_pause_batch_without_session(messages: Sequence[Message]) 
         ]
         if len(matching_indexes) == 1:
             unmatched_host_requests.pop(matching_indexes[0])
-    return not approval_complete or bool(unmatched_host_requests)
+            matched_host_result_ids.add(id(response))
+    return not approval_complete or bool(unmatched_host_requests), matched_host_result_ids
 
 
 def _bind_approval_response_to_pending_request(
@@ -3894,15 +3924,17 @@ async def _resolve_approval_responses(
     from ._middleware import MiddlewareFailure
     from ._types import Message
 
-    if not _has_authoritative_approval_session(invocation_session) and _has_partial_mixed_pause_batch_without_session(
-        prepared_messages
-    ):
-        raise RuntimeError("A caller-owned AgentSession is required to resume a mixed pause batch partially.")
+    stateless_host_result_ids: set[int] = set()
+    if not _has_authoritative_approval_session(invocation_session):
+        partial_mixed_batch, stateless_host_result_ids = _stateless_mixed_pause_batch_status(prepared_messages)
+        if partial_mixed_batch:
+            raise RuntimeError("A caller-owned AgentSession is required to resume a mixed pause batch partially.")
 
     incomplete_pause_batch, host_result_ids = _stage_pending_pause_batch_responses(
         prepared_messages,
         invocation_session,
     )
+    host_result_ids.update(stateless_host_result_ids)
     if incomplete_pause_batch:
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row, action="return")
 
