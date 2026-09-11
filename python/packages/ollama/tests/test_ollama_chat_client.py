@@ -135,6 +135,8 @@ def mock_streaming_chat_completion_tool_call() -> AsyncStream[OllamaChatResponse
             tool_calls=cast(Any, [{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}]),
         ),
         model="test",
+        done=True,
+        done_reason="stop",
     )
     stream = MagicMock(spec=AsyncStream)
     stream.__aiter__.return_value = [ollama_tool_call]
@@ -510,6 +512,25 @@ async def test_cmc_streaming_ignores_done_reason_and_usage_before_final_chunk(
     assert final_response.text == "test"
     assert final_response.finish_reason is None
     assert final_response.usage_details is None
+
+
+def test_streaming_tool_call_before_done_is_not_authorized(
+    ollama_unit_test_env: dict[str, str],
+) -> None:
+    response = OllamaChatResponse(
+        message=OllamaMessage(
+            content="",
+            role="assistant",
+            tool_calls=cast(Any, [{"function": {"name": "hello_world", "arguments": {"arg1": "value1"}}}]),
+        ),
+        model="test",
+        done=False,
+    )
+
+    update = OllamaChatClient()._parse_streaming_response_from_ollama(response)
+
+    assert update.contents[0].type == "function_call"
+    assert update.finish_reason is None
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
