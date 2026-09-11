@@ -4,7 +4,9 @@ Redis-based storage for agent threads and context.
 
 ## Main Classes
 
-- **`RedisHistoryProvider`** - Persistent chat history provider using Redis
+- **`RedisHistoryProvider`** - Persistent chat history provider using scoped Redis keys. Scoped mode requires an
+  application ID and non-empty session ID, and can additionally isolate tenants and agents. Use explicit legacy mode
+  only while deliberately migrating historical keys; scoped mode never accesses them automatically.
 - **`RedisContextProvider`** - Context provider with Redis-backed retrieval
 - **`RedisSettings`** - TypedDict connection settings for vector stores, resolved with core `load_settings` from
   explicit URL overrides, an optional .env file, or `REDIS_URL`. URLs use `SecretString` to mask credentials.
@@ -40,7 +42,9 @@ their own indexes/keys, never `FLUSHALL`. Coverage includes both formats and
 from agent_framework.redis import RedisContextProvider, RedisHistoryProvider
 
 context_provider = RedisContextProvider(redis_url="redis://localhost:6379")
-history_provider = RedisHistoryProvider(redis_url="redis://localhost:6379")
+history_provider = RedisHistoryProvider(
+    redis_url="redis://localhost:6379", application_id="my-app", agent_id="my-agent"
+)
 ```
 
 ## Import Path
