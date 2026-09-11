@@ -124,6 +124,7 @@ preview = true
 [tool.ruff.lint]
 fixable = ["ALL"]
 unfixable = []
+# Exact rule selectors use names to satisfy RUF102; category prefixes remain codes.
 select = [
     "ASYNC", # async checks
     "B", # bugbear checks
@@ -144,7 +145,7 @@ select = [
     "T20", # typing checks
     "TD", # todos
     "W", # pycodestyle warning checks
-    "debugger", # Debugger,
+    "debugger", # Debugger
     "S", # Bandit checks
 ]
 ignore = [
