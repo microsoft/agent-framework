@@ -230,6 +230,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
             httpRequest.Content = new StringContent(request.Body, Encoding.UTF8);
             // Replace the default content-type header (including charset) with the declared type.
             httpRequest.Content.Headers.Remove("Content-Type");
+            ValidateHeaderValue("Content-Type", contentType);
             httpRequest.Content.Headers.TryAddWithoutValidation("Content-Type", contentType);
         }
 
@@ -241,6 +242,8 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
                 {
                     continue;
                 }
+
+                ValidateHeader(header.Key, header.Value);
 
                 // Content-* headers belong on HttpContent; all others belong on the request.
                 if (header.Key.StartsWith("Content-", StringComparison.OrdinalIgnoreCase) && httpRequest.Content is not null)
@@ -259,6 +262,27 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
 
         return httpRequest;
     }
+
+    private static void ValidateHeader(string name, string value)
+    {
+        if (ContainsHttpHeaderDelimiter(name))
+        {
+            throw new ArgumentException($"HTTP header name '{name}' contains invalid characters.", nameof(name));
+        }
+
+        ValidateHeaderValue(name, value);
+    }
+
+    private static void ValidateHeaderValue(string name, string value)
+    {
+        if (ContainsHttpHeaderDelimiter(value))
+        {
+            throw new ArgumentException($"HTTP header '{name}' contains invalid characters.", nameof(value));
+        }
+    }
+
+    private static bool ContainsHttpHeaderDelimiter(string value) =>
+        value.IndexOfAny(['\r', '\n', '\0']) >= 0;
 
     private static HttpClient CreateOwnedHttpClient()
     {
