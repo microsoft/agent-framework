@@ -390,7 +390,7 @@ Chosen option 5.
 1. Agent calls IChatClient with any functions registered on the agent.
    (IChatClient has FunctionInvokingChatClient)
 1. Model responds with FunctionCallContent indicating function calls required.
-1. FunctionInvokingChatClient decorator identifies any function calls that require user approval and returns an FunctionApprovalRequestContent.
+1. FunctionInvokingChatClient decorator identifies any function calls that require user approval and returns a FunctionApprovalRequestContent.
    (If there are multiple parallel function calls, all function calls will be returned as FunctionApprovalRequestContent even if only some require approval.)
 1. Agent updates the thread with the FunctionApprovalRequestContent (or this may have already been done by a service threaded agent).
 1. Agent returns the FunctionApprovalRequestContent to the caller which shows it to the user in the appropriate format.
