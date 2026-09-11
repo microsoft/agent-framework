@@ -100,13 +100,18 @@ By default, the package validates Python code against allow-lists before
 execution. The validator runs in its own short-lived Python subprocess with a
 dedicated timeout (`ProcessExecutionLimits.ValidationTimeoutSeconds`).
 
-- **Allowed imports**: `math`, `random`, `json`, `datetime`, `pathlib`, `os`
-  (only `os.environ`, `os.path` attributes are reachable), etc.
+- **Allowed imports**: `math`, `random`, `json`, `datetime`, `pathlib`, `os`,
+  etc. OS access is limited to lexical `os.path` transformations and read-only
+  access to the scrubbed `os.environ` mapping.
 - **Blocked imports**: `subprocess`, `sys`, `socket`, `importlib`, network and
   threading modules, etc.
 - **Allowed builtins**: `print`, `len`, `str`, type constructors, etc.
 - **Blocked builtins**: `eval`, `exec`, `compile`, `__import__`, `open`,
   `getattr`, `setattr`, etc.
+
+OS-derived aliases retain the same restrictions. Filesystem-querying path
+helpers, environment mutation, unknown descendants, and reflective access are
+rejected by default.
 
 See [`Resources/validator.py`](Resources/validator.py) for the full default
 allow-lists.
