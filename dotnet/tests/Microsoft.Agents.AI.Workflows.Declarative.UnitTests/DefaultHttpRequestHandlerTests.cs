@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using System.Threading;
@@ -255,6 +256,57 @@ public sealed class DefaultHttpRequestHandlerTests
         // Assert
         Assert.Equal("Bearer secret", messageHandler.LastRequest!.Headers.Authorization!.ToString());
         Assert.Contains(messageHandler.LastRequest.Headers.Accept, mediaType => mediaType.MediaType == "application/json");
+    }
+
+    [Fact]
+    public async Task SendAsyncRejectsHeaderValuesContainingCrlfBeforeSendingAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        await using RawHttpServer server = new();
+        using HttpClient httpClient = new();
+        await using DefaultHttpRequestHandler handler = new(httpClient);
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = server.Url,
+            Headers = new Dictionary<string, string>
+            {
+                ["X-User-Note"] = "safe\r\n\r\nDELETE /admin HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            },
+        };
+
+        // Act
+        Exception? exception = await Record.ExceptionAsync(() => handler.SendAsync(request, cancellationToken));
+        string? rawRequest = await server.TryReadRequestAsync(TimeSpan.FromMilliseconds(500));
+
+        // Assert
+        Assert.Null(rawRequest);
+        Assert.IsType<ArgumentException>(exception);
+    }
+
+    [Fact]
+    public async Task SendAsyncRejectsBodyContentTypeContainingCrlfBeforeSendingAsync()
+    {
+        // Arrange
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+            throw new InvalidOperationException("The request should be rejected before transport."));
+        using HttpClient httpClient = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new(httpClient);
+        HttpRequestInfo request = new()
+        {
+            Method = "POST",
+            Url = TestUrl,
+            Body = "safe",
+            BodyContentType = "text/plain\r\nX-Injected: value",
+        };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request);
+
+        // Assert
+        await Assert.ThrowsAsync<ArgumentException>(actAsync);
+        Assert.Null(messageHandler.LastRequest);
     }
 
     [Fact]
@@ -1071,6 +1123,95 @@ public sealed class DefaultHttpRequestHandlerTests
                 this.RequestBodies.Add(null);
             }
             return await this._responseFactory(request, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private sealed class RawHttpServer : IAsyncDisposable
+    {
+        private readonly TcpListener _listener;
+        private readonly Task<string?> _rawRequestTask;
+
+        public RawHttpServer()
+        {
+            this._listener = new TcpListener(IPAddress.Loopback, 0);
+            this._listener.Start();
+            int port = ((IPEndPoint)this._listener.LocalEndpoint).Port;
+            this.Url = $"http://127.0.0.1:{port}/public";
+            this._rawRequestTask = Task.Run(this.AcceptAndRespond);
+        }
+
+        public string Url { get; }
+
+        public async Task<string?> TryReadRequestAsync(TimeSpan timeout)
+        {
+            Task completedTask = await Task.WhenAny(this._rawRequestTask, Task.Delay(timeout)).ConfigureAwait(false);
+            return completedTask == this._rawRequestTask
+                ? await this._rawRequestTask.ConfigureAwait(false)
+                : null;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+#if NET
+            this._listener.Dispose();
+#else
+            this._listener.Stop();
+#endif
+            await this._rawRequestTask.ConfigureAwait(false);
+        }
+
+        private string? AcceptAndRespond()
+        {
+            TcpClient client;
+            try
+            {
+                client = this._listener.AcceptTcpClient();
+            }
+            catch (SocketException)
+            {
+                return null;
+            }
+            catch (ObjectDisposedException)
+            {
+                return null;
+            }
+
+            using (client)
+            {
+                client.ReceiveTimeout = 250;
+                using NetworkStream stream = client.GetStream();
+                using MemoryStream rawRequest = new();
+                byte[] buffer = new byte[1024];
+
+                while (true)
+                {
+                    int bytesRead;
+                    try
+                    {
+                        bytesRead = stream.Read(buffer, 0, buffer.Length);
+                    }
+                    catch (IOException)
+                    {
+                        break;
+                    }
+
+                    if (bytesRead == 0)
+                    {
+                        break;
+                    }
+
+                    rawRequest.Write(buffer, 0, bytesRead);
+                    string currentRequest = Encoding.ASCII.GetString(rawRequest.ToArray());
+                    if (currentRequest.Contains("DELETE /admin", StringComparison.Ordinal))
+                    {
+                        break;
+                    }
+                }
+
+                byte[] responseBytes = Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+                stream.Write(responseBytes, 0, responseBytes.Length);
+                return Encoding.ASCII.GetString(rawRequest.ToArray());
+            }
         }
     }
 
