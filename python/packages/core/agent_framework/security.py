@@ -3968,8 +3968,8 @@ class SecureMCPToolProxy:
         url: URL of a remote MCP server.  When provided, the proxy creates
             an ``MCPStreamableHTTPTool`` internally.  Mutually exclusive with
             *mcp_tool*.
-        headers: HTTP headers (e.g. auth tokens) sent with every request
-            when using *url* mode.
+        headers: HTTP headers (e.g. auth tokens) sent with requests to the
+            configured origin when using *url* mode.
         name: Tool name used when creating the internal
             ``MCPStreamableHTTPTool`` (defaults to ``"mcp"``).
         description: Tool description for the internal tool.
@@ -4007,8 +4007,8 @@ class SecureMCPToolProxy:
         Keyword Args:
             url: URL of a remote MCP server. When provided, the proxy creates an
                 ``MCPStreamableHTTPTool`` internally. Mutually exclusive with ``mcp_tool``.
-            headers: HTTP headers (e.g. auth tokens) sent with every request when using
-                ``url`` mode.
+            headers: HTTP headers (e.g. auth tokens) sent with requests to the configured
+                origin when using ``url`` mode.
             name: Tool name used when creating the internal ``MCPStreamableHTTPTool``
                 (defaults to ``"mcp"``).
             description: Tool description for the internal tool.
@@ -4031,30 +4031,14 @@ class SecureMCPToolProxy:
             raise ValueError("Provide either 'mcp_tool' (an MCPTool instance) or 'url' (a remote MCP server URL).")
 
         if url is not None:
-            from httpx import AsyncClient, Timeout
-
-            from ._mcp import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TIMEOUT, MCPStreamableHTTPTool
+            from ._mcp import MCPStreamableHTTPTool
 
             static_headers = dict(headers or {})
-            # Pass headers via an AsyncClient so they are included on ALL requests
-            # (including session.initialize()), not just tool calls. Using
-            # header_provider alone only sets headers via a ContextVar that is
-            # populated during call_tool() and would be empty during initialization,
-            # causing 401s that silently manifest as anyio cancel-scope errors.
-            http_client = (
-                AsyncClient(
-                    headers=static_headers,
-                    follow_redirects=True,
-                    timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
-                )
-                if static_headers
-                else None
-            )
             mcp_tool = MCPStreamableHTTPTool(
                 name=name or "mcp",
                 url=url,
-                http_client=http_client,
                 description=description,
+                static_headers=static_headers,
             )
 
         # The validation above guarantees a tool is set (passed directly or built
