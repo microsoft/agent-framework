@@ -59,6 +59,16 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   migrations and must warn because it disables that isolation; it is unsafe for shared multi-tenant deployments.
   A configured endpoint resolver must return a non-empty string. Reject invalid results before accessing state or
   invoking the runner; absence of a resolver, not an invalid result, selects intentionally unscoped operation.
+- Request `state` is client-owned Shared State and is merged into `AgentSession.state`, minus a protected set:
+  tool-approval state, history/context-provider namespaces, message-injection state, and provider-owned keys.
+  Agents declare the latter through a `service_session_state_keys` attribute, but that resolves against the agent
+  object AG-UI is handed, so a wrapper agent that does not forward it would silently drop the protection.
+  `_RESERVED_SERVICE_SESSION_STATE_KEYS` therefore reserves such keys unconditionally; add a key there whenever
+  it names a remote resource that the server's own credentialed call addresses.
+- Provider-owned keys identify remote resources that the server's own credentialed call addresses — for example
+  the Foundry hosted-agent session ID, which selects a VM-isolated sandbox with a persistent filesystem. Never let
+  request state choose one. `AgentSession.service_session_id` is deliberately a separate attribute rather than a
+  `state` entry, so conversation continuation is unreachable from client input by construction; keep it that way.
 - `confirm_changes` snapshot cleanup resolves the synthetic confirmation back to its original `function_call_id`;
   it must never concatenate unrelated tool results or record accepted changes without a matching real result.
 - SSE keepalive is endpoint-owned transport behavior configured through

@@ -8,7 +8,7 @@ import copy
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
@@ -138,6 +138,18 @@ logger = logging.getLogger(__name__)
 AG_UI_INTERNAL_METADATA_KEYS = {"ag_ui_thread_id", "ag_ui_run_id", "current_state", "forwarded_props"}
 _COLLECTED_APPROVAL_RESPONSES_KEY = "collected_approval_responses"
 _PROVIDER_SERVICE_SESSION_ID_STATE_KEY = "__ag_ui_provider_service_session_id"
+
+# Provider-owned session-state keys reserved unconditionally, independent of what the agent declares through
+# ``service_session_state_keys``. Agents are expected to declare their own keys, but that resolves through the
+# agent object AG-UI is handed, so a wrapper agent that does not forward the attribute would silently drop the
+# protection. Keys naming a remote resource that the server's own credentialed call addresses are reserved here
+# instead. The Foundry key is spelled literally rather than imported, because agent-framework-ag-ui does not
+# depend on agent-framework-foundry and must protect the key even when it is absent or outdated.
+#
+# agent_framework_foundry.FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY. Selects the Foundry hosted-agent runtime session,
+# a VM-isolated sandbox with a persistent filesystem, so a client-supplied value would run the server's
+# credentialed call inside another session's sandbox.
+_RESERVED_SERVICE_SESSION_STATE_KEYS: frozenset[str] = frozenset({"foundry_hosted_agent_session_id"})
 
 
 @dataclass
@@ -2324,11 +2336,16 @@ def _request_state_protected_keys(agent: SupportsAgentRun) -> set[str]:
 
 
 def _provider_service_session_state_keys(agent: SupportsAgentRun) -> set[str]:
-    """Return provider-owned session-state keys that must not cross stateless runs."""
-    keys = getattr(agent, "service_session_state_keys", ())
-    if not isinstance(keys, (list, tuple, set, frozenset)):
-        return set()
-    return {key for key in keys if isinstance(key, str)}
+    """Return provider-owned session-state keys that must not cross stateless runs.
+
+    Always includes :data:`_RESERVED_SERVICE_SESSION_STATE_KEYS`, so the reserved keys stay server-owned even
+    when ``agent`` declares nothing, such as a wrapper agent that does not forward the attribute.
+    """
+    keys = set(_RESERVED_SERVICE_SESSION_STATE_KEYS)
+    declared = getattr(agent, "service_session_state_keys", ())
+    if isinstance(declared, (list, tuple, set, frozenset)):
+        keys.update(key for key in cast(Collection[Any], declared) if isinstance(key, str))
+    return keys
 
 
 def _serialize_session_continuation_state(

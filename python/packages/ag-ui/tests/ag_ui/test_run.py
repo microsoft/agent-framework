@@ -2922,3 +2922,89 @@ async def test_stateless_snapshot_excludes_only_provider_service_session_state()
         {"client_value": "available"},
         {"private": "preserved", "client_value": "available"},
     ]
+
+
+async def test_reserved_service_session_keys_protected_without_agent_declaration():
+    """Reserved provider keys stay server-owned even if the agent declares nothing.
+
+    ``service_session_state_keys`` is resolved from the agent object AG-UI is handed, so an agent that does not
+    declare it, such as a wrapper that forgets to forward the attribute or an older provider package, would
+    otherwise silently fall back to accepting a client-supplied value. Reserving the key in
+    ``_RESERVED_SERVICE_SESSION_STATE_KEYS`` is the backstop that keeps those combinations safe.
+    """
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    stub = StubAgent()
+    assert not hasattr(stub, "service_session_state_keys")
+
+    observed_state: list[dict[str, Any]] = []
+    original_run = stub.run
+
+    def capture_state(*args: Any, **kwargs: Any) -> Any:
+        observed_state.append(dict(kwargs["session"].state))
+        return original_run(*args, **kwargs)
+
+    stub.run = capture_state  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+    agent = AgentFrameworkAgent(agent=stub)
+    _ = [
+        event
+        async for event in agent.run(
+            {
+                "thread_id": "frontend-thread",
+                "run_id": "attacker-run",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "state": {
+                    "foundry_hosted_agent_session_id": "victim-sandbox",
+                    "client_value": "available",
+                },
+            }
+        )
+    ]
+
+    assert observed_state == [{"client_value": "available"}]
+
+
+async def test_request_state_cannot_assign_service_session_id():
+    """Chat history held by the provider is addressed by ``service_session_id``, never by client state.
+
+    ``AgentSession`` keeps ``service_session_id`` as its own attribute rather than a ``state`` entry, and only
+    trusted snapshot storage or a provider response may set it. This test locks in that boundary so a future
+    refactor cannot start sourcing conversation continuation from request Shared State.
+    """
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    for use_service_session in (False, True):
+        stub = StubAgent()
+        observed: list[Any] = []
+        original_run = stub.run
+
+        def capture(*args: Any, **kwargs: Any) -> Any:
+            observed.append(kwargs["session"].service_session_id)
+            return original_run(*args, **kwargs)
+
+        stub.run = capture  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+
+        agent = AgentFrameworkAgent(
+            agent=stub,
+            use_service_session=use_service_session,
+            snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+        )
+        _ = [
+            event
+            async for event in agent.run(
+                {
+                    "thread_id": "frontend-thread",
+                    "run_id": "attacker-run",
+                    "__ag_ui_snapshot_scope": "test",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "state": {"__ag_ui_provider_service_session_id": "victim-conversation"},
+                }
+            )
+        ]
+
+        assert observed == [None], f"client state selected a conversation (use_service_session={use_service_session})"

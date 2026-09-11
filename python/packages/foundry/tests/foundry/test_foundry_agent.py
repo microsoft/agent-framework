@@ -6,7 +6,7 @@ import inspect
 import json
 import os
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from importlib import import_module
 from types import SimpleNamespace
 from typing import Any, cast
@@ -24,6 +24,7 @@ from agent_framework import (
     ChatMiddleware,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     FunctionInvocationContext,
     FunctionMiddleware,
     Message,
@@ -31,6 +32,7 @@ from agent_framework import (
     WorkflowBuilder,
     tool,
 )
+from agent_framework._types import ResponseStream
 from agent_framework.foundry import FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY
 from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
 from agent_framework_openai._chat_client import RawOpenAIChatClient
@@ -1093,6 +1095,134 @@ def test_raw_foundry_agent_init_with_function_tools() -> None:
     )
 
     assert agent.default_options.get("tools") is not None
+
+
+async def test_agui_request_state_cannot_choose_foundry_hosted_agent_sandbox() -> None:
+    """A client must not be able to pick which Foundry sandbox the server's credentialed call addresses.
+
+    Reproduces the full reported chain without network access: an ordinary AG-UI request carries
+    ``foundry_hosted_agent_session_id`` in its client-owned ``state``, and the resulting session is then used to
+    prepare the outbound Foundry Responses call. ``agent_session_id`` selects a VM-isolated sandbox with a
+    persistent filesystem, so honouring a caller-supplied value would run the server's own credentialed request
+    inside another session's sandbox.
+    """
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    foundry_agent = RawFoundryAgent(project_client=mock_project, agent_name="test-agent")
+
+    observed_state: list[dict[str, Any]] = []
+
+    def fake_run(messages: Any = None, **kwargs: Any) -> Any:
+        session = kwargs.get("session")
+        observed_state.append(dict(session.state) if session is not None else {})
+
+        async def _stream() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text(text="ok")], role="assistant")
+
+        return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+    foundry_agent.run = fake_run  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+
+    runner = AgentFrameworkAgent(agent=foundry_agent)
+    events = [
+        event
+        async for event in runner.run({
+            "runId": "attacker-run",
+            "threadId": "attacker-thread",
+            "messages": [{"role": "user", "content": "hello"}],
+            "state": {
+                FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY: "VICTIM-SANDBOX-9f31c2",
+                "benign": "ok",
+            },
+        })
+    ]
+
+    assert not [event for event in events if getattr(event, "type", None) == "RUN_ERROR"]
+    # The sandbox handle is stripped, while ordinary client Shared State still reaches the agent.
+    assert observed_state == [{"benign": "ok"}]
+
+    # The outbound Foundry call therefore pins no sandbox at all.
+    session = AgentSession()
+    session.state.update(observed_state[0])
+    with patch(
+        "agent_framework._agents.RawAgent._prepare_run_context",
+        new=AsyncMock(return_value={"ok": True}),
+    ) as mock_prepare_run_context:
+        await foundry_agent._prepare_run_context(
+            messages="hi",
+            session=session,
+            tools=None,
+            options={},
+            compaction_strategy=None,
+            tokenizer=None,
+            function_invocation_kwargs=None,
+            client_kwargs=None,
+        )
+
+    assert mock_prepare_run_context.await_args
+    assert "agent_session_id" not in mock_prepare_run_context.await_args.kwargs["options"].get("extra_body", {})
+
+
+async def test_agui_request_state_cannot_overwrite_established_foundry_sandbox() -> None:
+    """A server-established sandbox handle stays authoritative when a later request tries to replace it."""
+    store = InMemoryAGUIThreadSnapshotStore()
+    mock_project = MagicMock()
+    mock_openai = MagicMock()
+    mock_openai.conversations.create = AsyncMock(return_value=SimpleNamespace(id="conv_server_owned"))
+    mock_project.get_openai_client.return_value = mock_openai
+    foundry_agent = RawFoundryAgent(project_client=mock_project, agent_name="test-agent")
+
+    observed_state: list[dict[str, Any]] = []
+
+    def fake_run(messages: Any = None, **kwargs: Any) -> Any:
+        session = kwargs.get("session")
+        observed_state.append(dict(session.state) if session is not None else {})
+
+        async def _stream() -> AsyncIterator[AgentResponseUpdate]:
+            # The provider establishes the real sandbox handle, exactly as a live response would.
+            if session is not None:
+                session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = "server-owned-sandbox"
+            yield AgentResponseUpdate(contents=[Content.from_text(text="ok")], role="assistant")
+
+        return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+
+    foundry_agent.run = fake_run  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+
+    runner = AgentFrameworkAgent(
+        agent=foundry_agent,
+        use_service_session=True,
+        snapshot_store=store,
+    )
+    payload: dict[str, Any] = {
+        "threadId": "victim-thread",
+        "__ag_ui_snapshot_scope": "scope",
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+    _ = [event async for event in runner.run({**payload, "runId": "run-1"})]
+
+    attacker_payload = {
+        **payload,
+        "runId": "run-2",
+        "state": {FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY: "attacker-chosen-sandbox"},
+    }
+    _ = [event async for event in runner.run(attacker_payload)]
+
+    assert observed_state[0] == {}
+    # The second turn resumes the server's own sandbox and ignores the attacker's value.
+    assert observed_state[1] == {FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY: "server-owned-sandbox"}
+
+
+def test_foundry_agents_declare_hosted_agent_session_id_as_server_owned() -> None:
+    """The hosted-agent session ID must stay server-owned so hosts reject client-supplied values.
+
+    ``agent_session_id`` selects the Foundry hosted-agent runtime session, which is a VM-isolated sandbox with a
+    persistent filesystem. A caller-supplied value would redirect the server's own credentialed call into another
+    session's sandbox, so hosts discover this key through ``service_session_state_keys`` and refuse to let
+    untrusted input populate it. Without this test nothing fails if the declaration is dropped.
+    """
+    assert FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY in RawFoundryAgent.service_session_state_keys
+    # FoundryAgent is the recommended production class, so it must inherit the same protection.
+    assert FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY in FoundryAgent.service_session_state_keys
 
 
 async def test_raw_foundry_agent_prepare_run_context_injects_agent_session_id_from_state() -> None:
