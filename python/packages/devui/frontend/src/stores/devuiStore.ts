@@ -110,6 +110,7 @@ interface DevUIState {
   runtime: "python" | "dotnet";
   serverCapabilities: {
     instrumentation: boolean;
+    trace_retrieval: boolean;
     openai_proxy: boolean;
     deployment: boolean;
   };
@@ -200,7 +201,18 @@ interface DevUIActions {
   toggleOAIMode: () => void;
 
   // Server Meta Actions
-  setServerMeta: (meta: { uiMode: "developer" | "user"; runtime: "python" | "dotnet"; capabilities: { instrumentation: boolean; openai_proxy: boolean; deployment: boolean }; authRequired: boolean; version?: string }) => void;
+  setServerMeta: (meta: {
+    uiMode: "developer" | "user";
+    runtime: "python" | "dotnet";
+    capabilities: {
+      instrumentation: boolean;
+      trace_retrieval: boolean;
+      openai_proxy: boolean;
+      deployment: boolean;
+    };
+    authRequired: boolean;
+    version?: string;
+  }) => void;
 
   // Deployment Actions
   startDeployment: () => void;
@@ -290,6 +302,7 @@ export const useDevUIStore = create<DevUIStore>()(
         runtime: "python", // Default to Python runtime
         serverCapabilities: {
           instrumentation: false,
+          trace_retrieval: false,
           openai_proxy: false,
           deployment: false,
         },

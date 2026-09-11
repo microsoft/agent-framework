@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading;
 using Aspire.Hosting.AgentFramework;
 using Aspire.Hosting.ApplicationModel;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -63,7 +64,10 @@ public static class AgentFrameworkBuilderExtensions
         builder.Eventing.Subscribe<InitializeResourceEvent>(resource, async (e, ct) =>
         {
             var logger = e.Logger;
-            var aggregator = new DevUIAggregatorHostedService(resource, e.Services.GetRequiredService<ILoggerFactory>().CreateLogger<DevUIAggregatorHostedService>());
+            var aggregator = new DevUIAggregatorHostedService(
+                resource,
+                e.Services.GetRequiredService<ILoggerFactory>().CreateLogger<DevUIAggregatorHostedService>(),
+                e.Services.GetService<IConfiguration>());
 
             try
             {

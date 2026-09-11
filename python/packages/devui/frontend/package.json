@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test:tracing": "node --test test/trace-polling.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
