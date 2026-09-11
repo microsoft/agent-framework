@@ -59,6 +59,33 @@ def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[s
     return unique_origin_session_ids
 
 
+def _aggregate_origin_session_ids(messages: Sequence[Message]) -> list[str]:
+    """Aggregate origin_session_ids from a sequence of Message objects.
+
+    Extracts origin_session_ids from each message's _attribution and returns
+    a deduplicated list preserving first-seen order. Messages without attribution
+    or without origin_session_ids are silently skipped.
+
+    Args:
+        messages: The Message objects to aggregate provenance from.
+
+    Returns:
+        Deduplicated origin_session_ids in first-seen order.
+    """
+    origin_session_ids: list[str] = []
+    for message in messages:
+        attribution = message.additional_properties.get("_attribution")
+        if not isinstance(attribution, Mapping):
+            continue
+        origins = attribution.get("origin_session_ids")
+        if not isinstance(origins, Sequence) or isinstance(origins, str):
+            continue
+        for origin in cast("Sequence[Any]", origins):
+            if isinstance(origin, str):
+                origin_session_ids.append(origin)
+    return _deduplicate_origin_session_ids(origin_session_ids)
+
+
 @runtime_checkable
 class TokenizerProtocol(Protocol):
     """Protocol for token counters used by token-aware compaction strategies."""
@@ -1153,19 +1180,28 @@ class ToolResultCompactionStrategy:
                 _set_group_summarized_by_summary_id(msg, summary_id)
                 changed = set_excluded(msg, excluded=True, reason="tool_result_compaction") or changed
 
+            # Aggregate provenance directly from the actual Message objects being summarized
+            # This ensures origin_session_ids are preserved even when message_id is None
+            aggregated_origins = _aggregate_origin_session_ids(group_msgs)
+
             # Insert summary with forward links to the originals.
             summary_annotation = {
                 SUMMARY_OF_MESSAGE_IDS_KEY: original_message_ids,
                 SUMMARY_OF_GROUP_IDS_KEY: [group_id],
             }
             insertion_index = starts.get(group_id, 0)
+            
+            summary_additional_properties: dict[str, Any] = {
+                GROUP_ANNOTATION_KEY: summary_annotation,
+            }
+            if aggregated_origins:
+                summary_additional_properties["_attribution"] = {"origin_session_ids": aggregated_origins}
+            
             summary_message = Message(
                 role="assistant",
                 contents=[summary_text],
                 message_id=summary_id,
-                additional_properties={
-                    GROUP_ANNOTATION_KEY: summary_annotation,
-                },
+                additional_properties=summary_additional_properties,
             )
             messages.insert(insertion_index, summary_message)
             annotate_message_groups(messages, from_index=insertion_index, force_reannotate=False)
@@ -1581,13 +1617,21 @@ class SummarizationStrategy:
             SUMMARY_OF_GROUP_IDS_KEY: summary_of_group_ids,
         }
 
+        # Aggregate provenance directly from the actual Message objects being summarized
+        # This ensures origin_session_ids are preserved even when message_id is None
+        aggregated_origins = _aggregate_origin_session_ids(messages_to_summarize)
+
+        summary_additional_properties: dict[str, Any] = {
+            GROUP_ANNOTATION_KEY: summary_annotation,
+        }
+        if aggregated_origins:
+            summary_additional_properties["_attribution"] = {"origin_session_ids": aggregated_origins}
+
         summary_message = Message(
             role="assistant",
             contents=[summary_text],
             message_id=summary_id,
-            additional_properties={
-                GROUP_ANNOTATION_KEY: summary_annotation,
-            },
+            additional_properties=summary_additional_properties,
         )
 
         for message in messages_to_summarize:
@@ -1833,11 +1877,6 @@ class CompactionProvider(ContextProvider):
             id(message): sid for sid, msgs in context.context_messages.items() for message in msgs
         }
 
-        # Track original messages by message_id for attribution preservation
-        message_by_message_id: dict[str, Message] = {
-            message.message_id: message for message in all_messages if message.message_id
-        }
-
         await _run_compaction_strategy(
             all_messages,
             strategy=self.before_strategy,
@@ -1863,47 +1902,6 @@ class CompactionProvider(ContextProvider):
         
         context.context_messages.clear()
         context.context_messages.update(rebuilt)
-
-        # Preserve attribution metadata on synthetic summary messages
-        # This ensures cross-session governance signals are not lost when content is summarized
-        for message in projected:
-            # Check if this is a synthetic summary message
-            annotation = _read_group_annotation_raw(message)
-            if annotation is None:
-                continue
-            
-            summarized_message_ids: Any = annotation.get(SUMMARY_OF_MESSAGE_IDS_KEY)
-            if not isinstance(summarized_message_ids, list) or not summarized_message_ids:
-                continue
-            
-            # Collect origin_session_ids from all summarized messages
-            origin_session_ids: list[str] = []
-            for msg_id in cast("list[Any]", summarized_message_ids):
-                if not isinstance(msg_id, str):
-                    continue
-                original_message = message_by_message_id.get(msg_id)
-                if original_message is None:
-                    continue
-                original_attribution = original_message.additional_properties.get("_attribution")
-                if isinstance(original_attribution, Mapping):
-                    original_origins = original_attribution.get("origin_session_ids")
-                    if isinstance(original_origins, Sequence) and not isinstance(original_origins, str):
-                        for origin in cast("Sequence[Any]", original_origins):
-                            if isinstance(origin, str):
-                                origin_session_ids.append(origin)
-            
-            if origin_session_ids:
-                # Deduplicate and attach to the synthetic summary
-                deduplicated_ids = _deduplicate_origin_session_ids(origin_session_ids)
-                summary_attribution = message.additional_properties.get("_attribution")
-                if isinstance(summary_attribution, Mapping):
-                    # Merge with existing attribution if present
-                    merged_attribution = dict(cast("Mapping[str, Any]", summary_attribution))
-                    merged_attribution["origin_session_ids"] = deduplicated_ids
-                    message.additional_properties["_attribution"] = merged_attribution
-                else:
-                    # Create new attribution dict
-                    message.additional_properties["_attribution"] = {"origin_session_ids": deduplicated_ids}
 
     async def after_run(
         self,
