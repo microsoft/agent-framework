@@ -14,13 +14,14 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReason,
     Message,
     ResponseStream,
     tool,
 )
 from pytest import MonkeyPatch
 
-from agent_framework_ag_ui._client import AGUIChatClient
+from agent_framework_ag_ui._client import AGUIChatClient, _resolve_finish_reason
 from agent_framework_ag_ui._http_service import AGUIHttpService
 
 
@@ -57,6 +58,33 @@ class StubAGUIChatClient(AGUIChatClient):
 
 class TestAGUIChatClient:
     """Test suite for AGUIChatClient."""
+
+    @pytest.mark.parametrize(
+        ("provider_finish_reason", "has_function_calls", "function_calls_committed", "expected"),
+        [
+            (None, False, False, None),
+            (FinishReason("tool_calls"), False, False, "tool_calls"),
+            (FinishReason("stop"), True, False, "stop"),
+            (FinishReason("tool_calls"), True, False, None),
+            (FinishReason("stop"), True, True, "tool_calls"),
+        ],
+    )
+    def test_resolve_finish_reason_requires_function_call_commitment(
+        self,
+        provider_finish_reason: FinishReason | None,
+        has_function_calls: bool,
+        function_calls_committed: bool,
+        expected: str | None,
+    ) -> None:
+        """Only committed function calls resolve to an authorizing finish reason."""
+        assert (
+            _resolve_finish_reason(
+                provider_finish_reason,
+                has_function_calls=has_function_calls,
+                function_calls_committed=function_calls_committed,
+            )
+            == expected
+        )
 
     async def test_client_initialization(self) -> None:
         """Test client initialization."""
@@ -546,6 +574,161 @@ class TestAGUIChatClient:
 
         assert response is not None
 
+    async def test_client_tool_updates_precede_run_finished_commit(self, monkeypatch: MonkeyPatch) -> None:
+        """Client tool updates stream immediately before RUN_FINISHED commits them."""
+
+        @tool
+        def client_tool(value: int) -> str:
+            """Return the supplied value."""
+            return str(value)
+
+        mock_events = [
+            {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+            {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolName": "client_tool"},
+            {"type": "TOOL_CALL_ARGS", "toolCallId": "call_1", "delta": '{"value": 1}'},
+            {"type": "TOOL_CALL_END", "toolCallId": "call_1"},
+            {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
+        ]
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            for event in mock_events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        stream = client.inner_get_response(
+            messages=[Message(role="user", contents=["Test"])],
+            options={"tools": [client_tool]},
+            stream=True,
+        )
+        assert isinstance(stream, ResponseStream)
+        updates = [cast(ChatResponseUpdate, update) async for update in stream]
+
+        function_updates = [
+            (index, content.arguments)
+            for index, update in enumerate(updates)
+            for content in update.contents
+            if content.type == "function_call"
+        ]
+        assert function_updates == [(1, ""), (2, '{"value": 1}')]
+        assert [update.finish_reason for update in updates] == [None, None, None, "tool_calls"]
+
+    async def test_client_tool_run_error_is_not_committed(self, monkeypatch: MonkeyPatch) -> None:
+        """RUN_ERROR leaves streamed client calls non-authorizing."""
+
+        @tool
+        def client_tool(value: int) -> str:
+            """Return the supplied value."""
+            return str(value)
+
+        mock_events = [
+            {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+            {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolName": "client_tool"},
+            {"type": "TOOL_CALL_ARGS", "toolCallId": "call_1", "delta": '{"value": 1}'},
+            {"type": "TOOL_CALL_END", "toolCallId": "call_1"},
+            {"type": "RUN_ERROR", "threadId": "thread_1", "runId": "run_1", "message": "failed"},
+        ]
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            for event in mock_events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        stream = client.inner_get_response(
+            messages=[Message(role="user", contents=["Test"])],
+            options={"tools": [client_tool]},
+            stream=True,
+        )
+        assert isinstance(stream, ResponseStream)
+        updates = [cast(ChatResponseUpdate, update) async for update in stream]
+
+        assert all(update.finish_reason != "tool_calls" for update in updates)
+        assert updates[-1].contents[0].type == "error"
+
+    async def test_client_tool_transport_eof_is_not_committed(self, monkeypatch: MonkeyPatch) -> None:
+        """Transport EOF without RUN_FINISHED leaves client calls non-authorizing."""
+
+        @tool
+        def client_tool(value: int) -> str:
+            """Return the supplied value."""
+            return str(value)
+
+        mock_events = [
+            {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+            {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolName": "client_tool"},
+            {"type": "TOOL_CALL_ARGS", "toolCallId": "call_1", "delta": '{"value": 1}'},
+            {"type": "TOOL_CALL_END", "toolCallId": "call_1"},
+        ]
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            for event in mock_events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        stream = client.inner_get_response(
+            messages=[Message(role="user", contents=["Test"])],
+            options={"tools": [client_tool]},
+            stream=True,
+        )
+        assert isinstance(stream, ResponseStream)
+        updates = [cast(ChatResponseUpdate, update) async for update in stream]
+
+        assert all(update.finish_reason != "tool_calls" for update in updates)
+
+    async def test_committed_client_tool_executes_exactly_once(self, monkeypatch: MonkeyPatch) -> None:
+        """A committed client tool call executes once before the follow-up response."""
+        executions: list[int] = []
+
+        @tool
+        def client_tool(value: int) -> str:
+            """Record and return the supplied value."""
+            executions.append(value)
+            return str(value)
+
+        call_count = 0
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                mock_events = [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+                    {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolName": "client_tool"},
+                    {"type": "TOOL_CALL_ARGS", "toolCallId": "call_1", "delta": '{"value": 1}'},
+                    {"type": "TOOL_CALL_END", "toolCallId": "call_1"},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
+                ]
+            else:
+                mock_events = [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_2"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "msg_1", "delta": "done"},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_2"},
+                ]
+            for event in mock_events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        response = await client.get_response(
+            [Message(role="user", contents=["Test"])],
+            options={"tools": [client_tool]},
+        )
+        content_types = [content.type for message in response.messages for content in message.contents]
+
+        assert executions == [1]
+        assert call_count == 2
+        assert response.text == "done"
+        assert content_types.count("function_result") == 1
+        assert (
+            content_types.index("function_call") < content_types.index("function_result") < content_types.index("text")
+        )
+
     async def test_server_tool_calls_unwrapped_after_invocation(self, monkeypatch: MonkeyPatch) -> None:
         """Ensure server-side tool calls are exposed as FunctionCallContent after processing."""
 
@@ -576,6 +759,7 @@ class TestAGUIChatClient:
         assert function_calls[0].name == "get_time_zone"
 
         assert not any(content.type == "server_function_call" for update in updates for content in update.contents)
+        assert updates[-1].finish_reason == "stop"
 
     async def test_server_tool_calls_not_executed_locally(self, monkeypatch: MonkeyPatch) -> None:
         """Server tools should not trigger local function invocation even when client tools exist."""

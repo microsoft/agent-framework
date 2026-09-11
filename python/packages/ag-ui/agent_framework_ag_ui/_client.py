@@ -21,6 +21,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReason,
     FunctionTool,
     Message,
     ResponseStream,
@@ -56,6 +57,22 @@ if TYPE_CHECKING:
     from ._types import AGUIChatOptions
 
 logger: logging.Logger = logging.getLogger("agent_framework.ag_ui")
+
+
+def _resolve_finish_reason(
+    provider_finish_reason: FinishReason | None,
+    *,
+    has_function_calls: bool,
+    function_calls_committed: bool,
+) -> FinishReason | None:
+    """Resolve the provider finish reason after function-call commitment."""
+    if not has_function_calls:
+        return provider_finish_reason
+    if function_calls_committed:
+        return FinishReason("tool_calls")
+    if provider_finish_reason == "tool_calls":
+        return None
+    return provider_finish_reason
 
 
 def _unwrap_server_function_call_contents(contents: MutableSequence[Content | dict[str, Any]]) -> None:
@@ -495,6 +512,7 @@ class AGUIChatClient(
         logger.debug(f"[AGUIChatClient] Client tool set: {client_tool_set}")
 
         converter = AGUIEventConverter()
+        has_function_calls = False
 
         available_interrupts = options.get("available_interrupts", options.get("availableInterrupts"))
 
@@ -522,6 +540,7 @@ class AGUIChatClient(
                         )
                         if content.name in client_tool_set:
                             # Client tool - let function invocation execute it
+                            has_function_calls = True
                             if not content.additional_properties:
                                 content.additional_properties = {}
                             content.additional_properties["agui_thread_id"] = thread_id
@@ -531,4 +550,9 @@ class AGUIChatClient(
                             self._register_server_tool_placeholder(content.name)  # type: ignore[arg-type]
                             update.contents[i] = Content(type="server_function_call", function_call=content)  # type: ignore
 
+                update.finish_reason = _resolve_finish_reason(
+                    cast(FinishReason | None, update.finish_reason),
+                    has_function_calls=has_function_calls,
+                    function_calls_committed=str(event.get("type", "")).upper() == "RUN_FINISHED",
+                )
                 yield update
