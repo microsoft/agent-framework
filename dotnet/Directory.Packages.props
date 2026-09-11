@@ -110,11 +110,11 @@
     <!-- Agent SDKs -->
     <PackageVersion Include="GitHub.Copilot.SDK" Version="1.0.11" />
     <PackageVersion Include="ResponsibleAI.AgentHooks" Version="0.1.0-alpha.5" />
-    <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.9.28-beta" />
+    <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.9.35-beta" />
     <!-- M365 Agents SDK -->
     <PackageVersion Include="AdaptiveCards" Version="3.1.0" />
-    <PackageVersion Include="Microsoft.Agents.Authentication.Msal" Version="1.9.28-beta" />
-    <PackageVersion Include="Microsoft.Agents.Hosting.AspNetCore" Version="1.9.28-beta" />
+    <PackageVersion Include="Microsoft.Agents.Authentication.Msal" Version="1.9.35-beta" />
+    <PackageVersion Include="Microsoft.Agents.Hosting.AspNetCore" Version="1.9.35-beta" />
     <!-- A2A -->
     <PackageVersion Include="A2A" Version="1.0.0-preview2" />
     <PackageVersion Include="A2A.AspNetCore" Version="1.0.0-preview2" />
