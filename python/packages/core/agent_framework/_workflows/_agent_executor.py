@@ -3,17 +3,18 @@
 import inspect
 import logging
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
-from typing_extensions import Never
+from typing_extensions import Never, NotRequired, TypedDict
 
 from agent_framework import Content
 
 from .._agents import SupportsAgentRun
 from .._sessions import AgentSession
 from .._types import AgentResponse, AgentResponseUpdate, Message, ResponseStream
+from ..exceptions import WorkflowCheckpointException
 from ._agent_utils import resolve_agent_id
 from ._const import GLOBAL_KWARGS_KEY, INTERNAL_SOURCE_ID, WORKFLOW_RUN_KWARGS_KEY
 from ._executor import Executor, handler
@@ -28,6 +29,79 @@ else:
     from typing_extensions import override  # pragma: no cover
 
 logger = logging.getLogger(__name__)
+
+
+class AgentSessionCheckpointState(TypedDict):
+    """Serialized :class:`~agent_framework.AgentSession` payload (``AgentSession.to_dict()``).
+
+    ``state`` holds session-local data. When the session uses service-side storage,
+    local ``state`` may be incomplete relative to the remote conversation.
+    """
+
+    type: NotRequired[str]
+    session_id: str
+    service_session_id: NotRequired[str | None]
+    state: NotRequired[dict[str, Any]]
+
+
+class AgentExecutorCheckpointState(TypedDict, total=False):
+    """Public schema for state saved and restored by :class:`AgentExecutor`.
+
+    Stored under ``WorkflowCheckpoint.state["_executor_state"][executor_id]``.
+
+    ``on_checkpoint_save`` always writes every key below. Restore accepts partial
+    mappings for backward compatibility: missing keys reset to empty defaults.
+    Unknown keys are ignored so newer writers remain readable by older runtimes.
+
+    Compatibility:
+        - Add fields as ``total=False`` / ``NotRequired`` and treat absence as default.
+        - Do not rename or change the meaning of existing keys without a migration path.
+        - Custom executors should define their own TypedDict (or equivalent) and validate
+          types in ``on_checkpoint_restore``; prefer
+          :class:`~agent_framework.exceptions.WorkflowCheckpointException` for malformed data.
+
+    Keys:
+        cache: Messages buffered between runs before the next agent invocation.
+        full_conversation: Prior inputs plus assistant/tool outputs after the last run.
+        agent_session: Serialized session payload (:class:`AgentSessionCheckpointState`).
+        pending_agent_requests: In-flight agent-owned user-input requests by request id.
+        pending_responses_to_agent: Queued content responses waiting to be sent to the agent.
+    """
+
+    cache: list[Message]
+    full_conversation: list[Message]
+    agent_session: AgentSessionCheckpointState
+    pending_agent_requests: dict[str, Content]
+    pending_responses_to_agent: list[Content]
+
+
+def _validate_agent_executor_checkpoint_state(state: Mapping[str, Any]) -> None:
+    """Raise :class:`WorkflowCheckpointException` when checkpoint payload types are wrong."""
+    if not isinstance(state, Mapping):
+        raise WorkflowCheckpointException(
+            f"AgentExecutor checkpoint state must be a mapping, got {type(state).__name__}."
+        )
+
+    list_keys = ("cache", "full_conversation", "pending_responses_to_agent")
+    for key in list_keys:
+        if key in state and state[key] is not None and not isinstance(state[key], list):
+            raise WorkflowCheckpointException(
+                f"AgentExecutor checkpoint field '{key}' must be a list, got {type(state[key]).__name__}."
+            )
+
+    if "pending_agent_requests" in state and state["pending_agent_requests"] is not None:
+        if not isinstance(state["pending_agent_requests"], dict):
+            raise WorkflowCheckpointException(
+                "AgentExecutor checkpoint field 'pending_agent_requests' must be a dict, "
+                f"got {type(state['pending_agent_requests']).__name__}."
+            )
+
+    if "agent_session" in state and state["agent_session"] is not None:
+        if not isinstance(state["agent_session"], dict):
+            raise WorkflowCheckpointException(
+                "AgentExecutor checkpoint field 'agent_session' must be a dict, "
+                f"got {type(state['agent_session']).__name__}."
+            )
 
 
 def _accepts_runtime_tools(agent: SupportsAgentRun) -> bool:
@@ -347,32 +421,41 @@ class AgentExecutor(Executor):
             await self._resume_with_pending_responses(ctx)
 
     @override
-    async def on_checkpoint_save(self) -> dict[str, Any]:
+    async def on_checkpoint_save(self) -> AgentExecutorCheckpointState:
         """Capture current executor state for checkpointing.
 
         NOTE: if the session uses service-side storage, the full session state
         may not be serialized locally.
 
         Returns:
-            Dict containing serialized cache and session state
+            :class:`AgentExecutorCheckpointState` with cache, conversation, session,
+            and pending request/response fields.
         """
         serialized_session = self._session.to_dict()
 
-        return {
-            "cache": self._cache,
-            "full_conversation": self._full_conversation,
-            "agent_session": serialized_session,
-            "pending_agent_requests": self._pending_agent_requests,
-            "pending_responses_to_agent": self._pending_responses_to_agent,
-        }
+        return AgentExecutorCheckpointState(
+            cache=self._cache,
+            full_conversation=self._full_conversation,
+            agent_session=serialized_session,
+            pending_agent_requests=self._pending_agent_requests,
+            pending_responses_to_agent=self._pending_responses_to_agent,
+        )
 
     @override
-    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+    async def on_checkpoint_restore(self, state: AgentExecutorCheckpointState | dict[str, Any]) -> None:
         """Restore executor state from checkpoint.
 
         Args:
-            state: Checkpoint data dict
+            state: Checkpoint payload matching :class:`AgentExecutorCheckpointState`
+                (or a compatible mapping). Missing known keys use empty defaults;
+                unknown keys are ignored.
+
+        Raises:
+            WorkflowCheckpointException: If ``state`` is not a mapping or a known
+                field has an incompatible type.
         """
+        _validate_agent_executor_checkpoint_state(state)
+
         cache_payload = state.get("cache")
         self._cache = cache_payload or []
 

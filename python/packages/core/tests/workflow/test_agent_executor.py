@@ -578,6 +578,78 @@ async def test_checkpoint_restore_works_without_context_mode_in_state() -> None:
     assert executor._context_mode == "last_agent"  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_agent_executor_checkpoint_state_public_schema_keys() -> None:
+    """Saved AgentExecutor checkpoint state exposes the public TypedDict keys."""
+    from agent_framework import AgentExecutorCheckpointState, AgentSessionCheckpointState
+
+    agent = _CountingAgent(id="schema_agent", name="SchemaAgent")
+    executor = AgentExecutor(agent)
+    executor._cache = [Message(role="user", contents=["hello"])]  # pyright: ignore[reportPrivateUsage]
+
+    state = await executor.on_checkpoint_save()
+
+    assert set(state) == {
+        "cache",
+        "full_conversation",
+        "agent_session",
+        "pending_agent_requests",
+        "pending_responses_to_agent",
+    }
+    assert isinstance(state, dict)
+    assert len(state["cache"]) == 1
+    assert "session_id" in state["agent_session"]
+    # Public types remain importable for static analysis / migrations.
+    _: type[AgentExecutorCheckpointState] = AgentExecutorCheckpointState
+    __: type[AgentSessionCheckpointState] = AgentSessionCheckpointState
+
+
+async def test_agent_executor_checkpoint_restore_missing_optional_fields() -> None:
+    """Restore accepts older partial payloads (missing optional TypedDict fields)."""
+    agent = _CountingAgent(id="partial_agent", name="PartialAgent")
+    executor = AgentExecutor(agent)
+    executor._cache = [Message(role="user", contents=["stale"])]  # pyright: ignore[reportPrivateUsage]
+
+    await executor.on_checkpoint_restore({})
+
+    assert executor._cache == []  # pyright: ignore[reportPrivateUsage]
+    assert executor._full_conversation == []  # pyright: ignore[reportPrivateUsage]
+    assert executor._pending_agent_requests == {}  # pyright: ignore[reportPrivateUsage]
+    assert executor._pending_responses_to_agent == []  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_agent_executor_checkpoint_restore_rejects_malformed_fields() -> None:
+    """Restore raises WorkflowCheckpointException for wrong field types."""
+    from agent_framework import WorkflowCheckpointException
+
+    agent = _CountingAgent(id="bad_agent", name="BadAgent")
+    executor = AgentExecutor(agent)
+
+    with pytest.raises(WorkflowCheckpointException, match="cache"):
+        await executor.on_checkpoint_restore({"cache": "not-a-list"})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="agent_session"):
+        await executor.on_checkpoint_restore({"agent_session": "not-a-dict"})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_agent_requests"):
+        await executor.on_checkpoint_restore({"pending_agent_requests": []})  # type: ignore[typeddict-item]
+
+
+async def test_agent_executor_checkpoint_restore_ignores_unknown_keys() -> None:
+    """Forward-compatible restore ignores unknown checkpoint keys."""
+    agent = _CountingAgent(id="fwd_agent", name="FwdAgent")
+    executor = AgentExecutor(agent)
+
+    await executor.on_checkpoint_restore(
+        {
+            "cache": [Message(role="user", contents=["ok"])],
+            "future_field": {"ignored": True},
+        }
+    )
+
+    assert len(executor._cache) == 1  # pyright: ignore[reportPrivateUsage]
+    assert executor._cache[0].text == "ok"  # pyright: ignore[reportPrivateUsage]
+
+
 # ---------------------------------------------------------------------------
 # Per-executor kwargs resolution tests
 # ---------------------------------------------------------------------------
