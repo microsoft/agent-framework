@@ -41,7 +41,7 @@ from anthropic.types.beta import (
 from pydantic import BaseModel, Field
 
 from agent_framework_anthropic import AnthropicChatOptions, AnthropicClient, RawAnthropicClient
-from agent_framework_anthropic._chat_client import AnthropicSettings
+from agent_framework_anthropic._chat_client import AnthropicSettings, _resolve_finish_reason
 from agent_framework_anthropic._feature_usage import FeatureIndex
 
 # Test constants
@@ -598,32 +598,26 @@ def test_streaming_replay_preserves_empty_signed_thinking_block(
     client = create_test_anthropic_client(mock_anthropic_client)
 
     events: list[BetaRawMessageStreamEvent] = [
-        BetaRawContentBlockStartEvent.model_validate(
-            {
-                "type": "content_block_start",
-                "index": 0,
-                "content_block": {"type": "thinking", "thinking": "", "signature": ""},
-            }
-        ),
-        BetaRawContentBlockDeltaEvent.model_validate(
-            {
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {"type": "signature_delta", "signature": "synthetic-signature"},
-            }
-        ),
-        BetaRawContentBlockStartEvent.model_validate(
-            {
-                "type": "content_block_start",
-                "index": 1,
-                "content_block": {
-                    "type": "tool_use",
-                    "id": "toolu_test",
-                    "name": "lookup",
-                    "input": {},
-                },
-            }
-        ),
+        BetaRawContentBlockStartEvent.model_validate({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "thinking", "thinking": "", "signature": ""},
+        }),
+        BetaRawContentBlockDeltaEvent.model_validate({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "signature_delta", "signature": "synthetic-signature"},
+        }),
+        BetaRawContentBlockStartEvent.model_validate({
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {
+                "type": "tool_use",
+                "id": "toolu_test",
+                "name": "lookup",
+                "input": {},
+            },
+        }),
     ]
 
     updates = [client._process_stream_event(event) for event in events]
@@ -1639,6 +1633,77 @@ def test_process_message_with_tool_use(mock_anthropic_client: MagicMock) -> None
     ("stop_reason", "expected"),
     [
         ("end_turn", "stop"),
+        ("max_tokens", "length"),
+        (None, None),
+    ],
+)
+def test_process_message_does_not_commit_incomplete_tool_use(
+    mock_anthropic_client: MagicMock,
+    stop_reason: str | None,
+    expected: str | None,
+) -> None:
+    """A tool block is locally actionable only when the completed message authoritatively reports tool_use."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    mock_message = MagicMock(spec=BetaMessage)
+    mock_message.id = "msg_123"
+    mock_message.model = "claude-3-5-sonnet-20241022"
+    mock_message.content = [
+        BetaToolUseBlock(
+            type="tool_use",
+            id="call_123",
+            name="get_weather",
+            input={"location": "San Francisco"},
+        )
+    ]
+    mock_message.usage = BetaUsage(input_tokens=10, output_tokens=5)
+    mock_message.stop_reason = stop_reason
+
+    response = client._process_message(mock_message, {})
+
+    assert response.messages[0].contents[0].type == "function_call"
+    assert response.finish_reason == expected
+
+
+def test_resolve_finish_reason_uses_function_call_commitment() -> None:
+    """Committed calls override the provider reason while incomplete call evidence fails closed."""
+    assert (
+        _resolve_finish_reason(
+            "end_turn",
+            has_function_calls=True,
+            function_calls_committed=True,
+        )
+        == "tool_calls"
+    )
+    assert (
+        _resolve_finish_reason(
+            "tool_use",
+            has_function_calls=True,
+            function_calls_committed=False,
+        )
+        is None
+    )
+    assert (
+        _resolve_finish_reason(
+            "end_turn",
+            has_function_calls=False,
+            function_calls_committed=False,
+        )
+        == "stop"
+    )
+    assert (
+        _resolve_finish_reason(
+            "tool_use",
+            has_function_calls=False,
+            function_calls_committed=False,
+        )
+        == "tool_calls"
+    )
+
+
+@pytest.mark.parametrize(
+    ("stop_reason", "expected"),
+    [
+        ("end_turn", "stop"),
         ("stop_sequence", "stop"),
         ("pause_turn", "stop"),
         ("max_tokens", "length"),
@@ -1854,6 +1919,199 @@ def test_parse_contents_server_tool_use_input_json_delta_ignored(
 # Stream Processing Tests
 
 
+def _anthropic_stream_event(
+    event_type: str,
+    *,
+    index: int | None = None,
+    stop_reason: str | None = None,
+    content_block: Any | None = None,
+) -> MagicMock:
+    event = MagicMock()
+    event.type = event_type
+    if index is not None:
+        event.index = index
+    if event_type == "message_start":
+        event.message.id = "msg_stream"
+        event.message.role = "assistant"
+        event.message.model = "claude-3-5-sonnet-20241022"
+        event.message.content = []
+        event.message.stop_reason = None
+        event.message.usage = None
+    elif event_type == "message_delta":
+        event.delta.stop_reason = stop_reason
+        event.usage = None
+    elif event_type == "content_block_start":
+        event.content_block = content_block
+    return event
+
+
+async def _collect_anthropic_stream_updates(
+    client: AnthropicClient,
+    mock_anthropic_client: MagicMock,
+    events: list[MagicMock],
+) -> list[ChatResponseUpdate]:
+    async def mock_stream():
+        for event in events:
+            yield event
+
+    mock_anthropic_client.beta.messages.create.return_value = mock_stream()
+    return [
+        update
+        async for update in client._inner_get_response(  # type: ignore[attr-defined] # ty: ignore[not-iterable]
+            messages=[Message(role="user", contents=["Hi"])],
+            options=ChatOptions(max_tokens=10),
+            stream=True,
+        )
+    ]
+
+
+def _local_tool_use_block() -> MagicMock:
+    content_block = MagicMock()
+    content_block.type = "tool_use"
+    content_block.id = "call_stream"
+    content_block.name = "get_weather"
+    content_block.input = {}
+    return content_block
+
+
+async def test_streaming_tool_call_updates_precede_message_stop_commitment(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Tool content remains incremental, but tool_calls is emitted only on message_stop."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    argument_delta = MagicMock()
+    argument_delta.type = "input_json_delta"
+    argument_delta.partial_json = '{"location":"Paris"}'
+    delta_event = _anthropic_stream_event("content_block_delta", index=0)
+    delta_event.delta = argument_delta
+
+    updates = await _collect_anthropic_stream_updates(
+        client,
+        mock_anthropic_client,
+        [
+            _anthropic_stream_event("message_start"),
+            _anthropic_stream_event("content_block_start", index=0, content_block=_local_tool_use_block()),
+            delta_event,
+            _anthropic_stream_event("content_block_stop", index=0),
+            _anthropic_stream_event("message_delta", stop_reason="tool_use"),
+            _anthropic_stream_event("message_stop"),
+        ],
+    )
+
+    assert [update.finish_reason for update in updates] == [None, None, None, None, "tool_calls"]
+    assert updates[1].contents[0].call_id == "call_stream"
+    assert updates[2].contents[0].call_id == "call_stream"
+    assert updates[2].contents[0].arguments == '{"location":"Paris"}'
+
+
+async def test_streaming_tool_call_without_message_stop_is_not_committed(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """EOF after the provisional tool_use reason must not authorize the streamed call."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    updates = await _collect_anthropic_stream_updates(
+        client,
+        mock_anthropic_client,
+        [
+            _anthropic_stream_event("message_start"),
+            _anthropic_stream_event("content_block_start", index=0, content_block=_local_tool_use_block()),
+            _anthropic_stream_event("content_block_stop", index=0),
+            _anthropic_stream_event("message_delta", stop_reason="tool_use"),
+        ],
+    )
+
+    assert any(content.type == "function_call" for update in updates for content in update.contents)
+    assert all(update.finish_reason != "tool_calls" for update in updates)
+
+
+async def test_streaming_preserves_last_non_null_finish_reason(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A later metadata delta without a reason must not erase the pending terminal reason."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    updates = await _collect_anthropic_stream_updates(
+        client,
+        mock_anthropic_client,
+        [
+            _anthropic_stream_event("message_start"),
+            _anthropic_stream_event("content_block_start", index=0, content_block=_local_tool_use_block()),
+            _anthropic_stream_event("content_block_stop", index=0),
+            _anthropic_stream_event("message_delta", stop_reason="tool_use"),
+            _anthropic_stream_event("message_delta", stop_reason=None),
+            _anthropic_stream_event("message_stop"),
+        ],
+    )
+
+    assert updates[-1].finish_reason == "tool_calls"
+    assert sum(update.finish_reason == "tool_calls" for update in updates) == 1
+
+
+@pytest.mark.parametrize(
+    ("close_tool_block", "stop_reason", "expected"),
+    [
+        (True, "tool_use", "tool_calls"),
+        (False, "tool_use", None),
+        (True, "max_tokens", "length"),
+    ],
+)
+async def test_streaming_tool_call_commitment_requires_closed_block_and_completed_output(
+    mock_anthropic_client: MagicMock,
+    close_tool_block: bool,
+    stop_reason: str,
+    expected: str | None,
+) -> None:
+    """Only a closed tool block followed by an authoritative tool_use stop is committed."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    events = [
+        _anthropic_stream_event("message_start"),
+        _anthropic_stream_event("content_block_start", index=0, content_block=_local_tool_use_block()),
+    ]
+    if close_tool_block:
+        events.append(_anthropic_stream_event("content_block_stop", index=0))
+    events.extend([
+        _anthropic_stream_event("message_delta", stop_reason=stop_reason),
+        _anthropic_stream_event("message_stop"),
+    ])
+
+    updates = await _collect_anthropic_stream_updates(client, mock_anthropic_client, events)
+
+    assert updates[-1].finish_reason == expected
+    assert sum(update.finish_reason == "tool_calls" for update in updates) == (1 if expected == "tool_calls" else 0)
+
+
+async def test_streaming_message_stop_emits_finish_reason_once_without_draining(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """The terminal event resolves once and does not consume provider events after message_stop."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    events_consumed = 0
+
+    async def mock_stream():
+        nonlocal events_consumed
+        for event in (
+            _anthropic_stream_event("message_delta", stop_reason="end_turn"),
+            _anthropic_stream_event("message_stop"),
+            _anthropic_stream_event("message_stop"),
+        ):
+            events_consumed += 1
+            yield event
+
+    mock_anthropic_client.beta.messages.create.return_value = mock_stream()
+    updates = [
+        update
+        async for update in client._inner_get_response(  # type: ignore[attr-defined] # ty: ignore[not-iterable]
+            messages=[Message(role="user", contents=["Hi"])],
+            options=ChatOptions(max_tokens=10),
+            stream=True,
+        )
+    ]
+
+    assert [update.finish_reason for update in updates] == [None, "stop"]
+    assert events_consumed == 2
+
+
 def test_process_stream_event_simple(mock_anthropic_client: MagicMock) -> None:
     """Test _process_stream_event with simple mock event."""
     client = create_test_anthropic_client(mock_anthropic_client)
@@ -1944,8 +2202,8 @@ async def test_inner_get_response_streaming(mock_anthropic_client: MagicMock) ->
         if chunk:
             chunks.append(chunk)
 
-    # We should get at least some response (even if empty due to message_stop)
-    assert isinstance(chunks, list)
+    assert len(chunks) == 1
+    assert chunks[0].finish_reason is None
 
 
 async def test_inner_get_response_ignores_options_stream_streaming(
@@ -2033,11 +2291,9 @@ async def test_inner_get_response_streaming_wraps_sdk_errors(mock_anthropic_clie
         ):
             pass
 
-    # 2. Failure raised mid-stream, after at least one event has been yielded.
+    # 2. Failure raised mid-stream, after at least one non-terminal event has been yielded.
     async def _raise_after_first_event() -> Any:
-        event = MagicMock()
-        event.type = "message_stop"
-        yield event
+        yield _anthropic_stream_event("message_delta", stop_reason=None)
         raise _anthropic_status_error(anthropic_sdk.PermissionDeniedError, 403, "permission denied")
 
     mock_anthropic_client.beta.messages.create.side_effect = None

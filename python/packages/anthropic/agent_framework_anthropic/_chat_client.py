@@ -255,6 +255,22 @@ def _map_finish_reason(stop_reason: str | None) -> FinishReason | None:
     return FinishReason(FINISH_REASON_MAP.get(stop_reason, stop_reason))
 
 
+def _resolve_finish_reason(
+    provider_finish_reason: str | None,
+    *,
+    has_function_calls: bool,
+    function_calls_committed: bool,
+) -> FinishReason | None:
+    """Resolve the framework finish reason from provider and function-call completion evidence."""
+    if function_calls_committed:
+        return FinishReason("tool_calls")
+
+    finish_reason = _map_finish_reason(provider_finish_reason)
+    if has_function_calls and finish_reason == "tool_calls":
+        return None
+    return finish_reason
+
+
 class AnthropicSettings(TypedDict, total=False):
     """Anthropic Project settings.
 
@@ -592,10 +608,41 @@ class RawAnthropicClient(
                 # each message_delta carries the running total), so thread a per-stream
                 # accumulator to _process_stream_event to emit increments instead.
                 emitted_usage: dict[str, int] = {}
+                provider_finish_reason: str | None = None
+                has_function_calls = False
+                open_function_call_blocks: set[int] = set()
                 mark_feature_used(FeatureIndex.ANTHROPIC)
                 try:
                     async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
                         parsed_chunk = self._process_stream_event(chunk, emitted_usage)
+                        if chunk.type == "message_delta":
+                            if chunk.delta.stop_reason is not None:
+                                provider_finish_reason = chunk.delta.stop_reason
+                            if parsed_chunk:
+                                parsed_chunk.finish_reason = None
+                        elif chunk.type == "content_block_start" and parsed_chunk:
+                            if any(
+                                content.type == "function_call" and not content.informational_only
+                                for content in parsed_chunk.contents
+                            ):
+                                has_function_calls = True
+                                open_function_call_blocks.add(chunk.index)
+                        elif chunk.type == "content_block_stop":
+                            open_function_call_blocks.discard(chunk.index)
+                        elif chunk.type == "message_stop":
+                            yield ChatResponseUpdate(
+                                finish_reason=_resolve_finish_reason(
+                                    provider_finish_reason,
+                                    has_function_calls=has_function_calls,
+                                    function_calls_committed=(
+                                        has_function_calls
+                                        and not open_function_call_blocks
+                                        and provider_finish_reason == "tool_use"
+                                    ),
+                                ),
+                                raw_representation=chunk,
+                            )
+                            return
                         if parsed_chunk:
                             yield parsed_chunk
                 except AgentFrameworkException:
@@ -1134,18 +1181,26 @@ class RawAnthropicClient(
         Returns:
             A ChatResponse object containing the processed response.
         """
+        contents = self._parse_contents_from_anthropic(message.content)
+        has_function_calls = any(
+            content.type == "function_call" and not content.informational_only for content in contents
+        )
         return ChatResponse(
             response_id=message.id,
             messages=[
                 Message(
                     role="assistant",
-                    contents=self._parse_contents_from_anthropic(message.content),
+                    contents=contents,
                     raw_representation=message,
                 )
             ],
             usage_details=self._parse_usage_from_anthropic(message.usage),
             model=message.model,
-            finish_reason=_map_finish_reason(message.stop_reason),
+            finish_reason=_resolve_finish_reason(
+                message.stop_reason,
+                has_function_calls=has_function_calls,
+                function_calls_committed=has_function_calls and message.stop_reason == "tool_use",
+            ),
             response_format=options.get("response_format"),
             raw_representation=message,
         )
