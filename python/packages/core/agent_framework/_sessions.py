@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, cast
 
 import msgspec
+from typing_extensions import NotRequired, TypedDict
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._filesystem import (
@@ -1704,6 +1705,21 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         )
 
 
+class AgentSessionDict(TypedDict):
+    """Serialized :class:`AgentSession` payload produced by :meth:`AgentSession.to_dict`.
+
+    ``service_session_id`` may be a plain string or a structured
+    :data:`ServiceSessionId` mapping, matching :attr:`AgentSession.service_session_id`.
+    ``state`` holds session-local data and may be incomplete when the session uses
+    service-side storage.
+    """
+
+    type: NotRequired[str]
+    session_id: str
+    service_session_id: NotRequired[str | ServiceSessionId | None]
+    state: NotRequired[dict[str, Any]]
+
+
 class AgentSession:
     """A conversation session with an agent.
 
@@ -1744,7 +1760,7 @@ class AgentSession:
         """The unique identifier for this session."""
         return self._session_id
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> AgentSessionDict:
         """Serialize session to a plain dict for storage/transfer.
 
         Registered custom values use their configured codecs. Unregistered

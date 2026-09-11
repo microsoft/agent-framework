@@ -580,7 +580,7 @@ async def test_checkpoint_restore_works_without_context_mode_in_state() -> None:
 
 async def test_agent_executor_checkpoint_state_public_schema_keys() -> None:
     """Saved AgentExecutor checkpoint state exposes the public TypedDict keys."""
-    from agent_framework import AgentExecutorCheckpointState, AgentSessionCheckpointState
+    from agent_framework import AgentExecutorCheckpointState, AgentSessionCheckpointState, AgentSessionDict
 
     agent = _CountingAgent(id="schema_agent", name="SchemaAgent")
     executor = AgentExecutor(agent)
@@ -601,6 +601,7 @@ async def test_agent_executor_checkpoint_state_public_schema_keys() -> None:
     # Public types remain importable for static analysis / migrations.
     _: type[AgentExecutorCheckpointState] = AgentExecutorCheckpointState
     __: type[AgentSessionCheckpointState] = AgentSessionCheckpointState
+    assert AgentSessionCheckpointState is AgentSessionDict
 
 
 async def test_agent_executor_checkpoint_restore_missing_optional_fields() -> None:
