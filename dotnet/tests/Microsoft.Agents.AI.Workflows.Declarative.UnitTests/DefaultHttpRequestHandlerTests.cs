@@ -2,8 +2,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -365,6 +367,254 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
+    public async Task SendAsyncTimeoutCancelsResponseBodyReadAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        int requestCount = 0;
+        using var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StallingContent(),
+        };
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+        {
+            requestCount++;
+#pragma warning disable CA2025 // Do not pass 'IDisposable' instances into unawaited tasks
+            return Task.FromResult(response);
+#pragma warning restore CA2025 // Do not pass 'IDisposable' instances into unawaited tasks
+        });
+
+        using HttpClient httpClient = new(messageHandler);
+#pragma warning disable CA2025 // Do not pass 'IDisposable' instances into unawaited tasks
+        await using DefaultHttpRequestHandler handler = new((_, _) => Task.FromResult<HttpClient?>(httpClient));
+#pragma warning restore CA2025 // Do not pass 'IDisposable' instances into unawaited tasks
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = TestUrl,
+            Timeout = TimeSpan.FromMilliseconds(50),
+        };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(actAsync);
+        Assert.Equal(1, requestCount);
+    }
+
+    [Fact]
+    public async Task SendAsyncTimeoutAppliesAcrossRedirectsAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        int requestCount = 0;
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.TemporaryRedirect)
+        {
+            Headers = { Location = new Uri("https://api.example.test/next") },
+        };
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("ok", Encoding.UTF8, "text/plain"),
+        };
+        TestHttpMessageHandler messageHandler = new(async (req, ct) =>
+        {
+            requestCount++;
+            TimeSpan delay = requestCount == 1 ? TimeSpan.FromMilliseconds(1) : TimeSpan.FromSeconds(5);
+            await Task.Delay(delay, ct).ConfigureAwait(false);
+
+            if (requestCount == 1)
+            {
+                return redirectResponse;
+            }
+
+            return okResponse;
+        });
+
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = TestUrl,
+            Timeout = TimeSpan.FromMilliseconds(300),
+        };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(actAsync);
+        Assert.Equal(2, requestCount);
+    }
+
+    [Fact]
+    public async Task SendAsyncPostFoundRedirectRewritesToGetAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.Found)
+        {
+            Headers = { Location = new Uri("https://api.example.test/next") },
+        };
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
+        };
+        int requestCount = 0;
+#pragma warning disable CA2025
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+        {
+            requestCount++;
+            return Task.FromResult(requestCount == 1 ? redirectResponse : okResponse);
+        });
+#pragma warning restore CA2025
+
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
+        HttpRequestInfo request = new()
+        {
+            Method = "POST",
+            Url = TestUrl,
+            Body = "request-body",
+            BodyContentType = "text/plain",
+        };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        Assert.Equal("redirected", result.Body);
+        Assert.Equal(["POST", "GET"], messageHandler.RequestMethods);
+        Assert.Equal(["request-body", null], messageHandler.RequestBodies);
+    }
+
+    [Theory]
+    [InlineData(307)]
+    [InlineData(308)]
+    public async Task SendAsyncPostPreserveMethodRedirectPreservesBodyAsync(int redirectStatusCode)
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        using HttpResponseMessage redirectResponse = new((HttpStatusCode)redirectStatusCode)
+        {
+            Headers = { Location = new Uri("https://api.example.test/next") },
+        };
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
+        };
+        int requestCount = 0;
+#pragma warning disable CA2025
+        TestHttpMessageHandler messageHandler = new((req, _) =>
+        {
+            requestCount++;
+            return Task.FromResult(requestCount == 1 ? redirectResponse : okResponse);
+        });
+#pragma warning restore CA2025
+
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
+        HttpRequestInfo request = new()
+        {
+            Method = "POST",
+            Url = TestUrl,
+            Body = "request-body",
+            BodyContentType = "text/plain",
+        };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        Assert.Equal("redirected", result.Body);
+        Assert.Equal(["POST", "POST"], messageHandler.RequestMethods);
+        Assert.Equal(["request-body", "request-body"], messageHandler.RequestBodies);
+    }
+
+    [Theory]
+    [InlineData(307)]
+    [InlineData(308)]
+    public async Task SendAsyncPostPreserveMethodRedirectToDifferentOriginWithBodyThrowsAsync(int redirectStatusCode)
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        int requestCount = 0;
+        using HttpResponseMessage redirectResponse = new((HttpStatusCode)redirectStatusCode)
+        {
+            Headers = { Location = new Uri("https://secondary.example.test/next") },
+        };
+#pragma warning disable CA2025
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+        {
+            requestCount++;
+            return Task.FromResult(redirectResponse);
+        });
+#pragma warning restore CA2025
+
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
+        HttpRequestInfo request = new()
+        {
+            Method = "POST",
+            Url = TestUrl,
+            Body = "request-body",
+            BodyContentType = "text/plain",
+        };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Contains("preserve the request body to a different origin", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(1, requestCount);
+    }
+
+    [Fact]
+    public async Task SendAsyncTooManyRedirectsThrowsAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        int requestCount = 0;
+        List<HttpResponseMessage> createdResponses = [];
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+        {
+            requestCount++;
+            HttpResponseMessage response = new(HttpStatusCode.TemporaryRedirect)
+            {
+                Headers = { Location = new Uri($"https://api.example.test/redirect/{requestCount}") },
+            };
+
+            createdResponses.Add(response);
+#pragma warning disable CA2025
+            return Task.FromResult(response);
+#pragma warning restore CA2025
+        });
+
+        try
+        {
+            await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
+            HttpRequestInfo request = new()
+            {
+                Method = "GET",
+                Url = TestUrl,
+            };
+
+            // Act
+            async Task actAsync() => await handler.SendAsync(request, cancellationToken);
+
+            // Assert
+            HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+            Assert.Contains("maximum number of HTTP redirects", exception.Message, StringComparison.Ordinal);
+            Assert.Equal(51, requestCount);
+        }
+        finally
+        {
+            foreach (HttpResponseMessage response in createdResponses)
+            {
+                response.Dispose();
+            }
+        }
+    }
+
+    [Fact]
     public async Task SendAsyncFallsBackToOwnedClientWhenProviderReturnsNullAsync()
     {
         // Arrange
@@ -383,6 +633,302 @@ public sealed class DefaultHttpRequestHandlerTests
         // Assert
         await Assert.ThrowsAnyAsync<Exception>(actAsync);
         Assert.Equal(1, providerCallCount);
+    }
+
+    [Fact]
+    public async Task SendAsyncDoesNotApplyRequestHeadersToRedirectedEndpointAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        List<bool> requestsWithHeader = [];
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.TemporaryRedirect)
+        {
+            Headers = { Location = new Uri("https://api.example.test/next") },
+        };
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
+        };
+#pragma warning disable CA2025
+        TestHttpMessageHandler messageHandler = new((req, _) =>
+        {
+            requestsWithHeader.Add(req.Headers.Contains("X-Trace-Id"));
+            if (requestsWithHeader.Count == 1)
+            {
+                return Task.FromResult(redirectResponse);
+            }
+
+            return Task.FromResult(okResponse);
+        });
+#pragma warning restore CA2025
+
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = TestUrl,
+            Headers = new Dictionary<string, string>
+            {
+                ["X-Trace-Id"] = "trace-1",
+            },
+        };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        Assert.Equal("redirected", result.Body);
+        Assert.Equal([true, false], requestsWithHeader);
+    }
+
+    [Fact]
+    public async Task SendAsyncDoesNotApplyRequestHeadersToDifferentRedirectedEndpointAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        List<bool> requestsWithHeader = [];
+        List<string> requestUrls = [];
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.TemporaryRedirect)
+        {
+            Headers = { Location = new Uri("https://secondary.example.test/next") },
+        };
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
+        };
+#pragma warning disable CA2025
+        TestHttpMessageHandler messageHandler = new((req, _) =>
+        {
+            requestUrls.Add(req.RequestUri!.ToString());
+            requestsWithHeader.Add(req.Headers.Contains("X-Trace-Id"));
+            return Task.FromResult(requestUrls.Count == 1 ? redirectResponse : okResponse);
+        });
+#pragma warning restore CA2025
+
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
+
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = TestUrl,
+            Headers = new Dictionary<string, string>
+            {
+                ["X-Trace-Id"] = "trace-1",
+            },
+        };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        Assert.Equal("redirected", result.Body);
+        Assert.Equal([true, false], requestsWithHeader);
+        Assert.Equal([TestUrl, "https://secondary.example.test/next"], requestUrls);
+    }
+
+    [Fact]
+    public async Task SendAsyncDoesNotReadRedirectedResponseBodyAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        TrackingContent redirectedContent = new("not returned");
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.TemporaryRedirect)
+        {
+            Content = redirectedContent,
+            Headers = { Location = new Uri("https://api.example.test/next") },
+        };
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
+        };
+#pragma warning disable CA2025
+        TestHttpMessageHandler messageHandler = new((req, _) =>
+        {
+            if (req.RequestUri!.AbsolutePath == "/resource")
+            {
+                return Task.FromResult(redirectResponse);
+            }
+
+            return Task.FromResult(okResponse);
+        });
+#pragma warning restore CA2025
+
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = TestUrl,
+        };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        Assert.Equal("redirected", result.Body);
+        Assert.False(redirectedContent.WasRead);
+    }
+
+    [Fact]
+    public async Task SendAsyncRejectsHttpsToHttpRedirectAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        int requestCount = 0;
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.TemporaryRedirect)
+        {
+            Headers = { Location = new Uri("http://api.example.test/next") },
+        };
+#pragma warning disable CA2025
+        TestHttpMessageHandler messageHandler = new((req, _) =>
+        {
+            requestCount++;
+            return Task.FromResult(redirectResponse);
+        });
+#pragma warning restore CA2025
+
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler);
+        HttpRequestInfo request = new()
+        {
+            Method = "POST",
+            Url = TestUrl,
+            Body = "request-body",
+            BodyContentType = "text/plain",
+        };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        HttpRequestException exception = await Assert.ThrowsAsync<HttpRequestException>(actAsync);
+        Assert.Contains("HTTPS to HTTP", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(1, requestCount);
+    }
+
+    [Fact]
+    public async Task SendAsyncProviderClientAllowsScopedDefaultHeadersOnInitialRequestAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("ok", Encoding.UTF8, "text/plain"),
+        };
+#pragma warning disable CA2025
+        TestHttpMessageHandler messageHandler = new((req, _) =>
+            Task.FromResult(okResponse));
+#pragma warning restore CA2025
+        using HttpClient providerClient = new(messageHandler);
+        providerClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Client-Token", "provider-header-value");
+
+        int providerCallCount = 0;
+#pragma warning disable CA2025
+        await using DefaultHttpRequestHandler handler = new((_, _) =>
+        {
+            providerCallCount++;
+            return Task.FromResult<HttpClient?>(providerClient);
+        });
+#pragma warning restore CA2025
+
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = TestUrl,
+        };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        Assert.Equal("ok", result.Body);
+        Assert.Equal(1, providerCallCount);
+    }
+
+    [Fact]
+    public async Task SendAsyncSuppliedClientReturnsRedirectResponseAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.TemporaryRedirect)
+        {
+            Headers = { Location = new Uri("https://secondary.example.test/next") },
+        };
+#pragma warning disable CA2025
+        TestHttpMessageHandler primaryMessageHandler = new((req, _) =>
+            Task.FromResult(redirectResponse));
+#pragma warning restore CA2025
+        using HttpClient primaryClient = new(primaryMessageHandler);
+        primaryClient.DefaultRequestHeaders.TryAddWithoutValidation("Ocp-Apim-Subscription-Key", "provider-header-value");
+
+        int providerCallCount = 0;
+#pragma warning disable CA2025
+        await using DefaultHttpRequestHandler handler = new((_, _) =>
+        {
+            providerCallCount++;
+            return Task.FromResult<HttpClient?>(primaryClient);
+        });
+#pragma warning restore CA2025
+
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = TestUrl,
+        };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        Assert.Equal(307, result.StatusCode);
+        Assert.False(result.IsSuccessStatusCode);
+        Assert.NotNull(result.Headers);
+        Assert.Equal("https://secondary.example.test/next", Assert.Single(result.Headers!["Location"]));
+        Assert.Equal(1, providerCallCount);
+    }
+
+    [Fact]
+    public async Task SendAsyncInvokesProviderForRedirectDestinationAsync()
+    {
+        // Arrange
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        List<string> providerUrls = [];
+        List<string> requestUrls = [];
+        using HttpResponseMessage redirectResponse = new(HttpStatusCode.TemporaryRedirect)
+        {
+            Headers = { Location = new Uri("https://secondary.example.test/next") },
+        };
+        using HttpResponseMessage okResponse = new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("redirected", Encoding.UTF8, "text/plain"),
+        };
+#pragma warning disable CA2025
+        TestHttpMessageHandler messageHandler = new((req, _) =>
+        {
+            requestUrls.Add(req.RequestUri!.ToString());
+            return Task.FromResult(requestUrls.Count == 1 ? redirectResponse : okResponse);
+        });
+#pragma warning restore CA2025
+
+        await using DefaultHttpRequestHandler handler = CreateHandlerWithOwnedMessageHandler(messageHandler, (info, _) =>
+        {
+            providerUrls.Add(info.Url);
+            return Task.FromResult<HttpClient?>(null);
+        });
+
+        HttpRequestInfo request = new()
+        {
+            Method = "GET",
+            Url = TestUrl,
+        };
+
+        // Act
+        HttpRequestResult result = await handler.SendAsync(request, cancellationToken);
+
+        // Assert
+        Assert.Equal("redirected", result.Body);
+        Assert.Equal(2, providerUrls.Count);
+        Assert.Equal(TestUrl, providerUrls[0]);
+        Assert.Equal("https://secondary.example.test/next", providerUrls[1]);
+        Assert.Equal(providerUrls, requestUrls);
     }
 
     #endregion
@@ -476,6 +1022,17 @@ public sealed class DefaultHttpRequestHandlerTests
 
     #endregion
 
+    private static DefaultHttpRequestHandler CreateHandlerWithOwnedMessageHandler(
+        HttpMessageHandler ownedHttpMessageHandler,
+        Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? httpClientProvider = null)
+    {
+        DefaultHttpRequestHandler handler = new(httpClientProvider);
+        FieldInfo? ownedHttpClientField = typeof(DefaultHttpRequestHandler).GetField("_ownedHttpClient", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(ownedHttpClientField);
+        ownedHttpClientField.SetValue(handler, new Lazy<HttpClient>(() => new HttpClient(ownedHttpMessageHandler), LazyThreadSafetyMode.ExecutionAndPublication));
+        return handler;
+    }
+
     private sealed class TestHttpMessageHandler : HttpMessageHandler
     {
         private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _responseFactory;
@@ -491,9 +1048,14 @@ public sealed class DefaultHttpRequestHandlerTests
 
         public string? LastRequestContentType { get; private set; }
 
+        public List<string> RequestMethods { get; } = [];
+
+        public List<string?> RequestBodies { get; } = [];
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             this.LastRequest = request;
+            this.RequestMethods.Add(request.Method.Method);
             if (request.Content is not null)
             {
 #if NET
@@ -501,9 +1063,68 @@ public sealed class DefaultHttpRequestHandlerTests
 #else
                 this.LastRequestBody = await request.Content.ReadAsStringAsync().ConfigureAwait(false);
 #endif
+                this.RequestBodies.Add(this.LastRequestBody);
                 this.LastRequestContentType = request.Content.Headers.ContentType?.MediaType;
             }
+            else
+            {
+                this.RequestBodies.Add(null);
+            }
             return await this._responseFactory(request, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private sealed class TrackingContent : HttpContent
+    {
+        private readonly string _content;
+
+        public TrackingContent(string content)
+        {
+            this._content = content;
+        }
+
+        public bool WasRead { get; private set; }
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        {
+            this.WasRead = true;
+            byte[] bytes = Encoding.UTF8.GetBytes(this._content);
+            return stream.WriteAsync(bytes, 0, bytes.Length);
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = Encoding.UTF8.GetByteCount(this._content);
+            return true;
+        }
+    }
+
+    private sealed class StallingContent : HttpContent
+    {
+        private readonly TaskCompletionSource<object?> _stall = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
+            this._stall.Task;
+
+#if NET
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context, CancellationToken cancellationToken) =>
+            Task.Delay(Timeout.Infinite, cancellationToken);
+#endif
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                this._stall.TrySetCanceled();
+            }
+
+            base.Dispose(disposing);
         }
     }
 }

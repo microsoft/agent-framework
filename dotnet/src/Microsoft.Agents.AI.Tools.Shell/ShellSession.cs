@@ -573,6 +573,9 @@ internal sealed class ShellSession : IAsyncDisposable
             return
                 "& {" +
                 " $__af_rc = 0;" +
+                // $LASTEXITCODE persists across commands and cmdlets do not update it.
+                // Clear it so any value after invocation belongs to this command.
+                " $global:LASTEXITCODE = $null;" +
                 " try {" +
                 $"   $__af_cmd = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}'));" +
                 // Force the user command's success output through the same
@@ -588,9 +591,11 @@ internal sealed class ShellSession : IAsyncDisposable
                 "       [Console]::WriteLine(($_ | Out-String).TrimEnd());" +
                 "     }" +
                 "   };" +
+                // Capture the pipeline status before flushing overwrites it.
+                "   $__af_ok = $?;" +
                 "   [Console]::Out.Flush();" +
                 "   if ($LASTEXITCODE -ne $null) { $__af_rc = $LASTEXITCODE }" +
-                "   elseif (-not $?) { $__af_rc = 1 }" +
+                "   elseif (-not $__af_ok) { $__af_rc = 1 }" +
                 " } catch {" +
                 "   [Console]::Error.WriteLine($_.ToString());" +
                 "   $__af_rc = 1" +
