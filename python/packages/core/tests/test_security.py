@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 from datetime import timedelta
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
@@ -47,6 +47,38 @@ from agent_framework.security import (
     get_current_middleware,
     store_untrusted_content,
 )
+
+_PRINCIPALS_KEY = "agent_framework.security.principals"
+_AUTHORITY_MARKER_KEY = "_security_label_authoritative"
+
+
+def _principal_metadata(user_id: str, tenant_id: str = "tenant-a") -> dict[str, Any]:
+    return {
+        _PRINCIPALS_KEY: [
+            {"tenant_id": tenant_id, "user_id": user_id},
+        ]
+    }
+
+
+def _identity_destination(principals: Any | None) -> FunctionTool:
+    class DestinationArgs(BaseModel):
+        value: str = "value"
+
+    async def destination(value: str = "value") -> str:
+        return value
+
+    additional_properties: dict[str, Any] = {
+        "max_allowed_confidentiality": ConfidentialityLabel.USER_IDENTITY.value,
+    }
+    if principals is not None:
+        additional_properties[_PRINCIPALS_KEY] = principals
+    return FunctionTool(
+        fn=destination,
+        name="identity_destination",
+        description="Identity-scoped destination",
+        args_schema=DestinationArgs,
+        additional_properties=additional_properties,
+    )
 
 
 class TestContentLabel:
@@ -162,6 +194,23 @@ class TestCombineLabels:
         result = combine_labels(label1, label2)
         assert result.metadata["key1"] == "value1"
         assert result.metadata["key2"] == "value2"
+
+    def test_combine_user_identity_principals_uses_set_union(self) -> None:
+        label_a = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+        label_b = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-b"),
+        )
+
+        result = combine_labels(label_a, label_b)
+
+        assert result.metadata[_PRINCIPALS_KEY] == [
+            {"tenant_id": "tenant-a", "user_id": "user-a"},
+            {"tenant_id": "tenant-a", "user_id": "user-b"},
+        ]
 
 
 class TestContentVariableStore:
@@ -298,6 +347,21 @@ class TestStoreUntrustedContent:
 class TestLabelTrackingMiddleware:
     """Tests for LabelTrackingFunctionMiddleware."""
 
+    @staticmethod
+    def _variable_sink() -> FunctionTool:
+        class SinkArgs(BaseModel):
+            payload: Any
+
+        async def sink(payload: Any) -> Any:
+            return payload
+
+        return FunctionTool(
+            fn=sink,
+            name="variable_sink",
+            description="Receive expanded variables",
+            args_schema=SinkArgs,
+        )
+
     @pytest.fixture
     def middleware(self):
         """Create middleware instance."""
@@ -359,6 +423,38 @@ class TestLabelTrackingMiddleware:
 
         label = context.metadata["result_label"]
         assert label.integrity == IntegrityLabel.TRUSTED
+
+    async def test_local_source_declaration_preserves_user_identity_principal(self, middleware) -> None:
+        class SourceArgs(BaseModel):
+            pass
+
+        async def source() -> str:
+            return "identity data"
+
+        function = FunctionTool(
+            fn=source,
+            name="identity_source",
+            description="Locally declared identity source",
+            args_schema=SourceArgs,
+            additional_properties={
+                "source_integrity": "trusted",
+                "confidentiality": "user_identity",
+                _PRINCIPALS_KEY: _principal_metadata("user-a")[_PRINCIPALS_KEY],
+            },
+        )
+        context = FunctionInvocationContext(function=function, arguments={})
+
+        async def next_fn() -> None:
+            context.result = [Content.from_text("identity data")]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].metadata[_PRINCIPALS_KEY] == [
+            {"tenant_id": "tenant-a", "user_id": "user-a"}
+        ]
+        assert middleware.get_context_label().metadata[_PRINCIPALS_KEY] == [
+            {"tenant_id": "tenant-a", "user_id": "user-a"}
+        ]
 
     @pytest.mark.asyncio
     async def test_tool_without_source_integrity_defaults_untrusted(self, middleware, mock_function):
@@ -496,6 +592,119 @@ class TestLabelTrackingMiddleware:
             context.result = [Content.from_text("sent")]
 
         await middleware.process(context, next_fn)
+
+    async def test_transitive_variable_reference_expands_and_collects_all_labels(self, middleware) -> None:
+        store = middleware.get_variable_store()
+        leaf_id = store.store(
+            "expanded value",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        root_id = store.store(
+            f"[{leaf_id}]",
+            ContentLabel(integrity=IntegrityLabel.TRUSTED),
+        )
+        function = self._variable_sink()
+        context = FunctionInvocationContext(function=function, arguments={"payload": f"[{root_id}]"})
+
+        async def next_fn() -> None:
+            assert context.arguments == {"payload": "expanded value"}
+            assert context.metadata["argument_label"].integrity == IntegrityLabel.UNTRUSTED
+            context.result = [Content.from_text("done")]
+
+        await middleware.process(context, next_fn)
+
+    async def test_three_level_variable_reference_chain_expands(self, middleware) -> None:
+        store = middleware.get_variable_store()
+        third_id = store.store("third", ContentLabel(integrity=IntegrityLabel.TRUSTED))
+        second_id = store.store(f"[{third_id}]", ContentLabel(integrity=IntegrityLabel.TRUSTED))
+        first_id = store.store(f"[{second_id}]", ContentLabel(integrity=IntegrityLabel.TRUSTED))
+        function = self._variable_sink()
+        context = FunctionInvocationContext(function=function, arguments={"payload": f"[{first_id}]"})
+
+        async def next_fn() -> None:
+            assert context.arguments == {"payload": "third"}
+            context.result = [Content.from_text("done")]
+
+        await middleware.process(context, next_fn)
+
+    @pytest.mark.parametrize("indirect", [False, True], ids=["direct", "indirect"])
+    async def test_variable_reference_cycle_fails_before_tool_execution(self, middleware, indirect: bool) -> None:
+        store = middleware.get_variable_store()
+        first_id = store.store("", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+        first_entry = cast(dict[str, Any], middleware._scope.variables[first_id])
+        if indirect:
+            second_id = store.store("", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+            second_entry = cast(dict[str, Any], middleware._scope.variables[second_id])
+            first_entry["content"] = f"[{second_id}]"
+            second_entry["content"] = f"[{first_id}]"
+        else:
+            first_entry["content"] = f"[{first_id}]"
+
+        function = self._variable_sink()
+        context = FunctionInvocationContext(function=function, arguments={"payload": f"[{first_id}]"})
+
+        async def next_fn() -> None:
+            pytest.fail("A cyclic variable graph must not execute the destination tool")
+
+        with pytest.raises(ValueError, match="cycle"):
+            await middleware.process(context, next_fn)
+
+    async def test_nested_mixed_trust_references_expand_and_taint_arguments(self, middleware) -> None:
+        store = middleware.get_variable_store()
+        trusted_id = store.store("trusted", ContentLabel(integrity=IntegrityLabel.TRUSTED))
+        untrusted_id = store.store("untrusted", ContentLabel(integrity=IntegrityLabel.UNTRUSTED))
+        function = self._variable_sink()
+        context = FunctionInvocationContext(
+            function=function,
+            arguments={
+                "payload": {
+                    "trusted": f"[{trusted_id}]",
+                    "nested": [f"[{untrusted_id}]", (f"[{trusted_id}]",)],
+                }
+            },
+        )
+
+        async def next_fn() -> None:
+            assert context.arguments == {
+                "payload": {
+                    "trusted": "trusted",
+                    "nested": ["untrusted", ("trusted",)],
+                }
+            }
+            assert context.metadata["argument_label"].integrity == IntegrityLabel.UNTRUSTED
+            context.result = [Content.from_text("done")]
+
+        await middleware.process(context, next_fn)
+
+    async def test_variable_reference_depth_limit_fails_before_tool_execution(self, middleware) -> None:
+        store = middleware.get_variable_store()
+        value = "leaf"
+        for _ in range(17):
+            variable_id = store.store(value, ContentLabel(integrity=IntegrityLabel.TRUSTED))
+            value = f"[{variable_id}]"
+
+        function = self._variable_sink()
+        context = FunctionInvocationContext(function=function, arguments={"payload": value})
+
+        async def next_fn() -> None:
+            pytest.fail("An over-depth variable graph must not execute the destination tool")
+
+        with pytest.raises(ValueError, match="depth"):
+            await middleware.process(context, next_fn)
+
+    async def test_variable_reference_count_limit_fails_before_tool_execution(self, middleware) -> None:
+        store = middleware.get_variable_store()
+        references = [
+            f"[{store.store(str(index), ContentLabel(integrity=IntegrityLabel.TRUSTED))}]" for index in range(101)
+        ]
+        function = self._variable_sink()
+        context = FunctionInvocationContext(function=function, arguments={"payload": references})
+
+        async def next_fn() -> None:
+            pytest.fail("An over-limit variable graph must not execute the destination tool")
+
+        with pytest.raises(ValueError, match="count"):
+            await middleware.process(context, next_fn)
 
     @pytest.mark.asyncio
     async def test_json_string_variable_reference_expands_only_response_before_call_next(self, middleware):
@@ -1481,7 +1690,9 @@ class TestPolicyEnforcementMiddleware:
             arguments=mock_function.args_schema(arg="test"),
         )
         escalated_context.metadata["context_label"] = ContentLabel(
-            integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.USER_IDENTITY
+            integrity=IntegrityLabel.UNTRUSTED,
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
         )
         escalated_context.metadata["call_id"] = "call-label"
         escalated_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
@@ -1736,6 +1947,7 @@ class TestPolicyEnforcementMiddleware:
         label = ContentLabel(
             integrity=IntegrityLabel.TRUSTED,
             confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
         )
         request_context = FunctionInvocationContext(
             function=mock_function,
@@ -1820,6 +2032,179 @@ class TestPolicyEnforcementMiddleware:
             await middleware.process(replay_context, execute)
         assert isinstance(replay_context.result, Content)
         assert replay_context.result.type == "function_approval_request"
+
+    async def test_approval_for_one_principal_cannot_authorize_another(self) -> None:
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        function = _identity_destination(_principal_metadata("user-c")[_PRINCIPALS_KEY])
+        request_context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(value="value"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        request_context.metadata["context_label"] = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+        request_context.metadata["call_id"] = "principal-approval"
+
+        async def stop_before_approval() -> None:
+            pytest.fail("A mismatched principal flow must require approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_approval)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+        assert approval_request.type == "function_approval_request"
+
+        replay_context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(value="value"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        replay_context.metadata["context_label"] = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-b"),
+        )
+        replay_context.metadata["call_id"] = "principal-approval"
+        replay_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+
+        assert executed is False
+        assert isinstance(replay_context.result, Content)
+        assert replay_context.result.type == "function_approval_request"
+        assert replay_context.result.additional_properties["_replacement_approval_request"] is True
+
+    async def test_approval_is_bound_to_destination_principals(self) -> None:
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        function = _identity_destination(_principal_metadata("user-b")[_PRINCIPALS_KEY])
+        source_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+        request_context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(value="value"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        request_context.metadata["context_label"] = source_label
+        request_context.metadata["call_id"] = "destination-principal-approval"
+
+        async def stop_before_approval() -> None:
+            pytest.fail("A mismatched principal flow must require approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_approval)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+        assert function.additional_properties is not None
+        function.additional_properties[_PRINCIPALS_KEY] = _principal_metadata("user-c")[_PRINCIPALS_KEY]
+
+        replay_context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(value="value"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        replay_context.metadata["context_label"] = source_label
+        replay_context.metadata["call_id"] = "destination-principal-approval"
+        replay_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+
+        assert executed is False
+        assert isinstance(replay_context.result, Content)
+        assert replay_context.result.type == "function_approval_request"
+        assert replay_context.result.additional_properties["_replacement_approval_request"] is True
+
+    @pytest.mark.parametrize("malformed_source", [True, False], ids=["source", "destination"])
+    async def test_malformed_principals_cannot_create_approval_authority(self, malformed_source: bool) -> None:
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        destination_principals: Any = (
+            _principal_metadata("user-b")[_PRINCIPALS_KEY]
+            if malformed_source
+            else {"tenant_id": "tenant-a", "user_id": "user-b"}
+        )
+        source_metadata = {} if malformed_source else _principal_metadata("user-a")
+        function = _identity_destination(destination_principals)
+        context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(value="value"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        context.metadata["context_label"] = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=source_metadata,
+        )
+        context.metadata["call_id"] = "invalid-principal-approval"
+
+        async def execute() -> None:
+            pytest.fail("Malformed principal state must not create approval authority")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(context, execute)
+
+        assert isinstance(context.result, dict)
+        assert context.result["violation_type"] == "unsafe_approval_binding"
+
+    async def test_approval_binds_computed_argument_principals_without_label_tracker(self) -> None:
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        function = _identity_destination(_principal_metadata("user-c")[_PRINCIPALS_KEY])
+        request_context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(value="value"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        request_context.metadata.update({
+            "context_label": ContentLabel(),
+            "argument_label": ContentLabel(
+                confidentiality=ConfidentialityLabel.USER_IDENTITY,
+                metadata=_principal_metadata("user-a"),
+            ),
+            "call_id": "argument-principal-approval",
+        })
+
+        async def stop_before_approval() -> None:
+            pytest.fail("A mismatched principal flow must require approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_approval)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+
+        replay_context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(value="value"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        replay_context.metadata.update({
+            "context_label": ContentLabel(),
+            "argument_label": ContentLabel(
+                confidentiality=ConfidentialityLabel.USER_IDENTITY,
+                metadata=_principal_metadata("user-b"),
+            ),
+            "call_id": "argument-principal-approval",
+            "approval_response": approval_request.to_function_approval_response(True),
+        })
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+
+        assert executed is False
+        assert isinstance(replay_context.result, Content)
+        assert replay_context.result.additional_properties["_replacement_approval_request"] is True
 
 
 class TestAutomaticHiding:
@@ -2105,7 +2490,7 @@ class TestAutomaticHiding:
             ContentLabel(
                 integrity=IntegrityLabel.UNTRUSTED,
                 confidentiality=ConfidentialityLabel.USER_IDENTITY,
-                metadata={"user_id": "user-123"},
+                metadata=_principal_metadata("user-123"),
             ),
         )
 
@@ -3318,6 +3703,7 @@ class TestQuarantinedLLM:
             ContentLabel(
                 integrity=IntegrityLabel.TRUSTED,
                 confidentiality=ConfidentialityLabel.USER_IDENTITY,
+                metadata=_principal_metadata("user-a"),
             ),
         )
         quarantine_tool = next(tool for tool in middleware.get_security_tools() if tool.name == "quarantined_llm")
@@ -3339,6 +3725,31 @@ class TestQuarantinedLLM:
         _, hidden_label = middleware.get_variable_store().retrieve(hidden_reference["variable_id"])
         assert hidden_label.integrity == IntegrityLabel.UNTRUSTED
         assert hidden_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+
+    async def test_quarantined_llm_preserves_user_identity_when_principals_are_missing(self) -> None:
+        middleware = LabelTrackingFunctionMiddleware()
+        variable_id = middleware.get_variable_store().store(
+            "identity secret",
+            ContentLabel(
+                integrity=IntegrityLabel.UNTRUSTED,
+                confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            ),
+        )
+        quarantine_tool = next(tool for tool in middleware.get_security_tools() if tool.name == "quarantined_llm")
+        context = FunctionInvocationContext(
+            function=quarantine_tool,
+            arguments={"prompt": "Summarize", "variable_ids": [variable_id]},
+        )
+
+        async def next_fn() -> None:
+            context.result = await quarantine_tool.invoke(arguments=context.arguments, context=context)
+
+        await middleware.process(context, next_fn)
+
+        result_label = context.metadata["result_label"]
+        assert result_label.integrity == IntegrityLabel.UNTRUSTED
+        assert result_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+        assert _PRINCIPALS_KEY not in result_label.metadata
 
     async def test_quarantined_llm_public_input_remains_public(self) -> None:
         """A valid quarantine label overrides the fail-closed PRIVATE fallback."""
@@ -3886,9 +4297,167 @@ class TestPerItemEmbeddedLabels:
 
         return FunctionTool(fn=mock_fn, name="fetch_items", description="Fetch items", args_schema=MockArgs)
 
+    async def test_untrusted_fallback_cannot_be_upgraded_by_embedded_label(self, middleware, mock_function) -> None:
+        context = FunctionInvocationContext(function=mock_function, arguments=mock_function.args_schema())
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "remote result",
+                    additional_properties={
+                        "security_label": {"integrity": "trusted", "confidentiality": "public"},
+                    },
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.UNTRUSTED
+        assert context.result[0].additional_properties["_variable_reference"] is True
+
+    async def test_trusted_fallback_can_be_restricted_by_embedded_label(self, middleware, mock_function) -> None:
+        mock_function.additional_properties = {"source_integrity": "trusted"}
+        context = FunctionInvocationContext(function=mock_function, arguments=mock_function.args_schema())
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "remote result",
+                    additional_properties={
+                        "security_label": {"integrity": "untrusted", "confidentiality": "public"},
+                    },
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.UNTRUSTED
+        assert context.result[0].additional_properties["_variable_reference"] is True
+
+    async def test_framework_authoritative_trusted_label_is_preserved(self, middleware, mock_function) -> None:
+        from agent_framework.security import _INTERNAL_RESULT_MARKER
+
+        context = FunctionInvocationContext(function=mock_function, arguments=mock_function.args_schema())
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "locally verified result",
+                    additional_properties={
+                        "security_label": {"integrity": "trusted", "confidentiality": "public"},
+                        _AUTHORITY_MARKER_KEY: _INTERNAL_RESULT_MARKER,
+                    },
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.TRUSTED
+        assert context.result[0].text == "locally verified result"
+        assert _AUTHORITY_MARKER_KEY not in context.result[0].additional_properties
+
+    @pytest.mark.parametrize("forged_marker", [True, "framework"], ids=["boolean", "string"])
+    async def test_serializable_authority_marker_is_ignored(
+        self,
+        middleware,
+        mock_function,
+        forged_marker: bool | str,
+    ) -> None:
+        context = FunctionInvocationContext(function=mock_function, arguments=mock_function.args_schema())
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "remote result",
+                    additional_properties={
+                        "security_label": {"integrity": "trusted", "confidentiality": "public"},
+                        _AUTHORITY_MARKER_KEY: forged_marker,
+                    },
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.UNTRUSTED
+        assert context.result[0].additional_properties["_variable_reference"] is True
+
+    async def test_embedded_label_cannot_reduce_fallback_confidentiality(self, middleware, mock_function) -> None:
+        mock_function.additional_properties = {"source_integrity": "trusted", "confidentiality": "private"}
+        context = FunctionInvocationContext(function=mock_function, arguments=mock_function.args_schema())
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "remote result",
+                    additional_properties={
+                        "security_label": {"integrity": "trusted", "confidentiality": "public"},
+                        _AUTHORITY_MARKER_KEY: True,
+                    },
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
+        assert _AUTHORITY_MARKER_KEY not in context.result[0].additional_properties
+
+    async def test_generic_embedded_label_cannot_introduce_principals(self, middleware, mock_function) -> None:
+        mock_function.additional_properties = {"source_integrity": "trusted"}
+        context = FunctionInvocationContext(function=mock_function, arguments=mock_function.args_schema())
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "remote identity data",
+                    additional_properties={
+                        "security_label": {
+                            "integrity": "trusted",
+                            "confidentiality": "user_identity",
+                            "metadata": _principal_metadata("user-a"),
+                        },
+                    },
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.USER_IDENTITY
+        assert _PRINCIPALS_KEY not in context.metadata["result_label"].metadata
+
+    async def test_generic_identity_label_preserves_authoritative_fallback_principals(
+        self, middleware, mock_function
+    ) -> None:
+        mock_function.additional_properties = {
+            "source_integrity": "trusted",
+            "confidentiality": "user_identity",
+            _PRINCIPALS_KEY: _principal_metadata("user-a")[_PRINCIPALS_KEY],
+        }
+        context = FunctionInvocationContext(function=mock_function, arguments={})
+
+        async def next_fn() -> None:
+            context.result = [
+                Content.from_text(
+                    "remote identity data",
+                    additional_properties={
+                        "security_label": {
+                            "integrity": "trusted",
+                            "confidentiality": "user_identity",
+                            "metadata": _principal_metadata("user-b"),
+                        },
+                    },
+                )
+            ]
+
+        await middleware.process(context, next_fn)
+
+        assert context.metadata["result_label"].metadata[_PRINCIPALS_KEY] == [
+            {"tenant_id": "tenant-a", "user_id": "user-a"}
+        ]
+
     @pytest.mark.asyncio
     async def test_mixed_trust_items_in_list(self, middleware, mock_function):
         """Test that untrusted items are hidden while trusted items remain visible."""
+        mock_function.additional_properties = {"source_integrity": "trusted"}
         args = mock_function.args_schema()
         context = FunctionInvocationContext(function=mock_function, arguments=args)
 
@@ -3941,6 +4510,7 @@ class TestPerItemEmbeddedLabels:
     @pytest.mark.asyncio
     async def test_hidden_untrusted_items_do_not_taint_integrity_in_mixed_results(self, middleware, mock_function):
         """Hidden untrusted items should only affect confidentiality, not integrity."""
+        mock_function.additional_properties = {"source_integrity": "trusted"}
         args = mock_function.args_schema()
         context = FunctionInvocationContext(function=mock_function, arguments=args)
 
@@ -3965,6 +4535,7 @@ class TestPerItemEmbeddedLabels:
     @pytest.mark.asyncio
     async def test_all_trusted_items_visible(self, middleware, mock_function):
         """Test that all trusted items remain fully visible."""
+        mock_function.additional_properties = {"source_integrity": "trusted"}
         args = mock_function.args_schema()
         context = FunctionInvocationContext(function=mock_function, arguments=args)
 
@@ -4043,6 +4614,47 @@ class TestPerItemEmbeddedLabels:
         assert context.result[0].additional_properties["_variable_reference"] is True
         assert middleware.get_context_label().integrity == IntegrityLabel.TRUSTED
         assert middleware.get_context_label().confidentiality == ConfidentialityLabel.USER_IDENTITY
+
+    async def test_hidden_user_identity_result_unions_principals_at_same_rank(
+        self, middleware, mock_function, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG, logger="agent_framework.security")
+        middleware._context_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+        mock_function.additional_properties = {
+            "source_integrity": "untrusted",
+            "confidentiality": "user_identity",
+            _PRINCIPALS_KEY: _principal_metadata("user-b")[_PRINCIPALS_KEY],
+        }
+        context = FunctionInvocationContext(function=mock_function, arguments={})
+
+        async def next_fn() -> None:
+            context.result = [Content.from_text("hidden user B data")]
+
+        await middleware.process(context, next_fn)
+
+        assert context.result[0].additional_properties["_variable_reference"] is True
+        assert middleware.get_context_label().metadata[_PRINCIPALS_KEY] == [
+            {"tenant_id": "tenant-a", "user_id": "user-a"},
+            {"tenant_id": "tenant-a", "user_id": "user-b"},
+        ]
+
+        assert "user-a" not in caplog.text
+        assert "user-b" not in caplog.text
+        caplog.clear()
+
+        destination = _identity_destination(_principal_metadata("user-a")[_PRINCIPALS_KEY])
+        policy_context = FunctionInvocationContext(function=destination, arguments={})
+        policy_context.metadata["context_label"] = middleware.get_context_label()
+        policy = PolicyEnforcementFunctionMiddleware()
+
+        async def execute() -> None:
+            pytest.fail("A single-user destination must not receive hidden content from another principal")
+
+        with pytest.raises(MiddlewareTermination):
+            await policy.process(policy_context, execute)
 
     async def test_malformed_embedded_metadata_preserves_mandatory_label_fields(
         self, middleware, mock_function
@@ -4390,16 +5002,17 @@ class TestTieredLabelPropagation:
                     "transformed",
                     additional_properties={
                         "security_label": {"integrity": "trusted", "confidentiality": "public"},
-                        "_security_label_authoritative_confidentiality": True,
+                        _AUTHORITY_MARKER_KEY: True,
                     },
                 )
             ]
 
         await middleware.process(context, next_fn)
 
-        assert context.metadata["result_label"].integrity == IntegrityLabel.TRUSTED
+        assert context.metadata["result_label"].integrity == IntegrityLabel.UNTRUSTED
         assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
         assert middleware.get_context_label().confidentiality == ConfidentialityLabel.PRIVATE
+        assert _AUTHORITY_MARKER_KEY not in context.result[0].additional_properties
 
     @pytest.mark.asyncio
     async def test_embedded_labels_override_source_integrity(self, middleware):
@@ -4695,6 +5308,96 @@ class TestMaxAllowedConfidentiality:
         # Should be blocked (either violation should block)
         assert "error" in context.result
 
+    async def test_matching_user_identity_principal_is_allowed(self, policy_middleware) -> None:
+        source_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+        function = _identity_destination(_principal_metadata("user-a")[_PRINCIPALS_KEY])
+        context = FunctionInvocationContext(function=function, arguments={})
+        context.metadata["context_label"] = source_label
+
+        async def next_fn() -> None:
+            context.result = "sent"
+
+        await policy_middleware.process(context, next_fn)
+
+        assert context.result == "sent"
+
+    @pytest.mark.parametrize(
+        ("source_metadata", "destination_principals"),
+        [
+            (_principal_metadata("user-a"), _principal_metadata("user-b")[_PRINCIPALS_KEY]),
+            (
+                _principal_metadata("user-a", "tenant-a"),
+                _principal_metadata("user-a", "tenant-b")[_PRINCIPALS_KEY],
+            ),
+            ({}, _principal_metadata("user-a")[_PRINCIPALS_KEY]),
+            (_principal_metadata("user-a"), None),
+            (
+                {_PRINCIPALS_KEY: {"tenant_id": "tenant-a", "user_id": "user-a"}},
+                _principal_metadata("user-a")[_PRINCIPALS_KEY],
+            ),
+            (
+                _principal_metadata("user-a"),
+                {"tenant_id": "tenant-a", "user_id": "user-a"},
+            ),
+        ],
+        ids=[
+            "different-user",
+            "different-tenant",
+            "missing-source",
+            "missing-destination",
+            "malformed-source",
+            "malformed-destination",
+        ],
+    )
+    async def test_user_identity_principal_mismatch_is_blocked(
+        self,
+        policy_middleware,
+        source_metadata: dict[str, Any],
+        destination_principals: Any | None,
+    ) -> None:
+        source_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=source_metadata,
+        )
+        function = _identity_destination(destination_principals)
+        context = FunctionInvocationContext(function=function, arguments={})
+        context.metadata["context_label"] = source_label
+        executed = False
+
+        async def next_fn() -> None:
+            nonlocal executed
+            executed = True
+
+        with pytest.raises(MiddlewareTermination):
+            await policy_middleware.process(context, next_fn)
+
+        assert executed is False
+        assert context.result["violation_type"] == "principal_mismatch"
+
+    async def test_combined_principals_require_destination_subset(self, policy_middleware) -> None:
+        source_label = combine_labels(
+            ContentLabel(
+                confidentiality=ConfidentialityLabel.USER_IDENTITY,
+                metadata=_principal_metadata("user-a"),
+            ),
+            ContentLabel(
+                confidentiality=ConfidentialityLabel.USER_IDENTITY,
+                metadata=_principal_metadata("user-b"),
+            ),
+        )
+        function = _identity_destination(_principal_metadata("user-a")[_PRINCIPALS_KEY])
+        context = FunctionInvocationContext(function=function, arguments={})
+        context.metadata["context_label"] = source_label
+
+        async def next_fn() -> None:
+            pytest.fail("A destination for one owner must not receive content owned by multiple principals")
+
+        with pytest.raises(MiddlewareTermination):
+            await policy_middleware.process(context, next_fn)
+
 
 class TestCheckConfidentialityAllowed:
     """Tests for check_confidentiality_allowed helper function."""
@@ -4755,12 +5458,73 @@ class TestCheckConfidentialityAllowed:
         ui_label = ContentLabel(confidentiality=ConfidentialityLabel.USER_IDENTITY)
         assert check_confidentiality_allowed(ui_label, ConfidentialityLabel.PRIVATE) is False
 
-    def test_user_identity_to_user_identity_allowed(self):
-        """Test USER_IDENTITY data can be written to USER_IDENTITY destination."""
+    def test_matching_user_identity_to_user_identity_allowed(self):
         from agent_framework.security import check_confidentiality_allowed
 
-        ui_label = ContentLabel(confidentiality=ConfidentialityLabel.USER_IDENTITY)
-        assert check_confidentiality_allowed(ui_label, ConfidentialityLabel.USER_IDENTITY) is True
+        ui_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+        assert (
+            check_confidentiality_allowed(
+                ui_label,
+                ConfidentialityLabel.USER_IDENTITY,
+                authorized_principals=_principal_metadata("user-a")[_PRINCIPALS_KEY],
+            )
+            is True
+        )
+
+    def test_user_identity_accepts_sequence_and_mapping_implementations(self) -> None:
+        from agent_framework.security import check_confidentiality_allowed
+
+        principal = MappingProxyType({"tenant_id": "tenant-a", "user_id": "user-a"})
+        ui_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata={_PRINCIPALS_KEY: (principal,)},
+        )
+
+        assert (
+            check_confidentiality_allowed(
+                ui_label,
+                ConfidentialityLabel.USER_IDENTITY,
+                authorized_principals=(principal,),
+            )
+            is True
+        )
+
+    @pytest.mark.parametrize(
+        ("source_metadata", "authorized_principals"),
+        [
+            (_principal_metadata("user-a"), _principal_metadata("user-b")[_PRINCIPALS_KEY]),
+            (
+                _principal_metadata("user-a", "tenant-a"),
+                _principal_metadata("user-a", "tenant-b")[_PRINCIPALS_KEY],
+            ),
+            ({}, _principal_metadata("user-a")[_PRINCIPALS_KEY]),
+            (_principal_metadata("user-a"), None),
+        ],
+        ids=["different-user", "different-tenant", "missing-source", "missing-destination"],
+    )
+    def test_user_identity_requires_matching_principals(
+        self,
+        source_metadata: dict[str, Any],
+        authorized_principals: Any | None,
+    ) -> None:
+        from agent_framework.security import check_confidentiality_allowed
+
+        ui_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=source_metadata,
+        )
+
+        assert (
+            check_confidentiality_allowed(
+                ui_label,
+                ConfidentialityLabel.USER_IDENTITY,
+                authorized_principals=authorized_principals,
+            )
+            is False
+        )
 
 
 if __name__ == "__main__":
@@ -5363,6 +6127,31 @@ class TestMCPIFCMetaLabels:
         )
         assert result[0].additional_properties["security_label"] == expected_label
 
+    async def test_framework_stamped_mcp_label_remains_authoritative_through_tracking(self) -> None:
+        from agent_framework.security import apply_mcp_security_labels
+
+        annotations = SimpleNamespace(readOnlyHint=True, openWorldHint=False)
+        server_meta = {"ifc": {"integrity": "trusted", "confidentiality": "public"}}
+        mcp_tool, function = _make_connected_mcp_tool_for_ifc(
+            annotations=annotations,
+            server_meta=server_meta,
+        )
+        await apply_mcp_security_labels(mcp_tool, trust_server_ifc=True)
+        assert function.func is not None
+        stamped_result = await function.func()
+        tracker = LabelTrackingFunctionMiddleware()
+        context = FunctionInvocationContext(function=function, arguments={})
+
+        async def next_fn() -> None:
+            context.result = stamped_result
+
+        await tracker.process(context, next_fn)
+
+        assert context.metadata["result_label"].integrity == IntegrityLabel.TRUSTED
+        assert context.result[0].text == "payload"
+        assert _AUTHORITY_MARKER_KEY not in context.result[0].additional_properties
+        assert "_security_label_authoritative_confidentiality" not in context.result[0].additional_properties
+
     async def test_apply_mcp_security_labels_reconfigures_existing_wrapper_authority(self):
         from agent_framework.security import apply_mcp_security_labels
 
@@ -5587,6 +6376,58 @@ class TestManualSecuritySessionSelection:
             inspect(bob, bob_variable),
         ) == ["alice secret", "bob secret"]
         assert get_current_middleware() is None
+
+    async def test_overlapping_sessions_keep_principal_metadata_isolated(self) -> None:
+        tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=False)
+        alice = AgentSession(session_id="alice-principal")
+        bob = AgentSession(session_id="bob-principal")
+        tracker._scope_for_session(alice).context_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-a"),
+        )
+        tracker._scope_for_session(bob).context_label = ContentLabel(
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata=_principal_metadata("user-b"),
+        )
+
+        class SourceArgs(BaseModel):
+            pass
+
+        async def source() -> str:
+            return "done"
+
+        function = FunctionTool(
+            fn=source,
+            name="session_principal_source",
+            description="Observe session principal",
+            args_schema=SourceArgs,
+            additional_properties={"source_integrity": "trusted"},
+        )
+        both_started = asyncio.Event()
+        started = 0
+
+        async def run(session: AgentSession, expected_user_id: str) -> None:
+            nonlocal started
+            context = FunctionInvocationContext(function=function, arguments={}, session=session)
+
+            async def execute() -> None:
+                nonlocal started
+                started += 1
+                if started == 2:
+                    both_started.set()
+                await both_started.wait()
+                await asyncio.sleep(0)
+                assert context.metadata["context_label"].metadata[_PRINCIPALS_KEY] == [
+                    {"tenant_id": "tenant-a", "user_id": expected_user_id}
+                ]
+                context.result = [Content.from_text("done")]
+
+            await tracker.process(context, execute)
+
+        await asyncio.gather(
+            run(alice, "user-a"),
+            run(bob, "user-b"),
+        )
 
     async def test_direct_standalone_invocation_keeps_private_scope(self) -> None:
         tracker = LabelTrackingFunctionMiddleware()
