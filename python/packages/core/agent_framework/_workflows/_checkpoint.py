@@ -414,11 +414,12 @@ class FileCheckpointStorage:
         file_path = self._validate_file_path(checkpoint_id)
 
         def _delete() -> bool:
-            if file_path.exists():
+            try:
                 file_path.unlink()
-                logger.info(f"Deleted checkpoint {checkpoint_id} from {file_path}")
-                return True
-            return False
+            except FileNotFoundError:
+                return False
+            logger.info(f"Deleted checkpoint {checkpoint_id} from {file_path}")
+            return True
 
         return await asyncio.to_thread(_delete)
 
