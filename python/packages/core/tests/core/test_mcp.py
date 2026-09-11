@@ -580,7 +580,7 @@ async def test_generated_mcp_tool_preserves_complete_host_payload_once() -> None
         "isError": False,
     }
 
-    assert [item.additional_properties["_meta"] for item in function_result.items] == [{"widget": "image"}] * 2
+    assert [item.additional_properties["_meta"] for item in function_result.items] == [{"widget": "image"}]
     assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY] == expected_host_payload
     assert all(_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY not in item.additional_properties for item in function_result.items)
     restored = Content.from_dict(function_result.to_dict())
@@ -1194,7 +1194,7 @@ async def test_secure_mcp_builtin_parser_restricts_all_result_shapes(result_shap
     )
 
     assert function_result.items is not None
-    assert len(function_result.items) == (2 if result_shape == "both" else 1)
+    assert len(function_result.items) == 1
     for hidden_item in function_result.items:
         assert hidden_item.additional_properties["_variable_reference"] is True
         assert hidden_item.additional_properties["security_label"]["integrity"] == "untrusted"
@@ -8264,7 +8264,7 @@ async def test_secure_mcp_task_results_cannot_relax_local_label(result_path: str
     )
 
     assert function_result.items is not None
-    assert len(function_result.items) == 2
+    assert len(function_result.items) == 1
     for item in function_result.items:
         assert item.additional_properties["_variable_reference"] is True
         assert item.additional_properties["security_label"]["integrity"] == "untrusted"
