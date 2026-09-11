@@ -3069,16 +3069,20 @@ async def test_mixed_approval_host_batch_stages_partial_responses_in_original_or
 
     async def run(contents: list[Content], session: AgentSession) -> ChatResponse:
         visible_tools = [approval_func, host_func] if host_kind == "declaration" else [approval_func]
+        if not streaming:
+            return await chat_client_base.get_response(
+                [Message(role="user", contents=contents)],
+                options={"tool_choice": "auto", "tools": visible_tools},
+                client_kwargs={"session": session},
+            )
         result = chat_client_base.get_response(
             [Message(role="user", contents=contents)],
-            stream=streaming,
+            stream=True,
             options={"tool_choice": "auto", "tools": visible_tools},
             client_kwargs={"session": session},
         )
-        if not streaming:
-            return await result  # type: ignore[misc]
-        updates = [update async for update in result]  # type: ignore[union-attr]
-        response = await result.get_final_response()  # type: ignore[union-attr]
+        updates = [update async for update in result]
+        response = await result.get_final_response()
         if not response.messages and updates:
             return ChatResponse.from_updates(updates)
         return response
@@ -3153,6 +3157,110 @@ async def test_mixed_approval_host_batch_stages_partial_responses_in_original_or
     final_tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
     assert isinstance(final_tool_state, dict)
     assert _PENDING_PAUSE_BATCH_KEY not in final_tool_state
+
+
+async def test_mixed_pause_partial_resume_without_session_fails_closed() -> None:
+    """A stateless partial response cannot bypass the mixed-pause barrier."""
+    from agent_framework._tools import _resolve_approval_responses
+
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host-call",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    executions = 0
+
+    async def execute_function_calls(**kwargs: Any) -> Any:
+        nonlocal executions
+        executions += 1
+        pytest.fail(f"partial stateless mixed batch must not execute: {kwargs}")
+
+    with pytest.raises(RuntimeError, match="AgentSession.*mixed pause batch"):
+        await _resolve_approval_responses(
+            prepared_messages=[
+                Message(role="assistant", contents=[approval_call, approval_request, host_request]),
+                Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)]),
+            ],
+            options=None,
+            errors_in_a_row=0,
+            max_errors=3,
+            execute_function_calls=execute_function_calls,
+        )
+
+    assert executions == 0
+
+
+def test_idless_duplicate_call_id_replay_does_not_fill_another_pause_occurrence() -> None:
+    """Repeated id-less history remains bound to its already staged occurrence."""
+    from agent_framework._tools import (
+        _PENDING_PAUSE_BATCH_KEY,
+        _TOOL_APPROVAL_STATE_KEY,
+        _stage_pending_pause_batch_responses,
+        _store_pending_pause_batch,
+    )
+
+    session = AgentSession()
+    first_request = Content.from_function_call(
+        call_id="duplicate",
+        name="host_func",
+        arguments={"value": 1},
+        id="host-occurrence-1",
+    )
+    first_request.user_input_request = True
+    second_request = Content.from_function_call(
+        call_id="duplicate",
+        name="host_func",
+        arguments={"value": 2},
+        id="host-occurrence-2",
+    )
+    second_request.user_input_request = True
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    _store_pending_pause_batch(session, [[first_request], [approval_request], [second_request]])
+
+    first_result = Content.from_function_result(call_id="duplicate", result="first")
+    incomplete, _ = _stage_pending_pause_batch_responses(
+        [Message(role="tool", contents=[first_result])],
+        session,
+    )
+    assert incomplete is True
+
+    replay_one = Content.from_function_result(call_id="duplicate", result="first")
+    replay_two = Content.from_function_result(call_id="duplicate", result="first")
+    incomplete, _ = _stage_pending_pause_batch_responses(
+        [Message(role="tool", contents=[replay_one, replay_two])],
+        session,
+    )
+
+    assert incomplete is True
+    tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
+    assert isinstance(tool_state, dict)
+    batch = tool_state[_PENDING_PAUSE_BATCH_KEY]
+    assert isinstance(batch, dict)
+    items = batch["items"]
+    assert isinstance(items, list)
+    assert items[0]["response"] == first_result.to_dict()
+    assert "response" not in items[2]
 
 
 @pytest.mark.parametrize("unknown_first", [True, False], ids=["unknown-first", "approval-first"])
