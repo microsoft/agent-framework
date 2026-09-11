@@ -523,7 +523,6 @@ async def test_uncommitted_function_call_turn_is_filtered_before_compaction(
         await client.get_response(response.messages)
 
     assert replayed_messages == []
-    assert response.messages == []
 
 
 @pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])

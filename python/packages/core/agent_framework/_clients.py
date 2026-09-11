@@ -67,6 +67,8 @@ _UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY = "_agent_framework_uncommitted_function_
 
 
 def _filter_uncommitted_function_call_messages(messages: Sequence[Message]) -> list[Message]:
+    if any(not isinstance(message, Message) for message in messages):
+        return cast(list[Message], messages)
     return [
         message
         for message in messages
