@@ -142,10 +142,10 @@ select = [
     "RUF", # RUF specific rules
     "S", # Bandit checks
     "SIM", # flake8-simplify check
+    "T100", # Debugger
     "T20", # flake8-print checks
     "TD", # todos
     "W", # pycodestyle warning checks
-    "T100", # Debugger
 ]
 ignore = [
     "D100", # allow missing docstring in public module
