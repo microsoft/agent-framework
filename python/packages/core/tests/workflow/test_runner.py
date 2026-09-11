@@ -1496,3 +1496,32 @@ async def test_runner_drains_straggler_events_at_iteration_end():
     output_events = [e for e in events if e.type == "output"]
     # We should have output events from both executors
     assert len(output_events) >= 2
+
+@pytest.mark.asyncio
+async def test_failed_superstep_discards_pending_state_before_next_run() -> None:
+    """Pending State writes from a failed superstep must not leak into a later run (#7859)."""
+    from agent_framework import WorkflowBuilder
+
+    @dataclass
+    class Msg:
+        fail: bool
+
+    class FlakyExecutor(Executor):
+        @handler
+        async def run(self, message: Msg, ctx: WorkflowContext) -> None:
+            if message.fail:
+                ctx.set_state("secret", "leaked-from-failed-run")
+                raise RuntimeError("simulated transient failure")
+            await ctx.yield_output("ok")  # type: ignore[arg-type]
+
+    workflow = WorkflowBuilder(start_executor=FlakyExecutor(id="flaky")).build()
+
+    with pytest.raises(RuntimeError, match="simulated transient failure"):
+        async for _ in workflow.run(Msg(fail=True), stream=True):
+            pass
+
+    async for _ in workflow.run(Msg(fail=False), stream=True):
+        pass
+
+    committed = workflow._runner.state.export_state()  # pyright: ignore[reportPrivateUsage]
+    assert "secret" not in committed

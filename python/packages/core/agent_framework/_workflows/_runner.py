@@ -142,6 +142,9 @@ class RunnerImpl:
                 iteration_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await iteration_task
+                # Abandon staged state writes from the interrupted superstep so a later
+                # successful run on the same Workflow cannot commit them (#7859).
+                self._state.discard()
                 raise
 
             # Propagate errors from iteration, but first surface any pending events
@@ -152,6 +155,8 @@ class RunnerImpl:
                 if await self._ctx.has_events():
                     for event in await self._ctx.drain_events():
                         yield event
+                # Drop staged writes from the failed superstep before re-raising (#7859).
+                self._state.discard()
                 raise
             self._iteration += 1
 
