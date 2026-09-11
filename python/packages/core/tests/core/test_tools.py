@@ -343,6 +343,72 @@ async def test_tool_decorator_with_async():
     assert (await async_test_tool(1, 2)) == 3
 
 
+async def test_async_tool_exception_limit_counts_awaited_failures() -> None:
+    """Async tool failures count toward the configured exception limit."""
+    from agent_framework.exceptions import ToolException
+
+    @tool(name="failing_async_tool", max_invocation_exceptions=1)
+    async def failing_async_tool() -> str:
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await failing_async_tool.invoke(skip_parsing=True)
+
+    assert failing_async_tool.invocation_count == 1
+    assert failing_async_tool.invocation_exception_count == 1
+
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await failing_async_tool.invoke(skip_parsing=True)
+
+    assert failing_async_tool.invocation_count == 1
+    assert failing_async_tool.invocation_exception_count == 1
+
+
+async def test_direct_async_tool_exception_limit_counts_awaited_failures() -> None:
+    """Direct async tool calls count failures toward the configured exception limit."""
+    from agent_framework.exceptions import ToolException
+
+    @tool(name="failing_direct_async_tool", max_invocation_exceptions=1)
+    async def failing_direct_async_tool() -> str:
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await failing_direct_async_tool()
+
+    assert failing_direct_async_tool.invocation_count == 1
+    assert failing_direct_async_tool.invocation_exception_count == 1
+
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await failing_direct_async_tool()
+
+    assert failing_direct_async_tool.invocation_count == 1
+    assert failing_direct_async_tool.invocation_exception_count == 1
+
+
+async def test_sync_awaitable_tool_exception_limit_counts_awaited_failures() -> None:
+    """Sync tools returning awaitables count failures during async invocation."""
+    from agent_framework.exceptions import ToolException
+
+    @tool(name="failing_sync_awaitable_tool", max_invocation_exceptions=1)
+    def failing_sync_awaitable_tool() -> Any:
+        async def fail_later() -> str:
+            raise RuntimeError("boom")
+
+        return fail_later()
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await failing_sync_awaitable_tool.invoke(skip_parsing=True)
+
+    assert failing_sync_awaitable_tool.invocation_count == 1
+    assert failing_sync_awaitable_tool.invocation_exception_count == 1
+
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await failing_sync_awaitable_tool.invoke(skip_parsing=True)
+
+    assert failing_sync_awaitable_tool.invocation_count == 1
+    assert failing_sync_awaitable_tool.invocation_exception_count == 1
+
+
 def test_tool_decorator_in_class():
     """Test the tool decorator."""
 

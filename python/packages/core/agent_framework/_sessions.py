@@ -2335,8 +2335,12 @@ class FileHistoryProvider(HistoryProvider):
                             for message in new_messages:
                                 file_handle.write(f"{self._serialize_json_message(message)}\n")
                     return
+                existing_messages = self._read_msgpack_messages(file_path) if file_path.exists() else []
+                new_messages = filter_new_messages(existing_messages, messages)
+                if not new_messages:
+                    return
                 with file_path.open("ab") as file_handle:
-                    for message in messages:
+                    for message in new_messages:
                         serialized = _DEFAULT_MSGPACK_ENCODER.encode(message.to_dict())
                         file_handle.write(len(serialized).to_bytes(self._MSGPACK_RECORD_HEADER_BYTES, "big"))
                         file_handle.write(serialized)

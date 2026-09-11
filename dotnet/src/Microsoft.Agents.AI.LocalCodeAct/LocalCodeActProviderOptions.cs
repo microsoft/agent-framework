@@ -19,6 +19,19 @@ public sealed class LocalCodeActProviderOptions
     public IEnumerable<AIFunction>? Tools { get; set; }
 
     /// <summary>
+    /// Gets or sets the approval mode for <c>execute_code</c>.
+    /// Defaults to <see cref="LocalCodeActApprovalMode.NeverRequire"/>.
+    /// </summary>
+    /// <remarks>
+    /// Under <see cref="LocalCodeActApprovalMode.NeverRequire"/>, approval still propagates from the
+    /// tools in <see cref="Tools"/>: if any of them is an <see cref="ApprovalRequiredAIFunction"/>,
+    /// <c>execute_code</c> requires approval as well. This is required because generated code can
+    /// invoke any registered tool via <c>call_tool(...)</c> once execution has started, at which
+    /// point per-tool approval can no longer be enforced.
+    /// </remarks>
+    public LocalCodeActApprovalMode ApprovalMode { get; set; } = LocalCodeActApprovalMode.NeverRequire;
+
+    /// <summary>
     /// Gets or sets the initial set of file mounts exposed to generated code.
     /// </summary>
     public IEnumerable<FileMount>? FileMounts { get; set; }
