@@ -315,6 +315,10 @@ def _encode(value: Any) -> Any:
         typed_dict = cast(dict[Any, Any], value)
         if any(str(k) in _RESERVED_DICT_KEYS for k in typed_dict):
             return _encode_pickle(value)
+        # Distinct Python keys can collapse after str(); pickle those mappings so
+        # values are not silently overwritten (for example {1: "a", "1": "b"}).
+        if len({str(k) for k in typed_dict}) != len(typed_dict):
+            return _encode_pickle(value)
         encoded_dict: dict[str, Any] = {str(k): _encode(v) for k, v in typed_dict.items()}
         return encoded_dict
 
