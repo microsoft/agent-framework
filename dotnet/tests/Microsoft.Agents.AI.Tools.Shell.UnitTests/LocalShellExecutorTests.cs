@@ -314,6 +314,37 @@ public sealed class LocalShellExecutorTests
     }
 
     [Fact]
+    public async Task Persistent_PowerShell_DoesNotInheritPreviousExitCodeAsync()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return;
+        }
+
+        // Arrange
+        await using var shell = new LocalShellExecutor(new()
+        {
+            Mode = ShellMode.Persistent,
+            Shell = "powershell.exe",
+            Timeout = TimeSpan.FromSeconds(20),
+        });
+
+        // Act
+        var firstFailure = await shell.RunAsync("cmd /c exit 3");
+        var succeeding = await shell.RunAsync("Write-Output ok");
+        var repeatedFailure = await shell.RunAsync("cmd /c exit 3");
+        var readback = await shell.RunAsync("Write-Output $LASTEXITCODE");
+
+        // Assert
+        Assert.Equal(3, firstFailure.ExitCode);
+        Assert.Equal(0, succeeding.ExitCode);
+        Assert.Contains("ok", succeeding.Stdout, StringComparison.Ordinal);
+        Assert.Equal(3, repeatedFailure.ExitCode);
+        Assert.Equal(0, readback.ExitCode);
+        Assert.Empty(readback.Stdout.Trim());
+    }
+
+    [Fact]
     public async Task Persistent_Timeout_ReturnsExitCode124Async()
     {
         await using var shell = new LocalShellExecutor(new()
