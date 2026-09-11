@@ -19,7 +19,7 @@ load_dotenv()
 
 # In-memory session store — keyed by session and user IDs when a user is present.
 # WARNING: This is lost on restart. Use durable storage in production.
-_sessions: dict[str, AgentSession] = {}
+_sessions: dict[str | tuple[str, str], AgentSession] = {}
 
 # Create the agent
 client = FoundryChatClient(
@@ -40,11 +40,11 @@ agent = Agent(
 app = InvocationAgentServerHost()
 
 
-def get_session_partition_key() -> str:
+def get_session_partition_key() -> str | tuple[str, str]:
     """Get the partition key for the current request.
 
-    A partition key is a JSON array string containing the session ID and user ID when a user ID
-    is present, preserving their boundaries and escaping. Otherwise, the key is just the session ID. In the
+    A partition key is a tuple containing the session ID and user ID when a user ID
+    is present, preserving their boundaries. Otherwise, the key is just the session ID. In the
     Foundry hosted environment, the partition key is used to maintain isolation between
     different sessions and users, such that one user cannot access another user's sessions.
 
@@ -57,7 +57,7 @@ def get_session_partition_key() -> str:
             "The request context is missing session_id. Please ensure that the request is a valid request."
         )
     if context.user_id is not None:
-        return json.dumps([context.session_id, context.user_id], separators=(",", ":"))
+        return context.session_id, context.user_id
     return context.session_id
 
 
@@ -73,8 +73,14 @@ async def handle_invoke(request: Request):
             return StreamingResponse(content=error, status_code=400)
         return Response(content=error, status_code=400)
 
-    session_id = get_session_partition_key()
-    session = _sessions.setdefault(session_id, AgentSession(session_id=session_id))
+    partition_key = get_session_partition_key()
+    session = _sessions.get(partition_key)
+    if session is None:
+        session_id = (
+            json.dumps(partition_key, separators=(",", ":")) if isinstance(partition_key, tuple) else partition_key
+        )
+        session = AgentSession(session_id=session_id)
+        _sessions[partition_key] = session
 
     if stream:
 

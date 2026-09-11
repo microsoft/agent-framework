@@ -37,15 +37,15 @@ class InvocationsHostServer(InvocationAgentServerHost):
         super().__init__(openapi_spec=openapi_spec, **kwargs)
 
         self._agent = agent
-        self._sessions: dict[str, AgentSession] = {}
+        self._sessions: dict[str | tuple[str, str], AgentSession] = {}
         self.invoke_handler(self._handle_invoke)
         mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)
 
-    def _partition_key(self) -> str:
+    def _partition_key(self) -> str | tuple[str, str]:
         """Get the partition key for the current request.
 
-        A hosted partition key is a JSON array string containing the session ID and user ID,
-        preserving their boundaries and escaping. Locally, the key is just the session ID. In the
+        A hosted partition key is a tuple containing the session ID and user ID,
+        preserving their boundaries. Locally, the key is just the session ID. In the
         Foundry hosted environment, the partition key is used to maintain isolation between
         different sessions and users, such that one user cannot access another user's sessions.
 
@@ -63,7 +63,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
                     "The hosted environment is missing session_id or user_id in the request context. "
                     "Please ensure that the request is coming from a valid Foundry platform service."
                 )
-            return json.dumps([context.session_id, context.user_id], separators=(",", ":"))
+            return context.session_id, context.user_id
 
         if not context.session_id:
             raise RuntimeError(
@@ -75,7 +75,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
     async def _handle_invoke(self, request: Request) -> Response:
         """Invoke the agent with the given request."""
         try:
-            session_id = self._partition_key()
+            partition_key = self._partition_key()
         except Exception as e:
             return Response(content=str(e), status_code=500)
 
@@ -89,7 +89,13 @@ class InvocationsHostServer(InvocationAgentServerHost):
                 return StreamingResponse(content=error, status_code=400)
             return Response(content=error, status_code=400)
 
-        session = self._sessions.setdefault(session_id, AgentSession(session_id=session_id))
+        session = self._sessions.get(partition_key)
+        if session is None:
+            session_id = (
+                json.dumps(partition_key, separators=(",", ":")) if isinstance(partition_key, tuple) else partition_key
+            )
+            session = AgentSession(session_id=session_id)
+            self._sessions[partition_key] = session
 
         if stream:
 

@@ -15,7 +15,7 @@ import json
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from itertools import product
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
@@ -193,21 +193,31 @@ class TestPartitionKey:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         server.config.is_hosted = True
         with _request_context(call_id="call-1", session_id="sess-1", user_id="user-1"):
-            assert server._partition_key() == '["sess-1","user-1"]'  # pyright: ignore[reportPrivateUsage]
+            assert server._partition_key() == ("sess-1", "user-1")  # pyright: ignore[reportPrivateUsage]
 
-    def test_hosted_keys_preserve_identifier_values(self) -> None:
-        server = InvocationsHostServer(_make_agent(response_text="hi"))
+    async def test_hosted_keys_and_session_ids_preserve_identifier_values(self) -> None:
+        agent = _make_agent(response_text="hi")
+        server = InvocationsHostServer(agent)
         server.config.is_hosted = True
         identifiers = ["part", "part:part", "part,part", "[part]", 'part"\\', "part\n\t", "\u00e9", r"\u00e9", " part "]
-        keys: set[str] = set()
+        keys: set[tuple[str, str]] = set()
+        request = _make_request({"message": "Hi"})
 
         for session_id, user_id in product(identifiers, repeat=2):
             with _request_context(call_id="call-1", session_id=session_id, user_id=user_id):
                 key = server._partition_key()  # pyright: ignore[reportPrivateUsage]
+                response = await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
 
-            assert json.loads(key) == [session_id, user_id]
+            assert isinstance(key, tuple)
+            assert key == (session_id, user_id)
             assert key not in keys
             keys.add(key)
+            assert response.status_code == 200
+            session = agent.calls[-1]["session"]
+            assert isinstance(session, AgentSession)
+            expected_id = json.dumps([session_id, user_id], separators=(",", ":"))
+            assert session.session_id == expected_id
+            assert session.to_dict()["session_id"] == expected_id
 
 
 # endregion
@@ -217,6 +227,32 @@ class TestPartitionKey:
 
 
 class TestHandleInvoke:
+    @pytest.mark.parametrize("stream", [False, True])
+    @pytest.mark.parametrize("hosted", [False, True])
+    async def test_reusing_session_skips_serialization_and_construction(self, hosted: bool, stream: bool) -> None:
+        agent = _make_agent(response_text="ok", stream_texts=["ok"])
+        server = InvocationsHostServer(agent)
+        server.config.is_hosted = hosted
+        request = _make_request({"message": "Hi", "stream": stream})
+        expected_id = '["sess-1","user-1"]' if hosted else "sess-1"
+
+        with (
+            _request_context(call_id="call-1", session_id="sess-1", user_id="user-1"),
+            patch("agent_framework_foundry_hosting._invocations.json", wraps=json) as serializer,
+            patch("agent_framework_foundry_hosting._invocations.AgentSession", wraps=AgentSession) as session_factory,
+        ):
+            for _ in range(2):
+                response = await server._handle_invoke(request)  # pyright: ignore[reportPrivateUsage]
+                if isinstance(response, StreamingResponse):
+                    assert await _collect_stream(response) == "ok"
+                else:
+                    assert bytes(response.body).decode() == "ok"
+
+        assert agent.calls[0]["session"] is agent.calls[1]["session"]
+        assert agent.calls[0]["session"].session_id == expected_id
+        assert serializer.dumps.call_count == (1 if hosted else 0)
+        session_factory.assert_called_once_with(session_id=expected_id)
+
     async def test_missing_message_returns_400(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         request = _make_request({"stream": False})
