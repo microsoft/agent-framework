@@ -406,7 +406,7 @@ We need to consider abstractions for `AIContent` derived types for tool call res
 
 ## StructuredOutputs
 
-Structured outputs is a valueable aspect of any Agent system, since it forces an Agent to produce output in a required format, and may include required fields. This allows turning unstructured data into structured data easily using a general purpose language model.
+Structured outputs is a valuable aspect of any Agent system, since it forces an Agent to produce output in a required format, and may include required fields. This allows turning unstructured data into structured data easily using a general purpose language model.
 
 Not all agent types necessarily support this or necessarily support this in the same way.
 Requesting a specific output schema at invocation time is widely supported by inference services though, and therefore inference based agents would support this well.
