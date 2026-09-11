@@ -22,7 +22,7 @@ MCPHTTPServer: TypeAlias = tuple[httpx.AsyncClient, list[httpx.Request], dict[st
 @pytest.fixture
 async def mcp_http_server() -> AsyncIterator[MCPHTTPServer]:
     requests: list[httpx.Request] = []
-    writes: dict[str, list[str]] = {"token-a": [], "token-b": [], "token-c": []}
+    writes: dict[str, list[str]] = {"token-a": [], "token-A": [], "token-b": [], "token-c": []}
 
     async def record_request(request: httpx.Request) -> None:
         requests.append(request)
@@ -31,7 +31,7 @@ async def mcp_http_server() -> AsyncIterator[MCPHTTPServer]:
         if request.url.path == "/unrelated":
             return httpx.Response(200)
         principal = request.headers.get("Authorization", "")
-        if principal not in writes:
+        if principal not in writes and principal != "rejected-token":
             return httpx.Response(401)
         if request.method == "GET":
             return httpx.Response(405)
@@ -39,6 +39,11 @@ async def mcp_http_server() -> AsyncIterator[MCPHTTPServer]:
             return httpx.Response(200)
         body = json.loads(request.content)
         method = body.get("method")
+        if principal == "rejected-token":
+            return httpx.Response(
+                200,
+                json={"jsonrpc": "2.0", "id": body.get("id"), "error": {"code": -32001, "message": "rejected"}},
+            )
         headers: dict[str, str] = {}
         result: dict[str, Any] = {}
         if method == "initialize":
@@ -54,7 +59,11 @@ async def mcp_http_server() -> AsyncIterator[MCPHTTPServer]:
                     {
                         "name": "record",
                         "inputSchema": {"type": "object", "properties": {"marker": {"type": "string"}}},
-                    }
+                    },
+                    {
+                        "name": f"{principal}-only",
+                        "inputSchema": {"type": "object", "properties": {}},
+                    },
                 ]
             }
         elif method == "tools/call":
@@ -90,6 +99,14 @@ def _calls(requests: list[httpx.Request]) -> list[httpx.Request]:
         request
         for request in requests
         if request.method == "POST" and json.loads(request.content).get("method") == "tools/call"
+    ]
+
+
+def _requests_for_method(requests: list[httpx.Request], method: str) -> list[httpx.Request]:
+    return [
+        request
+        for request in requests
+        if request.method == "POST" and json.loads(request.content).get("method") == method
     ]
 
 
@@ -265,11 +282,161 @@ async def test_shared_client_concurrent_calls_keep_dynamic_headers_isolated(mcp_
         )
     calls = _calls(requests)
     assert {request.headers["mcp-session-id"]: request.headers["Authorization"] for request in calls} == {
-        "session-token-a": "token-c",
+        "session-token-c": "token-c",
         "session-token-b": "token-b",
     }
-    assert writes == {"token-a": [], "token-b": ["second"], "token-c": ["first"]}
+    assert writes == {"token-a": [], "token-A": [], "token-b": ["second"], "token-c": ["first"]}
     assert all("credential" not in json.loads(request.content)["params"]["arguments"] for request in calls)
+
+
+async def test_dynamic_headers_reconnect_before_principal_change_and_bind_ambient_requests(
+    mcp_http_server: MCPHTTPServer,
+) -> None:
+    client, requests, writes = mcp_http_server
+    tool = _tool(client, "token-a")
+    try:
+        await tool.connect()
+        await tool.call_tool("record", credential="token-a", marker="first")
+        await tool.call_tool("record", credential="token-b", marker="second")
+        await tool.load_tools()
+        assert tool.session is not None
+        await tool.session.send_ping()
+        assert {function.name for function in tool.functions} == {"record", "token-b-only"}
+
+        assert [request.headers["Authorization"] for request in _requests_for_method(requests, "initialize")] == [
+            "token-a",
+            "token-b",
+        ]
+        calls = _calls(requests)
+        assert [(request.headers["mcp-session-id"], request.headers["Authorization"]) for request in calls] == [
+            ("session-token-a", "token-a"),
+            ("session-token-b", "token-b"),
+        ]
+        second_initialize = _requests_for_method(requests, "initialize")[-1]
+        switched_requests = requests[requests.index(second_initialize) :]
+        ambient_requests = _requests_for_method(switched_requests, "tools/list") + _requests_for_method(
+            switched_requests, "ping"
+        )
+        assert ambient_requests
+        assert all(request.headers["Authorization"] == "token-b" for request in ambient_requests)
+        assert all(request.headers["mcp-session-id"] == "session-token-b" for request in ambient_requests)
+        assert writes["token-a"] == ["first"]
+        assert writes["token-b"] == ["second"]
+    finally:
+        await tool.close()
+
+
+async def test_concurrent_callers_use_sessions_bound_to_their_own_headers(mcp_http_server: MCPHTTPServer) -> None:
+    client, requests, writes = mcp_http_server
+    tool = _tool(client, "token-a")
+    try:
+        await tool.connect()
+        await asyncio.gather(
+            tool.call_tool("record", credential="token-a", marker="first"),
+            tool.call_tool("record", credential="token-b", marker="second"),
+        )
+
+        calls = _calls(requests)
+        assert len(calls) == 2
+        assert all(
+            request.headers["mcp-session-id"] == f"session-{request.headers['Authorization']}" for request in calls
+        )
+        assert writes["token-a"] == ["first"]
+        assert writes["token-b"] == ["second"]
+    finally:
+        await tool.close()
+
+
+async def test_header_identity_normalizes_names_but_preserves_value_case(mcp_http_server: MCPHTTPServer) -> None:
+    client, requests, writes = mcp_http_server
+
+    def provide_headers(kwargs: dict[str, Any]) -> dict[str, str]:
+        return {
+            kwargs.get("header_name", "Authorization"): kwargs.get("credential", "token-a"),
+            kwargs.get("scope_header_name", "X-Scope"): kwargs.get("scope", "red"),
+        }
+
+    tool = MCPStreamableHTTPTool(
+        name="normalized",
+        url="https://mcp.example/mcp",
+        http_client=client,
+        load_prompts=False,
+        header_provider=provide_headers,
+    )
+    tool._seed_connection_kwargs({
+        "header_name": "Authorization",
+        "credential": "token-a",
+        "scope_header_name": "X-Scope",
+        "scope": "red",
+    })
+    try:
+        await tool.connect()
+        await tool.call_tool(
+            "record",
+            header_name="authorization",
+            credential="token-a",
+            scope_header_name="x-scope",
+            scope="red",
+            marker="same",
+        )
+        assert len(_requests_for_method(requests, "initialize")) == 1
+
+        await tool.call_tool("record", credential="token-a", scope="blue", marker="scope-change")
+        await tool.call_tool("record", credential="token-A", scope="blue", marker="value-case-change")
+        assert [request.headers["Authorization"] for request in _requests_for_method(requests, "initialize")] == [
+            "token-a",
+            "token-a",
+            "token-A",
+        ]
+        assert writes["token-a"] == ["same", "scope-change"]
+        assert writes["token-A"] == ["value-case-change"]
+    finally:
+        await tool.close()
+
+
+async def test_failed_identity_reconnect_discards_the_previous_session(mcp_http_server: MCPHTTPServer) -> None:
+    client, requests, _ = mcp_http_server
+    tool = _tool(client, "token-a")
+    try:
+        await tool.connect()
+        with pytest.raises((ToolException, ToolExecutionException)):
+            await tool.call_tool("record", credential="rejected-token")
+
+        assert tool.session is None
+        assert not tool.is_connected
+        assert tool.functions == []
+        assert not any(
+            request.headers.get("Authorization") == "rejected-token"
+            and request.headers.get("mcp-session-id") == "session-token-a"
+            for request in requests
+        )
+    finally:
+        await tool.close()
+
+
+async def test_cancelled_identity_switch_keeps_the_existing_session_bound(mcp_http_server: MCPHTTPServer) -> None:
+    client, requests, _ = mcp_http_server
+    tool = _tool(client, "token-a")
+    try:
+        await tool.connect()
+        existing_session = tool.session
+
+        async def cancel_reconnect(*, reset: bool = False) -> None:
+            assert reset
+            raise asyncio.CancelledError
+
+        with patch.object(tool, "connect", new=cancel_reconnect), pytest.raises(asyncio.CancelledError):
+            await tool.call_tool("record", credential="token-b")
+
+        assert tool.is_connected
+        assert tool.session is existing_session
+
+        await tool.call_tool("record", credential="token-b")
+        last_call = _calls(requests)[-1]
+        assert last_call.headers["Authorization"] == "token-b"
+        assert last_call.headers["mcp-session-id"] == "session-token-b"
+    finally:
+        await tool.close()
 
 
 async def test_headerless_transport_does_not_inherit_another_transports_credentials(
@@ -770,7 +937,7 @@ async def test_seeded_connection_kwargs_authenticate_the_handshake(
         await tool.close()
 
 
-async def test_connection_kwargs_are_fixed_for_the_connection_and_cleared_on_close(
+async def test_connection_rebinds_to_changed_call_headers_and_clears_kwargs_on_close(
     mcp_http_server: MCPHTTPServer,
 ) -> None:
     client, requests, _ = mcp_http_server
@@ -781,15 +948,18 @@ async def test_connection_kwargs_are_fixed_for_the_connection_and_cleared_on_clo
             # A later run must not re-authenticate an already-established connection.
             tool._seed_connection_kwargs({"credential": "token-b"})
             assert tool._connection_kwargs == {"credential": "token-a"}
-            # Call scope resolves independently of the connection scope.
+            # A call with another effective header identity establishes a matching session.
             await tool.call_tool("record", credential="token-c")
         initializes = [
             request
             for request in requests
             if request.method == "POST" and json.loads(request.content).get("method") == "initialize"
         ]
-        assert [request.headers.get("Authorization") for request in initializes] == ["token-a"]
-        assert [request.headers.get("Authorization") for request in _calls(requests)] == ["token-c"]
+        assert [request.headers.get("Authorization") for request in initializes] == ["token-a", "token-c"]
+        assert [
+            (request.headers.get("mcp-session-id"), request.headers.get("Authorization"))
+            for request in _calls(requests)
+        ] == [("session-token-c", "token-c")]
         assert tool._connection_kwargs is None
         # The credential was released on close, so an unseeded reconnect is rejected.
         with pytest.raises(ToolException):

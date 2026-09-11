@@ -7171,8 +7171,8 @@ async def test_mcp_streamable_http_tool_header_provider_skips_cross_origin_redir
             await tool._httpx_client.aclose()  # type: ignore[union-attr]
 
 
-async def test_mcp_streamable_http_tool_replaces_headers_on_same_origin_redirect():
-    """A redirected request must retain only the provider's latest header set."""
+async def test_mcp_streamable_http_tool_keeps_bound_headers_on_same_origin_redirect():
+    """A redirected request must retain the header set bound to its session."""
     import httpx
 
     provider_headers = {"X-Previous": "old"}
@@ -7202,8 +7202,8 @@ async def test_mcp_streamable_http_tool_replaces_headers_on_same_origin_redirect
                 extensions=initial.extensions,
             )
             await hooks[0](same_origin_redirect)
-            assert "X-Previous" not in same_origin_redirect.headers
-            assert same_origin_redirect.headers.get("X-Current") == "new"
+            assert same_origin_redirect.headers.get("X-Previous") == "old"
+            assert "X-Current" not in same_origin_redirect.headers
 
             cross_origin_redirect = httpx.Request(
                 "POST",
@@ -7939,7 +7939,7 @@ async def test_mcp_streamable_http_tool_header_provider_serializes_concurrent_ca
         return types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
 
     class _TestServer(MCPStreamableHTTPTool):
-        async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+        async def connect(self, *, reset: bool = False) -> None:
             self.session = Mock(spec=ClientSession)
             self.session.list_tools = AsyncMock(
                 return_value=types.ListToolsResult(
@@ -9552,7 +9552,7 @@ async def test_header_provider_reading_contextvar_keeps_credential_out_of_argume
     seen_headers: list[dict[str, str]] = []
 
     class TestServer(MCPStreamableHTTPTool):
-        async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+        async def connect(self, *, reset: bool = False) -> None:
             self.session = Mock(spec=ClientSession)
             self.session.list_tools = AsyncMock(
                 return_value=types.ListToolsResult(
