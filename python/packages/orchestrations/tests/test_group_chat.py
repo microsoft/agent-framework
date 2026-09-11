@@ -296,6 +296,34 @@ async def test_agent_manager_handles_concatenated_json_output() -> None:
     assert final_update.text == "concatenated manager final"
 
 
+async def test_orchestrator_agent_receives_workflow_run_kwargs() -> None:
+    """#8304: the GroupChat orchestrator's agent.run must receive the
+    workflow's function_invocation_kwargs/client_kwargs like participants do."""
+    received: list[dict[str, Any]] = []
+
+    class RecordingOrchestratorAgent(StubManagerAgent):
+        async def run(self, messages: Any = None, *, session: Any = None, **kwargs: Any) -> Any:  # type: ignore[override]
+            received.append(kwargs)
+            return await super().run(messages, session=session, **kwargs)
+
+    manager = RecordingOrchestratorAgent()
+    worker = StubAgent("agent", "worker response")
+    workflow = GroupChatBuilder(
+        participants=[worker],
+        orchestrator_agent=manager,
+    ).build()
+
+    await workflow.run(
+        "coordinate task",
+        function_invocation_kwargs={"user_id": "u-123"},
+        client_kwargs={"trace_id": "t-456"},
+    )
+
+    assert received, "orchestrator agent was never invoked"
+    assert received[0].get("function_invocation_kwargs") == {"user_id": "u-123"}
+    assert received[0].get("client_kwargs") == {"trace_id": "t-456"}
+
+
 # Comprehensive tests for group chat functionality
 
 

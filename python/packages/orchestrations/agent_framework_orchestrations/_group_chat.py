@@ -31,9 +31,15 @@ from typing import Any, ClassVar, Literal, cast
 
 from agent_framework import Agent, AgentResponse, AgentResponseUpdate, AgentSession, Message, SupportsAgentRun
 from agent_framework._telemetry import mark_feature_used
-from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
+from agent_framework._workflows._agent_executor import (
+    AgentExecutor,
+    AgentExecutorRequest,
+    AgentExecutorResponse,
+    prepare_agent_run_kwargs,
+)
 from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import CheckpointStorage
+from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
 from agent_framework._workflows._executor import Executor
 from agent_framework._workflows._workflow import Workflow
 from agent_framework._workflows._workflow_context import WorkflowContext
@@ -353,7 +359,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         ):
             return
 
-        agent_orchestration_output = await self._invoke_agent()
+        agent_orchestration_output = await self._invoke_agent(ctx)
         if await self._check_agent_terminate_and_yield(
             agent_orchestration_output,
             cast(WorkflowContext[Never, AgentResponse | AgentResponseUpdate], ctx),
@@ -393,7 +399,7 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
         ):
             return
 
-        agent_orchestration_output = await self._invoke_agent()
+        agent_orchestration_output = await self._invoke_agent(ctx)
         if await self._check_agent_terminate_and_yield(
             agent_orchestration_output,
             cast(WorkflowContext[Never, AgentResponse | AgentResponseUpdate], ctx),
@@ -486,15 +492,23 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
 
         raise ValueError("Failed to parse agent orchestration output.") from last_error
 
-    async def _invoke_agent(self) -> AgentOrchestrationOutput:
+    async def _invoke_agent(self, ctx: WorkflowContext[Any, Any]) -> AgentOrchestrationOutput:
         """Invoke the orchestrator agent to determine the next speaker and termination."""
 
         async def _invoke_agent_helper(conversation: list[Message]) -> AgentOrchestrationOutput:
             # Run the agent in non-streaming mode for simplicity
+            # Forward the workflow's run kwargs (function_invocation_kwargs /
+            # client_kwargs) like AgentExecutor does for participants, so a
+            # host that relies on them (tool ACLs, request-scoped ids) sees
+            # them on the orchestrator too.
+            raw_run_kwargs = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
+            function_invocation_kwargs, client_kwargs = prepare_agent_run_kwargs(raw_run_kwargs, self.id)
             agent_response = await self._agent.run(
                 messages=conversation,
                 session=self._session,
                 options={"response_format": AgentOrchestrationOutput},
+                function_invocation_kwargs=function_invocation_kwargs,
+                client_kwargs=client_kwargs,
             )
             # Parse and validate the structured output
             agent_orchestration_output = self._parse_agent_output(agent_response)

@@ -30,6 +30,66 @@ else:
 logger = logging.getLogger(__name__)
 
 
+def resolve_executor_run_kwargs(
+    resolved: dict[str, Any] | None,
+    executor_id: str,
+) -> dict[str, Any] | None:
+    """Extract one executor's kwargs from a resolved invocation kwargs dict.
+
+    Args:
+        resolved: The resolved dict produced by ``Workflow._resolve_invocation_kwargs``,
+            containing either a ``__global__`` key (global kwargs) or executor-ID keys
+            (per-executor kwargs). May also be ``None``.
+        executor_id: The executor whose kwargs should be extracted.
+
+    Returns:
+        The kwargs for this executor, or ``None`` if not applicable.
+    """
+    if not isinstance(resolved, dict):
+        return None
+    # Use explicit key-presence checks so that an empty per-executor dict is
+    # honoured (e.g. to clear kwargs) instead of falling through to global.
+    if executor_id in resolved:
+        executor_kwargs = resolved[executor_id]
+    elif GLOBAL_KWARGS_KEY in resolved:
+        executor_kwargs = resolved[GLOBAL_KWARGS_KEY]
+    else:
+        return None
+
+    if not isinstance(executor_kwargs, dict):
+        logger.warning(
+            "Executor %s expected a dict for its kwargs, but got %s. Ignoring.",
+            executor_id,
+            type(executor_kwargs),
+        )
+        return None
+
+    return executor_kwargs
+
+
+def prepare_agent_run_kwargs(
+    raw_run_kwargs: dict[str, Any],
+    executor_id: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Prepare function_invocation_kwargs and client_kwargs for agent.run().
+
+    Extracts ``function_invocation_kwargs`` and ``client_kwargs`` from the
+    workflow state dict, resolving per-executor entries using ``executor_id``.
+    Shared by ``AgentExecutor`` and the orchestrator/manager call sites that
+    invoke an agent inside a workflow (GroupChat orchestrator, Magentic
+    manager), so run kwargs reach every agent run, not just participants.
+
+    Returns:
+        A 2-tuple of (function_invocation_kwargs, client_kwargs).
+    """
+    fi_resolved = raw_run_kwargs.get("function_invocation_kwargs")
+    ci_resolved = raw_run_kwargs.get("client_kwargs")
+    function_invocation_kwargs = resolve_executor_run_kwargs(fi_resolved, executor_id)
+    client_kwargs = resolve_executor_run_kwargs(ci_resolved, executor_id)
+
+    return function_invocation_kwargs, client_kwargs
+
+
 def _accepts_runtime_tools(agent: SupportsAgentRun) -> bool:
     """Return whether the agent run surface accepts a tools keyword."""
     try:
@@ -594,12 +654,7 @@ class AgentExecutor(Executor):
         Returns:
             A 2-tuple of (function_invocation_kwargs, client_kwargs).
         """
-        fi_resolved = raw_run_kwargs.get("function_invocation_kwargs")
-        ci_resolved = raw_run_kwargs.get("client_kwargs")
-        function_invocation_kwargs = self._resolve_executor_kwargs(fi_resolved)
-        client_kwargs = self._resolve_executor_kwargs(ci_resolved)
-
-        return function_invocation_kwargs, client_kwargs
+        return prepare_agent_run_kwargs(raw_run_kwargs, self.id)
 
     def _resolve_executor_kwargs(self, resolved: dict[str, Any] | None) -> dict[str, Any] | None:
         """Extract this executor's kwargs from a resolved invocation kwargs dict.
@@ -612,24 +667,4 @@ class AgentExecutor(Executor):
         Returns:
             The kwargs for this executor, or ``None`` if not applicable.
         """
-        if not isinstance(resolved, dict):
-            return None
-        # Use explicit key-presence checks so that an empty per-executor dict is
-        # honoured (e.g. to clear kwargs) instead of falling through to global.
-        if self.id in resolved:
-            executor_kwargs = resolved[self.id]
-        elif GLOBAL_KWARGS_KEY in resolved:
-            executor_kwargs = resolved[GLOBAL_KWARGS_KEY]
-        else:
-            return None
-
-        if not isinstance(executor_kwargs, dict):
-            logger.warning(
-                "Executor %s expected a dict for its kwargs, but got %s. Ignoring.",
-                self.id,
-                type(executor_kwargs),  # type: ignore
-            )
-
-            return None
-
-        return executor_kwargs  # type: ignore
+        return resolve_executor_run_kwargs(resolved, self.id)
