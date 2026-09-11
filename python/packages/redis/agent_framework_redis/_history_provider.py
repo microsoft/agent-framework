@@ -9,6 +9,7 @@ This module provides ``RedisHistoryProvider``, built on the new
 from __future__ import annotations
 
 import json
+import warnings
 from collections.abc import Awaitable, Sequence
 from inspect import isawaitable
 from typing import Any, ClassVar, Literal, TypeVar, cast
@@ -90,7 +91,9 @@ class RedisHistoryProvider(HistoryProvider):
             port: Redis port number. Defaults to 6380 (Azure Redis SSL port).
             ssl: Enable SSL/TLS connection. Defaults to True.
             username: Redis username.
-            key_prefix: Prefix for Redis keys. Defaults to 'chat_messages'.
+            key_prefix: Base prefix for Redis keys. Scoped mode appends independently encoded
+                tenant, application, agent, provider source, and session segments.
+                Defaults to 'chat_messages'.
             tenant_id: Optional tenant identifier used as an independent key boundary.
             application_id: Application identifier used as a required key boundary in scoped mode.
             agent_id: Optional agent identifier used as an independent key boundary.
@@ -145,6 +148,13 @@ class RedisHistoryProvider(HistoryProvider):
                 raise ValueError("agent_id must be non-empty when supplied")
         elif any(scope is not None for scope in (tenant_id, application_id, agent_id)):
             raise ValueError("tenant_id, application_id, and agent_id cannot be used with key_format='legacy'")
+        if key_format == "legacy":
+            warnings.warn(
+                "key_format='legacy' is deprecated and will be removed in a future version. "
+                "Migrate persisted history to scoped keys and use key_format='scoped'.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         self.key_prefix = key_prefix
         self.tenant_id = tenant_id
@@ -174,7 +184,7 @@ class RedisHistoryProvider(HistoryProvider):
         return _storage_key_segment(value, encoded_prefix=encoded_prefix)
 
     def _redis_key(self, session_id: str | None) -> str:
-        """Get the Redis key for a given session's messages."""
+        """Get a pipe-delimited scoped key or the historical colon-delimited legacy key."""
         if self.key_format == "legacy":
             return f"{self.key_prefix}:{session_id or 'default'}"
         if not session_id:

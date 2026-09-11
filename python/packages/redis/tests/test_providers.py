@@ -547,8 +547,11 @@ class TestRedisHistoryProviderRedisKey:
         mock_redis_client.delete.assert_awaited_once_with(expected_key)
         assert expected_key != "chat_messages:session"
 
-    def test_legacy_format_preserves_historical_keys(self, mock_redis_client: MagicMock):
-        with patch("agent_framework_redis._history_provider.redis.from_url", return_value=mock_redis_client):
+    def test_legacy_format_warns_and_preserves_historical_keys(self, mock_redis_client: MagicMock):
+        with (
+            patch("agent_framework_redis._history_provider.redis.from_url", return_value=mock_redis_client),
+            pytest.warns(DeprecationWarning, match="key_format='legacy'.*deprecated"),
+        ):
             provider = RedisHistoryProvider(
                 "mem",
                 redis_url="redis://localhost:6379",
