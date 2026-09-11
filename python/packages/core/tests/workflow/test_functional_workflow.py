@@ -1470,6 +1470,31 @@ def caplog_context(target_logger: logging.Logger) -> Iterator[list[str]]:
 class TestHITLInStepWithCaching:
     """Regression tests: request_info inside @step combined with caching and bypass."""
 
+    async def test_response_only_resume_restores_state_from_cached_step(self):
+        """Response-only HITL resumes must preserve state written before a cached step."""
+        seed_calls = 0
+
+        @step
+        async def seed_state(ctx: RunContext) -> str:
+            nonlocal seed_calls
+            seed_calls += 1
+            ctx.set_state("marker", "ok")
+            return "seeded"
+
+        @built_workflow
+        async def wf(data: str, ctx: RunContext) -> str:
+            value = await seed_state()
+            answer = await ctx.request_info("question", response_type=str, request_id="r1")
+            return f"{ctx.get_state('marker', 'MISSING')}:{value}:{answer}"
+
+        result1 = await wf.run("input")
+        assert result1.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+
+        result2 = await wf.run(responses={"r1": "ok"})
+
+        assert seed_calls == 1
+        assert result2.get_outputs() == ["ok:seeded:ok"]
+
     async def test_preceding_step_bypassed_on_hitl_resume(self):
         """When a step after a completed step calls request_info and interrupts,
         resuming should bypass the first step (cached) and re-execute the HITL step."""

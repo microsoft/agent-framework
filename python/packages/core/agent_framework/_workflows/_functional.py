@@ -739,6 +739,7 @@ class FunctionalWorkflow:
         self._last_message: Any = None
         self._last_step_cache: dict[tuple[str, int], Any] = {}
         self._last_step_cache_auto_request_info_counts: dict[tuple[str, int], int] = {}
+        self._last_state: dict[str, Any] = {}
         self._last_pending_request_ids: set[str] = set()
 
         # Signature arity is validated once at decoration time.
@@ -1015,6 +1016,7 @@ class FunctionalWorkflow:
                 message = self._last_message
             ctx._step_cache = dict(self._last_step_cache)
             ctx._step_cache_auto_request_info_counts = dict(self._last_step_cache_auto_request_info_counts)
+            ctx._state = dict(self._last_state)
 
         # Store message for future replays
         if message is not None:
@@ -1064,6 +1066,7 @@ class FunctionalWorkflow:
                 # Persist step cache for response-only replay
                 self._last_step_cache = dict(ctx._step_cache)
                 self._last_step_cache_auto_request_info_counts = dict(ctx._step_cache_auto_request_info_counts)
+                self._last_state = dict(ctx._state)
 
             # Yield collected events.
             # NOTE: Events are buffered during _execute() and yielded after
@@ -1091,6 +1094,7 @@ class FunctionalWorkflow:
                 self._last_message = None
                 self._last_step_cache = {}
                 self._last_step_cache_auto_request_info_counts = {}
+                self._last_state = {}
                 self._last_pending_request_ids = set()
                 yield _framework_event(WorkflowEvent.status, WorkflowRunState.IDLE)
 
@@ -1100,6 +1104,7 @@ class FunctionalWorkflow:
             # Persist step cache for response-only replay
             self._last_step_cache = dict(ctx._step_cache)
             self._last_step_cache_auto_request_info_counts = dict(ctx._step_cache_auto_request_info_counts)
+            self._last_state = dict(ctx._state)
             self._last_pending_request_ids = set(ctx._pending_requests)
 
             # HITL interruption — yield events collected so far
