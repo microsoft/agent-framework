@@ -46,14 +46,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import gzip
 import inspect
 import io
 import json
 import logging
 import os
 import re
-import tarfile
 import time
 import zipfile
 from abc import ABC, abstractmethod
@@ -4502,12 +4500,10 @@ _ARCHIVE_READ_BUFFER_SIZE: Final[int] = 81920
 
 
 class _ArchiveFormat(Enum):
-    """The archive container formats supported by :func:`_extract_archive`."""
+    """The archive container formats supported during archive skill discovery."""
 
     UNKNOWN = "unknown"
     ZIP = "zip"
-    TAR = "tar"
-    TAR_GZ = "tar_gz"
 
 
 def _detect_archive_format(data: bytes, media_type: str | None, url: str | None) -> _ArchiveFormat:
@@ -4524,8 +4520,9 @@ def _detect_archive_format(data: bytes, media_type: str | None, url: str | None)
     Returns:
         The detected :class:`_ArchiveFormat`, or :attr:`_ArchiveFormat.UNKNOWN`.
     """
+    # Reject gzip by signature before considering potentially incorrect MIME type or URL hints.
     if len(data) >= 2 and data[0] == 0x1F and data[1] == 0x8B:
-        return _ArchiveFormat.TAR_GZ
+        return _ArchiveFormat.UNKNOWN
 
     if len(data) >= 4 and data[0] == 0x50 and data[1] == 0x4B and data[2] in (0x03, 0x05, 0x07):
         return _ArchiveFormat.ZIP
@@ -4533,18 +4530,10 @@ def _detect_archive_format(data: bytes, media_type: str | None, url: str | None)
     media = (media_type or "").strip().lower()
     if media in ("application/zip", "application/x-zip-compressed"):
         return _ArchiveFormat.ZIP
-    if media in ("application/gzip", "application/x-gzip", "application/x-compressed-tar"):
-        return _ArchiveFormat.TAR_GZ
-    if media in ("application/x-tar", "application/tar"):
-        return _ArchiveFormat.TAR
 
     lowered = (url or "").lower()
     if lowered.endswith(".zip"):
         return _ArchiveFormat.ZIP
-    if lowered.endswith(".tar.gz") or lowered.endswith(".tgz"):
-        return _ArchiveFormat.TAR_GZ
-    if lowered.endswith(".tar"):
-        return _ArchiveFormat.TAR
 
     return _ArchiveFormat.UNKNOWN
 
@@ -4623,13 +4612,10 @@ def _extract_archive_to_memory(
 ) -> dict[str, bytes]:
     """Extract an archive's regular files into an in-memory ``{relative-path: bytes}`` mapping.
 
-    Supports ZIP, TAR, and gzip-compressed TAR payloads. Non-regular TAR entries
-    (symbolic links, hard links, device nodes, etc.) are skipped so an archive cannot
-    smuggle in a link, and absolute member names are neutralized to relative. A member
-    that attempts to escape the skill namespace via a ``..`` parent-traversal ("zip-slip")
-    aborts extraction of the whole archive by raising. Extraction is bounded by a maximum
-    file count and total uncompressed size to mitigate decompression-bomb attacks. No
-    filesystem is touched.
+    Supports ZIP payloads. A member that attempts to escape the skill namespace via a
+    ``..`` parent-traversal ("zip-slip") aborts extraction of the whole archive by
+    raising. Extraction is bounded by a maximum file count and total uncompressed size
+    to mitigate decompression-bomb attacks. No filesystem is touched.
 
     Args:
         data: The raw archive bytes.
@@ -4644,20 +4630,12 @@ def _extract_archive_to_memory(
         ValueError: If the format is unknown, a limit is exceeded, or a member attempts
             a path-traversal ("zip-slip") escape.
         OSError: If the payload cannot be read.
-        tarfile.TarError: If a TAR payload is malformed.
         zipfile.BadZipFile: If a ZIP payload is malformed.
-        gzip.BadGzipFile: If a gzip payload is malformed.
     """
     if archive_format is _ArchiveFormat.ZIP:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             return _extract_zip_to_memory(archive, max_file_count, max_uncompressed_size_bytes)
-    if archive_format is _ArchiveFormat.TAR:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
-            return _extract_tar_to_memory(archive, max_file_count, max_uncompressed_size_bytes)
-    if archive_format is _ArchiveFormat.TAR_GZ:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
-            return _extract_tar_to_memory(archive, max_file_count, max_uncompressed_size_bytes)
-    raise ValueError(f"Unsupported skill archive format '{archive_format}'.")
+    raise ValueError(f"Unsupported skill archive format '{archive_format}'. Use ZIP instead.")
 
 
 def _extract_zip_to_memory(
@@ -4689,46 +4667,10 @@ def _extract_zip_to_memory(
     return files
 
 
-def _extract_tar_to_memory(
-    archive: tarfile.TarFile,
-    max_file_count: int,
-    max_uncompressed_size_bytes: int,
-) -> dict[str, bytes]:
-    """Read regular files from a TAR archive into memory. See :func:`_extract_archive_to_memory`."""
-    remaining_bytes = max_uncompressed_size_bytes
-    files: dict[str, bytes] = {}
-    file_count = 0
-
-    for member in archive:
-        # Only regular files are materialized. Skipping links/devices avoids both
-        # unsupported entry types and link-based escapes outside the skill namespace.
-        if not member.isreg():
-            continue
-
-        file_count += 1
-        if file_count > max_file_count:
-            raise ValueError(f"Skill archive exceeds the maximum allowed file count ({max_file_count}).")
-
-        name = _normalize_archive_member_name(member.name)
-        if name is None:
-            continue
-
-        source = archive.extractfile(member)
-        if source is None:
-            continue
-
-        with source:
-            content, remaining_bytes = _read_member_with_limit(source, remaining_bytes)
-        files[name] = content
-
-    return files
-
-
 class _ArchiveEntryLoader:
     """Loads ``archive``-type ``skill://index.json`` entries entirely in memory.
 
-    Each entry's ``url`` points to a single archive resource (ZIP, TAR, or
-    gzip-compressed TAR). The archive is downloaded and unpacked **in memory** into a
+    Each entry's ``url`` points to a ZIP archive resource, which is unpacked **in memory** into a
     :class:`FileSkill` whose ``SKILL.md`` body drives the skill and whose sibling files
     (matching the configured resource extensions, within the configured depth) become
     in-memory :class:`InlineSkillResource` resources. Nothing is written to disk, so
@@ -4738,9 +4680,8 @@ class _ArchiveEntryLoader:
     resource extensions become readable resources; a script file is at most a readable
     resource, never a :class:`SkillScript`.
 
-    Extraction is hardened against path-traversal ("zip-slip") member names, non-regular
-    TAR members (links/devices), oversized downloads, excessive file counts, and
-    decompression bombs.
+    Extraction is hardened against path-traversal ("zip-slip") member names,
+    oversized downloads, excessive file counts, and decompression bombs.
     """
 
     def __init__(
@@ -4871,7 +4812,7 @@ class _ArchiveEntryLoader:
             files = _extract_archive_to_memory(
                 data, archive_format, self._max_file_count, self._max_uncompressed_size_bytes
             )
-        except (OSError, ValueError, EOFError, tarfile.TarError, zipfile.BadZipFile, gzip.BadGzipFile):
+        except (OSError, ValueError, EOFError, zipfile.BadZipFile):
             logger.warning("Failed to extract archive for skill '%s'.", entry.name, exc_info=True)
             return None
 
@@ -4984,8 +4925,8 @@ class MCPSkillsSource(SkillsSource):
       ``name``, ``description``, and ``url`` fields. The referenced ``SKILL.md``
       resource is **not** read during discovery; the host fetches its body on
       demand via ``resources/read`` when the skill content is needed.
-    * ``archive`` — the entry's ``url`` points to a single archive resource
-      (ZIP, TAR, or gzip-compressed TAR) whose content unpacks into the skill's
+    * ``archive`` — the entry's ``url`` points to a ZIP archive resource
+      whose content unpacks into the skill's
       namespace. The archive is downloaded and unpacked **in memory** into a
       skill whose ``SKILL.md`` body drives it and whose sibling files become
       in-memory resources; nothing is written to disk. Scripts bundled inside an
@@ -5015,8 +4956,8 @@ class MCPSkillsSource(SkillsSource):
         script-capable skills, executed. Only connect this source to MCP
         servers you have vetted and trust, and treat their responses as
         untrusted input. Archive extraction is hardened against path-traversal
-        ("zip-slip"), link-based escapes, and decompression bombs, but the
-        skill *content* is still untrusted.
+        ("zip-slip") and decompression bombs, but the skill *content* is still
+        untrusted.
 
     Examples:
         .. code-block:: python

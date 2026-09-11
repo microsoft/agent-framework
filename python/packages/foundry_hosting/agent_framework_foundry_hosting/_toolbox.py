@@ -288,7 +288,7 @@ class FoundryToolbox(MCPStreamableHTTPTool):
         the agent via ``tools=`` -- set ``load_tools=False`` if you want skills only
         and no tools -- or by entering it as an ``async with`` context manager.
 
-        Skills served as ``archive`` entries (a packaged ZIP / TAR) are downloaded and
+        Skills served as ``archive`` entries (a packaged ZIP) are downloaded and
         unpacked **in memory** and served like file-based skills; nothing is written to
         disk. The ``archive_*`` keyword arguments configure that behavior; see
         :class:`~agent_framework.MCPSkillsSource` for their full semantics. Any left

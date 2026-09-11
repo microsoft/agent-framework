@@ -11,19 +11,19 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Aspire.* -->
-    <PackageVersion Include="Anthropic" Version="12.43.0" />
+    <PackageVersion Include="Anthropic" Version="12.45.0" />
     <PackageVersion Include="Anthropic.Foundry" Version="0.7.1" />
     <PackageVersion Include="Aspire.Hosting" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="13.0.0-preview.1.25560.3" />
-    <PackageVersion Include="Aspire.Azure.AI.Inference" Version="13.1.0-preview.1.25616.3" />
-    <PackageVersion Include="Aspire.Hosting.Azure.AIFoundry" Version="13.1.0-preview.1.25616.3" />
+    <PackageVersion Include="Aspire.Azure.AI.Inference" Version="13.5.3-preview.1.26425.3" />
+    <PackageVersion Include="Aspire.Hosting.Azure.AIFoundry" Version="13.1.3-preview.1.26166.8" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
-    <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0" />
+    <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.5.0" />
     <PackageVersion Include="MessagePack" Version="3.1.7" /> <!-- Transitive dependency of Aspire pinned to newer version due to vulnerability in 2.5.192 -->
     <!-- Azure.* -->
-    <PackageVersion Include="Azure.AI.AgentServer.Core" Version="1.0.0-beta.28" />
+    <PackageVersion Include="Azure.AI.AgentServer.Core" Version="1.0.0-beta.29" />
     <PackageVersion Include="Azure.AI.AgentServer.Invocations" Version="1.0.0-beta.6" />
     <PackageVersion Include="Azure.AI.AgentServer.Responses" Version="1.0.0-beta.8" />
     <PackageVersion Include="Azure.Search.Documents" Version="12.0.0" />
@@ -31,14 +31,14 @@
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.10" />
     <PackageVersion Include="Azure.Core" Version="1.62.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
-    <PackageVersion Include="Azure.Storage.Blobs" Version="12.29.1" />
+    <PackageVersion Include="Azure.Storage.Blobs" Version="12.29.2" />
     <PackageVersion Include="DotNetEnv" Version="3.2.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.9.0" />
     <!-- Google Gemini  -->
     <PackageVersion Include="Google.GenAI" Version="1.6.0" />
     <PackageVersion Include="Mscc.GenerativeAI.Microsoft" Version="2.9.3" />
     <!-- Microsoft.Azure.* -->
-    <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.61.0" />
+    <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.63.0" />
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <!-- Newtonsoft.Json -->
     <PackageVersion Include="Newtonsoft.Json" Version="13.0.4" />
@@ -55,11 +55,11 @@
     <PackageVersion Include="System.Net.Http.Json" Version="10.0.12" />
     <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.12" />
     <!-- AG-UI .NET SDK packages (published by the AG-UI team). -->
-    <PackageVersion Include="AGUI.Abstractions" Version="0.0.5" />
-    <PackageVersion Include="AGUI.Formatting" Version="0.0.5" />
-    <PackageVersion Include="AGUI.Protobuf" Version="0.0.5" />
-    <PackageVersion Include="AGUI.Client" Version="0.0.5" />
-    <PackageVersion Include="AGUI.Server" Version="0.0.5" />
+    <PackageVersion Include="AGUI.Abstractions" Version="0.0.6" />
+    <PackageVersion Include="AGUI.Formatting" Version="0.0.6" />
+    <PackageVersion Include="AGUI.Protobuf" Version="0.0.6" />
+    <PackageVersion Include="AGUI.Client" Version="0.0.6" />
+    <PackageVersion Include="AGUI.Server" Version="0.0.6" />
     <PackageVersion Include="System.Text.Json" Version="10.0.12" />
     <PackageVersion Include="System.Threading.Channels" Version="10.0.12" />
     <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
@@ -80,14 +80,14 @@
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
     <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.2.3" />
     <!-- Microsoft.Extensions.* -->
-    <PackageVersion Include="Microsoft.Extensions.AI" Version="10.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation" Version="10.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation.Quality" Version="10.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation.Safety" Version="10.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.9.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation.Quality" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.Evaluation.Safety" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.10.0" />
     <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="10.0.12" />
-    <PackageVersion Include="Microsoft.Extensions.Compliance.Abstractions" Version="10.9.0" />
+    <PackageVersion Include="Microsoft.Extensions.Compliance.Abstractions" Version="10.10.0" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.12" />
@@ -97,24 +97,24 @@
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
-    <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.9.0" />
+    <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.10.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.12" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.12" />
-    <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.VectorData.Abstractions" Version="10.9.0" />
+    <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.Extensions.VectorData.Abstractions" Version="10.10.0" />
     <!-- Vector Stores -->
     <PackageVersion Include="CommunityToolkit.VectorData.AzureCosmosDB" Version="1.0.0" />
     <PackageVersion Include="CommunityToolkit.VectorData.InMemory" Version="1.0.1" />
     <PackageVersion Include="CommunityToolkit.VectorData.Qdrant" Version="1.0.0" />
     <!-- Agent SDKs -->
     <PackageVersion Include="GitHub.Copilot.SDK" Version="1.0.11" />
-    <PackageVersion Include="ResponsibleAI.AgentHooks" Version="0.1.0-alpha.4" />
-    <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.3.171-beta" />
+    <PackageVersion Include="ResponsibleAI.AgentHooks" Version="0.1.0-alpha.5" />
+    <PackageVersion Include="Microsoft.Agents.CopilotStudio.Client" Version="1.9.28-beta" />
     <!-- M365 Agents SDK -->
     <PackageVersion Include="AdaptiveCards" Version="3.1.0" />
-    <PackageVersion Include="Microsoft.Agents.Authentication.Msal" Version="1.3.171-beta" />
-    <PackageVersion Include="Microsoft.Agents.Hosting.AspNetCore" Version="1.3.171-beta" />
+    <PackageVersion Include="Microsoft.Agents.Authentication.Msal" Version="1.9.28-beta" />
+    <PackageVersion Include="Microsoft.Agents.Hosting.AspNetCore" Version="1.9.28-beta" />
     <!-- A2A -->
     <PackageVersion Include="A2A" Version="1.0.0-preview2" />
     <PackageVersion Include="A2A.AspNetCore" Version="1.0.0-preview2" />
@@ -122,16 +122,16 @@
     <PackageVersion Include="ModelContextProtocol" Version="2.2.0" />
     <PackageVersion Include="ModelContextProtocol.Extensions.Tasks" Version="2.2.0" />
     <!-- Hyperlight -->
-    <PackageVersion Include="Hyperlight.HyperlightSandbox.Api" Version="0.4.0" />
-    <PackageVersion Include="Hyperlight.HyperlightSandbox.Guest.Python" Version="0.4.0" />
+    <PackageVersion Include="Hyperlight.HyperlightSandbox.Api" Version="0.6.0" />
+    <PackageVersion Include="Hyperlight.HyperlightSandbox.Guest.Python" Version="0.6.0" />
     <!-- Inference SDKs -->
     <PackageVersion Include="Dapr.AI.Microsoft.Extensions" Version="1.18.5" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />
     <PackageVersion Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
-    <PackageVersion Include="OllamaSharp" Version="5.4.8" />
-    <PackageVersion Include="OpenAI" Version="2.12.0" />
+    <PackageVersion Include="OllamaSharp" Version="5.4.30" />
+    <PackageVersion Include="OpenAI" Version="2.13.0" />
     <!-- Identity -->
-    <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.84.2" />
+    <PackageVersion Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.88.0" />
     <!-- Workflows -->
     <PackageVersion Include="Microsoft.Agents.ObjectModel" Version="2026.5.5" />
     <PackageVersion Include="Microsoft.Agents.ObjectModel.Json" Version="2026.5.5" />
