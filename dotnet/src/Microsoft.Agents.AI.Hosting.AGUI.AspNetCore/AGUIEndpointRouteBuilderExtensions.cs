@@ -147,14 +147,18 @@ public static class AGUIEndpointRouteBuilderExtensions
 
             var session = await hostAgent.GetOrCreateSessionAsync(threadId, cancellationToken).ConfigureAwait(false);
 
+            IEnumerable<ChatMessage> messages = ctx.Messages.MapAGUIInterruptResponsesToFunctionResults();
+
             var events = hostAgent
                 .RunStreamingAsync(
-                    ctx.Messages,
+                    messages,
                     session: session,
                     options: new ChatClientAgentRunOptions { ChatOptions = ctx.ChatOptions },
                     cancellationToken: cancellationToken)
                 .AsChatResponseUpdatesAsync()
-                .AsAGUIEventStreamAsync(ctx, cancellationToken);
+                .MapWorkflowEventsToAGUI()
+                .AsAGUIEventStreamAsync(ctx, cancellationToken)
+                .MakeRunErrorTerminalAsync();
 
             // Wrap the event stream to save the session after streaming completes.
             var eventsWithSessionSave = SaveSessionAfterStreamingAsync(events, hostAgent, threadId, session, cancellationToken);

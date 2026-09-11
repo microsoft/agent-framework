@@ -22,5 +22,6 @@ internal sealed class ConfigureAGUIJsonOptions : IConfigureOptions<JsonOptions>
         // configured ASP.NET Core JsonSerializerOptions).
         chain.Add(AgentAbstractionsJsonUtilities.DefaultOptions.TypeInfoResolver!);
         chain.Add(AGUIJsonSerializerContext.Default.Options.TypeInfoResolver!);
+        AGUIJsonUtilities.RegisterInterruptContentTypes(options.SerializerOptions);
     }
 }
