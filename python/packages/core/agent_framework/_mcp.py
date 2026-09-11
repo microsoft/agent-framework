@@ -3481,6 +3481,7 @@ class MCPStreamableHTTPTool(MCPTool):
         sampling_max_requests: int | None = _DEFAULT_SAMPLING_MAX_REQUESTS,
         additional_properties: dict[str, Any] | None = None,
         http_client: AsyncClient | None = None,
+        static_headers: Mapping[str, str] | None = None,
         header_provider: Callable[[dict[str, Any]], dict[str, str]] | None = None,
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
@@ -3552,8 +3553,8 @@ class MCPStreamableHTTPTool(MCPTool):
                 requests are rejected. Resets on reconnect. ``None`` disables it.
             http_client: Optional asyncClient to use. If not provided, the
                 ``streamable_http_client`` API will create and manage a default client.
-                To configure headers, timeouts, or other HTTP client settings, create
-                and pass your own ``asyncClient`` instance.
+                Use ``static_headers`` for fixed headers. To configure timeouts or other
+                HTTP client settings, create and pass your own ``asyncClient`` instance.
                 Security: when you attach sensitive headers (e.g. authentication tokens)
                 via a custom ``http_client``, you are responsible for enforcing the same
                 origin-scoped header policy that the built-in ``header_provider`` hook
@@ -3563,6 +3564,13 @@ class MCPStreamableHTTPTool(MCPTool):
                 client that sets headers unconditionally (e.g. via ``AsyncClient(headers=...)``
                 or ``follow_redirects=True`` without an origin check) can leak those headers
                 to other origins; scope them to the target origin yourself.
+            static_headers: Optional fixed HTTP headers to inject into requests to the
+                configured ``url`` origin. The headers are copied at construction, included
+                on connection-lifetime requests and tool calls, retained across same-origin
+                redirects, and removed on cross-origin redirects. Unlike ``header_provider``,
+                fixed headers do not serialize concurrent tool calls. Use ``header_provider``
+                instead when header values depend on runtime invocation arguments. When both
+                are provided, dynamic headers override fixed headers with the same name.
             header_provider: Optional callable that receives the runtime keyword arguments
                 (from ``FunctionInvocationContext.kwargs``) and returns a ``dict[str, str]``
                 of HTTP headers to inject into every outbound request to the MCP server.
@@ -3649,6 +3657,7 @@ class MCPStreamableHTTPTool(MCPTool):
         self.url = url
         self.terminate_on_close = terminate_on_close
         self._httpx_client: AsyncClient | None = http_client
+        self._static_headers = dict(static_headers or {})
         self._header_provider = header_provider
         # Headers for the in-flight call_tool invocation. The streamable HTTP transport
         # sends requests from tasks spawned at connect time, whose contexts never observe
@@ -3691,7 +3700,7 @@ class MCPStreamableHTTPTool(MCPTool):
         from httpx import URL, AsyncClient, Timeout
 
         http_client = self._httpx_client
-        if self._header_provider is not None:
+        if self._static_headers or self._header_provider is not None:
             target_origin = _url_origin(URL(self.url))
             if http_client is None:
                 http_client = AsyncClient(
@@ -3711,26 +3720,28 @@ class MCPStreamableHTTPTool(MCPTool):
                         for key in request.extensions.pop(_MCP_INJECTED_HEADER_KEYS_EXTENSION, ()):
                             request.headers.pop(key, None)
                         return
-                    # The transport may send this request from a task whose context was
-                    # captured before call_tool set the ContextVar; fall back to the
-                    # instance-level snapshot of the active call's headers. Both are None
-                    # only when this is an ambient request outside call_tool; an active
-                    # call that legitimately produced no headers yields an empty dict and
-                    # must not trigger the ambient fallback below.
-                    headers = _mcp_call_headers.get(None)
-                    if headers is None:
-                        headers = self._active_call_headers
-                    if headers is None:
+                    headers = self._static_headers.copy()
+                    if self._header_provider is not None:
+                        # The transport may send this request from a task whose context was
+                        # captured before call_tool set the ContextVar; fall back to the
+                        # instance-level snapshot of the active call's headers. Both are None
+                        # only when this is an ambient request outside call_tool; an active
+                        # call that legitimately produced no headers yields an empty dict and
+                        # must not trigger the ambient fallback below.
+                        dynamic_headers = _mcp_call_headers.get(None)
+                        if dynamic_headers is None:
+                            dynamic_headers = self._active_call_headers
+                    else:
+                        dynamic_headers = None
+                    if dynamic_headers is None and self._header_provider is not None:
                         # Ambient request made outside call_tool (the initialize handshake,
                         # load_tools/load_prompts discovery, or background pings). Invoke the
                         # provider with the kwargs seeded by the run that established this
                         # connection, so static providers and run-supplied credentials both
                         # authenticate these requests. Provider failures propagate, matching the
                         # call_tool path, except the one case below that no caller can avoid.
-                        if self._header_provider is None:
-                            raise RuntimeError("Header injection hook invoked without a header_provider.")
                         try:
-                            headers = self._header_provider(self._connection_kwargs or {})
+                            dynamic_headers = self._header_provider(self._connection_kwargs or {})
                         except KeyError:
                             # Unavoidable only when no run seeded this connection: the provider
                             # wants per-call values a connection-lifetime request cannot have. Once
@@ -3744,7 +3755,9 @@ class MCPStreamableHTTPTool(MCPTool):
                                 self.name,
                                 exc_info=True,
                             )
-                            headers = {}
+                            dynamic_headers = {}
+                    if dynamic_headers is not None:
+                        headers.update(dynamic_headers)
                     for key in request.extensions.pop(_MCP_INJECTED_HEADER_KEYS_EXTENSION, ()):
                         request.headers.pop(key, None)
                     for key, value in headers.items():

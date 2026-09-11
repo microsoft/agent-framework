@@ -4775,6 +4775,36 @@ if __name__ == "__main__":
 class TestSecureMCPToolProxyURLMode:
     """Tests for origin-scoped headers in the proxy's URL mode."""
 
+    async def test_static_headers_do_not_serialize_tool_calls(self) -> None:
+        from unittest.mock import patch
+
+        from agent_framework._mcp import MCPTool
+        from agent_framework.security import SecureMCPToolProxy
+
+        both_started = asyncio.Event()
+        started = 0
+
+        async def overlapping_call(_tool: MCPTool, tool_name: str, **_kwargs: Any) -> str:
+            nonlocal started
+            started += 1
+            if started == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=1)
+            return tool_name
+
+        proxy = SecureMCPToolProxy(
+            url="https://mcp.example/mcp",
+            headers={"Authorization": "auth-value"},
+        )
+
+        with patch.object(MCPTool, "call_tool", overlapping_call):
+            results = await asyncio.gather(
+                proxy.mcp_tool.call_tool("first"),
+                proxy.mcp_tool.call_tool("second"),
+            )
+
+        assert results == ["first", "second"]
+
     async def test_headers_are_sent_only_to_the_configured_origin(self) -> None:
         from unittest.mock import patch
 

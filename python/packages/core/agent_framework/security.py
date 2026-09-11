@@ -4038,7 +4038,7 @@ class SecureMCPToolProxy:
                 name=name or "mcp",
                 url=url,
                 description=description,
-                header_provider=(lambda _kwargs: static_headers.copy()) if static_headers else None,
+                static_headers=static_headers,
             )
 
         # The validation above guarantees a tool is set (passed directly or built
