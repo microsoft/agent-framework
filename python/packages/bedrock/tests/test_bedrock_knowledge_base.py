@@ -268,7 +268,8 @@ class TestBedrockKnowledgeBaseProvider:
         )
 
         # Verify context injected as an untrusted user-role message (matches repo
-        # convention; role alternation is handled by _prepare_bedrock_messages coalescing)
+        # convention, e.g. azure-cosmos-memory; retrieved content stays in the
+        # untrusted user channel rather than being elevated to system instructions)
         assert "bedrock-kb" in context.context_messages
         injected = context.context_messages["bedrock-kb"]
         assert len(injected) == 1
