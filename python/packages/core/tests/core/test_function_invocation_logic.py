@@ -3401,6 +3401,84 @@ async def test_approved_argument_repair_requires_replacement_approval(
     assert final_response.text == "done"
 
 
+async def test_approved_argument_repair_short_circuit_requires_replacement_approval(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Short-circuiting middleware cannot return under stale argument approval."""
+    executions = 0
+
+    class RepairAndShortCircuitMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            del call_next
+            assert isinstance(context.arguments, dict)
+            if "count_text" in context.arguments:
+                context.arguments = {"count": int(context.arguments["count_text"])}
+            context.result = "handled by middleware"
+
+    @tool(name="approved_short_circuit", approval_mode="always_require")
+    def approved_short_circuit(count: int) -> str:
+        nonlocal executions
+        executions += 1
+        return str(count)
+
+    function_call = Content.from_function_call(
+        call_id="approved-short-circuit-1",
+        name="approved_short_circuit",
+        arguments='{"count_text": "3"}',
+    )
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[approved_short_circuit],
+        middleware=[RepairAndShortCircuitMiddleware()],
+    )
+    session = agent.create_session()
+
+    first_response = await agent.run("count", session=session)
+    first_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    replacement_response = await agent.run(
+        Message(role="user", contents=[first_request.to_function_approval_response(approved=True)]),
+        session=session,
+    )
+    replacement_request = next(
+        content
+        for message in replacement_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+
+    assert executions == 0
+    assert replacement_request.function_call is not None
+    assert replacement_request.function_call.parse_arguments() == {"count": 3}
+
+    final_response = await agent.run(
+        Message(role="user", contents=[replacement_request.to_function_approval_response(approved=True)]),
+        session=session,
+    )
+
+    assert executions == 0
+    assert final_response.text == "done"
+    result = next(
+        content
+        for message in final_response.messages
+        for content in message.contents
+        if content.type == "function_result"
+    )
+    assert result.result == "handled by middleware"
+
+
 async def test_hosted_tool_approval_response(chat_client_base: SupportsChatGetResponse):
     """Test handling of approval responses for hosted tools (tools not in tool_map)."""
 

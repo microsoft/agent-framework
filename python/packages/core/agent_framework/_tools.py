@@ -692,19 +692,15 @@ class FunctionTool(SerializationMixin):
                     f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"
                 )
         except ValidationError as exc:
-            locations = sorted({
-                ".".join(str(part) for part in error["loc"])
-                for error in exc.errors(include_input=False, include_url=False)
-            })
-            redacted_message = f"Invalid arguments for '{self.name}'."
-            if locations:
-                redacted_message = f"{redacted_message} Invalid field(s): {', '.join(locations)}."
             raise _FunctionArgumentValidationError(
                 f"Invalid arguments for '{self.name}': {exc}",
-                redacted_message=redacted_message,
+                redacted_message=f"Invalid arguments for '{self.name}'.",
             ) from exc
         except TypeError as exc:
-            raise _FunctionArgumentValidationError(str(exc)) from exc
+            raise _FunctionArgumentValidationError(
+                str(exc),
+                redacted_message=f"Invalid arguments for '{self.name}'.",
+            ) from exc
 
         try:
             return _validate_arguments_against_schema(
@@ -1917,6 +1913,20 @@ async def _auto_invoke_function(
             tool_call_id=call_id,
         )
 
+    def ensure_short_circuit_arguments_are_authorized() -> None:
+        current_arguments = tool._arguments_as_mapping(  # pyright: ignore[reportPrivateUsage]
+            middleware_context.arguments
+        )
+        tool._ensure_security_arguments_unchanged(  # pyright: ignore[reportPrivateUsage]
+            middleware_context, current_arguments
+        )
+        tool._ensure_approved_arguments_unchanged(  # pyright: ignore[reportPrivateUsage]
+            middleware_context,
+            tool._approval_visible_arguments(  # pyright: ignore[reportPrivateUsage]
+                middleware_context.arguments, middleware_context
+            ),
+        )
+
     from ._middleware import MiddlewareTermination
 
     # MiddlewareTermination bubbles up to signal loop termination
@@ -1926,10 +1936,7 @@ async def _auto_invoke_function(
             final_handler=final_function_handler,
         )
         if not final_handler_started:
-            tool._ensure_security_arguments_unchanged(  # pyright: ignore[reportPrivateUsage]
-                middleware_context,
-                tool._arguments_as_mapping(middleware_context.arguments),  # pyright: ignore[reportPrivateUsage]
-            )
+            ensure_short_circuit_arguments_are_authorized()
 
         # Pass through function_approval_request directly (e.g., from security middleware)
         if isinstance(function_result, Content) and function_result.type == "function_approval_request":
@@ -1943,10 +1950,13 @@ async def _auto_invoke_function(
         )
     except MiddlewareTermination as term_exc:
         if not final_handler_started:
-            tool._ensure_security_arguments_unchanged(  # pyright: ignore[reportPrivateUsage]
-                middleware_context,
-                tool._arguments_as_mapping(middleware_context.arguments),  # pyright: ignore[reportPrivateUsage]
-            )
+            try:
+                ensure_short_circuit_arguments_are_authorized()
+            except _FunctionArgumentsChangedAfterApproval as exc:
+                raise MiddlewareTermination(
+                    "Function arguments changed after approval.",
+                    result=_replacement_approval_request(function_call_content, exc.arguments),
+                ) from exc
         # Re-raise to signal loop termination, but first capture any result set by middleware
         if middleware_context.result is not None:
             # Pass through function_approval_request directly (e.g., from security policy middleware)

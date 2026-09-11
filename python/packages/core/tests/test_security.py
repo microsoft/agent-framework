@@ -11,7 +11,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from agent_framework import (
     Agent,
@@ -5834,7 +5834,84 @@ class TestVariableArgumentPolicy:
         assert result.type == "function_result"
         assert "secret payload" not in str(result.result)
         assert "secret payload" not in str(result.exception)
-        assert result.exception == "Invalid arguments for 'strict_sink'. Invalid field(s): value."
+        assert result.exception == "Invalid arguments for 'strict_sink'."
+
+    async def test_hidden_mapping_key_is_not_disclosed_by_validation_error(self) -> None:
+        """Pydantic error locations cannot expose keys from resolved hidden mappings."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            {"secret-key": 1},
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+
+        class StrictArgs(BaseModel):
+            value: dict[int, int]
+
+        strict_tool = FunctionTool(
+            func=lambda value: str(value),
+            name="strict_mapping_sink",
+            input_model=StrictArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="hidden-mapping-key-error",
+            name=strict_tool.name,
+            arguments={"value": f"[{variable_id}]"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration({"include_detailed_errors": True}),
+            tool_map={strict_tool.name: strict_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert "secret-key" not in str(result.result)
+        assert "secret-key" not in str(result.exception)
+        assert result.exception == "Invalid arguments for 'strict_mapping_sink'."
+
+    async def test_hidden_value_is_not_disclosed_by_validator_type_error(self) -> None:
+        """Direct validator TypeErrors use the generic security redaction."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "secret payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+
+        class StrictArgs(BaseModel):
+            value: str
+
+            @field_validator("value")
+            @classmethod
+            def reject_value(cls, value: str) -> str:
+                raise TypeError(f"rejected: {value}")
+
+        strict_tool = FunctionTool(
+            func=lambda value: value,
+            name="validator_type_error_sink",
+            input_model=StrictArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="hidden-validator-type-error",
+            name=strict_tool.name,
+            arguments={"value": f"[{variable_id}]"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration({"include_detailed_errors": True}),
+            tool_map={strict_tool.name: strict_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert "secret payload" not in str(result.result)
+        assert "secret payload" not in str(result.exception)
+        assert result.exception == "Invalid arguments for 'validator_type_error_sink'."
 
     async def test_argument_mutation_after_security_middleware_fails_closed(self) -> None:
         """A later middleware cannot change arguments after security policy has inspected them."""
