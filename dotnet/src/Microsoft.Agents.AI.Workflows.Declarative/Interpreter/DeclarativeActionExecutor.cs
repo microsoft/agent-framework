@@ -64,6 +64,7 @@ internal abstract class DeclarativeActionExecutor : Executor<ActionExecutorResul
     /// <inheritdoc/>
     public virtual ValueTask ResetAsync()
     {
+        this.State.Reset();
         return default;
     }
 

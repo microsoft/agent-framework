@@ -7464,6 +7464,29 @@ async def test_mcp_streamable_http_tool_keeps_header_hook_until_cancelled_close_
         await user_client.aclose()
 
 
+async def test_mcp_header_scoped_client_tags_send_requests():
+    """The transport wrapper must identify requests sent through AsyncClient.send."""
+    import httpx
+
+    from agent_framework._mcp import _MCP_HEADER_OWNER_EXTENSION, _MCPHeaderScopedClient
+
+    owner = object()
+    observed_owners: list[object | None] = []
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        observed_owners.append(request.extensions.get(_MCP_HEADER_OWNER_EXTENSION))
+        return httpx.Response(200)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as user_client:
+        wrapper = _MCPHeaderScopedClient(user_client, owner)
+        request = user_client.build_request("POST", "http://example.com/mcp")
+
+        response = await wrapper.send(request)
+
+    assert response.status_code == 200
+    assert observed_owners == [owner]
+
+
 async def test_mcp_header_scoped_client_delegates_unwrapped_attributes():
     """The transport wrapper must stay a drop-in for the caller's httpx client."""
     import httpx

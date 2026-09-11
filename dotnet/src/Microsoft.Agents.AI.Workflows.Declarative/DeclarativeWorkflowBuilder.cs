@@ -78,6 +78,7 @@ public static class DeclarativeWorkflowBuilder
             options.Configuration,
             options.AllowedEnvironmentVariables,
             options.AllowProcessEnvironmentVariableFallback);
+        state.CaptureInitialState();
         DeclarativeWorkflowExecutor<TInput> rootExecutor =
             new(rootId,
                 options,

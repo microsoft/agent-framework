@@ -31,6 +31,8 @@ internal sealed class WorkflowFormulaState
 
     private readonly Dictionary<string, WorkflowScope> _scopes;
 
+    private Dictionary<string, WorkflowScope> _initialScopes;
+
     private int _isInitialized;
 
     public RecalcEngine Engine { get; }
@@ -40,6 +42,7 @@ internal sealed class WorkflowFormulaState
     public WorkflowFormulaState(RecalcEngine engine)
     {
         this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => GetScopeName(scopeName), _ => new WorkflowScope());
+        this._initialScopes = this.CreateScopeSnapshot();
 
         this.Engine = engine;
         this.Evaluator = new WorkflowExpressionEngine(this);
@@ -81,12 +84,26 @@ internal sealed class WorkflowFormulaState
 
     public bool SetInitialized() => Interlocked.CompareExchange(ref this._isInitialized, 1, 0) == 0;
 
+    public void CaptureInitialState()
+    {
+        this._initialScopes = this.CreateScopeSnapshot();
+    }
+
+    public void Reset()
+    {
+        this.RestoreInitialState();
+        Interlocked.Exchange(ref this._isInitialized, 0);
+        this.Bind();
+    }
+
     public async ValueTask RestoreAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
         if (!this.SetInitialized())
         {
             return;
         }
+
+        this.RestoreInitialState();
 
         Stopwatch timer = Stopwatch.StartNew();
         Debug.WriteLine("RESTORE CHECKPOINT - BEGIN");
@@ -111,6 +128,28 @@ internal sealed class WorkflowFormulaState
             }
 
             this.Bind(scopeName);
+        }
+    }
+
+    private Dictionary<string, WorkflowScope> CreateScopeSnapshot() =>
+        this._scopes.ToDictionary(scope => scope.Key, scope => new WorkflowScope(scope.Value));
+
+    private void RestoreInitialState()
+    {
+        foreach (KeyValuePair<string, WorkflowScope> initialScopeEntry in this._initialScopes)
+        {
+            WorkflowScope scope = this._scopes[initialScopeEntry.Key];
+            scope.Clear();
+            scope.Sensitivities.Clear();
+            foreach (KeyValuePair<string, FormulaValue> initialValueEntry in initialScopeEntry.Value)
+            {
+                scope[initialValueEntry.Key] = initialValueEntry.Value;
+            }
+
+            foreach (KeyValuePair<string, SensitivityLevel> initialSensitivityEntry in initialScopeEntry.Value.Sensitivities)
+            {
+                scope.Sensitivities[initialSensitivityEntry.Key] = initialSensitivityEntry.Value;
+            }
         }
     }
 
@@ -168,6 +207,22 @@ internal sealed class WorkflowFormulaState
     /// </summary>
     private sealed class WorkflowScope : Dictionary<string, FormulaValue>
     {
+        public WorkflowScope()
+        {
+        }
+
+        public WorkflowScope(IDictionary<string, FormulaValue> values)
+            : base(values)
+        {
+            if (values is WorkflowScope scope)
+            {
+                foreach (KeyValuePair<string, SensitivityLevel> sensitivity in scope.Sensitivities)
+                {
+                    this.Sensitivities[sensitivity.Key] = sensitivity.Value;
+                }
+            }
+        }
+
         public Dictionary<string, SensitivityLevel> Sensitivities { get; } = [];
     }
 }
