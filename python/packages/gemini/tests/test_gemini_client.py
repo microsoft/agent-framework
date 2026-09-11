@@ -542,8 +542,8 @@ async def test_get_response_no_usage_when_metadata_absent() -> None:
         ("IMAGE_SAFETY", "content_filter"),
         ("IMAGE_PROHIBITED_CONTENT", "content_filter"),
         ("IMAGE_RECITATION", "content_filter"),
-        ("MALFORMED_FUNCTION_CALL", "tool_calls"),
-        ("UNEXPECTED_TOOL_CALL", "tool_calls"),
+        ("MALFORMED_FUNCTION_CALL", "MALFORMED_FUNCTION_CALL"),
+        ("UNEXPECTED_TOOL_CALL", "UNEXPECTED_TOOL_CALL"),
         # Real google-genai FinishReason values with no entry in _FINISH_REASON_MAP: must now
         # pass through as the raw string instead of being silently dropped to None.
         ("OTHER", "OTHER"),
@@ -602,6 +602,204 @@ async def test_unmapped_finish_reason_still_attaches_usage_on_streamed_final_chu
 
     assert updates[-1].finish_reason == "TOO_MANY_TOOL_CALLS"
     assert any(c.type == "usage" for c in updates[-1].contents)
+
+
+@pytest.mark.parametrize(
+    ("provider_finish_reason", "expected_finish_reason"),
+    [
+        ("STOP", "tool_calls"),
+        ("MALFORMED_FUNCTION_CALL", "MALFORMED_FUNCTION_CALL"),
+        ("UNEXPECTED_TOOL_CALL", "UNEXPECTED_TOOL_CALL"),
+        ("SAFETY", "content_filter"),
+        ("MAX_TOKENS", "length"),
+        ("TOO_MANY_TOOL_CALLS", "TOO_MANY_TOOL_CALLS"),
+        ("OTHER", "OTHER"),
+        (None, None),
+    ],
+)
+async def test_non_streaming_function_calls_require_authoritative_terminal_commitment(
+    provider_finish_reason: str | None,
+    expected_finish_reason: str | None,
+) -> None:
+    """Only a normal terminal candidate authoritatively commits local function calls."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(
+        return_value=_make_response(
+            [_make_part(function_call=("call-1", "search", {"q": "framework"}))],
+            finish_reason=provider_finish_reason,
+        )
+    )
+
+    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Search")])])
+
+    assert response.finish_reason == expected_finish_reason
+    assert len(response.messages[0].contents) == 1
+    function_call = response.messages[0].contents[0]
+    assert function_call.type == "function_call"
+    assert function_call.call_id == "call-1"
+    assert function_call.name == "search"
+    assert function_call.arguments == {"q": "framework"}
+
+
+async def test_non_streaming_server_side_tool_call_does_not_override_finish_reason() -> None:
+    """Informational server-side calls are not actionable local function calls."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(
+        return_value=_make_response(
+            [_make_part(tool_call=("search-1", types.ToolType.FILE_SEARCH, {"query": "framework"}))],
+            finish_reason="STOP",
+        )
+    )
+
+    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Search")])])
+
+    assert response.finish_reason == "stop"
+    assert response.messages[0].contents[0].informational_only is True
+
+
+async def test_streaming_committed_function_call_precedes_terminal_tool_calls_update() -> None:
+    """A streamed call remains immediate and a later normal terminal candidate commits it."""
+    client, mock = _make_gemini_client()
+    chunks = [
+        _make_response(
+            [_make_part(function_call=("call-1", "search", {"q": "framework"}))],
+            finish_reason=None,
+            prompt_tokens=None,
+            output_tokens=None,
+        ),
+        _make_response([_make_part(text="Searching")], finish_reason="STOP"),
+    ]
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter(chunks))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Search")])],
+        stream=True,
+    )
+    updates = [update async for update in stream]
+    final = await stream.get_final_response()
+
+    assert [update.finish_reason for update in updates] == [None, "tool_calls"]
+    assert [content.type for content in updates[0].contents] == ["function_call"]
+    assert updates[0].contents[0].call_id == "call-1"
+    assert updates[0].contents[0].arguments == {"q": "framework"}
+    assert updates[1].text == "Searching"
+    assert final.finish_reason == "tool_calls"
+    assert [content.type for content in final.messages[0].contents] == ["function_call", "text"]
+
+
+async def test_streaming_terminal_candidate_commits_function_call_in_same_update() -> None:
+    """A normal terminal candidate can commit an actionable call carried in the same update."""
+    client, mock = _make_gemini_client()
+    chunks = [
+        _make_response(
+            [_make_part(function_call=("call-1", "search", {"q": "framework"}))],
+            finish_reason="STOP",
+        )
+    ]
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter(chunks))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Search")])],
+        stream=True,
+    )
+    updates = [update async for update in stream]
+    final = await stream.get_final_response()
+
+    assert len(updates) == 1
+    assert updates[0].finish_reason == "tool_calls"
+    assert updates[0].contents[0].call_id == "call-1"
+    assert final.finish_reason == "tool_calls"
+
+
+@pytest.mark.parametrize(
+    ("provider_finish_reason", "expected_finish_reason"),
+    [
+        ("MALFORMED_FUNCTION_CALL", "MALFORMED_FUNCTION_CALL"),
+        ("UNEXPECTED_TOOL_CALL", "UNEXPECTED_TOOL_CALL"),
+        ("SAFETY", "content_filter"),
+        ("MAX_TOKENS", "length"),
+        ("TOO_MANY_TOOL_CALLS", "TOO_MANY_TOOL_CALLS"),
+        ("OTHER", "OTHER"),
+    ],
+)
+async def test_streaming_function_calls_are_not_committed_by_abnormal_terminal_reason(
+    provider_finish_reason: str,
+    expected_finish_reason: str,
+) -> None:
+    """Abnormal terminal candidates do not authorize streamed local function calls."""
+    client, mock = _make_gemini_client()
+    chunks = [
+        _make_response(
+            [_make_part(function_call=("call-1", "search", {"q": "framework"}))],
+            finish_reason=None,
+            prompt_tokens=None,
+            output_tokens=None,
+        ),
+        _make_response([], finish_reason=provider_finish_reason),
+    ]
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter(chunks))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Search")])],
+        stream=True,
+    )
+    updates = [update async for update in stream]
+    final = await stream.get_final_response()
+
+    assert [update.finish_reason for update in updates] == [None, expected_finish_reason]
+    assert final.finish_reason == expected_finish_reason
+
+
+async def test_streaming_function_call_without_terminal_candidate_is_not_committed_at_eof() -> None:
+    """EOF alone does not synthesize authority for a streamed local function call."""
+    client, mock = _make_gemini_client()
+    chunks = [
+        _make_response(
+            [_make_part(function_call=("call-1", "search", {"q": "framework"}))],
+            finish_reason=None,
+            prompt_tokens=None,
+            output_tokens=None,
+        )
+    ]
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter(chunks))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Search")])],
+        stream=True,
+    )
+    updates = [update async for update in stream]
+    final = await stream.get_final_response()
+
+    assert len(updates) == 1
+    assert updates[0].finish_reason is None
+    assert final.finish_reason is None
+
+
+async def test_streaming_function_call_is_not_committed_by_chunk_without_candidate() -> None:
+    """A blocked or otherwise candidate-less chunk provides no terminal commitment evidence."""
+    client, mock = _make_gemini_client()
+    candidate_less_chunk = _make_response([])
+    candidate_less_chunk.candidates = []
+    chunks = [
+        _make_response(
+            [_make_part(function_call=("call-1", "search", {"q": "framework"}))],
+            finish_reason=None,
+            prompt_tokens=None,
+            output_tokens=None,
+        ),
+        candidate_less_chunk,
+    ]
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter(chunks))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Search")])],
+        stream=True,
+    )
+    updates = [update async for update in stream]
+    final = await stream.get_final_response()
+
+    assert [update.finish_reason for update in updates] == [None, None]
+    assert final.finish_reason is None
 
 
 # message conversion

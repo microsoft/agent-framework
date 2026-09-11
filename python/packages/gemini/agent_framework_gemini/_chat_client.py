@@ -324,9 +324,19 @@ _FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
     "IMAGE_SAFETY": "content_filter",
     "IMAGE_PROHIBITED_CONTENT": "content_filter",
     "IMAGE_RECITATION": "content_filter",
-    "MALFORMED_FUNCTION_CALL": "tool_calls",
-    "UNEXPECTED_TOOL_CALL": "tool_calls",
 }
+
+
+def _resolve_finish_reason(
+    provider_finish_reason: FinishReasonLiteral | FinishReason | None,
+    *,
+    has_function_calls: bool,
+    function_calls_committed: bool,
+) -> FinishReasonLiteral | FinishReason | None:
+    """Resolve the public finish reason without authorizing uncommitted function calls."""
+    if has_function_calls and function_calls_committed:
+        return "tool_calls"
+    return provider_finish_reason
 
 
 class RawGeminiChatClient(
@@ -585,12 +595,18 @@ class RawGeminiChatClient(
                     cast(Any, self._genai_client.aio.models).generate_content_stream,
                 )
                 try:
+                    has_function_calls = False
                     async for chunk in await generate_content_stream(
                         model=model,
                         contents=contents,
                         config=config,
                     ):
-                        yield self._process_chunk(chunk)
+                        update = self._process_chunk(chunk, has_function_calls=has_function_calls)
+                        has_function_calls = has_function_calls or any(
+                            content.type == "function_call" and not content.informational_only
+                            for content in update.contents
+                        )
+                        yield update
                 except AgentFrameworkException:
                     raise
                 except Exception as ex:
@@ -1149,25 +1165,37 @@ class RawGeminiChatClient(
         candidate = response.candidates[0] if response.candidates else None
         parts: list[types.Part] = (candidate.content.parts or []) if candidate and candidate.content else []
         contents = self._parse_parts(parts)
+        has_function_calls = any(
+            content.type == "function_call" and not content.informational_only for content in contents
+        )
+        provider_finish_reason = candidate.finish_reason.name if candidate and candidate.finish_reason else None
         return ChatResponse(
             response_id=None,
             messages=[Message(role="assistant", contents=contents, raw_representation=candidate)],
             usage_details=self._parse_usage(response.usage_metadata),
             model=response.model_version or self.model,
-            finish_reason=self._map_finish_reason(
-                candidate.finish_reason.name if candidate and candidate.finish_reason else None
+            finish_reason=_resolve_finish_reason(
+                self._map_finish_reason(provider_finish_reason),
+                has_function_calls=has_function_calls,
+                function_calls_committed=has_function_calls and provider_finish_reason == "STOP",
             ),
             response_format=response_format,
             raw_representation=response,
         )
 
-    def _process_chunk(self, chunk: types.GenerateContentResponse) -> ChatResponseUpdate:
+    def _process_chunk(
+        self,
+        chunk: types.GenerateContentResponse,
+        *,
+        has_function_calls: bool = False,
+    ) -> ChatResponseUpdate:
         """Convert a single streaming chunk to a framework ChatResponseUpdate.
 
         Usage details are attached only to the final chunk, identified by a non-None finish reason.
 
         Args:
             chunk: A streaming ``GenerateContentResponse`` chunk from the Gemini API.
+            has_function_calls: Whether an earlier streaming update contained an actionable function call.
 
         Returns:
             A ``ChatResponseUpdate`` with parsed contents, finish reason, and model ID.
@@ -1175,9 +1203,15 @@ class RawGeminiChatClient(
         candidate = chunk.candidates[0] if chunk.candidates else None
         parts: list[types.Part] = (candidate.content.parts or []) if candidate and candidate.content else []
         contents = self._parse_parts(parts)
+        has_function_calls = has_function_calls or any(
+            content.type == "function_call" and not content.informational_only for content in contents
+        )
+        provider_finish_reason = candidate.finish_reason.name if candidate and candidate.finish_reason else None
 
-        finish_reason = self._map_finish_reason(
-            candidate.finish_reason.name if candidate and candidate.finish_reason else None
+        finish_reason = _resolve_finish_reason(
+            self._map_finish_reason(provider_finish_reason),
+            has_function_calls=has_function_calls,
+            function_calls_committed=has_function_calls and provider_finish_reason == "STOP",
         )
 
         # Attach usage to the final chunk only (when finish_reason is set).
