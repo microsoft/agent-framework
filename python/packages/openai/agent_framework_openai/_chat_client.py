@@ -770,9 +770,7 @@ class RawOpenAIChatClient(
                     update.finish_reason = self._get_finish_reason_from_openai_response(
                         terminal_response,
                         function_call_commitments=function_call_commitments,
-                        local_shell_tool_name=self._get_local_shell_tool_name(
-                            (validated_options or {}).get("tools")
-                        ),
+                        local_shell_tool_name=self._get_local_shell_tool_name((validated_options or {}).get("tools")),
                     )
                 return update
 
@@ -2695,10 +2693,7 @@ class RawOpenAIChatClient(
             (output_index, item)
             for output_index, item in enumerate(getattr(response, "output", ()))
             if getattr(item, "type", None) == "function_call"
-            or (
-                local_shell_tool_name is not None
-                and getattr(item, "type", None) in {"shell_call", "local_shell_call"}
-            )
+            or (local_shell_tool_name is not None and getattr(item, "type", None) in {"shell_call", "local_shell_call"})
         ]
         if function_call_commitments is None:
             function_calls_committed = getattr(response, "status", None) == "completed" and all(

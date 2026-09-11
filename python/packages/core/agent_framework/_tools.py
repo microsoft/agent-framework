@@ -1825,11 +1825,7 @@ def _is_actionable_function_call(content: Content) -> bool:
 def _mark_uncommitted_function_call_messages(response: ChatResponse) -> None:
     from ._clients import _UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY  # pyright: ignore[reportPrivateUsage]
 
-    if not any(
-        _is_actionable_function_call(content)
-        for message in response.messages
-        for content in message.contents
-    ):
+    if not any(_is_actionable_function_call(content) for message in response.messages for content in message.contents):
         return
     replay_metadata = {"finish_reason": response.finish_reason}
     for message in response.messages:
@@ -1844,9 +1840,7 @@ def _mark_uncommitted_streaming_contents(contents: Sequence[Content], response: 
     from ._clients import _UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY  # pyright: ignore[reportPrivateUsage]
 
     if response.finish_reason == "tool_calls" or not any(
-        _is_actionable_function_call(content)
-        for message in response.messages
-        for content in message.contents
+        _is_actionable_function_call(content) for message in response.messages for content in message.contents
     ):
         return
     replay_metadata = {"finish_reason": response.finish_reason}

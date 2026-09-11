@@ -76,8 +76,7 @@ def _filter_uncommitted_function_call_messages(messages: Sequence[Message]) -> l
         or (
             _UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY not in message.additional_properties
             and not any(
-                _UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY in content.additional_properties
-                for content in message.contents
+                _UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY in content.additional_properties for content in message.contents
             )
         )
     ]

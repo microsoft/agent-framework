@@ -408,7 +408,7 @@ async def test_function_calls_require_tool_calls_finish_reason(
                     role="assistant",
                     message_id="function-call-message",
                     finish_reason=cast(Any, finish_reason),
-                )
+                ),
             ]
         ]
     else:
@@ -550,9 +550,7 @@ async def test_missing_tool_calls_finish_reason_does_not_request_approval(
     response = await result.get_final_response() if stream else await result
 
     assert not any(
-        content.type == "function_approval_request"
-        for message in response.messages
-        for content in message.contents
+        content.type == "function_approval_request" for message in response.messages for content in message.contents
     )
     assert client.call_count == 1
 
