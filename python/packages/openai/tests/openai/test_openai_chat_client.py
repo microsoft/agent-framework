@@ -2159,6 +2159,32 @@ def test_get_shell_tool_local_executor_maps_to_shell_tool() -> None:
     assert response_tools[0]["environment"]["type"] == "local"
 
 
+def test_shell_output_payloads_do_not_expose_exception_diagnostics() -> None:
+    diagnostic = "test-token-value at /srv/private/tool.py"
+    content = Content.from_function_result(
+        call_id="call-1",
+        result="Error: Function failed.",
+        exception=diagnostic,
+    )
+
+    local_payload = json.loads(OpenAIChatClient._to_local_shell_output_payload(content))
+    shell_payload = OpenAIChatClient._to_shell_call_output_payload(content)
+    serialized = json.dumps({"local": local_payload, "shell": shell_payload})
+
+    assert local_payload["stdout"] == "Error: Function failed."
+    assert local_payload["exit_code"] == 1
+    assert shell_payload == [
+        {"stdout": "Error: Function failed.", "stderr": "", "outcome": {"type": "exit", "exit_code": 1}}
+    ]
+    assert diagnostic not in serialized
+
+    empty_diagnostic = Content.from_function_result(call_id="call-2", result="failed", exception="")
+    empty_local_payload = json.loads(OpenAIChatClient._to_local_shell_output_payload(empty_diagnostic))
+    empty_shell_payload = OpenAIChatClient._to_shell_call_output_payload(empty_diagnostic)
+    assert empty_local_payload["exit_code"] == 1
+    assert empty_shell_payload[0]["outcome"] == {"type": "exit", "exit_code": 1}
+
+
 def test_prepared_local_shell_tool_survives_make_tools() -> None:
     """Regression: the prepared shell tool must be a subscriptable dict.
 

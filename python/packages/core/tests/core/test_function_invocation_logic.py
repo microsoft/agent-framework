@@ -37,6 +37,7 @@ from agent_framework._middleware import FunctionInvocationContext, FunctionMiddl
 _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT = (
     "Function invocation limit reached before a final answer could be produced."
 )
+_PRIVATE_ERROR_DETAIL = "test-token-value at /srv/private/tool.py"
 
 
 def _group_id(message: Message) -> str | None:
@@ -2920,7 +2921,7 @@ async def test_function_invocation_config_include_detailed_errors_false(chat_cli
 
     @tool(name="error_function", approval_mode="never_require")
     def error_func(arg1: str) -> str:
-        raise ValueError("Specific error message that should not appear")
+        raise ValueError(f"Specific error message that should not appear: {_PRIVATE_ERROR_DETAIL}")
 
     chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
@@ -2949,6 +2950,8 @@ async def test_function_invocation_config_include_detailed_errors_false(chat_cli
     assert error_result.exception is not None
     assert "Specific error message" not in error_result.result
     assert "Error:" in error_result.result  # Generic error prefix
+    assert _PRIVATE_ERROR_DETAIL in error_result.exception
+    assert _PRIVATE_ERROR_DETAIL not in json.dumps(response.to_dict())
 
 
 async def test_function_invocation_config_include_detailed_errors_true(chat_client_base: SupportsChatGetResponse):
@@ -2956,7 +2959,7 @@ async def test_function_invocation_config_include_detailed_errors_true(chat_clie
 
     @tool(name="error_function", approval_mode="never_require")
     def error_func(arg1: str) -> str:
-        raise ValueError("Specific error message that should appear")
+        raise ValueError(f"Specific error message that should appear: {_PRIVATE_ERROR_DETAIL}")
 
     chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
@@ -2986,6 +2989,7 @@ async def test_function_invocation_config_include_detailed_errors_true(chat_clie
     assert "Specific error message that should appear" in error_result.result
     # The error format includes "Function failed. Exception:" prefix
     assert "Exception:" in error_result.result
+    assert _PRIVATE_ERROR_DETAIL in json.dumps(response.to_dict())
 
 
 async def test_function_invocation_config_validation_max_iterations():
@@ -5249,7 +5253,7 @@ async def test_streaming_function_invocation_config_include_detailed_errors_true
 
     @tool(name="error_function", approval_mode="never_require")
     def error_func(arg1: str) -> str:
-        raise ValueError("Specific error message that should appear")
+        raise ValueError(f"Specific error message that should appear: {_PRIVATE_ERROR_DETAIL}")
 
     chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
@@ -5282,6 +5286,7 @@ async def test_streaming_function_invocation_config_include_detailed_errors_true
     assert error_result.exception is not None
     assert "Specific error message that should appear" in error_result.result
     assert "Exception:" in error_result.result
+    assert _PRIVATE_ERROR_DETAIL in json.dumps([update.to_dict() for update in updates])
 
 
 async def test_streaming_function_invocation_config_include_detailed_errors_false(
@@ -5291,7 +5296,7 @@ async def test_streaming_function_invocation_config_include_detailed_errors_fals
 
     @tool(name="error_function", approval_mode="never_require")
     def error_func(arg1: str) -> str:
-        raise ValueError("Specific error message that should not appear")
+        raise ValueError(f"Specific error message that should not appear: {_PRIVATE_ERROR_DETAIL}")
 
     chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
@@ -5324,6 +5329,8 @@ async def test_streaming_function_invocation_config_include_detailed_errors_fals
     assert error_result.exception is not None
     assert "Specific error message" not in error_result.result
     assert "Error:" in error_result.result  # Generic error prefix
+    assert _PRIVATE_ERROR_DETAIL in error_result.exception
+    assert _PRIVATE_ERROR_DETAIL not in json.dumps([update.to_dict() for update in updates])
 
 
 async def test_streaming_argument_validation_error_with_detailed_errors(chat_client_base: SupportsChatGetResponse):

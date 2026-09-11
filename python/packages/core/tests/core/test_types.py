@@ -2477,6 +2477,49 @@ def test_content_to_dict_exclude_fields() -> None:
     assert parsed["type"] == "text"
 
 
+def test_function_result_exception_is_internal_by_default() -> None:
+    diagnostic = "test-token-value at /srv/private/tool.py"
+    content = Content.from_function_result(
+        call_id="call-1",
+        result="Error: Function failed.",
+        exception=diagnostic,
+    )
+
+    assert content.exception == diagnostic
+    assert content.to_dict()["exception"] == "FunctionInvocationError"
+    assert content.to_dict(exclude_none=False)["exception"] == "FunctionInvocationError"
+    response = AgentResponse(messages=[Message(role="tool", contents=[content])])
+    serialized = json.dumps(response.to_dict())
+    assert diagnostic not in serialized
+    assert "FunctionInvocationError" in serialized
+
+    restored = Content.from_dict(content.to_dict())
+    assert restored.exception == "FunctionInvocationError"
+    assert restored != Content.from_function_result(
+        call_id="call-1",
+        result="Error: Function failed.",
+        exception="different diagnostic",
+    )
+
+    empty_diagnostic = Content.from_function_result(call_id="call-2", exception="")
+    assert empty_diagnostic.to_dict()["exception"] == "FunctionInvocationError"
+
+
+def test_content_equality_compares_nested_raw_exception_diagnostics() -> None:
+    first = Content(
+        "function_result",
+        call_id="outer",
+        items=[Content.from_function_result(call_id="inner", exception="diagnostic-a")],
+    )
+    second = Content(
+        "function_result",
+        call_id="outer",
+        items=[Content.from_function_result(call_id="inner", exception="diagnostic-b")],
+    )
+
+    assert first != second
+
+
 def test_chat_response_roundtrip_preserves_compaction_annotation_dict() -> None:
     response = ChatResponse(
         messages=[

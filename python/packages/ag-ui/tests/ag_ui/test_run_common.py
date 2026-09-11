@@ -253,6 +253,27 @@ class TestEmitToolResult:
         assert flow.message_id is None
         assert flow.accumulated_text == ""
 
+    def test_tool_result_does_not_emit_internal_exception(self):
+        """AG-UI events and snapshots contain only the channel-visible result."""
+        diagnostic = "test-token-value at /srv/private/tool.py"
+        content = Content.from_function_result(
+            call_id="call_1",
+            result="Error: Function failed.",
+            exception=diagnostic,
+        )
+        flow = FlowState()
+
+        events = _emit_tool_result(content, flow)
+        payload = json.dumps(
+            {
+                "events": [event.model_dump(mode="json", by_alias=True) for event in events],
+                "snapshot": flow.tool_results,
+            }
+        )
+
+        assert "Error: Function failed." in payload
+        assert diagnostic not in payload
+
 
 class TestStateUpdateHelper:
     """Tests for the public ``state_update`` helper."""

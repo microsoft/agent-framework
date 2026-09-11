@@ -448,24 +448,34 @@ def test_align_tool_results_handles_pending_edge_cases() -> None:
 def test_convert_content_to_bedrock_block_handles_errors_and_missing_items() -> None:
     """Function result conversion should serialize items, rich content warnings, and fallback results."""
     client = _make_client()
+    diagnostic = "test-token-value at /srv/private/tool.py"
     rich_result = Content.from_function_result(
         call_id="call-1",
         result=[Content.from_text(text="summary"), Content.from_data(data=b"x", media_type="image/png")],
-        exception="tool failed",
+        exception=diagnostic,
     )
+    restored_rich_result = Content.from_dict(rich_result.to_dict())
     fallback_result = Content.from_function_result(call_id="call-2", result={"answer": 42})
     fallback_result.items = None
 
-    rich_block = client._convert_content_to_bedrock_block(rich_result)
+    rich_block = client._convert_content_to_bedrock_block(restored_rich_result)
     fallback_block = client._convert_content_to_bedrock_block(fallback_result)
 
     assert rich_block == {
         "toolResult": {
             "toolUseId": "call-1",
-            "content": [{"text": "summary"}, {"text": "tool failed"}],
+            "content": [{"text": "summary"}],
             "status": "error",
         }
     }
+    assert diagnostic not in str(rich_block)
+
+    empty_diagnostic_block = client._convert_content_to_bedrock_block(
+        Content.from_function_result(call_id="call-empty", result="failed", exception="")
+    )
+    assert empty_diagnostic_block is not None
+    assert empty_diagnostic_block["toolResult"]["status"] == "error"
+
     assert fallback_block == {
         "toolResult": {
             "toolUseId": "call-2",
