@@ -158,7 +158,7 @@ ignore = [
     "B027", # allow empty non-abstract method in ABC
     "B905", # `zip()` without an explicit `strict=` parameter
     "RUF067", # allow version detection in __init__.py
-    "rule-codes-in-selectors", # allow stable rule codes in Ruff selectors
+    "RUF201", # allow stable rule codes in Ruff selectors
 ]
 
 [tool.ruff.lint.per-file-ignores]
