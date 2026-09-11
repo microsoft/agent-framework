@@ -145,20 +145,20 @@ select = [
     "T20", # typing checks
     "TD", # todos
     "W", # pycodestyle warning checks
-    "debugger", # Debugger
+    "debugger", # T100: Debugger
     "S", # Bandit checks
 ]
 ignore = [
-    "undocumented-public-module", # allow missing docstring in public module
-    "undocumented-public-package", # allow missing docstring in public package
-    "property-docstring-starts-with-verb", # allow property docstrings that start with a verb
-    "overload-with-docstring", # allow overload to have a docstring
-    "missing-todo-link", # allow missing link to todo issue
-    "line-contains-todo", # allow todo
-    "yield-in-context-manager-in-async-generator", # allow yielding inside async-generator context managers
-    "empty-method-without-abstract-decorator", # allow empty non-abstract method in ABC
-    "zip-without-explicit-strict", # `zip()` without an explicit `strict=` parameter
-    "non-empty-init-module", # allow version detection in __init__.py
+    "undocumented-public-module", # D100: allow missing docstring in public module
+    "undocumented-public-package", # D104: allow missing docstring in public package
+    "property-docstring-starts-with-verb", # D421: allow property docstrings that start with a verb
+    "overload-with-docstring", # D418: allow overload to have a docstring
+    "missing-todo-link", # TD003: allow missing link to todo issue
+    "line-contains-todo", # FIX002: allow todo
+    "yield-in-context-manager-in-async-generator", # ASYNC119: allow yielding inside async-generator context managers
+    "empty-method-without-abstract-decorator", # B027: allow empty non-abstract method in ABC
+    "zip-without-explicit-strict", # B905: `zip()` without an explicit `strict=` parameter
+    "non-empty-init-module", # RUF067: allow version detection in __init__.py
 ]
 
 [tool.ruff.lint.per-file-ignores]
