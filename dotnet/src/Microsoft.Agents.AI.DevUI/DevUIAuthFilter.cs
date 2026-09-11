@@ -47,7 +47,10 @@ internal sealed class DevUIAuthFilter : IEndpointFilter
     {
         var httpContext = context.HttpContext;
         var remoteIp = httpContext.Connection.RemoteIpAddress;
-        var isLoopback = remoteIp is not null && IPAddress.IsLoopback(remoteIp);
+
+        // A null RemoteIpAddress means the connection is in-process (e.g., an ASP.NET Core
+        // TestServer created via UseTestServer()), so treat it as loopback.
+        var isLoopback = remoteIp is null || IPAddress.IsLoopback(remoteIp);
 
         if (!isLoopback && !this._options.AllowRemoteAccess)
         {
