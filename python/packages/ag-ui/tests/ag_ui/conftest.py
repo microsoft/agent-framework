@@ -38,6 +38,16 @@ StreamFn = Callable[..., AsyncIterable[ChatResponseUpdate]]
 ResponseFn = Callable[..., Awaitable[ChatResponse]]
 
 
+def _finish_committed_test_calls(response: ChatResponse) -> ChatResponse:
+    if response.finish_reason is None and any(
+        content.type == "function_call" and not content.informational_only
+        for message in response.messages
+        for content in message.contents
+    ):
+        response.finish_reason = "tool_calls"
+    return response
+
+
 def pytest_configure() -> None:
     """Ensure this test directory is on sys.path so helper modules can be imported by name."""
     test_dir = str(Path(__file__).resolve().parent)
@@ -129,11 +139,23 @@ class StreamingChatClientStub(
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         if stream:
+            async def _stream() -> AsyncIterator[ChatResponseUpdate]:
+                has_function_calls = False
+                has_finish_reason = False
+                async for update in self._stream_fn(messages, options, **kwargs):
+                    has_function_calls = has_function_calls or any(
+                        content.type == "function_call" and not content.informational_only
+                        for content in update.contents
+                    )
+                    has_finish_reason = has_finish_reason or update.finish_reason is not None
+                    yield update
+                if has_function_calls and not has_finish_reason:
+                    yield ChatResponseUpdate(finish_reason="tool_calls")
 
             def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
-                return ChatResponse.from_updates(updates)
+                return _finish_committed_test_calls(ChatResponse.from_updates(updates))
 
-            return ResponseStream(self._stream_fn(messages, options, **kwargs), finalizer=_finalize)
+            return ResponseStream(_stream(), finalizer=_finalize)
 
         return self._get_response_impl(messages, options, **kwargs)
 
@@ -142,15 +164,17 @@ class StreamingChatClientStub(
     ) -> ChatResponse:
         """Non-streaming implementation."""
         if self._response_fn is not None:
-            return await self._response_fn(messages, options, **kwargs)
+            return _finish_committed_test_calls(await self._response_fn(messages, options, **kwargs))
 
         contents: list[Any] = []
         async for update in self._stream_fn(list(messages), dict(options), **kwargs):
             contents.extend(update.contents)
 
-        return ChatResponse(
-            messages=[Message(role="assistant", contents=contents)],
-            response_id="stub-response",
+        return _finish_committed_test_calls(
+            ChatResponse(
+                messages=[Message(role="assistant", contents=contents)],
+                response_id="stub-response",
+            )
         )
 
 
