@@ -3633,6 +3633,135 @@ def test_stateless_complete_mixed_pause_matches_identified_host_responses_first(
     assert host_result_ids == {id(identified_result), id(idless_result)}
 
 
+def test_stateless_complete_mixed_pause_rebuilds_host_approval_host_occurrence_order() -> None:
+    """A complete stateless batch follows the model's Host1-Approval-Host2 occurrence order."""
+    from agent_framework._tools import _stateless_mixed_pause_batch_status
+
+    first_host_request = Content.from_function_call(
+        call_id="host-1",
+        name="host_func",
+        arguments={"value": 1},
+        id="host-occurrence-1",
+    )
+    first_host_request.user_input_request = True
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    second_host_request = Content.from_function_call(
+        call_id="host-2",
+        name="host_func",
+        arguments={"value": 2},
+        id="host-occurrence-2",
+    )
+    second_host_request.user_input_request = True
+    first_host_result = Content.from_function_result(call_id="host-1", result="first")
+    first_host_result.id = "host-occurrence-1"
+    approval_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    second_host_result = Content.from_function_result(call_id="host-2", result="second")
+    second_host_result.id = "host-occurrence-2"
+    messages = [
+        Message(
+            role="assistant",
+            contents=[first_host_request, approval_call, approval_request, second_host_request],
+        ),
+        Message(role="tool", contents=[second_host_result, first_host_result]),
+        Message(role="user", contents=[approval_response]),
+    ]
+
+    partial, host_result_ids = _stateless_mixed_pause_batch_status(messages)
+
+    assert partial is False
+    assert host_result_ids == {id(first_host_result), id(second_host_result)}
+    assert messages[-1].role == "user"
+    assert messages[-1].contents == [first_host_result, approval_response, second_host_result]
+
+
+async def test_stateless_complete_mixed_pause_normalizes_out_of_order_reused_call_id_results() -> None:
+    """Out-of-order replies are normalized in occurrence order without confusing a reused provider call_id."""
+    from agent_framework._tools import _FunctionExecutionBatch, _resolve_approval_responses
+
+    first_host_request = Content.from_function_call(
+        call_id="reused-call",
+        name="host_func",
+        arguments={"value": 1},
+        id="host-occurrence-1",
+    )
+    first_host_request.user_input_request = True
+    approval_call = Content.from_function_call(
+        call_id="reused-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    second_host_request = Content.from_function_call(
+        call_id="reused-call",
+        name="host_func",
+        arguments={"value": 2},
+        id="host-occurrence-2",
+    )
+    second_host_request.user_input_request = True
+    first_host_result = Content.from_function_result(call_id="reused-call", result="host-one")
+    first_host_result.id = "host-occurrence-1"
+    approval_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    second_host_result = Content.from_function_result(call_id="reused-call", result="host-two")
+    second_host_result.id = "host-occurrence-2"
+    prepared_messages = [
+        Message(
+            role="assistant",
+            contents=[first_host_request, approval_call, approval_request, second_host_request],
+        ),
+        Message(role="user", contents=[second_host_result, approval_response, first_host_result]),
+    ]
+    executed: list[Content] = []
+
+    async def execute_function_calls(*, function_calls: list[Content], **kwargs: Any) -> Any:
+        executed.extend(function_calls)
+        return _FunctionExecutionBatch(
+            result_groups=[[Content.from_function_result(call_id="reused-call", result="approved")]],
+            executed_call_count=1,
+        )
+
+    result = await _resolve_approval_responses(
+        prepared_messages=prepared_messages,
+        options=None,
+        errors_in_a_row=0,
+        max_errors=3,
+        execute_function_calls=execute_function_calls,
+    )
+
+    assert executed == [approval_response]
+    assert result.function_call_count == 1
+    response_projection = [
+        (message.role, [content.result for content in message.contents]) for message in result.response_messages
+    ]
+    assert response_projection == [("tool", ["approved"])]
+    assert prepared_messages[-1].role == "tool"
+    assert [(content.type, content.result) for content in prepared_messages[-1].contents] == [
+        ("function_result", "host-one"),
+        ("function_result", "approved"),
+        ("function_result", "host-two"),
+    ]
+
+
 def test_stateless_complete_mixed_pause_with_ambiguous_idless_responses_fails_closed() -> None:
     """Id-less responses cannot be assigned when duplicate call-id occurrences remain."""
     from agent_framework._tools import _stateless_mixed_pause_batch_status
