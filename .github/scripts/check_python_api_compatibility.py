@@ -199,12 +199,21 @@ def main() -> int:
                 allow_inspection=False,
                 resolve_aliases=True,
             )
-            new_package = load(
-                spec.module,
-                search_paths=[spec.search_path],
-                allow_inspection=False,
-                resolve_aliases=True,
-            )
+            try:
+                new_package = load(
+                    spec.module,
+                    search_paths=[spec.search_path],
+                    allow_inspection=False,
+                    resolve_aliases=True,
+                )
+            except ModuleNotFoundError:
+                breakage_count += 1
+                print(
+                    f"::warning title={spec.module}::"
+                    "Released public import package was removed"
+                )
+                print("::endgroup::")
+                continue
 
             for breakage in find_breaking_changes(old_package, new_package):
                 try:
