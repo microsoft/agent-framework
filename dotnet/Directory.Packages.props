@@ -49,7 +49,7 @@
     <PackageVersion Include="System.ClientModel" Version="1.15.0" />
     <PackageVersion Include="System.CodeDom" Version="10.0.12" />
     <PackageVersion Include="System.Collections.Immutable" Version="10.0.12" />
-    <PackageVersion Include="System.CommandLine" Version="2.0.0-rc.2.25502.107" />
+    <PackageVersion Include="System.CommandLine" Version="2.0.12" />
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.12" />
     <PackageVersion Include="System.Linq.AsyncEnumerable" Version="10.0.12" />
     <PackageVersion Include="System.Net.Http.Json" Version="10.0.12" />
