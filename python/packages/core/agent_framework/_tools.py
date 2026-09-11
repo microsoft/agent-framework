@@ -621,15 +621,23 @@ class FunctionTool(SerializationMixin):
             self.invocation_exception_count += 1
             raise
 
+    async def _await_invocation_result(self, result: Any) -> Any:
+        """Await a function result and count exceptions raised by the awaitable."""
+        try:
+            return await result
+        except Exception:
+            self.invocation_exception_count += 1
+            raise
+
     async def _invoke_function(self, call_kwargs: Mapping[str, Any]) -> Any:
         """Run sync tools off the event loop during async invocation."""
         func = self.func.func if isinstance(self.func, FunctionTool) else self.func
         if inspect.iscoroutinefunction(func) or getattr(self, "_invoke_sync_on_event_loop", False):
             res = self.__call__(**call_kwargs)
-            return await res if inspect.isawaitable(res) else res
+            return await self._await_invocation_result(res) if inspect.isawaitable(res) else res
 
         res = await asyncio.to_thread(self.__call__, **call_kwargs)
-        return await res if inspect.isawaitable(res) else res
+        return await self._await_invocation_result(res) if inspect.isawaitable(res) else res
 
     @overload
     async def invoke(
