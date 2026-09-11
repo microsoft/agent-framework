@@ -99,6 +99,7 @@ agent-framework-hosting-telegram = { workspace = true }
 agent-framework-hyperlight = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-mistral = { workspace = true }
+agent-framework-mongodb = { workspace = true }
 agent-framework-monty = { workspace = true }
 agent-framework-ollama = { workspace = true }
 agent-framework-openai = { workspace = true }

@@ -84,6 +84,55 @@ jobs:
           path: ./python/pytest.xml
           if-no-files-found: ignore
 
+  # MongoDB tests use the official disposable Atlas Local image and need no cloud credentials.
+  python-tests-mongodb:
+    name: Python Integration Tests - MongoDB
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    services:
+      mongodb:
+        image: mongodb/mongodb-atlas-local@sha256:82da14850e350f15aae720ebba130ade6a607335877486a63252b3ad8ef3b12a
+        ports:
+          - 27017:27017
+    env:
+      MONGODB_TEST_URI: "mongodb://localhost:27017/?directConnection=true"
+      MONGODB_TEST_DATABASE: af_vectors_test
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Test MongoDB integration
+        run: >
+          uv run --directory packages/mongodb poe test-integration
+          --junitxml=${{ github.workspace }}/python/pytest-mongodb.xml
+      - name: Surface failing tests
+        if: always()
+        uses: pmeier/pytest-results-action@fdc7f18d9934e38aca411ca9557e6577bd25ca9c # v0.9.0
+        with:
+          path: ./python/pytest-mongodb.xml
+          summary: true
+          display-options: fEX
+          fail-on-empty: false
+          title: MongoDB integration test results
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-mongodb
+          path: ./python/pytest-mongodb.xml
+          if-no-files-found: ignore
+
   # Unit tests: all non-integration tests across all packages
   python-tests-unit:
     name: Python Integration Tests - Unit
@@ -630,6 +679,7 @@ jobs:
         python-tests-foundry-hosting,
         python-tests-cosmos,
         python-tests-qdrant,
+        python-tests-mongodb,
         python-tests-github-copilot,
         python-tests-postgres,
         python-tests-redis,
@@ -697,6 +747,7 @@ jobs:
         python-tests-foundry-hosting,
         python-tests-cosmos,
         python-tests-qdrant,
+        python-tests-mongodb,
         python-tests-github-copilot,
         python-tests-postgres,
         python-tests-redis,
