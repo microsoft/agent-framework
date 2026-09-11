@@ -449,3 +449,27 @@ async def test_workflow_hitl_resume_persists_user_text_in_thread_snapshot() -> N
         and "replacement" in message["content"]
         for message in snapshot.messages
     )
+
+
+def test_snapshot_messages_from_resume_skips_approval_strings() -> None:
+    from agent_framework_ag_ui._workflow import _snapshot_messages_from_resume_value
+
+    assert _snapshot_messages_from_resume_value("approved") == []
+    assert _snapshot_messages_from_resume_value("rejected") == []
+    assert _snapshot_messages_from_resume_value("Please refund me") == [
+        {"role": "user", "content": "Please refund me"}
+    ]
+
+
+def test_append_unique_snapshot_messages_dedupes_client_replay() -> None:
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    existing = [{"id": "u1", "role": "user", "content": "already present"}]
+    incoming = [
+        {"id": "u1", "role": "user", "content": "already present"},
+        {"id": "u2", "role": "user", "content": "new reply"},
+    ]
+    assert _append_unique_snapshot_messages(existing, incoming) == [
+        {"id": "u1", "role": "user", "content": "already present"},
+        {"id": "u2", "role": "user", "content": "new reply"},
+    ]

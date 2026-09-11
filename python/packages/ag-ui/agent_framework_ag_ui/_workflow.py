@@ -59,6 +59,14 @@ WorkflowRequestOwner = tuple[str | None, str | None]
 
 _REQUEST_OWNER_ATTRIBUTE = "_ag_ui_request_owner"
 _CHECKPOINT_REQUEST_OWNER_KEY = "ag_ui_workflow_request_owner"
+_APPROVAL_RESUME_STRINGS = frozenset({
+    "approved",
+    "rejected",
+    "accepted",
+    "denied",
+    "true",
+    "false",
+})
 
 
 def _snapshot_messages_from_resume_value(value: Any) -> list[dict[str, Any]]:
@@ -71,7 +79,11 @@ def _snapshot_messages_from_resume_value(value: Any) -> list[dict[str, Any]]:
         return []
     if isinstance(value, str):
         text = value.strip()
-        return [{"role": "user", "content": text}] if text else []
+        # Legacy request_info(str) resumes often send bare "approved"/"rejected"
+        # strings — those are not conversational HITL turns (#8160 / Copilot).
+        if not text or text.casefold() in _APPROVAL_RESUME_STRINGS:
+            return []
+        return [{"role": "user", "content": text}]
     if isinstance(value, dict):
         # Function-approval style payloads are not chat turns.
         if any(key in value for key in ("approved", "accepted", "functionCall", "function_call")):
@@ -114,6 +126,27 @@ def _snapshot_messages_from_workflow_resume(resume_payload: Any) -> list[dict[st
             continue
         messages.extend(_snapshot_messages_from_resume_value(interrupt.get("value")))
     return messages
+
+
+def _message_identity(message: dict[str, Any]) -> tuple[Any, ...]:
+    """Stable identity for deduping resume-synthesized turns against request messages."""
+    return (message.get("role"), message.get("id"), message.get("content"))
+
+
+def _append_unique_snapshot_messages(
+    existing: list[dict[str, Any]],
+    incoming: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Append resume-derived turns that are not already present in the seed."""
+    seen = {_message_identity(message) for message in existing}
+    merged = list(existing)
+    for message in incoming:
+        identity = _message_identity(message)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        merged.append(message)
+    return merged
 
 
 def _checkpoint_id_from_input(input_data: dict[str, Any]) -> str | None:
@@ -530,9 +563,13 @@ class AgentFrameworkWorkflow:
         if resume_payload is not None and snapshot_session.enabled:
             # Conversational HITL resumes put the user reply in interrupt.value with
             # messages:[]; fold that text into the snapshot so hydrate keeps it (#8160).
+            # Skip when the client already included the same turn in `messages`.
             hitl_messages = _snapshot_messages_from_workflow_resume(resume_payload)
             if hitl_messages:
-                builder_seed_messages = [*builder_seed_messages, *hitl_messages]
+                builder_seed_messages = _append_unique_snapshot_messages(
+                    builder_seed_messages,
+                    hitl_messages,
+                )
         snapshot_builder = _WorkflowSnapshotBuilder(builder_seed_messages) if snapshot_session.enabled else None
         if snapshot_builder is not None and effective_state:
             # Seed builder state so a run that emits no StateSnapshotEvent still
