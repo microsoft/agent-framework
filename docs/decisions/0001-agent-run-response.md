@@ -200,7 +200,7 @@ var primaryContentOnly = response.Messages.FirstOrDefault();
 ```
 
 - **PROS**: Simple getting started experience, Reusing IChatClient response types.
-- **CONS**: Intermediate updates are only availble in streaming mode.
+- **CONS**: Intermediate updates are only available in streaming mode.
 
 ### Option 4: Remove Run API and retain RunStreaming API only, which returns a Stream of Primary + Secondary
 
