@@ -26,6 +26,7 @@ from agent_framework import (
     Message,
     ResponseStream,
     WorkflowBuilder,
+    WorkflowCheckpoint,
     WorkflowCheckpointException,
     WorkflowContext,
     WorkflowConvergenceException,
@@ -1699,3 +1700,108 @@ async def test_output_executors_filtering_with_run_responses_streaming() -> None
 
 
 # endregion
+
+
+# ---------------------------------------------------------------------------
+# Pause checkpoint resolution (AG-UI interrupt metadata)
+# ---------------------------------------------------------------------------
+
+class _ApprovalExecutor(Executor):
+    def __init__(self) -> None:
+        super().__init__(id="approval_executor")
+
+    @handler
+    async def start(self, message: Any, ctx: WorkflowContext) -> None:
+        del message
+        function_call = Content.from_function_call(
+            call_id="refund-call",
+            name="submit_refund",
+            arguments={"order_id": "12345"},
+        )
+        approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+        await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+    @response_handler
+    async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+        del original_request, response
+        await ctx.yield_output("done")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.asyncio
+async def test_resolve_pause_checkpoint_id_prefers_runner_over_shared_latest() -> None:
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=_ApprovalExecutor(), checkpoint_storage=storage).build()
+    async for _ in workflow.run("go", stream=True):
+        pass
+
+    pause_id = workflow.get_last_checkpoint_id()
+    assert pause_id is not None
+
+    competing = WorkflowCheckpoint(
+        workflow_name=workflow.name,
+        graph_signature_hash="competing",
+        pending_request_info_events={},
+        timestamp="9999-01-01T00:00:00+00:00",
+    )
+    await storage.save(competing)
+
+    # Workflow owns the run baseline captured at run() start.
+    resolved = await workflow.resolve_pause_checkpoint_id(
+        {"approval-1"},
+        checkpoint_storage=storage,
+    )
+    assert resolved == pause_id
+
+
+@pytest.mark.asyncio
+async def test_resolve_pause_checkpoint_id_requires_run_scoped_change_without_storage() -> None:
+    workflow = WorkflowBuilder(start_executor=_ApprovalExecutor()).build()
+    workflow._runner._previous_checkpoint_id = "leftover"  # pyright: ignore[reportPrivateUsage]
+    workflow._run_baseline_checkpoint_id = "leftover"  # pyright: ignore[reportPrivateUsage]
+
+    assert await workflow.resolve_pause_checkpoint_id({"approval-1"}) is None
+    assert (
+        await workflow.resolve_pause_checkpoint_id(
+            {"approval-1"},
+            baseline_checkpoint_id=None,
+        )
+        == "leftover"
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_pause_checkpoint_id_excludes_restored_checkpoint() -> None:
+    """After resume, the restored id must not be re-advertised if a new pause save fails."""
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=_ApprovalExecutor(), checkpoint_storage=storage).build()
+
+    async for _ in workflow.run("go", stream=True):
+        pass
+    restored = workflow.get_last_checkpoint_id()
+    assert restored is not None
+
+    # Simulate a resume that restored `restored` but did not persist a newer pause.
+    workflow._run_baseline_checkpoint_id = restored  # pyright: ignore[reportPrivateUsage]
+    workflow._restored_checkpoint_id = restored  # pyright: ignore[reportPrivateUsage]
+    workflow._runner._previous_checkpoint_id = restored  # pyright: ignore[reportPrivateUsage]
+
+    assert (
+        await workflow.resolve_pause_checkpoint_id(
+            {"approval-1"},
+            checkpoint_storage=storage,
+            known_checkpoint_id=restored,
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_pause_checkpoint_id_uses_builder_storage() -> None:
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=_ApprovalExecutor(), checkpoint_storage=storage).build()
+    async for _ in workflow.run("go", stream=True):
+        pass
+
+    pause_id = workflow.get_last_checkpoint_id()
+    resolved = await workflow.resolve_pause_checkpoint_id({"approval-1"})
+    assert resolved == pause_id

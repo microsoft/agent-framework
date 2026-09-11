@@ -60,6 +60,8 @@ from ._utils import canonical_function_arguments, generate_event_id, make_json_s
 
 logger = logging.getLogger(__name__)
 
+_BASELINE_OMITTED = object()
+
 
 _TERMINAL_STATES: set[str] = {
     WorkflowRunState.IDLE.value,
@@ -152,7 +154,7 @@ def _attach_checkpoint_id_to_interrupts(
     interrupts: list[dict[str, Any]],
     checkpoint_id: str | None,
 ) -> list[dict[str, Any]]:
-    """Attach ``checkpoint_id`` to each interrupt's ``metadata.agent_framework`` (issue #8150).
+    """Attach ``checkpoint_id`` to each interrupt's ``metadata.agent_framework``.
 
     Multi-worker hosts need the pause checkpoint on the wire so the next resume can pass
     ``forwardedProps.checkpoint_id`` without a side-channel lookup. No-op when checkpointing
@@ -191,12 +193,13 @@ async def _pause_checkpoint_id_for_interrupts(
     checkpoint_storage: CheckpointStorage | None,
     interrupts: list[dict[str, Any]],
     known_checkpoint_id: str | None = None,
-    baseline_checkpoint_id: str | None = None,
+    baseline_checkpoint_id: Any = _BASELINE_OMITTED,
 ) -> str | None:
     """Resolve the pause checkpoint for *this* run's interrupts via core.
 
-    ``baseline_checkpoint_id`` must be the runner id captured before ``workflow.run()`` so
-    a leftover id from a prior run is not advertised when this run did not persist.
+    When ``baseline_checkpoint_id`` is omitted, core uses the baseline captured at
+    ``workflow.run()`` start. Pass ``None`` explicitly for short-circuit paths that
+    did not call ``run()`` and should advertise the current runner id when present.
     """
     if not interrupts:
         return None
@@ -210,28 +213,26 @@ async def _pause_checkpoint_id_for_interrupts(
         Callable[..., Awaitable[str | None]],
         resolve,
     )
-    return await resolve_fn(
-        _interrupt_request_ids(interrupts),
-        checkpoint_storage=checkpoint_storage,
-        known_checkpoint_id=known_checkpoint_id,
-        baseline_checkpoint_id=baseline_checkpoint_id,
-    )
+    kwargs: dict[str, Any] = {
+        "checkpoint_storage": checkpoint_storage,
+        "known_checkpoint_id": known_checkpoint_id,
+    }
+    if baseline_checkpoint_id is not _BASELINE_OMITTED:
+        kwargs["baseline_checkpoint_id"] = baseline_checkpoint_id
+    return await resolve_fn(_interrupt_request_ids(interrupts), **kwargs)
 
 
-async def _build_run_finished_with_checkpointed_interrupts(
+async def _interrupts_with_pause_checkpoint(
     *,
-    run_id: str,
-    thread_id: str,
     interrupts: list[dict[str, Any]],
     workflow: Workflow,
     checkpoint_storage: CheckpointStorage | None,
     known_checkpoint_id: str | None = None,
-    baseline_checkpoint_id: str | None = None,
-) -> Any:
-    """Build RUN_FINISHED, attaching the pause checkpoint id to interrupt metadata when available."""
+    baseline_checkpoint_id: Any = _BASELINE_OMITTED,
+) -> list[dict[str, Any]]:
+    """Attach a run-scoped pause checkpoint id to interrupts when available."""
     if not interrupts:
-        return _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=interrupts)
-
+        return interrupts
     pause_checkpoint_id = await _pause_checkpoint_id_for_interrupts(
         workflow=workflow,
         checkpoint_storage=checkpoint_storage,
@@ -239,11 +240,7 @@ async def _build_run_finished_with_checkpointed_interrupts(
         known_checkpoint_id=known_checkpoint_id,
         baseline_checkpoint_id=baseline_checkpoint_id,
     )
-    return _build_run_finished_event(
-        run_id=run_id,
-        thread_id=thread_id,
-        interrupts=_attach_checkpoint_id_to_interrupts(interrupts, pause_checkpoint_id),
-    )
+    return _attach_checkpoint_id_to_interrupts(interrupts, pause_checkpoint_id)
 
 
 async def _pending_request_events(workflow: Workflow) -> dict[str, Any]:
@@ -1234,33 +1231,29 @@ async def run_workflow_stream(
             interrupt_event_value = _workflow_interrupt_event_value(request_payload)
             if interrupt_event_value is not None:
                 yield CustomEvent(name=_INTERRUPT_CARD_EVENT_NAME, value=interrupt_event_value)
-        baseline_checkpoint_id = (
-            workflow.get_last_checkpoint_id() if hasattr(workflow, "get_last_checkpoint_id") else None
-        )
-        yield await _build_run_finished_with_checkpointed_interrupts(
+        yield _build_run_finished_event(
             run_id=run_id,
             thread_id=thread_id,
-            interrupts=pending_interrupts,
-            workflow=workflow,
-            checkpoint_storage=checkpoint_storage,
-            known_checkpoint_id=checkpoint_id,
-            baseline_checkpoint_id=baseline_checkpoint_id,
+            interrupts=await _interrupts_with_pause_checkpoint(
+                interrupts=pending_interrupts,
+                workflow=workflow,
+                checkpoint_storage=checkpoint_storage,
+                baseline_checkpoint_id=None,
+            ),
         )
         return
 
     if checkpoint_id is None and not responses and not messages:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-        baseline_checkpoint_id = (
-            workflow.get_last_checkpoint_id() if hasattr(workflow, "get_last_checkpoint_id") else None
-        )
-        yield await _build_run_finished_with_checkpointed_interrupts(
+        yield _build_run_finished_event(
             run_id=run_id,
             thread_id=thread_id,
-            interrupts=pending_interrupts,
-            workflow=workflow,
-            checkpoint_storage=checkpoint_storage,
-            known_checkpoint_id=checkpoint_id,
-            baseline_checkpoint_id=baseline_checkpoint_id,
+            interrupts=await _interrupts_with_pause_checkpoint(
+                interrupts=pending_interrupts,
+                workflow=workflow,
+                checkpoint_storage=checkpoint_storage,
+                baseline_checkpoint_id=None,
+            ),
         )
         return
 
@@ -1318,8 +1311,6 @@ async def run_workflow_stream(
     if checkpoint_storage is not None or checkpoint_id is not None:
         checkpoint_kwargs = {"checkpoint_storage": checkpoint_storage, "checkpoint_id": checkpoint_id}
 
-    baseline_checkpoint_id = workflow.get_last_checkpoint_id() if hasattr(workflow, "get_last_checkpoint_id") else None
-
     try:
         telemetry_conversation_id = str(supplied_thread_id) if supplied_thread_id is not None else None
         telemetry_context = partial(_use_telemetry_conversation_id, telemetry_conversation_id)
@@ -1369,14 +1360,14 @@ async def run_workflow_stream(
                         yield end_event
                     if not interrupts:
                         interrupts.extend(_interrupts_from_pending_requests(await _pending_request_events(workflow)))
-                    yield await _build_run_finished_with_checkpointed_interrupts(
+                    yield _build_run_finished_event(
                         run_id=run_id,
                         thread_id=thread_id,
-                        interrupts=interrupts,
-                        workflow=workflow,
-                        checkpoint_storage=checkpoint_storage,
-                        known_checkpoint_id=checkpoint_id,
-                        baseline_checkpoint_id=baseline_checkpoint_id,
+                        interrupts=await _interrupts_with_pause_checkpoint(
+                            interrupts=interrupts,
+                            workflow=workflow,
+                            checkpoint_storage=checkpoint_storage,
+                        ),
                     )
                     terminal_emitted = True
                 elif state_value not in _TERMINAL_STATES:
@@ -1524,12 +1515,12 @@ async def run_workflow_stream(
     if not terminal_emitted and not run_error_emitted:
         if not interrupts:
             interrupts.extend(_interrupts_from_pending_requests(await _pending_request_events(workflow)))
-        yield await _build_run_finished_with_checkpointed_interrupts(
+        yield _build_run_finished_event(
             run_id=run_id,
             thread_id=thread_id,
-            interrupts=interrupts,
-            workflow=workflow,
-            checkpoint_storage=checkpoint_storage,
-            known_checkpoint_id=checkpoint_id,
-            baseline_checkpoint_id=baseline_checkpoint_id,
+            interrupts=await _interrupts_with_pause_checkpoint(
+                interrupts=interrupts,
+                workflow=workflow,
+                checkpoint_storage=checkpoint_storage,
+            ),
         )

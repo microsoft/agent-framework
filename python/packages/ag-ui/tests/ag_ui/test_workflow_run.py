@@ -118,8 +118,9 @@ async def test_pause_checkpoint_id_ignores_competing_shared_latest() -> None:
     """Prefer this runner's pause checkpoint over a newer shared get_latest() winner."""
     from agent_framework import WorkflowCheckpoint
 
+    from agent_framework_ag_ui._run_common import _build_run_finished_event
     from agent_framework_ag_ui._workflow_run import (
-        _build_run_finished_with_checkpointed_interrupts,
+        _interrupts_with_pause_checkpoint,
         _pause_checkpoint_id_for_interrupts,
     )
 
@@ -169,22 +170,22 @@ async def test_pause_checkpoint_id_ignores_competing_shared_latest() -> None:
     assert latest is not None
     assert latest.checkpoint_id == competing.checkpoint_id
 
-    # baseline=None: treat as first advertisement after the pause run already advanced the runner id.
+    # Workflow-owned baseline from the pause run should already allow advertising pause_id.
     resolved = await _pause_checkpoint_id_for_interrupts(
         workflow=workflow,
         checkpoint_storage=storage,
         interrupts=interrupt_payload,
-        baseline_checkpoint_id=None,
     )
     assert resolved == pause_id
 
-    rebuilt = await _build_run_finished_with_checkpointed_interrupts(
-        run_id="run-1",
-        thread_id="thread-1",
-        interrupts=interrupt_payload,
-        workflow=workflow,
-        checkpoint_storage=storage,
-        baseline_checkpoint_id=None,
+    rebuilt = _build_run_finished_event(
+        "run-1",
+        "thread-1",
+        interrupts=await _interrupts_with_pause_checkpoint(
+            interrupts=interrupt_payload,
+            workflow=workflow,
+            checkpoint_storage=storage,
+        ),
     )
     rebuilt_interrupts = _interrupts_from_run_finished(rebuilt)
     assert rebuilt_interrupts[0]["metadata"]["agent_framework"]["checkpoint_id"] == pause_id
@@ -252,12 +253,12 @@ async def test_resolve_pause_checkpoint_id_is_run_scoped_without_storage() -> No
     from agent_framework_ag_ui._workflow_run import _pause_checkpoint_id_for_interrupts
 
     interrupts = [{"id": "req-1", "value": "need-input"}]
+    workflow._run_baseline_checkpoint_id = "stale-from-prior-run"  # pyright: ignore[reportPrivateUsage]
     assert (
         await _pause_checkpoint_id_for_interrupts(
             workflow=workflow,
             checkpoint_storage=None,
             interrupts=interrupts,
-            baseline_checkpoint_id="stale-from-prior-run",
         )
         is None
     )
