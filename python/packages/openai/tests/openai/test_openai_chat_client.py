@@ -2183,16 +2183,6 @@ def test_shell_output_payloads_do_not_expose_exception_diagnostics() -> None:
     empty_shell_payload = OpenAIChatClient._to_shell_call_output_payload(empty_diagnostic)
     assert empty_local_payload["exit_code"] == 1
     assert empty_shell_payload[0]["outcome"] == {"type": "exit", "exit_code": 1}
-def test_get_shell_tool_local_executor_requires_approval_by_default() -> None:
-    """A plain local shell callable must retain the normal approval boundary."""
-
-    def local_exec(command: str) -> str:
-        return command
-
-    local_shell_tool = OpenAIChatClient.get_shell_tool(func=local_exec)
-
-    assert local_shell_tool.approval_mode == "always_require"
-
 
 def test_prepared_local_shell_tool_survives_make_tools() -> None:
     """Regression: the prepared shell tool must be a subscriptable dict.

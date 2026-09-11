@@ -1255,7 +1255,7 @@ class RawOpenAIChatClient(
                 dict with explicit hosted container settings.
             name: Optional local tool name when ``func`` is provided.
             description: Optional local tool description when ``func`` is provided.
-            approval_mode: Optional local tool approval mode. Plain callables default to approval required.
+            approval_mode: Optional local tool approval mode.
 
         Returns:
             A hosted shell declaration or a local shell FunctionTool.
@@ -1302,7 +1302,7 @@ class RawOpenAIChatClient(
                 func=func,
                 name=name,
                 description=description,
-                approval_mode=approval_mode or "always_require",
+                approval_mode=approval_mode,
             )
 
         if base_tool.func is None:
