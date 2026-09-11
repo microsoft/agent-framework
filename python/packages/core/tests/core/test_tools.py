@@ -18,6 +18,7 @@ from agent_framework import (
 from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
     _auto_invoke_function,
+    _format_argument_validation_error,
     _parse_annotation,
     _parse_inputs,
     normalize_function_invocation_configuration,
@@ -151,6 +152,22 @@ async def test_tool_decorator_with_json_schema_invoke_missing_required():
 
     with pytest.raises(TypeError, match="Missing required argument"):
         await search.invoke(arguments={})
+
+
+def test_format_argument_validation_error_unvetted_type_error_falls_back_to_generic_message():
+    """A plain TypeError (not _ToolArgumentValidationError) has no message vetted as value-free.
+
+    _format_argument_validation_error only trusts _ToolArgumentValidationError.safe_message and the
+    structured ValidationError summary to be free of submitted data; any other TypeError reaching it must
+    get a generic, tool-named default instead of forwarding str(exception) verbatim, since that text's
+    origin (and therefore its safety) is unknown here.
+    """
+    exc = TypeError("some internal detail: submitted-secret-value")
+
+    message = _format_argument_validation_error(exc, "mytool", {})
+
+    assert message == "Error: invalid arguments for tool 'mytool'."
+    assert "submitted-secret-value" not in message
 
 
 async def test_invoke_preserves_explicit_null_argument():
