@@ -6,7 +6,6 @@
 // discovers the toolbox's tools at runtime and invokes them locally.
 
 using System.ClientModel;
-using System.ClientModel.Primitives;
 using System.Net.Http.Headers;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
@@ -81,10 +80,7 @@ static async Task<string> CreateSampleToolboxAsync(string name, string endpoint,
     // script, not the application itself. This helper exists so the sample can
     // be run end-to-end without first setting a toolbox up by hand.
 
-    // The Foundry-Features header is currently required for toolbox CRUD operations.
-    var options = new AgentAdministrationClientOptions();
-    options.AddPolicy(new FoundryFeaturesPolicy("Toolboxes=V1Preview"), PipelinePosition.PerCall);
-    var adminClient = new AgentAdministrationClient(new Uri(endpoint), credential, options);
+    var adminClient = new AgentAdministrationClient(new Uri(endpoint), credential);
     var toolboxClient = adminClient.GetAgentToolboxes();
 
     // Delete existing toolbox if present (ignore 404).
@@ -112,26 +108,6 @@ static async Task<string> CreateSampleToolboxAsync(string name, string endpoint,
 
     Console.WriteLine($"Created toolbox '{created.Name}' v{created.Version} ({created.Tools.Count} tool(s))");
     return $"{endpoint}/toolboxes/{created.Name}/mcp?api-version=v{created.Version}";
-}
-
-// ---------------------------------------------------------------------------
-// Pipeline policy: adds the Foundry-Features header for toolbox CRUD calls
-// ---------------------------------------------------------------------------
-internal sealed class FoundryFeaturesPolicy(string feature) : PipelinePolicy
-{
-    private const string FeatureHeader = "Foundry-Features";
-
-    public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
-    {
-        message.Request.Headers.Add(FeatureHeader, feature);
-        ProcessNext(message, pipeline, currentIndex);
-    }
-
-    public override ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
-    {
-        message.Request.Headers.Add(FeatureHeader, feature);
-        return ProcessNextAsync(message, pipeline, currentIndex);
-    }
 }
 
 // ---------------------------------------------------------------------------

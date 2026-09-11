@@ -614,9 +614,16 @@ class FunctionTool(SerializationMixin):
             if func is None:
                 raise ToolException(f"Function '{self.name}' has no implementation.")
             # If we have a bound instance, call the function with self
-            if self._instance is not None:
-                return func(self._instance, *args, **kwargs)
-            return func(*args, **kwargs)
+            result = func(self._instance, *args, **kwargs) if self._instance is not None else func(*args, **kwargs)
+            return self._await_invocation_result(result) if inspect.isawaitable(result) else result
+        except Exception:
+            self.invocation_exception_count += 1
+            raise
+
+    async def _await_invocation_result(self, result: Any) -> Any:
+        """Await a function result and count exceptions raised by the awaitable."""
+        try:
+            return await result
         except Exception:
             self.invocation_exception_count += 1
             raise
@@ -626,9 +633,8 @@ class FunctionTool(SerializationMixin):
         func = self.func.func if isinstance(self.func, FunctionTool) else self.func
         if inspect.iscoroutinefunction(func) or getattr(self, "_invoke_sync_on_event_loop", False):
             res = self.__call__(**call_kwargs)
-            return await res if inspect.isawaitable(res) else res
-
-        res = await asyncio.to_thread(self.__call__, **call_kwargs)
+        else:
+            res = await asyncio.to_thread(self.__call__, **call_kwargs)
         return await res if inspect.isawaitable(res) else res
 
     @overload

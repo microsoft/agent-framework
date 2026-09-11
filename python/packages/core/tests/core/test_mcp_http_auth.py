@@ -732,3 +732,190 @@ async def test_cancelled_borrowed_session_caller_can_retry(mcp_http_server: MCPH
             finally:
                 release_setup.set()
                 await borrowed.close()
+
+
+def _kwargs_dependent_tool(client: httpx.AsyncClient) -> MCPStreamableHTTPTool:
+    """A tool whose header_provider can only authenticate when connection kwargs are seeded."""
+    return MCPStreamableHTTPTool(
+        name="seeded",
+        url="https://mcp.example/mcp",
+        http_client=client,
+        load_prompts=False,
+        header_provider=lambda kwargs: {"Authorization": kwargs["credential"]},
+    )
+
+
+@pytest.mark.parametrize("seeded", [True, False])
+async def test_seeded_connection_kwargs_authenticate_the_handshake(
+    mcp_http_server: MCPHTTPServer, seeded: bool
+) -> None:
+    client, requests, _ = mcp_http_server
+    tool = _kwargs_dependent_tool(client)
+    if seeded:
+        tool._seed_connection_kwargs({"credential": "token-a"})
+    try:
+        if not seeded:
+            with pytest.raises(ToolException):
+                await tool.connect()
+            return
+        async with tool:
+            await tool.call_tool("record", credential="token-a")
+        initializes = [
+            request
+            for request in requests
+            if request.method == "POST" and json.loads(request.content).get("method") == "initialize"
+        ]
+        assert [request.headers.get("Authorization") for request in initializes] == ["token-a"]
+    finally:
+        await tool.close()
+
+
+async def test_connection_kwargs_are_fixed_for_the_connection_and_cleared_on_close(
+    mcp_http_server: MCPHTTPServer,
+) -> None:
+    client, requests, _ = mcp_http_server
+    tool = _kwargs_dependent_tool(client)
+    tool._seed_connection_kwargs({"credential": "token-a"})
+    try:
+        async with tool:
+            # A later run must not re-authenticate an already-established connection.
+            tool._seed_connection_kwargs({"credential": "token-b"})
+            assert tool._connection_kwargs == {"credential": "token-a"}
+            # Call scope resolves independently of the connection scope.
+            await tool.call_tool("record", credential="token-c")
+        initializes = [
+            request
+            for request in requests
+            if request.method == "POST" and json.loads(request.content).get("method") == "initialize"
+        ]
+        assert [request.headers.get("Authorization") for request in initializes] == ["token-a"]
+        assert [request.headers.get("Authorization") for request in _calls(requests)] == ["token-c"]
+        assert tool._connection_kwargs is None
+        # The credential was released on close, so an unseeded reconnect is rejected.
+        with pytest.raises(ToolException):
+            await tool.connect()
+    finally:
+        await tool.close()
+
+
+async def test_standalone_static_header_provider_authenticates_without_a_run(mcp_http_server: MCPHTTPServer) -> None:
+    """A provider that ignores kwargs authenticates the handshake outside any agent run.
+
+    Pins the boundary of the connection-kwargs seeding: standalone use has no per-call kwargs
+    to seed from, so a closure/token-provider style provider is the supported shape there.
+    """
+    client, requests, _ = mcp_http_server
+    tool = MCPStreamableHTTPTool(
+        name="standalone",
+        url="https://mcp.example/mcp",
+        http_client=client,
+        load_prompts=False,
+        header_provider=lambda _kwargs: {"Authorization": "token-a"},
+    )
+    try:
+        async with tool:
+            await tool.call_tool("record")
+        authenticated = [
+            request
+            for request in requests
+            if request.method == "POST"
+            and json.loads(request.content).get("method") in {"initialize", "tools/list", "tools/call"}
+        ]
+        assert authenticated
+        assert all(request.headers.get("Authorization") == "token-a" for request in authenticated)
+    finally:
+        await tool.close()
+
+
+async def test_seeded_kwargs_missing_the_providers_key_fails_the_handshake(
+    mcp_http_server: MCPHTTPServer,
+) -> None:
+    """A key absent from seeded connection kwargs is a misconfiguration, not a tolerated ambient miss.
+
+    An unseeded connection legitimately has no per-call values, so a KeyError there is tolerated.
+    Once a run supplies kwargs, a provider asking for an absent key must fail loudly instead of
+    letting the handshake go out unauthenticated.
+    """
+    client, _, _ = mcp_http_server
+    tool = MCPStreamableHTTPTool(
+        name="mismatch",
+        url="https://mcp.example/mcp",
+        http_client=client,
+        load_prompts=False,
+        header_provider=lambda kwargs: {"Authorization": kwargs["credential"]},
+    )
+    tool._seed_connection_kwargs({"typo_credential": "token-a"})
+    try:
+        with pytest.raises(ToolException) as error:
+            await tool.connect()
+        assert "'credential'" in str(error.value)
+    finally:
+        await tool.close()
+
+
+async def test_run_supplying_no_kwargs_still_fails_a_kwargs_dependent_provider(
+    mcp_http_server: MCPHTTPServer,
+) -> None:
+    """Seeding an empty mapping is still seeding, so the provider's missing key must not be tolerated.
+
+    An empty mapping cannot distinguish a run that supplied no kwargs from a connection no run
+    ever seeded; only the latter has no way to carry the key and may proceed unauthenticated.
+    """
+    client, _, _ = mcp_http_server
+    tool = _kwargs_dependent_tool(client)
+    tool._seed_connection_kwargs({})
+    try:
+        with pytest.raises(ToolException) as error:
+            await tool.connect()
+        assert "'credential'" in str(error.value)
+    finally:
+        await tool.close()
+
+
+async def test_failed_connect_releases_the_seeded_credential(mcp_http_server: MCPHTTPServer) -> None:
+    """An abandoned connection attempt must not leave its credential for a later unseeded connect.
+
+    A rejected handshake unwinds without going through close(), so the release has to happen on
+    the failure path too; otherwise a standalone reconnect re-sends the failed run's credential.
+    """
+    client, requests, _ = mcp_http_server
+    tool = _kwargs_dependent_tool(client)
+    tool._seed_connection_kwargs({"credential": "token-rejected"})
+    try:
+        with pytest.raises(ToolException):
+            await tool.connect()
+        assert tool._connection_kwargs is None
+        with pytest.raises(ToolException):
+            await tool.connect()
+        initializes = [
+            request
+            for request in requests
+            if request.method == "POST" and json.loads(request.content).get("method") == "initialize"
+        ]
+        assert [request.headers.get("Authorization") for request in initializes] == ["token-rejected", None]
+    finally:
+        await tool.close()
+
+
+async def test_a_second_run_cannot_replace_an_unconnected_claim(mcp_http_server: MCPHTTPServer) -> None:
+    """The first run to seed owns the connection, even before its handshake completes.
+
+    is_connected only turns true after initialize returns, so it cannot by itself stop a
+    concurrent run from swapping the credential mid-handshake and authenticating the shared
+    connection as the wrong caller.
+    """
+    client, requests, _ = mcp_http_server
+    tool = _kwargs_dependent_tool(client)
+    tool._seed_connection_kwargs({"credential": "token-a"})
+    tool._seed_connection_kwargs({"credential": "token-b"})
+    try:
+        async with tool:
+            pass
+        initializes = [
+            request
+            for request in requests
+            if request.method == "POST" and json.loads(request.content).get("method") == "initialize"
+        ]
+        assert [request.headers.get("Authorization") for request in initializes] == ["token-a"]
+    finally:
+        await tool.close()
