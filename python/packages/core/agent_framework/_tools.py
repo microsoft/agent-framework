@@ -2761,6 +2761,45 @@ def _store_pending_pause_batch(
         state.pop(_PENDING_PAUSE_BATCH_KEY, None)
 
 
+def _cancel_pending_pause_batch_request(  # pyright: ignore[reportUnusedFunction]
+    invocation_session: AgentSession | None,
+    request_id: str,
+) -> None:
+    """Remove one cancelled workflow request from session-backed pause state."""
+    state = _get_tool_approval_state(invocation_session, create=False)
+    if state is None:
+        return
+
+    raw_batch = state.get(_PENDING_PAUSE_BATCH_KEY)
+    if isinstance(raw_batch, Mapping):
+        batch = cast(Mapping[str, Any], raw_batch)
+        raw_items: Any = batch.get("items")
+        if isinstance(raw_items, list):
+            remaining_items: list[Any] = []
+            for raw_item in cast(list[Any], raw_items):
+                if not isinstance(raw_item, dict):
+                    remaining_items.append(raw_item)
+                    continue
+                item = cast(dict[str, Any], raw_item)
+                request = _content_from_state(item.get("request"))
+                request_ids: set[str] = {request.id} if request is not None and request.id is not None else set()
+                if request is not None and request.function_call is not None and request.function_call.id is not None:
+                    request_ids.add(request.function_call.id)
+                if request_id not in request_ids:
+                    remaining_items.append(item)
+            if remaining_items:
+                state[_PENDING_PAUSE_BATCH_KEY] = {"items": remaining_items}
+            else:
+                state.pop(_PENDING_PAUSE_BATCH_KEY, None)
+
+    pending = _load_pending_approval_requests(invocation_session)
+    pending.pop(request_id, None)
+    for pending_id, request in list(pending.items()):
+        if request.function_call is not None and request.function_call.id == request_id:
+            pending.pop(pending_id)
+    _store_pending_approval_requests(invocation_session, list(pending.values()))
+
+
 def _stage_pending_pause_batch_responses(
     messages: list[Message],
     invocation_session: AgentSession | None,
@@ -2839,18 +2878,21 @@ def _stage_pending_pause_batch_responses(
             if item is None:
                 # History can replay responses staged on an earlier run. Consume those
                 # occurrences before assigning later same-call_id results.
+                candidate_state = candidate.to_dict()
+                matching_stored_slots = [
+                    slot for slot in slots if slot.get("response") is not None and slot["response"] == candidate_state
+                ]
                 item = next(
-                    (
-                        slot
-                        for slot in slots
-                        if id(slot) not in observed_stored_slots
-                        and slot.get("response") is not None
-                        and slot["response"] == candidate.to_dict()
-                    ),
+                    (slot for slot in matching_stored_slots if id(slot) not in observed_stored_slots),
                     None,
                 )
                 if item is not None:
                     observed_stored_slots.add(id(item))
+                elif matching_stored_slots:
+                    # A repeated id-less history item is a replay of an already staged
+                    # response, not a response for another occurrence sharing call_id.
+                    matched_content_ids.add(id(candidate))
+                    continue
                 else:
                     item = next((slot for slot in slots if slot.get("response") is None), None)
             if item is None:
@@ -2883,6 +2925,60 @@ def _stage_pending_pause_batch_responses(
     state.pop(_PENDING_PAUSE_BATCH_KEY, None)
     messages.append(Message(role="user", contents=ordered_responses))
     return False, host_result_ids
+
+
+def _has_partial_mixed_pause_batch_without_session(messages: Sequence[Message]) -> bool:
+    """Return whether a stateless transcript partially answers a mixed pause barrier."""
+    approval_requests: list[Content] = []
+    host_requests: list[Content] = []
+    approval_responses: list[Content] = []
+    host_responses: list[Content] = []
+    for message in messages:
+        for content in message.contents:
+            if content.type == "function_approval_request":
+                approval_requests.append(content)
+            elif content.type == "function_call" and content.user_input_request:
+                host_requests.append(content)
+            elif content.type == "function_approval_response":
+                approval_responses.append(content)
+            elif content.type == "function_result":
+                host_responses.append(content)
+
+    if not approval_requests or not host_requests or not (approval_responses or host_responses):
+        return False
+
+    answered_approval_ids = {response.id for response in approval_responses if response.id is not None}
+    approval_complete = all(
+        request.id in answered_approval_ids
+        or (
+            request.function_call is not None
+            and request.function_call.id is not None
+            and request.function_call.id in answered_approval_ids
+        )
+        for request in approval_requests
+    )
+
+    unmatched_host_requests = list(host_requests)
+    for response in host_responses:
+        matching_index: int | None = None
+        if response.id is not None:
+            matching_index = next(
+                (
+                    index
+                    for index, request in enumerate(unmatched_host_requests)
+                    if request.id == response.id and request.call_id == response.call_id
+                ),
+                None,
+            )
+        else:
+            matching_indexes = [
+                index for index, request in enumerate(unmatched_host_requests) if request.call_id == response.call_id
+            ]
+            if len(matching_indexes) == 1:
+                matching_index = matching_indexes[0]
+        if matching_index is not None:
+            unmatched_host_requests.pop(matching_index)
+    return not approval_complete or bool(unmatched_host_requests)
 
 
 def _bind_approval_response_to_pending_request(
@@ -3849,6 +3945,11 @@ async def _resolve_approval_responses(
     """
     from ._middleware import MiddlewareFailure
     from ._types import Message
+
+    if not _has_authoritative_approval_session(invocation_session) and _has_partial_mixed_pause_batch_without_session(
+        prepared_messages
+    ):
+        raise RuntimeError("A caller-owned AgentSession is required to resume a mixed pause batch partially.")
 
     incomplete_pause_batch, host_result_ids = _stage_pending_pause_batch_responses(
         prepared_messages,

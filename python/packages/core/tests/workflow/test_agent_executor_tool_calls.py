@@ -763,6 +763,47 @@ async def test_agent_executor_mixed_pause_batch_waits_and_preserves_occurrence_o
     ]
 
 
+async def test_agent_executor_mixed_pause_cancellation_terminates_corresponding_item() -> None:
+    """Cancelling one mixed-pause request must not leave the session barrier stuck."""
+
+    def execute_approval() -> str:
+        return "approved"
+
+    approval_tool = FunctionTool(name="approval_func", func=execute_approval, approval_mode="always_require")
+    host_tool = FunctionTool(
+        name="host_func",
+        func=None,
+        description="A Host-owned function",
+        input_model={"type": "object", "properties": {"value": {"type": "integer"}}},
+    )
+    client = MixedPauseBatchMockChatClient()
+    agent = Agent(
+        client=client,
+        name="MixedPauseCancellationAgent",
+        tools=[approval_tool, host_tool],
+    )
+    workflow = WorkflowBuilder(start_executor=agent, output_from=[test_executor]).add_edge(agent, test_executor).build()
+
+    paused = await workflow.run("run mixed batch")
+    requests = {event.request_id: event for event in paused.get_request_info_events()}
+    cancelled = await workflow.cancel_pending_requests(["host-occurrence-1"])
+
+    assert cancelled.get_outputs() == []
+
+    resumed = await workflow.run(
+        responses={
+            "approval-occurrence": requests["approval-occurrence"].data.to_function_approval_response(True),
+            "host-occurrence-2": Content.from_function_result(
+                call_id="reused-call-id",
+                result="host-two",
+            ),
+        }
+    )
+
+    assert resumed.get_outputs() == ["done"]
+    assert client._iteration == 2
+
+
 async def test_agent_executor_declaration_only_tool_emits_request_info() -> None:
     """Test that AgentExecutor emits request_info when agent calls a declaration-only tool."""
     agent = Agent(

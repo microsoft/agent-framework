@@ -349,6 +349,9 @@ class AgentExecutor(Executor):
         ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate],
     ) -> None:
         """Release an agent-owned user-input request after workflow cancellation."""
+        from .._tools import _cancel_pending_pause_batch_request  # pyright: ignore[reportPrivateUsage]
+
+        _cancel_pending_pause_batch_request(self._session, request_id)
         self._pending_agent_requests.pop(request_id, None)
         if not self._pending_agent_requests:
             await self._resume_with_pending_responses(ctx)
