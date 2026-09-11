@@ -46,6 +46,7 @@ from openai.types.responses import (
     Response,
     ResponseCompletedEvent,
     ResponseFailedEvent,
+    ResponseFunctionCallArgumentsDeltaEvent,
     ResponseFunctionCallArgumentsDoneEvent,
     ResponseFunctionToolCall,
     ResponseIncompleteEvent,
@@ -7381,7 +7382,7 @@ def test_streaming_response_completed_sets_created_at() -> None:
     [
         ("stop", False, False, "stop"),
         ("length", False, True, "length"),
-        ("tool_calls", False, False, None),
+        ("tool_calls", False, False, "tool_calls"),
         ("stop", True, True, "tool_calls"),
         ("length", True, True, "tool_calls"),
         ("tool_calls", True, False, None),
@@ -7518,6 +7519,16 @@ def _typed_function_call_events(
             )
         )
         sequence_number += 1
+        events.append(
+            ResponseFunctionCallArgumentsDeltaEvent(
+                delta=function_call.arguments,
+                item_id=function_call.id or "",
+                output_index=index,
+                sequence_number=sequence_number,
+                type="response.function_call_arguments.delta",
+            )
+        )
+        sequence_number += 1
         if index in arguments_done:
             events.append(
                 ResponseFunctionCallArgumentsDoneEvent(
@@ -7554,6 +7565,39 @@ async def _parse_typed_response_stream(events: Sequence[object]) -> list[ChatRes
         return [update async for update in stream]
 
 
+async def _run_typed_function_loop(
+    first_events: Sequence[object],
+    tool_instance: FunctionTool,
+) -> tuple[list[ChatResponseUpdate], ChatResponse, AsyncMock]:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    final_events = [
+        ResponseCompletedEvent(
+            response=_typed_terminal_response([]),
+            sequence_number=0,
+            type="response.completed",
+        )
+    ]
+    create = AsyncMock(
+        side_effect=[
+            _FakeAsyncEventStream(first_events),
+            _FakeAsyncEventStream(final_events),
+        ]
+    )
+    with (
+        patch.object(client, "_prepare_request", new=AsyncMock(return_value=(client.client, {}, {}))),
+        patch.object(client.client.responses, "create", new=create),
+    ):
+        stream = _as_chat_response_stream(
+            client.get_response(
+                [Message(role="user", contents=["Call the tool"])],
+                options={"tools": [tool_instance]},
+                stream=True,
+            )
+        )
+        updates = [update async for update in stream]
+        return updates, await stream.get_final_response(), create
+
+
 @pytest.mark.parametrize(
     ("arguments_done", "output_items_done", "expected_finish_reason"),
     [
@@ -7587,6 +7631,156 @@ async def test_streaming_parallel_function_calls_commit_all_or_nothing(
 
     assert [update.raw_representation for update in updates] == events
     assert updates[-1].finish_reason == expected_finish_reason
+    calls = [content for update in updates for content in update.contents if content.type == "function_call"]
+    assert [(call.call_id, call.arguments) for call in calls] == [
+        ("call_0", '{"index": 0}'),
+        ("call_1", '{"index": 1}'),
+    ]
+
+
+async def test_streaming_completed_response_requires_completed_function_call_item() -> None:
+    function_call = _typed_function_call(0, status="incomplete")
+    events = _typed_function_call_events([function_call], arguments_done={0}, output_items_done={0})
+    events.append(
+        ResponseCompletedEvent(
+            response=_typed_terminal_response([function_call]),
+            sequence_number=len(events),
+            type="response.completed",
+        )
+    )
+
+    updates = await _parse_typed_response_stream(events)
+
+    assert updates[-1].finish_reason == "stop"
+
+
+@pytest.mark.parametrize(
+    ("arguments_done", "output_items_done", "terminal_status", "expected_executions", "expected_provider_calls"),
+    [
+        ({0}, {0}, "completed", 1, 2),
+        (set(), {0}, "completed", 0, 1),
+        ({0}, set(), "completed", 0, 1),
+        (set(), set(), "completed", 0, 1),
+        ({0}, {0}, "incomplete", 0, 1),
+        ({0}, {0}, "failed", 0, 1),
+    ],
+)
+async def test_openai_function_loop_executes_only_committed_streamed_calls(
+    arguments_done: set[int],
+    output_items_done: set[int],
+    terminal_status: str,
+    expected_executions: int,
+    expected_provider_calls: int,
+) -> None:
+    executions = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup(index: int) -> str:
+        nonlocal executions
+        executions += 1
+        return str(index)
+
+    function_call = _typed_function_call(0)
+    events = _typed_function_call_events(
+        [function_call],
+        arguments_done=arguments_done,
+        output_items_done=output_items_done,
+    )
+    response = _typed_terminal_response(
+        [function_call],
+        status=terminal_status,
+        incomplete_reason="max_output_tokens" if terminal_status == "incomplete" else None,
+    )
+    if terminal_status == "completed":
+        terminal_event: object = ResponseCompletedEvent(
+            response=response,
+            sequence_number=len(events),
+            type="response.completed",
+        )
+    elif terminal_status == "incomplete":
+        terminal_event = ResponseIncompleteEvent(
+            response=response,
+            sequence_number=len(events),
+            type="response.incomplete",
+        )
+    else:
+        terminal_event = ResponseFailedEvent(
+            response=response,
+            sequence_number=len(events),
+            type="response.failed",
+        )
+    events.append(terminal_event)
+
+    updates, final, create = await _run_typed_function_loop(events, lookup)
+
+    assert executions == expected_executions
+    assert create.await_count == expected_provider_calls
+    assert any(content.type == "function_call" for update in updates for content in update.contents)
+    result_contents = [
+        content for message in final.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert len(result_contents) == expected_executions
+
+
+async def test_uncommitted_streamed_call_does_not_request_approval() -> None:
+    @tool(name="lookup", approval_mode="always_require")
+    def lookup(index: int) -> str:
+        raise AssertionError("uncommitted call must not execute")
+
+    function_call = _typed_function_call(0)
+    events = _typed_function_call_events([function_call], arguments_done=set(), output_items_done=set())
+    events.append(
+        ResponseCompletedEvent(
+            response=_typed_terminal_response([function_call]),
+            sequence_number=len(events),
+            type="response.completed",
+        )
+    )
+
+    updates, final, create = await _run_typed_function_loop(events, lookup)
+
+    assert create.await_count == 1
+    assert not any(content.type == "function_approval_request" for update in updates for content in update.contents)
+    assert not any(
+        content.type == "function_approval_request"
+        for message in final.messages
+        for content in message.contents
+    )
+
+
+async def test_committed_malformed_arguments_fail_before_tool_body() -> None:
+    executions = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup(index: int) -> str:
+        nonlocal executions
+        executions += 1
+        return str(index)
+
+    function_call = ResponseFunctionToolCall(
+        arguments='{"index":',
+        call_id="call_0",
+        id="fc_0",
+        name="lookup",
+        status="completed",
+        type="function_call",
+    )
+    events = _typed_function_call_events([function_call], arguments_done={0}, output_items_done={0})
+    events.append(
+        ResponseCompletedEvent(
+            response=_typed_terminal_response([function_call]),
+            sequence_number=len(events),
+            type="response.completed",
+        )
+    )
+
+    _, final, create = await _run_typed_function_loop(events, lookup)
+
+    assert executions == 0
+    assert create.await_count == 2
+    results = [content for message in final.messages for content in message.contents if content.type == "function_result"]
+    assert len(results) == 1
+    assert results[0].exception is not None
 
 
 async def test_streaming_function_call_done_event_order_is_independent() -> None:

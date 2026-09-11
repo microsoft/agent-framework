@@ -168,7 +168,9 @@ def _resolve_finish_reason(
     function_calls_committed: bool,
 ) -> FinishReason | None:
     """Resolve function-call authorization without trusting a speculative provider reason."""
-    if has_function_calls and function_calls_committed:
+    if not has_function_calls:
+        return provider_finish_reason
+    if function_calls_committed:
         return FinishReason("tool_calls")
     if provider_finish_reason == "tool_calls":
         return None
@@ -2694,6 +2696,7 @@ class RawOpenAIChatClient(
             function_calls_committed = getattr(response, "status", None) == "completed" and all(
                 function_call_commitments.get((output_index, getattr(item, "id", None) or ""), 0)
                 == _FUNCTION_CALL_COMMITTED
+                and getattr(item, "status", None) == "completed"
                 for output_index, item in function_calls
             )
         return _resolve_finish_reason(
