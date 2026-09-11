@@ -124,19 +124,41 @@ The implementation is validated through:
 
 ### Usage Example
 
+The name passed to `TracerProviderBuilder.AddSource` must match the source name the agent emits under, otherwise the
+provider silently receives no agent spans. When no source name is supplied to `UseOpenTelemetry`, the agent emits under
+`OpenTelemetryAgent.DefaultSourceName`, so that is the value to register. That property is marked
+`[Experimental("MAAI001")]`; suppress that diagnostic in your csproj to use it.
+
 ```csharp
 // Create TracerProvider
 using var tracerProvider = Sdk.CreateTracerProviderBuilder()
-    .AddSource(AgentOpenTelemetryConsts.DefaultSourceName)
+    .AddSource(OpenTelemetryAgent.DefaultSourceName)
     .AddConsoleExporter()
     .Build();
 
 // Create and wrap agent with telemetry
 var baseAgent = new ChatClientAgent(chatClient, options);
-using var telemetryAgent = baseAgent.WithOpenTelemetry();
+using var telemetryAgent = baseAgent.AsBuilder()
+    .UseOpenTelemetry()
+    .Build();
 
 // Use agent normally - telemetry is captured automatically
 var response = await telemetryAgent.RunAsync(messages);
+```
+
+To emit under a custom source name, pass the same value to both calls:
+
+```csharp
+const string SourceName = "MyCompany.MyAgent";
+
+using var tracerProvider = Sdk.CreateTracerProviderBuilder()
+    .AddSource(SourceName)
+    .AddConsoleExporter()
+    .Build();
+
+using var telemetryAgent = baseAgent.AsBuilder()
+    .UseOpenTelemetry(sourceName: SourceName)
+    .Build();
 ```
 
 ### Relationship to Microsoft.Extensions.AI
