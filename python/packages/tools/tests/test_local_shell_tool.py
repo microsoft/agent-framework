@@ -1,15 +1,29 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import json
 import os
 import sys
+from collections.abc import Awaitable, Mapping, Sequence
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from agent_framework import Agent, AgentSession, BaseChatClient, ChatResponse, Content, FunctionInvocationLayer, Message
+from agent_framework.security import (
+    ContentLabel,
+    IntegrityLabel,
+    LabelTrackingFunctionMiddleware,
+    PolicyEnforcementFunctionMiddleware,
+)
 
 from agent_framework_tools._feature_usage import FeatureIndex
 from agent_framework_tools.shell import LocalShellTool, ShellCommandError, ShellPolicy
 from agent_framework_tools.shell._executor import _popen_kwargs_for_group, run_stateless
+
+_TEST_SHELL = "agent-framework-test-shell"
+_APPROVED_COMMAND = "printf '%s' approved-value"
+_ALTERNATE_COMMAND = "printf '%s' alternate-value"
 
 
 class _FakeExecProcess:
@@ -30,6 +44,69 @@ class _FakeExecProcess:
             raise result
         stdout, stderr = result
         return stdout, stderr
+
+
+class _ScriptedFunctionClient(FunctionInvocationLayer, BaseChatClient):
+    def __init__(self, responses: Sequence[ChatResponse]) -> None:
+        super().__init__()
+        self._responses = list(responses)
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse]:
+        assert not stream
+
+        async def get_response() -> ChatResponse:
+            if self._responses:
+                return self._responses.pop(0)
+            return ChatResponse(messages=Message(role="assistant", contents=["done"]))
+
+        return get_response()
+
+
+async def _request_variable_shell_approval(
+    session_id: str,
+) -> tuple[Agent[Any], AgentSession, Content, str, LabelTrackingFunctionMiddleware]:
+    tracker = LabelTrackingFunctionMiddleware()
+    session = AgentSession(session_id=session_id)
+    variable_id = tracker.get_variable_store(session).store(
+        _APPROVED_COMMAND,
+        ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+    )
+    function_call = Content.from_function_call(
+        call_id="provider-shell-call",
+        name="run_shell",
+        arguments={"command": f"[{variable_id}]"},
+        id="shell-call-occurrence",
+    )
+    client = _ScriptedFunctionClient([
+        ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+    ])
+    # Isolate the variable-aware policy approval from the tool's independent blanket approval.
+    shell = LocalShellTool(
+        mode="stateless",
+        shell=[_TEST_SHELL],
+        approval_mode="never_require",
+        acknowledge_unsafe=True,
+    )
+    agent = Agent(
+        client=client,
+        tools=[shell.as_function()],
+        middleware=[
+            tracker,
+            PolicyEnforcementFunctionMiddleware(approval_on_violation=True),
+        ],
+    )
+
+    response = await agent.run("Run the hidden command", session=session)
+
+    assert len(response.user_input_requests) == 1
+    return agent, session, response.user_input_requests[0], variable_id, tracker
 
 
 async def test_stateless_echo() -> None:
@@ -317,6 +394,96 @@ async def test_as_function_wires_kind_and_approval() -> None:
     assert ft.name == "shell_exec"
     assert ft.kind == "shell"
     assert ft.approval_mode == "always_require"
+
+
+async def test_variable_shell_approval_executes_only_the_reviewed_command() -> None:
+    agent, session, request, variable_id, _ = await _request_variable_shell_approval("exact-shell-approval")
+
+    assert request.id == "shell-call-occurrence"
+    assert request.function_call is not None
+    assert request.function_call.call_id == "provider-shell-call"
+    assert request.function_call.name == "run_shell"
+    assert request.function_call.parse_arguments() == {"command": f"[{variable_id}]"}
+
+    create_process = AsyncMock(return_value=_FakeExecProcess(communicate_results=[(b"approved-value", b"")]))
+    with patch("agent_framework_tools.shell._executor.asyncio.create_subprocess_exec", create_process):
+        await agent.run(request.to_function_approval_response(True), session=session)
+
+    assert create_process.await_count == 1
+    assert create_process.await_args is not None
+    assert create_process.await_args.args == (_TEST_SHELL, "-c", _APPROVED_COMMAND)
+
+
+async def test_variable_shell_approval_blocks_changed_resolved_command() -> None:
+    agent, session, request, variable_id, _ = await _request_variable_shell_approval("changed-shell-variable")
+    security_state = session.state["__agent_framework_fides_security__"]
+    security_state["variables"][variable_id]["content"] = json.dumps(_ALTERNATE_COMMAND)
+
+    create_process = AsyncMock()
+    with patch("agent_framework_tools.shell._executor.asyncio.create_subprocess_exec", create_process):
+        response = await agent.run(request.to_function_approval_response(True), session=session)
+
+    create_process.assert_not_awaited()
+    replacement = response.user_input_requests
+    assert len(replacement) == 1
+    assert replacement[0].id != request.id
+    assert replacement[0].function_call is not None
+    assert replacement[0].function_call.parse_arguments() == {"command": f"[{variable_id}]"}
+
+
+@pytest.mark.parametrize("mutation", ["reference", "command", "arguments", "request_id", "call_id"])
+async def test_variable_shell_approval_substitutions_cannot_change_executed_argv(mutation: str) -> None:
+    agent, session, request, _, tracker = await _request_variable_shell_approval(f"substituted-shell-{mutation}")
+    response = Content.from_dict(request.to_function_approval_response(True).to_dict())
+    assert response.function_call is not None
+
+    if mutation == "reference":
+        alternate_variable_id = tracker.get_variable_store(session).store(
+            _ALTERNATE_COMMAND,
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        response.function_call.arguments = {"command": f"[{alternate_variable_id}]"}
+    elif mutation == "command":
+        response.function_call.arguments = {"command": _ALTERNATE_COMMAND}
+    elif mutation == "arguments":
+        response.function_call.arguments = {
+            "command": _ALTERNATE_COMMAND,
+            "unexpected": "substituted",
+        }
+    elif mutation == "request_id":
+        response.id = "different-request"
+    else:
+        response.function_call.call_id = "different-provider-call"
+
+    create_process = AsyncMock(
+        side_effect=lambda *_args, **_kwargs: _FakeExecProcess(communicate_results=[(b"approved-value", b"")])
+    )
+    with patch("agent_framework_tools.shell._executor.asyncio.create_subprocess_exec", create_process):
+        await agent.run(response, session=session)
+
+    if mutation == "request_id":
+        create_process.assert_not_awaited()
+    else:
+        assert create_process.await_count == 1
+        assert create_process.await_args is not None
+        assert create_process.await_args.args == (_TEST_SHELL, "-c", _APPROVED_COMMAND)
+
+
+async def test_variable_shell_approval_cannot_be_replayed_on_later_turn_or_session() -> None:
+    agent, session, request, _, _ = await _request_variable_shell_approval("shell-approval-replay")
+    approval = request.to_function_approval_response(True)
+    create_process = AsyncMock(
+        side_effect=lambda *_args, **_kwargs: _FakeExecProcess(communicate_results=[(b"approved-value", b"")])
+    )
+
+    with patch("agent_framework_tools.shell._executor.asyncio.create_subprocess_exec", create_process):
+        await agent.run(approval, session=session)
+        await agent.run(approval, session=session)
+        await agent.run(approval, session=AgentSession(session_id="different-shell-session"))
+
+    assert create_process.await_count == 1
+    assert create_process.await_args is not None
+    assert create_process.await_args.args == (_TEST_SHELL, "-c", _APPROVED_COMMAND)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX persistent reanchor test")
