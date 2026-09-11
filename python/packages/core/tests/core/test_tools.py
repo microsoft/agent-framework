@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
+import contextvars
 import threading
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
@@ -1608,6 +1609,38 @@ async def test_try_execute_function_call_groups_sequential_config():
     )
     assert not should_terminate
     assert execution_order == ["a_start", "a_end", "b_start", "b_end"]
+
+
+async def test_sequential_execution_isolates_contextvars() -> None:
+    """ContextVar mutations in one tool should not leak to subsequent tools in sequential mode.
+
+    Regression test requested by reviewer: ensures that `asyncio.create_task` is used
+    in the sequential execution path to isolate ContextVar mutations between tool calls.
+    """
+    test_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("test_var", default=None)
+
+    @tool()
+    async def tool_a() -> str:
+        test_var.set("polluted_by_a")
+        return "a"
+
+    @tool()
+    async def tool_b() -> str:
+        return test_var.get() or "None"
+
+    call_a = Content.from_function_call(call_id="1", name="tool_a", arguments="{}")
+    call_b = Content.from_function_call(call_id="2", name="tool_b", arguments="{}")
+
+    config = normalize_function_invocation_configuration({"allow_concurrent_invocation": False})
+    results, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[call_a, call_b],
+        tools=[tool_a, tool_b],
+        config=config,
+    )
+
+    assert not should_terminate
+    assert results[1][0].result == "None"
 
 
 # endregion

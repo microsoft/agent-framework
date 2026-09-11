@@ -1463,9 +1463,11 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
     - ``allow_concurrent_invocation``: Dictates whether multiple tool calls in a
       single message batch are executed concurrently (``True``, default) or
       one-by-one (``False``). When set to ``False``, tools run sequentially. If a
-      call requests termination or fails, the loop immediately stops dequeuing
-      subsequent calls and safely skips them, ensuring provider continuation
-      history remains resolved.
+      call requests termination (e.g., via middleware), the loop immediately stops
+      dequeuing subsequent calls and safely skips them, ensuring provider
+      continuation history remains resolved. Ordinary tool failures do not stop
+      the loop; they are converted to error results and the next tool in the
+      batch is executed.
 
     Note:
         ``max_iterations``, ``max_function_calls``, and ``max_duration_seconds``
@@ -1999,6 +2001,7 @@ async def _try_execute_function_call_groups(
         logger.debug("Returning visible function_approval_request contents and storing already-approved requests")
         visible_requests: list[Content] = []
         already_approved_requests: list[tuple[int, Content]] = []
+        batch_id = str(uuid4())
         for idx, function_call in enumerate(function_calls):
             if function_call.type != "function_call":
                 continue
@@ -2006,7 +2009,8 @@ async def _try_execute_function_call_groups(
                 id=function_call.id or function_call.call_id,  # type: ignore[arg-type]
                 function_call=function_call,
             )
-            approval_request.additional_properties = {"original_index": idx}
+            approval_request.additional_properties["original_index"] = idx
+            approval_request.additional_properties["batch_id"] = batch_id
             tool_name = function_call.name
             if tool_name is None:
                 visible_requests.append(approval_request)
@@ -2051,22 +2055,24 @@ async def _try_execute_function_call_groups(
     allow_concurrent = config.get("allow_concurrent_invocation", True)
     execution_results: list[tuple[list[Content], bool]] = []
 
-    async def _execute_single(call: Content) -> tuple[list[Content], bool]:
+    def _create_execution_task(call: Content) -> asyncio.Task[tuple[list[Content], bool]]:
         ctx = contextvars.copy_context()
-        return await ctx.run(
-            _execute_single_function_call,
-            call,
-            custom_args=custom_args,
-            config=config,
-            tool_map=tool_map,
-            invocation_session=invocation_session,
-            middleware_pipeline=middleware_pipeline,
-            live_tools=live_tools,
-            host_payload_budget=host_payload_budget,
+        return ctx.run(
+            asyncio.create_task,
+            _execute_single_function_call(
+                call,
+                custom_args=custom_args,
+                config=config,
+                tool_map=tool_map,
+                invocation_session=invocation_session,
+                middleware_pipeline=middleware_pipeline,
+                live_tools=live_tools,
+                host_payload_budget=host_payload_budget,
+            ),
         )
 
     if allow_concurrent:
-        tasks = [asyncio.create_task(_execute_single(call)) for call in function_calls]
+        tasks = [_create_execution_task(call) for call in function_calls]
         try:
             execution_results = await asyncio.gather(*tasks)
         except BaseException:
@@ -2076,7 +2082,7 @@ async def _try_execute_function_call_groups(
             raise
     else:
         for idx, call in enumerate(function_calls):
-            task = asyncio.create_task(_execute_single(call))
+            task = _create_execution_task(call)
             try:
                 res = await task
             except BaseException:
@@ -2147,9 +2153,10 @@ async def _execute_function_calls(
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
 ) -> _FunctionExecutionBatch:
+    config = config_provider()
     run_config = cast(
         "FunctionInvocationConfiguration",
-        dict(config_provider()) if config_provider() else {},
+        dict(config) if config else {},
     )
 
     tools = _extract_tools(options)
@@ -2505,9 +2512,12 @@ def _bind_approval_response_to_pending_request(
         additional_properties=rebound_properties,
         raw_representation=response.raw_representation,
     )
-    # Propagate the original batch index so sequential execution can restore model order
-    if request.additional_properties and "original_index" in request.additional_properties:
-        rebound.additional_properties["original_index"] = request.additional_properties["original_index"]
+    if request.additional_properties:
+        if "original_index" in request.additional_properties:
+            rebound.additional_properties["original_index"] = request.additional_properties["original_index"]
+        if "batch_id" in request.additional_properties:
+            rebound.additional_properties["batch_id"] = request.additional_properties["batch_id"]
+
     if consume:
         pending.pop(request_key, None)
         _save_pending_approval_requests(invocation_session, pending)
