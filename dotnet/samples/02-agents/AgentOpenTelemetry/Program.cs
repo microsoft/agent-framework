@@ -122,7 +122,9 @@ var agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
         tools: [AIFunctionFactory.Create(GetWeatherAsync)],
         clientFactory: client => client
             .AsBuilder()
-            .UseFunctionInvocation()
+            // Pass ILoggerFactory so UseFunctionInvocation can log tool-execution exceptions (see #2352 / #2211).
+            // Alternative: pass the IServiceProvider to Build(serviceProvider) and let the pipeline resolve ILoggerFactory.
+            .UseFunctionInvocation(loggerFactory)
             .UseOpenTelemetry(sourceName: SourceName, configure: (cfg) => cfg.EnableSensitiveData = true) // enable telemetry at the chat client level
             .Build())
     .AsBuilder()
