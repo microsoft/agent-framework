@@ -377,6 +377,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
   not invent one.
 - A completed function call/result pair is inert on later turns.
 - Informational-only and declaration-only calls are not executed as local tools.
+- Provider-hosted shell calls remain informational transcript content. Only a distinct, well-formed local-shell call
+  with an explicitly configured local executor can enter the local function loop and its approval boundary.
 
 ### Reasoning-bound calls
 
@@ -494,6 +496,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Calls across response messages | Every actionable call is executed once. | `test_base_client_executes_function_calls_across_multiple_response_messages` |
 | Parallel calls | Results retain the corresponding call ids and execution count. | `test_max_function_calls_limits_parallel_invocations`, `test_streaming_multiple_function_calls_parallel_execution` |
 | Informational-only call | The call is returned but not executed or approved. | `test_informational_only_function_call_is_not_invoked`, `test_informational_only_function_call_does_not_request_approval`, `test_streaming_informational_only_function_call_is_not_invoked` |
+| OpenAI hosted/local shell boundary | Hosted shell calls remain informational in streaming and non-streaming responses even when a local executor is configured; only valid explicit local-shell calls can execute, and local execution preserves its configured approval mode. | `packages/openai/tests/openai/test_openai_chat_client.py::test_response_content_creation_with_shell_call_remains_hosted_with_local_tool`, `test_parse_chunk_from_openai_shell_call_done_remains_hosted`, `test_mixed_shell_calls_only_invoke_explicit_local_shell_call`, `test_malformed_local_shell_call_is_not_executable`, `test_response_function_call_named_local_shell_is_informational`, `test_parse_chunk_function_call_named_local_shell_is_informational`, `test_local_shell_tool_requires_approval_before_function_loop_execution` |
 | Declaration-only call | The call is surfaced as user input and is not executed; streaming arguments appear once while finalized request metadata remains available. | `test_declaration_only_tool`, `test_streaming_declaration_only_tool_preserves_metadata_without_duplicate_arguments` |
 | Function invocation disabled | The client bypasses the invocation loop without losing invocation kwargs. | `test_function_invocation_config_enabled_false`, `test_function_invocation_config_enabled_false_preserves_invocation_kwargs`, `test_streaming_function_invocation_config_enabled_false` |
 | Runtime tool changes | Added tools become available on the next iteration and retain approval behavior. | `test_add_tools_available_next_iteration`, `test_add_tools_with_approval_required_tool` |
