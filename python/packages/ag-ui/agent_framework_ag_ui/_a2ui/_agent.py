@@ -720,7 +720,7 @@ class A2UIAgent:
         invocation_kwargs = run_kwargs.get("function_invocation_kwargs")
         custom_args = dict(cast(Mapping[str, Any], invocation_kwargs)) if invocation_kwargs is not None else {}
         try:
-            groups, should_terminate = await _try_execute_function_call_groups(
+            groups, should_terminate, _ = await _try_execute_function_call_groups(
                 custom_args=custom_args,
                 function_calls=server_calls,
                 tools=tools,
