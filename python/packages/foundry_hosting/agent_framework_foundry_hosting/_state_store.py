@@ -5,7 +5,6 @@ import asyncio
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import ClassVar, Generic, Protocol, TypeVar
-from weakref import WeakKeyDictionary
 
 from agent_framework import (
     AgentSession,
@@ -297,51 +296,72 @@ class FunctionApprovalStoreProvider(StoreProvider[FunctionApprovalStore]):
 # region Agent session persistence
 
 
+class _SessionStoreLoopCache:
+    """Per-event-loop cache of backing ``FoundryStateStore`` instances, by scope.
+
+    Anchored on the event loop (see ``FoundryAgentSessionStore._loop_cache``) so
+    that it -- along with the stores' pooled pipelines and credentials -- is
+    reclaimed together with the loop, rather than surviving in a process-global
+    map after the loop closes.
+    """
+
+    __slots__ = ("lock", "stores")
+
+    def __init__(self) -> None:
+        self.stores: dict[str, FoundryStateStore] = {}
+        self.lock = asyncio.Lock()
+
+
 class FoundryAgentSessionStore(SessionStore):
     """Agent session store backed by the `FoundryStateStore`."""
 
     DEFAULT_ROOT_SCOPE = "agent_sessions"
 
-    # Cache the backing ``FoundryStateStore`` per (event loop, scope). The store
-    # owns an async pipeline + credential bound to the loop it was created on, so
-    # it must never be reused from a different loop (e.g. across ``asyncio.run()``
-    # calls, or between loop-scoped tests) -- keying by the running loop prevents
-    # that and lets a closed loop's store be garbage-collected along with it.
-    # Keying by scope keeps a subclass that overrides ``DEFAULT_ROOT_SCOPE``
-    # isolated to its own collection rather than sharing (or clobbering) the base
-    # store.
-    #
-    # Within the long-running server (a single loop) every request shares one
-    # store, so the per-request credential rebuild + ``agent_sessions`` metadata
-    # round-trip that ``get_or_create`` would otherwise repeat is paid just once.
-    _store_cache: ClassVar[
-        "WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, FoundryStateStore]]"
-    ] = WeakKeyDictionary()
-    _cache_locks: ClassVar["WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]"] = WeakKeyDictionary()
+    # Name of the attribute under which each event loop carries its own
+    # ``_SessionStoreLoopCache`` (see ``_loop_cache``).
+    _LOOP_CACHE_ATTR: ClassVar[str] = "_agent_framework_foundry_session_store_cache"
 
     def __init__(self, platform_context: FoundryAgentRequestContext) -> None:
         self.platform_context = platform_context
 
     @classmethod
-    def _loop_lock(cls, loop: "asyncio.AbstractEventLoop") -> asyncio.Lock:
-        lock = cls._cache_locks.get(loop)
-        if lock is None:
-            # ``setdefault`` collapses a concurrent first-use to a single lock.
-            lock = cls._cache_locks.setdefault(loop, asyncio.Lock())
-        return lock
+    def _loop_cache(cls, loop: "asyncio.AbstractEventLoop") -> "_SessionStoreLoopCache | None":
+        # Store the cache ON the loop rather than in a process-global map keyed
+        # by the loop. A backing ``FoundryStateStore`` (and the ``asyncio.Lock``
+        # guarding its creation) strongly references the loop it was bound to, so
+        # holding either in a module-level ``WeakKeyDictionary`` would keep that
+        # "weak" key -- and the store's open pipeline + credential -- alive
+        # forever, leaking one entry per closed loop (e.g. every ``asyncio.run``).
+        # Anchored to the loop, the cache is collected together with the loop.
+        cache: _SessionStoreLoopCache | None = getattr(loop, cls._LOOP_CACHE_ATTR, None)
+        if cache is not None:
+            return cache
+        cache = _SessionStoreLoopCache()
+        try:
+            setattr(loop, cls._LOOP_CACHE_ATTR, cache)
+        except (AttributeError, TypeError):
+            # A C-level loop that forbids attribute assignment: skip caching
+            # rather than leak. Correctness is unaffected, only the reuse.
+            return None
+        return cache
 
     async def _get_store(self) -> FoundryStateStore:
         loop = asyncio.get_running_loop()
         scope = self.DEFAULT_ROOT_SCOPE
+        cache = self._loop_cache(loop)
+        if cache is None:
+            # Loop cannot hold the cache; resolve without reuse (and no leak).
+            return await FoundryStateStore.get_or_create(scope, user_isolation=True)
         # Fast path: already resolved on this loop -> no lock, no round-trip.
-        by_scope = FoundryAgentSessionStore._store_cache.get(loop)
-        if by_scope is not None and scope in by_scope:
-            return by_scope[scope]
-        async with self._loop_lock(loop):
-            by_scope = FoundryAgentSessionStore._store_cache.setdefault(loop, {})
-            if scope not in by_scope:
-                by_scope[scope] = await FoundryStateStore.get_or_create(scope, user_isolation=True)
-        return by_scope[scope]
+        store = cache.stores.get(scope)
+        if store is not None:
+            return store
+        async with cache.lock:
+            store = cache.stores.get(scope)
+            if store is None:
+                store = await FoundryStateStore.get_or_create(scope, user_isolation=True)
+                cache.stores[scope] = store
+        return store
 
     async def get(self, session_id: str) -> AgentSession | None:
         # The shared store is intentionally NOT entered as an ``async with``

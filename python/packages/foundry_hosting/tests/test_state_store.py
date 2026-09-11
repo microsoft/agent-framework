@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -74,18 +74,15 @@ def _platform_context(call_id: str = "call-1", user_id: str = "user-1") -> Found
 
 
 @pytest.fixture(autouse=True)
-def _reset_agent_session_store_cache() -> Iterator[None]:
-    """Isolate the FoundryAgentSessionStore per-(loop, scope) state-store cache.
+def _reset_agent_session_store_cache() -> None:
+    """Guard the FoundryAgentSessionStore per-(loop, scope) state-store cache.
 
-    The backing store is cached per event loop and scope; clear the caches
-    before and after every test so a test's mocked ``get_or_create`` never leaks
-    into another test that happens to share an event loop.
+    The backing store is cached on the running event loop itself, so a store (and
+    its mocked ``get_or_create``) cannot outlive the loop that created it. Every
+    test runs on its own function-scoped event loop, so the cache is inherently
+    isolated per test -- no explicit teardown is required.
     """
-    FoundryAgentSessionStore._store_cache.clear()
-    FoundryAgentSessionStore._cache_locks.clear()
-    yield
-    FoundryAgentSessionStore._store_cache.clear()
-    FoundryAgentSessionStore._cache_locks.clear()
+    return None
 
 
 def test_storage_providers_use_public_abstraction() -> None:
@@ -552,9 +549,18 @@ async def test_agent_session_store_concurrent_init_resolves_once() -> None:
     store.get_item = AsyncMock(return_value=None)
     session_store = FoundryAgentSessionStore(_platform_context())
 
+    async def _slow_get_or_create(scope: str, *, user_isolation: bool) -> MagicMock:
+        # Suspend before returning so every gathered task reaches ``_get_store``
+        # and blocks on the creation lock while the first resolve is in flight.
+        # A non-suspending mock would let the first task populate the cache
+        # synchronously, so even a lock-less implementation would pass -- this
+        # forces genuine contention that exercises the lock + second cache check.
+        await asyncio.sleep(0)
+        return store
+
     with patch(
         "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
-        new=AsyncMock(return_value=store),
+        new=AsyncMock(side_effect=_slow_get_or_create),
     ) as get_or_create:
         await asyncio.gather(*(session_store.get(f"s{i}") for i in range(25)))
 
