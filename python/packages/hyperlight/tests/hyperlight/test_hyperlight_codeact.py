@@ -395,6 +395,14 @@ class _FakeSandboxWithBoundedOutputs(_FakeSandbox):
             (output_root / "nested").mkdir()
             (output_root / "nested" / "report.bin").write_bytes(b"data")
             self.output_files = ["nested/report.bin"]
+        elif code == "create-wide-output":
+            for index in range(101):
+                (output_root / f"directory-{index}").mkdir()
+        elif code == "create-deep-output":
+            current = output_root
+            for index in range(execute_code_module.OUTPUT_TRAVERSAL_MAX_DEPTH + 1):
+                current /= f"level-{index}"
+                current.mkdir()
         else:
             return super().run(code)
 
@@ -1155,6 +1163,35 @@ def test_clear_directory_removes_junction_without_deleting_target(tmp_path: Path
     assert not (output_root / "linked_dir").exists()
 
 
+def test_clear_directory_bounds_directory_only_breadth(tmp_path: Path) -> None:
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    for index in range(101):
+        (output_root / f"directory-{index}").mkdir()
+
+    with pytest.raises(execute_code_module._OutputCleanupError, match="cleanup entry limit of 100"):
+        execute_code_module._clear_directory(
+            cast("TemporaryDirectory[str]", _OutputDirShim(output_root)),
+            max_entries=100,
+            max_depth=execute_code_module.OUTPUT_TRAVERSAL_MAX_DEPTH,
+        )
+
+    assert sum(1 for _ in output_root.iterdir()) == 1
+
+
+def test_clear_directory_bounds_nesting_depth(tmp_path: Path) -> None:
+    output_root = tmp_path / "output"
+    current = output_root
+    for index in range(3):
+        current /= f"level-{index}"
+        current.mkdir(parents=True)
+
+    with pytest.raises(execute_code_module._OutputCleanupError, match="cleanup nesting depth limit of 2"):
+        execute_code_module._clear_directory(
+            cast("TemporaryDirectory[str]", _OutputDirShim(output_root)), max_entries=100, max_depth=2
+        )
+
+
 def test_is_safe_output_file_rejects_parent_traversal(tmp_path: Path) -> None:
     """A lexical ``..`` component must be rejected even without any symlink."""
     output_root = tmp_path / "output"
@@ -1240,6 +1277,109 @@ async def test_execute_code_tool_rejects_sparse_output_without_unbounded_read(
     _assert_bounded_output_error(contents, "per-file output limit")
 
 
+async def test_execute_code_tool_clears_output_after_rejection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+    execute_code = HyperlightExecuteCodeTool(
+        workspace_root=tmp_path,
+        max_output_file_bytes=3,
+    )
+    config = execute_code._build_run_config()
+    output_root = Path(cast(Any, execute_code._registry)._get_or_create_entry(config).output_dir.name)
+
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-memory-output"})
+
+        _assert_bounded_output_error(contents, "per-file output limit")
+        remaining_outputs = await asyncio.to_thread(lambda: list(output_root.iterdir()))
+        assert remaining_outputs == []
+    finally:
+        _close_execute_code_registry(execute_code)
+
+
+async def test_execute_code_tool_preserves_result_when_post_cleanup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path)
+    config = execute_code._build_run_config()
+    registry = cast(Any, execute_code._registry)
+    output_root = Path(registry._get_or_create_entry(config).output_dir.name)
+    original_scandir = os.scandir
+    output_scan_calls = 0
+
+    def fail_post_cleanup(path: str | os.PathLike[str]) -> Any:
+        nonlocal output_scan_calls
+        if Path(path) == output_root:
+            output_scan_calls += 1
+            if output_scan_calls == 3:
+                raise PermissionError("simulated cleanup failure")
+        return original_scandir(path)
+
+    monkeypatch.setattr(execute_code_module.os, "scandir", fail_post_cleanup)
+
+    try:
+        contents = await execute_code.invoke(arguments={"code": "create-output"})
+
+        assert any(item.type == "text" and item.text == "done\n" for item in contents)
+        assert any(item.type == "data" for item in contents)
+        cleanup_errors = [item for item in contents if item.type == "error"]
+        assert len(cleanup_errors) == 1
+        assert cleanup_errors[0].error_details == "Could not clear sandbox output safely."
+        assert str(output_root) not in cleanup_errors[0].error_details
+        assert registry._entries == {}
+
+        recovered = await execute_code.invoke(arguments={"code": "fail"})
+        assert not any(item.type == "data" for item in recovered)
+        assert any(item.type == "error" and item.error_details == "sandbox boom" for item in recovered)
+        replacement_output_root = Path(registry._get_or_create_entry(config).output_dir.name)
+        remaining_outputs = await asyncio.to_thread(lambda: list(replacement_output_root.iterdir()))
+        assert len(_FakeSandbox.instances) == 2
+        assert remaining_outputs == []
+    finally:
+        _close_execute_code_registry(execute_code)
+
+
+async def test_execute_code_tool_preserves_exception_when_post_cleanup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path)
+    config = execute_code._build_run_config()
+    registry = cast(Any, execute_code._registry)
+    output_root = Path(registry._get_or_create_entry(config).output_dir.name)
+    original_scandir = os.scandir
+    output_scan_calls = 0
+
+    def fail_post_cleanup(path: str | os.PathLike[str]) -> Any:
+        nonlocal output_scan_calls
+        if Path(path) == output_root:
+            output_scan_calls += 1
+            if output_scan_calls == 2:
+                raise PermissionError("simulated cleanup failure")
+        return original_scandir(path)
+
+    def fail_build_contents(**kwargs: Any) -> list[Content]:
+        del kwargs
+        raise RuntimeError("primary build failure")
+
+    monkeypatch.setattr(execute_code_module.os, "scandir", fail_post_cleanup)
+    monkeypatch.setattr(execute_code_module, "_build_execution_contents", fail_build_contents)
+
+    try:
+        with pytest.raises(RuntimeError, match="primary build failure"):
+            await execute_code.invoke(arguments={"code": "create-output"})
+        assert registry._entries == {}
+    finally:
+        _close_execute_code_registry(execute_code)
+
+
 async def test_execute_code_tool_checks_output_count_before_reading(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1290,12 +1430,15 @@ async def test_execute_code_tool_streams_directory_enumeration_to_count_limit(
     execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path, max_output_files=2)
     config = execute_code._build_run_config()
     output_root = Path(cast(Any, execute_code._registry)._get_or_create_entry(config).output_dir.name)
-    scanned_entries = 0
+    scanned_entries: list[int] = []
 
     class _BoundedScandir:
         def __init__(self, path: str | os.PathLike[str]) -> None:
             self._entries = original_scandir(path)
-            self._track = Path(path) == output_root
+            self._scan_index: int | None = None
+            if Path(path) == output_root:
+                self._scan_index = len(scanned_entries)
+                scanned_entries.append(0)
 
         def __enter__(self) -> _BoundedScandir:
             self._entries.__enter__()
@@ -1311,12 +1454,11 @@ async def test_execute_code_tool_streams_directory_enumeration_to_count_limit(
             return self
 
         def __next__(self) -> os.DirEntry[str]:
-            nonlocal scanned_entries
             entry = next(self._entries)
-            if self._track:
-                scanned_entries += 1
-                if scanned_entries > 3:
-                    pytest.fail("output directory enumeration continued past max_output_files + 1")
+            if self._scan_index is not None:
+                scanned_entries[self._scan_index] += 1
+                if scanned_entries[self._scan_index] > 3:
+                    pytest.fail("an output directory scan continued past max_output_files + 1")
             return entry
 
     monkeypatch.setattr(execute_code_module.os, "scandir", _BoundedScandir)
@@ -1327,8 +1469,44 @@ async def test_execute_code_tool_streams_directory_enumeration_to_count_limit(
         monkeypatch.setattr(execute_code_module.os, "scandir", original_scandir)
         _close_execute_code_registry(execute_code)
 
-    assert scanned_entries == 3
+    assert scanned_entries == [0, 3, 3]
     _assert_bounded_output_error(contents, "output file count limit")
+
+
+@pytest.mark.parametrize(
+    ("code", "error_match"),
+    [
+        ("create-wide-output", "traversal entry limit of 100"),
+        ("create-deep-output", "nesting depth limit of 32"),
+    ],
+)
+async def test_execute_code_tool_invalidates_entry_when_cleanup_exceeds_bounds(
+    code: str,
+    error_match: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithBoundedOutputs)
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path, max_output_files=1)
+    config = execute_code._build_run_config()
+    registry = cast(Any, execute_code._registry)
+    registry._get_or_create_entry(config)
+
+    try:
+        rejected = await execute_code.invoke(arguments={"code": code})
+        assert registry._entries == {}
+
+        recovered = await execute_code.invoke(arguments={"code": "create-memory-output"})
+        replacement_output_root = Path(registry._get_or_create_entry(config).output_dir.name)
+        remaining_after_recovery = await asyncio.to_thread(lambda: list(replacement_output_root.iterdir()))
+    finally:
+        _close_execute_code_registry(execute_code)
+
+    _assert_bounded_output_error(rejected, error_match)
+    assert len(_FakeSandbox.instances) == 2
+    assert [_decode_content_bytes(item) for item in recovered if item.type == "data"] == [b"data"]
+    assert remaining_after_recovery == []
 
 
 async def test_execute_code_tool_reads_only_observed_file_size_with_large_limits(
