@@ -76,6 +76,7 @@ const MAX_RETRY_ATTEMPTS = 10; // Max 10 retries (~30 seconds with exponential b
 const STREAMING_STATE_SAVE_INTERVAL_MS = 250;
 const TRACE_POLL_ATTEMPTS = 12;
 const TRACE_POLL_INTERVAL_MS = 500;
+const TRACE_POLL_TIMEOUT_MS = 6000;
 
 // Get backend URL from localStorage or default
 function getBackendUrl(): string {
@@ -225,6 +226,7 @@ class ApiClient {
     signal?: AbortSignal
   ): Promise<ExtendedResponseStreamEvent[]> {
     if (!traceRetrievalEnabled) return [];
+    if (signal?.aborted) throw new DOMException("Request aborted", "AbortError");
 
     const headers: Record<string, string> = {};
     if (this.authToken) {
@@ -232,38 +234,51 @@ class ApiClient {
     }
 
     const spansById = new Map<string, ExtendedResponseStreamEvent>();
+    const pollingController = new AbortController();
+    const abortPolling = () => pollingController.abort();
+    signal?.addEventListener("abort", abortPolling, { once: true });
+    // One deadline covers fetches, response bodies, and delays across every attempt.
+    const deadlineTimer = setTimeout(abortPolling, TRACE_POLL_TIMEOUT_MS);
 
     // An unchanged subset does not mean the trace is complete: Aspire's batch exporter
     // can hold later spans for several seconds. Merge through the entire bounded window.
-    for (let attempt = 0; attempt < TRACE_POLL_ATTEMPTS; attempt++) {
-      try {
-        const response = await fetch(
-          `${this.baseUrl}/v1/responses/${encodeURIComponent(responseId)}/traces`,
-          { headers, signal }
-        );
+    try {
+      for (let attempt = 0; attempt < TRACE_POLL_ATTEMPTS; attempt++) {
+        try {
+          const response = await fetch(
+            `${this.baseUrl}/v1/responses/${encodeURIComponent(responseId)}/traces`,
+            { headers, signal: pollingController.signal }
+          );
 
-        if (response.ok) {
-          const result = await response.json() as { data?: ExtendedResponseStreamEvent[] };
-          if (result.data && result.data.length > 0) {
-            for (const event of result.data) {
-              const spanId = getTraceSpanData(event)?.span_id;
-              if (spanId) spansById.set(spanId, event);
+          if (response.ok) {
+            const result = await response.json() as { data?: ExtendedResponseStreamEvent[] };
+            if (result.data && result.data.length > 0) {
+              for (const event of result.data) {
+                const spanId = getTraceSpanData(event)?.span_id;
+                if (spanId) spansById.set(spanId, event);
+              }
             }
+          } else if (response.status === 401) {
+            this.clearAuthToken();
+            return [];
+          } else if (response.status !== 404 && response.status !== 503) {
+            break;
           }
-        } else if (response.status === 401) {
-          this.clearAuthToken();
-          return [];
-        } else if (response.status !== 404 && response.status !== 503) {
-          return [];
+        } catch (error) {
+          if (isAbortError(error) || pollingController.signal.aborted) throw error;
+          // Keep earlier snapshots and let later attempts recover from transient failures.
         }
-      } catch (error) {
-        if (isAbortError(error)) throw error;
-        return [];
-      }
 
-      if (attempt < TRACE_POLL_ATTEMPTS - 1) {
-        await sleep(TRACE_POLL_INTERVAL_MS, signal);
+        if (attempt < TRACE_POLL_ATTEMPTS - 1) {
+          await sleep(TRACE_POLL_INTERVAL_MS, pollingController.signal);
+        }
       }
+    } catch (error) {
+      // Caller cancellation still rejects; our deadline returns the best snapshot collected.
+      if (signal?.aborted || !pollingController.signal.aborted) throw error;
+    } finally {
+      clearTimeout(deadlineTimer);
+      signal?.removeEventListener("abort", abortPolling);
     }
 
     return Array.from(spansById.values());
