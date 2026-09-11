@@ -3004,16 +3004,26 @@ def _stateless_mixed_pause_batch_status(messages: list[Message]) -> tuple[bool, 
 
     unmatched_approval_requests = set(range(len(approval_requests)))
     matched_approval_responses: dict[int, Content] = {}
+    matched_approval_response_ids: set[int] = set()
     for response in approval_responses:
         if response.id is None:
             continue
         matching_indexes = [
-            index for index in unmatched_approval_requests if response.id in approval_request_identities[index]
+            index for index, identities in enumerate(approval_request_identities) if response.id in identities
         ]
-        if len(matching_indexes) == 1:
-            matching_index = matching_indexes[0]
+        if len(matching_indexes) != 1:
+            continue
+        matching_index = matching_indexes[0]
+        previous_response = matched_approval_responses.get(matching_index)
+        if previous_response is not None:
+            if previous_response.to_dict() != response.to_dict():
+                function_call = approval_requests[matching_index].function_call
+                occurrence_id = function_call.id if function_call is not None else approval_requests[matching_index].id
+                raise RuntimeError(f"Conflicting approval response for occurrence {occurrence_id!r}.")
+        else:
             unmatched_approval_requests.remove(matching_index)
             matched_approval_responses[matching_index] = response
+        matched_approval_response_ids.add(id(response))
     approval_complete = not unmatched_approval_requests
 
     unmatched_host_requests = list(host_requests)
@@ -3074,7 +3084,7 @@ def _stateless_mixed_pause_batch_status(messages: list[Message]) -> tuple[bool, 
         if index not in ordered_approval_indexes
     )
 
-    matched_response_ids = {id(response) for response in ordered_responses}
+    matched_response_ids = {id(response) for response in ordered_responses} | matched_approval_response_ids
     filtered_messages: list[Message] = []
     for message in messages:
         message.contents = [content for content in message.contents if id(content) not in matched_response_ids]

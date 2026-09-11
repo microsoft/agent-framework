@@ -3762,6 +3762,157 @@ async def test_stateless_complete_mixed_pause_normalizes_out_of_order_reused_cal
     ]
 
 
+def _host_approval_host_replay_messages(
+    approval_responses: Sequence[Content],
+) -> tuple[list[Message], Content, Content, Content]:
+    """Build an out-of-order stateless Host1-Approval-Host2 replay."""
+    first_host_request = Content.from_function_call(
+        call_id="reused-call",
+        name="host_func",
+        arguments={"value": 1},
+        id="host-occurrence-1",
+    )
+    first_host_request.user_input_request = True
+    approval_call = Content.from_function_call(
+        call_id="reused-call",
+        name="approval_func",
+        arguments={"value": "approved"},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    second_host_request = Content.from_function_call(
+        call_id="reused-call",
+        name="host_func",
+        arguments={"value": 2},
+        id="host-occurrence-2",
+    )
+    second_host_request.user_input_request = True
+    first_host_result = Content.from_function_result(call_id="reused-call", result="host-one")
+    first_host_result.id = "host-occurrence-1"
+    second_host_result = Content.from_function_result(call_id="reused-call", result="host-two")
+    second_host_result.id = "host-occurrence-2"
+    return (
+        [
+            Message(
+                role="assistant",
+                contents=[first_host_request, approval_call, approval_request, second_host_request],
+            ),
+            Message(
+                role="user",
+                contents=[second_host_result, *approval_responses, first_host_result],
+            ),
+        ],
+        approval_call,
+        first_host_result,
+        second_host_result,
+    )
+
+
+async def test_stateless_host_approval_host_identical_approval_replay_executes_once() -> None:
+    """An exact duplicate decision is an idempotent replay of one approval occurrence."""
+    from agent_framework._tools import _FunctionExecutionBatch, _resolve_approval_responses
+
+    approval_call = Content.from_function_call(
+        call_id="reused-call",
+        name="approval_func",
+        arguments={"value": "approved"},
+        id="approval-occurrence",
+    )
+    approval_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval-occurrence",
+        function_call=approval_call,
+        additional_properties={"audit": "same"},
+    )
+    replay = Content.from_dict(approval_response.to_dict())
+    prepared_messages, _, first_host_result, second_host_result = _host_approval_host_replay_messages([
+        approval_response,
+        replay,
+    ])
+    executed: list[Content] = []
+
+    async def execute_function_calls(*, function_calls: list[Content], **kwargs: Any) -> Any:
+        executed.extend(function_calls)
+        return _FunctionExecutionBatch(
+            result_groups=[[Content.from_function_result(call_id="reused-call", result="approved")]],
+            executed_call_count=1,
+        )
+
+    result = await _resolve_approval_responses(
+        prepared_messages=prepared_messages,
+        options=None,
+        errors_in_a_row=0,
+        max_errors=3,
+        execute_function_calls=execute_function_calls,
+    )
+
+    assert executed == [approval_response]
+    assert result.function_call_count == 1
+    assert prepared_messages[-1].role == "tool"
+    assert [(content.type, content.result) for content in prepared_messages[-1].contents] == [
+        ("function_result", first_host_result.result),
+        ("function_result", "approved"),
+        ("function_result", second_host_result.result),
+    ]
+
+
+@pytest.mark.parametrize("conflict_kind", ["approved", "embedded-call", "additional-properties"])
+async def test_stateless_host_approval_host_conflicting_approval_replay_fails_closed(
+    conflict_kind: str,
+) -> None:
+    """Conflicting decisions for one occurrence are rejected before any approved call executes."""
+    from agent_framework._tools import _resolve_approval_responses
+
+    approval_call = Content.from_function_call(
+        call_id="reused-call",
+        name="approval_func",
+        arguments={"value": "approved"},
+        id="approval-occurrence",
+    )
+    first_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval-occurrence",
+        function_call=approval_call,
+        additional_properties={"audit": "same"},
+    )
+    conflicting_call = Content.from_dict(approval_call.to_dict())
+    conflicting_approved = True
+    conflicting_properties = {"audit": "same"}
+    if conflict_kind == "approved":
+        conflicting_approved = False
+    elif conflict_kind == "embedded-call":
+        conflicting_call.arguments = {"value": "attacker"}
+    else:
+        conflicting_properties = {"audit": "attacker"}
+    conflicting_response = Content.from_function_approval_response(
+        approved=conflicting_approved,
+        id="approval-occurrence",
+        function_call=conflicting_call,
+        additional_properties=conflicting_properties,
+    )
+    prepared_messages, _, _, _ = _host_approval_host_replay_messages([first_response, conflicting_response])
+    executions = 0
+
+    async def execute_function_calls(**kwargs: Any) -> Any:
+        nonlocal executions
+        executions += 1
+        pytest.fail(f"conflicting stateless approval replay must not execute: {kwargs}")
+
+    with pytest.raises(RuntimeError, match="Conflicting approval response.*approval-occurrence"):
+        await _resolve_approval_responses(
+            prepared_messages=prepared_messages,
+            options=None,
+            errors_in_a_row=0,
+            max_errors=3,
+            execute_function_calls=execute_function_calls,
+        )
+
+    assert executions == 0
+
+
 def test_stateless_complete_mixed_pause_with_ambiguous_idless_responses_fails_closed() -> None:
     """Id-less responses cannot be assigned when duplicate call-id occurrences remain."""
     from agent_framework._tools import _stateless_mixed_pause_batch_status
