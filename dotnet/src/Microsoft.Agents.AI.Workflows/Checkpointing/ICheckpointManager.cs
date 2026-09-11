@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.Workflows.Checkpointing;
@@ -39,4 +40,18 @@ internal interface ICheckpointManager
     /// cref="CheckpointInfo"/> objects associated with the specified session. The collection is empty if no checkpoints are
     /// found.</returns>
     ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string sessionId, CheckpointInfo? withParent = null);
+
+    /// <summary>
+    /// Notifies the underlying store that a workflow was successfully restored from the specified checkpoint, so that
+    /// a store deferring work until then can carry it out.
+    /// </summary>
+    /// <param name="sessionId">The identifier for the current session or execution context.</param>
+    /// <param name="checkpointInfo">Identifies the checkpoint the workflow was restored from.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
+    /// <returns>
+    /// <see langword="true"/> when the store observed the notification and may therefore have changed which
+    /// checkpoints it holds; otherwise <see langword="false"/>. Callers that cache the checkpoint index use this to
+    /// decide whether the cached copy needs to be read again.
+    /// </returns>
+    ValueTask<bool> NotifyCheckpointRestoredAsync(string sessionId, CheckpointInfo checkpointInfo, CancellationToken cancellationToken = default);
 }
