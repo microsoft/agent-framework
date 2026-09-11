@@ -145,8 +145,8 @@ codeact = MontyCodeActProvider(
   nothing is captured). `read-only` mounts reject writes.
 - **`resource_limits`** is forwarded straight to Monty's
   [`ResourceLimits`](https://github.com/pydantic/monty) TypedDict
-  (`max_allocations`, `max_duration_secs`, `max_memory`, `gc_interval`,
-  `max_recursion_depth`).
+  (`max_duration_secs`, `max_memory`, `gc_interval`, `max_recursion_depth`,
+  `max_suspensions`).
 
 ## DSL inside `execute_code`
 
