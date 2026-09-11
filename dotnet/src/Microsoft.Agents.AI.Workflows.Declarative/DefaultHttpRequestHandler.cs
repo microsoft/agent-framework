@@ -267,7 +267,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
     {
         if (ContainsHttpHeaderDelimiter(name))
         {
-            throw new ArgumentException($"HTTP header name '{name}' contains invalid characters.", nameof(name));
+            throw new ArgumentException("HTTP header name contains invalid characters.", nameof(name));
         }
 
         ValidateHeaderValue(name, value);
