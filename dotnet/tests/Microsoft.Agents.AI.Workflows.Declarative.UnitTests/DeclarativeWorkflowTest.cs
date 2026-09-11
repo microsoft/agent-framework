@@ -36,6 +36,42 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     }
 
     [Fact]
+    public void WorkflowYamlFixturesBuildSuccessfully()
+    {
+        HashSet<string> invalidFixtures =
+        [
+            "BadEmpty.yaml",
+            "BadId.yaml",
+            "BadKind.yaml",
+        ];
+        List<string> failures = [];
+
+        foreach (string workflowPath in Directory.GetFiles("Workflows", "*.yaml").OrderBy(path => path, StringComparer.Ordinal))
+        {
+            string workflowFile = Path.GetFileName(workflowPath);
+            if (invalidFixtures.Contains(workflowFile))
+            {
+                continue;
+            }
+
+            try
+            {
+                _ = this.CreateWorkflow(workflowFile, "fixture");
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"{workflowFile}: {ex.Message}");
+            }
+        }
+
+        if (failures.Count > 0)
+        {
+            throw new XunitException(
+                $"Expected every workflow fixture to build successfully.{Environment.NewLine}{string.Join(Environment.NewLine, failures)}");
+        }
+    }
+
+    [Fact]
     public async Task LoopEachActionAsync()
     {
         await this.RunWorkflowAsync("LoopEach.yaml");
