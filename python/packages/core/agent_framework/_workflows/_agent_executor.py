@@ -7,12 +7,12 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
-from typing_extensions import Never, NotRequired, TypedDict
+from typing_extensions import Never, TypedDict
 
 from agent_framework import Content
 
 from .._agents import SupportsAgentRun
-from .._sessions import AgentSession
+from .._sessions import AgentSession, AgentSessionDict
 from .._types import AgentResponse, AgentResponseUpdate, Message, ResponseStream
 from ..exceptions import WorkflowCheckpointException
 from ._agent_utils import resolve_agent_id
@@ -30,18 +30,8 @@ else:
 
 logger = logging.getLogger(__name__)
 
-
-class AgentSessionCheckpointState(TypedDict):
-    """Serialized :class:`~agent_framework.AgentSession` payload (``AgentSession.to_dict()``).
-
-    ``state`` holds session-local data. When the session uses service-side storage,
-    local ``state`` may be incomplete relative to the remote conversation.
-    """
-
-    type: NotRequired[str]
-    session_id: str
-    service_session_id: NotRequired[str | None]
-    state: NotRequired[dict[str, Any]]
+# Alias kept for the public PR surface; the canonical shape lives on AgentSession.
+AgentSessionCheckpointState = AgentSessionDict
 
 
 class AgentExecutorCheckpointState(TypedDict, total=False):
@@ -63,14 +53,14 @@ class AgentExecutorCheckpointState(TypedDict, total=False):
     Keys:
         cache: Messages buffered between runs before the next agent invocation.
         full_conversation: Prior inputs plus assistant/tool outputs after the last run.
-        agent_session: Serialized session payload (:class:`AgentSessionCheckpointState`).
+        agent_session: Serialized session payload (:class:`~agent_framework.AgentSessionDict`).
         pending_agent_requests: In-flight agent-owned user-input requests by request id.
         pending_responses_to_agent: Queued content responses waiting to be sent to the agent.
     """
 
     cache: list[Message]
     full_conversation: list[Message]
-    agent_session: AgentSessionCheckpointState
+    agent_session: AgentSessionDict
     pending_agent_requests: dict[str, Content]
     pending_responses_to_agent: list[Content]
 
@@ -442,13 +432,12 @@ class AgentExecutor(Executor):
         )
 
     @override
-    async def on_checkpoint_restore(self, state: AgentExecutorCheckpointState | dict[str, Any]) -> None:
+    async def on_checkpoint_restore(self, state: AgentExecutorCheckpointState) -> None:
         """Restore executor state from checkpoint.
 
         Args:
-            state: Checkpoint payload matching :class:`AgentExecutorCheckpointState`
-                (or a compatible mapping). Missing known keys use empty defaults;
-                unknown keys are ignored.
+            state: Checkpoint payload matching :class:`AgentExecutorCheckpointState`.
+                Missing known keys use empty defaults; unknown keys are ignored.
 
         Raises:
             WorkflowCheckpointException: If ``state`` is not a mapping or a known
