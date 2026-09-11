@@ -3584,6 +3584,93 @@ async def test_mixed_approval_host_batch_stages_partial_responses_in_original_or
     assert _PENDING_PAUSE_BATCH_KEY not in final_tool_state
 
 
+@pytest.mark.parametrize("identified_first", [True, False], ids=["identified-first", "idless-first"])
+def test_stateless_complete_mixed_pause_matches_identified_host_responses_first(identified_first: bool) -> None:
+    """An identified response reserves its occurrence before an id-less sibling is matched."""
+    from agent_framework._tools import _has_partial_mixed_pause_batch_without_session
+
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    first_host_request = Content.from_function_call(
+        call_id="duplicate-call",
+        name="host_func",
+        arguments={"value": 1},
+        id="host-occurrence-1",
+    )
+    first_host_request.user_input_request = True
+    second_host_request = Content.from_function_call(
+        call_id="duplicate-call",
+        name="host_func",
+        arguments={"value": 2},
+        id="host-occurrence-2",
+    )
+    second_host_request.user_input_request = True
+    identified_result = Content.from_function_result(call_id="duplicate-call", result="second")
+    identified_result.id = "host-occurrence-2"
+    idless_result = Content.from_function_result(call_id="duplicate-call", result="first")
+    host_responses = [identified_result, idless_result] if identified_first else [idless_result, identified_result]
+
+    assert (
+        _has_partial_mixed_pause_batch_without_session([
+            Message(
+                role="assistant",
+                contents=[approval_call, approval_request, first_host_request, second_host_request],
+            ),
+            Message(
+                role="user",
+                contents=[approval_request.to_function_approval_response(approved=True), *host_responses],
+            ),
+        ])
+        is False
+    )
+
+
+def test_stateless_complete_mixed_pause_with_ambiguous_idless_responses_fails_closed() -> None:
+    """Id-less responses cannot be assigned when duplicate call-id occurrences remain."""
+    from agent_framework._tools import _has_partial_mixed_pause_batch_without_session
+
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_requests: list[Content] = []
+    for occurrence in (1, 2):
+        request = Content.from_function_call(
+            call_id="duplicate-call",
+            name="host_func",
+            arguments={"value": occurrence},
+            id=f"host-occurrence-{occurrence}",
+        )
+        request.user_input_request = True
+        host_requests.append(request)
+
+    assert _has_partial_mixed_pause_batch_without_session([
+        Message(role="assistant", contents=[approval_call, approval_request, *host_requests]),
+        Message(
+            role="user",
+            contents=[
+                approval_request.to_function_approval_response(approved=True),
+                Content.from_function_result(call_id="duplicate-call", result="first"),
+                Content.from_function_result(call_id="duplicate-call", result="second"),
+            ],
+        ),
+    ])
+
+
 async def test_mixed_pause_partial_resume_without_session_fails_closed() -> None:
     """A stateless partial response cannot bypass the mixed-pause barrier."""
     from agent_framework._tools import _resolve_approval_responses

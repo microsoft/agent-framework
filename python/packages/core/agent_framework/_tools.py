@@ -2959,25 +2959,24 @@ def _has_partial_mixed_pause_batch_without_session(messages: Sequence[Message]) 
     )
 
     unmatched_host_requests = list(host_requests)
-    for response in host_responses:
-        matching_index: int | None = None
-        if response.id is not None:
-            matching_index = next(
-                (
-                    index
-                    for index, request in enumerate(unmatched_host_requests)
-                    if request.id == response.id and request.call_id == response.call_id
-                ),
-                None,
-            )
-        else:
-            matching_indexes = [
-                index for index, request in enumerate(unmatched_host_requests) if request.call_id == response.call_id
-            ]
-            if len(matching_indexes) == 1:
-                matching_index = matching_indexes[0]
+    for response in (candidate for candidate in host_responses if candidate.id is not None):
+        matching_index = next(
+            (
+                index
+                for index, request in enumerate(unmatched_host_requests)
+                if request.id == response.id and request.call_id == response.call_id
+            ),
+            None,
+        )
         if matching_index is not None:
             unmatched_host_requests.pop(matching_index)
+
+    for response in (candidate for candidate in host_responses if candidate.id is None):
+        matching_indexes = [
+            index for index, request in enumerate(unmatched_host_requests) if request.call_id == response.call_id
+        ]
+        if len(matching_indexes) == 1:
+            unmatched_host_requests.pop(matching_indexes[0])
     return not approval_complete or bool(unmatched_host_requests)
 
 
