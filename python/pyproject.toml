@@ -141,12 +141,12 @@ select = [
     "RET", # flake8-return check
     "RSE", # raise exception parantheses check
     "RUF", # RUF specific rules
+    "S", # Bandit checks
     "SIM", # flake8-simplify check
+    "debugger", # T100: Debugger
     "T20", # typing checks
     "TD", # todos
     "W", # pycodestyle warning checks
-    "debugger", # T100: Debugger
-    "S", # Bandit checks
 ]
 ignore = [
     "undocumented-public-module", # D100: allow missing docstring in public module
@@ -165,7 +165,7 @@ ignore = [
 # Ignore all directories named `tests` and `samples`.
 # Exact per-file selectors use names to satisfy RUF102; category prefixes remain codes.
 "**/tests/**" = ["D", "INP", "TD", "commented-out-code", "RUF", "S"]
-"samples/**" = ["D", "INP", "commented-out-code", "RUF", "S", "print", "CPY"]
+"samples/**" = ["D", "INP", "commented-out-code", "RUF", "S", "print", "CPY"] # print is T201.
 "*.ipynb" = ["CPY", "line-too-long"]
 
 [tool.ruff.format]
