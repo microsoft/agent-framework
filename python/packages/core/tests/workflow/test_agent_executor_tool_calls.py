@@ -209,7 +209,8 @@ class MockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
                                 call_id="2", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
                             ),
                         ],
-                    )
+                    ),
+                    finish_reason="tool_calls",
                 )
             else:
                 response = ChatResponse(
@@ -220,7 +221,8 @@ class MockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
                                 call_id="1", name="mock_tool_requiring_approval", arguments='{"query": "test"}'
                             )
                         ],
-                    )
+                    ),
+                    finish_reason="tool_calls",
                 )
         else:
             response = ChatResponse(messages=Message("assistant", ["Tool executed successfully."]))
@@ -242,6 +244,7 @@ class MockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
                         ),
                     ],
                     role="assistant",
+                    finish_reason="tool_calls",
                 )
             else:
                 yield ChatResponseUpdate(
@@ -251,6 +254,7 @@ class MockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
                         )
                     ],
                     role="assistant",
+                    finish_reason="tool_calls",
                 )
         else:
             yield ChatResponseUpdate(contents=[Content.from_text(text="Tool executed ")], role="assistant")
@@ -549,7 +553,8 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
                                 call_id="2", name="client_side_tool", arguments='{"query": "test2"}'
                             ),
                         ],
-                    )
+                    ),
+                    finish_reason="tool_calls",
                 )
             else:
                 response = ChatResponse(
@@ -560,7 +565,8 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
                                 call_id="1", name="client_side_tool", arguments='{"query": "test"}'
                             )
                         ],
-                    )
+                    ),
+                    finish_reason="tool_calls",
                 )
         else:
             response = ChatResponse(messages=Message("assistant", ["Tool executed successfully."]))
@@ -579,6 +585,7 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
                         ),
                     ],
                     role="assistant",
+                    finish_reason="tool_calls",
                 )
             else:
                 yield ChatResponseUpdate(
@@ -586,6 +593,7 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
                         Content.from_function_call(call_id="1", name="client_side_tool", arguments='{"query": "test"}')
                     ],
                     role="assistant",
+                    finish_reason="tool_calls",
                 )
         else:
             yield ChatResponseUpdate(contents=[Content.from_text(text="Tool executed ")], role="assistant")

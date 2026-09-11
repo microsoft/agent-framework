@@ -638,7 +638,7 @@ async def test_chat_agent_persists_history_per_service_call_streaming(
                     )
                 ],
                 role="assistant",
-                finish_reason="stop",
+                finish_reason="tool_calls",
                 response_id="resp_call_1",
             )
         ],
@@ -698,7 +698,7 @@ async def test_streaming_per_service_call_persistence_hides_response_id_from_aft
                     )
                 ],
                 role="assistant",
-                finish_reason="stop",
+                finish_reason="tool_calls",
                 response_id="resp_call_1",
             )
         ],
@@ -818,6 +818,7 @@ async def test_service_storage_updates_session_handle_per_service_call_before_no
         ),
         conversation_id="resp_call_1",
         response_id="resp_call_1",
+        finish_reason="tool_calls",
     )
     mock_get_non_streaming_response = AsyncMock(
         side_effect=[first_response, RuntimeError("service down")],
@@ -864,7 +865,7 @@ async def test_service_storage_updates_session_handle_per_service_call_before_st
                 )
             ],
             role="assistant",
-            finish_reason="stop",
+            finish_reason="tool_calls",
         )
 
     def _finalize_first_stream(_updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
@@ -881,6 +882,7 @@ async def test_service_storage_updates_session_handle_per_service_call_before_st
             ),
             conversation_id="resp_call_1",
             response_id="resp_call_1",
+            finish_reason="tool_calls",
         )
 
     first_stream = ResponseStream(_first_stream_updates(), finalizer=_finalize_first_stream)
@@ -3303,6 +3305,7 @@ class _PscSpyChatClient(MockBaseChatClient):
         store_and_echo = self._effective_store(options) and self._echo_conversation_id
         conv_id = _PSC_SERVICE_CONVERSATION_ID if store_and_echo else None
         contents = self._next_contents()
+        finish_reason = "tool_calls" if any(content.type == "function_call" for content in contents) else "stop"
 
         if stream:
 
@@ -3311,7 +3314,7 @@ class _PscSpyChatClient(MockBaseChatClient):
                 yield ChatResponseUpdate(
                     contents=contents,
                     role="assistant",
-                    finish_reason="stop",
+                    finish_reason=finish_reason,
                     conversation_id=conv_id,
                 )
 
@@ -3328,6 +3331,7 @@ class _PscSpyChatClient(MockBaseChatClient):
             return ChatResponse(
                 messages=Message(role="assistant", contents=contents),
                 conversation_id=conv_id,
+                finish_reason=finish_reason,
             )
 
         return _get()

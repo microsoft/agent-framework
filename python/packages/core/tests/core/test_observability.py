@@ -4825,6 +4825,7 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
                                 ],
                             )
                         ],
+                        finish_reason="tool_calls",
                     )
                 return ChatResponse(
                     messages=[Message(role="assistant", contents=["The weather in Seattle is sunny!"])],
@@ -6277,6 +6278,7 @@ async def test_function_call_spans_nested_under_agent_span(span_exporter: InMemo
                                 )
                             ],
                             role="assistant",
+                            finish_reason="tool_calls",
                         )
                     else:
                         yield ChatResponseUpdate(
@@ -6305,6 +6307,7 @@ async def test_function_call_spans_nested_under_agent_span(span_exporter: InMemo
                                 ],
                             )
                         ],
+                        finish_reason="tool_calls",
                     )
                 return ChatResponse(
                     messages=[Message(role="assistant", contents=["The weather in Seattle is sunny!"])],
@@ -6405,6 +6408,7 @@ async def test_parallel_function_call_spans_nested_under_agent_span(span_exporte
                                 ],
                             )
                         ],
+                        finish_reason="tool_calls",
                     )
 
                 return _get_tool_calls()

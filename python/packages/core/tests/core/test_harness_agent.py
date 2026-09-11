@@ -1527,6 +1527,7 @@ async def _run_harness_tool_call_turn(
                         Content.from_function_call(call_id="call_1", name="lookup", arguments={"query": "widgets"})
                     ],
                     role="assistant",
+                    finish_reason="tool_calls",
                 ),
             ]
         return [ChatResponseUpdate(contents=[Content.from_text("Done.")], role="assistant", finish_reason="stop")]
