@@ -173,6 +173,7 @@ class MockBaseChatClient(
         self.run_responses: list[ChatResponse] = []
         self.streaming_responses: list[list[ChatResponseUpdate]] = []
         self.call_count: int = 0
+        self.auto_finish_function_calls: bool = True
 
     @override
     def _inner_get_response(  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
@@ -226,6 +227,16 @@ class MockBaseChatClient(
                 conversation_id=response.conversation_id,
             )
 
+        if (
+            self.auto_finish_function_calls
+            and response.finish_reason is None
+            and any(
+                content.type == "function_call" and not content.informational_only
+                for message in response.messages
+                for content in message.contents
+            )
+        ):
+            response.finish_reason = "tool_calls"
         return response
 
     def _get_streaming_response(
@@ -253,6 +264,17 @@ class MockBaseChatClient(
                 )
                 return
             response = self.streaming_responses.pop(0)
+            if (
+                self.auto_finish_function_calls
+                and response
+                and not any(update.finish_reason is not None for update in response)
+                and any(
+                    content.type == "function_call" and not content.informational_only
+                    for update in response
+                    for content in update.contents
+                )
+            ):
+                response[-1].finish_reason = "tool_calls"
             for update in response:
                 yield update
             await asyncio.sleep(0)

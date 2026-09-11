@@ -5,7 +5,7 @@ import json
 import logging
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -362,6 +362,109 @@ def test_actionable_function_call_uses_occurrence_identity_for_empty_call_id() -
     assert extracted == [function_call]
     assert function_call.id
     assert function_call.call_id == function_call.id
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+@pytest.mark.parametrize(
+    "finish_reason",
+    [None, "stop", "length", "content_filter"],
+    ids=["missing", "stop", "length", "content_filter"],
+)
+async def test_function_calls_require_tool_calls_finish_reason(
+    chat_client_base: SupportsChatGetResponse,
+    stream: bool,
+    finish_reason: str | None,
+) -> None:
+    tool_calls = 0
+    middleware_calls = 0
+
+    class RecordingMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Any) -> None:
+            nonlocal middleware_calls
+            middleware_calls += 1
+            await call_next()
+
+    @tool(name="guarded_write", approval_mode="never_require")
+    def guarded_write() -> str:
+        nonlocal tool_calls
+        tool_calls += 1
+        return "done"
+
+    client = cast(Any, chat_client_base)
+    client.auto_finish_function_calls = False
+    function_call = Content.from_function_call(call_id="call_1", name="guarded_write", arguments={})
+    if stream:
+        client.streaming_responses = [
+            [
+                ChatResponseUpdate(
+                    contents=[function_call],
+                    role="assistant",
+                    finish_reason=cast(Any, finish_reason),
+                )
+            ]
+        ]
+    else:
+        client.run_responses = [
+            ChatResponse(
+                messages=[Message(role="assistant", contents=[function_call])],
+                finish_reason=cast(Any, finish_reason),
+            )
+        ]
+
+    result = client.get_response(
+        [Message(role="user", contents=["write"])],
+        options={"tools": [guarded_write]},
+        middleware=[RecordingMiddleware()],
+        stream=stream,
+    )
+    if stream:
+        updates = [update async for update in result]
+        assert any(content is function_call for update in updates for content in update.contents)
+        response = await result.get_final_response()
+    else:
+        response = await result
+
+    contents = [content for message in response.messages for content in message.contents]
+    assert function_call in contents
+    assert not any(content.type in {"function_approval_request", "function_result"} for content in contents)
+    assert tool_calls == 0
+    assert middleware_calls == 0
+    assert client.call_count == 1
+
+    prepared_messages = await client._prepare_messages_for_model_call(response.messages)
+    assert prepared_messages == []
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+async def test_missing_tool_calls_finish_reason_does_not_request_approval(
+    chat_client_base: SupportsChatGetResponse,
+    stream: bool,
+) -> None:
+    @tool(name="guarded_write", approval_mode="always_require")
+    def guarded_write() -> str:
+        raise AssertionError("tool body must not run")
+
+    client = cast(Any, chat_client_base)
+    client.auto_finish_function_calls = False
+    function_call = Content.from_function_call(call_id="call_1", name="guarded_write", arguments={})
+    if stream:
+        client.streaming_responses = [[ChatResponseUpdate(contents=[function_call], role="assistant")]]
+    else:
+        client.run_responses = [ChatResponse(messages=[Message(role="assistant", contents=[function_call])])]
+
+    result = client.get_response(
+        [Message(role="user", contents=["write"])],
+        options={"tools": [guarded_write]},
+        stream=stream,
+    )
+    response = await result.get_final_response() if stream else await result
+
+    assert not any(
+        content.type == "function_approval_request"
+        for message in response.messages
+        for content in message.contents
+    )
+    assert client.call_count == 1
 
 
 async def test_streaming_empty_call_id_keeps_occurrence_identity_through_approval(
@@ -6236,6 +6339,7 @@ async def test_conversation_id_updated_in_options_between_tool_iterations():
                 contents=[Content.from_function_call(call_id="call_1", name="test_func", arguments='{"arg1": "v1"}')],
             ),
             conversation_id="conv_after_first_call",
+            finish_reason="tool_calls",
         ),
         ChatResponse(
             messages=Message(role="assistant", contents=["done"]),
@@ -6269,6 +6373,7 @@ async def test_conversation_id_updated_in_options_between_tool_iterations():
                 contents=[Content.from_function_call(call_id="call_2", name="test_func", arguments='{"arg1": "v2"}')],
                 role="assistant",
                 conversation_id="stream_conv_after_first",
+                finish_reason="tool_calls",
             ),
         ],
         [

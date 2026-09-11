@@ -1308,7 +1308,12 @@ def is_local_history_conversation_id(conversation_id: str | None) -> bool:
 def _response_contains_follow_up_request(response: ChatResponse) -> bool:
     """Return whether a response requires another model call in the current run."""
     return any(
-        item.type == "function_approval_request" or (item.type == "function_call" and not item.informational_only)
+        item.type == "function_approval_request"
+        or (
+            response.finish_reason == "tool_calls"
+            and item.type == "function_call"
+            and not item.informational_only
+        )
         for message in response.messages
         for item in message.contents
     )

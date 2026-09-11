@@ -63,6 +63,8 @@ BaseChatClientT = TypeVar("BaseChatClientT", bound="BaseChatClient")
 
 logger = logging.getLogger("agent_framework")
 
+_UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY = "_agent_framework_uncommitted_function_calls"
+
 
 # region SupportsChatGetResponse Protocol
 
@@ -374,7 +376,18 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
     ) -> list[Message]:
-        prepared_messages = list(messages)
+        prepared_messages = [
+            message
+            for message in messages
+            if message.role != "assistant"
+            or (
+                _UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY not in message.additional_properties
+                and not any(
+                    _UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY in content.additional_properties
+                    for content in message.contents
+                )
+            )
+        ]
         if compaction_strategy is None:
             if tokenizer is None:
                 return prepared_messages

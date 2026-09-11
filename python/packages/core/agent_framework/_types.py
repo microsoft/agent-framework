@@ -1782,7 +1782,7 @@ FinishReason = NewType("FinishReason", str)
 Known values:
     - "stop": Normal completion
     - "length": Max tokens reached
-    - "tool_calls": Tool calls triggered
+    - "tool_calls": The provider completed the turn and committed the returned tool calls
     - "content_filter": Content filter triggered
 
 Examples:

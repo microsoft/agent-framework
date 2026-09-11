@@ -497,7 +497,8 @@ class TestChatMiddleware:
                 messages=Message(
                     role="assistant",
                     contents=[Content.from_function_call(call_id="call-1", name="inject_message", arguments={})],
-                )
+                ),
+                finish_reason="tool_calls",
             ),
             ChatResponse(messages=Message(role="assistant", contents=["done"])),
         ]

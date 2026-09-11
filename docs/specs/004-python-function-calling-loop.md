@@ -128,13 +128,41 @@ Code-reading landmarks:
 - `_get_response_with_function_invocation(...)` owns non-streaming aggregation.
 - `_stream_response_with_function_invocation(...)` owns streamed emission/finalization.
 - `_resolve_approval_responses(...)` handles only inbound approval decisions.
-- `_process_model_function_calls(...)` handles only calls from a completed model response.
+- `_process_model_function_calls(...)` handles only calls from a provider-committed model response whose
+  `finish_reason` is `"tool_calls"`.
 - `_try_execute_function_calls(...)` decides approval/declaration/execution behavior for a batch.
 - `_replace_approval_contents_with_results(...)` is the occurrence-aware approval transcript normalizer.
 - `FunctionInvocationLayer._update_function_invocation_continuation_state(...)` updates continuation state after
   every service response. Provider layers may override it to carry provider-specific continuation metadata into
   the next service call, but must delegate to the base implementation so generic conversation continuation remains
   synchronized with the active `AgentSession`.
+
+### Function-call commitment boundary
+
+`finish_reason == "tool_calls"` is the provider-neutral authorization signal for local function invocation. A
+call-bearing response with a missing or different finish reason is caller-visible but must not create a local approval
+request, enter function middleware, execute a tool body, create a function result, or trigger another model call.
+
+Provider adapters may set `"tool_calls"` only after the provider's authoritative terminal evidence commits every
+actionable call in that response. For non-streaming APIs, the final SDK response must prove completion. For streaming
+APIs, adapters resolve the reason on the existing terminal event; parseable arguments and iterator exhaustion are not
+commitment evidence. Providers must continue yielding incremental call updates without adding a second drain,
+buffering the complete stream, or waiting after EOF.
+
+Adapters that need to combine an ordinary provider reason with protocol-specific call commitment use a small local
+`_resolve_finish_reason(provider_finish_reason, *, has_function_calls, function_calls_committed)` function:
+
+- committed calls return `"tool_calls"` regardless of the ordinary provider reason;
+- calls without commitment never return `"tool_calls"`;
+- responses without calls preserve their ordinary reason.
+
+The helper is intentionally repeated in affected provider modules. The commitment evidence differs by protocol and
+does not justify a shared provider abstraction. Custom clients that return completed local function calls must set
+`finish_reason="tool_calls"` explicitly.
+
+Uncommitted call-bearing assistant turns remain in the caller-visible response but are marked as excluded from future
+model input. Reasoning and call content from that turn are omitted together so later stateless replay cannot create a
+dangling provider call.
 
 ### Approval pause and resume
 
@@ -489,6 +517,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | String input | Flexible string input follows the same loop behavior. | `test_base_client_with_function_calling_string_input` |
 | Multiple sequential rounds | Each round retains one call/result pair. | `test_base_client_with_function_calling_resets` |
 | Streaming call | Call chunks, one result update, and final text are emitted in order. | `test_base_client_with_streaming_function_calling` |
+| Missing or non-authorizing finish reason | Call content remains caller-visible, but no approval, middleware, tool body, result, or follow-up model call occurs; the uncommitted turn is excluded from later model input. | `test_function_calls_require_tool_calls_finish_reason`, `test_missing_tool_calls_finish_reason_does_not_request_approval` |
+| Provider terminal commitment | Streaming providers emit incremental calls immediately and assign `"tool_calls"` only on their authoritative terminal event; incomplete, failed, malformed, or prematurely exhausted streams remain non-authorizing. | Provider-specific completion tests in OpenAI Responses, Anthropic, Gemini, and AG-UI |
 | Function-call occurrence identity | Actionable calls gain one stable `Content.id`; a safe local empty-`call_id` fallback uses that id with a migration warning, and streaming aggregation preserves provider-assigned occurrence ids across interleaved fragments. OpenAI Chat Completions scopes fragment correlation to each request and `(choice.index, tool.index)`. | `test_actionable_function_call_gets_stable_occurrence_identity`, `test_actionable_function_call_uses_occurrence_identity_for_empty_call_id`, `test_streaming_empty_call_id_keeps_occurrence_identity_through_approval`, `test_streaming_empty_call_id_delta_reuses_opening_call_identity`, `test_streaming_interleaved_indexed_call_fragments_coalesce_by_occurrence`, `packages/core/tests/core/test_types.py::test_function_call_occurrence_id_roundtrips_without_regeneration`, `packages/openai/tests/openai/test_openai_chat_completion_client.py::test_streaming_tool_call_identity_is_request_local_and_scoped_by_choice_index` |
 | Reasoning-bound call | Finalized output retains reasoning, function call, function result, and final text. | `test_streaming_function_calling_response_includes_reasoning_and_tool_results` |
 | Calls across response messages | Every actionable call is executed once. | `test_base_client_executes_function_calls_across_multiple_response_messages` |

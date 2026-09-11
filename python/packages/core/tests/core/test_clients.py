@@ -389,7 +389,7 @@ def _tool_call_update(call_id: str, location: str) -> list[ChatResponseUpdate]:
                 )
             ],
             role="assistant",
-            finish_reason="stop",
+            finish_reason="tool_calls",
             response_id=f"resp_{call_id}",
         )
     ]

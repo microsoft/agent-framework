@@ -1822,6 +1822,19 @@ def _is_actionable_function_call(content: Content) -> bool:
     return content.type == "function_call" and not content.informational_only
 
 
+def _mark_uncommitted_function_call_messages(response: ChatResponse) -> None:
+    from ._clients import _UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY  # pyright: ignore[reportPrivateUsage]
+
+    for message in response.messages:
+        uncommitted_calls = [content for content in message.contents if _is_actionable_function_call(content)]
+        if not uncommitted_calls:
+            continue
+        replay_metadata = {"finish_reason": response.finish_reason}
+        message.additional_properties[_UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY] = replay_metadata
+        for content in uncommitted_calls:
+            content.additional_properties[_UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY] = replay_metadata
+
+
 def _underlying_function_call(content: Content) -> Content:
     if content.type == "function_approval_response" and content.function_call is not None:
         return content.function_call
@@ -3392,6 +3405,13 @@ async def _process_model_function_calls(
     # 1. Extract only actionable, unanswered calls from this model turn.
     tools = _extract_tools(options)
     function_calls = _extract_function_calls(response)
+    if function_calls and response.finish_reason != "tool_calls":
+        _mark_uncommitted_function_call_messages(response)
+        if function_call_messages is not None:
+            _prepend_function_call_messages(response, function_call_messages)
+        if approval_requests:
+            _store_pending_approval_requests(invocation_session, approval_requests)
+        return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row, action="return")
     if not (function_calls and tools):
         if function_call_messages is not None:
             _prepend_function_call_messages(response, function_call_messages)
