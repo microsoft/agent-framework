@@ -1825,14 +1825,33 @@ def _is_actionable_function_call(content: Content) -> bool:
 def _mark_uncommitted_function_call_messages(response: ChatResponse) -> None:
     from ._clients import _UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY  # pyright: ignore[reportPrivateUsage]
 
+    if not any(
+        _is_actionable_function_call(content)
+        for message in response.messages
+        for content in message.contents
+    ):
+        return
+    replay_metadata = {"finish_reason": response.finish_reason}
     for message in response.messages:
-        uncommitted_calls = [content for content in message.contents if _is_actionable_function_call(content)]
-        if not uncommitted_calls:
+        if message.role != "assistant":
             continue
-        replay_metadata = {"finish_reason": response.finish_reason}
         message.additional_properties[_UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY] = replay_metadata
-        for content in uncommitted_calls:
+        for content in message.contents:
             content.additional_properties[_UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY] = replay_metadata
+
+
+def _mark_uncommitted_streaming_contents(contents: Sequence[Content], response: ChatResponse) -> None:
+    from ._clients import _UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY  # pyright: ignore[reportPrivateUsage]
+
+    if response.finish_reason == "tool_calls" or not any(
+        _is_actionable_function_call(content)
+        for message in response.messages
+        for content in message.contents
+    ):
+        return
+    replay_metadata = {"finish_reason": response.finish_reason}
+    for content in contents:
+        content.additional_properties[_UNCOMMITTED_FUNCTION_CALL_MESSAGE_KEY] = replay_metadata
 
 
 def _underlying_function_call(content: Content) -> Content:
@@ -3882,7 +3901,10 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             streamed_names_by_call_id: dict[str, str] = {}
             last_streamed_identity: tuple[str, str] | None = None
             warned_empty_call_ids: set[str] = set()
+            streamed_contents: list[Content] = []
             async for update in inner_stream:
+                if update.role in (None, "assistant"):
+                    streamed_contents.extend(update.contents)
                 for content in update.contents:
                     if content.type != "function_call":
                         continue
@@ -3940,6 +3962,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 yield update
 
             response = await inner_stream.get_final_response()
+            _mark_uncommitted_streaming_contents(streamed_contents, response)
             fallback_added = False
             if options.get("tool_choice") == "none" and budget_state.get("truncated"):
                 fallback_added = _ensure_function_invocation_limit_fallback_response(response)

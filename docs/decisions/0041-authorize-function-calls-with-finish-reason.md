@@ -67,7 +67,7 @@ base class, mixin, registry, or cross-provider helper.
 
 Streaming adapters resolve the finish reason on the provider's existing terminal event. They do not add another drain,
 buffer speculative content, or wait after iterator exhaustion. Calls returned without authorization remain visible to
-the caller but are excluded from later model-bound replay.
+the caller, while every assistant message from that uncommitted provider turn is excluded from later model-bound replay.
 
 ### Consequences
 

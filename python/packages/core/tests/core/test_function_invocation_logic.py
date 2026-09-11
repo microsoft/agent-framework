@@ -392,13 +392,20 @@ async def test_function_calls_require_tool_calls_finish_reason(
 
     client = cast(Any, chat_client_base)
     client.auto_finish_function_calls = False
+    reasoning = Content.from_text_reasoning(text="I should write")
     function_call = Content.from_function_call(call_id="call_1", name="guarded_write", arguments={})
     if stream:
         client.streaming_responses = [
             [
                 ChatResponseUpdate(
+                    contents=[reasoning],
+                    role="assistant",
+                    message_id="reasoning-message",
+                ),
+                ChatResponseUpdate(
                     contents=[function_call],
                     role="assistant",
+                    message_id="function-call-message",
                     finish_reason=cast(Any, finish_reason),
                 )
             ]
@@ -406,7 +413,10 @@ async def test_function_calls_require_tool_calls_finish_reason(
     else:
         client.run_responses = [
             ChatResponse(
-                messages=[Message(role="assistant", contents=[function_call])],
+                messages=[
+                    Message(role="assistant", contents=[reasoning]),
+                    Message(role="assistant", contents=[function_call]),
+                ],
                 finish_reason=cast(Any, finish_reason),
             )
         ]
@@ -425,6 +435,7 @@ async def test_function_calls_require_tool_calls_finish_reason(
         response = await result
 
     contents = [content for message in response.messages for content in message.contents]
+    assert reasoning in contents
     assert function_call in contents
     assert not any(content.type in {"function_approval_request", "function_result"} for content in contents)
     assert tool_calls == 0

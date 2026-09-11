@@ -747,7 +747,11 @@ class RawOpenAIChatClient(
                         function_call_commitments[key] = (
                             function_call_commitments.get(key, 0) | _FUNCTION_CALL_ARGUMENTS_DONE
                         )
-                    case "response.output_item.done" if getattr(chunk.item, "type", None) == "function_call":
+                    case "response.output_item.done" if getattr(chunk.item, "type", None) in {
+                        "function_call",
+                        "shell_call",
+                        "local_shell_call",
+                    }:
                         key = (chunk.output_index, getattr(chunk.item, "id", None) or "")
                         function_call_commitments[key] = (
                             function_call_commitments.get(key, 0) | _FUNCTION_CALL_OUTPUT_ITEM_DONE
@@ -766,6 +770,9 @@ class RawOpenAIChatClient(
                     update.finish_reason = self._get_finish_reason_from_openai_response(
                         terminal_response,
                         function_call_commitments=function_call_commitments,
+                        local_shell_tool_name=self._get_local_shell_tool_name(
+                            (validated_options or {}).get("tools")
+                        ),
                     )
                 return update
 
@@ -2671,6 +2678,7 @@ class RawOpenAIChatClient(
         response: Any,
         *,
         function_call_commitments: Mapping[tuple[int, str], int] | None = None,
+        local_shell_tool_name: str | None = None,
     ) -> FinishReason | None:
         """Get the framework finish reason from a terminal Responses API response."""
         incomplete_reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
@@ -2687,6 +2695,10 @@ class RawOpenAIChatClient(
             (output_index, item)
             for output_index, item in enumerate(getattr(response, "output", ()))
             if getattr(item, "type", None) == "function_call"
+            or (
+                local_shell_tool_name is not None
+                and getattr(item, "type", None) in {"shell_call", "local_shell_call"}
+            )
         ]
         if function_call_commitments is None:
             function_calls_committed = getattr(response, "status", None) == "completed" and all(
@@ -2695,7 +2707,11 @@ class RawOpenAIChatClient(
         else:
             function_calls_committed = getattr(response, "status", None) == "completed" and all(
                 function_call_commitments.get((output_index, getattr(item, "id", None) or ""), 0)
-                == _FUNCTION_CALL_COMMITTED
+                == (
+                    _FUNCTION_CALL_COMMITTED
+                    if getattr(item, "type", None) == "function_call"
+                    else _FUNCTION_CALL_OUTPUT_ITEM_DONE
+                )
                 and getattr(item, "status", None) == "completed"
                 for output_index, item in function_calls
             )
@@ -3013,7 +3029,10 @@ class RawOpenAIChatClient(
             args["value"] = structured_response
         elif response_format := options.get("response_format"):
             args["response_format"] = response_format
-        if finish_reason := self._get_finish_reason_from_openai_response(response):
+        if finish_reason := self._get_finish_reason_from_openai_response(
+            response,
+            local_shell_tool_name=local_shell_tool_name,
+        ):
             args["finish_reason"] = finish_reason
         # Set continuation_token when background operation is still in progress
         if response.status and response.status in ("in_progress", "queued"):

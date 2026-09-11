@@ -161,8 +161,8 @@ does not justify a shared provider abstraction. Custom clients that return compl
 `finish_reason="tool_calls"` explicitly.
 
 Uncommitted call-bearing assistant turns remain in the caller-visible response but are marked as excluded from future
-model input. Reasoning and call content from that turn are omitted together so later stateless replay cannot create a
-dangling provider call.
+model input. All assistant messages in that provider turn are omitted together, including reasoning that arrived in a
+separate streamed message, so later stateless replay cannot create a dangling provider call.
 
 ### Approval pause and resume
 

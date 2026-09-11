@@ -139,18 +139,24 @@ class StreamingChatClientStub(
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         if stream:
+
             async def _stream() -> AsyncIterator[ChatResponseUpdate]:
                 has_function_calls = False
                 has_finish_reason = False
+                pending_update: ChatResponseUpdate | None = None
                 async for update in self._stream_fn(messages, options, **kwargs):
                     has_function_calls = has_function_calls or any(
                         content.type == "function_call" and not content.informational_only
                         for content in update.contents
                     )
                     has_finish_reason = has_finish_reason or update.finish_reason is not None
-                    yield update
-                if has_function_calls and not has_finish_reason:
-                    yield ChatResponseUpdate(finish_reason="tool_calls")
+                    if pending_update is not None:
+                        yield pending_update
+                    pending_update = update
+                if pending_update is not None:
+                    if has_function_calls and not has_finish_reason:
+                        pending_update.finish_reason = "tool_calls"
+                    yield pending_update
 
             def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
                 return _finish_committed_test_calls(ChatResponse.from_updates(updates))
