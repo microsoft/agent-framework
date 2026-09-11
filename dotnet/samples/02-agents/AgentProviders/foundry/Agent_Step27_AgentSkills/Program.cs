@@ -15,7 +15,7 @@ string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
-const string AgentName = "AgentSkillsAgent";
+string agentName = $"AgentSkillsAgent-{Guid.NewGuid():N}";
 
 // --- Define an Agent Skill ---
 var supportSkill = new AgentInlineSkill(
@@ -47,7 +47,7 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredent
 
 // --- Create a server-side versioned Foundry agent ---
 ProjectsAgentVersion agentVersion = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(
-    AgentName,
+    agentName,
     new ProjectsAgentVersionCreationOptions(
         new DeclarativeAgentDefinition(model: deploymentName)
         {
@@ -78,5 +78,5 @@ try
 finally
 {
     // Cleanup: deletes the agent and all its versions.
-    await aiProjectClient.AgentAdministrationClient.DeleteAgentAsync(AgentName);
+    await aiProjectClient.AgentAdministrationClient.DeleteAgentAsync(agentName);
 }
