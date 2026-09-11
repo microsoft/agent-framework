@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from typing import Any, ClassVar, TypedDict
 
 from agent_framework import Message
-from agent_framework._sessions import HistoryProvider
+from agent_framework._sessions import HistoryProvider, filter_new_messages
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
 from azure.core.credentials import TokenCredential
@@ -187,10 +187,15 @@ class CosmosHistoryProvider(HistoryProvider):
 
         await self._ensure_container_proxy()
         session_key = self._session_partition_key(session_id)
+        existing_messages = await self.get_messages(session_key, state=state, **kwargs)
+        new_messages = filter_new_messages(existing_messages, messages)
+
+        if not new_messages:
+            return
 
         base_sort_key = time.time_ns()
         operations: list[tuple[str, tuple[dict[str, Any]]]] = []
-        for index, message in enumerate(messages):
+        for index, message in enumerate(new_messages):
             document = {
                 "id": str(uuid.uuid4()),
                 "session_id": session_key,
