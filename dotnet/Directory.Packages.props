@@ -151,7 +151,7 @@
     <PackageVersion Include="Moq" Version="[4.18.4]" />
     <PackageVersion Include="xunit.v3.mtp-v2" Version="4.0.0" />
     <PackageVersion Include="xRetry.v3" Version="1.0.0" />
-    <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.11.0" />
+    <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.11.2" />
     <!-- Symbols -->
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.401" />
     <!-- Toolset -->
