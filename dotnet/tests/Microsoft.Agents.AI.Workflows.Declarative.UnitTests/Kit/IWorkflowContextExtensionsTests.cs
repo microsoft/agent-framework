@@ -6,6 +6,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.PowerFx.Types;
 using Moq;
 
@@ -68,5 +69,44 @@ public sealed class IWorkflowContextExtensionsTests
         // Assert
         Assert.Equal("secret-value", state.Engine.Eval("Local.TestValue").ToObject());
         Assert.Equal(SensitivityLevel.Sensitive, state.GetSensitivity("TestValue", VariableScopeNames.Local));
+    }
+
+    [Fact]
+    public async Task ReadStateWithSensitivityAsync_WithPlainContext_ReadsSensitivitySidecarAsync()
+    {
+        // Arrange
+        Mock<IWorkflowContext> context = new(MockBehavior.Loose);
+        context
+            .Setup(c => c.ReadStateAsync<object>("TestValue", VariableScopeNames.Local, default))
+            .Returns(new ValueTask<object?>("secret-value"));
+        context
+            .Setup(c => c.ReadStateAsync<SensitivityLevel>("TestValue", WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), default))
+            .Returns(new ValueTask<SensitivityLevel>(SensitivityLevel.Sensitive));
+
+        // Act
+        var evaluatedValue = await context.Object.ReadStateWithSensitivityAsync<object>("TestValue", VariableScopeNames.Local);
+
+        // Assert
+        Assert.Equal("secret-value", evaluatedValue.Value);
+        Assert.Equal(SensitivityLevel.Sensitive, evaluatedValue.Sensitivity);
+    }
+
+    [Fact]
+    public async Task QueueStateUpdateWithSensitivityAsync_WithPlainContext_QueuesSensitivitySidecarAsync()
+    {
+        // Arrange
+        Mock<IWorkflowContext> context = new(MockBehavior.Strict);
+        context
+            .Setup(c => c.QueueStateUpdateAsync("TestValue", "secret-value", VariableScopeNames.Local, default))
+            .Returns(default(ValueTask));
+        context
+            .Setup(c => c.QueueStateUpdateAsync("TestValue", SensitivityLevel.Sensitive, WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local), default))
+            .Returns(default(ValueTask));
+
+        // Act
+        await context.Object.QueueStateUpdateWithSensitivityAsync("TestValue", new EvaluationResult<string>("secret-value", SensitivityLevel.Sensitive), VariableScopeNames.Local);
+
+        // Assert
+        context.VerifyAll();
     }
 }

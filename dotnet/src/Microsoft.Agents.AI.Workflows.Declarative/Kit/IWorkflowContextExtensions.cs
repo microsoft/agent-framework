@@ -134,8 +134,12 @@ public static class IWorkflowContextExtensions
             return new(declarativeValue, declarativeSensitivity);
         }
 
+        string plainScopeName = scopeName ?? WorkflowFormulaState.DefaultScopeName;
         TValue? value = await context.ReadStateAsync<TValue>(key, scopeName, cancellationToken).ConfigureAwait(false);
-        return new(value, SensitivityLevel.None);
+        SensitivityLevel sensitivity = ShouldPersistSensitivity(plainScopeName)
+            ? await context.ReadStateAsync<SensitivityLevel>(key, WorkflowFormulaState.GetSensitivityScopeName(plainScopeName), cancellationToken).ConfigureAwait(false)
+            : SensitivityLevel.None;
+        return new(value, sensitivity);
     }
 
     /// <summary>
@@ -163,6 +167,12 @@ public static class IWorkflowContextExtensions
         }
 
         await context.QueueStateUpdateAsync(key, value.Value, scopeName, cancellationToken).ConfigureAwait(false);
+
+        string plainScopeName = scopeName ?? WorkflowFormulaState.DefaultScopeName;
+        if (ShouldPersistSensitivity(plainScopeName))
+        {
+            await context.QueueStateUpdateAsync(key, value.Sensitivity, WorkflowFormulaState.GetSensitivityScopeName(plainScopeName), cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>
@@ -230,4 +240,9 @@ public static class IWorkflowContextExtensions
             throw new DeclarativeActionException("Cannot return sensitive workflow expression value.");
         }
     }
+
+    private static bool ShouldPersistSensitivity(string scopeName) =>
+        DeclarativeWorkflowContext.ManagedScopes.Contains(scopeName) ||
+        scopeName == VariableScopeNames.Environment ||
+        scopeName == VariableScopeNames.System;
 }

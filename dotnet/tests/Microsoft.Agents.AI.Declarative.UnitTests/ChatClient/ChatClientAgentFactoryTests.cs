@@ -156,6 +156,31 @@ public sealed class ChatClientAgentFactoryTests
     }
 
     [Fact]
+    public async Task TryCreateAsync_WithLegacyConfiguration_LoadsReferencedConfigurationAsync()
+    {
+        // Arrange
+        IConfiguration configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Temperature"] = "0.9",
+                ["TopP"] = "0.8",
+                ["OpenAIEndpoint"] = "https://example.openai.azure.com/",
+                ["OpenAIApiKey"] = "test-key",
+            })
+            .Build();
+        GptComponentMetadata promptAgent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithVariableReferences);
+        ChatClientPromptAgentFactory factory = new(this._mockChatClient.Object, configuration: configuration);
+
+        // Act
+        AIAgent? agent = await factory.TryCreateAsync(promptAgent);
+
+        // Assert
+        ChatClientAgent chatClientAgent = Assert.IsType<ChatClientAgent>(agent);
+        Assert.Equal(0.9F, chatClientAgent.ChatOptions?.Temperature);
+        Assert.Equal(0.8F, chatClientAgent.ChatOptions?.TopP);
+    }
+
+    [Fact]
     public async Task TryCreateAsync_OnlyLoadsAllowedReferencedConfigurationAsync()
     {
         // Arrange

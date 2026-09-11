@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.ObjectModel;
@@ -38,6 +39,7 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
             {
                 Engine = engine,
                 Configuration = configuration,
+                AllowedConfigurationVariables = configuration?.AsEnumerable().Select(static pair => pair.Key),
                 LoggerFactory = loggerFactory,
             },
             isValidated: true)
