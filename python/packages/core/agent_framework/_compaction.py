@@ -378,13 +378,13 @@ def _set_group_summarized_by_summary_id(message: Message, summary_id: str) -> No
 def _reconcile_compaction_summaries(  # pyright: ignore[reportUnusedFunction]
     source_messages: list[Message],
     working_messages: Sequence[Message],
-    previous_message_ids: set[int],
+    source_message_identities: set[int],
 ) -> None:
-    """Reconcile summaries of source messages without persisting unrelated rewrites."""
+    """Reconcile summaries supported by source-owned messages without persisting unrelated rewrites."""
     source_message_ids = {message.message_id for message in source_messages if message.message_id}
     candidates: list[tuple[Message, set[str]]] = []
     for message in working_messages:
-        if id(message) in previous_message_ids:
+        if id(message) in source_message_identities:
             continue
 
         annotation = _read_group_annotation_raw(message)

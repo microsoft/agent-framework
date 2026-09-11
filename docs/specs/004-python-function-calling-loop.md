@@ -478,6 +478,9 @@ that manually replay messages own the equivalent rule: do not resend an approval
   same turn.
 - A trusted terminal result consumes the corresponding approval authority in explicit stateless replay; a result in a
   server-registered pending occurrence cannot consume that authority before local execution.
+- Non-streaming runs that exclude tool groups through in-run compaction return the inserted summary messages in the
+  final response transcript, each positioned before the group it replaces, so history loaded with `skip_excluded`
+  keeps the summarized content; summaries of caller-owned input messages stay out of the returned transcript.
 
 ## Scenario-to-test matrix
 
@@ -497,6 +500,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Declaration-only call | The call is surfaced as user input and is not executed; streaming arguments appear once while finalized request metadata remains available. | `test_declaration_only_tool`, `test_streaming_declaration_only_tool_preserves_metadata_without_duplicate_arguments` |
 | Function invocation disabled | The client bypasses the invocation loop without losing invocation kwargs. | `test_function_invocation_config_enabled_false`, `test_function_invocation_config_enabled_false_preserves_invocation_kwargs`, `test_streaming_function_invocation_config_enabled_false` |
 | Runtime tool changes | Added tools become available on the next iteration and retain approval behavior. | `test_add_tools_available_next_iteration`, `test_add_tools_with_approval_required_tool` |
+| In-run compaction summaries | Summaries inserted for tool groups excluded by in-run compaction are returned in the final non-streaming response transcript before the group they replace, so history loaded with `skip_excluded` keeps the summarized content; summaries of caller-owned input messages are not added. | `packages/core/tests/core/test_clients.py::test_function_loop_returns_compaction_summaries_in_final_response`, `test_function_loop_returns_compaction_summaries_when_iteration_budget_exhausted`, `test_function_loop_reconciles_nested_compaction_summaries`, `test_function_loop_returns_compacted_transcript_on_early_terminal_exit`, `packages/core/tests/core/test_agents.py::test_agent_run_returns_and_persists_compaction_summaries` |
 
 ### Approval pause and resume
 
@@ -692,3 +696,4 @@ Before accepting an update, reviewers must confirm:
 - #6963 / #7095 — opaque reasoning-signature replay
 - #6074 / #7233 — reasoning-paired tool-call replay
 - #6450 / #6794 — provider message and tool-result serialization
+- #8099 — in-run compaction summaries in the returned transcript

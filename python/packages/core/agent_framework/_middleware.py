@@ -1523,7 +1523,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
             function_invocation_kwargs=function_invocation_kwargs,
         )
         source_messages = messages if isinstance(messages, list) else None
-        baseline_message_ids = {id(message) for message in messages}
+        source_message_identities = {id(message) for message in messages}
         middleware_messages = cast("list[Message]", context.messages)
         downstream_messages: list[Message] | None = None
 
@@ -1552,7 +1552,7 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
                     _reconcile_compaction_summaries(
                         source_messages,
                         downstream_messages if downstream_messages is not None else middleware_messages,
-                        baseline_message_ids,
+                        source_message_identities,
                     )
 
         if stream:
