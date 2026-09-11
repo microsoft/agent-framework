@@ -382,7 +382,9 @@ class FunctionInvocationContext:
                 and any middleware may overwrite it with a value of any type. On the way
                 out, only ``list[Content]`` and ``str`` survive intact: every other value,
                 a bare ``Content`` included, is stringified into a single text item, so
-                rebuild the list rather than assigning one item back.
+                rebuild the list rather than assigning one item back. The exception is a
+                bare ``Content`` of type ``function_approval_request``, which the
+                invocation layer passes through untouched to drive the approval flow.
         kwargs: Additional runtime keyword arguments forwarded to the function invocation.
         tools: The live, mutable list of tools available to the model for the current
                 agent run, or ``None`` when the function is invoked outside of a
@@ -779,7 +781,9 @@ class FunctionMiddleware(ABC):
             :meth:`FunctionTool.invoke`'s output — ``list[Content]``, or the raw return
             value under ``SKIP_PARSING`` — while an outer one sees whatever the inner
             middleware left. Overriding with anything but ``list[Content]`` or ``str``
-            collapses the result into a single stringified text item.
+            collapses the result into a single stringified text item, except a bare
+            ``Content`` of type ``function_approval_request``, which passes through
+            untouched to drive the approval flow.
         """
         ...
 
