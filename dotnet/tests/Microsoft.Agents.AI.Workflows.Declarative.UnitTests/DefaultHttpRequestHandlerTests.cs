@@ -286,6 +286,30 @@ public sealed class DefaultHttpRequestHandlerTests
     }
 
     [Fact]
+    public async Task SendAsyncRejectsBodyContentTypeContainingCrlfBeforeSendingAsync()
+    {
+        // Arrange
+        TestHttpMessageHandler messageHandler = new((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
+        using HttpClient httpClient = new(messageHandler);
+        await using DefaultHttpRequestHandler handler = new(httpClient);
+        HttpRequestInfo request = new()
+        {
+            Method = "POST",
+            Url = TestUrl,
+            Body = "safe",
+            BodyContentType = "text/plain\r\nX-Injected: value",
+        };
+
+        // Act
+        async Task actAsync() => await handler.SendAsync(request);
+
+        // Assert
+        await Assert.ThrowsAsync<ArgumentException>(actAsync);
+        Assert.Null(messageHandler.LastRequest);
+    }
+
+    [Fact]
     public async Task SendAsyncRoutesContentHeadersToBodyAsync()
     {
         // Arrange
