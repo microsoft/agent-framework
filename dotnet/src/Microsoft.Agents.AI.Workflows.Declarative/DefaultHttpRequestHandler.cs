@@ -2,7 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Threading;
@@ -24,9 +26,17 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// The handler applies the per-request <see cref="HttpRequestInfo.Timeout"/> using a linked <see cref="CancellationTokenSource"/>
 /// so it does not mutate <see cref="HttpClient.Timeout"/> on shared instances.
 /// </para>
+/// <para>
+/// Redirects are handled by this handler only when using its internally owned client, which disables automatic
+/// redirects so per-request headers are not forwarded to redirect destinations. If a supplied client returns a
+/// redirect response, this handler does not follow it because the client's redirect behavior is opaque. Supplied
+/// clients should disable automatic redirects and handle redirect responses before returning them to this handler.
+/// </para>
 /// </remarks>
 public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDisposable
 {
+    private const int MaxAutomaticRedirections = 50;
+
     private readonly Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? _httpClientProvider;
     private readonly Lazy<HttpClient> _ownedHttpClient;
 
@@ -80,7 +90,7 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
     public DefaultHttpRequestHandler(Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>>? httpClientProvider)
     {
         this._httpClientProvider = httpClientProvider;
-        this._ownedHttpClient = new Lazy<HttpClient>(() => new HttpClient(), LazyThreadSafetyMode.ExecutionAndPublication);
+        this._ownedHttpClient = new Lazy<HttpClient>(CreateOwnedHttpClient, LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     private static Func<HttpRequestInfo, CancellationToken, Task<HttpClient?>> CreateSingleClientProvider(HttpClient httpClient)
@@ -111,15 +121,8 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
             throw new ArgumentException("Request method must be provided.", nameof(request));
         }
 
-        HttpClient? providedClient = null;
-        if (this._httpClientProvider is not null)
-        {
-            providedClient = await this._httpClientProvider(request, cancellationToken).ConfigureAwait(false);
-        }
-
-        HttpClient client = providedClient ?? this._ownedHttpClient.Value;
-
-        using HttpRequestMessage httpRequest = BuildHttpRequestMessage(request);
+        HttpRequestInfo currentRequest = request;
+        Uri currentUri = CreateAbsoluteUri(ResolveRequestUri(request));
 
         using CancellationTokenSource? timeoutCts = request.Timeout is { } timeout && timeout > TimeSpan.Zero
             ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
@@ -129,32 +132,76 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
 
         CancellationToken effectiveToken = timeoutCts?.Token ?? cancellationToken;
 
-        using HttpResponseMessage httpResponse = await client
-            .SendAsync(httpRequest, HttpCompletionOption.ResponseContentRead, effectiveToken)
-            .ConfigureAwait(false);
-
-        string? body = httpResponse.Content is null
-            ? null
-#if NET
-            : await httpResponse.Content.ReadAsStringAsync(effectiveToken).ConfigureAwait(false);
-#else
-            : await httpResponse.Content.ReadAsStringAsync().ConfigureAwait(false);
-#endif
-
-        Dictionary<string, IReadOnlyList<string>> headers = new(StringComparer.OrdinalIgnoreCase);
-        AppendHeaders(headers, httpResponse.Headers);
-        if (httpResponse.Content is not null)
+        for (int redirectCount = 0; redirectCount <= MaxAutomaticRedirections; redirectCount++)
         {
-            AppendHeaders(headers, httpResponse.Content.Headers);
+            HttpClient? providedClient = null;
+            if (this._httpClientProvider is not null)
+            {
+                providedClient = await this._httpClientProvider(currentRequest, effectiveToken).ConfigureAwait(false);
+            }
+
+            HttpClient client = providedClient ?? this._ownedHttpClient.Value;
+
+            using HttpRequestMessage httpRequest = BuildHttpRequestMessage(currentRequest);
+
+            using HttpResponseMessage httpResponse = await client
+                .SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, effectiveToken)
+                .ConfigureAwait(false);
+
+            if (providedClient is null &&
+                TryCreateRedirectRequest(httpResponse, currentRequest, currentUri, out HttpRequestInfo? redirectRequest, out Uri? redirectUri))
+            {
+                currentRequest = redirectRequest;
+                currentUri = redirectUri;
+                continue;
+            }
+
+            string? body = httpResponse.Content is null
+                ? null
+                : await ReadResponseBodyAsStringAsync(httpResponse.Content, effectiveToken).ConfigureAwait(false);
+
+            Dictionary<string, IReadOnlyList<string>> headers = new(StringComparer.OrdinalIgnoreCase);
+            AppendHeaders(headers, httpResponse.Headers);
+            if (httpResponse.Content is not null)
+            {
+                AppendHeaders(headers, httpResponse.Content.Headers);
+            }
+
+            return new HttpRequestResult
+            {
+                StatusCode = (int)httpResponse.StatusCode,
+                IsSuccessStatusCode = httpResponse.IsSuccessStatusCode,
+                Body = body,
+                Headers = headers,
+            };
         }
 
-        return new HttpRequestResult
+        throw new HttpRequestException($"The maximum number of HTTP redirects ({MaxAutomaticRedirections}) was exceeded.");
+    }
+
+    private static async Task<string> ReadResponseBodyAsStringAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+#if NET
+        return await content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+#else
+        Task<string> readTask = content.ReadAsStringAsync();
+        Task cancellationTask = Task.Delay(Timeout.Infinite, cancellationToken);
+        Task completedTask = await Task.WhenAny(readTask, cancellationTask).ConfigureAwait(false);
+        if (completedTask == readTask)
         {
-            StatusCode = (int)httpResponse.StatusCode,
-            IsSuccessStatusCode = httpResponse.IsSuccessStatusCode,
-            Body = body,
-            Headers = headers,
-        };
+            return await readTask.ConfigureAwait(false);
+        }
+
+        content.Dispose();
+        _ = readTask.ContinueWith(
+            static task => _ = task.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+        cancellationToken.ThrowIfCancellationRequested();
+        throw new OperationCanceledException(cancellationToken);
+#endif
     }
 
     /// <inheritdoc/>
@@ -212,6 +259,96 @@ public sealed class DefaultHttpRequestHandler : IHttpRequestHandler, IAsyncDispo
 
         return httpRequest;
     }
+
+    private static HttpClient CreateOwnedHttpClient()
+    {
+        HttpClientHandler handler = new()
+        {
+            AllowAutoRedirect = false,
+            UseCookies = false,
+            CheckCertificateRevocationList = true
+        };
+
+        return new HttpClient(handler);
+    }
+
+    private static Uri CreateAbsoluteUri(string requestUri)
+    {
+        if (!Uri.TryCreate(requestUri, UriKind.Absolute, out Uri? uri))
+        {
+            throw new ArgumentException("Request URL must be an absolute URL.", nameof(requestUri));
+        }
+
+        return uri;
+    }
+
+    private static bool TryCreateRedirectRequest(
+        HttpResponseMessage response,
+        HttpRequestInfo currentRequest,
+        Uri currentUri,
+        [NotNullWhen(true)] out HttpRequestInfo? redirectRequest,
+        [NotNullWhen(true)] out Uri? redirectUri)
+    {
+        redirectRequest = null;
+        redirectUri = null;
+
+        if (!IsRedirectStatusCode(response.StatusCode) || response.Headers.Location is null)
+        {
+            return false;
+        }
+
+        redirectUri = response.Headers.Location.IsAbsoluteUri
+            ? response.Headers.Location
+            : new Uri(currentUri, response.Headers.Location);
+
+        if (IsHttpsToHttpRedirect(currentUri, redirectUri))
+        {
+            throw new HttpRequestException("Redirects from HTTPS to HTTP are not allowed.");
+        }
+
+        bool rewriteToGet = ShouldRewriteRedirectMethodToGet(response.StatusCode, currentRequest.Method);
+        if (!rewriteToGet && currentRequest.Body is not null && !HaveSameOrigin(currentUri, redirectUri))
+        {
+            throw new HttpRequestException("Redirects that preserve the request body to a different origin are not allowed.");
+        }
+
+        redirectRequest = new HttpRequestInfo
+        {
+            Method = rewriteToGet ? "GET" : currentRequest.Method,
+            Url = redirectUri.ToString(),
+            Body = rewriteToGet ? null : currentRequest.Body,
+            BodyContentType = rewriteToGet ? null : currentRequest.BodyContentType,
+            Timeout = currentRequest.Timeout,
+            ConnectionName = currentRequest.ConnectionName,
+        };
+
+        return true;
+    }
+
+    private static bool IsRedirectStatusCode(HttpStatusCode statusCode)
+    {
+        int code = (int)statusCode;
+        return code is 301 or 302 or 303 or 307 or 308;
+    }
+
+    private static bool ShouldRewriteRedirectMethodToGet(HttpStatusCode statusCode, string method)
+    {
+        string normalized = method.Trim().ToUpperInvariant();
+        int code = (int)statusCode;
+        return code == 303 || ((code == 301 || code == 302) && string.Equals(normalized, "POST", StringComparison.Ordinal));
+    }
+
+    private static bool IsHttpsToHttpRedirect(Uri currentUri, Uri redirectUri) =>
+        string.Equals(currentUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(redirectUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase);
+
+    private static bool HaveSameOrigin(Uri currentUri, Uri redirectUri) =>
+        Uri.Compare(
+            currentUri,
+            redirectUri,
+            UriComponents.SchemeAndServer,
+            UriFormat.Unescaped,
+            StringComparison.OrdinalIgnoreCase) == 0;
 
     private static HttpMethod ResolveMethod(string method)
     {

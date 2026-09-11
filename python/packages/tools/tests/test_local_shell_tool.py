@@ -245,6 +245,32 @@ async def test_persistent_powershell_propagates_cmdlet_error() -> None:
         assert result.stderr  # message surfaced
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell-specific exit-code handling")
+async def test_persistent_powershell_does_not_inherit_previous_exit_code() -> None:
+    """A cmdlet-only command must not report the rc of an earlier native command.
+
+    ``$LASTEXITCODE`` is a session-wide automatic variable that only native
+    (external) executables update, so it stays set after such a command and
+    would otherwise be reported for every later cmdlet-only command.
+    """
+    async with LocalShellTool(mode="persistent", approval_mode="never_require", acknowledge_unsafe=True) as tool:
+        failing = await tool.run("cmd /c exit 3")
+        assert failing.exit_code == 3
+
+        succeeding = await tool.run("Write-Output ok")
+        assert succeeding.exit_code == 0, f"inherited stale rc {succeeding.exit_code} from the previous command"
+        assert "ok" in succeeding.stdout
+
+        # The fix must not cost the session state persistent mode exists for:
+        # the user's own command can still read the previous native exit code,
+        # while the command reporting it exits 0 itself.
+        readback = await tool.run("Write-Output $LASTEXITCODE")
+        assert readback.exit_code == 0
+        assert readback.stdout.strip() == "3", (
+            f"$LASTEXITCODE no longer visible to the user's command: {readback.stdout!r}"
+        )
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="PowerShell-specific encoding")
 async def test_persistent_powershell_utf8_roundtrip() -> None:
     """Non-ASCII output should round-trip without mojibake."""
