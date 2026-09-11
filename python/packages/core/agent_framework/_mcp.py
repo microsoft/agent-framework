@@ -136,6 +136,7 @@ _MCP_FRAMEWORK_DENYLIST: frozenset[str] = frozenset({
 _mcp_call_headers: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar("_mcp_call_headers")
 _MCP_HEADER_OWNER_EXTENSION = "agent_framework.mcp_header_owner"
 _MCP_INJECTED_HEADER_KEYS_EXTENSION = "agent_framework.mcp_injected_header_keys"
+_MCPHeaderIdentity: TypeAlias = tuple[tuple[str, str], ...]
 MCP_DEFAULT_TIMEOUT = 30
 MCP_DEFAULT_SSE_READ_TIMEOUT = 60 * 5
 _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES = 1024 * 1024
@@ -647,6 +648,14 @@ def _url_origin(url: Any) -> tuple[str, str, int | None]:
     if port is None:
         port = 443 if url.scheme == "https" else 80 if url.scheme == "http" else None
     return (url.scheme, url.host or "", port)
+
+
+def _mcp_header_identity(headers: Mapping[str, str]) -> _MCPHeaderIdentity:
+    """Return the effective header set with case-insensitive names."""
+    normalized: dict[str, str] = {}
+    for name, value in headers.items():
+        normalized[name.lower()] = value
+    return tuple(sorted(normalized.items()))
 
 
 # Internal polling bounds for MCP long-running tasks. Not user-tunable today;
@@ -2421,14 +2430,17 @@ class MCPTool:
         self._tool_task_support_by_name = tool_task_support_by_name
         self._tool_param_names_by_name = tool_param_names_by_name
 
-    async def _close_on_owner(self) -> None:
-        # Cancel any pending reload tasks before tearing down the session.
+    async def _cancel_pending_reload_tasks(self) -> None:
+        """Cancel session-bound discovery reloads and wait for them to finish."""
         tasks = list(self._pending_reload_tasks)
         for task in tasks:
             task.cancel()
         self._pending_reload_tasks.clear()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _close_on_owner(self) -> None:
+        await self._cancel_pending_reload_tasks()
 
         await self._safe_close_exit_stack()
         self._exit_stack = AsyncExitStack()
@@ -3566,18 +3578,22 @@ class MCPStreamableHTTPTool(MCPTool):
                 of HTTP headers to inject into every outbound request to the MCP server.
                 Use this to forward per-request context (e.g. authentication tokens set in
                 agent middleware) without creating a separate ``httpx.AsyncClient``.
-                Only tool calls carry a run's kwargs. Connection-lifetime requests - the
-                ``initialize`` handshake, tool and prompt discovery, and background pings -
-                belong to no call, so they reuse the kwargs of the run that established the
-                connection until the tool is closed; a later run's kwargs do not reach them.
+                The complete header set used to initialize a connection becomes that session's
+                immutable effective identity. Header names are compared case-insensitively and
+                values case-sensitively. A tool call whose provider returns a different identity
+                closes the current session and reconnects with the new headers before sending the
+                call. Connection-lifetime requests - including discovery, background pings,
+                resource and prompt reloads, and long-running task polling - always use the
+                session-bound header set.
                 A tool connected outside any run (eagerly via ``async with``, or standalone)
                 has no kwargs to reuse and the provider is called with an empty mapping, in
                 which case a ``KeyError`` from the provider is tolerated and the request is
                 sent without headers. Once a run has supplied kwargs, a ``KeyError`` is
                 raised instead, since a key missing there is a misconfiguration rather than
-                an unavoidable gap. A credential that must authenticate the handshake should
-                therefore come from somewhere the provider can read without a run - a closure
-                or a ``ContextVar`` - rather than from run kwargs alone.
+                an unavoidable gap. A credential that must authenticate an eager handshake
+                must therefore come from somewhere the provider can read without a run, such
+                as a closure or ``ContextVar``. A lazy connection established by an agent run
+                can use that run's kwargs.
                 The framework attaches these headers only to requests whose origin (scheme,
                 host, port) matches the configured ``url``, so they are not leaked to other
                 origins on cross-origin redirects; headers injected this way are also removed
@@ -3658,6 +3674,13 @@ class MCPStreamableHTTPTool(MCPTool):
         # None means no run seeded this connection, which an empty mapping cannot express:
         # a run that supplies no kwargs still expects a missing provider key to be an error.
         self._connection_kwargs: dict[str, Any] | None = None
+        # Every connected transport is bound to one effective header set. A different
+        # set is staged until the current transport has closed, then promoted before
+        # the replacement transport initializes.
+        self._session_headers: dict[str, str] | None = None
+        self._session_header_identity: _MCPHeaderIdentity | None = None
+        self._pending_session_headers: dict[str, str] | None = None
+        self._pending_connection_kwargs: dict[str, Any] | None = None
         self._call_headers_lock = asyncio.Lock()
         self._header_request_owner = object()
         self._header_hook_client: AsyncClient | None = None
@@ -3687,6 +3710,8 @@ class MCPStreamableHTTPTool(MCPTool):
             An async context manager for the streamable HTTP client transport.
         """
         from httpx import URL, AsyncClient, Timeout
+
+        self._promote_pending_session_headers()
 
         http_client = self._httpx_client
         if self._header_provider is not None:
@@ -3725,6 +3750,8 @@ class MCPStreamableHTTPTool(MCPTool):
                         # connection, so static providers and run-supplied credentials both
                         # authenticate these requests. Provider failures propagate, matching the
                         # call_tool path, except the one case below that no caller can avoid.
+                        headers = self._session_headers
+                    if headers is None:
                         if self._header_provider is None:
                             raise RuntimeError("Header injection hook invoked without a header_provider.")
                         try:
@@ -3743,6 +3770,7 @@ class MCPStreamableHTTPTool(MCPTool):
                                 exc_info=True,
                             )
                             headers = {}
+                        self._bind_session_headers(headers)
                     for key in request.extensions.pop(_MCP_INJECTED_HEADER_KEYS_EXTENSION, ()):
                         request.headers.pop(key, None)
                     for key, value in headers.items():
@@ -3807,8 +3835,44 @@ class MCPStreamableHTTPTool(MCPTool):
             return
         self._connection_kwargs = dict(kwargs)
 
+    def _bind_session_headers(self, headers: Mapping[str, str]) -> None:
+        self._session_headers = dict(headers)
+        self._session_header_identity = _mcp_header_identity(headers)
+
+    def _stage_session_headers(self, headers: Mapping[str, str], kwargs: Mapping[str, Any]) -> None:
+        self._pending_session_headers = dict(headers)
+        self._pending_connection_kwargs = dict(kwargs)
+
+    def _promote_pending_session_headers(self) -> None:
+        if self._pending_session_headers is None:
+            return
+        headers = self._pending_session_headers
+        connection_kwargs = self._pending_connection_kwargs
+        self._discard_pending_session_headers()
+        self._connection_kwargs = connection_kwargs
+        self._bind_session_headers(headers)
+
+    def _discard_pending_session_headers(self) -> None:
+        self._pending_session_headers = None
+        self._pending_connection_kwargs = None
+
     def _release_connection_kwargs(self) -> None:
         self._connection_kwargs = None
+        self._session_headers = None
+        self._session_header_identity = None
+        self._pending_session_headers = None
+        self._pending_connection_kwargs = None
+
+    def _clear_session_discovery_state(self) -> None:
+        self._functions[:] = [
+            function
+            for function in self._functions
+            if not isinstance((function.additional_properties or {}).get(_MCP_REMOTE_NAME_KEY), str)
+        ]
+        self._tool_call_meta_by_name.clear()
+        self._tool_task_support_by_name.clear()
+        self._tool_param_names_by_name.clear()
+        self._progressive_loaded_tool_names.clear()
 
     async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call a tool, injecting headers from the header_provider if configured.
@@ -3816,7 +3880,9 @@ class MCPStreamableHTTPTool(MCPTool):
         When a ``header_provider`` was supplied at construction time, the runtime
         *kwargs* (originating from ``FunctionInvocationContext.kwargs``) are passed
         to the provider.  The returned headers are attached to every HTTP request
-        made during this tool call via a request hook on the underlying HTTP client.
+        made during this tool call via a request hook on the underlying HTTP client. If
+        they differ from the connected session's effective header identity, the tool
+        reconnects with those headers before sending the call.
 
         The provider does not consume the kwargs: the same mapping continues to
         :meth:`MCPTool.call_tool` and its outbound argument filter.
@@ -3831,8 +3897,24 @@ class MCPStreamableHTTPTool(MCPTool):
             A list of Content items representing the tool output.
         """
         if self._header_provider is not None:
-            headers = self._header_provider(kwargs)
+            headers = dict(self._header_provider(kwargs))
+            identity = _mcp_header_identity(headers)
             async with self._call_headers_lock:
+                if self.is_connected and self._session_header_identity is None:
+                    self._bind_session_headers(headers)
+                elif self.is_connected and identity != self._session_header_identity:
+                    await self._cancel_pending_reload_tasks()
+                    self._clear_session_discovery_state()
+                    self._stage_session_headers(headers, kwargs)
+                    try:
+                        await self.connect(reset=True)
+                    except (Exception, asyncio.CancelledError):
+                        if self.is_connected:
+                            self._discard_pending_session_headers()
+                        else:
+                            self._release_connection_kwargs()
+                        raise
+                    self._promote_pending_session_headers()
                 token = _mcp_call_headers.set(headers)
                 self._active_call_headers = headers
                 try:
