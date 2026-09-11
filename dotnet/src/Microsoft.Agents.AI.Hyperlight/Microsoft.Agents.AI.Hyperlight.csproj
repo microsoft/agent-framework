@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <PackageReference Include="Hyperlight.HyperlightSandbox.Api" />
+    <PackageReference Include="Hyperlight.HyperlightSandbox.Guest.Python" />
   </ItemGroup>
 
   <ItemGroup>
