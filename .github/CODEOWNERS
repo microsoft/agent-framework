@@ -1,12 +1,14 @@
 # Code ownership assignments
 # https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 #
-# Order matters: the last matching pattern wins, so repository-wide owners must
-# be repeated in the language-specific rules.
+# Order matters: the last matching pattern wins. The default rule applies outside
+# /python and /dotnet; each language-specific rule replaces it for that tree.
 
-# Repository-wide owners
+# Default owners for paths outside Python and .NET
 *        @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @moonbox3 @jpalvarezl @TaoChenOSU @giles17 @baywet @peibekwe
 
-# Language-specific owners
+# Python owners
 /python/ @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @moonbox3 @jpalvarezl @TaoChenOSU @giles17
+
+# .NET owners
 /dotnet/ @eavanvalkenburg @SergeyMenshykh @rogerbarreto @westey-m @moonbox3 @baywet @peibekwe
