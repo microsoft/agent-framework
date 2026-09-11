@@ -1,7 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
+
+logger = logging.getLogger(__name__)
 
 # Default maximum iterations for workflow execution.
 DEFAULT_MAX_ITERATIONS = 100
@@ -24,7 +27,7 @@ WORKFLOW_RUN_KWARGS_KEY = "_workflow_run_kwargs"
 RAW_FUNCTION_INVOCATION_KWARGS_KEY = "_raw_function_invocation_kwargs"
 RAW_CLIENT_KWARGS_KEY = "_raw_client_kwargs"
 
-# Legacy state key used to denote global kwargs in pre-structured run state.
+# Legacy sentinel for global kwargs in pre-structured run state and compatible plain input.
 GLOBAL_KWARGS_KEY = "__global__"
 
 
@@ -43,8 +46,18 @@ class ResolvedWorkflowInvocationKwargs:
         if global_kwargs is None and executor_kwargs is None:
             return None
         if global_kwargs is not None and not isinstance(global_kwargs, dict):
+            logger.warning(
+                "Executor %s expected a dict for global kwargs, but got %s. Ignoring.",
+                executor_id,
+                cast(type[Any], type(global_kwargs)),
+            )
             return None
         if executor_kwargs is not None and not isinstance(executor_kwargs, dict):
+            logger.warning(
+                "Executor %s expected a dict for its kwargs, but got %s. Ignoring.",
+                executor_id,
+                cast(type[Any], type(executor_kwargs)),
+            )
             return None
 
         return {**(global_kwargs or {}), **(executor_kwargs or {})}

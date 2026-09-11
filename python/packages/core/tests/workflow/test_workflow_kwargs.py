@@ -1160,6 +1160,32 @@ async def test_plain_mapping_targets_global_executor_through_subworkflow(kwargs_
     ) == ({"special": "A"}, None)
 
 
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+async def test_nested_workflow_preserves_legacy_mixed_kwargs(kwargs_channel: str) -> None:
+    """A child graph reclassifies the preserved legacy mixed input against its executor IDs."""
+    from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+    inner1 = _KwargsCapturingAgent(name="inner1")
+    inner2 = _KwargsCapturingAgent(name="inner2")
+    child = SequentialBuilder(participants=[inner1, inner2]).build()
+    parent = SequentialBuilder(participants=[WorkflowExecutor(child, id="subworkflow")]).build()
+    invocation_kwargs = {
+        "__global__": {"shared": "G", "overridden": "global"},
+        "inner1": {"specific": "A", "overridden": "specific"},
+    }
+
+    if kwargs_channel == "function_invocation_kwargs":
+        await parent.run("test", function_invocation_kwargs=invocation_kwargs)
+    else:
+        await parent.run("test", client_kwargs=invocation_kwargs)
+
+    actual = tuple(agent.captured_kwargs[0].get(kwargs_channel) for agent in (inner1, inner2))
+    assert actual == (
+        {"shared": "G", "specific": "A", "overridden": "specific"},
+        {"shared": "G", "overridden": "global"},
+    )
+
+
 # endregion
 
 
@@ -1229,6 +1255,69 @@ async def test_plain_global_mapping_preserves_global_application_kwarg(kwargs_ch
 
     assert agent_a.captured_kwargs[0].get(kwargs_channel) == invocation_kwargs
     assert agent_b.captured_kwargs[0].get(kwargs_channel) == invocation_kwargs
+
+
+@pytest.mark.parametrize(
+    ("executor_ids", "invocation_kwargs", "expected"),
+    [
+        (
+            ("agent1", "sibling"),
+            {"__global__": {"tenant": "tenant-a"}, "other_option": 123},
+            (
+                {"__global__": {"tenant": "tenant-a"}, "other_option": 123},
+                {"__global__": {"tenant": "tenant-a"}, "other_option": 123},
+            ),
+        ),
+        (
+            ("agent1", "sibling"),
+            {
+                "__global__": {"shared": "G", "overridden": "global"},
+                "agent1": {"specific": "A", "overridden": "specific"},
+            },
+            (
+                {"shared": "G", "specific": "A", "overridden": "specific"},
+                {"shared": "G", "overridden": "global"},
+            ),
+        ),
+        (
+            ("agent1", "sibling"),
+            {"__global__": "tenant-a", "agent1": {"specific": "A"}},
+            (None, None),
+        ),
+        (
+            ("__global__", "agent1"),
+            {"__global__": {"global_executor_only": True}, "agent1": {"agent1_only": True}},
+            ({"global_executor_only": True}, {"agent1_only": True}),
+        ),
+    ],
+    ids=[
+        "plain-global-application-global-mapping",
+        "plain-legacy-mixed",
+        "plain-legacy-mixed-invalid-global",
+        "plain-real-global-collision-boundary",
+    ],
+)
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+async def test_plain_invocation_kwargs_compatibility_boundaries(
+    kwargs_channel: str,
+    executor_ids: tuple[str, str],
+    invocation_kwargs: Mapping[str, Any],
+    expected: tuple[dict[str, Any] | None, dict[str, Any] | None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Legacy plain input retains the required collision and classification boundaries."""
+    agents = [_KwargsCapturingAgent(name=executor_id) for executor_id in executor_ids]
+    workflow = SequentialBuilder(participants=agents).build()
+
+    if kwargs_channel == "function_invocation_kwargs":
+        await workflow.run("test", function_invocation_kwargs=invocation_kwargs)
+    else:
+        await workflow.run("test", client_kwargs=invocation_kwargs)
+
+    actual = tuple(agent.captured_kwargs[0].get(kwargs_channel) for agent in agents)
+    assert actual == expected
+    if invocation_kwargs.get("__global__") == "tenant-a":
+        assert sum("expected a dict for global kwargs" in record.message for record in caplog.records) == 2
 
 
 async def test_per_executor_function_invocation_kwargs_routes_to_correct_agent() -> None:

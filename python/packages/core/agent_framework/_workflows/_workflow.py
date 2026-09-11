@@ -13,7 +13,7 @@ import warnings
 import weakref
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from .._sessions import ContextProvider
 from .._tools import ToolTypes, normalize_tools
@@ -23,6 +23,7 @@ from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._checkpoint import CheckpointStorage
 from ._const import (
     DEFAULT_MAX_ITERATIONS,
+    GLOBAL_KWARGS_KEY,
     INTERNAL_SOURCE_ID,
     RAW_CLIENT_KWARGS_KEY,
     RAW_FUNCTION_INVOCATION_KWARGS_KEY,
@@ -1127,11 +1128,11 @@ class Workflow(DictConvertible):
     ) -> ResolvedWorkflowInvocationKwargs:
         """Resolve invocation kwargs into a normalized per-executor or global format.
 
-        Detects whether the provided kwargs dict uses per-executor targeting by checking
-        if any top-level key matches a known executor ID in the workflow. If at least one
-        key matches, all entries are treated as per-executor. Otherwise the dict is treated
-        as global kwargs that apply to every executor. Use ``WorkflowInvocationKwargs`` to
-        combine global kwargs with per-executor overrides.
+        Typed input keeps global and executor-specific namespaces explicit. Plain mappings
+        retain their legacy classification: matching executor IDs select per-executor
+        routing, while an unmatched mapping is global application data. A legacy
+        ``"__global__"`` entry is treated as the global slot when another key matches
+        an executor and no executor is actually named ``"__global__"``.
 
         Args:
             kwargs: The raw invocation kwargs from the caller.
@@ -1153,13 +1154,25 @@ class Workflow(DictConvertible):
         executor_ids = set(self.executors.keys())
         matched_ids = kwargs.keys() & executor_ids
         if matched_ids:
+            resolved_kwargs = dict(kwargs)
+            if GLOBAL_KWARGS_KEY not in executor_ids and GLOBAL_KWARGS_KEY in resolved_kwargs:
+                legacy_global = resolved_kwargs.pop(GLOBAL_KWARGS_KEY)
+                logger.info(
+                    "Detected legacy mixed %s with global values and executor ID(s) %s.",
+                    param_name,
+                    matched_ids,
+                )
+                return ResolvedWorkflowInvocationKwargs(
+                    global_kwargs=cast(dict[str, Any], legacy_global),
+                    executor_kwargs=resolved_kwargs,
+                )
             logger.info(
                 "Detected per-executor %s: executor ID(s) %s found in keys. "
                 "All entries will be treated as per-executor.",
                 param_name,
                 matched_ids,
             )
-            return ResolvedWorkflowInvocationKwargs(executor_kwargs=dict(kwargs))
+            return ResolvedWorkflowInvocationKwargs(executor_kwargs=resolved_kwargs)
 
         logger.info(
             "No executor IDs found in %s keys; treating as global kwargs for all executors.",

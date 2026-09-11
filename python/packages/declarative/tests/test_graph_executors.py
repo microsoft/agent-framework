@@ -1869,6 +1869,34 @@ class TestExecutorKwargsForwarding:
 
         _assert_forwarded_kwargs(run_agent, kwargs_channel, invocation_kwargs)
 
+    @pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+    async def test_workflow_run_preserves_legacy_mixed_kwargs(self, kwargs_channel: str) -> None:
+        """Declarative executors receive the legacy global/specific merge as a dict."""
+        workflow, agents = _build_agent_workflow({"agent1": "agent1", "sibling": "sibling"})
+        agent1 = agents["agent1"]
+        sibling = agents["sibling"]
+        invocation_kwargs = {
+            "__global__": {"shared": "G", "overridden": "global"},
+            "agent1": {"specific": "A", "overridden": "specific"},
+        }
+
+        with (
+            patch.object(agent1, "run", wraps=agent1.run) as run_agent1,
+            patch.object(sibling, "run", wraps=sibling.run) as run_sibling,
+        ):
+            await _run_workflow_with_kwargs(workflow, kwargs_channel, invocation_kwargs)
+
+        _assert_forwarded_kwargs(
+            run_agent1,
+            kwargs_channel,
+            {"shared": "G", "specific": "A", "overridden": "specific"},
+        )
+        _assert_forwarded_kwargs(
+            run_sibling,
+            kwargs_channel,
+            {"shared": "G", "overridden": "global"},
+        )
+
     @pytest.mark.asyncio
     async def test_invoke_agent_forwards_kwargs(self):
         """InvokeAzureAgentExecutor should forward run_kwargs to agent.run()."""
