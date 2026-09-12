@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import base64
 import json
 import warnings
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
@@ -4529,13 +4530,22 @@ class TestResponseStreamMapAndWithFinalizer:
 
         assert collected == ["async_update_0", "async_update_1"]
 
-    async def test_from_awaitable(self) -> None:
+    @pytest.mark.parametrize("source_kind", ["coroutine", "task", "future"])
+    async def test_from_awaitable(self, source_kind: str) -> None:
         """from_awaitable() wraps an awaitable ResponseStream."""
 
         async def get_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse]:
             return ResponseStream(_generate_updates(2), finalizer=_combine_updates)
 
-        outer = ResponseStream.from_awaitable(get_stream())
+        source: Awaitable[ResponseStream[ChatResponseUpdate, ChatResponse]]
+        if source_kind == "task":
+            source = asyncio.create_task(get_stream())
+        elif source_kind == "future":
+            source = asyncio.get_running_loop().create_future()
+            source.set_result(await get_stream())
+        else:
+            source = get_stream()
+        outer = ResponseStream.from_awaitable(source)
 
         collected: list[str] = []
         async for update in outer:
@@ -4614,13 +4624,22 @@ class TestResponseStreamExecutionOrder:
 class TestResponseStreamAwaitableSource:
     """Tests for ResponseStream with awaitable stream sources."""
 
-    async def test_awaitable_stream_source(self) -> None:
+    @pytest.mark.parametrize("source_kind", ["coroutine", "task", "future"])
+    async def test_awaitable_stream_source(self, source_kind: str) -> None:
         """ResponseStream can accept an awaitable that resolves to an async iterable."""
 
         async def get_stream() -> AsyncIterable[ChatResponseUpdate]:
             return _generate_updates(2)
 
-        stream = ResponseStream(get_stream(), finalizer=_combine_updates)
+        source: Awaitable[AsyncIterable[ChatResponseUpdate]]
+        if source_kind == "task":
+            source = asyncio.create_task(get_stream())
+        elif source_kind == "future":
+            source = asyncio.get_running_loop().create_future()
+            source.set_result(await get_stream())
+        else:
+            source = get_stream()
+        stream = ResponseStream(source, finalizer=_combine_updates)
 
         collected: list[str] = []
         async for update in stream:

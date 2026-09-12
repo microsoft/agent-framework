@@ -9,7 +9,6 @@ import logging
 import re
 import sys
 import warnings
-from asyncio import iscoroutine
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -3379,8 +3378,8 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             if hasattr(self._stream_source, "__aiter__"):
                 self._stream = self._stream_source  # type: ignore[assignment]
             else:
-                if not iscoroutine(self._stream_source):
-                    self._stream = self._stream_source  # type: ignore[assignment]
+                if not isawaitable(self._stream_source):
+                    self._stream = self._stream_source
                 else:
                     self._stream = await self._stream_source
             if isinstance(self._stream, ResponseStream) and self._wrap_inner:
