@@ -162,7 +162,7 @@ class WorkflowAgent(BaseAgent):
         | Mapping[str, Any]
         | None = None,
         client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
+    ) -> Awaitable[AgentResponse]: ...
 
     @overload
     def run(
