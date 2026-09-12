@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from ._workflow import Workflow
 
 from ._const import (
+    EXECUTOR_KWARGS_KEY,
     GLOBAL_KWARGS_KEY,
     RAW_CLIENT_KWARGS_KEY,
     RAW_FUNCTION_INVOCATION_KWARGS_KEY,
@@ -396,7 +397,12 @@ class WorkflowExecutor(Executor):
                 normalized: Any = parent_kwargs.get(key)
                 if isinstance(normalized, dict):
                     normalized_dict = cast(dict[str, Any], normalized)
-                    if len(normalized_dict) == 1 and GLOBAL_KWARGS_KEY in normalized_dict:
+                    if EXECUTOR_KWARGS_KEY in normalized_dict:
+                        # post-#8310 shape: unwrap the global slot only when no
+                        # per-executor entries ride alongside it
+                        if not normalized_dict.get(EXECUTOR_KWARGS_KEY):
+                            normalized = normalized_dict[GLOBAL_KWARGS_KEY]
+                    elif len(normalized_dict) == 1 and GLOBAL_KWARGS_KEY in normalized_dict:
                         normalized = normalized_dict[GLOBAL_KWARGS_KEY]
                 resolved = cast(WorkflowInvocationKwargs | Mapping[str, Any] | None, normalized)
             if resolved is not None:

@@ -21,7 +21,7 @@ from agent_framework import (
 )
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
-from agent_framework._workflows._const import GLOBAL_KWARGS_KEY
+from agent_framework._workflows._const import EXECUTOR_KWARGS_KEY, GLOBAL_KWARGS_KEY
 
 
 class _CountingAgent(BaseAgent):
@@ -866,3 +866,48 @@ async def test_agent_executor_request_info_uses_user_input_request_id() -> None:
 
 
 # endregion Tool approval emission
+
+
+async def test_resolve_executor_kwargs_nested_shape_no_collision() -> None:
+    """#8310: with the nested shape, an executor named __global__ reads its own
+    entry while another executor still gets the global mapping."""
+    agent = _CountingAgent(id="a", name="A")
+    global_exec = AgentExecutor(agent, id="__global__")
+    other_exec = AgentExecutor(agent, id="other")
+
+    resolved = {
+        GLOBAL_KWARGS_KEY: {"shared": "G", "overridden": "global"},
+        EXECUTOR_KWARGS_KEY: {"__global__": {"special": "A", "overridden": "specific"}},
+    }
+    assert global_exec._resolve_executor_kwargs(resolved) == {  # pyright: ignore[reportPrivateUsage]
+        "shared": "G",
+        "special": "A",
+        "overridden": "specific",
+    }
+    assert other_exec._resolve_executor_kwargs(resolved) == {  # pyright: ignore[reportPrivateUsage]
+        "shared": "G",
+        "overridden": "global",
+    }
+
+
+async def test_resolve_executor_kwargs_nested_shape_targets_real_global_executor() -> None:
+    """#8310 plain mapping keyed __global__: targets only that executor."""
+    agent = _CountingAgent(id="a", name="A")
+    global_exec = AgentExecutor(agent, id="__global__")
+    other_exec = AgentExecutor(agent, id="other")
+
+    resolved = {EXECUTOR_KWARGS_KEY: {"__global__": {"special": "A"}}}
+    assert global_exec._resolve_executor_kwargs(resolved) == {"special": "A"}  # pyright: ignore[reportPrivateUsage]
+    assert other_exec._resolve_executor_kwargs(resolved) is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_resolve_executor_kwargs_legacy_shape_still_routes() -> None:
+    """Old checkpoints serialized the pre-#8310 shape; bare executor IDs and a
+    bare __global__ slot must keep routing as before."""
+    agent = _CountingAgent(id="a", name="A")
+    exec_a = AgentExecutor(agent, id="exec_a")
+    exec_b = AgentExecutor(agent, id="exec_b")
+
+    legacy = {"exec_a": {"k": "v"}, GLOBAL_KWARGS_KEY: {"g": "1"}}
+    assert exec_a._resolve_executor_kwargs(legacy) == {"k": "v", "g": "1"}  # pyright: ignore[reportPrivateUsage]
+    assert exec_b._resolve_executor_kwargs(legacy) == {"g": "1"}  # pyright: ignore[reportPrivateUsage]
