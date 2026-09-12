@@ -2247,9 +2247,36 @@ def test_response_content_creation_with_local_shell_call_maps_to_function_call()
     assert call_content.additional_properties[OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY] == "local-shell-item-1"
 
 
+@pytest.mark.parametrize(
+    ("item_type", "item_id", "command_parts"),
+    [
+        ("local_shell_call", None, ["echo", "ok"]),
+        ("local_shell_call", "item-1", "echo ok"),
+        ("forged_local_shell_call", "item-1", ["echo", "ok"]),
+    ],
+)
+def test_malformed_local_shell_call_is_not_executable(
+    item_type: str,
+    item_id: str | None,
+    command_parts: Any,
+) -> None:
+    """Malformed or unknown local shell items must not become function calls."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    item = MagicMock()
+    item.type = item_type
+    item.id = item_id
+    item.call_id = "local-shell-call-1"
+    item.action.command = command_parts
+    item.status = "completed"
+
+    contents = client._shell_item_to_contents(item, "run_shell")
+
+    assert all(content.type != "function_call" for content in contents)
+
+
 @pytest.mark.asyncio
-async def test_local_shell_tool_is_invoked_in_function_loop() -> None:
-    """Test local shell call executes executor and sends local_shell_call_output."""
+async def test_local_shell_tool_requires_approval_before_function_loop_execution() -> None:
+    """An explicit local shell call executes only after approval."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     executed_commands: list[str] = []
 
@@ -2259,7 +2286,7 @@ async def test_local_shell_tool_is_invoked_in_function_loop() -> None:
 
     local_shell_tool = OpenAIChatClient.get_shell_tool(
         func=local_exec,
-        approval_mode="never_require",
+        approval_mode="always_require",
     )
 
     mock_response1 = MagicMock()
@@ -2307,8 +2334,19 @@ async def test_local_shell_tool_is_invoked_in_function_loop() -> None:
     with patch.object(
         client.client.responses, "create", side_effect=[_as_raw(mock_response1), _as_raw(mock_response2)]
     ) as mock_create:
-        await client.get_response(
+        response = await client.get_response(
             messages=[Message(role="user", contents=["What Python version is available?"])],
+            options={"tools": [local_shell_tool]},
+        )
+
+        assert executed_commands == []
+        assert mock_create.call_count == 1
+        approval_request = next(
+            content for content in response.messages[0].contents if content.type == "function_approval_request"
+        )
+        approval_response = approval_request.to_function_approval_response(approved=True)
+        await client.get_response(
+            messages=[Message(role="user", contents=[approval_response])],
             options={"tools": [local_shell_tool]},
         )
 
@@ -2322,8 +2360,8 @@ async def test_local_shell_tool_is_invoked_in_function_loop() -> None:
 
 
 @pytest.mark.asyncio
-async def test_shell_call_is_invoked_as_local_shell_function_loop() -> None:
-    """Test shell_call maps to local function invocation and returns shell_call_output."""
+async def test_mixed_shell_calls_only_invoke_explicit_local_shell_call() -> None:
+    """A hosted shell call remains informational alongside an executable local call."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     executed_commands: list[str] = []
 
@@ -2348,7 +2386,7 @@ async def test_shell_call_is_invoked_as_local_shell_function_loop() -> None:
     mock_response1.incomplete = None
 
     mock_action = MagicMock()
-    mock_action.commands = ["python --version"]
+    mock_action.commands = ["pwd"]
     mock_action.timeout_ms = 30000
     mock_action.max_output_length = 4096
 
@@ -2358,7 +2396,18 @@ async def test_shell_call_is_invoked_as_local_shell_function_loop() -> None:
     mock_shell_call.call_id = "shell-call-1"
     mock_shell_call.action = mock_action
     mock_shell_call.status = "completed"
-    mock_response1.output = [mock_shell_call]
+
+    mock_local_action = MagicMock()
+    mock_local_action.command = ["python", "--version"]
+    mock_local_action.timeout_ms = 30000
+
+    mock_local_shell_call = MagicMock()
+    mock_local_shell_call.type = "local_shell_call"
+    mock_local_shell_call.id = "local-shell-item-1"
+    mock_local_shell_call.call_id = "local-shell-call-1"
+    mock_local_shell_call.action = mock_local_action
+    mock_local_shell_call.status = "completed"
+    mock_response1.output = [mock_shell_call, mock_local_shell_call]
 
     mock_response2 = MagicMock()
     mock_response2.output_parsed = None
@@ -2390,13 +2439,10 @@ async def test_shell_call_is_invoked_as_local_shell_function_loop() -> None:
         assert executed_commands == ["python --version"]
         assert mock_create.call_count == 2
         second_call_input = mock_create.call_args_list[1].kwargs["input"]
-        shell_outputs = [item for item in second_call_input if item.get("type") == "shell_call_output"]
-        assert len(shell_outputs) == 1
-        assert shell_outputs[0]["call_id"] == "shell-call-1"
-        assert isinstance(shell_outputs[0]["output"], list)
-        assert shell_outputs[0]["output"][0]["stdout"] == "Python 3.13.0"
+        assert all(item.get("type") != "shell_call_output" for item in second_call_input)
         local_shell_outputs = [item for item in second_call_input if item.get("type") == "local_shell_call_output"]
-        assert len(local_shell_outputs) == 0
+        assert len(local_shell_outputs) == 1
+        assert local_shell_outputs[0]["id"] == "local-shell-item-1"
 
 
 async def test_tool_loop_store_false_replays_encrypted_reasoning_group() -> None:
@@ -2526,9 +2572,14 @@ async def test_stateless_request_rejects_non_replayable_reasoning_bound_mcp_outp
     create.assert_not_awaited()
 
 
-def test_response_content_creation_with_shell_call() -> None:
-    """Test _parse_response_from_openai with shell_call output."""
+def test_response_content_creation_with_shell_call_remains_hosted_with_local_tool() -> None:
+    """A hosted shell call remains informational when a local shell tool is configured."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIChatClient.get_shell_tool(func=local_exec)
 
     mock_response = MagicMock()
     mock_response.output_parsed = None
@@ -2553,7 +2604,7 @@ def test_response_content_creation_with_shell_call() -> None:
 
     mock_response.output = [mock_shell_call]
 
-    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+    response = client._parse_response_from_openai(mock_response, options={"tools": [local_shell_tool]})  # type: ignore[arg-type]
 
     assert len(response.messages[0].contents) == 1
     call_content = response.messages[0].contents[0]
@@ -2682,6 +2733,39 @@ def test_response_content_creation_with_function_call() -> None:
     assert function_call.name == "get_weather"
     assert function_call.arguments == '{"location": "Seattle"}'
     assert function_call.informational_only is False
+
+
+def test_response_function_call_named_local_shell_is_informational() -> None:
+    """A generic function call cannot impersonate the configured local shell item."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIChatClient.get_shell_tool(func=local_exec, approval_mode="never_require")
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+
+    mock_function_call_item = MagicMock()
+    mock_function_call_item.type = "function_call"
+    mock_function_call_item.call_id = "call_123"
+    mock_function_call_item.name = local_shell_tool.name
+    mock_function_call_item.arguments = '{"command": "echo blocked"}'
+    mock_function_call_item.id = "fc_456"
+    mock_function_call_item.status = "completed"
+    mock_response.output = [mock_function_call_item]
+
+    response = client._parse_response_from_openai(mock_response, options={"tools": [local_shell_tool]})  # type: ignore[arg-type]
+
+    function_call = response.messages[0].contents[0]
+    assert function_call.type == "function_call"
+    assert function_call.name == local_shell_tool.name
+    assert function_call.informational_only is True
 
 
 def test_parse_response_from_openai_with_custom_tool_call_is_informational_only() -> None:
@@ -3149,6 +3233,48 @@ def test_parse_chunk_from_openai_function_call_is_actionable() -> None:
     assert update.contents[0].informational_only is False
 
 
+def test_parse_chunk_function_call_named_local_shell_is_informational() -> None:
+    """A streamed generic function call cannot impersonate a local shell item."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIChatClient.get_shell_tool(func=local_exec, approval_mode="never_require")
+    chat_options: dict[str, Any] = {"tools": [local_shell_tool]}
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    added_event = MagicMock()
+    added_event.type = "response.output_item.added"
+    added_event.output_index = 0
+    added_item = MagicMock()
+    added_item.type = "function_call"
+    added_item.call_id = "call_123"
+    added_item.name = local_shell_tool.name
+    added_event.item = added_item
+
+    delta_event = MagicMock()
+    delta_event.type = "response.function_call_arguments.delta"
+    delta_event.output_index = 0
+    delta_event.delta = '{"command": "echo blocked"}'
+    delta_event.item_id = "fc_456"
+
+    client._parse_chunk_from_openai(
+        added_event,
+        options=chat_options,
+        function_call_ids=function_call_ids,
+    )
+    update = client._parse_chunk_from_openai(
+        delta_event,
+        options=chat_options,
+        function_call_ids=function_call_ids,
+    )
+
+    assert len(update.contents) == 1
+    assert update.contents[0].type == "function_call"
+    assert update.contents[0].informational_only is True
+
+
 def test_parse_chunk_from_openai_custom_tool_call_done_is_informational_only() -> None:
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     chat_options: dict[str, Any] = {}
@@ -3240,8 +3366,8 @@ def test_parse_chunk_from_openai_shell_call_added_defers_command() -> None:
     assert update.contents == []
 
 
-def test_parse_chunk_from_openai_shell_call_done_emits_command() -> None:
-    """A completed shell_call on output_item.done must emit a function call with the real command."""
+def test_parse_chunk_from_openai_shell_call_done_remains_hosted() -> None:
+    """A completed hosted shell call remains informational in streaming output."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     def local_exec(command: str) -> str:
@@ -3272,10 +3398,9 @@ def test_parse_chunk_from_openai_shell_call_done_emits_command() -> None:
 
     assert len(update.contents) == 1
     call_content = update.contents[0]
-    assert call_content.type == "function_call"
+    assert call_content.type == "shell_tool_call"
     assert call_content.call_id == "shell-call-1"
-    assert call_content.name == local_shell_tool.name
-    assert call_content.parse_arguments() == {"command": "ls -la"}
+    assert call_content.commands == ["ls -la"]
 
 
 def test_parse_chunk_from_openai_local_shell_call_done_emits_command() -> None:

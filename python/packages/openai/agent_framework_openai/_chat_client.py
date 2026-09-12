@@ -2177,11 +2177,6 @@ class RawOpenAIChatClient(
             }
         ]
 
-    @staticmethod
-    def _join_shell_commands(commands: Sequence[str]) -> str:
-        """Join shell commands into a single executable command string."""
-        return "\n".join(command for command in commands if command).strip()
-
     def _shell_item_to_contents(self, item: Any, local_shell_tool_name: str | None) -> list[Content]:
         """Convert a shell output item into framework ``Content`` objects.
 
@@ -2203,36 +2198,31 @@ class RawOpenAIChatClient(
                 shell_commands = list(getattr(action, "commands", []) or [])
                 shell_timeout_ms = getattr(action, "timeout_ms", None)
                 shell_max_output = getattr(action, "max_output_length", None)
-            if local_shell_tool_name:
-                command_text = self._join_shell_commands(shell_commands)
-                contents.append(
-                    Content.from_function_call(
-                        call_id=shell_call_id,
-                        name=local_shell_tool_name,
-                        arguments=json.dumps({"command": command_text}),
-                        additional_properties={
-                            OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL,
-                            OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY: shell_commands,
-                        },
-                        raw_representation=item,
-                    )
+            contents.append(
+                Content.from_shell_tool_call(
+                    call_id=shell_call_id,
+                    commands=shell_commands,
+                    timeout_ms=shell_timeout_ms,
+                    max_output_length=shell_max_output,
+                    status=getattr(item, "status", None),
+                    raw_representation=item,
                 )
-            else:
-                contents.append(
-                    Content.from_shell_tool_call(
-                        call_id=shell_call_id,
-                        commands=shell_commands,
-                        timeout_ms=shell_timeout_ms,
-                        max_output_length=shell_max_output,
-                        status=getattr(item, "status", None),
-                        raw_representation=item,
-                    )
-                )
+            )
         elif item_type == "local_shell_call":
-            local_call_id = getattr(item, "call_id", None) or ""
-            local_command_parts = list(getattr(getattr(item, "action", None), "command", []) or [])
+            raw_local_call_id = getattr(item, "call_id", None)
+            local_call_id = raw_local_call_id if isinstance(raw_local_call_id, str) else ""
+            raw_local_call_item_id = getattr(item, "id", None)
+            local_call_item_id = raw_local_call_item_id if isinstance(raw_local_call_item_id, str) else ""
+            raw_local_command_parts = getattr(getattr(item, "action", None), "command", None)
+            local_command_parts: list[str] = (
+                cast("list[str]", raw_local_command_parts)
+                if isinstance(raw_local_command_parts, list)
+                and raw_local_command_parts
+                and all(isinstance(part, str) for part in cast("list[object]", raw_local_command_parts))
+                else []
+            )
             local_command = shlex.join(local_command_parts) if local_command_parts else ""
-            if local_shell_tool_name:
+            if local_shell_tool_name and local_call_id and local_call_item_id and local_command_parts:
                 contents.append(
                     Content.from_function_call(
                         call_id=local_call_id,
@@ -2240,7 +2230,7 @@ class RawOpenAIChatClient(
                         arguments=json.dumps({"command": local_command}),
                         additional_properties={
                             OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL,
-                            OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY: getattr(item, "id", None),
+                            OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY: local_call_item_id,
                             OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY: local_command_parts,
                         },
                         raw_representation=item,
@@ -2851,6 +2841,7 @@ class RawOpenAIChatClient(
                             call_id=item.call_id,
                             name=item.name,
                             arguments=item.arguments,
+                            informational_only=item.name == local_shell_tool_name,
                             additional_properties={"fc_id": item.id, "status": item.status},
                             raw_representation=item,
                         )
@@ -3350,6 +3341,7 @@ class RawOpenAIChatClient(
                             call_id=call_id,
                             name=name,
                             arguments=event.delta,
+                            informational_only=name == local_shell_tool_name,
                             additional_properties={
                                 "output_index": event.output_index,
                                 "fc_id": event.item_id,
