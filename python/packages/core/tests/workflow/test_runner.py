@@ -499,6 +499,100 @@ async def test_runner_iteration_exception_drains_events():
     assert len(events) > 0
 
 
+async def test_runner_completion_does_not_require_a_timer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A completed superstep must wake an otherwise idle event consumer."""
+    ctx = InProcRunnerContext()
+    runner = Runner([], {}, State(), ctx, "test", graph_signature_hash="test")
+    loop = asyncio.get_running_loop()
+    watchdog = loop.create_future()
+    # Schedule the test watchdog before deferring timers used by the runner.
+    watchdog_handle = loop.call_later(2, watchdog.set_result, None)
+    call_at = loop.call_at
+    monkeypatch.setattr(
+        loop, "call_at", lambda when, callback, *args, **kwargs: call_at(loop.time() + 3600, callback, *args, **kwargs)
+    )
+
+    async def consume() -> list[WorkflowEvent]:
+        return [event async for event in runner.run_until_convergence()]
+
+    task = asyncio.create_task(consume())
+    try:
+        done, _ = await asyncio.wait({task, watchdog}, return_when=asyncio.FIRST_COMPLETED)
+        assert task in done, "Iteration completion was waiting for a polling timer"
+        assert [event.type for event in task.result()] == ["superstep_started", "superstep_completed"]
+    finally:
+        watchdog_handle.cancel()
+        watchdog.cancel()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+async def test_runner_streams_live_and_tail_events(monkeypatch: pytest.MonkeyPatch, fail: bool) -> None:
+    """Yield live events before completion and retain ordered tail events on success or failure."""
+    ctx = InProcRunnerContext()
+    runner = Runner([], {}, State(), ctx, "test", graph_signature_hash="test")
+    release = asyncio.Event()
+
+    async def iteration() -> None:
+        await ctx.add_event(WorkflowEvent(type="output", data="live", executor_id="test"))
+        await release.wait()
+        for value in ("tail_1", "tail_2"):
+            await ctx.add_event(WorkflowEvent(type="output", data=value, executor_id="test"))
+        if fail:
+            raise RuntimeError("iteration failed")
+
+    monkeypatch.setattr(runner, "_run_iteration", iteration)
+    stream = runner.run_until_convergence()
+    try:
+        assert (await anext(stream)).type == "superstep_started"
+        assert (await anext(stream)).data == "live"
+        release.set()
+        outputs = []
+        try:
+            async for event in stream:
+                if event.type == "output":
+                    outputs.append(event.data)
+        except RuntimeError as exc:
+            assert fail and str(exc) == "iteration failed"
+        else:
+            assert not fail
+        assert outputs == ["tail_1", "tail_2"]
+    finally:
+        await stream.aclose()
+
+
+async def test_runner_stream_close_stops_active_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Closing after a live event must not leave background executor work running."""
+    ctx = InProcRunnerContext()
+    runner = Runner([], {}, State(), ctx, "test", graph_signature_hash="test")
+    stopped = asyncio.Event()
+    iteration_task: asyncio.Task[Any] | None = None
+
+    async def iteration() -> None:
+        nonlocal iteration_task
+        iteration_task = asyncio.current_task()
+        try:
+            await ctx.add_event(WorkflowEvent(type="output", data="live", executor_id="test"))
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr(runner, "_run_iteration", iteration)
+    stream = runner.run_until_convergence()
+    try:
+        await anext(stream)
+        assert (await anext(stream)).data == "live"
+        await stream.aclose()
+        assert stopped.is_set()
+        assert iteration_task is not None and iteration_task.done()
+    finally:
+        await stream.aclose()
+        if iteration_task is not None:
+            iteration_task.cancel()
+            await asyncio.gather(iteration_task, return_exceptions=True)
+
+
 async def test_runner_reset_iteration_count():
     """Test that reset_iteration_count works correctly."""
     executor_a = MockExecutor(id="executor_a")
