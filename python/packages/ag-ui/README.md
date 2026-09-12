@@ -211,6 +211,12 @@ argument fields remain supported as partial edits. Cancellation is a normal term
 not execute, while resolved siblings in the same complete resume continue normally. The same tool-approval shape and
 resume payloads apply when an agent approval is surfaced through a workflow `request_info` event.
 
+For built-in Agents, validated approvals resume through the normal `Agent.run()` path. Agent middleware still
+controls admission and scheduling, and provider and function middleware still apply before tool execution.
+For example, `ToolApprovalMiddleware` collects queued decisions before releasing the batch; AG-UI does not
+execute an individually approved tool ahead of that middleware. Completed results remain replayable without
+repeating tool execution.
+
 ```json
 {
   "threadId": "thread-1",

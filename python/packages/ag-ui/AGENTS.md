@@ -37,6 +37,38 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   resolved siblings in the same complete resume still proceed.
 - Approval-time execution preserves each call's complete result group. Follow-up user-input requests remain in the
   resumed messages, while `TOOL_CALL_RESULT` events are emitted only for terminal `function_result` contents.
+- Approval consent does not bypass policy. Built-in Agents receive validated local approvals through their normal
+  `Agent.run` path, including Agent middleware, provider `before_run` preparation, and function middleware.
+  `_approval_execution.py` tracks execution through existing function/chat middleware interfaces; it does not
+  prepare providers or invoke the tools itself. `MiddlewareFailure` remains fatal.
+- Queued approvals follow the wrapped Agent's scheduling. With `ToolApprovalMiddleware`, collected decisions
+  remain pending until that middleware releases the batch; AG-UI does not execute a tool ahead of it.
+  Collected server-side grants do not require the client to submit the same approval again.
+- A2UI continuation retains the inner response's original model-turn and reasoning/call/result groups. UI
+  rendering and its accounting remain adapter-owned while server tools use the existing function loop.
+  Streaming uses an executable adapter handoff tool that returns a private control request through the existing
+  function-result contract. That request is not a client approval prompt; completing the render clears only its
+  matching internal pending request. A run-scoped control observer is installed once through the client's
+  function-middleware extension point; its A2UI state is scoped to active stream pulls, preserving other runs'
+  control outcomes and the original middleware's relative order.
+  Adapter-side compatibility execution is limited to non-core agents without context providers; unsupported
+  provider preparation fails explicitly instead of executing with a partial policy.
+- Local approval resume checks the current function-invocation configuration before any approved side effect begins.
+  When invocation is disabled, grants remain pending under their original retention deadline and the endpoint emits
+  `APPROVAL_INVOCATION_DISABLED`; only a later explicit retry after re-enablement can execute them. Rejections and
+  cancellations in a mixed resume still settle and retire their snapshot controls while grants remain pending.
+  Repeating that mixed response or explicitly retrying it after re-enablement reuses retained terminal outcomes
+  without reviving cancelled/rejected authority or replaying completed tool effects.
+  Returning early or failing provider preparation releases every unstarted claimed grant, including hosted and
+  deferred siblings, without extending pending retention or changing the execution owner. The adapter's in-run
+  middleware rechecks enablement after provider preparation, before beginning any execution.
+- Approval claim cleanup covers the complete run, including approval-time failures before streaming starts.
+  In-run owners begin execution when the function or hosted request reaches its middleware seam. Cleanup releases
+  unstarted claims without renewing retention and recovers possibly started executions without replaying
+  uncertain work; settled and cancelled outcomes stay inert.
+- Complete resume payloads may include a retained result alongside a distinct pending occurrence that reuses
+  the provider call id. Match logical function-call occurrences and current request generations, not provider
+  ids alone; an older request generation for the same occurrence is still invalid.
 - Approval responses for tools injected during `before_run` are deferred to the in-run approval middleware rather
   than executed or rejected by the transport before those tools exist.
 - `_approval_lifecycle.py` is the sole owner of approval occurrence registration, trusted aliases, authority

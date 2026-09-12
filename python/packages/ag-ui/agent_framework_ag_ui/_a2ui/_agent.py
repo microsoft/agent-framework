@@ -11,22 +11,26 @@ Two paths:
 * **Non-streaming** advertises a REAL ``generate_a2ui`` tool whose body runs the
   toolkit's synchronous ``run_a2ui_generation_with_recovery``; ordinary automatic
   function invocation executes it.
-* **Streaming** advertises ``generate_a2ui`` as a declaration-only tool (``func=None``)
-  so the planner's call surfaces on the update stream instead of being auto-invoked.
-  An agent-level planner-rounds loop then runs the render sub-agent with a streaming
-  chat call, forwards its per-chunk ``render_a2ui`` argument fragments (progressive
-  paint), balances the forwarded call with a ``{"status": "rendered"}`` tool result,
-  feeds the envelope back to the planner, and continues — the same wire shape the
-  LangGraph adapters produce. MAF-python is async-native, so the streaming loop runs
-  on one event loop with no worker-thread/queue bridge.
+* **Streaming** advertises an executable ``generate_a2ui`` handoff tool. Its body returns
+  a private marked control after all sibling tools have traversed the normal
+  function/provider middleware pipeline. The adapter consumes that control, runs the
+  render sub-agent with a streaming chat call, forwards its per-chunk ``render_a2ui``
+  argument fragments (progressive paint), balances the forwarded call with a
+  ``{"status": "rendered"}`` tool result, feeds the envelope back to the planner, and
+  continues — the same wire shape the LangGraph adapters produce. MAF-python is
+  async-native, so the streaming loop runs on one event loop with no worker-thread/queue
+  bridge.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import copy
 import json
 import logging
-from collections.abc import AsyncIterator
+import threading
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any, cast
 
 from ag_ui_a2ui_toolkit import (
@@ -45,7 +49,16 @@ from ag_ui_a2ui_toolkit import (
     validate_a2ui_components,
     wrap_error_envelope,
 )
-from agent_framework import Content, FunctionTool, Message, normalize_messages
+from agent_framework import (
+    SKIP_PARSING,
+    Content,
+    FunctionInvocationContext,
+    FunctionMiddleware,
+    FunctionTool,
+    Message,
+    normalize_messages,
+)
+from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY  # pyright: ignore[reportPrivateUsage]
 
 from ._state import to_history_messages
 
@@ -83,6 +96,88 @@ RENDER_ACKNOWLEDGEMENT = '{"status": "rendered"}'
 # Cap on planner rounds (model turn -> generation -> result fed back) per run,
 # guarding against a planner that keeps requesting surfaces without terminating.
 MAX_PLANNER_ROUNDS = 8
+_A2UI_HANDOFF_MARKER = "_a2ui_adapter_handoff"
+_A2UI_TERMINATION_STATE: contextvars.ContextVar[_A2UITerminationState | None]
+_A2UI_OBSERVER_REGISTRATION_LOCK = threading.Lock()
+
+
+class _A2UIHandoffControlMiddleware(FunctionMiddleware):
+    """Force handoff tools through the identity-bearing middleware invocation path."""
+
+    async def process(
+        self,
+        context: FunctionInvocationContext,
+        call_next: Callable[[], Awaitable[None]],
+    ) -> None:
+        await call_next()
+
+
+class _A2UITerminationState:
+    """Mutable run-local termination signal shared with copied execution contexts."""
+
+    def __init__(self) -> None:
+        self.terminated = False
+
+
+_A2UI_TERMINATION_STATE = contextvars.ContextVar("_a2ui_termination_state", default=None)
+
+
+class _A2UITerminationObserverMiddleware(FunctionMiddleware):
+    """Observe graceful middleware termination without changing its propagation."""
+
+    async def process(
+        self,
+        context: FunctionInvocationContext,
+        call_next: Callable[[], Awaitable[None]],
+    ) -> None:
+        from agent_framework._middleware import MiddlewareTermination
+
+        try:
+            await call_next()
+        except MiddlewareTermination:
+            state = _A2UI_TERMINATION_STATE.get()
+            if state is not None:
+                state.terminated = True
+            raise
+
+
+def _ensure_termination_observer(client: Any) -> None:
+    """Install one transparent outer observer on a function-invocation client."""
+    with _A2UI_OBSERVER_REGISTRATION_LOCK:
+        middleware = getattr(client, "function_middleware", None)
+        if not isinstance(middleware, list):
+            return
+        if any(isinstance(item, _A2UITerminationObserverMiddleware) for item in middleware):
+            return
+        middleware.insert(0, _A2UITerminationObserverMiddleware())
+
+
+class _A2UIExecutionBudget:
+    """Adapter-owned view of the shared function-invocation budget."""
+
+    def __init__(self) -> None:
+        self._state: dict[str, Any] = {}
+
+    def client_kwargs(self, existing: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Install or preserve the core request's existing budget state."""
+        client_kwargs = dict(existing) if existing is not None else {}
+        existing_state = client_kwargs.get(_FUNCTION_INVOCATION_BUDGET_STATE_KEY)
+        if isinstance(existing_state, dict):
+            self._state = existing_state
+        client_kwargs[_FUNCTION_INVOCATION_BUDGET_STATE_KEY] = self._state
+        return client_kwargs
+
+    @property
+    def calls_used(self) -> int:
+        """Return the cumulative calls already charged to the request."""
+        value = self._state.get("total_function_calls", 0)
+        return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+    def record_adapter_calls(self, count: int) -> None:
+        """Charge completed renders or opaque-agent compatibility executions."""
+        if count < 0:
+            raise ValueError("Adapter function-call count cannot be negative.")
+        self._state["total_function_calls"] = self.calls_used + count
 
 
 def _generate_tool_schema() -> dict[str, Any]:
@@ -106,6 +201,14 @@ def _as_tool_list(tools: Any) -> list[Any]:
     if isinstance(tools, (list, tuple)):
         return list(tools)
     return [tools]
+
+
+def _as_middleware_list(middleware: Any) -> list[Any]:
+    if middleware is None:
+        return []
+    if isinstance(middleware, (list, tuple)):
+        return list(middleware)
+    return [middleware]
 
 
 def _string_arg(args: dict[str, Any], name: str) -> str | None:
@@ -352,6 +455,10 @@ class A2UIAgent:
         return getattr(self.inner_agent, "context_providers", [])
 
     @property
+    def middleware(self) -> Any:
+        return getattr(self.inner_agent, "middleware", None)
+
+    @property
     def service_session_state_keys(self) -> Any:
         return getattr(self.inner_agent, "service_session_state_keys", ())
 
@@ -374,10 +481,17 @@ class A2UIAgent:
         context_slice = kwargs.pop("a2ui_context", None)
         if context_slice is None:
             context_slice = self._context_slice
-        messages = self._with_context_prompt(messages, context_slice)
+        messages = self._prepare_run_messages(messages, a2ui_context=context_slice)
         if stream:
             return self._run_streaming(messages, context_slice, **kwargs)
         return self._run_non_streaming(messages, context_slice, **kwargs)
+
+    def _prepare_run_messages(
+        self, messages: Any = None, *, a2ui_context: dict[str, Any] | None = None
+    ) -> list[Message]:
+        """Prepare one A2UI request's model input."""
+        context_slice = self._context_slice if a2ui_context is None else a2ui_context
+        return _sanitize_unanswered_tool_calls(self._with_context_prompt(messages, context_slice))
 
     def _with_context_prompt(self, messages: Any, context_slice: dict[str, Any]) -> list[Message]:
         """Prepend the forwarded component catalog + guidelines as a system message."""
@@ -488,6 +602,76 @@ class A2UIAgent:
             input_model=_generate_tool_schema(),
         )
 
+    def _build_generate_handoff_tool(self) -> FunctionTool:
+        """Build the streaming tool that hands completed planner calls back to this adapter."""
+
+        async def _handoff_generate_a2ui(
+            intent: str | None = None,
+            target_surface_id: str | None = None,
+            changes: str | None = None,
+            context: FunctionInvocationContext | None = None,
+        ) -> Content:
+            arguments = {
+                name: value
+                for name, value in {
+                    "intent": intent,
+                    "target_surface_id": target_surface_id,
+                    "changes": changes,
+                }.items()
+                if value is not None
+            }
+            if context is not None:
+                if isinstance(context.arguments, Mapping):
+                    arguments = dict(context.arguments)
+                else:
+                    arguments = context.arguments.model_dump(exclude_none=True, exclude_unset=True)
+            call_id = context.metadata.get("call_id") if context is not None else None
+            occurrence_id = context.metadata.get("function_call_occurrence_id") if context is not None else None
+            if not isinstance(call_id, str) or not call_id:
+                raise RuntimeError("A2UI handoff requires function-call identity metadata.")
+            occurrence_id = occurrence_id if isinstance(occurrence_id, str) and occurrence_id else call_id
+            function_call = Content.from_function_call(
+                call_id=call_id,
+                name=context.function.name if context is not None else self.params["tool_name"],
+                arguments=arguments,
+                id=occurrence_id,
+            )
+            function_call.additional_properties[_A2UI_HANDOFF_MARKER] = True
+            return Content.from_function_approval_request(
+                id=occurrence_id,
+                function_call=function_call,
+                additional_properties={_A2UI_HANDOFF_MARKER: True},
+            )
+
+        return FunctionTool(
+            name=self.params["tool_name"],
+            description=self.params["tool_description"],
+            func=_handoff_generate_a2ui,
+            input_model=_generate_tool_schema(),
+            result_parser=SKIP_PARSING,
+        )
+
+    @staticmethod
+    def _clear_internal_handoff_requests(session: Any, request_ids: set[str]) -> None:
+        """Remove only completed private A2UI handoffs from core pending snapshots."""
+        if session is None or not request_ids:
+            return
+        from agent_framework._tools import (  # pyright: ignore[reportPrivateUsage]
+            _load_pending_approval_requests,
+            _save_pending_approval_requests,
+        )
+
+        pending = _load_pending_approval_requests(session)
+        changed = False
+        for request_id in request_ids:
+            request = pending.get(request_id)
+            if request is None or request.additional_properties.get(_A2UI_HANDOFF_MARKER) is not True:
+                continue
+            pending.pop(request_id)
+            changed = True
+        if changed:
+            _save_pending_approval_requests(session, pending)
+
     def _inner_default_tools(self) -> list[Any]:
         """The inner agent's own configured tools (``default_options["tools"]``).
 
@@ -511,13 +695,8 @@ class A2UIAgent:
     ) -> tuple[list[Any], list[Any], bool]:
         """Execute server tools called alongside generate_a2ui through the shared executor.
 
-        Runs them via the framework's function-invocation helper with the run's ``session``,
-        the run ``config``, and a middleware pipeline built from the client's static function
-        middleware plus the runtime ``middleware`` (bare objects and MiddlewareBundles
-        normalized/expanded via ``categorize_middleware``, so a bundle's function middleware
-        is applied, not skipped) — the same helper AG-UI approval resume uses, so
-        authorization/audit/policy middleware, the session, and approval controls all apply.
-        Kept here in the adapter (not behind a new core abstraction). Returns
+        Compatibility execution for non-core agents without context providers.
+        Core Agents execute their own siblings inside the prepared function loop. Returns
         ``(results, control, should_terminate)``; ``control`` are non-result contents (e.g. a
         ``function_approval_request``) that must reach the client. A ``MiddlewareFailure``
         (the fail-closed escape an authorization/guardrail middleware raises) propagates,
@@ -529,11 +708,17 @@ class A2UIAgent:
         from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareFailure, categorize_middleware
         from agent_framework._tools import _try_execute_function_call_groups
 
-        client = getattr(self.inner_agent, "client", None)
-        runtime_middleware = run_kwargs.get("middleware")
-        runtime_fn_mw = categorize_middleware(runtime_middleware)["function"] if runtime_middleware is not None else []
-        pipeline = FunctionMiddlewarePipeline(*(getattr(client, "function_middleware", None) or ()), *runtime_fn_mw)
-        custom_args = {k: v for k, v in run_kwargs.items() if k not in ("options", "middleware")}
+        if getattr(self.inner_agent, "context_providers", None):
+            raise TypeError("A2UI server tools with context providers require a core Agent execution path.")
+        pipeline = FunctionMiddlewarePipeline(
+            *categorize_middleware(
+                getattr(getattr(self.inner_agent, "client", None), "function_middleware", None),
+                getattr(self.inner_agent, "middleware", None),
+                run_kwargs.get("middleware"),
+            )["function"]
+        )
+        invocation_kwargs = run_kwargs.get("function_invocation_kwargs")
+        custom_args = dict(cast(Mapping[str, Any], invocation_kwargs)) if invocation_kwargs is not None else {}
         try:
             groups, should_terminate = await _try_execute_function_call_groups(
                 custom_args=custom_args,
@@ -587,7 +772,11 @@ class A2UIAgent:
         self, messages: Any = None, context_slice: dict[str, Any] | None = None, **kwargs: Any
     ) -> Any:
         from agent_framework import AgentResponseUpdate
-        from agent_framework._tools import normalize_function_invocation_configuration
+        from agent_framework._agents import RawAgent
+        from agent_framework._tools import (
+            FunctionInvocationLayer,
+            normalize_function_invocation_configuration,
+        )
 
         history = _sanitize_unanswered_tool_calls(normalize_messages(messages))
         session = kwargs.pop("session", None)
@@ -595,12 +784,7 @@ class A2UIAgent:
             t for t in _as_tool_list(kwargs.pop("tools", None)) if getattr(t, "name", None) != self.params["tool_name"]
         ]
         state = {"ag-ui": context_slice or {}}
-        generate_decl = FunctionTool(
-            name=self.params["tool_name"],
-            description=self.params["tool_description"],
-            func=None,
-            input_model=_generate_tool_schema(),
-        )
+        generate_tool = self._build_generate_handoff_tool()
 
         # Honor the inner agent's function-invocation configuration locally so this loop
         # behaves like the core loop: the invocation toggle, the cumulative call budget
@@ -615,6 +799,17 @@ class A2UIAgent:
         max_iters = fi_config.get("max_iterations")
         max_rounds = MAX_PLANNER_ROUNDS if max_iters is None else min(MAX_PLANNER_ROUNDS, max_iters)
         calls_used = 0
+        core_execution = isinstance(self.inner_agent, RawAgent) and isinstance(
+            self.inner_agent.client, FunctionInvocationLayer
+        )
+        execution_budget = _A2UIExecutionBudget()
+        if core_execution:
+            _ensure_termination_observer(self.inner_agent.client)
+            kwargs["client_kwargs"] = execution_budget.client_kwargs(kwargs.get("client_kwargs"))
+            kwargs["middleware"] = [
+                *_as_middleware_list(kwargs.get("middleware")),
+                _A2UIHandoffControlMiddleware(),
+            ]
 
         pending: list[Any] = history
         pending_session = session
@@ -640,60 +835,115 @@ class A2UIAgent:
             all_concat: dict[str, str] = {}
             cid_by_index: dict[int, str] = {}
             active_cid: str | None = None
-            async for update in self.inner_agent.run(
+            core_results: list[Content] = []
+            core_control: list[Content] = []
+            handoff_call_ids: set[str] = set()
+            handoff_request_ids: set[str] = set()
+            termination_state = _A2UITerminationState()
+            inner_stream = self.inner_agent.run(
                 pending,
                 stream=True,
                 session=pending_session,
-                tools=[*incoming_tools, generate_decl],
+                tools=[*incoming_tools, generate_tool],
                 **kwargs,
-            ):
-                for content in update.contents:
-                    ctype = getattr(content, "type", None)
-                    if ctype == "text":
-                        text_contents.append(content)
-                        continue
-                    if ctype != "function_call":
-                        continue
-                    name = getattr(content, "name", None)
-                    cid = getattr(content, "call_id", None)
-                    raw = getattr(content, "arguments", None)
-                    frag = raw if isinstance(raw, str) else (json.dumps(raw) if isinstance(raw, dict) else "")
-                    idx = _tool_call_index(content)
-                    if cid:
-                        # Opening or coalesced fragment of some call.
-                        if cid not in all_concat:
-                            call_order.append(cid)
-                            named_concat[cid] = ""
-                            all_concat[cid] = ""
-                        if name:
-                            name_by_cid[cid] = name
-                            named_concat[cid] += frag
-                        if idx is not None:
-                            cid_by_index[idx] = cid
-                        active_cid = cid
-                        all_concat[cid] += frag
-                    else:
-                        # Nameless continuation delta: attribute by index if known, else
-                        # to the most recently opened call.
-                        target = cid_by_index.get(idx) if idx is not None else None
-                        target = target or active_cid
-                        if target is not None:
-                            all_concat[target] += frag
-                yield update
+            )
+            token: contextvars.Token[_A2UITerminationState | None] | None = (
+                _A2UI_TERMINATION_STATE.set(termination_state) if core_execution else None
+            )
+            try:
+                async for update in inner_stream:
+                    visible_contents: list[Content] = []
+                    for content in update.contents:
+                        handoff_call = content.function_call if content.type == "function_approval_request" else content
+                        if handoff_call is not None and (
+                            content.additional_properties.get(_A2UI_HANDOFF_MARKER) is True
+                            or handoff_call.additional_properties.get(_A2UI_HANDOFF_MARKER) is True
+                        ):
+                            if content.id:
+                                handoff_request_ids.add(content.id)
+                            if handoff_call.call_id:
+                                handoff_call_ids.add(handoff_call.call_id)
+                                if handoff_call.call_id not in all_concat:
+                                    call_order.append(handoff_call.call_id)
+                                    name_by_cid[handoff_call.call_id] = handoff_call.name or self.params["tool_name"]
+                                    raw_arguments = handoff_call.arguments
+                                    handoff_arguments = (
+                                        raw_arguments
+                                        if isinstance(raw_arguments, str)
+                                        else json.dumps(raw_arguments)
+                                        if isinstance(raw_arguments, dict)
+                                        else ""
+                                    )
+                                    named_concat[handoff_call.call_id] = handoff_arguments
+                                    all_concat[handoff_call.call_id] = handoff_arguments
+                            continue
+                        if (
+                            content.type == "function_approval_request"
+                            and content.function_call is not None
+                            and content.function_call.name == self.params["tool_name"]
+                        ):
+                            continue
+                        visible_contents.append(content)
+                        ctype = getattr(content, "type", None)
+                        if core_execution:
+                            if ctype == "function_result":
+                                core_results.append(content)
+                            elif ctype != "function_call" and content.user_input_request:
+                                core_control.append(content)
+                        if ctype == "text":
+                            text_contents.append(content)
+                            continue
+                        if ctype != "function_call":
+                            continue
+                        name = getattr(content, "name", None)
+                        cid = getattr(content, "call_id", None)
+                        raw = getattr(content, "arguments", None)
+                        frag = raw if isinstance(raw, str) else (json.dumps(raw) if isinstance(raw, dict) else "")
+                        idx = _tool_call_index(content)
+                        if cid:
+                            # Opening or coalesced fragment of some call.
+                            if cid not in all_concat:
+                                call_order.append(cid)
+                                named_concat[cid] = ""
+                                all_concat[cid] = ""
+                            if name:
+                                name_by_cid[cid] = name
+                                named_concat[cid] += frag
+                            if idx is not None:
+                                cid_by_index[idx] = cid
+                            active_cid = cid
+                            all_concat[cid] += frag
+                        else:
+                            # Nameless continuation delta: attribute by index if known, else
+                            # to the most recently opened call.
+                            target = cid_by_index.get(idx) if idx is not None else None
+                            target = target or active_cid
+                            if target is not None:
+                                all_concat[target] += frag
+                    update.contents = visible_contents
+                    if visible_contents:
+                        if token is not None:
+                            _A2UI_TERMINATION_STATE.reset(token)
+                            token = None
+                        try:
+                            yield update
+                        finally:
+                            if core_execution:
+                                token = _A2UI_TERMINATION_STATE.set(termination_state)
+                inner_response_messages: list[Message] | None = None
+                if core_execution:
+                    inner_response = await inner_stream.get_final_response()
+                    inner_response_messages = list(inner_response.messages)
+            finally:
+                if token is not None:
+                    _A2UI_TERMINATION_STATE.reset(token)
 
-            # Classify the coalesced calls. The declaration-only generate_a2ui poisons
-            # the inner agent's batch invocation (a batch with any declaration-only call
-            # is paused before execution), so tools called alongside it are NOT run by the
-            # inner agent — handle them here by TYPE:
-            #   * generate_a2ui -> stream the surface (below).
-            #   * server tool (executable FunctionTool, found across incoming_tools OR the
-            #     inner agent's default tools) -> execute through the agent's real
-            #     function-invocation pipeline so middleware/config are preserved.
-            #   * client / declaration-only tool (func=None, browser-side) -> leave as a
-            #     user-input request for the frontend to execute and resume; do NOT
-            #     synthesize a result (that would break the resumable client-tool flow).
+            # Core Agents already executed server siblings and the adapter handoff using
+            # their prepared provider context. Opaque agents use the compatibility executor
+            # below and must not have unprepared context providers.
             executable_tools = [*incoming_tools, *self._inner_default_tools()]
             tool_by_name = {getattr(t, "name", None): t for t in executable_tools}
+            core_result_ids = {result.call_id for result in core_results}
             generate_calls: list[Content] = []
             server_calls: list[Content] = []
             client_calls: list[Content] = []
@@ -703,6 +953,8 @@ class A2UIAgent:
                     continue
                 obj = _first_parsable_object(named_concat[cid], all_concat[cid])
                 if nm == self.params["tool_name"]:
+                    if core_execution and cid not in handoff_call_ids:
+                        continue
                     generate_calls.append(
                         Content.from_function_call(
                             call_id=cid, name=nm, arguments=json.dumps(obj) if obj is not None else ""
@@ -712,7 +964,7 @@ class A2UIAgent:
                 args_str = json.dumps(obj) if isinstance(obj, dict) else (all_concat[cid] or "{}")
                 call = Content.from_function_call(call_id=cid, name=nm, arguments=args_str)
                 tool = tool_by_name.get(nm)
-                if tool is not None and getattr(tool, "func", None) is not None:
+                if cid in core_result_ids or (tool is not None and getattr(tool, "func", None) is not None):
                     server_calls.append(call)
                 else:
                     call.user_input_request = True
@@ -720,20 +972,27 @@ class A2UIAgent:
                     client_calls.append(call)
 
             if not generate_calls:
-                # No surface requested this round. A batch WITHOUT a declaration-only call
-                # is not poisoned, so the inner agent already executed/surfaced its calls
-                # and looped; nothing more to do here.
+                # No completed adapter handoff reached us. The inner agent either stopped
+                # requesting a surface, paused for external input/approval, or invocation
+                # was disabled/limited before generate_a2ui could execute.
+                return
+            if core_execution and termination_state.terminated:
+                return
+            if core_execution and core_control:
                 return
 
             # Execute server tools batched with generate_a2ui, honoring the invocation
             # toggle + the shared per-request call budget locally. Calls we must not run
             # (invocation disabled, or over budget) are deferred (left unexecuted) and force
             # the run to stop below rather than be fabricated.
-            server_results: list[Content] = []
+            server_results: list[Content] = core_results
             server_control: list[Content] = []
             server_terminated = False
             deferred_calls: list[Content] = []
-            if server_calls:
+            if core_execution:
+                calls_used = execution_budget.calls_used
+                deferred_calls = [call for call in server_calls if call.call_id not in core_result_ids]
+            elif server_calls:
                 runnable = server_calls if fi_enabled else []
                 if max_calls is not None:
                     runnable = runnable[: max(0, max_calls - calls_used)]
@@ -742,7 +1001,8 @@ class A2UIAgent:
                     server_results, server_control, server_terminated = await self._execute_server_tools(
                         runnable, executable_tools, session, fi_config, kwargs
                     )
-                    calls_used += len(runnable)
+                    execution_budget.record_adapter_calls(len(runnable))
+                    calls_used = execution_budget.calls_used
 
             # generate_a2ui also charges the call budget — each is a render-subagent
             # invocation — so a generate-only planner cannot exceed max_function_calls
@@ -755,7 +1015,8 @@ class A2UIAgent:
                 allowed = max(0, max_calls - calls_used)
                 deferred_generate = generate_calls[allowed:]
                 generate_calls = generate_calls[:allowed]
-            calls_used += len(generate_calls)
+            execution_budget.record_adapter_calls(len(generate_calls))
+            calls_used = execution_budget.calls_used
 
             generate_results: list[Content] = []
             for call in generate_calls:
@@ -763,12 +1024,13 @@ class A2UIAgent:
                 async for update in self._run_generate_streaming(call, history, state, box):
                     yield update
                 generate_results.append(Content.from_function_result(call_id=call.call_id or "", result=box[0]))
+            self._clear_internal_handoff_requests(session, handoff_request_ids)
 
             all_results = [*server_results, *generate_results]
             # Surface tool results on the wire; also surface any executor control contents
             # (e.g. a function_approval_request for a protected tool) so they are not dropped.
-            yield AgentResponseUpdate(role="tool", contents=all_results)
-            if server_control:
+            yield AgentResponseUpdate(role="tool", contents=generate_results if core_execution else all_results)
+            if server_control and not core_execution:
                 yield AgentResponseUpdate(role="assistant", contents=server_control)
 
             # Two ways this turn ends the loop. Calls awaiting EXTERNAL resolution — client
@@ -784,12 +1046,23 @@ class A2UIAgent:
             # Record this round's assistant call(s) + results BEFORE deciding to stop, so
             # the tools-off final narration below sees the surface this turn just produced
             # (otherwise it receives only the original user messages and cannot narrate it).
-            assistant_contents = [*text_contents, *server_calls, *generate_calls]
-            history = [
-                *history,
-                Message(role="assistant", contents=assistant_contents),
-                Message(role="tool", contents=all_results),
-            ]
+            if inner_response_messages is not None:
+                completed_messages = copy.deepcopy(inner_response_messages)
+                if (
+                    completed_messages
+                    and getattr(completed_messages[-1].role, "value", completed_messages[-1].role) == "tool"
+                ):
+                    completed_messages[-1].contents.extend(generate_results)
+                else:
+                    completed_messages.append(Message(role="tool", contents=generate_results))
+                history = [*history, *completed_messages]
+            else:
+                assistant_contents = [*text_contents, *server_calls, *generate_calls]
+                history = [
+                    *history,
+                    Message(role="assistant", contents=assistant_contents),
+                    Message(role="tool", contents=all_results),
+                ]
 
             budget_exhausted = max_calls is not None and calls_used >= max_calls
             if budget_exhausted:

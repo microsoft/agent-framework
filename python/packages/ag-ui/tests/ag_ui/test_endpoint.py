@@ -8,7 +8,7 @@ import logging
 import subprocess
 import sys
 from collections import Counter
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from inspect import signature
@@ -29,12 +29,14 @@ from agent_framework import (
     Executor,
     FileMemoryProvider,
     FileSystemAgentFileStore,
+    FunctionMiddleware,
     FunctionTool,
     HistoryProvider,
     InMemoryAgentFileStore,
     InMemoryCheckpointStorage,
     InMemoryHistoryProvider,
     Message,
+    MiddlewareFailure,
     SessionContext,
     SupportsAgentRun,
     ToolApprovalMiddleware,
@@ -47,6 +49,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
+from agent_framework._tools import FunctionInvocationLayer
 from agent_framework.orchestrations import SequentialBuilder
 from agent_framework.security import SecureAgentConfig
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
@@ -63,7 +66,12 @@ from agent_framework_ag_ui import (
     add_agent_framework_fastapi_endpoint,
 )
 from agent_framework_ag_ui._agent import AgentFrameworkAgent
-from agent_framework_ag_ui._approval_lifecycle import ApprovalExecutionOwner, ApprovalLifecycle, ApprovalStatus
+from agent_framework_ag_ui._approval_lifecycle import (
+    ApprovalExecutionOwner,
+    ApprovalLifecycle,
+    ApprovalStatus,
+    ResumeDecision,
+)
 from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore, approval_state_thread_id
 from agent_framework_ag_ui._workflow import (
     _CHECKPOINT_REQUEST_OWNER_KEY,
@@ -2959,6 +2967,620 @@ def _build_weather_approval_endpoint(
     return client, agent, executed_cities
 
 
+@pytest.mark.parametrize("a2ui_mode", ["none", "manual", "automatic"])
+@pytest.mark.parametrize("policy_source", ["agent", "context_provider"])
+async def test_endpoint_agent_approval_resume_preserves_agent_function_policy(
+    streaming_chat_client_stub: Any,
+    a2ui_mode: str,
+    policy_source: str,
+) -> None:
+    """Approval grants consent without bypassing Agent-level authorization."""
+    executed: list[str] = []
+    policy_observations: list[tuple[str | None, str | None]] = []
+    state = {"phase": "pause"}
+
+    class DenyProtectedTool(FunctionMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            del call_next
+            policy_observations.append(
+                (
+                    context.session.session_id if context.session is not None else None,
+                    context.kwargs.get("principal"),
+                )
+            )
+            raise MiddlewareFailure("principal is not authorized")
+
+    class AuthorizationProvider(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            context.extend_middleware(self.source_id, [DenyProtectedTool()])
+
+    def protected_action(value: str, principal: str | None = None) -> str:
+        executed.append(f"{principal}:{value}")
+        return "protected action completed"
+
+    protected_tool = FunctionTool(
+        name="protected_action",
+        description="Perform a protected action.",
+        func=protected_action,
+        approval_mode="always_require",
+    )
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        if state["phase"] == "pause":
+            yield ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="provider-protected",
+                        name="protected_action",
+                        arguments={"value": "classified"},
+                    )
+                ],
+                role="assistant",
+            )
+            return
+        yield ChatResponseUpdate(contents=[Content.from_text(text="must not continue")], role="assistant")
+
+    agent = Agent(
+        name="test_agent",
+        instructions="Test",
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[protected_tool],
+        middleware=[DenyProtectedTool()] if policy_source == "agent" else None,
+        context_providers=[AuthorizationProvider("authorization")] if policy_source == "context_provider" else None,
+    )
+    endpoint_agent: Any = agent
+    if a2ui_mode != "none":
+        pytest.importorskip("ag_ui_a2ui_toolkit")
+    if a2ui_mode == "manual":
+        from agent_framework_ag_ui._a2ui import enable_a2ui
+
+        endpoint_agent = enable_a2ui(agent, object())
+
+    wrapped_agent = AgentFrameworkAgent(agent=cast(SupportsAgentRun, endpoint_agent), require_confirmation=False)
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/approval")
+    client = TestClient(app)
+    pause_payload: dict[str, Any] = {
+        "runId": "run-pause",
+        "threadId": f"thread-policy-{a2ui_mode}",
+        "messages": [{"role": "user", "content": "Perform the protected action"}],
+    }
+    if a2ui_mode == "automatic":
+        pause_payload["forwardedProps"] = {"injectA2UITool": True}
+
+    pause_response = client.post("/approval", json=pause_payload)
+    assert pause_response.status_code == 200
+    pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
+    interrupts = _run_finished_interrupts(pause_finished[-1])
+    assert len(interrupts) == 1
+    assert executed == []
+
+    state["phase"] = "resume"
+    resume_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-resume",
+            "threadId": f"thread-policy-{a2ui_mode}",
+            "messages": [],
+            "resume": [
+                {
+                    "interruptId": interrupts[0]["id"],
+                    "status": "resolved",
+                    "payload": {"accepted": True},
+                }
+            ],
+            "forwardedProps": {"injectA2UITool": True} if a2ui_mode == "automatic" else {},
+        },
+    )
+
+    assert resume_response.status_code == 200
+    resume_events = _decode_sse_events(resume_response)
+    assert [event["code"] for event in resume_events if event.get("type") == "RUN_ERROR"] == ["MiddlewareFailure"]
+    assert not [event for event in resume_events if event.get("type") == "TOOL_CALL_RESULT"]
+    assert executed == []
+    assert policy_observations == [(f"thread-policy-{a2ui_mode}", None)]
+
+    state["phase"] = "pause"
+    direct_session = AgentSession(session_id=f"direct-policy-{a2ui_mode}")
+    direct_pause = agent.run(
+        "Perform the protected action",
+        stream=True,
+        session=direct_session,
+        function_invocation_kwargs={"principal": None},
+    )
+    direct_updates = [update async for update in direct_pause]
+    direct_request = next(
+        content
+        for update in direct_updates
+        for content in update.contents
+        if content.type == "function_approval_request"
+    )
+    assert direct_request.function_call is not None
+    assert direct_request.id is not None
+    direct_response = Content.from_function_approval_response(
+        approved=True,
+        id=direct_request.id,
+        function_call=direct_request.function_call,
+    )
+    state["phase"] = "resume"
+    with pytest.raises(MiddlewareFailure):
+        direct_resume = agent.run(
+            Message(role="user", contents=[direct_response]),
+            stream=True,
+            session=direct_session,
+            function_invocation_kwargs={"principal": None},
+        )
+        _ = [update async for update in direct_resume]
+    assert executed == []
+    assert policy_observations[-1] == (f"direct-policy-{a2ui_mode}", None)
+
+
+@pytest.mark.parametrize("a2ui_mode", ["manual", "automatic"])
+@pytest.mark.parametrize("policy_source", ["agent", "context_provider"])
+async def test_endpoint_a2ui_mixed_batch_preserves_agent_function_policy(
+    streaming_chat_client_stub: Any,
+    a2ui_mode: str,
+    policy_source: str,
+) -> None:
+    """A declaration-only UI call cannot bypass Agent-level policy for its server-tool sibling."""
+    executed: list[str] = []
+    policy_sessions: list[str | None] = []
+    render_calls: list[str] = []
+    state = {"direct": False}
+
+    class DenyProtectedTool(FunctionMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            if context.function.name != "protected_action":
+                await call_next()
+                return
+            policy_sessions.append(context.session.session_id if context.session is not None else None)
+            raise MiddlewareFailure("principal is not authorized")
+
+    class RenderClient:
+        def get_response(self, *args: Any, **kwargs: Any) -> Any:
+            del args, kwargs
+            render_calls.append("rendered")
+            raise AssertionError("rendering must not start after policy denial")
+
+    class AuthorizationProvider(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            context.extend_middleware(self.source_id, [DenyProtectedTool()])
+
+    def protected_action(value: str) -> str:
+        executed.append(value)
+        return "protected action completed"
+
+    protected_tool = FunctionTool(
+        name="protected_action",
+        description="Perform a protected action.",
+        func=protected_action,
+    )
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        calls = [
+            Content.from_function_call(
+                call_id="provider-protected",
+                name="protected_action",
+                arguments={"value": "classified"},
+            )
+        ]
+        if not state["direct"]:
+            calls.append(
+                Content.from_function_call(
+                    call_id="provider-generate",
+                    name="generate_a2ui",
+                    arguments={"intent": "create"},
+                )
+            )
+        yield ChatResponseUpdate(contents=calls, role="assistant")
+
+    agent = Agent(
+        name="test_agent",
+        instructions="Test",
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[protected_tool],
+        middleware=[DenyProtectedTool()] if policy_source == "agent" else None,
+        context_providers=[AuthorizationProvider("authorization")] if policy_source == "context_provider" else None,
+    )
+    pytest.importorskip("ag_ui_a2ui_toolkit")
+    endpoint_agent: Any = agent
+    if a2ui_mode == "manual":
+        from agent_framework_ag_ui._a2ui import enable_a2ui
+
+        endpoint_agent = enable_a2ui(agent, RenderClient())
+
+    wrapped_agent = AgentFrameworkAgent(agent=cast(SupportsAgentRun, endpoint_agent), require_confirmation=False)
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/a2ui")
+    client = TestClient(app)
+    payload: dict[str, Any] = {
+        "runId": "run-mixed",
+        "threadId": f"thread-mixed-policy-{a2ui_mode}",
+        "messages": [{"role": "user", "content": "Perform and render"}],
+    }
+    if a2ui_mode == "automatic":
+        payload["forwardedProps"] = {"injectA2UITool": True}
+
+    response = client.post("/a2ui", json=payload)
+
+    assert response.status_code == 200
+    events = _decode_sse_events(response)
+    assert [event["code"] for event in events if event.get("type") == "RUN_ERROR"] == ["MiddlewareFailure"]
+    assert not [event for event in events if event.get("type") == "TOOL_CALL_RESULT"]
+    assert executed == []
+    assert render_calls == []
+    assert policy_sessions == [f"thread-mixed-policy-{a2ui_mode}"]
+
+    state["direct"] = True
+    with pytest.raises(MiddlewareFailure):
+        direct_run = agent.run(
+            "Perform the protected action",
+            stream=True,
+            session=AgentSession(session_id=f"direct-mixed-policy-{a2ui_mode}"),
+        )
+        _ = [update async for update in direct_run]
+    assert executed == []
+    assert policy_sessions[-1] == f"direct-mixed-policy-{a2ui_mode}"
+
+
+@pytest.mark.parametrize("a2ui_mode", ["manual", "automatic"])
+async def test_endpoint_a2ui_approval_prepares_policy_from_effective_input(
+    streaming_chat_client_stub, a2ui_mode: str
+) -> None:
+    """Approval preparation must see the same A2UI context prompt as the normal wrapped run."""
+    pytest.importorskip("ag_ui_a2ui_toolkit")
+    from agent_framework_ag_ui._a2ui import enable_a2ui
+
+    phase = "pause"
+    executed: list[str] = []
+
+    class DenyWrites(FunctionMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            raise MiddlewareFailure("Workspace is read-only")
+
+    class WorkspacePolicy(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            if any("Read-only workspace" in message.text for message in context.input_messages):
+                context.extend_middleware(self.source_id, [DenyWrites()])
+
+    def save() -> str:
+        executed.append("saved")
+        return "Saved"
+
+    async def stream_fn(
+        messages: list[Message], options: dict[str, Any], **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        if phase == "pause":
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(id="save", call_id="save-call", name="save", arguments={})],
+            )
+        else:
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("Done.")])
+
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[FunctionTool(name="save", description="Save", func=save, approval_mode="always_require")],
+        context_providers=[WorkspacePolicy("workspace")],
+    )
+    endpoint_agent = cast(SupportsAgentRun, enable_a2ui(agent, object())) if a2ui_mode == "manual" else agent
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, AgentFrameworkAgent(agent=endpoint_agent), path="/approval")
+    client = TestClient(app)
+    context = [{"description": "Application mode", "value": "Read-only workspace"}]
+    forwarded = {"injectA2UITool": True} if a2ui_mode == "automatic" else {}
+    pause = client.post(
+        "/approval",
+        json={
+            "runId": "pause",
+            "threadId": "context-policy",
+            "messages": [{"role": "user", "content": "Save"}],
+            "context": context,
+            "forwardedProps": forwarded,
+        },
+    )
+    finished = [event for event in _decode_sse_events(pause) if event["type"] == "RUN_FINISHED"]
+    interrupt = _run_finished_interrupts(finished[-1])[0]
+    phase = "resume"
+    response = client.post(
+        "/approval",
+        json={
+            "runId": "resume",
+            "threadId": "context-policy",
+            "messages": [],
+            "context": context,
+            "forwardedProps": forwarded,
+            "resume": [{"interruptId": interrupt["id"], "status": "resolved", "payload": {"approved": True}}],
+        },
+    )
+    events = _decode_sse_events(response)
+    assert [event["code"] for event in events if event["type"] == "RUN_ERROR"] == ["MiddlewareFailure"]
+    assert executed == []
+    assert not [event for event in events if event["type"] == "TOOL_CALL_RESULT"]
+
+
+async def test_endpoint_approval_honors_agent_middleware_before_execution(streaming_chat_client_stub) -> None:
+    """The adapter must not execute a tool before the wrapped Agent admits the resumed run."""
+    from agent_framework import AgentMiddleware
+
+    phase = "pause"
+    executed: list[str] = []
+
+    class AdmitRun(AgentMiddleware):
+        async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            if phase == "resume":
+                raise MiddlewareFailure("Run denied")
+            await call_next()
+
+    def action() -> str:
+        executed.append("ran")
+        return "Done"
+
+    async def stream_fn(
+        messages: list[Message], options: dict[str, Any], **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        yield ChatResponseUpdate(
+            role="assistant",
+            contents=[Content.from_function_call(id="action", call_id="action-call", name="action", arguments={})],
+        )
+
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[FunctionTool(name="action", description="Action", func=action, approval_mode="always_require")],
+        middleware=[AdmitRun()],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, agent, path="/approval")
+    client = TestClient(app)
+    pause = client.post(
+        "/approval",
+        json={"runId": "pause", "threadId": "admit-run", "messages": [{"role": "user", "content": "Act"}]},
+    )
+    finished = [event for event in _decode_sse_events(pause) if event["type"] == "RUN_FINISHED"]
+    interrupt = _run_finished_interrupts(finished[-1])[0]
+    phase = "resume"
+    resumed = client.post(
+        "/approval",
+        json={
+            "runId": "resume",
+            "threadId": "admit-run",
+            "messages": [],
+            "resume": [{"interruptId": interrupt["id"], "status": "resolved", "payload": {"approved": True}}],
+        },
+    )
+    events = _decode_sse_events(resumed)
+    assert [event["code"] for event in events if event["type"] == "RUN_ERROR"] == ["MiddlewareFailure"]
+    assert executed == []
+    assert not [event for event in events if event["type"] == "TOOL_CALL_RESULT"]
+
+
+async def test_endpoint_a2ui_approval_completes_internal_render_handoff(streaming_chat_client_stub) -> None:
+    """A resumed mixed batch settles its internal UI handoff even when rendering returns an error envelope."""
+    pytest.importorskip("ag_ui_a2ui_toolkit")
+    from agent_framework import ChatResponse, ResponseStream
+
+    from agent_framework_ag_ui._a2ui import enable_a2ui
+
+    phase = "pause"
+    executed: list[str] = []
+    render_requests: list[bool] = []
+
+    class RenderClient:
+        def get_response(self, *args: Any, stream: bool = False, **kwargs: Any) -> Any:
+            render_requests.append(stream)
+            if stream:
+
+                async def updates() -> AsyncIterator[ChatResponseUpdate]:
+                    yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("Cannot render")])
+
+                return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+            async def response() -> ChatResponse:
+                return ChatResponse(messages=[Message(role="assistant", contents=[Content.from_text("Cannot render")])])
+
+            return response()
+
+    def save() -> str:
+        executed.append("saved")
+        return "Saved"
+
+    async def stream_fn(
+        messages: list[Message], options: dict[str, Any], **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        if phase == "pause":
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(id="save", call_id="save-call", name="save", arguments={}),
+                    Content.from_function_call(
+                        id="generate", call_id="generate-call", name="generate_a2ui", arguments={"intent": "create"}
+                    ),
+                ],
+            )
+        else:
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("Done.")])
+
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[FunctionTool(name="save", description="Save", func=save, approval_mode="always_require")],
+    )
+    wrapped = AgentFrameworkAgent(agent=cast(SupportsAgentRun, enable_a2ui(agent, RenderClient())))
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, wrapped, path="/approval")
+    client = TestClient(app)
+    pause = client.post(
+        "/approval",
+        json={
+            "runId": "pause",
+            "threadId": "render-handoff",
+            "messages": [{"role": "user", "content": "Save and render"}],
+        },
+    )
+    finished = [event for event in _decode_sse_events(pause) if event["type"] == "RUN_FINISHED"]
+    interrupts = _run_finished_interrupts(finished[-1])
+    assert len(interrupts) == 1
+    assert executed == []
+    assert render_requests == []
+    phase = "resume"
+    resumed = client.post(
+        "/approval",
+        json={
+            "runId": "resume",
+            "threadId": "render-handoff",
+            "messages": [],
+            "resume": [{"interruptId": interrupts[0]["id"], "status": "resolved", "payload": {"approved": True}}],
+        },
+    )
+    events = _decode_sse_events(resumed)
+    assert not [event for event in events if event["type"] == "RUN_ERROR"]
+    assert Counter(event["toolCallId"] for event in events if event["type"] == "TOOL_CALL_RESULT") == {
+        "save-call": 1,
+        "generate-call": 1,
+    }
+    assert executed == ["saved"]
+    assert render_requests
+    completed_render_count = len(render_requests)
+    replayed = client.post(
+        "/approval",
+        json={
+            "runId": "replay",
+            "threadId": "render-handoff",
+            "messages": [],
+            "resume": [{"interruptId": interrupts[0]["id"], "status": "resolved", "payload": {"approved": True}}],
+        },
+    )
+    replayed_events = _decode_sse_events(replayed)
+    assert not [event for event in replayed_events if event["type"] == "RUN_ERROR"]
+    assert Counter(event["toolCallId"] for event in replayed_events if event["type"] == "TOOL_CALL_RESULT") == {
+        "save-call": 1,
+        "generate-call": 1,
+    }
+    assert executed == ["saved"]
+    assert len(render_requests) == completed_render_count
+
+
+async def test_endpoint_approved_tool_and_continuation_share_provider_preparation(streaming_chat_client_stub) -> None:
+    """An approved tool and its model continuation use one prepared provider context."""
+    from agent_framework import FunctionInvocationContext
+
+    class BindPreparation(FunctionMiddleware):
+        def __init__(self, generation: int) -> None:
+            self.generation = generation
+
+        async def process(self, context: FunctionInvocationContext, call_next: Any) -> None:
+            context.kwargs["preparation"] = self.generation
+            await call_next()
+
+    class PreparationProvider(ContextProvider):
+        generation = 0
+
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            self.generation += 1
+            context.extend_middleware(self.source_id, [BindPreparation(self.generation)])
+            context.extend_messages(
+                self.source_id,
+                [Message(role="system", contents=[Content.from_text(f"Prepared context {self.generation}")])],
+            )
+
+    def approved_action(context: FunctionInvocationContext) -> str:
+        return f"Executed with preparation {context.kwargs['preparation']}"
+
+    async def stream_fn(
+        messages: list[Message], options: dict[str, Any], **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        result = next(
+            (
+                content.result
+                for message in messages
+                for content in message.contents
+                if content.type == "function_result"
+            ),
+            None,
+        )
+        if result is None:
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="approved-action", name="approved_action", arguments={})],
+            )
+            return
+        prepared_context = next(message.text for message in messages if message.text.startswith("Prepared context "))
+        yield ChatResponseUpdate(role="assistant", contents=[Content.from_text(f"{prepared_context}; {result}")])
+
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        context_providers=[PreparationProvider("preparation")],
+        tools=[
+            FunctionTool(
+                name="approved_action",
+                description="Approved action",
+                func=approved_action,
+                approval_mode="always_require",
+            )
+        ],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, agent, path="/approval")
+    client = TestClient(app)
+    pause = client.post(
+        "/approval",
+        json={"runId": "pause", "threadId": "prepared-run", "messages": [{"role": "user", "content": "Act"}]},
+    )
+    finished = [event for event in _decode_sse_events(pause) if event["type"] == "RUN_FINISHED"]
+    interrupt = _run_finished_interrupts(finished[-1])[0]
+    resumed = client.post(
+        "/approval",
+        json={
+            "runId": "resume",
+            "threadId": "prepared-run",
+            "messages": [],
+            "resume": [{"interruptId": interrupt["id"], "status": "resolved", "payload": {"approved": True}}],
+        },
+    )
+    events = _decode_sse_events(resumed)
+    assert not [event for event in events if event["type"] == "RUN_ERROR"]
+    assert "".join(event["delta"] for event in events if event["type"] == "TEXT_MESSAGE_CONTENT") == (
+        "Prepared context 2; Executed with preparation 2"
+    )
+
+
 async def test_endpoint_agent_approval_batch_keeps_distinct_occurrences_for_reused_call_id() -> None:
     """Unique interrupts sharing a provider call ID each execute and settle exactly once."""
     executed: list[str] = []
@@ -3077,10 +3699,10 @@ def _build_mixed_approval_batch_endpoint(
     streaming_chat_client_stub: Any,
     *,
     snapshot_store: InMemoryAGUIThreadSnapshotStore | None = None,
-) -> tuple[TestClient, list[str], list[Message], dict[str, str]]:
+) -> tuple[TestClient, list[str], list[Message], dict[str, Any]]:
     executed: list[str] = []
     messages_received: list[Message] = []
-    state = {"phase": "pause"}
+    state: dict[str, Any] = {"phase": "pause"}
 
     def sensitive_action(city: str) -> str:
         executed.append(f"sensitive:{city}")
@@ -3128,10 +3750,12 @@ def _build_mixed_approval_batch_endpoint(
         messages_received[:] = list(messages)
         yield ChatResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")
 
+    chat_client = streaming_chat_client_stub(stream_fn)
+    state["chat_client"] = chat_client
     agent = Agent(
         name="test_agent",
         instructions="Test",
-        client=streaming_chat_client_stub(stream_fn),
+        client=chat_client,
         tools=[gated_tool, sibling_tool],
     )
     app = FastAPI()
@@ -3148,6 +3772,8 @@ def _build_mixed_approval_batch_endpoint(
 
 def _build_tool_approval_queue_endpoint(
     streaming_chat_client_stub: Any,
+    *,
+    lifecycle: ApprovalLifecycle | None = None,
 ) -> tuple[TestClient, list[str], list[Message], dict[str, str], AgentFrameworkAgent]:
     executed: list[str] = []
     messages_received: list[Message] = []
@@ -3193,6 +3819,8 @@ def _build_tool_approval_queue_endpoint(
     )
     app = FastAPI()
     wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    if lifecycle is not None:
+        wrapped_agent._approval_state_store.lifecycle = lifecycle
     add_agent_framework_fastapi_endpoint(
         app,
         wrapped_agent,
@@ -3716,6 +4344,743 @@ async def test_endpoint_agent_approval_resume_remains_retryable_when_local_tool_
         (event["toolCallId"], event["content"]) for event in retry_events if event.get("type") == "TOOL_CALL_RESULT"
     ] == [("call_get_weather", "Sunny in Seattle")]
     assert executed_cities == ["Seattle"]
+
+
+@pytest.mark.parametrize("a2ui_mode", ["none", "manual", "automatic"])
+async def test_endpoint_agent_approval_resume_remains_pending_when_invocation_is_disabled(
+    streaming_chat_client_stub,
+    a2ui_mode: str,
+) -> None:
+    """A disabled local executor blocks an approved call without consuming its authority."""
+    call_id = "call_local_action"
+    state = {"phase": "pause"}
+    local_executions: list[str] = []
+    provider_resume_calls: list[str] = []
+    function_call = Content.from_function_call(
+        call_id=call_id,
+        name="local_action",
+        arguments={"document": "Approved draft"},
+    )
+
+    def local_action(document: str) -> str:
+        local_executions.append(document)
+        return "Draft applied"
+
+    local_tool = FunctionTool(
+        name="local_action",
+        description="Apply an approved draft.",
+        func=local_action,
+        approval_mode="always_require",
+    )
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del messages, options, kwargs
+        if state["phase"] == "pause":
+            yield ChatResponseUpdate(
+                contents=[Content.from_function_approval_request(id=call_id, function_call=function_call)],
+                role="assistant",
+            )
+            return
+        provider_resume_calls.append("resumed")
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")
+
+    chat_client = cast(Any, streaming_chat_client_stub(stream_fn))
+    agent = Agent(name="test_agent", instructions="Test", client=chat_client, tools=[local_tool])
+    endpoint_agent: SupportsAgentRun = agent
+    if a2ui_mode != "none":
+        pytest.importorskip("ag_ui_a2ui_toolkit")
+    if a2ui_mode == "manual":
+        from agent_framework_ag_ui._a2ui import enable_a2ui
+
+        endpoint_agent = cast(SupportsAgentRun, enable_a2ui(agent, object()))
+    wrapped_agent = AgentFrameworkAgent(agent=endpoint_agent, require_confirmation=False)
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        wrapped_agent,
+        path="/approval",
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+    )
+    client = TestClient(app)
+    thread_id = f"thread-disabled-resume-{a2ui_mode}"
+    forwarded_props = {"injectA2UITool": True} if a2ui_mode == "automatic" else {}
+
+    pause_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": thread_id,
+            "messages": [{"role": "user", "content": "Apply the draft"}],
+            "forwardedProps": forwarded_props,
+        },
+    )
+    pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
+    assert _run_finished_interrupts(pause_finished[-1])[0]["id"] == call_id
+
+    state["phase"] = "resume"
+    chat_client.function_invocation_configuration["enabled"] = False
+    resume = [{"interruptId": call_id, "status": "resolved", "payload": {"accepted": True}}]
+    blocked_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-blocked",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": resume,
+            "forwardedProps": forwarded_props,
+        },
+    )
+
+    blocked_events = _decode_sse_events(blocked_response)
+    blocked_errors = [event for event in blocked_events if event.get("type") == "RUN_ERROR"]
+    assert [(event["code"], event["message"]) for event in blocked_errors] == [
+        (
+            "APPROVAL_INVOCATION_DISABLED",
+            "Function invocation is disabled; the approved tool remains pending for an explicit retry.",
+        )
+    ]
+    assert not [event for event in blocked_events if event.get("type") == "TOOL_CALL_RESULT"]
+    assert local_executions == []
+    assert provider_resume_calls == []
+
+    repeated_blocked_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-blocked-again",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": resume,
+            "forwardedProps": forwarded_props,
+        },
+    )
+    repeated_blocked_events = _decode_sse_events(repeated_blocked_response)
+    assert [event["code"] for event in repeated_blocked_events if event.get("type") == "RUN_ERROR"] == [
+        "APPROVAL_INVOCATION_DISABLED"
+    ]
+    assert not [event for event in repeated_blocked_events if event.get("type") == "TOOL_CALL_RESULT"]
+    assert local_executions == []
+    assert provider_resume_calls == []
+
+    chat_client.function_invocation_configuration["enabled"] = True
+    retry_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-retry",
+            "threadId": thread_id,
+            "messages": [],
+            "resume": resume,
+            "forwardedProps": forwarded_props,
+        },
+    )
+
+    retry_events = _decode_sse_events(retry_response)
+    assert not [event for event in retry_events if event.get("type") == "RUN_ERROR"]
+    assert [
+        (event["toolCallId"], event["content"]) for event in retry_events if event.get("type") == "TOOL_CALL_RESULT"
+    ] == [(call_id, "Draft applied")]
+    assert local_executions == ["Approved draft"]
+    assert provider_resume_calls == ["resumed"]
+
+
+async def test_endpoint_agent_disabled_resume_releases_all_unstarted_local_grants(
+    streaming_chat_client_stub,
+) -> None:
+    """A disabled mixed batch leaves every unstarted local grant retryable."""
+    client, executed, _, state = _build_mixed_approval_batch_endpoint(streaming_chat_client_stub)
+    pause_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": "thread-disabled-mixed-grants",
+            "messages": [{"role": "user", "content": "Run both tools"}],
+        },
+    )
+    pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
+    approval_id = _run_finished_interrupts(pause_finished[-1])[0]["id"]
+    resume = [{"interruptId": approval_id, "status": "resolved", "payload": {"accepted": True}}]
+
+    state["phase"] = "resume"
+    chat_client = state["chat_client"]
+    chat_client.function_invocation_configuration["enabled"] = False
+    blocked_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-blocked",
+            "threadId": "thread-disabled-mixed-grants",
+            "messages": [],
+            "resume": resume,
+        },
+    )
+
+    blocked_events = _decode_sse_events(blocked_response)
+    assert [event["code"] for event in blocked_events if event.get("type") == "RUN_ERROR"] == [
+        "APPROVAL_INVOCATION_DISABLED"
+    ]
+    assert not [event for event in blocked_events if event.get("type") == "TOOL_CALL_RESULT"]
+    assert executed == []
+
+    chat_client.function_invocation_configuration["enabled"] = True
+    retry_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-retry",
+            "threadId": "thread-disabled-mixed-grants",
+            "messages": [],
+            "resume": resume,
+        },
+    )
+
+    retry_events = _decode_sse_events(retry_response)
+    assert not [event for event in retry_events if event.get("type") == "RUN_ERROR"]
+    assert [
+        (event["toolCallId"], event["content"]) for event in retry_events if event.get("type") == "TOOL_CALL_RESULT"
+    ] == [
+        ("call_sensitive", "Sensitive action in Seattle"),
+        ("call_weather", "Weather in Seattle"),
+    ]
+    assert executed == ["sensitive:Seattle", "weather:Seattle"]
+
+
+@pytest.mark.parametrize("blocking_reason", ["disabled", "provider_failure", "provider_disable"])
+async def test_endpoint_disabled_resume_keeps_local_and_hosted_grants_retryable(
+    streaming_chat_client_stub, blocking_reason: str
+) -> None:
+    """Blocking preparation must not strand any unstarted approval owner."""
+    executed: list[str] = []
+    phase = "pause"
+    local_call = Content.from_function_call(
+        id="local-occurrence", call_id="local-call", name="local_action", arguments={}
+    )
+    hosted_call = Content.from_function_call(
+        call_id="hosted-call",
+        name="hosted_action",
+        arguments={},
+        additional_properties={"server_label": "remote"},
+    )
+
+    class PreparationProvider(ContextProvider):
+        async def before_run(
+            self,
+            *,
+            agent: SupportsAgentRun,
+            session: AgentSession,
+            context: SessionContext,
+            state: dict[str, Any],
+        ) -> None:
+            if phase == "blocked" and blocking_reason == "provider_failure":
+                raise RuntimeError("Provider is temporarily unavailable")
+            if phase == "blocked" and blocking_reason == "provider_disable":
+                invocation = getattr(agent, "client")
+                assert isinstance(invocation, FunctionInvocationLayer)
+                invocation.function_invocation_configuration["enabled"] = False
+
+    def local_action() -> str:
+        executed.append("local")
+        return "Local completed"
+
+    async def stream_fn(
+        messages: list[Message], options: dict[str, Any], **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        if phase == "pause":
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_approval_request(id="local-occurrence", function_call=local_call),
+                    Content.from_function_approval_request(id="hosted-approval", function_call=hosted_call),
+                ],
+            )
+            return
+        for message in messages:
+            for content in message.contents:
+                if content.type == "function_approval_response" and content.id == "hosted-approval":
+                    assert content.approved is True
+                    executed.append("hosted")
+        yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("Done.")])
+
+    chat_client = streaming_chat_client_stub(stream_fn)
+    agent = Agent(
+        client=chat_client,
+        context_providers=[PreparationProvider("preparation")],
+        tools=[
+            FunctionTool(
+                name="local_action", description="Local action", func=local_action, approval_mode="always_require"
+            )
+        ],
+    )
+    assert isinstance(chat_client, FunctionInvocationLayer)
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, agent, path="/approval")
+    client = TestClient(app)
+    pause = client.post(
+        "/approval",
+        json={
+            "runId": "pause",
+            "threadId": "cross-owner",
+            "messages": [{"role": "user", "content": "Run both actions"}],
+        },
+    )
+    finished = [event for event in _decode_sse_events(pause) if event["type"] == "RUN_FINISHED"]
+    interrupts = _run_finished_interrupts(finished[-1])
+    assert {interrupt["id"] for interrupt in interrupts} == {"local-occurrence", "hosted-approval"}
+    resume = [
+        {"interruptId": interrupt["id"], "status": "resolved", "payload": {"approved": True}}
+        for interrupt in interrupts
+    ]
+    phase = "blocked"
+    chat_client.function_invocation_configuration["enabled"] = blocking_reason != "disabled"
+    for run_id in ("blocked", "blocked-again"):
+        response = client.post(
+            "/approval",
+            json={"runId": run_id, "threadId": "cross-owner", "messages": [], "resume": resume},
+        )
+        assert [event["code"] for event in _decode_sse_events(response) if event["type"] == "RUN_ERROR"] == [
+            "RuntimeError" if blocking_reason == "provider_failure" else "APPROVAL_INVOCATION_DISABLED"
+        ]
+        assert executed == []
+
+    phase = "resume"
+    chat_client.function_invocation_configuration["enabled"] = True
+    for run_id in ("retry", "completed-replay"):
+        response = client.post(
+            "/approval",
+            json={"runId": run_id, "threadId": "cross-owner", "messages": [], "resume": resume},
+        )
+        assert not [event for event in _decode_sse_events(response) if event["type"] == "RUN_ERROR"]
+        assert executed == ["local", "hosted"]
+
+
+@pytest.mark.parametrize("failure_point", ["middleware", "tool"])
+async def test_endpoint_fatal_approval_preserves_unstarted_siblings(
+    streaming_chat_client_stub, failure_point: str
+) -> None:
+    """A denied local approval must not strand untouched local or hosted siblings."""
+    executed: list[str] = []
+    phase = "pause"
+
+    class DenyFirst(FunctionMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            if context.function.name == "denied_action" and failure_point == "middleware":
+                raise MiddlewareFailure("Action denied")
+            if context.function.name == "allowed_action" and phase == "resume":
+                # Keep this sibling outside invocation while core cancels the failed parallel batch.
+                await asyncio.Event().wait()
+            await call_next()
+
+    def denied_action() -> str:
+        executed.append("denied")
+        raise MiddlewareFailure("Action failed after starting")
+
+    def allowed_action() -> str:
+        executed.append("allowed")
+        return "Allowed action completed"
+
+    calls = [
+        Content.from_function_call(id="denied", call_id="denied-call", name="denied_action", arguments={}),
+        Content.from_function_call(id="allowed", call_id="allowed-call", name="allowed_action", arguments={}),
+        Content.from_function_call(
+            id="hosted",
+            call_id="hosted-call",
+            name="hosted_action",
+            arguments={},
+            additional_properties={"server_label": "remote"},
+        ),
+    ]
+
+    async def stream_fn(
+        messages: list[Message], options: dict[str, Any], **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        if phase == "pause":
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_approval_request(id=identity, function_call=call)
+                    for identity, call in zip(("denied", "allowed", "hosted"), calls, strict=True)
+                ],
+            )
+            return
+        for message in messages:
+            for content in message.contents:
+                if content.type == "function_approval_response" and content.id == "hosted":
+                    assert content.approved is True
+                    executed.append("hosted")
+        yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("Done.")])
+
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(
+                name="denied_action", description="Denied action", func=denied_action, approval_mode="always_require"
+            ),
+            FunctionTool(
+                name="allowed_action", description="Allowed action", func=allowed_action, approval_mode="always_require"
+            ),
+        ],
+        middleware=[DenyFirst()],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, agent, path="/approval")
+    client = TestClient(app)
+    pause = client.post(
+        "/approval",
+        json={"runId": "pause", "threadId": "fatal-batch", "messages": [{"role": "user", "content": "Act"}]},
+    )
+    finished = [event for event in _decode_sse_events(pause) if event["type"] == "RUN_FINISHED"]
+    assert {item["id"] for item in _run_finished_interrupts(finished[-1])} == {"denied", "allowed", "hosted"}
+    phase = "resume"
+    failed = client.post(
+        "/approval",
+        json={
+            "runId": "denied",
+            "threadId": "fatal-batch",
+            "messages": [],
+            "resume": [
+                {"interruptId": identity, "status": "resolved", "payload": {"approved": True}}
+                for identity in ("denied", "allowed", "hosted")
+            ],
+        },
+    )
+    assert [event["code"] for event in _decode_sse_events(failed) if event["type"] == "RUN_ERROR"] == [
+        "MiddlewareFailure"
+    ]
+    failed_effects = ["denied"] if failure_point == "tool" else []
+    assert executed == failed_effects
+
+    denied_retry = client.post(
+        "/approval",
+        json={
+            "runId": "unsafe-retry",
+            "threadId": "fatal-batch",
+            "messages": [],
+            "resume": [
+                {"interruptId": identity, "status": "resolved", "payload": {"approved": True}}
+                for identity in ("denied", "allowed", "hosted")
+            ],
+        },
+    )
+    assert [event for event in _decode_sse_events(denied_retry) if event["type"] == "RUN_ERROR"]
+    assert executed == failed_effects
+
+    phase = "retry"
+    for run_id in ("retry-siblings", "replay-completed"):
+        response = client.post(
+            "/approval",
+            json={
+                "runId": run_id,
+                "threadId": "fatal-batch",
+                "messages": [],
+                "resume": [
+                    *([{"interruptId": "denied", "status": "cancelled"}] if failure_point == "middleware" else []),
+                    *[
+                        {"interruptId": identity, "status": "resolved", "payload": {"approved": True}}
+                        for identity in ("allowed", "hosted")
+                    ],
+                ],
+            },
+        )
+        assert not [event for event in _decode_sse_events(response) if event["type"] == "RUN_ERROR"]
+        assert executed == [*failed_effects, "allowed", "hosted"]
+
+
+@pytest.mark.parametrize("reuse_call_id", [False, True])
+async def test_endpoint_retained_and_pending_occurrences_resume_independently(
+    streaming_chat_client_stub, reuse_call_id: bool
+) -> None:
+    """A retained result cannot invalidate a distinct pending approval with the same provider id."""
+    phase = "first"
+    executed: list[str] = []
+
+    def record(value: str) -> str:
+        executed.append(value)
+        return f"Recorded {value}"
+
+    async def stream_fn(
+        messages: list[Message], options: dict[str, Any], **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        if phase == "complete":
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("Done.")])
+            return
+        call = Content.from_function_call(
+            id=phase,
+            call_id="shared" if reuse_call_id else f"provider-{phase}",
+            name="record",
+            arguments={"value": phase},
+        )
+        yield ChatResponseUpdate(
+            role="assistant", contents=[Content.from_function_approval_request(id=phase, function_call=call)]
+        )
+
+    agent = Agent(
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[FunctionTool(name="record", description="Record", func=record, approval_mode="always_require")],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, agent, path="/approval")
+    client = TestClient(app)
+    for occurrence_id in ("first", "second"):
+        phase = occurrence_id
+        pause = client.post(
+            "/approval",
+            json={
+                "runId": f"pause-{occurrence_id}",
+                "threadId": "retained-occurrences",
+                "messages": [{"role": "user", "content": f"Record {occurrence_id}"}],
+            },
+        )
+        finished = [event for event in _decode_sse_events(pause) if event["type"] == "RUN_FINISHED"]
+        assert [item["id"] for item in _run_finished_interrupts(finished[-1])] == [occurrence_id]
+        if occurrence_id == "first":
+            phase = "complete"
+            completed = client.post(
+                "/approval",
+                json={
+                    "runId": "complete-first",
+                    "threadId": "retained-occurrences",
+                    "messages": [],
+                    "resume": [{"interruptId": "first", "status": "resolved", "payload": {"approved": True}}],
+                },
+            )
+            assert not [event for event in _decode_sse_events(completed) if event["type"] == "RUN_ERROR"]
+            assert executed == ["first"]
+
+    phase = "complete"
+    for run_id in ("complete-both", "repeat-completed"):
+        response = client.post(
+            "/approval",
+            json={
+                "runId": run_id,
+                "threadId": "retained-occurrences",
+                "messages": [],
+                "resume": [
+                    {"interruptId": identity, "status": "resolved", "payload": {"approved": True}}
+                    for identity in ("first", "second")
+                ],
+            },
+        )
+        events = _decode_sse_events(response)
+        assert not [event for event in events if event["type"] == "RUN_ERROR"]
+        assert executed == ["first", "second"]
+        assert [event["content"] for event in events if event["type"] == "TOOL_CALL_RESULT"] == [
+            "Recorded first",
+            "Recorded second",
+        ]
+
+
+async def test_endpoint_agent_disabled_mixed_resume_preserves_terminal_progress_for_retry() -> None:
+    """A blocked mixed resume keeps grants retryable without reviving terminal siblings."""
+    executed: list[str] = []
+    observed_non_grants: list[tuple[str | None, bool]] = []
+
+    class ObserveNonGrants(FunctionMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            del context
+            await call_next()
+
+        def _on_approval_responses(
+            self,
+            responses: Sequence[Content],
+            *,
+            session: AgentSession | None,
+        ) -> None:
+            del session
+            observed_non_grants.extend(
+                (
+                    response.function_call.call_id if response.function_call else None,
+                    response.additional_properties.get("cancelled") is True,
+                )
+                for response in responses
+            )
+
+    def record_city(city: str) -> str:
+        executed.append(city)
+        return f"Recorded {city}"
+
+    tool = FunctionTool(
+        name="record_city",
+        description="Record a city",
+        func=record_city,
+        approval_mode="always_require",
+    )
+    approval_requests = [
+        Content.from_function_approval_request(
+            id=f"approval-{city.lower()}",
+            function_call=Content.from_function_call(
+                call_id=f"call-{city.lower()}",
+                name="record_city",
+                arguments={"city": city},
+            ),
+        )
+        for city in ("Seattle", "Portland", "Tokyo")
+    ]
+    client_config = Mock(function_invocation_configuration={"enabled": True})
+
+    class ObservedAgent(StubAgent):
+        middleware = [ObserveNonGrants()]
+
+    agent = ObservedAgent(
+        updates=[AgentResponseUpdate(contents=approval_requests, role="assistant")],
+        default_options={"tools": [tool]},
+        client=client_config,
+    )
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    snapshot_store = InMemoryAGUIThreadSnapshotStore()
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        wrapped_agent,
+        path="/approval",
+        snapshot_store=snapshot_store,
+        snapshot_scope_resolver=lambda _request: "tenant-a",
+    )
+    client = TestClient(app)
+    thread_id = "thread-disabled-mixed-decisions"
+    pause = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": thread_id,
+            "messages": [{"role": "user", "content": "Record three cities"}],
+        },
+    )
+    pause_finished = [event for event in _decode_sse_events(pause) if event.get("type") == "RUN_FINISHED"]
+    assert {interrupt["id"] for interrupt in _run_finished_interrupts(pause_finished[-1])} == {
+        "call-seattle",
+        "call-portland",
+        "call-tokyo",
+    }
+
+    agent.updates = [AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")]
+    mixed_resume = [
+        {
+            "interruptId": "call-seattle",
+            "status": "resolved",
+            "payload": {"approved": True},
+        },
+        {
+            "interruptId": "call-portland",
+            "status": "resolved",
+            "payload": {"approved": False},
+        },
+        {"interruptId": "call-tokyo", "status": "cancelled"},
+    ]
+    client_config.function_invocation_configuration["enabled"] = False
+
+    for run_id in ("run-blocked", "run-blocked-again"):
+        blocked = client.post(
+            "/approval",
+            json={"runId": run_id, "threadId": thread_id, "messages": [], "resume": mixed_resume},
+        )
+        blocked_events = _decode_sse_events(blocked)
+        assert [event["code"] for event in blocked_events if event.get("type") == "RUN_ERROR"] == [
+            "APPROVAL_INVOCATION_DISABLED"
+        ]
+        assert not [event for event in blocked_events if event.get("type") == "TOOL_CALL_RESULT"]
+        assert executed == []
+
+    assert set(observed_non_grants) == {
+        ("call-portland", False),
+        ("call-tokyo", True),
+    }
+    snapshot = await snapshot_store.get(scope="tenant-a", thread_id=thread_id)
+    assert snapshot is not None and snapshot.interrupt is not None
+    assert {interrupt["id"] for interrupt in snapshot.interrupt} == {"call-seattle"}
+
+    client_config.function_invocation_configuration["enabled"] = True
+    retry = client.post(
+        "/approval",
+        json={"runId": "run-retry", "threadId": thread_id, "messages": [], "resume": mixed_resume},
+    )
+    retry_events = _decode_sse_events(retry)
+    assert not [event for event in retry_events if event.get("type") == "RUN_ERROR"]
+    assert [
+        (event["toolCallId"], event["content"]) for event in retry_events if event.get("type") == "TOOL_CALL_RESULT"
+    ] == [("call-seattle", "Recorded Seattle")]
+    assert executed == ["Seattle"]
+
+
+async def test_endpoint_agent_mixed_retry_reprojects_completed_sibling_without_reexecution() -> None:
+    """A completed sibling is replayed while only the unfinished approval executes."""
+    executed: list[str] = []
+
+    def record_city(city: str) -> str:
+        executed.append(city)
+        return f"Recorded {city}"
+
+    tool = FunctionTool(name="record_city", description="Record a city", func=record_city)
+    agent = StubAgent(
+        updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")],
+        default_options={"tools": [tool]},
+    )
+    wrapped_agent = AgentFrameworkAgent(agent=agent, require_confirmation=False)
+    lifecycle = wrapped_agent._approval_state_store.lifecycle
+    completed = lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-completed-sibling",
+        interrupt_id="approval-seattle",
+        call_id="call-seattle",
+        name="record_city",
+        arguments='{"city":"Seattle"}',
+    )
+    completed_intent = lifecycle.claim(
+        thread_id="thread-completed-sibling",
+        decision=ResumeDecision(
+            interrupt_id="approval-seattle",
+            accepted=True,
+            arguments='{"city":"Seattle"}',
+            name="record_city",
+            original_arguments='{"city":"Seattle"}',
+        ),
+    )
+    lifecycle.begin_execution(completed_intent, owner=ApprovalExecutionOwner.LOCAL)
+    lifecycle.settle(
+        completed_intent,
+        [Content.from_function_result(call_id=completed.identity.call_id, result="Recorded Seattle")],
+    )
+    lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-completed-sibling",
+        interrupt_id="approval-portland",
+        call_id="call-portland",
+        name="record_city",
+        arguments='{"city":"Portland"}',
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, wrapped_agent, path="/approval")
+    client = TestClient(app)
+    resume = [
+        {
+            "interruptId": "approval-seattle",
+            "status": "resolved",
+            "payload": {"approved": True},
+        },
+        {
+            "interruptId": "approval-portland",
+            "status": "resolved",
+            "payload": {"approved": True},
+        },
+    ]
+
+    response = client.post(
+        "/approval",
+        json={
+            "runId": "run-completed-sibling",
+            "threadId": "thread-completed-sibling",
+            "messages": [],
+            "resume": resume,
+        },
+    )
+
+    events = _decode_sse_events(response)
+    assert not [event for event in events if event.get("type") == "RUN_ERROR"]
+    assert [(event["toolCallId"], event["content"]) for event in events if event.get("type") == "TOOL_CALL_RESULT"] == [
+        ("call-seattle", "Recorded Seattle"),
+        ("call-portland", "Recorded Portland"),
+    ]
+    assert executed == ["Portland"]
 
 
 async def test_endpoint_agent_approval_resume_releases_already_approved_sibling(streaming_chat_client_stub):
@@ -4375,7 +5740,7 @@ async def test_endpoint_agent_approval_resume_persists_replayable_tool_results(s
 
 
 async def test_endpoint_agent_approval_resume_surfaces_queued_tool_approval(streaming_chat_client_stub):
-    """Queued harness approval requests should survive and surface one at a time across AG-UI resumes."""
+    """Queued approvals retain decisions until the wrapped Agent's middleware releases the batch."""
     client, executed, messages_received, state, _ = _build_tool_approval_queue_endpoint(streaming_chat_client_stub)
     pause_response = client.post(
         "/approval",
@@ -4408,7 +5773,7 @@ async def test_endpoint_agent_approval_resume_surfaces_queued_tool_approval(stre
     assert first_resume.status_code == 200
     first_resume_events = _decode_sse_events(first_resume)
     tool_results = [event for event in first_resume_events if event.get("type") == "TOOL_CALL_RESULT"]
-    assert [(event["toolCallId"], event["content"]) for event in tool_results] == [("call_first", "first result")]
+    assert tool_results == []
     first_resume_finished = [event for event in first_resume_events if event.get("type") == "RUN_FINISHED"]
     second_interrupts = _run_finished_interrupts(first_resume_finished[-1])
     assert len(second_interrupts) == 1
@@ -4420,7 +5785,7 @@ async def test_endpoint_agent_approval_resume_surfaces_queued_tool_approval(stre
         for event in first_resume_events
         if event.get("type") == "TOOL_CALL_END" and event.get("toolCallId") == "call_first"
     ]
-    assert executed == ["first"]
+    assert executed == []
     assert messages_received == []
 
     final_resume = client.post(
@@ -4437,13 +5802,65 @@ async def test_endpoint_agent_approval_resume_surfaces_queued_tool_approval(stre
     final_events = _decode_sse_events(final_resume)
     final_tool_results = [event for event in final_events if event.get("type") == "TOOL_CALL_RESULT"]
     assert [(event["toolCallId"], event["content"]) for event in final_tool_results] == [
-        ("call_second", "second result")
+        ("call_first", "first result"),
+        ("call_second", "second result"),
     ]
     assert executed == ["first", "second"]
     replayed_results = [
         content for message in messages_received for content in message.contents if content.type == "function_result"
     ]
-    assert [content.call_id for content in replayed_results] == ["call_second"]
+    assert [content.call_id for content in replayed_results] == ["call_first", "call_second"]
+
+
+@pytest.mark.parametrize("retry_time", [25.0, 33.0])
+async def test_endpoint_collected_approval_preserves_original_expiration(
+    streaming_chat_client_stub, retry_time: float
+) -> None:
+    """A collected user grant cannot be recreated after its original authority expires."""
+    now = 0.0
+    lifecycle = ApprovalLifecycle(
+        pending_retention_seconds=30,
+        terminal_retention_seconds=1,
+        clock=lambda: now,
+    )
+    client, executed, _, state, _ = _build_tool_approval_queue_endpoint(streaming_chat_client_stub, lifecycle=lifecycle)
+    pause = client.post(
+        "/approval",
+        json={"runId": "pause", "threadId": "queue-expiration", "messages": [{"role": "user", "content": "Act"}]},
+    )
+    first_finished = [event for event in _decode_sse_events(pause) if event["type"] == "RUN_FINISHED"]
+    first = _run_finished_interrupts(first_finished[-1])[0]["id"]
+    now = 20.0
+    state["phase"] = "resume"
+    collected = client.post(
+        "/approval",
+        json={
+            "runId": "collect",
+            "threadId": "queue-expiration",
+            "messages": [],
+            "resume": [{"interruptId": first, "status": "resolved", "payload": {"approved": True}}],
+        },
+    )
+    second_finished = [event for event in _decode_sse_events(collected) if event["type"] == "RUN_FINISHED"]
+    second = _run_finished_interrupts(second_finished[-1])[0]["id"]
+    assert executed == []
+    now = retry_time
+    resumed = client.post(
+        "/approval",
+        json={
+            "runId": "complete",
+            "threadId": "queue-expiration",
+            "messages": [],
+            "resume": [{"interruptId": second, "status": "resolved", "payload": {"approved": True}}],
+        },
+    )
+    errors = [event for event in _decode_sse_events(resumed) if event["type"] == "RUN_ERROR"]
+    if retry_time == 25.0:
+        assert errors == []
+        assert executed == ["first", "second"]
+    else:
+        assert errors
+        assert executed == []
 
 
 async def test_endpoint_agent_approval_cancel_discards_queued_tool_approval(streaming_chat_client_stub):
@@ -4608,10 +6025,10 @@ async def test_endpoint_agent_approval_resume_processes_collected_auto_approved_
     resume_events = _decode_sse_events(resume_response)
     tool_results = [event for event in resume_events if event.get("type") == "TOOL_CALL_RESULT"]
     assert [(event["toolCallId"], event["content"]) for event in tool_results] == [
-        ("call_manual", "manual result"),
         ("call_auto", "auto result"),
+        ("call_manual", "manual result"),
     ]
-    assert executed == ["manual", "auto"]
+    assert executed == ["auto", "manual"]
     replayed_results = [
         content for message in messages_received for content in message.contents if content.type == "function_result"
     ]
@@ -5075,8 +6492,9 @@ async def test_endpoint_agent_approval_client_fields_do_not_mutate_stored_approv
 
 
 async def test_endpoint_agent_approval_resume_entry_denial_does_not_execute_tool():
-    """A resolved canonical denial resume should not execute the pending tool."""
-    client, _, executed_cities = _build_weather_approval_endpoint()
+    """A resolved canonical denial remains valid while function invocation is disabled."""
+    client, agent, executed_cities = _build_weather_approval_endpoint()
+    agent.client.function_invocation_configuration = {"enabled": False}
 
     response = client.post(
         "/approval",
@@ -5191,8 +6609,9 @@ async def test_endpoint_agent_approval_replayed_standard_edited_resume_is_idempo
 
 
 async def test_endpoint_agent_approval_cancelled_resume_entry_completes_without_execution():
-    """A cancelled canonical approval resume should complete without executing the pending tool."""
-    client, _, executed_cities = _build_weather_approval_endpoint()
+    """A cancelled canonical approval remains valid while function invocation is disabled."""
+    client, agent, executed_cities = _build_weather_approval_endpoint()
+    agent.client.function_invocation_configuration = {"enabled": False}
 
     response = client.post(
         "/approval",
@@ -9718,7 +11137,6 @@ async def test_endpoint_does_not_forward_resolved_local_approval_control_to_chat
         yield ChatResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")
 
     chat_client = cast(Any, streaming_chat_client_stub(stream_fn))
-    chat_client.function_invocation_configuration["enabled"] = False
     agent = Agent(
         name="test_agent",
         instructions="Test",
