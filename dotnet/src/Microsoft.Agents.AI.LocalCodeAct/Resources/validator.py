@@ -30,7 +30,7 @@ ALLOWED_IMPORTS: set[str] = {
     "hashlib",
     "uuid",
     "random",
-    "os",  # Limited to os.environ, os.path - validated via attribute access
+    "os",  # Limited to explicit os.environ and lexical os.path chains
 }
 
 # Blocked imports that expose dangerous capabilities.
@@ -54,11 +54,105 @@ BLOCKED_IMPORTS: set[str] = {
     "__builtin__",
 }
 
-# Allowed `os` attribute names. Generated code may only touch `os.environ` and
-# `os.path`; everything else (file I/O, process control, mutating helpers, etc.)
-# is rejected by default. Users may pass a custom allow-list via
-# ``allowed_os_attrs`` on the validator entry points.
+# Allowed top-level `os` attribute names. Descendants are validated separately
+# against complete-chain allow-lists.
 ALLOWED_OS_ATTRS: set[str] = {"environ", "path"}
+
+# Lexical path helpers that do not query or mutate the filesystem.
+ALLOWED_OS_PATH_ATTRS: set[str] = {
+    "abspath",
+    "basename",
+    "commonpath",
+    "commonprefix",
+    "dirname",
+    "expandvars",
+    "isabs",
+    "join",
+    "normcase",
+    "normpath",
+    "relpath",
+    "split",
+    "splitdrive",
+    "splitext",
+    "splitroot",
+}
+
+# Read-only mapping helpers for the scrubbed child-process environment.
+ALLOWED_OS_ENVIRON_ATTRS: set[str] = {
+    "copy",
+    "get",
+}
+
+# Builtins that consume an OS-derived value without retaining it.
+_OS_VALUE_CONSUMER_BUILTINS: frozenset[str] = frozenset({"bool", "len", "print", "repr", "str"})
+
+# Collection operations are safe only for os.environ, whose values are strings.
+_OS_ENVIRON_COPY_BUILTINS: frozenset[str] = frozenset(
+    {"dict", "enumerate", "frozenset", "iter", "list", "reversed", "set", "sorted", "tuple"}
+)
+
+_OS_VALUE_BUILTINS: frozenset[str] = _OS_VALUE_CONSUMER_BUILTINS | _OS_ENVIRON_COPY_BUILTINS
+
+_SAFE_DUNDER_ATTRS: frozenset[str] = frozenset(
+    {
+        "__aenter__",
+        "__aexit__",
+        "__doc__",
+        "__enter__",
+        "__eq__",
+        "__exit__",
+        "__file__",
+        "__hash__",
+        "__init__",
+        "__iter__",
+        "__len__",
+        "__module__",
+        "__name__",
+        "__next__",
+        "__repr__",
+        "__str__",
+    }
+)
+
+_BLOCKED_CAPABILITY_ATTRS: frozenset[str] = frozenset(
+    {
+        "__builtins__",
+        "_sys",
+        "builtins",
+        "connect_accepted_socket",
+        "create_connection",
+        "create_server",
+        "create_subprocess_exec",
+        "create_subprocess_shell",
+        "create_unix_connection",
+        "create_unix_server",
+        "getaddrinfo",
+        "getnameinfo",
+        "importlib",
+        "open_connection",
+        "open_unix_connection",
+        "socket",
+        "sock_accept",
+        "sock_connect",
+        "sock_recv",
+        "sock_recv_into",
+        "sock_recvfrom",
+        "sock_recvfrom_into",
+        "sock_sendall",
+        "sock_sendfile",
+        "sock_sendto",
+        "start_server",
+        "start_unix_server",
+        "subprocess",
+        "subprocess_exec",
+        "subprocess_shell",
+        "sys",
+    }
+)
+
+_OS_ROOT_CHAIN: tuple[str, ...] = ("os",)
+_OS_PATH_CHAIN: tuple[str, ...] = ("os", "path")
+_OS_ENVIRON_CHAIN: tuple[str, ...] = ("os", "environ")
 
 # Allowed builtin function names that generated code may call.
 # Note: getattr/setattr/hasattr/delattr are NOT included because they can bypass
@@ -116,6 +210,7 @@ ALLOWED_BUILTINS: set[str] = {
 
 # Blocked builtin function names that expose dangerous capabilities.
 BLOCKED_BUILTINS: set[str] = {
+    "__builtins__",
     "eval",
     "exec",
     "compile",
@@ -271,7 +366,9 @@ class _CodeValidator(ast.NodeVisitor):
         self._allowed_builtins = allowed_builtins if allowed_builtins is not None else ALLOWED_BUILTINS
         self._blocked_builtins = blocked_builtins if blocked_builtins is not None else BLOCKED_BUILTINS
         self._allowed_os_attrs = allowed_os_attrs if allowed_os_attrs is not None else ALLOWED_OS_ATTRS
-        self._os_aliases: set[str] = {"os"}
+        self._os_aliases: dict[str, set[tuple[str, ...]]] = {"os": {_OS_ROOT_CHAIN}}
+        self._os_containers: dict[str, set[tuple[str, ...]]] = {}
+        self._shadowed_os_value_builtins: set[str] = set()
 
     def validate(self, code: str) -> None:
         """Validate code and raise CodeValidationError if it violates policy."""
@@ -281,7 +378,9 @@ class _CodeValidator(ast.NodeVisitor):
             raise CodeValidationError(f"Syntax error in generated code: {exc}") from exc
 
         self._errors = []
-        self._os_aliases = {"os"}
+        self._os_aliases = {"os": {_OS_ROOT_CHAIN}}
+        self._os_containers = {}
+        self._shadowed_os_value_builtins = self._find_shadowed_os_value_builtins(tree)
         self.visit(tree)
 
         if self._errors:
@@ -305,10 +404,17 @@ class _CodeValidator(ast.NodeVisitor):
                 self._errors.append(f"Import of '{alias_node.name}' is not allowed (blocked: {module_name})")
             elif module_name not in self._allowed_imports:
                 self._errors.append(f"Import of '{alias_node.name}' is not allowed (not in allow-list)")
+
             if alias_node.name == "os":
-                self._os_aliases.add(alias_node.asname or "os")
-            elif alias_node.name.startswith("os.") and alias_node.asname is None:
-                self._os_aliases.add("os")
+                self._remember_os_alias(alias_node.asname or "os", _OS_ROOT_CHAIN)
+            elif alias_node.name.startswith("os."):
+                chain = tuple(alias_node.name.split("."))
+                if chain != _OS_PATH_CHAIN:
+                    self._errors.append(f"Import of '{alias_node.name}' is not allowed")
+                elif alias_node.asname is not None:
+                    self._remember_os_alias(alias_node.asname, chain)
+                else:
+                    self._remember_os_alias("os", _OS_ROOT_CHAIN)
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
@@ -317,44 +423,307 @@ class _CodeValidator(ast.NodeVisitor):
             self._errors.append("Relative imports are not allowed")
             return
 
+        if any(alias_node.name == "*" for alias_node in node.names):
+            self._errors.append(f"Wildcard import from '{node.module}' is not allowed")
+
         module_name = node.module.split(".")[0]
         if module_name in self._blocked_imports:
             self._errors.append(f"Import from '{node.module}' is not allowed (blocked: {module_name})")
         elif module_name not in self._allowed_imports:
             self._errors.append(f"Import from '{node.module}' is not allowed (not in allow-list)")
         elif module_name == "os":
-            # Mirror the os.* attribute allow-list for ``from os import X``,
-            # otherwise ``from os import system`` would bypass visit_Attribute.
             for alias_node in node.names:
-                if alias_node.name not in self._allowed_os_attrs:
+                chain = (*tuple(node.module.split(".")), alias_node.name)
+                if node.module != "os" or alias_node.name not in self._allowed_os_attrs:
                     self._errors.append(f"Import from 'os' of '{alias_node.name}' is not allowed")
+                else:
+                    self._remember_os_alias(alias_node.asname or alias_node.name, chain)
+        else:
+            for alias_node in node.names:
+                if alias_node.name.startswith("__") and alias_node.name.endswith("__"):
+                    self._errors.append(
+                        f"Import from '{node.module}' of reflective attribute '{alias_node.name}' is not allowed"
+                    )
+                elif alias_node.name in {"os", "_os"}:
+                    self._remember_os_alias(alias_node.asname or alias_node.name, _OS_ROOT_CHAIN)
+                elif alias_node.name in _BLOCKED_CAPABILITY_ATTRS:
+                    self._errors.append(
+                        f"Import from '{node.module}' of capability '{alias_node.name}' is not allowed"
+                    )
         self.generic_visit(node)
 
+    def visit_Name(self, node: ast.Name) -> None:
+        """Reject access to blocked builtin objects before they can be aliased."""
+        if isinstance(node.ctx, ast.Load) and node.id in self._blocked_builtins:
+            self._errors.append(f"Access to builtin '{node.id}' is not allowed")
+
     def visit_Assign(self, node: ast.Assign) -> None:
-        """Track re-bindings of the ``os`` module."""
+        """Track assignments of OS-derived values."""
         for target in node.targets:
-            self._track_os_alias_targets(target, node.value)
+            self._track_os_provenance(target, node.value)
         self.generic_visit(node)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-        """Track annotated re-bindings of the ``os`` module."""
-        if (
-            isinstance(node.value, ast.Name)
-            and node.value.id in self._os_aliases
-            and isinstance(node.target, ast.Name)
-        ):
-            self._os_aliases.add(node.target.id)
+        """Track annotated assignments of OS-derived values."""
+        if node.value is not None:
+            self._track_os_provenance(node.target, node.value)
         self.generic_visit(node)
 
-    def _track_os_alias_targets(self, target: ast.AST, value: ast.AST) -> None:
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        """Reject mutation of an OS-derived value."""
+        target_direct, target_contained = self._get_os_provenance(node.target)
+        value_direct, value_contained = self._get_os_provenance(node.value)
+        if target_direct or target_contained or value_direct or value_contained:
+            self._errors.append("Mutation of an OS-derived value is not allowed")
+        self.generic_visit(node)
+
+    def visit_For(self, node: ast.For) -> None:
+        """Track values extracted from containers during iteration."""
+        self._track_os_iteration_target(node.target, node.iter)
+        self.generic_visit(node)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
+        """Track values extracted from containers during async iteration."""
+        self._track_os_iteration_target(node.target, node.iter)
+        self.generic_visit(node)
+
+    def visit_comprehension(self, node: ast.comprehension) -> None:
+        """Reject comprehensions that could extract an OS-derived object."""
+        direct, contained = self._get_os_provenance(node.iter)
+        if contained or any(chain != _OS_ENVIRON_CHAIN for chain in direct):
+            self._errors.append("Comprehension over an OS-derived value is not allowed")
+        self.generic_visit(node)
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        """Reject list comprehensions that retain OS-derived objects."""
+        self._reject_os_derived_result(node.elt, "List comprehension")
+        self.generic_visit(node)
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        """Reject set comprehensions that retain OS-derived objects."""
+        self._reject_os_derived_result(node.elt, "Set comprehension")
+        self.generic_visit(node)
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        """Reject dictionary comprehensions that retain OS-derived objects."""
+        self._reject_os_derived_result(node.key, "Dictionary comprehension")
+        self._reject_os_derived_result(node.value, "Dictionary comprehension")
+        self.generic_visit(node)
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        """Reject generator expressions that retain OS-derived objects."""
+        self._reject_os_derived_result(node.elt, "Generator expression")
+        self.generic_visit(node)
+
+    def visit_Match(self, node: ast.Match) -> None:
+        """Reject pattern matching that could bind an OS-derived object."""
+        direct, contained = self._get_os_provenance(node.subject)
+        if direct or contained:
+            self._errors.append("Pattern matching on an OS-derived value is not allowed")
+        self.generic_visit(node)
+
+    def visit_Return(self, node: ast.Return) -> None:
+        """Reject returning OS-derived objects from local helpers."""
+        if node.value is not None:
+            direct, contained = self._get_os_provenance(node.value)
+            if direct or contained:
+                self._errors.append("Returning an OS-derived value is not allowed")
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """Reject OS-derived function defaults."""
+        self._validate_function_defaults(node.args)
+        self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        """Reject OS-derived async-function defaults."""
+        self._validate_function_defaults(node.args)
+        self.generic_visit(node)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        """Reject lambdas that capture or return OS-derived objects."""
+        self._validate_function_defaults(node.args)
+        direct, contained = self._get_os_provenance(node.body)
+        if direct or contained:
+            self._errors.append("Returning an OS-derived value is not allowed")
+        self.generic_visit(node)
+
+    def _remember_os_alias(self, name: str, chain: tuple[str, ...]) -> None:
+        self._os_aliases.setdefault(name, set()).add(chain)
+
+    def _remember_os_chains(
+        self,
+        target: ast.AST,
+        direct: set[tuple[str, ...]],
+        contained: set[tuple[str, ...]],
+    ) -> None:
         if isinstance(target, ast.Starred):
             target = target.value
 
-        if isinstance(target, ast.Name) and isinstance(value, ast.Name) and value.id in self._os_aliases:
-            self._os_aliases.add(target.id)
-        elif isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (ast.Tuple, ast.List)):
-            for target_item, value_item in zip(target.elts, value.elts):
-                self._track_os_alias_targets(target_item, value_item)
+        if isinstance(target, ast.Name):
+            if direct:
+                self._os_aliases.setdefault(target.id, set()).update(direct)
+            if contained:
+                self._os_containers.setdefault(target.id, set()).update(contained)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            possible = direct | contained
+            for target_item in target.elts:
+                self._remember_os_chains(target_item, possible, set())
+        elif direct or contained:
+            self._errors.append("Storing an OS-derived value on an object is not allowed")
+
+    def _track_os_provenance(self, target: ast.AST, value: ast.AST) -> None:
+        if isinstance(target, ast.Starred):
+            target = target.value
+
+        if isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (ast.Tuple, ast.List)):
+            starred_index = next(
+                (index for index, target_item in enumerate(target.elts) if isinstance(target_item, ast.Starred)),
+                None,
+            )
+            if starred_index is None:
+                for target_item, value_item in zip(target.elts, value.elts):
+                    self._track_os_provenance(target_item, value_item)
+                return
+
+            trailing_count = len(target.elts) - starred_index - 1
+            for target_item, value_item in zip(target.elts[:starred_index], value.elts[:starred_index]):
+                self._track_os_provenance(target_item, value_item)
+            if trailing_count:
+                for target_item, value_item in zip(target.elts[-trailing_count:], value.elts[-trailing_count:]):
+                    self._track_os_provenance(target_item, value_item)
+
+            star_contained: set[tuple[str, ...]] = set()
+            middle_end = len(value.elts) - trailing_count if trailing_count else len(value.elts)
+            for value_item in value.elts[starred_index:middle_end]:
+                item_direct, item_contained = self._get_os_provenance(value_item)
+                star_contained.update(item_direct)
+                star_contained.update(item_contained)
+            self._remember_os_chains(target.elts[starred_index], set(), star_contained)
+            return
+
+        direct, contained = self._get_os_provenance(value)
+        self._remember_os_chains(target, direct, contained)
+
+    def _track_os_iteration_target(self, target: ast.AST, iterator: ast.AST) -> None:
+        direct, contained = self._get_os_provenance(iterator)
+        extracted = set(contained)
+        extracted.update(chain for chain in direct if chain != _OS_ENVIRON_CHAIN)
+        if extracted:
+            self._remember_os_chains(target, extracted, set())
+
+    def _validate_function_defaults(self, arguments: ast.arguments) -> None:
+        defaults = [*arguments.defaults, *(default for default in arguments.kw_defaults if default is not None)]
+        for default in defaults:
+            direct, contained = self._get_os_provenance(default)
+            if direct or contained:
+                self._errors.append("Using an OS-derived value as a function default is not allowed")
+
+    def _reject_os_derived_result(self, node: ast.AST, expression_name: str) -> None:
+        direct, contained = self._get_os_provenance(node)
+        if direct or contained:
+            self._errors.append(f"{expression_name} retaining an OS-derived value is not allowed")
+
+    def _get_os_provenance(
+        self,
+        node: ast.AST,
+    ) -> tuple[set[tuple[str, ...]], set[tuple[str, ...]]]:
+        if isinstance(node, ast.Starred):
+            return self._get_os_provenance(node.value)
+
+        if isinstance(node, ast.Name):
+            return (
+                set(self._os_aliases.get(node.id, set())),
+                set(self._os_containers.get(node.id, set())),
+            )
+
+        if isinstance(node, ast.Attribute):
+            direct, _ = self._get_os_provenance(node.value)
+            if not direct and node.attr in {"os", "_os"}:
+                return ({_OS_ROOT_CHAIN}, set())
+            return ({(*chain, node.attr) for chain in direct}, set())
+
+        if isinstance(node, ast.Subscript):
+            direct, contained = self._get_os_provenance(node.value)
+            extracted = set(contained)
+            extracted.update(chain for chain in direct if chain != _OS_ENVIRON_CHAIN)
+            return extracted, set()
+
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            contained: set[tuple[str, ...]] = set()
+            for item in node.elts:
+                item_direct, item_contained = self._get_os_provenance(item)
+                contained.update(item_direct)
+                contained.update(item_contained)
+            return set(), contained
+
+        if isinstance(node, ast.Dict):
+            contained = set()
+            for item in [*node.keys, *node.values]:
+                if item is None:
+                    continue
+                item_direct, item_contained = self._get_os_provenance(item)
+                contained.update(item_direct)
+                contained.update(item_contained)
+            return set(), contained
+
+        if isinstance(node, ast.IfExp):
+            body_direct, body_contained = self._get_os_provenance(node.body)
+            else_direct, else_contained = self._get_os_provenance(node.orelse)
+            return body_direct | else_direct, body_contained | else_contained
+
+        if isinstance(node, ast.BoolOp):
+            direct: set[tuple[str, ...]] = set()
+            contained: set[tuple[str, ...]] = set()
+            for value in node.values:
+                value_direct, value_contained = self._get_os_provenance(value)
+                direct.update(value_direct)
+                contained.update(value_contained)
+            return direct, contained
+
+        if isinstance(node, ast.BinOp):
+            left_direct, left_contained = self._get_os_provenance(node.left)
+            right_direct, right_contained = self._get_os_provenance(node.right)
+            return left_direct | right_direct, left_contained | right_contained
+
+        return set(), set()
+
+    def _is_allowed_os_chain(self, chain: tuple[str, ...]) -> bool:
+        if chain == _OS_ROOT_CHAIN:
+            return True
+        if len(chain) == 2:
+            return chain[0] == "os" and chain[1] in self._allowed_os_attrs
+        if len(chain) != 3:
+            return False
+        if chain[:2] == _OS_PATH_CHAIN and "path" in self._allowed_os_attrs:
+            return chain[2] in ALLOWED_OS_PATH_ATTRS
+        if chain[:2] == _OS_ENVIRON_CHAIN and "environ" in self._allowed_os_attrs:
+            return chain[2] in ALLOWED_OS_ENVIRON_ATTRS
+        return False
+
+    @staticmethod
+    def _format_os_chains(chains: set[tuple[str, ...]]) -> str:
+        return ", ".join(".".join(chain) for chain in sorted(chains))
+
+    @staticmethod
+    def _find_shadowed_os_value_builtins(tree: ast.AST) -> set[str]:
+        bound_names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                bound_names.add(node.id)
+            elif isinstance(node, ast.arg):
+                bound_names.add(node.arg)
+            elif isinstance(node, ast.alias):
+                bound_names.add(node.asname or node.name.split(".")[0])
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                bound_names.add(node.name)
+            elif isinstance(node, ast.ExceptHandler) and node.name is not None:
+                bound_names.add(node.name)
+            elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name is not None:
+                bound_names.add(node.name)
+            elif isinstance(node, ast.MatchMapping) and node.rest is not None:
+                bound_names.add(node.rest)
+        return bound_names & _OS_VALUE_BUILTINS
 
     def visit_Call(self, node: ast.Call) -> None:
         """Validate function calls.
@@ -371,10 +740,36 @@ class _CodeValidator(ast.NodeVisitor):
                 # Real builtin that wasn't explicitly allowed — reject so the allow-list is meaningful.
                 self._errors.append(f"Call to builtin '{func_name}' is not in the allowed builtins list")
 
-        # Check for attribute access to dangerous methods
+        func_direct, func_contained = self._get_os_provenance(node.func)
+        for chain in func_direct:
+            if not self._is_allowed_os_chain(chain):
+                self._errors.append(f"Call to OS-derived function '{'.'.join(chain)}' is not allowed")
+        if func_contained:
+            chains = self._format_os_chains(func_contained)
+            self._errors.append(f"Calling a value containing OS-derived objects ({chains}) is not allowed")
+
+        consumer_name = node.func.id if isinstance(node.func, ast.Name) else None
+        is_unshadowed_builtin = (
+            consumer_name is not None
+            and consumer_name in _PYTHON_BUILTIN_NAMES
+            and consumer_name not in self._shadowed_os_value_builtins
+        )
+        for argument in [*node.args, *(keyword_node.value for keyword_node in node.keywords)]:
+            direct, contained = self._get_os_provenance(argument)
+            consumes_value = is_unshadowed_builtin and consumer_name in _OS_VALUE_CONSUMER_BUILTINS
+            copies_environment = (
+                is_unshadowed_builtin
+                and consumer_name in _OS_ENVIRON_COPY_BUILTINS
+                and not contained
+                and bool(direct)
+                and all(chain == _OS_ENVIRON_CHAIN for chain in direct)
+            )
+            if (direct or contained) and not consumes_value and not copies_environment:
+                chains = self._format_os_chains(direct | contained)
+                self._errors.append(f"Passing an OS-derived value ({chains}) to a call is not allowed")
+
         if isinstance(node.func, ast.Attribute):
             attr_name = node.func.attr
-            # Block common dangerous attribute methods
             if (
                 attr_name.startswith("__")
                 and attr_name.endswith("__")
@@ -386,40 +781,40 @@ class _CodeValidator(ast.NodeVisitor):
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         """Validate attribute access."""
-        # Enforce the `os` attribute allow-list. Anything outside `ALLOWED_OS_ATTRS`
-        # (file I/O, process control, mutating helpers, etc.) is rejected so the
-        # validator matches the documented `os.environ` / `os.path`-only contract.
-        if isinstance(node.value, ast.Name) and node.value.id in self._os_aliases and node.attr not in self._allowed_os_attrs:
-            self._errors.append(f"Access to os.{node.attr} is not allowed")
+        if node.attr in _BLOCKED_CAPABILITY_ATTRS:
+            self._errors.append(f"Access to capability attribute '{node.attr}' is not allowed")
 
-        # Block access to certain dangerous attributes
+        direct, _ = self._get_os_provenance(node)
+        _, base_contained = self._get_os_provenance(node.value)
+        for chain in direct:
+            if not self._is_allowed_os_chain(chain):
+                self._errors.append(f"Access to {'.'.join(chain)} is not allowed")
+            elif not isinstance(node.ctx, ast.Load):
+                self._errors.append(f"Mutation of {'.'.join(chain)} is not allowed")
+        if base_contained:
+            chains = self._format_os_chains(base_contained)
+            self._errors.append(f"Attribute access on a value containing OS-derived objects ({chains}) is not allowed")
+
         if (
             node.attr.startswith("__")
             and node.attr.endswith("__")
-            and node.attr
-            not in {
-                "__name__",
-                "__doc__",
-                "__dict__",
-                "__class__",
-                "__module__",
-                "__file__",
-                "__init__",
-                "__str__",
-                "__repr__",
-                "__eq__",
-                "__hash__",
-                "__len__",
-                "__iter__",
-                "__next__",
-                "__enter__",
-                "__exit__",
-                "__aenter__",
-                "__aexit__",
-            }
+            and node.attr not in _SAFE_DUNDER_ATTRS
         ):
             self._errors.append(f"Access to attribute '{node.attr}' is not allowed")
 
+        self.generic_visit(node)
+
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        """Permit only read access to the scrubbed environment mapping."""
+        direct, contained = self._get_os_provenance(node.value)
+        if contained:
+            chains = self._format_os_chains(contained)
+            self._errors.append(f"Subscript access to a value containing OS-derived objects ({chains}) is not allowed")
+        for chain in direct:
+            if chain != _OS_ENVIRON_CHAIN or "environ" not in self._allowed_os_attrs:
+                self._errors.append(f"Subscript access to {'.'.join(chain)} is not allowed")
+            elif not isinstance(node.ctx, ast.Load):
+                self._errors.append("Mutation of os.environ is not allowed")
         self.generic_visit(node)
 
 
@@ -440,8 +835,10 @@ def validate_code(
         blocked_imports: Custom set of blocked module names (replaces defaults).
         allowed_builtins: Custom set of allowed builtin names (replaces defaults).
         blocked_builtins: Custom set of blocked builtin names (replaces defaults).
-        allowed_os_attrs: Custom set of allowed ``os`` attribute names
-            (replaces the default ``{"environ", "path"}`` allow-list).
+        allowed_os_attrs: Custom set of allowed top-level ``os`` attribute names
+            (replaces the default ``{"environ", "path"}`` allow-list). Nested
+            ``os.path`` and ``os.environ`` access remains constrained by the
+            built-in complete-chain policy.
 
     Raises:
         CodeValidationError: If the code violates the allow-list policy.

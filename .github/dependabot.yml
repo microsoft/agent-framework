@@ -32,6 +32,10 @@ updates:
       anthropic:
         patterns:
           - "Anthropic*"
+      opentelemetry:
+        patterns:
+          - "OpenTelemetry*"
+          - "Azure.Monitor.OpenTelemetry.Exporter"
     ignore:
       # For all System.* and Microsoft.Extensions/Bcl.* packages, ignore all major version updates
       - dependency-name: "System.*"
@@ -55,6 +59,28 @@ updates:
     schedule:
       interval: "weekly"
       day: "thursday"
+    groups:
+      basics:
+        patterns:
+          - "uv"
+          - "ruff"
+          - "prek"
+          - "poethepoet"
+          - "tomli"
+          - "rich"
+      pytest:
+        patterns:
+          - "pytest*"
+      flit:
+        patterns:
+          - "flit*"
+      python-type-checkers:
+        patterns:
+          - "mypy"
+          - "pyright"
+          - "pyrefly"
+          - "ty"
+          - "zuban"
     labels:
       - "python"
       - "dependencies"
@@ -66,8 +92,58 @@ updates:
     schedule:
       interval: "weekly"
       day: "thursday"
+    groups:
+      basics:
+        patterns:
+          - "uv"
+          - "ruff"
+          - "prek"
+          - "poethepoet"
+          - "tomli"
+          - "rich"
+      pytest:
+        patterns:
+          - "pytest*"
+      flit:
+        patterns:
+          - "flit*"
+      python-type-checkers:
+        patterns:
+          - "mypy"
+          - "pyright"
+          - "pyrefly"
+          - "ty"
+          - "zuban"
     labels:
       - "python"
+      - "dependencies"
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: "uv"
+    directory: "python/packages/lab/"
+    schedule:
+      interval: "weekly"
+      day: "thursday"
+    groups:
+      basics:
+        patterns:
+          - "uv"
+          - "ruff"
+          - "prek"
+          - "poethepoet"
+          - "tomli"
+          - "rich"
+      pytest:
+        patterns:
+          - "pytest*"
+      python-type-checkers:
+        patterns:
+          - "mypy"
+          - "pyright"
+    labels:
+      - "python"
+      - "lab"
       - "dependencies"
     cooldown:
       default-days: 7

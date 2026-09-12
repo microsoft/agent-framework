@@ -3,7 +3,6 @@
 # ruff:file-ignore[unnecessary-assign-before-yield]
 from __future__ import annotations
 
-import asyncio
 import functools
 import hashlib
 import json
@@ -22,11 +21,19 @@ from .._types import Content, ResponseStream
 from ..exceptions import WorkflowException
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._checkpoint import CheckpointStorage
-from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, INTERNAL_SOURCE_ID, WORKFLOW_RUN_KWARGS_KEY
+from ._const import (
+    DEFAULT_MAX_ITERATIONS,
+    GLOBAL_KWARGS_KEY,
+    INTERNAL_SOURCE_ID,
+    RAW_CLIENT_KWARGS_KEY,
+    RAW_FUNCTION_INVOCATION_KWARGS_KEY,
+    WORKFLOW_RUN_KWARGS_KEY,
+)
 from ._edge import (
     EdgeGroup,
     FanOutEdgeGroup,
 )
+from ._edge_runner import gather_cancelling_siblings_on_error
 from ._events import (
     WorkflowErrorDetails,
     WorkflowEvent,
@@ -204,6 +211,18 @@ class OutputDesignation:
         if executor_id in self.intermediates:
             return "intermediate"
         return None
+
+
+@dataclass(frozen=True)
+class WorkflowInvocationKwargs:
+    """Explicit global and executor-specific kwargs for a workflow run.
+
+    Use this wrapper when shared kwargs should be combined with executor-specific
+    overrides. Plain mappings retain their existing global or per-executor behavior.
+    """
+
+    global_kwargs: Mapping[str, Any] = field(default_factory=lambda: dict[str, Any]())
+    executor_kwargs: Mapping[str, Mapping[str, Any]] = field(default_factory=lambda: dict[str, Mapping[str, Any]]())
 
 
 class Workflow(DictConvertible):
@@ -482,8 +501,11 @@ class Workflow(DictConvertible):
         is_continuation: bool = False,
         streaming: bool = False,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Private method to run workflow with proper tracing.
 
@@ -558,10 +580,18 @@ class Workflow(DictConvertible):
                         combined_kwargs["function_invocation_kwargs"] = self._resolve_invocation_kwargs(
                             function_invocation_kwargs, "function_invocation_kwargs"
                         )
+                        if isinstance(function_invocation_kwargs, WorkflowInvocationKwargs) or any(
+                            isinstance(value, Mapping) for value in function_invocation_kwargs.values()
+                        ):
+                            combined_kwargs[RAW_FUNCTION_INVOCATION_KWARGS_KEY] = function_invocation_kwargs
                     if client_kwargs is not None:
                         combined_kwargs["client_kwargs"] = self._resolve_invocation_kwargs(
                             client_kwargs, "client_kwargs"
                         )
+                        if isinstance(client_kwargs, WorkflowInvocationKwargs) or any(
+                            isinstance(value, Mapping) for value in client_kwargs.values()
+                        ):
+                            combined_kwargs[RAW_CLIENT_KWARGS_KEY] = client_kwargs
                     self._runner.state.set(WORKFLOW_RUN_KWARGS_KEY, combined_kwargs)
                 elif not is_continuation:
                     self._runner.state.set(WORKFLOW_RUN_KWARGS_KEY, {})
@@ -691,8 +721,11 @@ class Workflow(DictConvertible):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> ResponseStream[WorkflowEvent, WorkflowRunResult]: ...
 
     @overload
@@ -706,8 +739,8 @@ class Workflow(DictConvertible):
         checkpoint_storage: CheckpointStorage | None = None,
         include_status_events: bool = False,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None,
     ) -> Awaitable[WorkflowRunResult]: ...
 
     def run(
@@ -720,8 +753,11 @@ class Workflow(DictConvertible):
         checkpoint_storage: CheckpointStorage | None = None,
         include_status_events: bool = False,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> ResponseStream[WorkflowEvent, WorkflowRunResult] | Awaitable[WorkflowRunResult]:
         """Run the workflow, optionally streaming events.
 
@@ -746,10 +782,14 @@ class Workflow(DictConvertible):
             tools: Runtime tools available to agent executors.
             function_invocation_kwargs: Keyword arguments forwarded to tool invocations in
                 subagents. Either a mapping for agent name or agent executor id to kwargs,
-                or a flat mapping of kwargs for all tool invocations.
+                a flat mapping of kwargs for all tool invocations, or a
+                ``WorkflowInvocationKwargs`` instance to combine global and executor-specific
+                kwargs.
             client_kwargs: Keyword arguments forwarded to chat client calls in
                 subagents. Either a mapping for agent name or agent executor id to kwargs,
-                or a flat mapping of kwargs for all chat client calls.
+                a flat mapping of kwargs for all chat client calls, or a
+                ``WorkflowInvocationKwargs`` instance to combine global and executor-specific
+                kwargs.
 
         Returns:
             When stream=True: A ResponseStream[WorkflowEvent, WorkflowRunResult] for
@@ -791,7 +831,7 @@ class Workflow(DictConvertible):
                 checkpoint_id=checkpoint_id,
                 checkpoint_storage=checkpoint_storage,
                 streaming=stream,
-                tools=runtime_tools,
+                tools=tools,
                 function_invocation_kwargs=function_invocation_kwargs,
                 client_kwargs=client_kwargs,
             ),
@@ -812,8 +852,11 @@ class Workflow(DictConvertible):
         checkpoint_storage: CheckpointStorage | None = None,
         streaming: bool = False,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs
+        | Mapping[str, Mapping[str, Any]]
+        | Mapping[str, Any]
+        | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Single core execution path for both streaming and non-streaming modes.
 
@@ -1043,10 +1086,20 @@ class Workflow(DictConvertible):
                 )
             coerced_responses[request_id] = response
 
-        await asyncio.gather(*[
-            self._runner.context.send_request_info_response(request_id, response)
-            for request_id, response in coerced_responses.items()
-        ])
+        # Cancelling siblings on error, like every other concurrent write into runner state. Each
+        # coroutine pops its own request id, so a sibling of a failing one still finds its own event
+        # pending and would go on to write a RESPONSE message into the queue after the caller had
+        # already raised out of this method and skipped the entry checkpoint below. Under
+        # InProcRunnerContext that cannot happen today only because send_request_info_response never
+        # suspends -- its one await, send_message, has no awaits of its own -- so the siblings are
+        # always already finished. That is a property of this one context implementation, not of the
+        # RunnerContext protocol, so it is not what this is relying on.
+        await gather_cancelling_siblings_on_error(
+            *(
+                self._runner.context.send_request_info_response(request_id, response)
+                for request_id, response in coerced_responses.items()
+            )
+        )
 
         # Record a response-entry checkpoint capturing the delivered responses in-flight, before the
         # runner processes them in the next superstep. This mirrors the initial-message entry
@@ -1069,7 +1122,7 @@ class Workflow(DictConvertible):
 
     def _resolve_invocation_kwargs(
         self,
-        kwargs: Mapping[str, Any],
+        kwargs: WorkflowInvocationKwargs | Mapping[str, Any],
         param_name: str,
     ) -> dict[str, Any]:
         """Resolve invocation kwargs into a normalized per-executor or global format.
@@ -1077,17 +1130,24 @@ class Workflow(DictConvertible):
         Detects whether the provided kwargs dict uses per-executor targeting by checking
         if any top-level key matches a known executor ID in the workflow. If at least one
         key matches, all entries are treated as per-executor. Otherwise the dict is treated
-        as global kwargs that apply to every executor.
+        as global kwargs that apply to every executor. The ``"__global__"`` key can be used
+        explicitly to combine global kwargs with per-executor overrides.
 
         Args:
             kwargs: The raw invocation kwargs from the caller.
             param_name: The parameter name (for logging), e.g. ``"function_invocation_kwargs"``.
 
         Returns:
-            A dict with either:
-            - ``{"__global__": <original dict>}`` for global kwargs, or
-            - The original dict unchanged for per-executor kwargs.
+            A dict containing normalized global or per-executor mappings.
         """
+        if isinstance(kwargs, WorkflowInvocationKwargs):
+            resolved = {GLOBAL_KWARGS_KEY: dict(kwargs.global_kwargs)}
+            resolved.update({
+                executor_id: dict(executor_kwargs) for executor_id, executor_kwargs in kwargs.executor_kwargs.items()
+            })
+            logger.info("Explicit global %s provided with executor-specific overrides.", param_name)
+            return resolved
+
         executor_ids = set(self.executors.keys())
         matched_ids = kwargs.keys() & executor_ids
         if matched_ids:
@@ -1211,29 +1271,10 @@ class Workflow(DictConvertible):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
-        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        function_invocation_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None,
+        client_kwargs: WorkflowInvocationKwargs | Mapping[str, Any] | None = None,
     ) -> WorkflowRunResult:
-        """Cancel pending external requests and release their owning executor state.
-
-        Cancellation follows requests through nested workflows and clears any executor-owned
-        correlation without synthesizing a response. If cancellation drains an executor's pending
-        set after sibling responses were already accepted, the executor resumes through its normal
-        continuation path. Unknown or already-handled request IDs are ignored.
-
-        Args:
-            request_ids: Request identifiers to cancel.
-
-        Keyword Args:
-            checkpoint_id: Checkpoint to restore before applying cancellation.
-            checkpoint_storage: Runtime checkpoint storage for the cancellation continuation.
-            tools: Request-scoped tools available while cancellation resumes executors.
-            function_invocation_kwargs: Keyword arguments forwarded to resumed tool invocations.
-            client_kwargs: Keyword arguments forwarded to resumed chat client calls.
-
-        Returns:
-            Events produced while applying cancellation and any resulting continuation.
-        """
+        """Cancel pending external requests and continue the workflow."""
         selected_ids = set(request_ids)
         if not all(isinstance(request_id, str) and request_id for request_id in selected_ids):
             raise ValueError("Pending workflow request IDs must be non-empty strings.")
@@ -1250,10 +1291,7 @@ class Workflow(DictConvertible):
                     state=self._runner.state,
                     runner_context=self._runner.context,
                 )
-                await executor._cancel_pending_request(  # pyright: ignore[reportPrivateUsage]
-                    request_id,
-                    context,
-                )
+                await executor._cancel_pending_request(request_id, context)  # pyright: ignore[reportPrivateUsage]
 
         if checkpoint_storage is not None:
             self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)

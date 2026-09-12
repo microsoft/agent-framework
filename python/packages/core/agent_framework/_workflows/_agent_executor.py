@@ -50,24 +50,31 @@ def resolve_executor_run_kwargs(
     # isinstance against bare ``dict`` narrows the value type to Unknown under
     # strict pyright; pin the mapping type explicitly.
     resolved_map: dict[str, Any] = resolved
-    # Use explicit key-presence checks so that an empty per-executor dict is
-    # honoured (e.g. to clear kwargs) instead of falling through to global.
-    if executor_id in resolved_map:
-        executor_kwargs = resolved_map[executor_id]
-    elif GLOBAL_KWARGS_KEY in resolved_map:
-        executor_kwargs = resolved_map[GLOBAL_KWARGS_KEY]
-    else:
+    # Same merge semantics as upstream #7963: a ``__global__`` mapping combines
+    # with the executor's own entry, which wins per key.
+    global_kwargs: Any = resolved_map.get(GLOBAL_KWARGS_KEY)
+    executor_kwargs: Any = resolved_map.get(executor_id)
+    if global_kwargs is None and executor_kwargs is None:
         return None
 
-    if not isinstance(executor_kwargs, dict):
+    if global_kwargs is not None and not isinstance(global_kwargs, dict):
         logger.warning(
-            "Executor %s expected a dict for its kwargs, but got %s. Ignoring.",
+            "Executor %s expected a dict for global kwargs, but got %s. Ignoring.",
             executor_id,
-            type(executor_kwargs),
+            cast(type[Any], type(global_kwargs)),
         )
         return None
 
-    return executor_kwargs
+    if executor_kwargs is not None and not isinstance(executor_kwargs, dict):
+        logger.warning(
+            "Executor %s expected a dict for its kwargs, but got %s. Ignoring.",
+            executor_id,
+            cast(type[Any], type(executor_kwargs)),
+        )
+        return None
+
+    # Specific values override global values for the same function argument.
+    return {**(global_kwargs or {}), **(executor_kwargs or {})}
 
 
 def prepare_agent_run_kwargs(

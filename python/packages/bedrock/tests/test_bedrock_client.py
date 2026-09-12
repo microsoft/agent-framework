@@ -14,7 +14,7 @@ from agent_framework._settings import SecretString
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 
-from agent_framework_bedrock import BedrockChatClient
+from agent_framework_bedrock import BedrockChatClient, BedrockEmbeddingClient
 from agent_framework_bedrock._chat_client import BedrockSettings
 from agent_framework_bedrock._feature_usage import FeatureIndex
 
@@ -276,6 +276,38 @@ def test_init_uses_boto3_session_when_runtime_client_not_supplied() -> None:
     ]
 
 
+@pytest.mark.parametrize("secret_type", [str, SecretString], ids=["str", "secret"])
+@pytest.mark.parametrize(
+    ("client_type", "module"),
+    [(BedrockChatClient, "_chat_client"), (BedrockEmbeddingClient, "_embedding_client")],
+    ids=["chat", "embedding"],
+)
+def test_constructor_unwraps_session_credentials(
+    secret_type: type[str] | type[SecretString],
+    client_type: type[BedrockChatClient] | type[BedrockEmbeddingClient],
+    module: str,
+) -> None:
+    session = MagicMock(region_name="eu-west-1")
+    session.client.return_value = _StubBedrockRuntime()
+    with patch(f"agent_framework_bedrock.{module}.Boto3Session", return_value=session) as session_cls:
+        client = client_type(
+            model="test-model",
+            region="eu-west-1",
+            access_key=secret_type("access"),
+            secret_key=secret_type("secret"),
+            session_token=secret_type("token"),
+        )
+
+    assert client.model == "test-model"
+    session_cls.assert_called_once_with(
+        region_name="eu-west-1",
+        aws_access_key_id="access",
+        aws_secret_access_key="secret",
+        aws_session_token="token",
+    )
+    assert all(type(value) is str for value in session_cls.call_args.kwargs.values())
+
+
 def test_create_session_uses_secret_values() -> None:
     """Bedrock session creation should unwrap configured secret values."""
     settings: BedrockSettings = {
@@ -294,6 +326,9 @@ def test_create_session_uses_secret_values() -> None:
         aws_secret_access_key="secret",
         aws_session_token="token",
     )
+    assert all(type(value) is str for value in session_cls.call_args.kwargs.values())
+    assert isinstance(settings["secret_key"], SecretString)
+    assert str(settings["secret_key"]) == "**********"
 
 
 def test_invoke_converse_requires_mapping_response() -> None:
