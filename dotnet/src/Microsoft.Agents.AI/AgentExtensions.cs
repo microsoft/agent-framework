@@ -106,6 +106,34 @@ public static partial class AIAgentExtensions
     /// omitted, but a session is supplied, an id unique to the returned client is generated. Supply one when the id
     /// has to be recognizable outside the process, for example when it is persisted or routed on.
     /// </param>
+    /// <param name="allowNonChatClientAgents">
+    /// <para>
+    /// <see langword="false"/>, the default, restricts this method to agents whose behavior behind an
+    /// <see cref="IChatClient"/> is well defined: <paramref name="agent"/> must be a <see cref="ChatClientAgent"/>, or
+    /// must return one from an unkeyed <see cref="AIAgent.GetService{TService}(object?)"/> request, which every
+    /// decorator derived from <see cref="DelegatingAIAgent"/> forwards to the agent it wraps. The request is issued
+    /// only when this parameter is <see langword="false"/>. Any other agent is rejected with an
+    /// <see cref="InvalidOperationException"/>.
+    /// </para>
+    /// <para>
+    /// <see langword="true"/> wraps such an agent anyway — a remote agent such as A2A, Copilot Studio or GitHub
+    /// Copilot, a workflow hosted as an agent, or a custom <see cref="AIAgent"/>, even one that uses an
+    /// <see cref="IChatClient"/> internally — and accepts the consequences. The agent is not known to understand
+    /// <see cref="ChatClientAgentRunOptions"/>, so unless it inspects that type itself, of any
+    /// <see cref="ChatOptions"/> supplied to the returned client only <see cref="ChatOptions.ResponseFormat"/> can be
+    /// relied on to take effect, by being copied to <see cref="AgentRunOptions.ResponseFormat"/>; every other member,
+    /// including <see cref="ChatOptions.Tools"/>, <see cref="ChatOptions.Instructions"/>,
+    /// <see cref="ChatOptions.Temperature"/> and <see cref="ChatOptions.MaxOutputTokens"/>, is silently ignored.
+    /// Because <see cref="ChatOptions.ResponseFormat"/> still reaches the agent, the guidance below about untrusted
+    /// callers applies to opted-in agents as well: a caller-supplied JSON schema, including its name and description,
+    /// reaches the agent. The returned client is also only as faithful to the <see cref="IChatClient"/> contract as
+    /// the agent's own run implementation, and <see cref="IChatClient.GetService"/> answers only what the agent
+    /// answers. Converting the returned client back into an agent with
+    /// <see cref="ChatClientExtensions.AsAIAgent(IChatClient, ChatClientAgentOptions?, Microsoft.Extensions.Logging.ILoggerFactory?, IServiceProvider?)"/>
+    /// does not undo any of this: it yields a <see cref="ChatClientAgent"/> whose behavior remains bounded by the
+    /// wrapped agent rather than by a model.
+    /// </para>
+    /// </param>
     /// <returns>
     /// An <see cref="IChatClient"/> that can be used anywhere the <see cref="IChatClient"/> abstraction is consumed,
     /// such as in a <see cref="ChatClientBuilder"/> pipeline.
@@ -114,6 +142,11 @@ public static partial class AIAgentExtensions
     /// <exception cref="ArgumentException">
     /// <paramref name="conversationId"/> is non-<see langword="null"/> and no <paramref name="session"/> is supplied,
     /// or <paramref name="conversationId"/> is empty, whitespace, or a framework reserved value.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// <paramref name="allowNonChatClientAgents"/> is <see langword="false"/> and <paramref name="agent"/> is neither a
+    /// <see cref="ChatClientAgent"/> nor an agent that returns one from an unkeyed
+    /// <see cref="AIAgent.GetService{TService}(object?)"/> request.
     /// </exception>
     /// <remarks>
     /// <para>
@@ -159,7 +192,8 @@ public static partial class AIAgentExtensions
     /// <para>
     /// Any <see cref="ChatOptions"/> supplied to the returned client are passed to the agent as
     /// <see cref="ChatClientAgentRunOptions"/>. Agents that understand that type, such as <see cref="ChatClientAgent"/>,
-    /// honor those options; other agent implementations may ignore them. The exception is
+    /// honor those options; other agent implementations may ignore them, so wrapping an agent that does not expose a
+    /// <see cref="ChatClientAgent"/> requires opting in through <paramref name="allowNonChatClientAgents"/>. The exception is
     /// <see cref="ChatOptions.ResponseFormat"/>, which is additionally copied to <see cref="AgentRunOptions.ResponseFormat"/>
     /// and so may be honored by any agent implementation. Except where a conversation id has to be stripped, the
     /// caller's <see cref="ChatOptions"/> instance is handed to the agent by reference rather than copied.
@@ -203,7 +237,7 @@ public static partial class AIAgentExtensions
     /// </para>
     /// </remarks>
     [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-    public static IChatClient AsIChatClient(this AIAgent agent, AgentSession? session = null, string? conversationId = null)
+    public static IChatClient AsIChatClient(this AIAgent agent, AgentSession? session = null, string? conversationId = null, bool allowNonChatClientAgents = false)
     {
         Throw.IfNull(agent);
 
@@ -229,6 +263,19 @@ public static partial class AIAgentExtensions
                     nameof(conversationId),
                     $"The conversation id '{conversationId}' is reserved for internal use and cannot be used as a client-supplied conversation id.");
             }
+        }
+
+        // The probe asks for ChatClientAgent rather than IChatClient because the adapter's value rests on the agent
+        // honoring ChatClientAgentRunOptions, which is a ChatClientAgent capability rather than a chat client one; the
+        // framework already answers this question with the same probe elsewhere (see
+        // PerServiceCallChatHistoryPersistingChatClient and OpenTelemetryAgent). The flag is evaluated first so that an
+        // opted-in call never issues a GetService request against the agent.
+        if (!allowNonChatClientAgents && agent.GetService<ChatClientAgent>() is null)
+        {
+            throw new InvalidOperationException(
+                $"The agent of type '{agent.GetType().Name}' is not a {nameof(ChatClientAgent)} and does not expose one through {nameof(AIAgent.GetService)}, " +
+                $"so every {nameof(ChatOptions)} member except {nameof(ChatOptions)}.{nameof(ChatOptions.ResponseFormat)} would be silently ignored by the returned {nameof(IChatClient)}. " +
+                $"To wrap this agent anyway, accepting the limitations documented on {nameof(AsIChatClient)}, pass {nameof(allowNonChatClientAgents)}: true.");
         }
 
         return new AIAgentChatClient(agent, session, conversationId);

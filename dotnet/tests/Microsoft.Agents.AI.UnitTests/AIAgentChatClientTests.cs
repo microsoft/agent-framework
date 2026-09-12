@@ -31,17 +31,158 @@ public partial class AIAgentChatClientTests
     }
 
     [Fact]
-    public void AsIChatClient_WithValidAgent_ReturnsChatClient()
+    public void AsIChatClient_WithAgentNotExposingChatClientAgent_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var agent = new TestAIAgent();
+
+        // Act & Assert
+        // An agent that does not understand ChatClientAgentRunOptions would silently drop nearly every ChatOptions
+        // member a caller supplies, so wrapping it is refused unless the caller says it knows.
+        var exception = Assert.Throws<InvalidOperationException>(() => agent.AsIChatClient());
+
+        Assert.Contains(nameof(TestAIAgent), exception.Message, StringComparison.Ordinal);
+        Assert.Contains("allowNonChatClientAgents", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AsIChatClient_WithOptIn_ReturnsChatClient()
     {
         // Arrange
         var mockAgent = new Mock<AIAgent>();
 
         // Act
-        using var chatClient = mockAgent.Object.AsIChatClient();
+        using var chatClient = mockAgent.Object.AsIChatClient(allowNonChatClientAgents: true);
 
         // Assert
         Assert.NotNull(chatClient);
-        Assert.IsAssignableFrom<IChatClient>(chatClient);
+    }
+
+    [Fact]
+    public void AsIChatClient_WithOptIn_DoesNotProbeAgentForChatClientAgent()
+    {
+        // Arrange
+        // The opt-in short-circuits the capability check, so the agent must never be asked anything. Tests that count
+        // GetService requests rely on this, and so do agents whose GetService is expensive or has side effects.
+        var agent = new TestAIAgent
+        {
+            GetServiceFunc = (_, _) => throw new InvalidOperationException("must not be called")
+        };
+
+        // Act
+        using var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
+
+        // Assert
+        Assert.NotNull(chatClient);
+    }
+
+    [Fact]
+    public void AsIChatClient_OverChatClientAgent_DoesNotRequireOptIn()
+    {
+        // Arrange
+        var agent = new ChatClientAgent(new Mock<IChatClient>().Object);
+
+        // Act
+        using var chatClient = agent.AsIChatClient();
+
+        // Assert
+        Assert.NotNull(chatClient);
+    }
+
+    [Fact]
+    public void AsIChatClient_OverDelegatingAgentWrappingChatClientAgent_DoesNotRequireOptIn()
+    {
+        // Arrange
+        // DelegatingAIAgent forwards GetService to the agent it wraps, so a middleware pipeline over a
+        // ChatClientAgent still honors ChatClientAgentRunOptions and needs no opt-in.
+        var agent = new ChatClientAgent(new Mock<IChatClient>().Object)
+            .AsBuilder()
+            .Use(async (messages, session, options, next, cancellationToken) =>
+                await next(messages, session, options, cancellationToken))
+            .Build();
+
+        // Act
+        using var chatClient = agent.AsIChatClient();
+
+        // Assert
+        Assert.NotNull(chatClient);
+    }
+
+    [Fact]
+    public void AsIChatClient_OverDelegatingAgentWrappingNonChatClientAgent_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        // The same pipeline over an agent that is not a ChatClientAgent forwards the probe and finds nothing.
+        var agent = new TestAIAgent()
+            .AsBuilder()
+            .Use(async (messages, session, options, next, cancellationToken) =>
+                await next(messages, session, options, cancellationToken))
+            .Build();
+
+        // Act & Assert
+        var exception = Assert.Throws<InvalidOperationException>(() => agent.AsIChatClient());
+
+        Assert.Contains("allowNonChatClientAgents", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AsIChatClient_OverAgentExposingChatClientAgentViaGetService_DoesNotRequireOptIn()
+    {
+        // Arrange
+        var innerAgent = new ChatClientAgent(new Mock<IChatClient>().Object);
+        List<(Type ServiceType, object? ServiceKey)> capturedRequests = [];
+
+        var agent = new TestAIAgent
+        {
+            GetServiceFunc = (serviceType, serviceKey) =>
+            {
+                capturedRequests.Add((serviceType, serviceKey));
+                return serviceType == typeof(ChatClientAgent) ? innerAgent : null;
+            }
+        };
+
+        // Act
+        using var chatClient = agent.AsIChatClient();
+
+        // Assert
+        Assert.NotNull(chatClient);
+
+        // The probe is unkeyed, so an agent that only answers keyed requests is not mistaken for one that honors
+        // ChatClientAgentRunOptions.
+        Assert.Equal((typeof(ChatClientAgent), null), Assert.Single(capturedRequests));
+    }
+
+    [Fact]
+    public void AsIChatClient_OverAgentExposingOnlyChatClient_RequiresOptIn()
+    {
+        // Arrange
+        // The capability that matters is honoring ChatClientAgentRunOptions, not owning an IChatClient, so an agent
+        // that hands out its inner chat client but is not a ChatClientAgent is still rejected.
+        var chatClient = new Mock<IChatClient>().Object;
+        var agent = new TestAIAgent
+        {
+            GetServiceFunc = (serviceType, _) => serviceType == typeof(IChatClient) ? chatClient : null
+        };
+
+        // Act & Assert
+        var exception = Assert.Throws<InvalidOperationException>(() => agent.AsIChatClient());
+
+        Assert.Contains("allowNonChatClientAgents", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AsIChatClient_WithInvalidConversationIdAndUnsupportedAgent_ThrowsArgumentException()
+    {
+        // Arrange
+        var agent = new TestAIAgent();
+
+        // Act & Assert
+        // Argument validation runs before the capability check, so a caller who got both wrong is told about the
+        // argument first rather than being sent to fix the opt-in and then hitting the same wall again.
+        var exception = Assert.Throws<ArgumentException>(() =>
+            agent.AsIChatClient(session: null, conversationId: "orphan"));
+
+        Assert.Equal("conversationId", exception.ParamName);
     }
 
     [Fact]
@@ -49,7 +190,7 @@ public partial class AIAgentChatClientTests
     {
         // Arrange
         var mockAgent = new Mock<AIAgent>();
-        using var chatClient = mockAgent.Object.AsIChatClient();
+        using var chatClient = mockAgent.Object.AsIChatClient(allowNonChatClientAgents: true);
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
@@ -63,7 +204,7 @@ public partial class AIAgentChatClientTests
     {
         // Arrange
         var mockAgent = new Mock<AIAgent>();
-        using var chatClient = mockAgent.Object.AsIChatClient();
+        using var chatClient = mockAgent.Object.AsIChatClient(allowNonChatClientAgents: true);
 
         // Act & Assert
         // The exception must be raised by the call itself, before any enumeration takes place,
@@ -98,7 +239,7 @@ public partial class AIAgentChatClientTests
             }
         };
 
-        using var chatClient = agent.AsIChatClient();
+        using var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
         using var cancellationTokenSource = new CancellationTokenSource();
         List<ChatMessage> inputMessages = [new(ChatRole.User, "Hi")];
 
@@ -131,7 +272,7 @@ public partial class AIAgentChatClientTests
             }
         };
 
-        using var chatClient = agent.AsIChatClient();
+        using var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
         List<ChatMessage> inputMessages = [];
 
         // Act
@@ -159,7 +300,7 @@ public partial class AIAgentChatClientTests
             }
         };
 
-        using var chatClient = agent.AsIChatClient();
+        using var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
         var chatOptions = new ChatOptions
         {
             Temperature = 0.5f,
@@ -191,7 +332,7 @@ public partial class AIAgentChatClientTests
             }
         };
 
-        using var chatClient = agent.AsIChatClient(boundSession);
+        using var chatClient = agent.AsIChatClient(boundSession, allowNonChatClientAgents: true);
 
         // Act
         await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "Hi")]);
@@ -217,7 +358,7 @@ public partial class AIAgentChatClientTests
             RunAsyncFunc = (messages, session, options, cancellationToken) => Task.FromResult(agentResponse)
         };
 
-        using var chatClient = agent.AsIChatClient();
+        using var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
 
         // Act
         var response = await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "Hi")]);
@@ -256,7 +397,7 @@ public partial class AIAgentChatClientTests
             }
         };
 
-        using var chatClient = agent.AsIChatClient(boundSession);
+        using var chatClient = agent.AsIChatClient(boundSession, allowNonChatClientAgents: true);
         using var cancellationTokenSource = new CancellationTokenSource();
         List<ChatMessage> inputMessages = [new(ChatRole.User, "Hi")];
         var chatOptions = new ChatOptions();
@@ -298,7 +439,7 @@ public partial class AIAgentChatClientTests
             }
         };
 
-        using var chatClient = agent.AsIChatClient();
+        using var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
         using var cancellationTokenSource = new CancellationTokenSource();
 
         // Act
@@ -331,7 +472,7 @@ public partial class AIAgentChatClientTests
                 ToAsyncEnumerableAsync([agentUpdate], cancellationToken)
         };
 
-        using var chatClient = agent.AsIChatClient();
+        using var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
 
         // Act
         List<ChatResponseUpdate> receivedUpdates = [];
@@ -363,7 +504,7 @@ public partial class AIAgentChatClientTests
             }
         };
 
-        using var chatClient = agent.AsIChatClient();
+        using var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
         var chatOptions = new ChatOptions { ResponseFormat = ChatResponseFormat.Json };
 
         // Act
@@ -383,7 +524,7 @@ public partial class AIAgentChatClientTests
     {
         // Arrange
         var mockAgent = new Mock<AIAgent>();
-        using var chatClient = mockAgent.Object.AsIChatClient();
+        using var chatClient = mockAgent.Object.AsIChatClient(allowNonChatClientAgents: true);
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(
@@ -397,7 +538,7 @@ public partial class AIAgentChatClientTests
     {
         // Arrange
         var agent = new TestAIAgent();
-        using var chatClient = agent.AsIChatClient();
+        using var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
 
         // Act
         var service = chatClient.GetService(typeof(IChatClient));
@@ -438,7 +579,7 @@ public partial class AIAgentChatClientTests
     {
         // Arrange
         var agent = new TestAIAgent();
-        using var chatClient = agent.AsIChatClient();
+        using var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
 
         // Act
         var service = chatClient.GetService(typeof(AIAgent));
@@ -463,7 +604,9 @@ public partial class AIAgentChatClientTests
             }
         };
 
-        using var chatClient = agent.AsIChatClient();
+        // The opt-in short-circuits the ChatClientAgent capability probe, so the only requests counted below are
+        // the ones this test makes.
+        using var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
 
         // Act
         var keyed = chatClient.GetService(typeof(IChatClient), "key");
@@ -487,7 +630,7 @@ public partial class AIAgentChatClientTests
                 serviceType == typeof(AIAgentMetadata) ? new AIAgentMetadata("test-provider") : null
         };
 
-        using var chatClient = agent.AsIChatClient();
+        using var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
 
         // Act
         var metadata = chatClient.GetService(typeof(ChatClientMetadata)) as ChatClientMetadata;
@@ -512,7 +655,7 @@ public partial class AIAgentChatClientTests
                 null
         };
 
-        using var chatClient = agent.AsIChatClient();
+        using var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
 
         // Act
         var metadata = chatClient.GetService(typeof(ChatClientMetadata));
@@ -531,7 +674,7 @@ public partial class AIAgentChatClientTests
                 Task.FromResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "still alive")))
         };
 
-        var chatClient = agent.AsIChatClient();
+        var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
 
         // Act
         chatClient.Dispose();
@@ -679,7 +822,7 @@ public partial class AIAgentChatClientTests
         // Act & Assert
         // A conversation id only signals "history is stored here"; without a session there is nothing storing it.
         var exception = Assert.Throws<ArgumentException>(() =>
-            agent.AsIChatClient(session: null, conversationId: "orphan-conversation"));
+            agent.AsIChatClient(session: null, conversationId: "orphan-conversation", allowNonChatClientAgents: true));
 
         Assert.Equal("conversationId", exception.ParamName);
     }
@@ -696,7 +839,7 @@ public partial class AIAgentChatClientTests
         // A blank id would be reported verbatim on every response, where a caller testing it with
         // string.IsNullOrEmpty reads "no stored history" and resends everything the session already holds.
         var exception = Assert.Throws<ArgumentException>(() =>
-            agent.AsIChatClient(new ChatClientAgentSession(), conversationId));
+            agent.AsIChatClient(new ChatClientAgentSession(), conversationId, allowNonChatClientAgents: true));
 
         Assert.Equal("conversationId", exception.ParamName);
     }
@@ -713,7 +856,8 @@ public partial class AIAgentChatClientTests
         var exception = Assert.Throws<ArgumentException>(() =>
             agent.AsIChatClient(
                 new ChatClientAgentSession(),
-                PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId));
+                PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId,
+                allowNonChatClientAgents: true));
 
         Assert.Equal("conversationId", exception.ParamName);
     }
@@ -728,8 +872,8 @@ public partial class AIAgentChatClientTests
                 Task.FromResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "ok")))
         };
 
-        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession());
-        using var otherChatClient = agent.AsIChatClient(new ChatClientAgentSession());
+        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), allowNonChatClientAgents: true);
+        using var otherChatClient = agent.AsIChatClient(new ChatClientAgentSession(), allowNonChatClientAgents: true);
 
         // Act
         var first = await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "Hi")]);
@@ -754,7 +898,7 @@ public partial class AIAgentChatClientTests
                 Task.FromResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "ok")))
         };
 
-        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "my-own-conversation-id");
+        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "my-own-conversation-id", allowNonChatClientAgents: true);
 
         // Act
         var response = await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "Hi")]);
@@ -780,7 +924,7 @@ public partial class AIAgentChatClientTests
         };
 
         var session = new ChatClientAgentSession("service-conversation");
-        using var chatClient = agent.AsIChatClient(session, "adapter-conversation");
+        using var chatClient = agent.AsIChatClient(session, "adapter-conversation", allowNonChatClientAgents: true);
 
         // Act
         var response = await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "Hi")]);
@@ -810,7 +954,7 @@ public partial class AIAgentChatClientTests
             }
         };
 
-        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation");
+        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation", allowNonChatClientAgents: true);
         var chatOptions = new ChatOptions { ConversationId = "adapter-conversation", Temperature = 0.25f };
 
         // Act
@@ -835,7 +979,7 @@ public partial class AIAgentChatClientTests
         var agent = new TestAIAgent();
 
         var session = new ChatClientAgentSession("known-service-conversation");
-        using var chatClient = agent.AsIChatClient(session, "adapter-conversation");
+        using var chatClient = agent.AsIChatClient(session, "adapter-conversation", allowNonChatClientAgents: true);
 
         // Act & Assert
         // The bound client never reports the session's service id, so it does not accept it either. Only the id it
@@ -854,7 +998,7 @@ public partial class AIAgentChatClientTests
         // Arrange
         // RunAsyncFunc is left at its throwing default: the request must be rejected before it reaches the agent.
         var agent = new TestAIAgent();
-        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation");
+        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation", allowNonChatClientAgents: true);
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -882,7 +1026,7 @@ public partial class AIAgentChatClientTests
             }
         };
 
-        using var chatClient = agent.AsIChatClient(boundSession);
+        using var chatClient = agent.AsIChatClient(boundSession, allowNonChatClientAgents: true);
 
         // Act
         await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "Hi")]);
@@ -917,7 +1061,7 @@ public partial class AIAgentChatClientTests
         };
 
         var boundSession = new ChatClientAgentSession();
-        using var chatClient = agent.AsIChatClient(boundSession, "adapter-conversation");
+        using var chatClient = agent.AsIChatClient(boundSession, "adapter-conversation", allowNonChatClientAgents: true);
         var chatOptions = new ChatOptions { ConversationId = conversationId };
 
         // Act
@@ -960,7 +1104,7 @@ public partial class AIAgentChatClientTests
             RunAsyncFunc = (m, session, options, cancellationToken) => Task.FromResult(new AgentResponse(innerChatResponse))
         };
 
-        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation");
+        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation", allowNonChatClientAgents: true);
 
         // Act
         var response = await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "Hi")]);
@@ -1032,7 +1176,7 @@ public partial class AIAgentChatClientTests
             }
         };
 
-        using var chatClient = agent.AsIChatClient();
+        using var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
         var chatOptions = new ChatOptions { ConversationId = "caller-conversation" };
 
         // Act
@@ -1075,7 +1219,7 @@ public partial class AIAgentChatClientTests
             }
         };
 
-        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation");
+        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation", allowNonChatClientAgents: true);
 
         // Act
         List<ChatResponseUpdate> receivedUpdates = [];
@@ -1131,7 +1275,7 @@ public partial class AIAgentChatClientTests
             }
         };
 
-        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation");
+        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation", allowNonChatClientAgents: true);
 
         // Act
         var first = await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "Hi")]);
@@ -1335,7 +1479,7 @@ public partial class AIAgentChatClientTests
         };
 
         var session = new ChatClientAgentSession("known-service-conversation");
-        using var chatClient = agent.AsIChatClient(session, "adapter-conversation");
+        using var chatClient = agent.AsIChatClient(session, "adapter-conversation", allowNonChatClientAgents: true);
 
         // Act
         List<ChatResponseUpdate> receivedUpdates = [];
@@ -1380,7 +1524,7 @@ public partial class AIAgentChatClientTests
             }
         };
 
-        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation");
+        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation", allowNonChatClientAgents: true);
         var chatOptions = new ChatOptions { ConversationId = "adapter-conversation", Temperature = 0.25f };
 
         // Act
@@ -1404,7 +1548,7 @@ public partial class AIAgentChatClientTests
     {
         // Arrange
         var agent = new TestAIAgent();
-        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation");
+        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation", allowNonChatClientAgents: true);
 
         // Act & Assert
         // The rejection must come from the call itself, not from enumerating the result, which is only true
@@ -1451,7 +1595,7 @@ public partial class AIAgentChatClientTests
             }
         };
 
-        using var chatClient = agent.AsIChatClient(session, "adapter-conversation");
+        using var chatClient = agent.AsIChatClient(session, "adapter-conversation", allowNonChatClientAgents: true);
 
         // Act
         List<ChatResponseUpdate> receivedUpdates = [];
@@ -1490,7 +1634,7 @@ public partial class AIAgentChatClientTests
                 ToAsyncEnumerableAsync<AgentResponseUpdate>([], cancellationToken)
         };
 
-        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation");
+        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation", allowNonChatClientAgents: true);
 
         // Act
         List<ChatResponseUpdate> receivedUpdates = [];
@@ -1523,7 +1667,7 @@ public partial class AIAgentChatClientTests
                 ToAsyncEnumerableAsync<AgentResponseUpdate>([], cancellationToken)
         };
 
-        using var chatClient = agent.AsIChatClient();
+        using var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
 
         // Act
         List<ChatResponseUpdate> receivedUpdates = [];
@@ -1549,7 +1693,7 @@ public partial class AIAgentChatClientTests
                 Task.FromResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "ok")))
         };
 
-        using var chatClient = agent.AsIChatClient(new UnrecognizedAgentSession(), "adapter-conversation");
+        using var chatClient = agent.AsIChatClient(new UnrecognizedAgentSession(), "adapter-conversation", allowNonChatClientAgents: true);
 
         // Act
         var response = await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "Hi")]);
@@ -1565,7 +1709,7 @@ public partial class AIAgentChatClientTests
         // RunAsyncFunc is left at its throwing default: the sentinel names no resumable conversation, so it must be
         // rejected like any other unrecognized id rather than reaching the agent.
         var agent = new TestAIAgent();
-        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation");
+        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation", allowNonChatClientAgents: true);
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -1584,7 +1728,7 @@ public partial class AIAgentChatClientTests
         // conversation ids.
         var agent = new TestAIAgent();
         var session = new ChatClientAgentSession("secret-service-conversation");
-        using var chatClient = agent.AsIChatClient(session, "secret-adapter-conversation");
+        using var chatClient = agent.AsIChatClient(session, "secret-adapter-conversation", allowNonChatClientAgents: true);
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
