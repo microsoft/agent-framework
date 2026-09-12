@@ -42,9 +42,9 @@
     <PackageReference Include="AgentMemory.AgentFramework" Version="1.5.0" />
     <!-- Microsoft Agent Framework (matches AgentMemory's target) + the OpenAI/Foundry chat & embedding clients. -->
     <PackageReference Include="Microsoft.Agents.AI" Version="1.9.0" />
-    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.9.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.10.0" />
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.17" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
     <!-- Transitive dependency of Microsoft.Agents.AI; pinned explicitly (CPM is off here) because the
          version it would otherwise resolve to, 1.12.0, has a known moderate severity vulnerability
          (GHSA-g94r-2vxg-569j) that fails the repo's NuGet audit (NU1902 as error). Matches the version

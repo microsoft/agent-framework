@@ -4772,6 +4772,168 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 
 
+class TestSecureMCPToolProxyURLMode:
+    """Tests for origin-scoped headers in the proxy's URL mode."""
+
+    async def test_static_headers_do_not_serialize_tool_calls(self) -> None:
+        from unittest.mock import patch
+
+        from agent_framework._mcp import MCPTool
+        from agent_framework.security import SecureMCPToolProxy
+
+        both_started = asyncio.Event()
+        started = 0
+
+        async def overlapping_call(_tool: MCPTool, tool_name: str, **_kwargs: Any) -> str:
+            nonlocal started
+            started += 1
+            if started == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=1)
+            return tool_name
+
+        proxy = SecureMCPToolProxy(
+            url="https://mcp.example/mcp",
+            headers={"Authorization": "auth-value"},
+        )
+
+        with patch.object(MCPTool, "call_tool", overlapping_call):
+            results = await asyncio.gather(
+                proxy.mcp_tool.call_tool("first"),
+                proxy.mcp_tool.call_tool("second"),
+            )
+
+        assert results == ["first", "second"]
+
+    async def test_headers_are_sent_only_to_the_configured_origin(self) -> None:
+        from unittest.mock import patch
+
+        import httpx
+
+        from agent_framework._mcp import _MCPHeaderScopedClient
+        from agent_framework.security import SecureMCPToolProxy
+
+        configured_headers = {
+            "Authorization": "auth-value",
+            "X-API-Key": "api-value",
+            "Cookie": "session=value",
+            "Proxy-Authorization": "proxy-value",
+            "X-Custom-Credential": "custom-value",
+        }
+        observed: list[tuple[str, str, dict[str, str | None]]] = []
+        connection_methods: list[str] = []
+
+        async def handle(request: httpx.Request) -> httpx.Response:
+            observed.append((
+                request.url.host,
+                request.url.path,
+                {name: request.headers.get(name) for name in configured_headers},
+            ))
+            if request.url.path == "/redirect-start":
+                return httpx.Response(307, headers={"location": "/redirect-same-origin"})
+            if request.url.path == "/redirect-same-origin":
+                return httpx.Response(307, headers={"location": "https://other.example/redirect-final"})
+            if request.url.path == "/redirect-final":
+                return httpx.Response(200)
+            if request.url.path == "/loop-a":
+                return httpx.Response(307, headers={"location": "/loop-b"})
+            if request.url.path == "/loop-b":
+                return httpx.Response(307, headers={"location": "/loop-a"})
+            if request.url.path != "/mcp":
+                return httpx.Response(404)
+            if request.method == "GET":
+                return httpx.Response(405)
+            if request.method == "DELETE":
+                return httpx.Response(200)
+
+            body = json.loads(request.content)
+            method = body.get("method")
+            if isinstance(method, str):
+                connection_methods.append(method)
+            response_headers: dict[str, str] = {}
+            result: dict[str, Any] = {}
+            if method == "initialize":
+                response_headers["mcp-session-id"] = "secure-session"
+                result = {
+                    "protocolVersion": body["params"]["protocolVersion"],
+                    "capabilities": {"tools": {}, "prompts": {}},
+                    "serverInfo": {"name": "secure-test", "version": "1"},
+                }
+            elif method == "tools/list":
+                result = {"tools": []}
+            elif method == "prompts/list":
+                result = {"prompts": []}
+            if "id" not in body:
+                return httpx.Response(202)
+            return httpx.Response(
+                200,
+                headers=response_headers,
+                json={"jsonrpc": "2.0", "id": body["id"], "result": result},
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handle),
+            follow_redirects=True,
+            max_redirects=2,
+        ) as client:
+
+            def create_client(*_args: Any, **kwargs: Any) -> httpx.AsyncClient:
+                client.headers.update(kwargs.get("headers", {}))
+                client.follow_redirects = kwargs.get("follow_redirects", client.follow_redirects)
+                return client
+
+            with patch("httpx.AsyncClient", side_effect=create_client):
+                proxy = SecureMCPToolProxy(
+                    url="https://mcp.example/mcp",
+                    headers=configured_headers,
+                )
+                async with proxy:
+                    tool = proxy.mcp_tool
+                    transport_client = _MCPHeaderScopedClient(client, tool._header_request_owner)
+
+                    response = await transport_client.send(
+                        client.build_request("POST", "https://mcp.example/redirect-start"),
+                        follow_redirects=True,
+                    )
+                    assert response.status_code == 200
+
+                    with pytest.raises(httpx.TooManyRedirects):
+                        await transport_client.send(
+                            client.build_request("POST", "https://mcp.example/loop-a"),
+                            follow_redirects=True,
+                        )
+
+        connection_requests = [headers for host, path, headers in observed if host == "mcp.example" and path == "/mcp"]
+        assert connection_requests
+        assert all(headers == configured_headers for headers in connection_requests)
+        assert {"initialize", "tools/list"}.issubset(connection_methods)
+
+        redirect_requests = [entry for entry in observed if "redirect" in entry[1]]
+        assert redirect_requests == [
+            ("mcp.example", "/redirect-start", configured_headers),
+            ("mcp.example", "/redirect-same-origin", configured_headers),
+            ("other.example", "/redirect-final", dict.fromkeys(configured_headers)),
+        ]
+
+        loop_requests = [entry for entry in observed if entry[1].startswith("/loop-")]
+        assert loop_requests
+        assert all(host == "mcp.example" and headers == configured_headers for host, _, headers in loop_requests)
+
+    @pytest.mark.parametrize("url", ["not-a-url", "ftp://mcp.example/path", "https:///missing-host"])
+    def test_headers_require_an_absolute_http_origin(self, url: str) -> None:
+        from unittest.mock import patch
+
+        from agent_framework.security import SecureMCPToolProxy
+
+        with patch("httpx.AsyncClient") as create_client:
+            proxy = SecureMCPToolProxy(url=url, headers={"X-Custom-Credential": "custom-value"})
+
+            with pytest.raises(ValueError, match="absolute HTTP.*URL with a host"):
+                proxy.mcp_tool.get_mcp_client()
+
+            create_client.assert_not_called()
+
+
 class TestMCPAnnotationMapping:
     """Tests for hint-based mapping from MCP annotations to FIDES labels."""
 
