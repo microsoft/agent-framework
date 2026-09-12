@@ -28,11 +28,13 @@ var editorAgent = builder.AddProject<Projects.EditorAgent>("editor-agent")
     .WithHttpHealthCheck("/health");
 
 var devui = builder.AddDevUI("devui")
-    .WithAgentService(writerAgent)
-    .WithAgentService(editorAgent)
+    .WithAgentService(writerAgent, agents: [new("writer", "Writes short stories")])
+    .WithAgentService(editorAgent, agents: [new("editor", "Edits and formats stories")])
     .WaitFor(writerAgent)
     .WaitFor(editorAgent);
 ```
+
+Each `AgentEntityInfo` `Id` (e.g. `"writer"`, `"editor"`) must match the name passed to `AddAIAgent` in the corresponding agent service. The Aspire resource name (e.g. `"writer-agent"`) is independent and is used as the entity ID prefix the aggregator routes by. If you omit the `agents:` argument, `WithAgentService` will assume a single agent named after the Aspire resource — see the [Agent discovery](#agent-discovery) section below.
 
 Each agent service only needs to map the standard OpenAI API endpoints — no custom discovery endpoints are required:
 
@@ -61,12 +63,25 @@ The aggregator publishes its URL to the Aspire dashboard, where it appears as a 
 
 ## Agent discovery
 
-By default, `WithAgentService` declares a single agent named after the Aspire resource. You can provide explicit agent metadata when the agent name differs from the resource name, or when a service hosts multiple agents:
+By default, `WithAgentService` declares a single agent named after the Aspire resource. This is convenient when the resource name and the agent name are the same:
+
+```csharp
+var writerAgent = builder.AddProject<Projects.WriterAgent>("writer")
+    .WithHttpHealthCheck("/health");
+
+builder.AddDevUI("devui")
+    .WithAgentService(writerAgent); // matches builder.AddAIAgent("writer", ...) in WriterAgent
+```
+
+Provide explicit `agents` metadata when the agent name differs from the resource name (as in the [Usage example](#usage-example) above) or when a single service hosts multiple agents:
 
 ```csharp
 builder.AddDevUI("devui")
-    .WithAgentService(writerAgent, agents: [new("writer", "Writes short stories")])
-    .WithAgentService(editorAgent, agents: [new("editor", "Edits and formats stories")]);
+    .WithAgentService(multiAgentService, agents:
+    [
+        new("writer", "Writes short stories"),
+        new("editor", "Edits and formats stories"),
+    ]);
 ```
 
 Agent metadata is declared at the AppHost level so the aggregator builds the entity listing directly — agent services don't need a `/v1/entities` endpoint.
