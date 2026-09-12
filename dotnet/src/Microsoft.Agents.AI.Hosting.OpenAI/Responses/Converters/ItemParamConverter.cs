@@ -43,6 +43,7 @@ internal sealed class ItemParamConverter : JsonConverter<ItemParam>
             "mcp_list_tools" => doc.Deserialize(OpenAIHostingJsonContext.Default.MCPListToolsItemParam),
             "mcp_approval_request" => doc.Deserialize(OpenAIHostingJsonContext.Default.MCPApprovalRequestItemParam),
             "mcp_approval_response" => doc.Deserialize(OpenAIHostingJsonContext.Default.MCPApprovalResponseItemParam),
+            "function_approval_response" => doc.Deserialize(OpenAIHostingJsonContext.Default.FunctionApprovalResponseItemParam),
             "mcp_call" => doc.Deserialize(OpenAIHostingJsonContext.Default.MCPCallItemParam),
             _ => null // Ignore unknown types.
         };
