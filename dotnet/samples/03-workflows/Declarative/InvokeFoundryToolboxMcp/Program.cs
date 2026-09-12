@@ -100,6 +100,7 @@ internal sealed class Program
             WorkflowFactory workflowFactory = new("InvokeFoundryToolboxMcp.yaml", foundryEndpoint)
             {
                 Configuration = workflowConfiguration,
+                AllowedEnvironmentVariables = [ToolboxMcpServerUrlSetting, DocsServerLabelSetting, WebSearchToolNameSetting],
                 McpToolHandler = mcpToolHandler
             };
 

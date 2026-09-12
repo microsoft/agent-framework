@@ -70,6 +70,62 @@ public sealed class AddConversationMessageExecutorTest(ITestOutputHelper output)
             metadata: metadataRecord);
     }
 
+    [Fact]
+    public async Task AddMessageWithSensitiveContentThrowsAsync()
+    {
+        // Arrange
+        this.State.Set("SOME_SECRET", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        MockAgentProvider mockAgentProvider = new();
+        int messageCount = mockAgentProvider.TestMessages.Count;
+        AddConversationMessage model =
+            this.CreateModel(
+                this.FormatDisplayName(nameof(AddMessageWithSensitiveContentThrowsAsync)),
+                FormatVariablePath("TestMessage"),
+                "TestConversationId",
+                AgentMessageRoleWrapper.Get(AgentMessageRole.User),
+                "={Env.SOME_SECRET}",
+                metadata: null);
+
+        AddConversationMessageExecutor action = new(model, mockAgentProvider.Object, this.State);
+        Task ExecuteAsync() => this.ExecuteAsync(action);
+
+        // Act & Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("Cannot send sensitive conversation message content", exception.Message);
+        Assert.Equal(messageCount, mockAgentProvider.TestMessages.Count);
+    }
+
+    [Fact]
+    public async Task AddMessageWithSensitiveMetadataThrowsAsync()
+    {
+        // Arrange
+        Dictionary<string, string> metadataValues =
+            new()
+            {
+                ["Key1"] = "secret-value",
+            };
+        this.State.Set("SecretMetadata", metadataValues.ToRecordValue().ToFormula(), sensitivity: SensitivityLevel.Sensitive);
+        MockAgentProvider mockAgentProvider = new();
+        int messageCount = mockAgentProvider.TestMessages.Count;
+        AddConversationMessage model =
+            this.CreateModel(
+                this.FormatDisplayName(nameof(AddMessageWithSensitiveMetadataThrowsAsync)),
+                FormatVariablePath("TestMessage"),
+                "TestConversationId",
+                AgentMessageRoleWrapper.Get(AgentMessageRole.User),
+                "Hello",
+                metadata: null,
+                ObjectExpression<RecordDataValue>.Variable(PropertyPath.TopicVariable("SecretMetadata")).ToBuilder());
+
+        AddConversationMessageExecutor action = new(model, mockAgentProvider.Object, this.State);
+        Task ExecuteAsync() => this.ExecuteAsync(action);
+
+        // Act & Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("Cannot send sensitive conversation message metadata", exception.Message);
+        Assert.Equal(messageCount, mockAgentProvider.TestMessages.Count);
+    }
+
     private async Task ExecuteTestAsync(
         string displayName,
         string variableName,
@@ -112,10 +168,10 @@ public sealed class AddConversationMessageExecutorTest(ITestOutputHelper output)
         string conversationId,
         AgentMessageRoleWrapper role,
         string messageText,
-        RecordDataValue? metadata)
+        RecordDataValue? metadata,
+        ObjectExpression<RecordDataValue>.Builder? metadataExpression = null)
     {
-        ObjectExpression<RecordDataValue>.Builder? metadataExpression = null;
-        if (metadata is not null)
+        if (metadata is not null && metadataExpression is null)
         {
             metadataExpression = ObjectExpression<RecordDataValue>.Literal(metadata).ToBuilder();
         }

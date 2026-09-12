@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Extensions.Configuration;
@@ -38,6 +39,16 @@ public sealed class DeclarativeWorkflowOptions(ResponseAgentProvider agentProvid
     public IConfiguration? Configuration { get; init; }
 
     /// <summary>
+    /// Gets the configuration or process environment variable names that may be exposed through the workflow <c>Env</c> scope.
+    /// </summary>
+    public IEnumerable<string>? AllowedEnvironmentVariables { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether the workflow may fall back to process environment variables for allowed <c>Env</c> names missing from <see cref="Configuration"/>.
+    /// </summary>
+    public bool AllowProcessEnvironmentVariableFallback { get; init; }
+
+    /// <summary>
     /// Optionally identifies a continued workflow conversation.
     /// </summary>
     public string? ConversationId { get; init; }
@@ -51,6 +62,11 @@ public sealed class DeclarativeWorkflowOptions(ResponseAgentProvider agentProvid
     /// Defines the maximum allowed length for expressions evaluated in the workflow.
     /// </summary>
     public int? MaximumExpressionLength { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether the Power Fx <c>Set</c> function is enabled.
+    /// </summary>
+    public bool EnableSetFunction { get; init; }
 
     /// <summary>
     /// Gets the <see cref="ILoggerFactory"/> used to create loggers for workflow components.

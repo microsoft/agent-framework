@@ -3,11 +3,13 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Agents.ObjectModel.Exceptions;
 using Microsoft.PowerFx;
+using Microsoft.PowerFx.Syntax;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
@@ -15,11 +17,11 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 
 internal sealed class WorkflowExpressionEngine
 {
-    private readonly RecalcEngine _engine;
+    private readonly WorkflowFormulaState _state;
 
-    public WorkflowExpressionEngine(RecalcEngine engine)
+    public WorkflowExpressionEngine(WorkflowFormulaState state)
     {
-        this._engine = engine;
+        this._state = state;
     }
 
     public EvaluationResult<bool> GetValue(BoolExpression boolean) => this.Evaluate(boolean);
@@ -40,6 +42,55 @@ internal sealed class WorkflowExpressionEngine
 
     public EvaluationResult<TValue> GetValue<TValue>(EnumExpression<TValue> expression) where TValue : EnumWrapper =>
         this.Evaluate(expression);
+
+    public EvaluationResult<string> Format(IEnumerable<TemplateLine> template)
+    {
+        Throw.IfNull(template);
+
+        SensitivityLevel sensitivity = SensitivityLevel.None;
+        List<string> segments = [];
+        foreach (EvaluationResult<string> result in template.Select(this.Format))
+        {
+            sensitivity = MaxSensitivity(sensitivity, result.Sensitivity);
+            segments.Add(result.Value);
+        }
+
+        return new(string.Concat(segments), sensitivity);
+    }
+
+    public EvaluationResult<string> Format(TemplateLine? line)
+    {
+        if (line is null)
+        {
+            return new(string.Empty, SensitivityLevel.None);
+        }
+
+        SensitivityLevel sensitivity = SensitivityLevel.None;
+        List<string> segments = [];
+        foreach (EvaluationResult<string> result in line.Segments.Select(this.Format))
+        {
+            sensitivity = MaxSensitivity(sensitivity, result.Sensitivity);
+            segments.Add(result.Value);
+        }
+
+        return new(string.Concat(segments), sensitivity);
+    }
+
+    private EvaluationResult<string> Format(TemplateSegment segment)
+    {
+        if (segment is TextSegment textSegment)
+        {
+            return new(textSegment.Value ?? string.Empty, SensitivityLevel.None);
+        }
+
+        if (segment is ExpressionSegment { Expression: not null } expressionSegment)
+        {
+            EvaluationResult<FormulaValue> result = this.EvaluateScope(expressionSegment.Expression);
+            return new(result.Value.Format(), result.Sensitivity);
+        }
+
+        throw new DeclarativeModelException($"Unsupported segment type: {segment.GetType().Name}");
+    }
 
     private EvaluationResult<bool> Evaluate(BoolExpression expression)
     {
@@ -274,13 +325,131 @@ internal sealed class WorkflowExpressionEngine
             expression.VariableReference?.ToString() :
             expression.ExpressionText;
 
-        FormulaValue result = this._engine.Eval(expressionText);
+        FormulaValue result = this._state.Engine.Eval(expressionText);
 
         if (result is ErrorValue errorValue)
         {
             throw new DeclarativeActionException(errorValue.Format());
         }
 
-        return new(result, SensitivityLevel.None);
+        return new(result, this.GetSensitivity(expression));
     }
+
+    private SensitivityLevel GetSensitivity(ExpressionBase expression)
+    {
+        if (expression.VariableReference is { VariableName: string variableName })
+        {
+            return this._state.GetSensitivity(variableName, expression.VariableReference.NamespaceAlias);
+        }
+
+        string? expressionText = expression.ExpressionText;
+        if (string.IsNullOrWhiteSpace(expressionText))
+        {
+            return SensitivityLevel.None;
+        }
+
+        CheckResult checkResult = this._state.Engine.Check(expressionText);
+        checkResult.ThrowOnErrors();
+
+        SensitivityLevel sensitivity = SensitivityLevel.None;
+        foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(checkResult.Parse.Root))
+        {
+            sensitivity = MaxSensitivity(sensitivity, this._state.GetSensitivity(reference.VariableName, reference.ScopeName));
+        }
+
+        return sensitivity;
+    }
+
+    private static IEnumerable<(string? ScopeName, string VariableName)> GetVariableReferences(TexlNode node)
+    {
+        switch (node)
+        {
+            case DottedNameNode dottedNameNode:
+                if (TryGetDottedReference(dottedNameNode, out (string? ScopeName, string VariableName) dottedReference))
+                {
+                    yield return dottedReference;
+                }
+                else
+                {
+                    foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(dottedNameNode.Left))
+                    {
+                        yield return reference;
+                    }
+                }
+                yield break;
+
+            case FirstNameNode firstNameNode:
+                yield return (null, firstNameNode.Ident.Name.Value);
+                yield break;
+
+            case AsNode asNode:
+                foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(asNode.Left))
+                {
+                    yield return reference;
+                }
+                yield break;
+
+            case BinaryOpNode binaryOpNode:
+                foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(binaryOpNode.Left))
+                {
+                    yield return reference;
+                }
+                foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(binaryOpNode.Right))
+                {
+                    yield return reference;
+                }
+                yield break;
+
+            case UnaryOpNode unaryOpNode:
+                foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(unaryOpNode.Child))
+                {
+                    yield return reference;
+                }
+                yield break;
+
+            case CallNode callNode:
+                foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(callNode.Args))
+                {
+                    yield return reference;
+                }
+                yield break;
+
+            case VariadicBase variadicBase:
+                foreach (TexlNode childNode in variadicBase.ChildNodes)
+                {
+                    foreach ((string? ScopeName, string VariableName) reference in GetVariableReferences(childNode))
+                    {
+                        yield return reference;
+                    }
+                }
+                yield break;
+        }
+    }
+
+    private static bool TryGetDottedReference(DottedNameNode dottedNameNode, out (string? ScopeName, string VariableName) reference)
+    {
+        List<string> names = [];
+        TexlNode node = dottedNameNode;
+        while (node is DottedNameNode current)
+        {
+            names.Add(current.Right.Name.Value);
+            node = current.Left;
+        }
+
+        if (node is not FirstNameNode firstNameNode)
+        {
+            reference = default;
+            return false;
+        }
+
+        names.Add(firstNameNode.Ident.Name.Value);
+        names.Reverse();
+        reference = names.Count > 1 && VariableScopeNames.IsValidName(names[0])
+            ? (names[0], names[1])
+            : (null, names[0]);
+        return true;
+    }
+
+    private static SensitivityLevel MaxSensitivity(SensitivityLevel left, SensitivityLevel right) =>
+        left == SensitivityLevel.Sensitive || right == SensitivityLevel.Sensitive ? SensitivityLevel.Sensitive : SensitivityLevel.None;
 }

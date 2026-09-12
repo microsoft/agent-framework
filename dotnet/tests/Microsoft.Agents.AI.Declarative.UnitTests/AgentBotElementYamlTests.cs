@@ -234,7 +234,10 @@ public sealed class AgentBotElementYamlTests
             .Build();
 
         // Act
-        var agent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithVariableReferences, configuration);
+        var agent = AgentBotElementYaml.FromYaml(
+            PromptAgents.AgentWithVariableReferences,
+            configuration,
+            ["OpenAIEndpoint", "OpenAIApiKey", "Temperature", "TopP"]);
 
         // Assert
         Assert.NotNull(agent);

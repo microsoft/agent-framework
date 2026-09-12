@@ -124,6 +124,64 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     }
 
     [Fact]
+    public void StringExpressionGetValueForEnvironmentVariableIsSensitive()
+    {
+        // Arrange
+        this.State.Set("SOME_SECRET", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Variable(PropertyPath.Create("Env.SOME_SECRET")),
+            expectedValue: "secret-value",
+            expectedSensitivity: SensitivityLevel.Sensitive);
+    }
+
+    [Fact]
+    public void StringExpressionGetValueForQuotedEnvironmentVariableIsSensitive()
+    {
+        // Arrange
+        this.State.Set("API-KEY", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Expression("Env.'API-KEY'"),
+            expectedValue: "secret-value",
+            expectedSensitivity: SensitivityLevel.Sensitive);
+    }
+
+    [Fact]
+    public void StringExpressionGetValueForComputedDottedAccessIsSensitive()
+    {
+        // Arrange
+        TableValue secretTable = FormulaValue.NewTable(
+            RecordType.Empty().Add("Value", FormulaType.String),
+            new RecordValue[] { FormulaValue.NewRecordFromFields(new NamedValue("Value", FormulaValue.New("secret-value"))) });
+        this.State.Set("SecretTable", secretTable, VariableScopeNames.Local, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Expression("First(Local.SecretTable).Value"),
+            expectedValue: "secret-value",
+            expectedSensitivity: SensitivityLevel.Sensitive);
+    }
+
+    [Fact]
+    public void StringExpressionGetValueForEnvironmentVariableTextLiteralIsNotSensitive()
+    {
+        // Arrange
+        this.State.Set("SOME_SECRET", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Expression(@"Concatenate(""Env.SOME_SECRET"", "" literal"")"),
+            expectedValue: "Env.SOME_SECRET literal");
+    }
+
+    [Fact]
     public void StringExpressionGetValueForFormula() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(

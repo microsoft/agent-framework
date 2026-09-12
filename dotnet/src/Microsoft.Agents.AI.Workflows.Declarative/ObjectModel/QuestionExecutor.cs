@@ -10,6 +10,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Agents.ObjectModel.Abstractions;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
@@ -161,13 +162,13 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
         long repeatCount = this.Evaluator.GetValue(this.Model.RepeatCount).Value;
         if (actualCount >= repeatCount)
         {
-            DataValue defaultValue = DataValue.Blank();
+            EvaluationResult<DataValue> defaultValue = new(DataValue.Blank(), SensitivityLevel.None);
             if (this.Model.DefaultValue is not null)
             {
                 ValueExpression defaultValueExpression = Throw.IfNull(this.Model.DefaultValue);
-                defaultValue = this.Evaluator.GetValue(defaultValueExpression).Value;
+                defaultValue = this.Evaluator.GetValue(defaultValueExpression);
             }
-            await this.AssignAsync(Throw.IfNull(this.Model.Variable).Path, defaultValue.ToFormula(), context).ConfigureAwait(false);
+            await this.AssignAsync(Throw.IfNull(this.Model.Variable).Path, defaultValue.Value.ToFormula(), context, defaultValue.Sensitivity).ConfigureAwait(false);
             string defaultValueResponse = this.FormatPrompt(this.Model.DefaultValueResponse);
             await context.AddEventAsync(new MessageActivityEvent(defaultValueResponse.Trim()), cancellationToken).ConfigureAwait(false);
             // Reset for any subsequent Question turn (e.g. via GotoAction re-entry) so the next attempt starts fresh.
@@ -187,6 +188,12 @@ internal sealed class QuestionExecutor(Question model, ResponseAgentProvider age
             return string.Empty;
         }
 
-        return this.Engine.Format(messageActivity.Text).Trim();
+        EvaluationResult<string> promptResult = this.Evaluator.Format(messageActivity.Text);
+        if (promptResult.Sensitivity == SensitivityLevel.Sensitive)
+        {
+            throw new DeclarativeActionException($"Cannot send sensitive question prompt: {this.Id}.");
+        }
+
+        return promptResult.Value.Trim();
     }
 }
