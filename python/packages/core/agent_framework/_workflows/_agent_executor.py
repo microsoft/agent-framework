@@ -30,6 +30,76 @@ else:
 logger = logging.getLogger(__name__)
 
 
+def resolve_executor_run_kwargs(
+    resolved: dict[str, Any] | None,
+    executor_id: str,
+) -> dict[str, Any] | None:
+    """Extract one executor's kwargs from a resolved invocation kwargs dict.
+
+    Args:
+        resolved: The resolved dict produced by ``Workflow._resolve_invocation_kwargs``,
+            containing either a ``__global__`` key (global kwargs) or executor-ID keys
+            (per-executor kwargs). May also be ``None``.
+        executor_id: The executor whose kwargs should be extracted.
+
+    Returns:
+        The kwargs for this executor, or ``None`` if not applicable.
+    """
+    if not isinstance(resolved, dict):
+        return None
+    # isinstance against bare ``dict`` narrows the value type to Unknown under
+    # strict pyright; pin the mapping type explicitly.
+    resolved_map: dict[str, Any] = resolved
+    # Same merge semantics as upstream #7963: a ``__global__`` mapping combines
+    # with the executor's own entry, which wins per key.
+    global_kwargs: Any = resolved_map.get(GLOBAL_KWARGS_KEY)
+    executor_kwargs: Any = resolved_map.get(executor_id)
+    if global_kwargs is None and executor_kwargs is None:
+        return None
+
+    if global_kwargs is not None and not isinstance(global_kwargs, dict):
+        logger.warning(
+            "Executor %s expected a dict for global kwargs, but got %s. Ignoring.",
+            executor_id,
+            cast(type[Any], type(global_kwargs)),
+        )
+        return None
+
+    if executor_kwargs is not None and not isinstance(executor_kwargs, dict):
+        logger.warning(
+            "Executor %s expected a dict for its kwargs, but got %s. Ignoring.",
+            executor_id,
+            cast(type[Any], type(executor_kwargs)),
+        )
+        return None
+
+    # Specific values override global values for the same function argument.
+    return {**(global_kwargs or {}), **(executor_kwargs or {})}
+
+
+def prepare_agent_run_kwargs(
+    raw_run_kwargs: dict[str, Any],
+    executor_id: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Prepare function_invocation_kwargs and client_kwargs for agent.run().
+
+    Extracts ``function_invocation_kwargs`` and ``client_kwargs`` from the
+    workflow state dict, resolving per-executor entries using ``executor_id``.
+    Shared by ``AgentExecutor`` and the GroupChat orchestrator call site, so
+    run kwargs reach every agent run in those workflows, not just
+    participants.
+
+    Returns:
+        A 2-tuple of (function_invocation_kwargs, client_kwargs).
+    """
+    fi_resolved = raw_run_kwargs.get("function_invocation_kwargs")
+    ci_resolved = raw_run_kwargs.get("client_kwargs")
+    function_invocation_kwargs = resolve_executor_run_kwargs(fi_resolved, executor_id)
+    client_kwargs = resolve_executor_run_kwargs(ci_resolved, executor_id)
+
+    return function_invocation_kwargs, client_kwargs
+
+
 def _accepts_runtime_tools(agent: SupportsAgentRun) -> bool:
     """Return whether the agent run surface accepts a tools keyword."""
     try:
@@ -594,12 +664,7 @@ class AgentExecutor(Executor):
         Returns:
             A 2-tuple of (function_invocation_kwargs, client_kwargs).
         """
-        fi_resolved = raw_run_kwargs.get("function_invocation_kwargs")
-        ci_resolved = raw_run_kwargs.get("client_kwargs")
-        function_invocation_kwargs = self._resolve_executor_kwargs(fi_resolved)
-        client_kwargs = self._resolve_executor_kwargs(ci_resolved)
-
-        return function_invocation_kwargs, client_kwargs
+        return prepare_agent_run_kwargs(raw_run_kwargs, self.id)
 
     def _resolve_executor_kwargs(self, resolved: dict[str, Any] | None) -> dict[str, Any] | None:
         """Extract this executor's kwargs from a resolved invocation kwargs dict.
@@ -612,28 +677,4 @@ class AgentExecutor(Executor):
         Returns:
             The kwargs for this executor, or ``None`` if not applicable.
         """
-        if not isinstance(resolved, dict):
-            return None
-        global_kwargs: Any = resolved.get(GLOBAL_KWARGS_KEY)
-        executor_kwargs: Any = resolved.get(self.id)
-        if global_kwargs is None and executor_kwargs is None:
-            return None
-
-        if global_kwargs is not None and not isinstance(global_kwargs, dict):
-            logger.warning(
-                "Executor %s expected a dict for global kwargs, but got %s. Ignoring.",
-                self.id,
-                cast(type[Any], type(global_kwargs)),
-            )
-            return None
-
-        if executor_kwargs is not None and not isinstance(executor_kwargs, dict):
-            logger.warning(
-                "Executor %s expected a dict for its kwargs, but got %s. Ignoring.",
-                self.id,
-                cast(type[Any], type(executor_kwargs)),
-            )
-            return None
-
-        # Specific values override global values for the same function argument.
-        return {**(global_kwargs or {}), **(executor_kwargs or {})}
+        return resolve_executor_run_kwargs(resolved, self.id)

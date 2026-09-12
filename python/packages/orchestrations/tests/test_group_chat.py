@@ -18,6 +18,7 @@ from agent_framework import (
     WorkflowEvent,
     WorkflowRunState,
 )
+from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework.orchestrations import (
     AgentRequestInfoResponse,
@@ -294,6 +295,69 @@ async def test_agent_manager_handles_concatenated_json_output() -> None:
     # Terminal update is the orchestrator's completion message.
     assert final_update.author_name == manager.name
     assert final_update.text == "concatenated manager final"
+
+
+async def test_orchestrator_agent_receives_workflow_run_kwargs() -> None:
+    """#8304: the GroupChat orchestrator's agent.run must receive the
+    workflow's function_invocation_kwargs/client_kwargs like participants do."""
+    received: list[dict[str, Any]] = []
+
+    class RecordingOrchestratorAgent(StubManagerAgent):
+        async def run(self, messages: Any = None, *, session: Any = None, **kwargs: Any) -> Any:  # type: ignore[override]
+            received.append(kwargs)
+            return await super().run(messages, session=session, **kwargs)
+
+    manager = RecordingOrchestratorAgent()
+    worker = StubAgent("agent", "worker response")
+    workflow = GroupChatBuilder(
+        participants=[worker],
+        orchestrator_agent=manager,
+    ).build()
+
+    await workflow.run(
+        "coordinate task",
+        function_invocation_kwargs={"user_id": "u-123"},
+        client_kwargs={"trace_id": "t-456"},
+    )
+
+    assert received, "orchestrator agent was never invoked"
+    assert received[0].get("function_invocation_kwargs") == {"user_id": "u-123"}
+    assert received[0].get("client_kwargs") == {"trace_id": "t-456"}
+
+
+async def test_orchestrator_agent_receives_per_executor_run_kwargs() -> None:
+    """#8304: per-executor run kwargs must resolve with the orchestrator's own
+    executor id: its entry reaches agent.run, a participant's entry does not."""
+    received: list[dict[str, Any]] = []
+
+    class RecordingOrchestratorAgent(StubManagerAgent):
+        async def run(self, messages: Any = None, *, session: Any = None, **kwargs: Any) -> Any:  # type: ignore[override]
+            received.append(kwargs)
+            return await super().run(messages, session=session, **kwargs)
+
+    manager = RecordingOrchestratorAgent()
+    worker = StubAgent("agent", "worker response")
+    workflow = GroupChatBuilder(
+        participants=[worker],
+        orchestrator_agent=manager,
+    ).build()
+
+    orchestrator_eid = resolve_agent_id(manager)
+    participant_eids = [eid for eid in workflow.executors if eid != orchestrator_eid]
+    assert participant_eids, "expected at least one participant executor"
+
+    await workflow.run(
+        "coordinate task",
+        function_invocation_kwargs={
+            orchestrator_eid: {"user_id": "u-123"},
+            participant_eids[0]: {"user_id": "u-999"},
+        },
+        client_kwargs={orchestrator_eid: {"trace_id": "t-456"}},
+    )
+
+    assert received, "orchestrator agent was never invoked"
+    assert received[0].get("function_invocation_kwargs") == {"user_id": "u-123"}
+    assert received[0].get("client_kwargs") == {"trace_id": "t-456"}
 
 
 # Comprehensive tests for group chat functionality
