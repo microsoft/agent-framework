@@ -1,7 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import json
+import logging
+import os
+import sys
 import tempfile
+import time
+from concurrent.futures import Future as ConcurrentFuture
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1193,6 +1199,193 @@ async def test_file_checkpoint_storage_save_and_load():
         assert loaded_checkpoint.pending_request_info_events == checkpoint.pending_request_info_events
 
 
+async def test_file_checkpoint_storage_concurrent_saves_same_id():
+    """Concurrent saves of the same checkpoint ID must not fail on a shared temp path.
+
+    Regression for https://github.com/microsoft/agent-framework/issues/7748:
+    FileCheckpointStorage.save() used a fixed `<id>.json.tmp` temp path, so concurrent
+    saves raced on it (one rename removed it before another's rename). Uses enough
+    concurrent saves to reliably trip the race on the unfixed code.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="test-workflow",
+            graph_signature_hash="test-hash",
+            checkpoint_id="shared-id",
+        )
+
+        results = await asyncio.gather(*(storage.save(checkpoint) for _ in range(50)), return_exceptions=True)
+
+        errors = [r for r in results if isinstance(r, BaseException)]
+        assert not errors, f"concurrent saves raised internal filesystem errors: {errors[:1]!r}"
+        assert all(r == "shared-id" for r in results)
+        # One of the saves won; the destination is intact and parseable, not corrupted or truncated.
+        assert (Path(temp_dir) / "shared-id.json").exists()
+        loaded = await storage.load("shared-id")
+        assert loaded.checkpoint_id == checkpoint.checkpoint_id
+        assert loaded.workflow_name == checkpoint.workflow_name
+        assert loaded.graph_signature_hash == checkpoint.graph_signature_hash
+
+
+async def test_file_checkpoint_storage_destination_queue_registry_released():
+    """The destination registry must be empty again once nothing is queued or running.
+
+    Reviewer concern on #7757: the previous design kept a process-wide dict of
+    `threading.Lock` keyed by destination path and never removed an entry. Because
+    `WorkflowCheckpoint` generates a fresh UUID by default, every save retained one
+    entry for the lifetime of the process. Entries are now reference-counted by
+    queued-or-running operations and dropped by the last release, so repeated saves of
+    one ID and saves of many distinct IDs both settle back to nothing held.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        from agent_framework._workflows import _checkpoint as checkpoint_module
+
+        registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+        baseline = len(registry)
+
+        for _ in range(20):
+            await storage.save(
+                WorkflowCheckpoint(
+                    workflow_name="test-workflow",
+                    graph_signature_hash="test-hash",
+                    checkpoint_id="shared-id",
+                )
+            )
+        assert len(registry) == baseline, "same-ID saves left an entry behind"
+
+        # The default: every checkpoint gets its own UUID, so each save is a distinct
+        # destination. This is the case that grew without bound before.
+        for _ in range(20):
+            await storage.save(WorkflowCheckpoint(workflow_name="test-workflow", graph_signature_hash="test-hash"))
+        assert len(registry) == baseline, "distinct-ID saves leaked registry entries"
+
+        # Concurrent same-path saves share one entry while queued, and release it.
+        await asyncio.gather(
+            *(
+                storage.save(
+                    WorkflowCheckpoint(
+                        workflow_name="test-workflow",
+                        graph_signature_hash="test-hash",
+                        checkpoint_id="concurrent-id",
+                    )
+                )
+                for _ in range(8)
+            )
+        )
+        assert len(registry) == baseline, "concurrent saves left an entry behind"
+
+
+async def test_file_checkpoint_storage_concurrent_saves_across_instances():
+    """Two FileCheckpointStorage instances to the same directory must serialize same-ID saves.
+
+    Companion regression for a reviewer concern raised while fixing #7748: the
+    previous per-instance, per-event-loop lock registry did not span a second
+    FileCheckpointStorage instance pointed at the same directory, so concurrent
+    saves could still reach os.replace together and trip the Windows PermissionError
+    race. The fix switched to a process-wide, per-destination threading.Lock
+    keyed by canonical path. Both instances must complete all saves without
+    surfacing filesystem errors.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage_a = FileCheckpointStorage(temp_dir)
+        storage_b = FileCheckpointStorage(temp_dir)
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="test-workflow",
+            graph_signature_hash="test-hash",
+            checkpoint_id="shared-id",
+        )
+
+        results = await asyncio.gather(
+            *[storage_a.save(checkpoint) for _ in range(25)],
+            *[storage_b.save(checkpoint) for _ in range(25)],
+            return_exceptions=True,
+        )
+
+        errors = [r for r in results if isinstance(r, BaseException)]
+        assert not errors, f"cross-instance concurrent saves raised: {errors[:1]!r}"
+        assert all(r == "shared-id" for r in results)
+        assert (Path(temp_dir) / "shared-id.json").exists()
+
+        loaded = await storage_a.load("shared-id")
+        assert loaded.checkpoint_id == checkpoint.checkpoint_id
+        assert loaded.workflow_name == checkpoint.workflow_name
+
+
+async def test_file_checkpoint_storage_cancel_drains_before_releasing(monkeypatch):
+    """A cancelled save must not release the destination while its write is in flight.
+
+    Reviewer concern on #7757: shielding alone let the caller observe `CancelledError`
+    while the worker kept running, so a later save on another loop could take the
+    destination, complete, and then be overwritten when the cancelled worker finally
+    ran its `os.replace`. The cancellation path now drains the worker before
+    propagating, which means the cancelled caller does not return until its own write
+    has finished -- so nothing it wrote can land after a later save.
+    """
+    import threading
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        real_replace = checkpoint_module.os.replace
+        replace_started = threading.Event()
+        release_first_replace = threading.Event()
+        # `_replace_with_retry` may call os.replace more than once for a single write, so
+        # count completed writes rather than attempts.
+        attempts = 0
+        replace_calls: list[str] = []
+        calls_guard = threading.Lock()
+
+        def gated_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+            nonlocal attempts
+            with calls_guard:
+                attempts += 1
+                first = attempts == 1
+            if first:
+                replace_started.set()
+                assert release_first_replace.wait(timeout=10)
+            real_replace(src, dst)
+            with calls_guard:
+                replace_calls.append(os.path.basename(str(dst)))
+
+        monkeypatch.setattr(checkpoint_module.os, "replace", gated_replace)
+
+        def make(name: str) -> WorkflowCheckpoint:
+            return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="shared-id")
+
+        task_a = asyncio.create_task(storage.save(make("workflow-a")))
+        assert await asyncio.to_thread(replace_started.wait, 10), "save A never reached os.replace"
+
+        task_a.cancel()
+        # The drain is the point: A must still be running, holding the destination,
+        # because its own worker has not finished.
+        for _ in range(20):
+            await asyncio.sleep(0.01)
+            if task_a.done():
+                break
+        assert not task_a.done(), "cancelled save returned while its write was still in flight"
+
+        # A later save cannot take the destination while A is draining.
+        task_b = asyncio.create_task(storage.save(make("workflow-b")))
+        for _ in range(20):
+            await asyncio.sleep(0.01)
+            assert attempts == 1, "save B submitted a write while A was still draining"
+        assert not task_b.done()
+
+        release_first_replace.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task_a
+        await asyncio.wait_for(task_b, timeout=10)
+
+        assert len(replace_calls) == 2
+        # B ran second, so B's data is what survives.
+        assert (await storage.load("shared-id")).workflow_name == "workflow-b"
+
+
 async def test_file_checkpoint_storage_load_nonexistent():
     with tempfile.TemporaryDirectory() as temp_dir:
         storage = FileCheckpointStorage(temp_dir)
@@ -1844,3 +2037,1242 @@ async def test_file_checkpoint_storage_roundtrip_empty_collections():
 
 
 # endregion
+
+
+async def test_file_checkpoint_storage_queued_saves_do_not_occupy_executor_threads(monkeypatch):
+    """Queued same-path saves must wait on the event loop, not inside the executor.
+
+    Reviewer concern on #7757: the previous design acquired the destination lock inside
+    the worker, so every same-path save occupied an `asyncio.to_thread` worker while
+    merely waiting. A burst could fill the default pool and stall unrelated work --
+    including checkpoint loads -- and deadlock once the write that had to finish first
+    was queued behind those waiters. Ownership is now taken before submission, so only
+    the active write holds a worker.
+
+    The gate is a deliberately small executor: with three same-path saves in flight and
+    only two workers, an unrelated `to_thread` call still has to get a thread.
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        real_replace = checkpoint_module.os.replace
+        first_replace_reached = threading.Event()
+        release_first_replace = threading.Event()
+        inside_worker = 0
+        max_inside_worker = 0
+        counter_guard = threading.Lock()
+
+        def gated_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+            nonlocal inside_worker, max_inside_worker
+            with counter_guard:
+                inside_worker += 1
+                max_inside_worker = max(max_inside_worker, inside_worker)
+                first = inside_worker == 1 and not first_replace_reached.is_set()
+            try:
+                if first:
+                    first_replace_reached.set()
+                    assert release_first_replace.wait(timeout=10)
+                real_replace(src, dst)
+            finally:
+                with counter_guard:
+                    inside_worker -= 1
+
+        monkeypatch.setattr(checkpoint_module.os, "replace", gated_replace)
+
+        executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ckpt-test")
+        # `set_default_executor(None)` is rejected, so the original has to be put back
+        # by attribute. Routed through an untyped local rather than ignore comments.
+        loop: Any = asyncio.get_running_loop()
+        previous_executor = loop._default_executor
+        loop.set_default_executor(executor)
+        try:
+            saves = [
+                asyncio.create_task(
+                    storage.save(
+                        WorkflowCheckpoint(
+                            workflow_name=f"w{index}",
+                            graph_signature_hash="test-hash",
+                            checkpoint_id="shared-id",
+                        )
+                    )
+                )
+                for index in range(3)
+            ]
+            assert await asyncio.to_thread(first_replace_reached.wait, 10)
+
+            # The decisive assertion: two saves are queued behind the parked one, and an
+            # unrelated to_thread call must still be scheduled. Under the old design the
+            # waiters held both workers and this timed out.
+            marker = await asyncio.wait_for(asyncio.to_thread(lambda: "scheduled"), timeout=5)
+            assert marker == "scheduled"
+
+            release_first_replace.set()
+            await asyncio.wait_for(asyncio.gather(*saves), timeout=10)
+            assert max_inside_worker == 1, f"{max_inside_worker} writes ran concurrently for one destination"
+        finally:
+            loop._default_executor = previous_executor
+            executor.shutdown(wait=True)
+
+
+async def test_file_checkpoint_storage_cancel_before_submission_writes_nothing(monkeypatch):
+    """A save cancelled while queued must never submit its write, and must not stall the queue.
+
+    This is the other half of the cancellation contract: the reviewer asked that a
+    cancelled write either be removed before submission or drained. A save cancelled
+    while still waiting for the destination has nothing in the executor, so it is simply
+    removed -- and it still has to hand ownership on, or every later save for that path
+    would wait forever.
+    """
+    import threading
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        real_replace = checkpoint_module.os.replace
+        first_replace_reached = threading.Event()
+        release_first_replace = threading.Event()
+        # `_replace_with_retry` may call os.replace more than once for a single write, so
+        # count completed writes rather than attempts.
+        attempts = 0
+        written: list[str] = []
+        guard = threading.Lock()
+
+        def gated_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+            nonlocal attempts
+            with guard:
+                attempts += 1
+                first = attempts == 1
+            if first:
+                first_replace_reached.set()
+                assert release_first_replace.wait(timeout=10)
+            real_replace(src, dst)
+            with guard:
+                written.append(os.path.basename(str(dst)))
+
+        monkeypatch.setattr(checkpoint_module.os, "replace", gated_replace)
+
+        def make(name: str) -> WorkflowCheckpoint:
+            return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="shared-id")
+
+        holder = asyncio.create_task(storage.save(make("holder")))
+        assert await asyncio.to_thread(first_replace_reached.wait, 10)
+
+        queued = asyncio.create_task(storage.save(make("cancelled")))
+        follower = asyncio.create_task(storage.save(make("follower")))
+
+        # Wait on observable state rather than a sleep: both saves must actually be
+        # queued behind the holder before cancelling, or this would be testing a
+        # cancellation that raced the enqueue instead.
+        registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+        canonical = (Path(temp_dir) / "shared-id.json").resolve()
+        for _ in range(400):
+            entry = registry.get(canonical)
+            if entry is not None and entry.pending == 3:
+                break
+            await asyncio.sleep(0.005)
+        entry = registry.get(canonical)
+        assert entry is not None and entry.pending == 3, (
+            f"expected holder + two queued saves, got {entry.pending if entry else 'no entry'}"
+        )
+
+        queued.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await queued
+        # Nothing was submitted for the cancelled save: the only write in flight is the
+        # holder's, still parked before its replace.
+        assert attempts == 1, "the cancelled save submitted a write"
+        assert written == []
+
+        release_first_replace.set()
+        await asyncio.wait_for(asyncio.gather(holder, follower), timeout=10)
+
+        # Two writes total -- the holder and the follower. The cancelled save contributed
+        # none, and crucially did not stall the follower behind it.
+        assert len(written) == 2
+        assert (await storage.load("shared-id")).workflow_name == "follower"
+        assert not registry, "a cancelled save left its destination entry behind"
+
+
+def test_file_checkpoint_storage_serializes_across_event_loops(monkeypatch, tmp_path):
+    """Saves driven from separate event loops must still serialize per destination.
+
+    Reviewer concern on #7757: ownership has to be established by something that is not
+    bound to a loop, or two workers queued from different loops can reach `os.replace`
+    together. The queue hands ownership over a `concurrent.futures.Future`, which any
+    loop can await through `asyncio.wrap_future`, so a single chain orders both.
+
+    Deliberately not an async test: it needs two real loops running at once.
+    """
+    import threading
+    import time
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    real_replace = checkpoint_module.os.replace
+    inside_replace = 0
+    max_inside_replace = 0
+    completed: list[str] = []
+    guard = threading.Lock()
+    both_enqueued = threading.Barrier(2, timeout=10)
+
+    def observing_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+        nonlocal inside_replace, max_inside_replace
+        with guard:
+            inside_replace += 1
+            max_inside_replace = max(max_inside_replace, inside_replace)
+        try:
+            # Widen the window a real overlap would land in.
+            time.sleep(0.05)
+            real_replace(src, dst)
+        finally:
+            with guard:
+                inside_replace -= 1
+                completed.append(os.path.basename(str(dst)))
+
+    monkeypatch.setattr(checkpoint_module.os, "replace", observing_replace)
+
+    errors: list[BaseException] = []
+
+    def run_loop(name: str) -> None:
+        async def main() -> None:
+            storage = FileCheckpointStorage(str(tmp_path))
+            # Make both loops reach save() at the same time so the queue, not timing,
+            # is what orders them.
+            await asyncio.to_thread(both_enqueued.wait)
+            await storage.save(
+                WorkflowCheckpoint(
+                    workflow_name=name,
+                    graph_signature_hash="test-hash",
+                    checkpoint_id="cross-loop-id",
+                )
+            )
+
+        try:
+            asyncio.run(main())
+        except BaseException as exc:  # noqa: BLE001 - surfaced to the test below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run_loop, args=(f"loop-{index}",)) for index in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+        assert not thread.is_alive(), "a save driven from its own event loop never finished"
+
+    assert not errors, f"saves raised: {errors!r}"
+    assert len(completed) == 2
+    assert max_inside_replace == 1, f"{max_inside_replace} writes reached os.replace together across event loops"
+    registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+    assert not registry, "cross-loop saves left a destination entry behind"
+
+
+async def test_file_checkpoint_storage_repeated_cancellation_still_drains(monkeypatch):
+    """Cancelling again while a save is draining must not abandon the in-flight write.
+
+    Once a task has a cancellation pending, its next await raises `CancelledError`
+    immediately -- so a drain built on a single `await asyncio.shield(worker)` returns
+    with the worker still running and the write can land after ownership is released.
+    A task group or supervisor that cancels more than once reaches exactly that path,
+    so the drain absorbs re-delivered cancellations until the worker is genuinely done.
+    """
+    import threading
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        real_replace = checkpoint_module.os.replace
+        replace_started = threading.Event()
+        release_replace = threading.Event()
+        finished_writes: list[str] = []
+        guard = threading.Lock()
+
+        def gated_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+            replace_started.set()
+            assert release_replace.wait(timeout=10)
+            real_replace(src, dst)
+            with guard:
+                finished_writes.append(os.path.basename(str(dst)))
+
+        monkeypatch.setattr(checkpoint_module.os, "replace", gated_replace)
+
+        task = asyncio.create_task(
+            storage.save(
+                WorkflowCheckpoint(
+                    workflow_name="drained",
+                    graph_signature_hash="test-hash",
+                    checkpoint_id="shared-id",
+                )
+            )
+        )
+        assert await asyncio.to_thread(replace_started.wait, 10)
+
+        # Cancel repeatedly while the worker is parked. Each one is re-delivered into
+        # the drain, which must keep waiting rather than return early.
+        for _ in range(5):
+            task.cancel()
+            await asyncio.sleep(0.01)
+        assert not task.done(), "drain gave up while the write was still in flight"
+        assert finished_writes == []
+
+        release_replace.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # The write it owned completed before it propagated, so nothing lands later.
+        assert finished_writes == ["shared-id.json"]
+        registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+        assert not registry
+
+
+async def test_file_checkpoint_storage_write_failing_during_drain_is_reported(monkeypatch, caplog):
+    """A write that fails while draining must surface in the log, not vanish.
+
+    The cancelled caller never sees the write's exception -- it receives
+    `CancelledError` -- so the only place a failure can be noticed is the log.
+    """
+    import threading
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        replace_started = threading.Event()
+        release_replace = threading.Event()
+
+        def failing_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+            replace_started.set()
+            assert release_replace.wait(timeout=10)
+            raise OSError("disk went away mid-publish")
+
+        monkeypatch.setattr(checkpoint_module.os, "replace", failing_replace)
+
+        task = asyncio.create_task(
+            storage.save(
+                WorkflowCheckpoint(
+                    workflow_name="failing",
+                    graph_signature_hash="test-hash",
+                    checkpoint_id="shared-id",
+                )
+            )
+        )
+        assert await asyncio.to_thread(replace_started.wait, 10)
+
+        task.cancel()
+        await asyncio.sleep(0.01)
+        with caplog.at_level(logging.WARNING, logger=checkpoint_module.logger.name):
+            release_replace.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert any("failed while draining after cancellation" in record.message for record in caplog.records), (
+            f"the drained write's failure was not reported: {[r.message for r in caplog.records]}"
+        )
+        registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+        assert not registry, "a failed drained write left its destination entry behind"
+
+
+def test_release_write_tolerates_an_already_dropped_entry():
+    """Releasing a ticket whose entry is gone must be a no-op, not a KeyError.
+
+    Defensive: the registry entry is dropped by whichever operation releases last, so a
+    release must never assume its entry is still present.
+    """
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    path = Path("/nonexistent/never-enqueued.json")
+    ticket = checkpoint_module._WriteTicket(  # pyright: ignore[reportPrivateUsage]
+        path=path,
+        predecessor=None,
+        completion=ConcurrentFuture(),
+    )
+    # No entry was ever created for this path.
+    checkpoint_module._release_write(ticket)  # pyright: ignore[reportPrivateUsage]
+    assert ticket.completion.done()
+    assert path not in checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+
+
+def test_file_checkpoint_storage_abandoned_loop_does_not_own_destination_forever(monkeypatch, tmp_path):
+    """A loop that goes away mid-write must not leave its destination owned forever.
+
+    Ownership is released as the write's last act on the worker thread, not only in the
+    coroutine's `finally`. A thread outlives the loop that submitted it, so the write
+    finishes and hands the destination on; releasing solely from the coroutine would
+    leave the path owned for the life of the process and hang every later save to it.
+
+    Deliberately not an async test: it has to close a loop out from under a pending task.
+    """
+    import threading
+    import time
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    real_replace = checkpoint_module.os.replace
+    parked = threading.Event()
+    release_parked = threading.Event()
+
+    def gated_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+        parked.set()
+        assert release_parked.wait(timeout=20)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(checkpoint_module.os, "replace", gated_replace)
+
+    def make(name: str) -> WorkflowCheckpoint:
+        return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="abandoned-id")
+
+    abandoned_loop = asyncio.new_event_loop()
+    # Closing a loop with a pending task makes asyncio report "Task was destroyed but it
+    # is pending!" through the loop's exception handler. That is exactly the situation
+    # under test, so silence it rather than leaving the noise in CI output.
+    abandoned_loop.set_exception_handler(lambda loop, context: None)
+    try:
+        storage = FileCheckpointStorage(str(tmp_path))
+
+        async def start_and_park() -> asyncio.Task[str]:
+            task = abandoned_loop.create_task(storage.save(make("abandoned")))
+            await asyncio.to_thread(parked.wait, 20)
+            return task
+
+        pending = abandoned_loop.run_until_complete(start_and_park())
+        assert not pending.done()
+    finally:
+        # Abrupt: no cancellation, so the coroutine's `finally` never runs.
+        abandoned_loop.close()
+
+    # Let the orphaned worker finish. Its release happens on the thread.
+    release_parked.set()
+    deadline = time.monotonic() + 10
+    while checkpoint_module._destination_queues and time.monotonic() < deadline:  # pyright: ignore[reportPrivateUsage]
+        time.sleep(0.05)
+    assert not checkpoint_module._destination_queues, (  # pyright: ignore[reportPrivateUsage]
+        "the abandoned loop's destination entry was never released"
+    )
+
+    # A fresh loop must be able to save to the same destination.
+    outcome: dict[str, bool] = {}
+
+    def run_later_save() -> None:
+        async def main() -> None:
+            later_storage = FileCheckpointStorage(str(tmp_path))
+            try:
+                await asyncio.wait_for(later_storage.save(make("later")), timeout=10)
+                outcome["saved"] = True
+            except asyncio.TimeoutError:
+                outcome["saved"] = False
+
+        asyncio.run(main())
+
+    thread = threading.Thread(target=run_later_save)
+    thread.start()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+    assert outcome.get("saved") is True, "a later save to the abandoned destination hung"
+
+
+async def test_file_checkpoint_storage_failed_save_releases_the_destination(monkeypatch):
+    """A save that raises must not leave its destination owned.
+
+    The failure path matters as much as cancellation: if a raising write kept ownership,
+    one transient disk error would hang every later save to that checkpoint for the life
+    of the process.
+    """
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        def exploding_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+            raise OSError("simulated disk failure")
+
+        monkeypatch.setattr(checkpoint_module.os, "replace", exploding_replace)
+
+        def make(name: str) -> WorkflowCheckpoint:
+            return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="shared-id")
+
+        with pytest.raises(OSError, match="simulated disk failure"):
+            await storage.save(make("fails"))
+
+        registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+        assert not registry, "a failed save kept its destination"
+
+        # And the path is still usable once the failure clears.
+        monkeypatch.undo()
+        await asyncio.wait_for(storage.save(make("after-failure")), timeout=10)
+        assert (await storage.load("shared-id")).workflow_name == "after-failure"
+        assert not registry
+
+
+async def test_file_checkpoint_storage_cancelling_a_queued_save_does_not_let_the_next_overtake(monkeypatch):
+    """A save cancelled while queued must not hand off before its predecessor finishes.
+
+    Reviewer concern on #7757: `asyncio.wrap_future` chains cancellation into the future
+    it wraps, so cancelling the middle of three queued saves cancelled the shared
+    hand-off signal, and the unconditional release then let the third save reach
+    `os.replace` while the first still owned the destination -- after which the first
+    write could land last and overwrite the newer checkpoint. The hand-off for a
+    cancelled ticket is now deferred until its predecessor actually completes.
+    """
+    import threading
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        real_replace = checkpoint_module.os.replace
+        holder_parked = threading.Event()
+        release_holder = threading.Event()
+        inside_replace = 0
+        max_inside_replace = 0
+        completed: list[str] = []
+        guard = threading.Lock()
+
+        def gated_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+            nonlocal inside_replace, max_inside_replace
+            with guard:
+                inside_replace += 1
+                max_inside_replace = max(max_inside_replace, inside_replace)
+                park = inside_replace == 1 and not holder_parked.is_set()
+            try:
+                if park:
+                    holder_parked.set()
+                    assert release_holder.wait(timeout=15)
+                real_replace(src, dst)
+                with guard:
+                    completed.append(os.path.basename(str(dst)))
+            finally:
+                with guard:
+                    inside_replace -= 1
+
+        monkeypatch.setattr(checkpoint_module.os, "replace", gated_replace)
+
+        def make(name: str) -> WorkflowCheckpoint:
+            return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="shared-id")
+
+        holder = asyncio.create_task(storage.save(make("holder")))
+        assert await asyncio.to_thread(holder_parked.wait, 15)
+
+        queued = asyncio.create_task(storage.save(make("cancelled")))
+        third = asyncio.create_task(storage.save(make("third")))
+
+        registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+        canonical = (Path(temp_dir) / "shared-id.json").resolve()
+        for _ in range(400):
+            entry = registry.get(canonical)
+            if entry is not None and entry.pending == 3:
+                break
+            await asyncio.sleep(0.005)
+        entry = registry.get(canonical)
+        assert entry is not None and entry.pending == 3
+
+        queued.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await queued
+
+        # The holder is still parked inside its replace. The third save must not have
+        # taken the destination on the back of the cancellation.
+        for _ in range(30):
+            await asyncio.sleep(0.01)
+            with guard:
+                assert max_inside_replace == 1, "a second write started while the holder still owned the path"
+                assert completed == [], "a write completed while the holder was still parked"
+        assert not third.done()
+
+        release_holder.set()
+        await asyncio.wait_for(asyncio.gather(holder, third), timeout=15)
+
+        with guard:
+            assert max_inside_replace == 1, "writes overlapped for one destination"
+            assert len(completed) == 2, f"expected holder + third, got {completed}"
+        assert (await storage.load("shared-id")).workflow_name == "third"
+        assert not registry, "a cancelled queued save leaked its destination entry"
+
+
+def test_file_checkpoint_storage_cancelled_worker_task_does_not_release_early(monkeypatch, tmp_path):
+    """Cancelling the worker task must not release ownership while the thread writes.
+
+    Reviewer concern on #7757: loop shutdown cancels `save()` and the task wrapping
+    `asyncio.to_thread`, which makes `worker.done()` true while the function is still
+    blocked in `os.replace`. Draining on that task therefore returned immediately and
+    ownership was released with the write in flight. The drain now waits on the signal
+    the worker thread resolves, which cancellation cannot mark done.
+
+    Deliberately not an async test: it cancels every task the way shutdown does.
+    """
+    import threading
+    import time
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    real_replace = checkpoint_module.os.replace
+    parked = threading.Event()
+    release_parked = threading.Event()
+
+    def gated_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+        parked.set()
+        assert release_parked.wait(timeout=15)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(checkpoint_module.os, "replace", gated_replace)
+
+    canonical = (tmp_path / "shared-id.json").resolve()
+    observed: dict[str, bool] = {}
+
+    async def main() -> None:
+        storage = FileCheckpointStorage(str(tmp_path))
+        task = asyncio.create_task(
+            storage.save(
+                WorkflowCheckpoint(workflow_name="holder", graph_signature_hash="test-hash", checkpoint_id="shared-id")
+            )
+        )
+        await asyncio.to_thread(parked.wait, 15)
+
+        # What loop shutdown does: cancel every remaining task, including the one
+        # wrapping asyncio.to_thread.
+        for pending in [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]:
+            pending.cancel()
+
+        for _ in range(40):
+            await asyncio.sleep(0.01)
+            if canonical not in checkpoint_module._destination_queues:  # pyright: ignore[reportPrivateUsage]
+                break
+        # The write is still parked, so the destination must still be owned.
+        observed["released_early"] = canonical not in checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+        observed["still_writing"] = not release_parked.is_set()
+
+        release_parked.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(main())
+
+    assert observed["still_writing"], "the test never held the write open"
+    assert not observed["released_early"], "ownership was released while the write was still in flight"
+    # The worker thread releases once its write lands, so nothing is left owned.
+    deadline = time.monotonic() + 10
+    while checkpoint_module._destination_queues and time.monotonic() < deadline:  # pyright: ignore[reportPrivateUsage]
+        time.sleep(0.05)
+    assert not checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+
+
+def test_file_checkpoint_storage_shutdown_before_the_write_starts_does_not_hang(monkeypatch, tmp_path):
+    """Loop shutdown before the write reaches the executor must not strand the save.
+
+    Submitting through `asyncio.ensure_future(asyncio.to_thread(...))` makes the write a
+    Task, and shutdown cancels every task -- potentially before it has reached the
+    executor. Nothing would then release the destination, and a coroutine waiting for the
+    write's completion signal would wait for a signal that could never be resolved, so
+    the save never finished at all. Submission now goes through `run_in_executor`, which
+    returns a plain Future that `asyncio.all_tasks()` does not include, and a done
+    callback releases even if the executor drops the work.
+
+    Deliberately not an async test: it has to cancel every task the way shutdown does.
+    """
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    canonical = (tmp_path / "shared-id.json").resolve()
+    outcome: dict[str, object] = {}
+
+    async def main() -> None:
+        storage = FileCheckpointStorage(str(tmp_path))
+        asyncio.create_task(
+            storage.save(
+                WorkflowCheckpoint(workflow_name="victim", graph_signature_hash="test-hash", checkpoint_id="shared-id")
+            )
+        )
+        # One tick, so the save coroutine actually runs and submits its write. Without
+        # it the write has not been created yet and cancelling only the save takes the
+        # clean cancelled-before-submission path, which was never the broken case.
+        await asyncio.sleep(0)
+        victims = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+        outcome["task_count"] = len(victims)
+
+        # Assert the structural property *before* cancelling anything. If the write is a
+        # task, shutdown sweeps it and the save can end up waiting for a completion
+        # signal nothing will ever resolve -- which hangs `asyncio.run`'s own shutdown,
+        # outside any `wait_for` this test could wrap around it. Failing here keeps the
+        # regression a clean assertion rather than a hung CI job.
+        assert len(victims) == 1, (
+            f"the write must not be a task, or loop shutdown cancels it: found {len(victims)} tasks"
+        )
+
+        for task in victims:
+            task.cancel()
+        await asyncio.wait_for(asyncio.gather(*victims, return_exceptions=True), timeout=10)
+
+    asyncio.run(main())
+    assert outcome["task_count"] == 1
+
+    deadline = time.monotonic() + 10
+    while canonical in checkpoint_module._destination_queues and time.monotonic() < deadline:  # pyright: ignore[reportPrivateUsage]
+        time.sleep(0.05)
+    assert canonical not in checkpoint_module._destination_queues, (  # pyright: ignore[reportPrivateUsage]
+        "shutdown before the write started left the destination owned forever"
+    )
+
+
+async def test_file_checkpoint_storage_executor_shutdown_at_submission_releases():
+    """If the write cannot be submitted at all, the coroutine must release the destination.
+
+    `run_in_executor` raises synchronously against a shut-down executor, so no worker
+    exists to release on our behalf. This is the one path where the coroutine, not the
+    worker thread, owns the release.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        dead_executor = ThreadPoolExecutor(max_workers=1)
+        dead_executor.shutdown(wait=True)
+        loop: Any = asyncio.get_running_loop()
+        previous_executor = loop._default_executor
+        loop.set_default_executor(dead_executor)
+        try:
+            with pytest.raises(RuntimeError):
+                await storage.save(
+                    WorkflowCheckpoint(
+                        workflow_name="no-executor",
+                        graph_signature_hash="test-hash",
+                        checkpoint_id="shared-id",
+                    )
+                )
+        finally:
+            loop._default_executor = previous_executor
+
+        registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+        assert not registry, "a save that could not be submitted kept its destination"
+
+        # The path is still usable once an executor is available again.
+        await asyncio.wait_for(
+            storage.save(
+                WorkflowCheckpoint(workflow_name="after", graph_signature_hash="test-hash", checkpoint_id="shared-id")
+            ),
+            timeout=10,
+        )
+        assert (await storage.load("shared-id")).workflow_name == "after"
+
+
+def test_wait_for_signal_survives_its_loop_being_closed():
+    """Resolving a signal after its waiter's loop closed must not raise.
+
+    The worker thread outlives the loop that submitted the write, so it can resolve a
+    hand-off signal that a now-dead loop was waiting on. `call_soon_threadsafe` raises
+    `RuntimeError` on a closed loop, and that runs inside a `concurrent.futures`
+    done-callback -- where an exception would be swallowed into the callback machinery
+    rather than surfacing usefully.
+    """
+    import threading
+    from concurrent.futures import Future as ConcurrentFuture
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    source: ConcurrentFuture[None] = ConcurrentFuture()
+    loop = asyncio.new_event_loop()
+    try:
+
+        async def register() -> None:
+            checkpoint_module._wait_for_signal(source)  # pyright: ignore[reportPrivateUsage]
+
+        loop.run_until_complete(register())
+    finally:
+        loop.close()
+
+    # The worker thread resolves it after the loop is gone.
+    errors: list[BaseException] = []
+
+    def resolve() -> None:
+        try:
+            source.set_result(None)
+        except BaseException as exc:  # noqa: BLE001 - surfaced below
+            errors.append(exc)
+
+    thread = threading.Thread(target=resolve)
+    thread.start()
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert not errors, f"resolving after loop close raised: {errors!r}"
+    assert source.done()
+
+
+def test_await_signal_through_cancellation_survives_its_loop_being_closed():
+    """Resolving the signal after the draining loop closed must not raise.
+
+    The worker thread outlives the loop that submitted the write, so it can resolve a
+    signal that a now-dead loop was draining on. `call_soon_threadsafe` raises
+    `RuntimeError` against a closed loop, inside a `concurrent.futures` done-callback
+    where it would be swallowed rather than surface.
+    """
+    import threading
+    from concurrent.futures import Future as ConcurrentFuture
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    source: ConcurrentFuture[None] = ConcurrentFuture()
+    loop = asyncio.new_event_loop()
+    loop.set_exception_handler(lambda active_loop, context: None)
+    try:
+        # Start the drain, let it subscribe and suspend, then abandon the loop.
+        drain = loop.create_task(
+            checkpoint_module._await_signal_through_cancellation(source)  # pyright: ignore[reportPrivateUsage]
+        )
+        loop.run_until_complete(asyncio.sleep(0))
+        assert not drain.done()
+    finally:
+        loop.close()
+
+    errors: list[BaseException] = []
+
+    def resolve() -> None:
+        try:
+            source.set_result(None)
+        except BaseException as exc:  # noqa: BLE001 - surfaced below
+            errors.append(exc)
+
+    thread = threading.Thread(target=resolve)
+    thread.start()
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert not errors, f"resolving after the draining loop closed raised: {errors!r}"
+    assert source.done()
+
+
+def test_release_write_does_not_recurse_per_deferred_link():
+    """A long run of deferred releases must not nest one stack frame per link.
+
+    A save cancelled while queued defers its hand-off onto its predecessor, so resolving
+    the first ticket runs the second's callback, which resolves the third, and so on. Done
+    naively that is synchronous recursion: a run longer than the recursion limit raised
+    `RecursionError` on the worker thread partway through and left the destination owned
+    for the life of the process. The chain is drained in a loop instead.
+
+    Built from tickets directly so the depth can exceed the recursion limit without
+    thousands of real saves.
+    """
+    from concurrent.futures import Future as ConcurrentFuture
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    depth = 2000
+    assert depth > sys.getrecursionlimit(), "the run has to be longer than the recursion limit to prove anything"
+
+    path = Path("/nonexistent/deferred-chain.json")
+    tickets = [
+        checkpoint_module._WriteTicket(  # pyright: ignore[reportPrivateUsage]
+            path=path,
+            predecessor=None,
+            completion=ConcurrentFuture(),
+        )
+        for _ in range(depth)
+    ]
+    # Each link releases only once the one before it has.
+    for earlier, later in zip(tickets, tickets[1:]):
+        checkpoint_module._release_write_after(later, earlier.completion)  # pyright: ignore[reportPrivateUsage]
+
+    # Releasing the head must unwind the whole run.
+    checkpoint_module._release_write(tickets[0])  # pyright: ignore[reportPrivateUsage]
+
+    unresolved = [index for index, ticket in enumerate(tickets) if not ticket.completion.done()]
+    assert not unresolved, f"{len(unresolved)} links never released, first at index {unresolved[0]}"
+    assert all(ticket.released for ticket in tickets)
+
+
+def test_file_checkpoint_storage_abandoned_loop_while_queued_releases_the_destination(monkeypatch, tmp_path):
+    """A save whose loop dies while it is still queued must not strand the destination.
+
+    Reviewer follow-up on #7757: the submitted write is released by its worker thread, but
+    a ticket still *waiting* for its predecessor has no worker. If that waiter's loop
+    closes, `call_soon_threadsafe` raises and the coroutine never resumes, so nothing
+    resolves its hand-off signal and every later save for the destination waits forever.
+    The predecessor's callback now performs the release itself in that case.
+
+    Deliberately not an async test: it needs two loops and has to close one of them.
+    """
+    import threading
+    import time
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    real_replace = checkpoint_module.os.replace
+    parked = threading.Event()
+    release_parked = threading.Event()
+
+    def gated_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+        parked.set()
+        assert release_parked.wait(timeout=20)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(checkpoint_module.os, "replace", gated_replace)
+
+    def make(name: str) -> WorkflowCheckpoint:
+        return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="shared-id")
+
+    canonical = (tmp_path / "shared-id.json").resolve()
+    registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+
+    holder_loop = asyncio.new_event_loop()
+    queued_loop = asyncio.new_event_loop()
+    queued_loop.set_exception_handler(lambda loop, context: None)
+    try:
+        holder_storage = FileCheckpointStorage(str(tmp_path))
+
+        async def start_holder() -> asyncio.Task[str]:
+            task = holder_loop.create_task(holder_storage.save(make("holder")))
+            await asyncio.to_thread(parked.wait, 20)
+            return task
+
+        holder = holder_loop.run_until_complete(start_holder())
+
+        # A second save queues behind the parked holder on its own loop.
+        queued_storage = FileCheckpointStorage(str(tmp_path))
+
+        async def start_queued() -> None:
+            queued_loop.create_task(queued_storage.save(make("queued")))
+            for _ in range(400):
+                entry = registry.get(canonical)
+                if entry is not None and entry.pending == 2:
+                    return
+                await asyncio.sleep(0.005)
+            raise AssertionError("the second save never queued behind the holder")
+
+        queued_loop.run_until_complete(start_queued())
+    finally:
+        # Abandoned while its ticket is still queued and nothing has been submitted.
+        queued_loop.close()
+
+    release_parked.set()
+    holder_loop.run_until_complete(asyncio.gather(holder, return_exceptions=True))
+    holder_loop.close()
+
+    deadline = time.monotonic() + 10
+    while canonical in registry and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert canonical not in registry, "the abandoned queued save left the destination owned"
+
+    # And the destination is usable again from a fresh loop.
+    outcome: dict[str, bool] = {}
+
+    def later_save() -> None:
+        async def main() -> None:
+            storage = FileCheckpointStorage(str(tmp_path))
+            try:
+                await asyncio.wait_for(storage.save(make("later")), timeout=10)
+                outcome["saved"] = True
+            except asyncio.TimeoutError:
+                outcome["saved"] = False
+
+        asyncio.run(main())
+
+    thread = threading.Thread(target=later_save)
+    thread.start()
+    thread.join(timeout=30)
+    assert not thread.is_alive()
+    assert outcome.get("saved") is True, "a later save to the abandoned destination hung"
+
+
+def test_file_checkpoint_storage_graceful_shutdown_releases_a_queued_save(tmp_path, monkeypatch):
+    """A queued save released through the normal shutdown path, which is the guarantee.
+
+    `asyncio.run` cancels pending tasks before closing, so a save still waiting for its
+    predecessor takes its cancellation path and defers the hand-off onto that
+    predecessor. Pinning it because the `on_abandoned` hook only covers a loop that is
+    already closed when the signal resolves -- this is the path that has to stay safe
+    without it.
+    """
+    import threading
+    import time
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    real_replace = checkpoint_module.os.replace
+    parked = threading.Event()
+    release_parked = threading.Event()
+
+    def gated_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+        parked.set()
+        assert release_parked.wait(timeout=20)
+        real_replace(src, dst)
+
+    monkeypatch.setattr(checkpoint_module.os, "replace", gated_replace)
+
+    def make(name: str) -> WorkflowCheckpoint:
+        return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="shared-id")
+
+    canonical = (tmp_path / "shared-id.json").resolve()
+    registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+
+    holder_loop = asyncio.new_event_loop()
+    try:
+        holder_storage = FileCheckpointStorage(str(tmp_path))
+
+        async def start_holder() -> asyncio.Task[str]:
+            task = holder_loop.create_task(holder_storage.save(make("holder")))
+            await asyncio.to_thread(parked.wait, 20)
+            return task
+
+        holder = holder_loop.run_until_complete(start_holder())
+
+        # A second save queues behind it, on a loop that exits the normal way.
+        def run_queued() -> None:
+            async def main() -> None:
+                storage = FileCheckpointStorage(str(tmp_path))
+                asyncio.create_task(storage.save(make("queued")))
+                for _ in range(400):
+                    entry = registry.get(canonical)
+                    if entry is not None and entry.pending == 2:
+                        return
+                    await asyncio.sleep(0.005)
+                raise AssertionError("the second save never queued behind the holder")
+
+            asyncio.run(main())
+
+        thread = threading.Thread(target=run_queued)
+        thread.start()
+        thread.join(timeout=30)
+        assert not thread.is_alive()
+
+        release_parked.set()
+        holder_loop.run_until_complete(asyncio.gather(holder, return_exceptions=True))
+    finally:
+        holder_loop.close()
+
+    deadline = time.monotonic() + 10
+    while canonical in registry and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert canonical not in registry, "a gracefully cancelled queued save left the destination owned"
+
+
+def test_file_checkpoint_storage_abandonment_mid_chain_keeps_the_queue_ordered(tmp_path, monkeypatch):
+    """Releasing an abandoned queued ticket must hand off to its successor, in order.
+
+    The two-ticket case only shows the entry clearing. With a live save queued *behind*
+    the abandoned one, the release has to propagate through that link and still serialize
+    the writes -- if it handed off early, the successor's `os.replace` would run beside
+    the holder's.
+    """
+    import threading
+    import time
+
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    real_replace = checkpoint_module.os.replace
+    parked = threading.Event()
+    release_parked = threading.Event()
+    inside_replace = 0
+    peak_inside_replace = 0
+    completed: list[str] = []
+    guard = threading.Lock()
+
+    def gated_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+        nonlocal inside_replace, peak_inside_replace
+        with guard:
+            inside_replace += 1
+            peak_inside_replace = max(peak_inside_replace, inside_replace)
+            park = inside_replace == 1 and not parked.is_set()
+        try:
+            if park:
+                parked.set()
+                assert release_parked.wait(timeout=25)
+            real_replace(src, dst)
+            with guard:
+                completed.append(os.path.basename(str(dst)))
+        finally:
+            with guard:
+                inside_replace -= 1
+
+    monkeypatch.setattr(checkpoint_module.os, "replace", gated_replace)
+
+    def make(name: str) -> WorkflowCheckpoint:
+        return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="shared-id")
+
+    canonical = (tmp_path / "shared-id.json").resolve()
+    registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+
+    def wait_for_pending(count: int, timeout: float = 20.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            entry = registry.get(canonical)
+            if entry is not None and entry.pending == count:
+                return
+            time.sleep(0.005)
+        entry = registry.get(canonical)
+        raise AssertionError(f"expected {count} queued, saw {entry.pending if entry else 0}")
+
+    holder_loop = asyncio.new_event_loop()
+    abandoned_loop = asyncio.new_event_loop()
+    abandoned_loop.set_exception_handler(lambda loop, context: None)
+    successor: dict[str, bool] = {}
+    try:
+        holder_storage = FileCheckpointStorage(str(tmp_path))
+
+        async def start_holder() -> asyncio.Task[str]:
+            task = holder_loop.create_task(holder_storage.save(make("holder")))
+            await asyncio.to_thread(parked.wait, 25)
+            return task
+
+        holder = holder_loop.run_until_complete(start_holder())
+
+        async def start_abandoned() -> None:
+            storage = FileCheckpointStorage(str(tmp_path))
+            abandoned_loop.create_task(storage.save(make("abandoned")))
+            await asyncio.sleep(0)
+
+        abandoned_loop.run_until_complete(start_abandoned())
+        wait_for_pending(2)
+
+        def run_successor() -> None:
+            async def main() -> None:
+                storage = FileCheckpointStorage(str(tmp_path))
+                try:
+                    await asyncio.wait_for(storage.save(make("successor")), timeout=25)
+                    successor["saved"] = True
+                except asyncio.TimeoutError:
+                    successor["saved"] = False
+
+            asyncio.run(main())
+
+        thread = threading.Thread(target=run_successor)
+        thread.start()
+        wait_for_pending(3)
+
+        abandoned_loop.close()
+
+        release_parked.set()
+        holder_loop.run_until_complete(asyncio.gather(holder, return_exceptions=True))
+        thread.join(timeout=30)
+        assert not thread.is_alive()
+    finally:
+        holder_loop.close()
+
+    assert successor.get("saved") is True, "the save queued behind the abandoned one never ran"
+    with guard:
+        assert peak_inside_replace == 1, "writes overlapped across the abandoned link"
+        assert len(completed) == 2, f"expected holder + successor, got {completed}"
+    deadline = time.monotonic() + 10
+    while canonical in registry and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert canonical not in registry
+
+
+async def test_file_checkpoint_storage_replace_retry_gives_up_and_releases(monkeypatch):
+    """A destination that never becomes replaceable must fail loudly, not silently or forever.
+
+    The retry around ``os.replace`` exists for a Windows-specific transient: an indexer or
+    AV scan briefly holding a handle to the destination. It is bounded on purpose -- a
+    handle held for good has to surface as an error rather than a hang -- and giving up
+    must still release the destination, or one stuck file would wedge every later save to
+    it for the life of the process.
+
+    Both halves are asserted here because the suite only ever reached this code by
+    accident: the concurrency tests occasionally trip a real ``PermissionError`` on
+    Windows, which is environment-dependent and absent on Linux CI.
+    """
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        attempts: list[int] = []
+        real_replace = checkpoint_module.os.replace
+
+        def always_locked(src, dst):  # noqa: ANN001, ANN202 - test shim
+            attempts.append(1)
+            raise PermissionError("simulated handle held by another process")
+
+        monkeypatch.setattr(checkpoint_module.os, "replace", always_locked)
+
+        def make(name: str) -> WorkflowCheckpoint:
+            return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="locked-id")
+
+        with pytest.raises(PermissionError, match="simulated handle held"):
+            await storage.save(make("never-lands"))
+
+        assert len(attempts) == 5, f"expected the bounded retry to stop at 5 attempts, got {len(attempts)}"
+
+        registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+        assert not registry, "giving up on the replace kept the destination owned"
+
+        # No temp file survives the failure, and the path works once the lock clears.
+        leftovers = await asyncio.to_thread(lambda: list(Path(temp_dir).glob(".maf-ckpt-*.tmp")))
+        assert not leftovers, f"the abandoned write leaked temp files: {leftovers}"
+
+        monkeypatch.setattr(checkpoint_module.os, "replace", real_replace)
+        await asyncio.wait_for(storage.save(make("after-the-lock")), timeout=10)
+        assert (await storage.load("locked-id")).workflow_name == "after-the-lock"
+        assert not registry
+
+
+async def test_file_checkpoint_storage_temp_cleanup_failure_does_not_mask_the_write_error(monkeypatch, caplog):
+    """A temp file that cannot be removed must not replace the error that stranded it.
+
+    The cleanup runs in a ``finally`` while a write exception is propagating. Letting an
+    ``OSError`` out of it there would substitute a misleading "cannot remove temp file"
+    for the real disk failure the caller needs to see, and would skip the release that
+    keeps the destination usable.
+    """
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+
+        def exploding_replace(src, dst):  # noqa: ANN001, ANN202 - test shim
+            raise OSError("the real disk failure")
+
+        real_unlink = Path.unlink
+
+        def refuse_temp_unlink(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202 - test shim
+            if self.name.startswith(".maf-ckpt-"):
+                raise OSError("temp file is not removable either")
+            return real_unlink(self, *args, **kwargs)
+
+        monkeypatch.setattr(checkpoint_module.os, "replace", exploding_replace)
+        monkeypatch.setattr(Path, "unlink", refuse_temp_unlink)
+
+        def make(name: str) -> WorkflowCheckpoint:
+            return WorkflowCheckpoint(workflow_name=name, graph_signature_hash="test-hash", checkpoint_id="masked-id")
+
+        with (
+            caplog.at_level(logging.DEBUG, logger=checkpoint_module.logger.name),
+            pytest.raises(OSError, match="the real disk failure"),
+        ):
+            await storage.save(make("fails"))
+
+        assert any("Failed to remove checkpoint temp file" in record.message for record in caplog.records), (
+            "the swallowed cleanup failure left no diagnostic behind"
+        )
+
+        registry = checkpoint_module._destination_queues  # pyright: ignore[reportPrivateUsage]
+        assert not registry, "a failed cleanup kept the destination owned"
+
+        monkeypatch.undo()
+        await asyncio.wait_for(storage.save(make("after-failure")), timeout=10)
+        assert (await storage.load("masked-id")).workflow_name == "after-failure"
+
+
+async def test_await_signal_through_cancellation_returns_immediately_for_a_resolved_signal():
+    """The drain must not suspend on a write that already finished.
+
+    Exercised directly because arranging the race -- a cancellation arriving in the
+    window after the worker resolved the signal but before the coroutine resumes -- is
+    not deterministic through ``save()``. The fast path only skips registering a callback
+    that would fire straight back; this pins the behaviour it is allowed to have.
+    """
+    from agent_framework._workflows import _checkpoint as checkpoint_module
+
+    resolved: ConcurrentFuture[None] = ConcurrentFuture()
+    resolved.set_result(None)
+
+    await asyncio.wait_for(
+        checkpoint_module._await_signal_through_cancellation(resolved),  # pyright: ignore[reportPrivateUsage]
+        timeout=5,
+    )
