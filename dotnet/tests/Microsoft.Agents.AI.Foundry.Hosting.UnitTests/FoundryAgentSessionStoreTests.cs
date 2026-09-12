@@ -20,10 +20,11 @@ public sealed class FoundryAgentSessionStoreTests
         var backing = new FakeStateStore();
         var store = NewStore(backing);
         var agent = new TestAgent("{\"foo\":7}", name: "Concierge");
+        var key = Key("round-trip", "user", "alice");
 
         // Act
-        await store.SaveSessionAsync(agent, "round-trip", new TestSession(), userId: "alice");
-        var session = await store.GetSessionAsync(agent, "round-trip", userId: "alice");
+        await store.SaveSessionAsync(agent, key, new TestSession());
+        var session = await store.GetSessionAsync(agent, key);
 
         // Assert
         Assert.NotNull(session);
@@ -39,13 +40,14 @@ public sealed class FoundryAgentSessionStoreTests
         var backing = new FakeStateStore();
         var store = NewStore(backing);
         var agent = new TestAgent(name: "Concierge");
+        var key = Key("conv-1", "user", "alice");
 
         // Act
-        await store.SaveSessionAsync(agent, "conv-1", new TestSession(), userId: "alice");
+        await store.SaveSessionAsync(agent, key, new TestSession());
 
         // Assert: the item body keeps the readable key so a stored item can be traced back.
         var item = Assert.Single(backing.Items);
-        Assert.Equal("\"a14:name:Concierge|u5:alice|c6:conv-1\"", item["key"].ToString());
+        Assert.Equal("\"a14:name:Concierge|s6:conv-1|n4:user|v5:alice\"", item["key"].ToString());
     }
 
     [Fact]
@@ -56,7 +58,7 @@ public sealed class FoundryAgentSessionStoreTests
         var agent = new TestAgent(name: "Concierge");
 
         // Act
-        var session = await store.GetSessionAsync(agent, "conv-1", userId: null);
+        var session = await store.GetSessionAsync(agent, Key("conv-1"));
 
         // Assert
         Assert.Null(session);
@@ -72,7 +74,7 @@ public sealed class FoundryAgentSessionStoreTests
         var agent = new TestAgent(name: "Concierge");
 
         // Act
-        var session = await store.GetOrCreateSessionAsync(agent, "conv-1", userId: null);
+        var session = await store.GetOrCreateSessionAsync(agent, Key("conv-1"));
 
         // Assert
         Assert.NotNull(session);
@@ -86,10 +88,10 @@ public sealed class FoundryAgentSessionStoreTests
         // Arrange: Alice saves under the conversation id Bob will forge.
         var store = NewStore(new FakeStateStore());
         var agent = new TestAgent("{\"secret\":\"alice-only\"}", name: "Concierge");
-        await store.SaveSessionAsync(agent, "shared-conv", new TestSession(), userId: "alice");
+        await store.SaveSessionAsync(agent, Key("shared-conv", "user", "alice"), new TestSession());
 
         // Act
-        var bobSession = await store.GetSessionAsync(agent, "shared-conv", userId: "bob");
+        var bobSession = await store.GetSessionAsync(agent, Key("shared-conv", "user", "bob"));
 
         // Assert
         Assert.Null(bobSession);
@@ -104,10 +106,11 @@ public sealed class FoundryAgentSessionStoreTests
         var store = NewStore(backing);
         var concierge = new TestAgent("{\"owner\":\"concierge\"}", name: "Concierge");
         var researcher = new TestAgent(name: "Researcher");
-        await store.SaveSessionAsync(concierge, "shared-conv", new TestSession(), userId: "alice");
+        var key = Key("shared-conv", "user", "alice");
+        await store.SaveSessionAsync(concierge, key, new TestSession());
 
         // Act
-        var otherSession = await store.GetSessionAsync(researcher, "shared-conv", userId: "alice");
+        var otherSession = await store.GetSessionAsync(researcher, key);
 
         // Assert
         Assert.Null(otherSession);
@@ -125,10 +128,11 @@ public sealed class FoundryAgentSessionStoreTests
         var support = new TestAgent();
         AIAgent billing = new FoundryHostingAgent(billingLeaf, "key:billing");
         AIAgent hostedSupport = new FoundryHostingAgent(support, "key:support");
-        await store.SaveSessionAsync(billing, "shared-conv", new TestSession(), userId: "alice");
+        var key = Key("shared-conv", "user", "alice");
+        await store.SaveSessionAsync(billing, key, new TestSession());
 
         // Act
-        var supportSession = await store.GetSessionAsync(hostedSupport, "shared-conv", userId: "alice");
+        var supportSession = await store.GetSessionAsync(hostedSupport, key);
 
         // Assert
         Assert.Null(supportSession);
@@ -144,7 +148,7 @@ public sealed class FoundryAgentSessionStoreTests
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await store.SaveSessionAsync(agent, "conv-1", new TestSession(), userId: "alice"));
+            async () => await store.SaveSessionAsync(agent, Key("conv-1", "user", "alice"), new TestSession()));
 
         // Assert
         Assert.Contains(nameof(AIAgent.Name), exception.Message, StringComparison.Ordinal);
@@ -159,7 +163,7 @@ public sealed class FoundryAgentSessionStoreTests
 
         // Act
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await store.GetSessionAsync(agent, "conv-1", userId: "alice"));
+            async () => await store.GetSessionAsync(agent, Key("conv-1", "user", "alice")));
 
         // Assert
         Assert.Contains(nameof(AIAgent.Name), exception.Message, StringComparison.Ordinal);
@@ -179,9 +183,9 @@ public sealed class FoundryAgentSessionStoreTests
         var agent = new TestAgent(name: "Concierge");
 
         // Act
-        await store.SaveSessionAsync(agent, "conv-1", new TestSession(), userId: null);
-        await store.GetSessionAsync(agent, "conv-1", userId: null);
-        await store.GetSessionAsync(agent, "conv-2", userId: null);
+        await store.SaveSessionAsync(agent, Key("conv-1"), new TestSession());
+        await store.GetSessionAsync(agent, Key("conv-1"));
+        await store.GetSessionAsync(agent, Key("conv-2"));
 
         // Assert
         Assert.Equal(1, bindCount);
@@ -204,8 +208,8 @@ public sealed class FoundryAgentSessionStoreTests
 
         // Act
         await Assert.ThrowsAsync<FoundryStorageApiException>(
-            async () => await store.GetSessionAsync(agent, "conv-1", userId: null));
-        var session = await store.GetSessionAsync(agent, "conv-1", userId: null);
+            async () => await store.GetSessionAsync(agent, Key("conv-1")));
+        var session = await store.GetSessionAsync(agent, Key("conv-1"));
 
         // Assert
         Assert.Null(session);
@@ -230,8 +234,8 @@ public sealed class FoundryAgentSessionStoreTests
 
         // Act
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            async () => await store.GetSessionAsync(agent, "conv-1", userId: null));
-        var session = await store.GetSessionAsync(agent, "conv-1", userId: null);
+            async () => await store.GetSessionAsync(agent, Key("conv-1")));
+        var session = await store.GetSessionAsync(agent, Key("conv-1"));
 
         // Assert
         Assert.Null(session);
@@ -256,8 +260,8 @@ public sealed class FoundryAgentSessionStoreTests
 
         // Act
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            async () => await store.GetSessionAsync(agent, "conv-1", userId: null));
-        var session = await store.GetSessionAsync(agent, "conv-1", userId: null);
+            async () => await store.GetSessionAsync(agent, Key("conv-1")));
+        var session = await store.GetSessionAsync(agent, Key("conv-1"));
 
         // Assert
         Assert.Null(session);
@@ -282,9 +286,9 @@ public sealed class FoundryAgentSessionStoreTests
 
         // Act
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            async () => await store.GetSessionAsync(agent, "conv-1", userId: null, cancellation.Token));
+            async () => await store.GetSessionAsync(agent, Key("conv-1"), cancellation.Token));
         binding.SetResult(backing);
-        var session = await store.GetSessionAsync(agent, "conv-1", userId: null);
+        var session = await store.GetSessionAsync(agent, Key("conv-1"));
 
         // Assert
         Assert.Null(session);
@@ -292,15 +296,15 @@ public sealed class FoundryAgentSessionStoreTests
     }
 
     [Theory]
-    [InlineData("name:Concierge", "alice", "conv-1", "a14:name:Concierge|u5:alice|c6:conv-1")]
-    [InlineData("name:Concierge", null, "conv-1", "a14:name:Concierge|u-1:|c6:conv-1")]
-    [InlineData("default", "alice", "conv-1", "a7:default|u5:alice|c6:conv-1")]
-    [InlineData("default", null, "conv-1", "a7:default|u-1:|c6:conv-1")]
-    [InlineData("name:x", "x", "conv-1", "a6:name:x|u1:x|c6:conv-1")]
-    public void BuildLogicalKey_UsesLengthPrefixedComponents(string agentIdentity, string? userId, string conversationId, string expected)
+    [InlineData("name:Concierge", "conv-1", "a14:name:Concierge|s6:conv-1")]
+    [InlineData("default", "conv-1", "a7:default|s6:conv-1")]
+    public void BuildLogicalKey_UsesLengthPrefixedComponents(
+        string agentIdentity,
+        string sessionId,
+        string expected)
     {
         // Act
-        var key = FoundryAgentSessionStore.BuildLogicalKey(agentIdentity, conversationId, userId);
+        string key = FoundryAgentSessionKeyEncoder.BuildLogicalKey(agentIdentity, Key(sessionId));
 
         // Assert
         Assert.Equal(expected, key);
@@ -309,29 +313,31 @@ public sealed class FoundryAgentSessionStoreTests
     [Fact]
     public void BuildLogicalKey_DelimitersInsideComponents_DoNotCollide()
     {
-        // Act: these tuples produced the same delimiter-joined string before components carried
-        // their lengths.
-        string first = FoundryAgentSessionStore.BuildLogicalKey("name:Concierge", "x:c-y", "alice");
-        string second = FoundryAgentSessionStore.BuildLogicalKey("name:Concierge", "y", "alice:c-x");
+        // Act
+        string first = FoundryAgentSessionKeyEncoder.BuildLogicalKey(
+            "name:Concierge",
+            Key("x:c-y", "user", "alice"));
+        string second = FoundryAgentSessionKeyEncoder.BuildLogicalKey(
+            "name:Concierge",
+            Key("y", "user", "alice:c-x"));
 
         // Assert
         Assert.NotEqual(first, second);
         Assert.NotEqual(
-            FoundryAgentSessionStore.BuildItemKey(first),
-            FoundryAgentSessionStore.BuildItemKey(second));
+            FoundryAgentSessionKeyEncoder.BuildStorageKey(first),
+            FoundryAgentSessionKeyEncoder.BuildStorageKey(second));
     }
 
     [Fact]
     public void BuildItemKey_StaysWithinThePlatformKeyLimitForAnyInput()
     {
-        // Arrange: an agent name plus a user id plus a conversation id can easily pass 128 chars.
-        var logicalKey = FoundryAgentSessionStore.BuildLogicalKey(
+        // Arrange
+        var logicalKey = FoundryAgentSessionKeyEncoder.BuildLogicalKey(
             $"name:{new string('a', 200)}",
-            new string('c', 200),
-            new string('u', 200));
+            Key(new string('s', 200), "user", new string('u', 200)));
 
         // Act
-        var itemKey = FoundryAgentSessionStore.BuildItemKey(logicalKey);
+        var itemKey = FoundryAgentSessionKeyEncoder.BuildStorageKey(logicalKey);
 
         // Assert
         Assert.InRange(itemKey.Length, 1, 128);
@@ -341,9 +347,9 @@ public sealed class FoundryAgentSessionStoreTests
     public void BuildItemKey_IsStableAndDistinctPerLogicalKey()
     {
         // Arrange / Act
-        var first = FoundryAgentSessionStore.BuildItemKey("a14:name:Concierge|u5:alice|c6:conv-1");
-        var same = FoundryAgentSessionStore.BuildItemKey("a14:name:Concierge|u5:alice|c6:conv-1");
-        var other = FoundryAgentSessionStore.BuildItemKey("a14:name:Concierge|u3:bob|c6:conv-1");
+        var first = FoundryAgentSessionKeyEncoder.BuildStorageKey("a14:name:Concierge|s6:conv-1|n4:user|v5:alice");
+        var same = FoundryAgentSessionKeyEncoder.BuildStorageKey("a14:name:Concierge|s6:conv-1|n4:user|v5:alice");
+        var other = FoundryAgentSessionKeyEncoder.BuildStorageKey("a14:name:Concierge|s6:conv-1|n4:user|v3:bob");
 
         // Assert
         Assert.Equal(first, same);
@@ -370,6 +376,14 @@ public sealed class FoundryAgentSessionStoreTests
 
     private static FoundryAgentSessionStore NewStore(FakeStateStore backing)
         => new(_ => Task.FromResult<FoundryStateStore>(backing));
+
+    private static AgentSessionStoreKey Key(
+        string sessionId,
+        string? partitionName = null,
+        string? partitionValue = null)
+        => partitionName is null
+            ? new AgentSessionStoreKey(sessionId)
+            : new AgentSessionStoreKey(sessionId).WithPartition(partitionName, partitionValue!);
 
     /// <summary>
     /// An in-memory stand-in for the platform state store. <see cref="FoundryStateStore"/> exposes a

@@ -87,23 +87,34 @@ does (by default no request setting is mapped onto the run; unsupported settings
 converters (an internal `ToResponse` overload with an optional originating request is added so the
 facade can render without one). The streaming renderer's existing workflow-event support is preserved.
 
-### `Microsoft.Agents.AI.Hosting` (execution state, protocol-neutral)
+### `Microsoft.Agents.AI.Abstractions` (agent session persistence)
 
 ```csharp
-namespace Microsoft.Agents.AI.Hosting;
+namespace Microsoft.Agents.AI;
 
 public abstract class AgentSessionStore
 {
-    // ... existing members ...
+    public abstract ValueTask<AgentSession?> GetSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default);
 
-    // New: the one missing store operation. Virtual (not abstract) with a default that throws
-    // NotSupportedException, so existing external stores (e.g. the Foundry hosting stores) keep
-    // compiling; the in-box Hosting stores override it. In-box overrides treat deleting a missing
-    // session as a no-op.
-    public virtual ValueTask DeleteSessionAsync(
-        AIAgent agent, string conversationId, CancellationToken cancellationToken = default);
+    public virtual ValueTask<AgentSession> GetOrCreateSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default);
+
+    public abstract ValueTask SaveSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        AgentSession session,
+        CancellationToken cancellationToken = default);
 }
+```
 
+### `Microsoft.Agents.AI.Hosting` (workflow execution state)
+
+```csharp
 // Thin holder: pairs a workflow target with checkpointing + a per-session head cursor.
 public sealed class HostedWorkflowState
 {
@@ -121,15 +132,19 @@ public sealed class HostedWorkflowState
 }
 ```
 
-For agents, the application uses `AgentSessionStore` directly: `GetSessionAsync(agent, id)` creates a
-session on miss and returns an independent instance per call (so concurrent calls can fork the same
-stored state — for example branching from a `previous_response_id` or managing several `conversation`
-ids side by side — without one branch observing another's in-flight mutations). The store performs no
-cross-call locking; an application that needs concurrent runs against the same id to be serialized owns
-that coordination. `SaveSessionAsync(agent, id, session)` persists post-run, including under a newly
-minted `resp_*` id when the protocol mints a new continuation id. `DeleteSessionAsync` uses the new
-store method. No agent-side holder is needed: create-on-miss already lives in the store, so a
-pass-through wrapper would only bind the `agent` argument.
+For agents, the application uses `AgentSessionStore` directly. `GetSessionAsync(agent, key)`
+returns `null` on a miss, while `GetOrCreateSessionAsync(agent, key)` returns a ready session.
+Each successful lookup returns an independent instance, so concurrent calls can fork the same stored
+state without observing another branch's changes. The store performs no cross-call locking. An
+application that needs concurrent runs against the same id to be serialized owns that coordination.
+`SaveSessionAsync(agent, key, session)` persists the post-run state, including under a newly
+minted `resp_*` id when the protocol creates a continuation id. No agent-side holder is needed because
+the convenience method already performs lookup or creation.
+
+`AgentSessionStoreKey` contains a session id plus arbitrary named partitions. Every partition contributes
+to identity, independent of dictionary order. Stores must not ignore unknown partitions. Physical key
+encoding belongs to each store implementation. Provider-specific
+metadata such as Foundry tags is not part of the key or the Abstractions contract.
 
 `HostedWorkflowState` defaults to `CheckpointManager.CreateInMemory()` and an in-memory
 `sessionId -> CheckpointInfo` cursor. Because the checkpoint store is already `sessionId`-keyed but
@@ -171,8 +186,8 @@ parsing a structured payload into a typed record), without coupling the holder t
 - Authenticate the caller before using any `GetSessionId(...)` result.
 - Authorize and bind the candidate id to the authenticated principal/tenant before using it as an
   `AgentSessionStore` key or a workflow checkpoint session id.
-- For multi-user hosts, wrap the store with `IsolationKeyScopedAgentSessionStore` (for example via
-  `UseClaimsBasedAgentIsolation(...)`), so the session namespace is scoped per principal.
+- Multi-user hosts must add a trusted identity partition, or wrap the store with
+  `IsolationKeyScopedAgentSessionStore` so `AgentIsolationKeyProvider` supplies one.
 - Persist session/checkpoint state only after the run or stream has completed.
 
 ## E2E Code Samples
@@ -193,7 +208,8 @@ app.MapPost("/responses", async (HttpContext http, CancellationToken ct) =>
     string sessionId = Authorize(http.User, candidate) ?? OpenAIResponses.CreateResponseId();
 
     var run = OpenAIResponses.ToAgentRunRequest(body);
-    var session = await sessionStore.GetSessionAsync(agent, sessionId, ct);
+    var key = new AgentSessionStoreKey(sessionId);
+    var session = await sessionStore.GetOrCreateSessionAsync(agent, key, ct);
 
     string responseId = OpenAIResponses.CreateResponseId();
 
@@ -206,12 +222,20 @@ app.MapPost("/responses", async (HttpContext http, CancellationToken ct) =>
             await http.Response.WriteAsync(frame, ct);
             await http.Response.Body.FlushAsync(ct);
         }
-        await sessionStore.SaveSessionAsync(agent, responseId, session, ct);
+        await sessionStore.SaveSessionAsync(
+            agent,
+            new AgentSessionStoreKey(responseId),
+            session,
+            ct);
         return Results.Empty;
     }
 
     var result = await agent.RunAsync(run.Messages, session, run.Options, ct);
-    await sessionStore.SaveSessionAsync(agent, responseId, session, ct);
+    await sessionStore.SaveSessionAsync(
+        agent,
+        new AgentSessionStoreKey(responseId),
+        session,
+        ct);
     return Results.Json(OpenAIResponses.WriteResponse(result, responseId, sessionId));
 });
 ```

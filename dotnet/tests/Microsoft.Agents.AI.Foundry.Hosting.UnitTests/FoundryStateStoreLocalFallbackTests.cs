@@ -38,8 +38,9 @@ public sealed class FoundryStateStoreLocalFallbackTests
             var checkpointStore = new FoundryJsonCheckpointStore();
 
             // Act
-            await sessionStore.SaveSessionAsync(agent, "conversation-1", new TestSession(), userId: "user-1");
-            AgentSession? session = await sessionStore.GetSessionAsync(agent, "conversation-1", userId: "user-1");
+            var key = new AgentSessionStoreKey("conversation-1").WithPartition("user", "user-1");
+            await sessionStore.SaveSessionAsync(agent, key, new TestSession());
+            AgentSession? session = await sessionStore.GetSessionAsync(agent, key);
 
             using JsonDocument document = JsonDocument.Parse("""{"step":1}""");
             CheckpointInfo checkpointInfo = await checkpointStore.CreateCheckpointAsync(

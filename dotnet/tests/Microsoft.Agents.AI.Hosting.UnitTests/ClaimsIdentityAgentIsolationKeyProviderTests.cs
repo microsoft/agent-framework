@@ -233,10 +233,10 @@ public class ClaimsIdentityAgentIsolationKeyProviderTests
     }
 
     /// <summary>
-    /// Verify that GetIsolationKeyAsync handles empty claim values.
+    /// Verify that GetIsolationKeyAsync rejects empty claim values.
     /// </summary>
     [Fact]
-    public async Task GetIsolationKeyAsyncHandlesEmptyClaimValueAsync()
+    public async Task GetIsolationKeyAsyncReturnsNullForEmptyClaimValueAsync()
     {
         // Arrange
         this.SetupHttpContextWithClaim(ClaimTypes.NameIdentifier, string.Empty);
@@ -246,7 +246,7 @@ public class ClaimsIdentityAgentIsolationKeyProviderTests
         string? result = await provider.GetIsolationKeyAsync();
 
         // Assert
-        Assert.Equal(string.Empty, result);
+        Assert.Null(result);
     }
 
     /// <summary>
