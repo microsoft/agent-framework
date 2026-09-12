@@ -10,8 +10,14 @@ schema that the AI model sees, or when the function signature does not accuratel
 represent the desired schema.
 
 Two approaches are shown:
-1. Using a Pydantic BaseModel subclass as the schema
-2. Using a raw JSON schema dictionary as the schema
+1. Using a Pydantic BaseModel subclass for recursive runtime validation
+2. Using a raw JSON schema dictionary for a trusted, non-sensitive tool
+
+Raw schema dictionaries are passed through to the model and receive only
+lightweight top-level checks at runtime. They do not comprehensively enforce
+nested JSON Schema keywords and must not be used as an authorization or
+security boundary. Prefer Pydantic for sensitive tools or whenever runtime
+validation matters.
 """
 
 import asyncio
@@ -45,7 +51,8 @@ def get_weather(location: str, unit: str = "celsius") -> str:
     return f"The weather in {location} is 22 degrees {unit}."
 
 
-# Approach 2: JSON schema dictionary as explicit schema
+# Approach 2: JSON schema dictionary for a trusted, non-sensitive tool.
+# This receives lightweight top-level checks only; use Pydantic for runtime enforcement.
 get_current_time_schema = {
     "type": "object",
     "properties": {

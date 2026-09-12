@@ -8,6 +8,7 @@ import copy
 import inspect
 import json
 import logging
+import struct
 import sys
 import typing
 import warnings
@@ -121,10 +122,63 @@ _FUNCTION_INVOCATION_BUDGET_STATE_KEY: Final[str] = "_function_invocation_budget
 _FUNCTION_RESULT_CARRIER_CONTEXT_KEY: Final[str] = "_function_result_carrier"
 _FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY: Final[str] = "_function_result_payload_budget"
 _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY: Final[str] = "_function_result_payload_budget"
+_APPROVED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_approved_function_arguments"
+_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY: Final[str] = "_security_function_arguments"
+_PREPARED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_prepared_function_arguments"
+_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: Final[str] = "_auto_prepare_function_arguments"
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
 )
 _USER_VISIBLE_CONTENT_TYPES: Final[set[str]] = {"data", "uri", "error", "hosted_file", "hosted_vector_store"}
+
+
+class _FunctionArgumentValidationError(TypeError):
+    """An argument-validation failure raised before the function body starts."""
+
+    def __init__(self, message: str, *, redacted_message: str | None = None) -> None:
+        super().__init__(message)
+        self.redacted_message = redacted_message or message
+
+
+class _FunctionArgumentsChangedAfterApproval(Exception):
+    """Signal that middleware changed an approval-bound invocation."""
+
+    def __init__(self, arguments: Mapping[str, Any]) -> None:
+        super().__init__("Function arguments changed after approval.")
+        self.arguments = dict(arguments)
+
+
+def _argument_comparison_token(value: Any) -> Any:
+    """Build an immutable, type-aware token without copying argument objects."""
+    if isinstance(value, BaseModel):
+        return _argument_comparison_token(value.model_dump(exclude_unset=True))
+    if isinstance(value, dict):
+        return (
+            "dict",
+            frozenset(
+                (_argument_comparison_token(key), _argument_comparison_token(item))
+                for key, item in cast(dict[Any, Any], value).items()
+            ),
+        )
+    if isinstance(value, list):
+        return ("list", tuple(_argument_comparison_token(item) for item in cast(list[Any], value)))
+    if isinstance(value, tuple):
+        return ("tuple", tuple(_argument_comparison_token(item) for item in cast(tuple[Any, ...], value)))
+    if isinstance(value, float):
+        return ("float", struct.pack("!d", value))
+    if value is None or isinstance(value, bool | int | str | bytes):
+        return (type(value), value)
+    return ("object", type(value), id(value))
+
+
+@dataclass(frozen=True)
+class _PreparedArgumentsState:
+    """Exact prepared arguments and their immutable comparison token."""
+
+    arguments: dict[str, Any]
+    token: Any
+
+
 ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -323,7 +377,10 @@ class FunctionTool(SerializationMixin):
     """A tool that wraps a Python function to make it callable by AI models.
 
     This class wraps a Python function to make it callable by AI models with automatic
-    parameter validation and JSON schema generation.
+    parameter validation and JSON schema generation. Inferred and Pydantic input models
+    provide recursive runtime validation. Caller-supplied JSON schema mappings are passed
+    through to providers and receive only the lightweight checks documented on
+    :paramref:`input_model`; they are not an authorization or security boundary.
 
     Attributes:
         name: The name of the tool.
@@ -434,6 +491,15 @@ class FunctionTool(SerializationMixin):
                 parameters, explicitly provide ``input_model`` (either a Pydantic
                 ``BaseModel`` or a JSON schema dictionary) so the model can reason about
                 the expected arguments.
+
+                A dictionary is preserved as supplied and checked only for top-level
+                ``required`` fields, ``additionalProperties: false``, and property
+                ``enum`` and primitive ``type`` values. Nested constraints,
+                compositions such as ``oneOf``, references such as ``$ref``, and other
+                JSON Schema keywords are not comprehensively enforced at runtime. Use a
+                Pydantic model when runtime validation matters. Treat dictionary schemas
+                as declarations for trusted settings and non-sensitive functions only;
+                never rely on them as an authorization or security boundary.
             result_parser: An optional callable with signature ``Callable[[Any], str]`` that
                 overrides the default result parsing behavior. When provided, this callable
                 is used to convert the raw function return value to a string instead of the
@@ -637,6 +703,136 @@ class FunctionTool(SerializationMixin):
             res = await asyncio.to_thread(self.__call__, **call_kwargs)
         return await res if inspect.isawaitable(res) else res
 
+    def _prepare_arguments(self, arguments: BaseModel | Mapping[str, Any] | None) -> dict[str, Any]:
+        """Validate and normalize arguments immediately before function execution."""
+        if arguments is None:
+            return {}
+
+        try:
+            if isinstance(arguments, Mapping):
+                parsed_arguments = dict(arguments)
+                if self.input_model is not None and not self._schema_supplied:
+                    # exclude_unset (not exclude_none): keep arguments the model
+                    # explicitly provided even when their value is null, and drop
+                    # only the ones it left out, so the function's own defaults
+                    # apply. Excluding null instead would strip a required nullable
+                    # parameter the model deliberately set to null, failing the
+                    # invocation on the missing argument (#5934).
+                    parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(exclude_unset=True)
+            elif isinstance(arguments, BaseModel):
+                if (
+                    self.input_model is not None
+                    and not self._schema_supplied
+                    and not isinstance(arguments, self.input_model)
+                ):
+                    raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
+                parsed_arguments = arguments.model_dump(exclude_unset=True)
+            else:
+                raise TypeError(
+                    f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"
+                )
+        except ValidationError as exc:
+            raise _FunctionArgumentValidationError(
+                f"Invalid arguments for '{self.name}': {exc}",
+                redacted_message=f"Invalid arguments for '{self.name}'.",
+            ) from exc
+        except TypeError as exc:
+            raise _FunctionArgumentValidationError(
+                str(exc),
+                redacted_message=f"Invalid arguments for '{self.name}'.",
+            ) from exc
+
+        try:
+            return _validate_arguments_against_schema(
+                arguments=parsed_arguments,
+                schema=self.parameters(),
+                tool_name=self.name,
+            )
+        except TypeError as exc:
+            raise _FunctionArgumentValidationError(str(exc)) from exc
+
+    @staticmethod
+    def _arguments_as_mapping(arguments: Any) -> dict[str, Any] | None:
+        """Return arguments as a mapping without applying schema validation."""
+        candidate = arguments
+        if candidate is None:
+            return {}
+        if isinstance(candidate, BaseModel):
+            return candidate.model_dump(exclude_unset=True)
+        if isinstance(candidate, Mapping):
+            return dict(cast(Mapping[str, Any], candidate))
+        return None
+
+    @classmethod
+    def _approval_visible_arguments(
+        cls,
+        arguments: BaseModel | Mapping[str, Any] | None,
+        context: FunctionInvocationContext | None,
+    ) -> dict[str, Any] | None:
+        """Return the non-expanded arguments that an approval request may disclose."""
+        if context is not None and "original_arguments_for_messages" in context.metadata:
+            return cls._arguments_as_mapping(context.metadata["original_arguments_for_messages"])
+        return cls._arguments_as_mapping(arguments)
+
+    def _prepare_context_arguments(
+        self,
+        context: FunctionInvocationContext,
+        arguments: BaseModel | Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Prepare current context arguments once, reusing an unchanged prepared snapshot."""
+        current_arguments = self._arguments_as_mapping(arguments)
+        prepared_state = context.metadata.get(_PREPARED_ARGUMENTS_CONTEXT_KEY)
+        if (
+            current_arguments is not None
+            and isinstance(prepared_state, _PreparedArgumentsState)
+            and _argument_comparison_token(current_arguments) == prepared_state.token
+        ):
+            context.arguments = prepared_state.arguments
+            return prepared_state.arguments
+
+        validated_arguments = self._prepare_arguments(arguments)
+        context.arguments = validated_arguments
+        context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = _PreparedArgumentsState(
+            arguments=validated_arguments,
+            token=_argument_comparison_token(validated_arguments),
+        )
+        return validated_arguments
+
+    @staticmethod
+    def _ensure_security_arguments_unchanged(
+        context: FunctionInvocationContext | None,
+        current_arguments: Mapping[str, Any] | None,
+    ) -> None:
+        """Fail closed when arguments change after security middleware processed them."""
+        if context is None:
+            return
+        security_token = context.metadata.get(_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY)
+        if security_token is not None and (
+            current_arguments is None or _argument_comparison_token(dict(current_arguments)) != security_token
+        ):
+            from ._middleware import MiddlewareFailure
+
+            raise MiddlewareFailure(
+                "Function arguments changed after security middleware processed them. "
+                "Install argument-repair middleware before security middleware."
+            )
+
+    @staticmethod
+    def _ensure_approved_arguments_unchanged(
+        context: FunctionInvocationContext | None,
+        approval_visible_arguments: Mapping[str, Any] | None,
+    ) -> None:
+        """Require a replacement approval when middleware changes approved arguments."""
+        if context is None:
+            return
+        if approval_visible_arguments is None:
+            return
+        approved_token = context.metadata.get(_APPROVED_ARGUMENTS_CONTEXT_KEY)
+        if approved_token is None:
+            return
+        if _argument_comparison_token(dict(approval_visible_arguments)) != approved_token:
+            raise _FunctionArgumentsChangedAfterApproval(approval_visible_arguments)
+
     @overload
     async def invoke(
         self,
@@ -728,42 +924,14 @@ class FunctionTool(SerializationMixin):
         if arguments is None and context is not None:
             arguments = context.arguments
 
-        if arguments is None:
-            validated_arguments: dict[str, Any] = {}
-        else:
-            try:
-                if isinstance(arguments, Mapping):
-                    parsed_arguments = dict(arguments)
-                    if self.input_model is not None and not self._schema_supplied:
-                        # exclude_unset (not exclude_none): keep arguments the model
-                        # explicitly provided even when their value is null, and drop
-                        # only the ones it left out, so the function's own defaults
-                        # apply. Excluding null instead would strip a required nullable
-                        # parameter the model deliberately set to null, failing the
-                        # invocation on the missing argument (#5934).
-                        parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(
-                            exclude_unset=True
-                        )
-                elif isinstance(arguments, BaseModel):
-                    if (
-                        self.input_model is not None
-                        and not self._schema_supplied
-                        and not isinstance(arguments, self.input_model)
-                    ):
-                        raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
-                    parsed_arguments = arguments.model_dump(exclude_unset=True)
-                else:
-                    raise TypeError(
-                        f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"
-                    )
-            except ValidationError as exc:
-                raise TypeError(f"Invalid arguments for '{self.name}': {exc}") from exc
-
-            validated_arguments = _validate_arguments_against_schema(
-                arguments=parsed_arguments,
-                schema=self.parameters(),
-                tool_name=self.name,
-            )
+        current_arguments = self._arguments_as_mapping(arguments)
+        approval_visible_arguments = self._approval_visible_arguments(arguments, context)
+        self._ensure_security_arguments_unchanged(context, current_arguments)
+        validated_arguments = (
+            self._prepare_context_arguments(context, arguments)
+            if context is not None
+            else self._prepare_arguments(arguments)
+        )
 
         effective_context = context
         if effective_context is None and self._context_parameter_name is not None:
@@ -776,6 +944,8 @@ class FunctionTool(SerializationMixin):
             effective_context.function = self
             effective_context.arguments = validated_arguments
             effective_context.kwargs = dict(runtime_kwargs)
+
+        self._ensure_approved_arguments_unchanged(effective_context, approval_visible_arguments)
 
         call_kwargs = dict(validated_arguments)
         observable_kwargs = dict(validated_arguments)
@@ -1183,7 +1353,7 @@ def _validate_arguments_against_schema(
     schema: Mapping[str, Any],
     tool_name: str,
 ) -> dict[str, Any]:
-    """Run lightweight argument checks for schema-supplied tools."""
+    """Run lightweight, top-level argument checks for schema-supplied tools."""
     parsed_arguments = dict(arguments)
 
     required_fields = [field for field in schema.get("required", []) if isinstance(field, str)]
@@ -1203,9 +1373,7 @@ def _validate_arguments_against_schema(
 
         enum_values = properties.get(field_name, {}).get("enum")
         if isinstance(enum_values, list) and enum_values and field_value not in enum_values:
-            raise TypeError(
-                f"Invalid value for '{field_name}' in '{tool_name}': {field_value!r} is not in {enum_values!r}"
-            )
+            raise TypeError(f"Invalid value for '{field_name}' in '{tool_name}': value is not in {enum_values!r}")
 
         schema_type = properties.get(field_name, {}).get("type")
         if isinstance(schema_type, str):
@@ -1299,9 +1467,14 @@ def tool(
             docstring will be used.
         schema: An explicit input schema for the function. This can be a Pydantic
             ``BaseModel`` subclass or a JSON schema dictionary (``Mapping[str, Any]``).
-            When a dictionary is provided, it must be a flat object schema with a
-            ``properties`` key (complex JSON Schema features such as ``oneOf``,
-            ``$ref``, or nested compositions are not supported).
+            Dictionary schemas are passed through to providers and receive only
+            lightweight top-level checks for ``required``, ``additionalProperties:
+            false``, property ``enum``, and primitive property ``type``. Nested
+            constraints, compositions such as ``oneOf``, references such as ``$ref``,
+            and other JSON Schema keywords are not comprehensively enforced at runtime.
+            Use a Pydantic model when runtime validation matters. Dictionary schemas are
+            intended for trusted settings and non-sensitive functions and must not be
+            treated as an authorization or security boundary.
             When provided, the schema is used instead of inferring one from the
             function's signature. Defaults to ``None`` (infer from signature).
         approval_mode: Whether or not approval is required to run this tool.
@@ -1548,6 +1721,62 @@ def _function_execution_error_result(
     )
 
 
+def _function_argument_validation_error_result(
+    function_call: Content,
+    exception: _FunctionArgumentValidationError,
+    config: FunctionInvocationConfiguration,
+    context: FunctionInvocationContext | None = None,
+) -> Content:
+    """Build the stable tool result for argument-validation failures."""
+    from ._types import Content
+
+    exception_message = (
+        exception.redacted_message
+        if context is not None and _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY in context.metadata
+        else str(exception)
+    )
+    message = "Error: Argument parsing failed."
+    if config.get("include_detailed_errors", False):
+        message = f"{message} Exception: {exception_message}"
+    return Content.from_function_result(
+        call_id=function_call.call_id,  # type: ignore[arg-type]
+        result=message,
+        exception=exception_message,
+        additional_properties=function_call.additional_properties,
+    )
+
+
+def _replacement_approval_request(
+    function_call: Content,
+    arguments: Mapping[str, Any],
+) -> Content:
+    """Create a new approval generation for middleware-repaired arguments."""
+    from ._types import Content
+
+    call_id = function_call.call_id
+    if call_id is None:
+        raise KeyError(f'Function "{function_call.name}" is missing call_id.')
+    occurrence_id = function_call.id or call_id
+    request_id = f"{occurrence_id}:replacement:{uuid4().hex}"
+    repaired_call = Content.from_function_call(
+        call_id=call_id,
+        name=function_call.name,  # type: ignore[arg-type]
+        arguments=copy.deepcopy(dict(arguments)),
+        id=occurrence_id,
+        annotations=copy.deepcopy(function_call.annotations),
+        additional_properties=copy.deepcopy(function_call.additional_properties),
+    )
+    return Content.from_function_approval_request(
+        id=request_id,
+        function_call=repaired_call,
+        additional_properties={
+            _APPROVAL_REQUEST_ID_KEY: request_id,
+            "_replacement_approval_request": True,
+            "reason": "Function arguments changed after approval.",
+        },
+    )
+
+
 def _finalize_function_result(
     *,
     call_id: str,
@@ -1678,29 +1907,7 @@ async def _auto_invoke_function(
     }
     if invocation_session is not None:
         runtime_kwargs["session"] = invocation_session
-    try:
-        if not cast(bool, getattr(tool, "_schema_supplied", False)) and tool.input_model is not None:
-            # exclude_unset (not exclude_none) so an argument the model explicitly set
-            # to null still reaches the function; see FunctionTool.invoke for the full
-            # rationale. This is the auto-calling path #5934 actually hits.
-            args = tool.input_model.model_validate(parsed_args).model_dump(exclude_unset=True)
-        else:
-            args = dict(parsed_args)
-        args = _validate_arguments_against_schema(
-            arguments=args,
-            schema=tool.parameters(),
-            tool_name=tool.name,
-        )
-    except (TypeError, ValidationError) as exc:
-        message = "Error: Argument parsing failed."
-        if config.get("include_detailed_errors", False):
-            message = f"{message} Exception: {exc}"
-        return Content.from_function_result(
-            call_id=function_call_content.call_id,  # type: ignore[arg-type]
-            result=message,
-            exception=str(exc),
-            additional_properties=function_call_content.additional_properties,
-        )
+    args = dict(parsed_args)
 
     from ._middleware import FunctionInvocationContext, MiddlewareFailure
 
@@ -1733,9 +1940,20 @@ async def _auto_invoke_function(
             # Explicit control-flow signals escape the loop; only ordinary exceptions
             # are absorbed into tool-error results below.
             raise
+        except _FunctionArgumentValidationError as exc:
+            return _function_argument_validation_error_result(function_call_content, exc, config)
         except Exception as exc:
             return _function_execution_error_result(function_call_content, tool.name, exc, config, direct_context)
     # Execute through middleware pipeline if available
+    arguments_prepared = False
+    try:
+        args = tool._prepare_arguments(args)  # pyright: ignore[reportPrivateUsage]
+        arguments_prepared = True
+    except _FunctionArgumentValidationError:
+        # Invalid provider arguments are intentionally exposed to middleware so
+        # it has a supported opportunity to repair them before final validation.
+        pass
+
     middleware_context = FunctionInvocationContext(
         function=tool,
         arguments=args,
@@ -1745,6 +1963,12 @@ async def _auto_invoke_function(
     )
     if host_payload_budget is not None:
         middleware_context.metadata[_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY] = host_payload_budget
+    middleware_context.metadata[_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY] = True
+    if arguments_prepared:
+        middleware_context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = _PreparedArgumentsState(
+            arguments=args,
+            token=_argument_comparison_token(args),
+        )
 
     call_id = function_call_content.call_id
     if call_id is None:
@@ -1759,12 +1983,31 @@ async def _auto_invoke_function(
     # this replay corresponds to a middleware-specific approval flow.
     if approval_response is not None:
         middleware_context.metadata["approval_response"] = approval_response
+        middleware_context.metadata[_APPROVED_ARGUMENTS_CONTEXT_KEY] = _argument_comparison_token(args)
+
+    final_handler_started = False
 
     async def final_function_handler(context_obj: Any) -> Any:
+        nonlocal final_handler_started
+        final_handler_started = True
         return await tool.invoke(
             arguments=context_obj.arguments,
             context=context_obj,
             tool_call_id=call_id,
+        )
+
+    def ensure_short_circuit_arguments_are_authorized() -> None:
+        current_arguments = tool._arguments_as_mapping(  # pyright: ignore[reportPrivateUsage]
+            middleware_context.arguments
+        )
+        tool._ensure_security_arguments_unchanged(  # pyright: ignore[reportPrivateUsage]
+            middleware_context, current_arguments
+        )
+        tool._ensure_approved_arguments_unchanged(  # pyright: ignore[reportPrivateUsage]
+            middleware_context,
+            tool._approval_visible_arguments(  # pyright: ignore[reportPrivateUsage]
+                middleware_context.arguments, middleware_context
+            ),
         )
 
     from ._middleware import MiddlewareTermination
@@ -1775,6 +2018,8 @@ async def _auto_invoke_function(
             context=middleware_context,
             final_handler=final_function_handler,
         )
+        if not final_handler_started:
+            ensure_short_circuit_arguments_are_authorized()
 
         # Pass through function_approval_request directly (e.g., from security middleware)
         if isinstance(function_result, Content) and function_result.type == "function_approval_request":
@@ -1787,6 +2032,14 @@ async def _auto_invoke_function(
             context=middleware_context,
         )
     except MiddlewareTermination as term_exc:
+        if not final_handler_started:
+            try:
+                ensure_short_circuit_arguments_are_authorized()
+            except _FunctionArgumentsChangedAfterApproval as exc:
+                raise MiddlewareTermination(
+                    "Function arguments changed after approval.",
+                    result=_replacement_approval_request(function_call_content, exc.arguments),
+                ) from exc
         # Re-raise to signal loop termination, but first capture any result set by middleware
         if middleware_context.result is not None:
             # Pass through function_approval_request directly (e.g., from security policy middleware)
@@ -1805,6 +2058,13 @@ async def _auto_invoke_function(
                     context=middleware_context,
                 )
         raise
+    except _FunctionArgumentsChangedAfterApproval as exc:
+        raise MiddlewareTermination(
+            "Function arguments changed after approval.",
+            result=_replacement_approval_request(function_call_content, exc.arguments),
+        ) from exc
+    except _FunctionArgumentValidationError as exc:
+        return _function_argument_validation_error_result(function_call_content, exc, config, middleware_context)
     except (MiddlewareFailure, UserInputRequiredException):
         # MiddlewareFailure is the loop's explicit fail-closed escape: middleware that
         # must abort the run (enforcement layers, guardrails) raises it instead of

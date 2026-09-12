@@ -3,11 +3,14 @@
 import asyncio
 import json
 import logging
+import math
+import threading
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, Literal
 
 import pytest
+from pydantic import BaseModel, field_validator
 
 from agent_framework import (
     Agent,
@@ -32,7 +35,12 @@ from agent_framework._compaction import (
     annotate_message_groups,
     included_token_count,
 )
-from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
+from agent_framework._middleware import (
+    FunctionInvocationContext,
+    FunctionMiddleware,
+    FunctionMiddlewarePipeline,
+    MiddlewareTermination,
+)
 
 _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT = (
     "Function invocation limit reached before a final answer could be produced."
@@ -3120,6 +3128,619 @@ async def test_argument_validation_error_without_detailed_errors(chat_client_bas
     assert error_result.exception is not None
     assert "Argument parsing failed" in error_result.result
     assert "Exception:" not in error_result.result  # No detailed error
+
+
+async def test_function_middleware_repairs_raw_arguments_before_validation(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Function middleware can repair provider arguments before final validation."""
+    observed_arguments: list[dict[str, Any]] = []
+    executed_arguments: list[int] = []
+
+    class RepairArgumentsMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            observed_arguments.append(dict(context.arguments))
+            context.arguments["count"] = int(context.arguments.pop("count_text"))
+            await call_next()
+            assert context.arguments == {"count": 3}
+
+    @tool(name="count_items", approval_mode="never_require")
+    def count_items(count: int) -> str:
+        executed_arguments.append(count)
+        return str(count)
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="repair-1",
+                        name="count_items",
+                        arguments='{"count_text": "3"}',
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["count"])],
+        options={"tools": [count_items]},
+        client_kwargs={"middleware": [RepairArgumentsMiddleware()]},
+    )
+
+    assert observed_arguments == [{"count_text": "3"}]
+    assert executed_arguments == [3]
+
+
+async def test_function_middleware_keeps_normalized_arguments_for_valid_calls(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Valid calls preserve the existing normalized middleware argument contract."""
+    validation_count = 0
+    observed_arguments: list[dict[str, Any]] = []
+
+    class CountArgs(BaseModel):
+        count: int
+
+        @field_validator("count")
+        @classmethod
+        def track_validation(cls, value: int) -> int:
+            nonlocal validation_count
+            validation_count += 1
+            return value
+
+    class ObserveArgumentsMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            observed_arguments.append(dict(context.arguments))
+            await call_next()
+
+    @tool(name="count_items", schema=CountArgs, approval_mode="never_require")
+    def count_items(count: int) -> str:
+        return str(count)
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="valid-1", name="count_items", arguments='{"count": "3"}')
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["count"])],
+        options={"tools": [count_items]},
+        client_kwargs={"middleware": [ObserveArgumentsMiddleware()]},
+    )
+
+    assert observed_arguments == [{"count": 3}]
+    assert validation_count == 1
+
+
+async def test_approved_coercing_arguments_execute_without_replacement() -> None:
+    """Approval binds to the normalized middleware-entry representation."""
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    class CountArgs(BaseModel):
+        count: int
+
+    class PassthroughMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert context.arguments == {"count": 3}
+            await call_next()
+
+    received: list[int] = []
+
+    @tool(name="approved_count", schema=CountArgs, approval_mode="always_require")
+    def approved_count(count: int) -> str:
+        received.append(count)
+        return str(count)
+
+    function_call = Content.from_function_call(
+        call_id="approved-coercion",
+        id="approved-coercion-occurrence",
+        name=approved_count.name,
+        arguments={"count": "3"},
+    )
+    approval_response = Content.from_function_approval_request(
+        id="approved-coercion-occurrence",
+        function_call=function_call,
+    ).to_function_approval_response(approved=True)
+
+    result = await _auto_invoke_function(
+        approval_response,
+        config=normalize_function_invocation_configuration(None),
+        tool_map={approved_count.name: approved_count},
+        middleware_pipeline=FunctionMiddlewarePipeline(PassthroughMiddleware()),
+    )
+
+    assert result.type == "function_result"
+    assert result.result == "3"
+    assert received == [3]
+
+
+async def test_prepared_arguments_support_noncopyable_validator_output() -> None:
+    """Prepared argument reuse does not require validator outputs to be deepcopyable."""
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    validation_count = 0
+    received: list[Any] = []
+
+    class LockArgs(BaseModel):
+        value: Any
+
+        @field_validator("value")
+        @classmethod
+        def create_lock(cls, value: Any) -> Any:
+            nonlocal validation_count
+            validation_count += 1
+            return threading.Lock() if value == "lock" else value
+
+    class PassthroughMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            await call_next()
+
+    @tool(name="lock_tool", schema=LockArgs, approval_mode="never_require")
+    def lock_tool(value: Any) -> str:
+        received.append(value)
+        return "locked" if value.locked() else "unlocked"
+
+    result = await _auto_invoke_function(
+        Content.from_function_call(call_id="noncopyable", name=lock_tool.name, arguments={"value": "lock"}),
+        config=normalize_function_invocation_configuration(None),
+        tool_map={lock_tool.name: lock_tool},
+        middleware_pipeline=FunctionMiddlewarePipeline(PassthroughMiddleware()),
+    )
+
+    assert result.type == "function_result"
+    assert result.result == "unlocked"
+    assert len(received) == 1
+    assert validation_count == 1
+
+
+async def test_nan_prepared_and_approval_snapshots_are_stable() -> None:
+    """An unchanged NaN survives prepared and approval snapshot comparison."""
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    validation_count = 0
+    received: list[float] = []
+
+    class FloatArgs(BaseModel):
+        value: float
+
+        @field_validator("value")
+        @classmethod
+        def track_validation(cls, value: float) -> float:
+            nonlocal validation_count
+            validation_count += 1
+            return value
+
+    class PassthroughMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            assert math.isnan(context.arguments["value"])
+            await call_next()
+
+    @tool(name="nan_tool", schema=FloatArgs, approval_mode="always_require")
+    def nan_tool(value: float) -> str:
+        received.append(value)
+        return "nan"
+
+    function_call = Content.from_function_call(
+        call_id="nan-call",
+        id="nan-occurrence",
+        name=nan_tool.name,
+        arguments={"value": "NaN"},
+    )
+    approval_response = Content.from_function_approval_request(
+        id="nan-occurrence",
+        function_call=function_call,
+    ).to_function_approval_response(approved=True)
+
+    result = await _auto_invoke_function(
+        approval_response,
+        config=normalize_function_invocation_configuration(None),
+        tool_map={nan_tool.name: nan_tool},
+        middleware_pipeline=FunctionMiddlewarePipeline(PassthroughMiddleware()),
+    )
+
+    assert result.type == "function_result"
+    assert result.result == "nan"
+    assert len(received) == 1 and math.isnan(received[0])
+    assert validation_count == 1
+
+
+async def test_function_middleware_can_short_circuit_before_argument_validation(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A middleware result can handle an invalid call without invoking validation or the tool."""
+    executions = 0
+
+    class ShortCircuitMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            del call_next
+            assert context.arguments == {"wrong_name": "not-an-int"}
+            context.result = "handled by middleware"
+
+    @tool(name="strict_tool", approval_mode="never_require")
+    def strict_tool(count: int) -> str:
+        nonlocal executions
+        executions += 1
+        return str(count)
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="short-circuit-1",
+                        name="strict_tool",
+                        arguments='{"wrong_name": "not-an-int"}',
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["count"])],
+        options={"tools": [strict_tool]},
+        client_kwargs={"middleware": [ShortCircuitMiddleware()]},
+    )
+
+    assert executions == 0
+    result = next(
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    )
+    assert result.result == "handled by middleware"
+
+
+async def test_invalid_arguments_produced_by_middleware_keep_argument_error_contract(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Final validation still rejects invalid middleware output before the tool body."""
+    executions = 0
+
+    class InvalidRepairMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            context.arguments = {"count": "not-an-int"}
+            await call_next()
+
+    @tool(name="strict_tool", approval_mode="never_require")
+    def strict_tool(count: int) -> str:
+        nonlocal executions
+        executions += 1
+        return str(count)
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="invalid-repair-1", name="strict_tool", arguments='{"count": 1}')
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["count"])],
+        options={"tools": [strict_tool]},
+        client_kwargs={"middleware": [InvalidRepairMiddleware()]},
+    )
+
+    assert executions == 0
+    result = next(
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    )
+    assert result.result == "Error: Argument parsing failed."
+    assert result.exception is not None
+
+
+async def test_middleware_type_error_remains_function_error(chat_client_base: SupportsChatGetResponse) -> None:
+    """A middleware TypeError is not misclassified as an argument-validation failure."""
+
+    class FailingMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            del context, call_next
+            raise TypeError("middleware failed")
+
+    @tool(name="strict_tool", approval_mode="never_require")
+    def strict_tool(count: int) -> str:
+        return str(count)
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="middleware-error-1", name="strict_tool", arguments='{"count": 1}'
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["count"])],
+        options={"tools": [strict_tool]},
+        client_kwargs={"middleware": [FailingMiddleware()]},
+    )
+
+    result = next(
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    )
+    assert result.result == "Error: Function failed."
+    assert result.exception == "middleware failed"
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_approved_argument_repair_requires_replacement_approval(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """Middleware cannot silently execute repaired arguments under an approval for a different call."""
+    executions: list[int] = []
+
+    class RepairArgumentsMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            if "count_text" in context.arguments:
+                context.arguments = {"count": int(context.arguments["count_text"])}
+            await call_next()
+
+    @tool(name="approved_count", approval_mode="always_require")
+    def approved_count(count: int) -> str:
+        executions.append(count)
+        return str(count)
+
+    function_call = Content.from_function_call(
+        call_id="approved-repair-1",
+        name="approved_count",
+        arguments='{"count_text": "3"}',
+    )
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ]
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[approved_count],
+        middleware=[RepairArgumentsMiddleware()],
+    )
+    session = agent.create_session()
+
+    async def run(value: str | Message):
+        if not streaming:
+            return await agent.run(value, session=session)
+        stream = agent.run(value, session=session, stream=True)
+        async for _ in stream:
+            pass
+        return await stream.get_final_response()
+
+    first_response = await run("count")
+    first_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    replacement_response = await run(
+        Message(role="user", contents=[first_request.to_function_approval_response(approved=True)])
+    )
+    replacement_request = next(
+        content
+        for message in replacement_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+
+    assert executions == []
+    assert replacement_request.id != first_request.id
+    assert replacement_request.additional_properties["_replacement_approval_request"] is True
+    assert replacement_request.function_call is not None
+    assert first_request.function_call is not None
+    assert replacement_request.function_call.id == first_request.function_call.id
+    assert replacement_request.function_call.parse_arguments() == {"count": 3}
+
+    final_response = await run(
+        Message(role="user", contents=[replacement_request.to_function_approval_response(approved=True)])
+    )
+
+    assert executions == [3]
+    assert final_response.text == "done"
+
+
+async def test_approved_argument_repair_short_circuit_requires_replacement_approval(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Short-circuiting middleware cannot return under stale argument approval."""
+    executions = 0
+
+    class RepairAndShortCircuitMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            del call_next
+            assert isinstance(context.arguments, dict)
+            if "count_text" in context.arguments:
+                context.arguments = {"count": int(context.arguments["count_text"])}
+            context.result = "handled by middleware"
+
+    @tool(name="approved_short_circuit", approval_mode="always_require")
+    def approved_short_circuit(count: int) -> str:
+        nonlocal executions
+        executions += 1
+        return str(count)
+
+    function_call = Content.from_function_call(
+        call_id="approved-short-circuit-1",
+        name="approved_short_circuit",
+        arguments='{"count_text": "3"}',
+    )
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[approved_short_circuit],
+        middleware=[RepairAndShortCircuitMiddleware()],
+    )
+    session = agent.create_session()
+
+    first_response = await agent.run("count", session=session)
+    first_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    replacement_response = await agent.run(
+        Message(role="user", contents=[first_request.to_function_approval_response(approved=True)]),
+        session=session,
+    )
+    replacement_request = next(
+        content
+        for message in replacement_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+
+    assert executions == 0
+    assert replacement_request.function_call is not None
+    assert replacement_request.function_call.parse_arguments() == {"count": 3}
+
+    final_response = await agent.run(
+        Message(role="user", contents=[replacement_request.to_function_approval_response(approved=True)]),
+        session=session,
+    )
+
+    assert executions == 0
+    assert final_response.text == "done"
+    result = next(
+        content
+        for message in final_response.messages
+        for content in message.contents
+        if content.type == "function_result"
+    )
+    assert result.result == "handled by middleware"
+
+
+@pytest.mark.parametrize(
+    ("approved_value", "changed_value"),
+    [(True, 1), (-0.0, 0.0)],
+    ids=["boolean-to-integer", "negative-zero-to-positive-zero"],
+)
+async def test_approval_snapshot_distinguishes_exact_values(
+    approved_value: Any,
+    changed_value: Any,
+) -> None:
+    """A type or floating-point bit change requires replacement approval."""
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    class ChangeTypeMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            context.arguments = {"value": changed_value}
+            await call_next()
+
+    @tool(name="typed_value", approval_mode="always_require")
+    def typed_value(value: Any) -> str:
+        return f"{type(value).__name__}:{value}"
+
+    function_call = Content.from_function_call(
+        call_id="typed-approval",
+        id="typed-approval-occurrence",
+        name=typed_value.name,
+        arguments={"value": approved_value},
+    )
+    approval_response = Content.from_function_approval_request(
+        id="typed-approval-occurrence",
+        function_call=function_call,
+    ).to_function_approval_response(approved=True)
+
+    with pytest.raises(MiddlewareTermination) as exc_info:
+        await _auto_invoke_function(
+            approval_response,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={typed_value.name: typed_value},
+            middleware_pipeline=FunctionMiddlewarePipeline(ChangeTypeMiddleware()),
+        )
+
+    replacement = exc_info.value.result
+    assert isinstance(replacement, Content)
+    assert replacement.type == "function_approval_request"
+    assert replacement.function_call is not None
+    replacement_arguments = replacement.function_call.parse_arguments()
+    assert replacement_arguments is not None
+    replacement_value = replacement_arguments["value"]
+    if isinstance(changed_value, float):
+        assert isinstance(replacement_value, float)
+        assert math.copysign(1.0, replacement_value) == math.copysign(1.0, changed_value)
+    else:
+        assert replacement_value == changed_value
 
 
 async def test_hosted_tool_approval_response(chat_client_base: SupportsChatGetResponse):
