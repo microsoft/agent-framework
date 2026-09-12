@@ -156,6 +156,7 @@ from ._middleware import (
 from ._sessions import (
     MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY,
     AgentSession,
+    AgentSessionDict,
     ContextProvider,
     FileHistoryProvider,
     FileSessionStore,
@@ -273,7 +274,13 @@ from ._vectors import (
     vectorstoremodel,
 )
 from ._workflows._agent import WorkflowAgent
-from ._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
+from ._workflows._agent_executor import (
+    AgentExecutor,
+    AgentExecutorCheckpointState,
+    AgentExecutorRequest,
+    AgentExecutorResponse,
+    AgentSessionCheckpointState,
+)
 from ._workflows._agent_utils import resolve_agent_id
 from ._workflows._checkpoint import (
     CheckpointID,
@@ -378,6 +385,7 @@ __all__ = [
     "AgentContext",
     "AgentEvalConverter",
     "AgentExecutor",
+    "AgentExecutorCheckpointState",
     "AgentExecutorRequest",
     "AgentExecutorResponse",
     "AgentFileStore",
@@ -391,6 +399,8 @@ __all__ = [
     "AgentResponseUpdate",
     "AgentRunInputs",
     "AgentSession",
+    "AgentSessionCheckpointState",
+    "AgentSessionDict",
     "AggregatingSkillsSource",
     "Annotation",
     "BackgroundAgentsProvider",
