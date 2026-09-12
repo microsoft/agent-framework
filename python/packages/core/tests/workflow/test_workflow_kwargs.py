@@ -840,8 +840,8 @@ async def test_continuation_tools_preserve_existing_invocation_kwargs() -> None:
 
     assert captured_run_kwargs == [
         {
-            "function_invocation_kwargs": {"__global__": function_kwargs},
-            "client_kwargs": {"__global__": client_kwargs},
+            "function_invocation_kwargs": {"__global__": function_kwargs, "__per_executor__": {}},
+            "client_kwargs": {"__global__": client_kwargs, "__per_executor__": {}},
         }
     ]
 
@@ -971,8 +971,8 @@ async def test_subworkflow_resume_tools_preserve_child_invocation_kwargs() -> No
 
     assert captured_child_kwargs == [
         {
-            "function_invocation_kwargs": {"__global__": function_kwargs},
-            "client_kwargs": {"__global__": client_kwargs},
+            "function_invocation_kwargs": {"__global__": function_kwargs, "__per_executor__": {}},
+            "client_kwargs": {"__global__": client_kwargs, "__per_executor__": {}},
         }
     ]
 
@@ -1397,6 +1397,57 @@ async def test_empty_client_kwargs_clears_previous() -> None:
 
     assert len(agent.captured_kwargs) >= 2
     assert agent.captured_kwargs[-1].get("client_kwargs") == {}
+
+
+# endregion
+
+
+# region __global__ collision (#8310)
+
+
+async def test_global_named_executor_keeps_its_kwargs_separate_from_global() -> None:
+    """An executor literally named "__global__" must not collide with the
+    global kwargs slot: the typed wrapper keeps both, and the per-executor
+    entry targets it while the global mapping still reaches the others."""
+    global_named = _KwargsCapturingAgent(name="__global__")
+    other = _KwargsCapturingAgent(name="other")
+    workflow = SequentialBuilder(participants=[global_named, other]).build()
+
+    fi_kwargs = WorkflowInvocationKwargs(
+        global_kwargs={"shared": "G", "overridden": "global"},
+        executor_kwargs={"__global__": {"special": "A", "overridden": "specific"}},
+    )
+
+    async for event in workflow.run("test", function_invocation_kwargs=fi_kwargs, stream=True):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    g = global_named.captured_kwargs[0].get("function_invocation_kwargs")
+    o = other.captured_kwargs[0].get("function_invocation_kwargs")
+    # the "__global__" executor: global + its own entry, its entry winning
+    assert g == {"shared": "G", "special": "A", "overridden": "specific"}
+    # the other executor: global only, nothing leaked from "__global__"
+    assert o == {"shared": "G", "overridden": "global"}
+
+
+async def test_per_executor_mapping_keyed_global_targets_only_that_executor() -> None:
+    """A plain per-executor mapping keyed by "__global__" targets the real
+    executor with that ID and must not leak into unrelated executors."""
+    global_named = _KwargsCapturingAgent(name="__global__")
+    other = _KwargsCapturingAgent(name="other")
+    workflow = SequentialBuilder(participants=[global_named, other]).build()
+
+    async for event in workflow.run(
+        "test",
+        function_invocation_kwargs={"__global__": {"special": "A"}},
+        stream=True,
+    ):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    assert global_named.captured_kwargs[0].get("function_invocation_kwargs") == {"special": "A"}
+    # per-executor convention: an untargeted executor gets None
+    assert other.captured_kwargs[0].get("function_invocation_kwargs") is None
 
 
 # endregion

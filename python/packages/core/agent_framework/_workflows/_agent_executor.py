@@ -15,7 +15,7 @@ from .._agents import SupportsAgentRun
 from .._sessions import AgentSession
 from .._types import AgentResponse, AgentResponseUpdate, Message, ResponseStream
 from ._agent_utils import resolve_agent_id
-from ._const import GLOBAL_KWARGS_KEY, INTERNAL_SOURCE_ID, WORKFLOW_RUN_KWARGS_KEY
+from ._const import EXECUTOR_KWARGS_KEY, GLOBAL_KWARGS_KEY, INTERNAL_SOURCE_ID, WORKFLOW_RUN_KWARGS_KEY
 from ._executor import Executor, handler
 from ._message_utils import normalize_messages_input
 from ._request_info_mixin import response_handler
@@ -614,8 +614,22 @@ class AgentExecutor(Executor):
         """
         if not isinstance(resolved, dict):
             return None
+        # the global slot stays absent for a pure per-executor mapping, so an
+        # untargeted executor still gets None; an explicitly empty global dict
+        # (``function_invocation_kwargs={}``) is preserved and merges to {}
         global_kwargs: Any = resolved.get(GLOBAL_KWARGS_KEY)
-        executor_kwargs: Any = resolved.get(self.id)
+        if EXECUTOR_KWARGS_KEY in resolved:
+            # post-#8310 shape: per-executor entries nest under the framework
+            # slot, so an executor named "__global__" cannot collide with the
+            # global kwargs slot
+            per_executor = resolved.get(EXECUTOR_KWARGS_KEY)
+            executor_kwargs: Any = (
+                cast(dict[str, Any], per_executor).get(self.id) if isinstance(per_executor, dict) else None
+            )
+        else:
+            # legacy pre-#8310 shape restored from an old checkpoint: bare
+            # executor IDs sit at the top level
+            executor_kwargs = resolved.get(self.id)
         if global_kwargs is None and executor_kwargs is None:
             return None
 

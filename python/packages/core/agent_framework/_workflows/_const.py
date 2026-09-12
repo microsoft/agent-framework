@@ -25,6 +25,12 @@ RAW_CLIENT_KWARGS_KEY = "_raw_client_kwargs"
 # that apply to all executors (as opposed to per-executor keyed entries).
 GLOBAL_KWARGS_KEY = "__global__"
 
+# Framework slot holding the nested per-executor kwargs map. Executor-specific
+# entries nest under this key so an executor whose ID is "__global__" (or any
+# other reserved-looking string) can never collide with the global slot
+# (#8310).
+EXECUTOR_KWARGS_KEY = "__per_executor__"
+
 
 def INTERNAL_SOURCE_ID(executor_id: str) -> str:
     """Generate an internal source ID for a given executor."""
