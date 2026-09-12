@@ -50,9 +50,13 @@ $Scenarios = @(
     'custom-storage',
     'memory',
     'azure-search-rag',
+    'azure-search-tool-annotations',
+    'web-search-annotations',
     'session-files',
     'agent-skills',
     'user-identity',
+    'resilient-workflow',
+    'steerable-long-running',
     'unsupported-protocol'
 )
 

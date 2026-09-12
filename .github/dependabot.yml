@@ -11,6 +11,31 @@ updates:
     schedule:
       interval: "cron"
       cronjob: "0 8 * * 4,0" # Every Thursday(4) and Sunday(0) at 8:00 UTC
+    groups:
+      agent-memory:
+        patterns:
+          - "AgentMemory"
+          - "AgentMemory.AgentFramework"
+      aspire:
+        patterns:
+          - "Aspire.*"
+          - "CommunityToolkit.Aspire.*"
+      azure-ai-agentserver:
+        patterns:
+          - "Azure.AI.AgentServer.*"
+      agui:
+        patterns:
+          - "AGUI.*"
+      communitytoolkit-vectordata:
+        patterns:
+          - "CommunityToolkit.VectorData.*"
+      anthropic:
+        patterns:
+          - "Anthropic*"
+      opentelemetry:
+        patterns:
+          - "OpenTelemetry*"
+          - "Azure.Monitor.OpenTelemetry.Exporter"
     ignore:
       # For all System.* and Microsoft.Extensions/Bcl.* packages, ignore all major version updates
       - dependency-name: "System.*"
@@ -23,6 +48,8 @@ updates:
     labels:
       - ".NET"
       - "dependencies"
+    cooldown:
+      default-days: 7
 
   # Maintain dependencies for python.
   # TODO: Remove these Python Dependabot entries after we have confidence in the
@@ -32,17 +59,94 @@ updates:
     schedule:
       interval: "weekly"
       day: "thursday"
+    groups:
+      basics:
+        patterns:
+          - "uv"
+          - "ruff"
+          - "prek"
+          - "poethepoet"
+          - "tomli"
+          - "rich"
+      pytest:
+        patterns:
+          - "pytest*"
+      flit:
+        patterns:
+          - "flit*"
+      python-type-checkers:
+        patterns:
+          - "mypy"
+          - "pyright"
+          - "pyrefly"
+          - "ty"
+          - "zuban"
     labels:
       - "python"
       - "dependencies"
+    cooldown:
+      default-days: 7
+
   - package-ecosystem: "uv"
     directory: "python/"
     schedule:
       interval: "weekly"
       day: "thursday"
+    groups:
+      basics:
+        patterns:
+          - "uv"
+          - "ruff"
+          - "prek"
+          - "poethepoet"
+          - "tomli"
+          - "rich"
+      pytest:
+        patterns:
+          - "pytest*"
+      flit:
+        patterns:
+          - "flit*"
+      python-type-checkers:
+        patterns:
+          - "mypy"
+          - "pyright"
+          - "pyrefly"
+          - "ty"
+          - "zuban"
     labels:
       - "python"
       - "dependencies"
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: "uv"
+    directory: "python/packages/lab/"
+    schedule:
+      interval: "weekly"
+      day: "thursday"
+    groups:
+      basics:
+        patterns:
+          - "uv"
+          - "ruff"
+          - "prek"
+          - "poethepoet"
+          - "tomli"
+          - "rich"
+      pytest:
+        patterns:
+          - "pytest*"
+      python-type-checkers:
+        patterns:
+          - "mypy"
+          - "pyright"
+    labels:
+      - "python"
+      - "lab"
+      - "dependencies"
+    cooldown:
+      default-days: 7
 
   # Maintain dependencies for github-actions
   - package-ecosystem: "github-actions"
@@ -55,6 +159,16 @@ updates:
     directories:
       - "/"
       - "/.github/actions/*"
+    groups:
+      codeql-actions:
+        patterns:
+          - "github/codeql-action/*"
+      artifact-actions:
+        patterns:
+          - "actions/upload-artifact"
+          - "actions/download-artifact"
     schedule:
       interval: "weekly"
       day: "sunday"
+    cooldown:
+      default-days: 7

@@ -666,15 +666,26 @@ public class AgentFrameworkResponseHandlerTests
             .ReturnsAsync(Array.Empty<Item>());
 
         using var cts = new CancellationTokenSource();
+        var events = new List<ResponseStreamEvent>();
+
+        async Task ExecuteAsync()
+        {
+            await foreach (var evt in handler.CreateAsync(request, mockContext.Object, cts.Token))
+            {
+                events.Add(evt);
+            }
+        }
+
+        // Act
+        var execution = ExecuteAsync();
+        await agent.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cts.Cancel();
 
-        // Act & Assert
-        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
-        {
-            await foreach (var _ in handler.CreateAsync(request, mockContext.Object, cts.Token))
-            {
-            }
-        });
+        // Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await execution.WaitAsync(TimeSpan.FromSeconds(5)));
+        await agent.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.DoesNotContain(events, evt => evt is ResponseCompletedEvent);
     }
 
     [Fact]
@@ -1355,6 +1366,50 @@ public class AgentFrameworkResponseHandlerTests
         Assert.Equal("set by the container", raw.EndUserId);
     }
 
+    [Fact]
+    public async Task CreateAsync_ChatClientAnnotationOnlyUpdate_EmitsCitationAsync()
+    {
+        // Arrange
+        var annotation = new CitationAnnotation
+        {
+            Url = new Uri("https://example.com/doc"),
+            Title = "Example Document",
+            AnnotatedRegions = [new TextSpanAnnotatedRegion { StartIndex = 0, EndIndex = 5 }]
+        };
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(() => ToAsyncEnumerableUpdatesAsync(
+                new ChatResponseUpdate(ChatRole.Assistant, "Hello") { MessageId = "resp_msg_1" },
+                new ChatResponseUpdate(
+                    ChatRole.Assistant,
+                    [new AIContent { Annotations = [annotation] }])
+                {
+                    MessageId = "resp_msg_1"
+                }));
+
+        var agent = new ChatClientAgent(client.Object);
+        var handler = BuildHandlerWith(agent, new FakeHostedSessionIsolationKeyProvider(), new InMemoryAgentSessionStore());
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in handler.CreateAsync(
+            NewConversationRequest("conv-citation", "a question", store: true),
+            NewContextServing("resp_" + new string('c', 46), []),
+            CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var annotationEvent = Assert.Single(events.OfType<ResponseOutputTextAnnotationAddedEvent>());
+        var citation = Assert.IsType<UrlCitationBody>(annotationEvent.Annotation);
+        Assert.Equal(new Uri("https://example.com/doc"), citation.Url);
+        Assert.Equal("Example Document", citation.Title);
+    }
+
     private static CreateResponse NewConversationRequest(string conversationId, string text, bool store)
     {
         var request = new CreateResponse { Model = "test", Store = store };
@@ -1643,15 +1698,29 @@ public class AgentFrameworkResponseHandlerTests
 
     private sealed class CancellationCheckingAgent : AIAgent
     {
+        public TaskCompletionSource Started { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource CancellationObserved { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
             AgentSession? session,
             AgentRunOptions? options,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            yield return new AgentResponseUpdate { Contents = [new MeaiTextContent("test")] };
-            await Task.CompletedTask;
+            this.Started.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                this.CancellationObserved.TrySetResult();
+            }
+
+            yield break;
         }
 
         protected override Task<AgentResponse> RunCoreAsync(

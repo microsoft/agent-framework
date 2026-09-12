@@ -109,6 +109,7 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
         }
 #pragma warning restore CA1513
 
+        FeatureUsageMarker.MarkUsed();
         var checkpointId = Guid.NewGuid().ToString("N");
         var checkpointInfo = new CheckpointInfo(sessionId, checkpointId);
 
@@ -146,6 +147,7 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
         }
 #pragma warning restore CA1513
 
+        FeatureUsageMarker.MarkUsed();
         var id = $"{sessionId}_{key.CheckpointId}";
 
         try
@@ -175,6 +177,7 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
         }
 #pragma warning restore CA1513
 
+        FeatureUsageMarker.MarkUsed();
         QueryDefinition query = withParent == null
             ? new QueryDefinition("SELECT c.sessionId, c.checkpointId FROM c WHERE c.sessionId = @sessionId ORDER BY c.timestamp ASC")
                 .WithParameter("@sessionId", sessionId)

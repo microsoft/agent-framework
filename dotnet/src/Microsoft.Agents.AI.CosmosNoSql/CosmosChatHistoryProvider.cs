@@ -16,7 +16,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Provides a Cosmos DB implementation of the <see cref="ChatHistoryProvider"/> abstract class.
+/// Provides a Cosmos DB implementation of the <see cref="ChatHistoryProvider"/> abstract class for persistent chat history storage.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -243,6 +243,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         }
 #pragma warning restore CA1513
 
+        FeatureUsageMarker.MarkUsed();
         var state = this._sessionState.GetOrInitializeState(session);
         var partitionKey = BuildPartitionKey(state);
 
@@ -306,6 +307,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         }
 #pragma warning restore CA1513
 
+        FeatureUsageMarker.MarkUsed();
         var state = this._sessionState.GetOrInitializeState(context.Session);
         var messageList = context.RequestMessages.Concat(context.ResponseMessages ?? []).ToList();
         if (messageList.Count == 0)
@@ -477,6 +479,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         }
 #pragma warning restore CA1513
 
+        FeatureUsageMarker.MarkUsed();
         var state = this._sessionState.GetOrInitializeState(session);
         var partitionKey = BuildPartitionKey(state);
 
@@ -511,6 +514,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         }
 #pragma warning restore CA1513
 
+        FeatureUsageMarker.MarkUsed();
         var state = this._sessionState.GetOrInitializeState(session);
         var partitionKey = BuildPartitionKey(state);
 

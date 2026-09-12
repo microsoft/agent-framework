@@ -34,8 +34,6 @@ from agent_framework import FunctionTool
 from agent_framework._feature_stage import ExperimentalFeature, experimental
 from agent_framework._mcp import MCPTool
 
-from ._chat_client import RawFoundryChatClient
-
 if TYPE_CHECKING:
     from agent_framework import Agent
     from azure.ai.projects.models import (
@@ -44,6 +42,8 @@ if TYPE_CHECKING:
         StructuredInputDefinition,
         Tool,
     )
+
+    from ._chat_client import RawFoundryChatClient
 
 
 @experimental(feature_id=ExperimentalFeature.TO_PROMPT_AGENT)
@@ -81,6 +81,8 @@ def to_prompt_agent(
         tools, and generation parameters. Pass it to
         ``AIProjectClient.agents.create_version(...)`` to publish.
     """
+    from ._chat_client import RawFoundryChatClient
+
     if not isinstance(agent.client, RawFoundryChatClient):
         raise TypeError(
             "Creating a Foundry Prompt Agent requires an Agent whose client is a FoundryChatClient; "

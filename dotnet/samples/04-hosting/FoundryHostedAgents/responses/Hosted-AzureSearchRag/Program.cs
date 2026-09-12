@@ -9,27 +9,27 @@
 
 using Azure;
 using Azure.AI.Projects;
-using Azure.Core;
 using Azure.Identity;
 using Azure.Search.Documents;
 using Azure.Search.Documents.Models;
 using DotNetEnv;
-using Hosted_Shared_Contributor_Setup;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 
 // Load .env file if present (for local development)
 Env.TraversePath().Load();
 
-string projectEndpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+string projectEndpoint = System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-4o";
+string deploymentName = FirstNonBlank(
+    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
+    System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
+    "gpt-4o")!;
 
-string searchEndpoint = Environment.GetEnvironmentVariable("AZURE_SEARCH_ENDPOINT")
+string searchEndpoint = FirstNonBlank(System.Environment.GetEnvironmentVariable("AZURE_SEARCH_ENDPOINT"))
     ?? throw new InvalidOperationException("AZURE_SEARCH_ENDPOINT is not set.");
-string searchIndexName = Environment.GetEnvironmentVariable("AZURE_SEARCH_INDEX_NAME")
+string searchIndexName = FirstNonBlank(System.Environment.GetEnvironmentVariable("AZURE_SEARCH_INDEX_NAME"))
     ?? throw new InvalidOperationException("AZURE_SEARCH_INDEX_NAME is not set.");
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
@@ -39,9 +39,7 @@ string searchIndexName = Environment.GetEnvironmentVariable("AZURE_SEARCH_INDEX_
 // then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in
 // production). The dev credential is scope aware so a single instance serves both Foundry and
 // Azure AI Search clients (each Azure SDK client requests a token for its own audience).
-TokenCredential credential = new ChainedTokenCredential(
-    new DevTemporaryTokenCredential(),
-    new DefaultAzureCredential());
+var credential = new DefaultAzureCredential();
 
 // Connect to the pre-provisioned search index. The caller is expected to have created the
 // index and populated it with documents matching the schema (id / content / sourceName /
@@ -57,7 +55,7 @@ TextSearchProviderOptions textSearchOptions = new()
 AIAgent agent = new AIProjectClient(new Uri(projectEndpoint), credential)
     .AsAIAgent(new ChatClientAgentOptions
     {
-        Name = Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-azure-search-rag",
+        Name = System.Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-azure-search-rag",
         ChatOptions = new ChatOptions
         {
             ModelId = deploymentName,
@@ -74,12 +72,11 @@ builder.Services.AddFoundryResponses(agent);
 var app = builder.Build();
 app.MapFoundryResponses();
 
-// Contributor-only: in Development, also map the per-agent OpenAI route shape that live Foundry uses
-// so a local REPL client can target this server via AIProjectClient.AsAIAgent(Uri agentEndpoint).
-// Do not use this in production. Hosted Foundry agents only support the agent-endpoint path.
-app.MapDevTemporaryLocalAgentEndpoint();
 
 app.Run();
+
+static string? FirstNonBlank(params string?[] candidates) =>
+    Array.Find(candidates, candidate => !string.IsNullOrWhiteSpace(candidate));
 
 // ── Search adapter ───────────────────────────────────────────────────────────
 // Wraps a SearchClient as the delegate TextSearchProvider expects. Keyword/full-text only;
@@ -108,68 +105,3 @@ static Func<string, CancellationToken, Task<IEnumerable<TextSearchProvider.TextS
 
         return results;
     };
-
-/// <summary>
-/// A scope aware <see cref="TokenCredential"/> for local Docker debugging only.
-/// Reads pre-fetched bearer tokens from environment variables, dispensing the right token
-/// based on the requested scope:
-/// <list type="bullet">
-///   <item><description><c>ai.azure.com</c> scopes -> <c>AZURE_BEARER_TOKEN_FOUNDRY</c></description></item>
-///   <item><description><c>search.azure.com</c> scopes -> <c>AZURE_BEARER_TOKEN_SEARCH</c></description></item>
-/// </list>
-/// For any other scope, throws <see cref="CredentialUnavailableException"/> so a chained
-/// credential will fall through. This should NOT be used in production: tokens expire (~1 hour)
-/// and cannot be refreshed.
-///
-/// Generate the tokens on your host and pass them to the container:
-/// <code>
-///   export AZURE_BEARER_TOKEN_FOUNDRY=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
-///   export AZURE_BEARER_TOKEN_SEARCH=$(az account get-access-token --resource https://search.azure.com --query accessToken -o tsv)
-///   docker run -e AZURE_BEARER_TOKEN_FOUNDRY -e AZURE_BEARER_TOKEN_SEARCH ...
-/// </code>
-/// </summary>
-internal sealed class DevTemporaryTokenCredential : TokenCredential
-{
-    private const string FoundryEnvironmentVariable = "AZURE_BEARER_TOKEN_FOUNDRY";
-    private const string SearchEnvironmentVariable = "AZURE_BEARER_TOKEN_SEARCH";
-
-    public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
-        => Resolve(requestContext.Scopes);
-
-    public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
-        => new(Resolve(requestContext.Scopes));
-
-    private static AccessToken Resolve(IReadOnlyList<string> scopes)
-    {
-        string? envVar = null;
-        foreach (var scope in scopes)
-        {
-            if (scope.Contains("search.azure.com", StringComparison.OrdinalIgnoreCase))
-            {
-                envVar = SearchEnvironmentVariable;
-                break;
-            }
-
-            if (scope.Contains("ai.azure.com", StringComparison.OrdinalIgnoreCase))
-            {
-                envVar = FoundryEnvironmentVariable;
-                break;
-            }
-        }
-
-        if (envVar is null)
-        {
-            throw new CredentialUnavailableException(
-                $"DevTemporaryTokenCredential cannot serve scopes [{string.Join(", ", scopes)}]; falling through.");
-        }
-
-        var token = Environment.GetEnvironmentVariable(envVar);
-        if (string.IsNullOrEmpty(token) || string.Equals(token, "DefaultAzureCredential", StringComparison.Ordinal))
-        {
-            throw new CredentialUnavailableException(
-                $"{envVar} environment variable is not set; falling through to next credential.");
-        }
-
-        return new AccessToken(token, DateTimeOffset.UtcNow.AddHours(1));
-    }
-}

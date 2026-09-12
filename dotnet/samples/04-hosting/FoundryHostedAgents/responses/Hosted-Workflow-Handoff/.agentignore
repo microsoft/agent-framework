@@ -1,0 +1,30 @@
+# Controls which files are excluded from the code-deploy ZIP upload (.gitignore syntax).
+# Note: only the root .agentignore is read; subdirectory files are not supported.
+#
+# To include a file that is excluded by default, use negation: !filename
+
+# azd tooling files
+azure.yaml
+.agentignore
+
+# Security / secrets
+.env
+.env.*
+.azure/
+.git/
+
+# .NET build output
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Agent session state written by FileSystemAgentSessionStore during local runs. The hosted
+# runtime writes its own under the container's home directory, so uploading the local copy
+# would ship stale sessions with the agent.
+.checkpoints/
+
+# Contributor mode (scripts/Add-LocalFrameworkFeed.ps1) generates local-feed/ and nuget.config.
+# Those are deliberately NOT excluded: the server-side restore needs them to resolve the Agent
+# Framework from the packages shipped in this upload instead of nuget.org.

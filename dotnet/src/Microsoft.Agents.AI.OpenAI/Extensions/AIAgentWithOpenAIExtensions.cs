@@ -44,6 +44,7 @@ public static class AIAgentWithOpenAIExtensions
         Throw.IfNull(agent);
         Throw.IfNull(messages);
 
+        FeatureUsageMarker.MarkUsed();
         var response = await agent.RunAsync([.. messages.AsChatMessages()], session, options, cancellationToken).ConfigureAwait(false);
 
         return response.AsOpenAIChatCompletion();
@@ -96,6 +97,7 @@ public static class AIAgentWithOpenAIExtensions
         Throw.IfNull(agent);
         Throw.IfNull(messages);
 
+        FeatureUsageMarker.MarkUsed();
         var response = await agent.RunAsync(messages.AsChatMessages(), session, options, cancellationToken).ConfigureAwait(false);
 
         return response.AsOpenAIResponse();

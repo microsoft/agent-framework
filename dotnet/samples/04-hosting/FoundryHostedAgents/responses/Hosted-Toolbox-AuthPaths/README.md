@@ -1,206 +1,218 @@
-﻿# Hosted Toolbox — Authentication Paths
+# Hosted-Toolbox-AuthPaths
 
-A hosted Foundry agent backed by a single Foundry Toolbox that bundles MCP tools using **three different authentication paths**. The educational surface lives in the toolbox configuration (which you provision in the Foundry portal) and in this README — the agent code itself is identical to the existing [`Hosted-Toolbox/`](../Hosted-Toolbox/) sample.
+A hosted agent demonstrating Foundry Toolbox auth paths (per-user OAuth consent) at runtime. Requires TOOLBOX_NAME set to a toolbox whose tools require delegated user consent.
 
-Drive the agent across the auth paths with the shared [`Using-Samples/SimpleAgent/`](../Using-Samples/SimpleAgent/) REPL client, pointed at this agent. For the **OAuth user-consent** path (#4 below), use the dedicated [`Using-Samples/Hosted-Toolbox-AuthPaths-Client/`](../Using-Samples/Hosted-Toolbox-AuthPaths-Client/) REPL, which detects the consent request, **prints the consent link** and waits for you to press Enter once you have signed in, then re-sends. It never auto-opens a browser, so it works in headless, SSH, and container shells.
-
-## What this sample teaches
-
-| Aspect | This sample | Existing siblings |
-|---|---|---|
-| Toolbox marker pattern | `FoundryAITool.CreateHostedMcpToolbox(name)` + `AddFoundryToolboxes(credential, name)` | Same as [`Hosted-Toolbox/`](../Hosted-Toolbox/) |
-| Tools per toolbox | **Three MCP tools, each with a different auth method** | `Hosted-Toolbox/`: typically one demo tool |
-| Consumption | Server-side (Foundry resolves the marker) | Same |
-| Client | Shared [`Using-Samples/SimpleAgent/`](../Using-Samples/SimpleAgent/) REPL, pointed at this agent | `Hosted-Toolbox/`: any client |
-
-Related samples:
-- [`Hosted-Toolbox/`](../Hosted-Toolbox/) — simpler single-tool toolbox.
-- [`Hosted-McpTools/`](../Hosted-McpTools/) — contrasts client-side `McpClient` vs server-side `HostedMcpServerTool` for non-toolbox MCP servers.
-
-## Authentication-path matrix
-
-The sample's purpose is to enumerate every authentication path a Foundry toolbox can drive, so each path appears alongside the others. Pick the ones your scenario needs — each connection in a toolbox is independent.
-
-| # | Auth method | MCP target | Connection `authType` | What flows where | When to pick this |
-|---|---|---|---|---|---|
-| 1 | **Key-based via project connection** | GitHub MCP at `https://api.githubcopilot.com/mcp` | `CustomKeys` | A PAT stored as `Authorization: Bearer <pat>` lives in the Foundry connection. The toolbox proxy reads it server-side and injects on every MCP call. | The upstream service only accepts API keys or PATs. |
-| 2 | **Microsoft Entra — agent identity** | Any Azure Cognitive Services MCP endpoint your project can reach (e.g., Language service MCP) | `AgenticIdentityToken` | Foundry mints an Entra token for the agent's own identity (`instance_identity` in the new agent object model), scoped to the connection's `audience`, and forwards it to the MCP server. The agent identity must hold the required role (typically `Cognitive Services User`) on the target resource. | Per-agent least-privilege access to Entra-protected services. Recommended default for new agents. |
-| 3 | **Inline `Authorization` (anti-pattern)** | `https://gitmcp.io/Azure/azure-rest-api-specs` | none | A literal bearer string lives on the toolbox tool entry's `authorization` field. **Do not do this in production** — there's no rotation, no secret store, no per-user identity. Shown for completeness. | Local-dev or public MCP servers that accept any (or no) bearer. |
-| 4 | **OAuth — per-user consent (delegated)** | Any per-user OAuth-protected MCP target (e.g. delegated Microsoft Graph, a Logic Apps connector) | `OAuth` connection | The first call for a user has no stored token, so the proxy returns `CONSENT_REQUIRED`. The agent surfaces an `oauth_consent_request` with a consent link and marks the response `incomplete`. The user consents out of band; the proxy then stores their delegated token (bound to the user, not the conversation) and performs the on-behalf-of exchange on every subsequent call. | The tool must act **as the end user** against a downstream that requires delegated consent. |
-
-> **Path #4 needs the OAuth-aware client.** The shared `SimpleAgent/` REPL ignores the consent request and the call simply stays incomplete. Use [`Using-Samples/Hosted-Toolbox-AuthPaths-Client/`](../Using-Samples/Hosted-Toolbox-AuthPaths-Client/) instead — it prints the consent link, waits for you to press Enter after you have signed in, then re-sends the prompt. The user's token never touches the container or the client; consent and the OBO exchange happen entirely between the user, the identity provider, and the toolbox proxy.
+This sample deploys to Foundry **directly from source (code / ZIP upload)**: the platform builds and runs your code with no container image, so there is no Dockerfile to author or container registry to manage. Source deploy is the default for .NET.
 
 ## Prerequisites
 
-### 0. (Path #2 only) Identify an Entra-authenticated MCP target
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
+- An **existing** Foundry project with an **existing** model deployment (for example `gpt-4o`).
+  This sample's `azure.yaml` declares no `deployments:` block, so `azd` connects to a project and
+  a deployment you already have rather than creating them. `azd ai agent init` prompts you to pick
+  the project, and takes the deployment name as the `-d` argument.
+- Azure CLI logged in (`az login`)
+- Azure Developer CLI (`azd`) with the AI agents extension: `azd extension install azure.ai.agents`
 
-Path #2 requires an MCP server that accepts Microsoft Entra tokens. Any **Azure Cognitive Services** resource that exposes an MCP endpoint works — they all accept Entra ID tokens and gate access via standard RBAC.
+## Files
 
-The reference walkthrough below uses an **Azure Language service** MCP endpoint:
+| File | Purpose |
+|------|---------|
+| `Program.cs` | The agent: consumes a Foundry Toolbox whose tools require per-user OAuth consent, hosts it with the Responses protocol. |
+| `azure.yaml` | The unified `azd` project file. Declares the Foundry project and the hosted agent with `codeConfiguration` (source/ZIP deploy), and passes the listen port and the model deployment name to the container through env. |
+| `.agentignore` | Controls which files are excluded from the code-deploy ZIP upload (`.gitignore` syntax). |
+| `HostedToolboxAuthPaths.csproj` | Self-contained project: single target framework and explicit package versions. It also opts out of the repository's central package management, which does not travel inside the ZIP. |
+| `.env.example` | Template for local configuration. |
+| `../../scripts/Add-LocalFrameworkFeed.ps1`, `../../scripts/add-local-framework-feed.sh` | Contributor-only helpers, see [Deploy your local framework changes](#deploy-your-local-framework-changes-contributors). |
 
-```
-https://<your-language-service>.cognitiveservices.azure.com/language/mcp?api-version=2025-11-15-preview
-```
+## Configuration
 
-Substitute any other Cognitive Services MCP endpoint you have. If your project has none, omit tool #2 from your toolbox — the remaining two paths still work.
+Copy the template and fill in your project endpoint:
 
-#### RBAC for path #2
-
-Grant the **`Cognitive Services User`** role on the target resource to the agent's instance identity. Find it on the agent ARM resource (Azure portal → your agent → JSON view) at `instance_identity.principal_id`. This is the principal the Foundry proxy uses when minting tokens for `AgenticIdentityToken` connections.
-
-```powershell
-$lang = "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<lang-svc>"
-
-az role assignment create `
-    --assignee-object-id <agent-instance-identity-principal-id> `
-    --assignee-principal-type ServicePrincipal `
-    --role "Cognitive Services User" `
-    --scope $lang
-```
-
-Repeat for any additional Cognitive Services resources the agent identity needs to call.
-
-> The RBAC grant requires `Microsoft.Authorization/roleAssignments/write` on the target scope. In many enterprise subscriptions this needs a PIM JIT activation.
-
-### 1. Foundry project + Azure AI User role
-
-- An active Microsoft Foundry project ([create one](https://learn.microsoft.com/en-us/azure/foundry/how-to/create-projects)).
-- The **Azure AI User** role on the project assigned to:
-  - The developer (you) creating the toolbox.
-  - The agent identity for tool invocation.
-
-### 2. Create the project connections
-
-The Entra-based connection (path #2) is not available in the Foundry portal connection wizard today. Create it via ARM REST:
+PowerShell:
 
 ```powershell
-$armToken = az account get-access-token --query accessToken -o tsv
-$h        = @{ Authorization = "Bearer $armToken"; "Content-Type" = "application/json" }
-$proj     = "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<foundry-account>/projects/<project>"
-$lang     = "https://<lang-svc>.cognitiveservices.azure.com/language/mcp?api-version=2025-11-15-preview"
-
-# Path 2 — agent identity
-$body2 = @{ properties = @{
-    category = "RemoteTool"; target = $lang
-    authType = "AgenticIdentityToken"; audience = "https://cognitiveservices.azure.com"
-    isSharedToAll = $false
-}} | ConvertTo-Json -Depth 5
-az rest --method PUT --headers "Content-Type=application/json" `
-    --url "https://management.azure.com$proj/connections/lang-mcp-agent-id?api-version=2025-04-01-preview" `
-    --body $body2
+copy .env.example .env
 ```
 
-Connection summary:
+Bash:
 
-| Connection name (used by the toolbox) | `category` | `authType` | `audience` |
-|---|---|---|---|
-| `github-mcp-key` | `CustomKeys` | `CustomKeys` | n/a (key value carries `Authorization: Bearer <pat>`) |
-| `lang-mcp-agent-id` | `RemoteTool` | `AgenticIdentityToken` | `https://cognitiveservices.azure.com` |
+```bash
+cp .env.example .env
+```
 
-Path #3 (`gitmcp.io`) needs no connection — the auth lives on the toolbox tool entry itself.
+```env
+FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+TOOLBOX_NAME=<your-toolbox-name>
+ASPNETCORE_URLS=http://+:8088
+AZURE_TOKEN_CREDENTIALS=dev
+```
 
-The `audience` value is the token resource identifier of the target service — for any Cognitive Services resource it is `https://cognitiveservices.azure.com`. For other Azure services consult [Agent identity — runtime token exchange](https://learn.microsoft.com/azure/foundry/agents/concepts/agent-identity#runtime-token-exchange).
+> `.env` is gitignored. The `.env.example` template is checked in as a reference.
 
-### 3. Create the toolbox
+> `ASPNETCORE_URLS` pins the local run to the port the `Using-Samples` REPLs expect. Recent
+> `Microsoft.Agents.AI.Foundry.Hosting` versions bind that port themselves, so it only matters
+> while this project is pinned to an older published package.
 
-In the Foundry portal → Tools → Add Toolbox. Name it `auth-paths-toolbox` (or whatever you prefer; export the name as `TOOLBOX_NAME`). Add three MCP tool entries:
+> **Windows note:** write `.env` as UTF-8 **without** a byte order mark. `azd` reads the file
+> during `azd ai agent init` and fails with `unexpected character` when a mark is present.
 
-| Tool `server_label` | `server_url` | Auth |
-|---|---|---|
-| `github_pat` | `https://api.githubcopilot.com/mcp` | `project_connection_id: github-mcp-key` |
-| `lang_agent` | Your Language service MCP URL | `project_connection_id: lang-mcp-agent-id` |
-| `gitmcp_inline` | `https://gitmcp.io/Azure/azure-rest-api-specs` | `authorization: "Bearer demo-only-not-real"` (no `project_connection_id`) |
+> **Local development on a machine without a managed identity:** set `AZURE_TOKEN_CREDENTIALS=dev`.
+> `Program.cs` authenticates with `DefaultAzureCredential`. On a developer machine with no
+> managed identity, `DefaultAzureCredential` probes the Azure Instance Metadata Service (IMDS,
+> `169.254.169.254`) and blocks for a long time before every model call. `AZURE_TOKEN_CREDENTIALS=dev`
+> restricts it to developer credentials (Azure CLI, Visual Studio, `azd`) and skips that probe.
+> Only for local runs; the deployed agent uses the platform-injected managed identity.
 
-Each entry should also carry:
+## Run and test locally
 
-- `require_approval: never` (this sample is focused on auth, not approval flows; see [`ToolCallingApprovalHostedAgentFixture.cs`](../../../../../tests/Foundry.Hosting.IntegrationTests/Fixtures/ToolCallingApprovalHostedAgentFixture.cs) for that concern).
-- A tight `allowed_tools` list. GitHub MCP exposes ~50 tools; restrict to what you actually want the model to invoke. For example: `github_pat` → `["search_issues", "list_pull_requests"]`. **Every name in `allowed_tools` must match a real tool on the upstream server** — an unknown name (e.g., `get_issue`, which GitHub MCP does not expose) makes the whole source fail enumeration. See the partial-failure note below.
+Local runs use two terminals: one hosts the agent, the other is a code-first client that talks to it,
+see the sibling [`Using-Samples`](../Using-Samples/) REPLs.
 
-### Sidebar — what the toolbox-creation code looks like
+**Terminal 1 — host the agent:**
 
-This sample assumes the toolbox already exists; it does not provision one programmatically. For an end-to-end code example of toolbox creation from a publisher script (suitable for a CI/CD pipeline), see [`02-agents/AgentProviders/foundry/Agent_Step25_FoundryToolboxMcp/Program.cs`](../../../../02-agents/AgentProviders/foundry/Agent_Step25_FoundryToolboxMcp/Program.cs) — its `CreateSampleToolboxAsync` helper uses `AgentAdministrationClient.GetAgentToolboxes().CreateToolboxVersionAsync(...)` and is the canonical pattern.
+```
+cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Toolbox-AuthPaths
+az login
+dotnet run
+```
 
-## Run the agent
+The agent starts on `http://localhost:8088`.
 
-Set environment variables (or copy `.env.example` to `.env` and fill it in):
+**Terminal 2 — chat with it (code-first REPL):**
+
+PowerShell:
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT  = "https://<account>.services.ai.azure.com/api/projects/<project>"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME = "gpt-4o"
-$env:TOOLBOX_NAME       = "auth-paths-toolbox"
+cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SimpleAgent
+$env:AZURE_AI_AGENT_NAME = "hosted-toolbox-auth-paths"
+dotnet run -- --local
 ```
 
-Locally, the `Foundry.Hosting` package reads `AZURE_AI_PROJECT_ENDPOINT` as a fallback when `FOUNDRY_PROJECT_ENDPOINT` is absent. In the hosted Foundry runtime, the platform auto-injects `FOUNDRY_PROJECT_ENDPOINT` and the package builds the toolbox proxy URL as `{FOUNDRY_PROJECT_ENDPOINT}/toolboxes/{TOOLBOX_NAME}/mcp?api-version=v1` per [`tools-integration-spec.md`](https://github.com/microsoft/AgentSchema/blob/main/specs/agents/hosted_agents/container-spec/docs/tools-integration-spec.md) §2–§3.
+Bash:
 
-Then sign in (`az login`) and start the server:
+```bash
+cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SimpleAgent
+export AZURE_AI_AGENT_NAME="hosted-toolbox-auth-paths"
+dotnet run -- --local
+```
+
+Try: `Use a toolbox tool that requires my consent.`
+
+## Deploy to Foundry (source / ZIP)
+
+`azd` scaffolds the project into a working folder, so every step below runs from an **empty
+directory outside the repository**, and `-m` points at this sample's `azure.yaml`.
+
+### Step 1: create the working directory and enter it
+
+PowerShell:
 
 ```powershell
-dotnet run --tl:off
+$work = Join-Path $env:TEMP "hosted-toolbox-auth-paths-work"
+mkdir $work
+cd $work
 ```
 
-The server logs at `http://localhost:8088/`. In Development it also maps the per-agent OpenAI route shape (`MapDevTemporaryLocalAgentEndpoint()`), so the shared `SimpleAgent` REPL client can reach it through `AsAIAgent(agentEndpoint)` — the only supported way to consume a hosted Foundry agent. In a separate terminal:
+### Step 2: scaffold the project
 
-**Against the local dev server** (point the client at localhost; the `{project}` segment is a wildcard the server ignores):
+`azd ai agent init` copies the sample into a subfolder named `hosted-toolbox-auth-paths` (the top-level `name:`
+in `azure.yaml`) and writes the adopted `azure.yaml` and the `azd` environment there. It prompts
+you to pick the Foundry project; `-d` is the name of an existing model deployment in that project.
+
+PowerShell:
 
 ```powershell
-cd ../Using-Samples/SimpleAgent
-$env:AZURE_AI_PROJECT_ENDPOINT = "http://localhost:8088/api/projects/local"
-$env:AZURE_AI_AGENT_NAME       = "hosted-toolbox-auth-paths-agent"
-dotnet run --tl:off
+$sample = "<repo>/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Toolbox-AuthPaths/azure.yaml"
+
+azd auth login
+azd ai agent init -m $sample -d <model-deployment>
 ```
 
-**Against a deployed agent** (point the client at the real project endpoint and the deployed agent name):
+### Step 3: provision and deploy
+
+Contributors changing the Agent Framework source: do the extra step in
+[Deploy your local framework changes](#deploy-your-local-framework-changes-contributors) now,
+before the commands below. Everyone else can ignore it.
+
+```
+cd hosted-toolbox-auth-paths
+azd env get-values
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME <model-deployment>
+azd env set TOOLBOX_NAME <your-toolbox-name>
+azd provision
+azd deploy
+azd ai agent invoke "Use a toolbox tool that requires my consent."
+```
+
+`azd` packages the source into a ZIP (honoring `.agentignore`), uploads it, and Foundry runs
+`dotnet restore` + `dotnet publish` on it during provisioning (`dependencyResolution: remote_build`
+in `azure.yaml`). No Dockerfile, no container registry.
+
+> **The toolbox must already exist in the project, and the agent identity must be able to read it.**
+> `TOOLBOX_NAME` is resolved at runtime against the project's toolboxes (list them with
+> `GET <project-endpoint>/toolboxes?api-version=v1`). The deployed agent runs under a managed
+> identity that `azd` grants `Foundry User` on the project, which is enough to read the toolbox.
+> For this sample point `TOOLBOX_NAME` at a toolbox whose tools require per-user OAuth consent, so
+> the first invoke streams an `oauth_consent_request` output item and finishes with
+> `response.incomplete`; that consent step is the whole point of the sample.
+
+### Step 4: clean up
+
+```
+azd down
+```
+
+> **`azd down` does not delete the hosted agent.** It reports success but leaves the deployed agent
+> in place. Delete it explicitly with a REST call:
+>
+> ```bash
+> az rest --method delete \
+>   --url "<project-endpoint>/agents/hosted-toolbox-auth-paths" \
+>   --url-parameters api-version=v1 force=true \
+>   --resource https://ai.azure.com
+> ```
+
+Then delete the working directory.
+
+## Deploy your local framework changes (contributors)
+
+**Skip this section unless you are changing the Agent Framework itself.** The project restores the
+**published** Agent Framework packages, and Foundry restores from nuget.org when it builds the
+upload, so editing framework source in this repository changes nothing about the deployed agent.
+
+The helper script packs your local framework source into NuGet packages and puts them **inside the
+upload**, together with a `nuget.config` that points the restore at them. Run it in the flow above,
+**between step 2 and step 3**:
+
+PowerShell:
 
 ```powershell
-cd ../Using-Samples/SimpleAgent
-$env:AZURE_AI_PROJECT_ENDPOINT = "https://<account>.services.ai.azure.com/api/projects/<project>"
-$env:AZURE_AI_AGENT_NAME       = "hosted-toolbox-auth-paths-agent"
-dotnet run --tl:off
+cd $work
+<repo>/dotnet/samples/04-hosting/FoundryHostedAgents/scripts/Add-LocalFrameworkFeed.ps1 -Path ./hosted-toolbox-auth-paths
 ```
 
-Either way the client derives the per-agent endpoint URL (`{AZURE_AI_PROJECT_ENDPOINT}/agents/{AZURE_AI_AGENT_NAME}/endpoint/protocols/openai`) and consumes the agent via `AsAIAgent(agentEndpoint)`. Run `az login` first so the client can mint a bearer token.
+Bash:
 
-> **Parallel-run warning**: `Hosted-Toolbox/` and other `Hosted-*` samples default to the same port (8088) and the same agent name slot. Always set a unique `AGENT_NAME` (this sample defaults to `hosted-toolbox-auth-paths-agent`) and stop other hosted samples before starting this one.
-
-## Sample prompts
-
-One per auth path so each tool gets exercised at least once:
-
-```
-List the latest 3 issues in microsoft/agent-framework.            # path #1 — GitHub MCP (key)
-Detect the language of "Bonjour le monde".                        # path #2 — Language MCP (agent identity)
-What's the latest API version for Microsoft.CognitiveServices?    # path #3 — gitmcp.io (inline Authorization)
-Send a test email to myself.                                      # path #4 — OAuth user consent (use the OAuth client)
+```bash
+cd "$WORK"
+<repo>/dotnet/samples/04-hosting/FoundryHostedAgents/scripts/add-local-framework-feed.sh ./hosted-toolbox-auth-paths
 ```
 
-> Path #4 triggers the consent flow on first use. Run it from [`Using-Samples/Hosted-Toolbox-AuthPaths-Client/`](../Using-Samples/Hosted-Toolbox-AuthPaths-Client/), not `SimpleAgent/`.
+See the
+[`Hosted-ChatClientAgent`](../Hosted-ChatClientAgent/README.md#deploy-your-local-framework-changes-contributors)
+README for the full explanation of what the script changes and why.
 
-## Troubleshooting / partial-failure semantics
+## Troubleshooting
 
-`AddFoundryToolboxes` resolves the toolbox at startup by listing its tools via MCP `tools/list`. For **hard** errors this enumeration is **all-or-nothing**: if *any* single tool source fails to enumerate (a bad `allowed_tools` name, a rejected key or Entra token, an unreachable upstream), the Foundry toolbox proxy returns a top-level JSON-RPC error (`-32007`) instead of a partial list, the hosting package marks the toolbox startup as failed, `/readiness` returns 503, and *every* invoke against the agent returns **HTTP 424** — even for the auth paths that are configured correctly. So one misconfigured connection or one bad `allowed_tools` entry bricks the whole agent at startup. Get each source enumerating cleanly before deploying.
+**`azd ai agent invoke` fails with `404 not_found: Conversation '<id>' not found`**
 
-**Exception — OAuth consent (path #4) does not brick the container.** When a source fails enumeration purely because it needs per-user OAuth consent (`CONSENT_REQUIRED`), the hosting package keeps the container **healthy and routable**: `/readiness` stays 200 and the consent requirement is surfaced per-request as an `oauth_consent_request` with a consent link. The user consents (via the [`Hosted-Toolbox-AuthPaths-Client/`](../Using-Samples/Hosted-Toolbox-AuthPaths-Client/) REPL), re-sends, and enumeration is retried so the tool becomes available. A *mix* of `CONSENT_REQUIRED` and any non-consent error is still treated as a hard failure (consent alone cannot make enumeration succeed). Symptoms per auth path:
+`azd` reuses the saved session and conversation per agent. Once the agent is redeployed or deleted,
+that conversation no longer exists on the server. Start a fresh one:
 
-| Symptom | Likely cause |
-|---|---|
-| **All invokes return HTTP 424 ("Failed Dependency")** | One or more tool sources failed `tools/list` at startup (see all-or-nothing note above). Common causes: an `allowed_tools` name that does not exist on the upstream server, or an Entra connection whose token is rejected. Reproduce by calling the toolbox `tools/list` directly with your own token — a `-32007` top-level error names the failing source. |
-| **HTTP 401 "audience is incorrect"** | The connection's `audience` field is missing or does not match the OAuth resource identifier the target service accepts. For Cognitive Services targets, set `audience: "https://cognitiveservices.azure.com"`. |
-| **HTTP 401 / 403 "principal does not have access"** | Path #1: PAT expired or scope insufficient. Path #2: the agent's instance identity is missing the required role on the target resource. |
-| **Container reports zero tools but startup succeeded** | `FoundryToolboxService.StartAsync` caches the `tools/list` result at startup. If a connection or RBAC grant changed after the container started, force a fresh container (re-deploy the agent version) — the cache won't pick up the change until then. |
-| **HTTP 404 from a tool call** | Toolbox name mismatch (`TOOLBOX_NAME` vs the name in the portal), or the toolbox was deleted. |
-| **Server logs a warning "Neither FOUNDRY_PROJECT_ENDPOINT nor AZURE_AI_PROJECT_ENDPOINT is set; toolbox support is disabled"** | Local dev without the env var set. The agent will load with zero tools and respond as if it has none. Set `AZURE_AI_PROJECT_ENDPOINT` (local-dev fallback) or `FOUNDRY_PROJECT_ENDPOINT` to your project endpoint. |
-| **Tools appear but model never invokes them** | `instructions:` in `Program.cs` may not surface what each tool is for. Tighten the `allowed_tools` lists and rephrase prompts to mention the upstream service by name. |
-| **`azd ai agent invoke` returns `404 not_found: Conversation '<id>' not found`** | `azd` saves the session and conversation per agent and reuses them on the next invoke. Once the agent is redeployed, deleted, or restarted, that saved conversation no longer exists on the server. Pass `--new-conversation` (and `--new-session` if it persists) to start a fresh one. |
+```
+azd ai agent invoke --new-conversation "Hello!"
+```
 
-## Region and model compatibility
-
-Foundry Toolboxes have region constraints; some tool types are limited to specific models. This sample defaults to `gpt-4o`, which works in all supported regions. For the full matrix, see the [Foundry tools compatibility matrix](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox#region-and-model-compatibility).
-
-## Anti-pattern note for path #3
-
-Inline `authorization` on a toolbox tool entry stores credentials **inside the toolbox definition**. There is no rotation, no per-user scoping, no secret-store integration. Use it only for:
-
-- Public MCP servers that ignore the bearer (the `gitmcp.io` case demonstrated here).
-- Local development against a test MCP server with a throwaway token.
-
-For everything else use `project_connection_id` and let the platform inject credentials.
+For the full hosted-agent deployment guide, see the [official source-code deployment doc](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent-code).

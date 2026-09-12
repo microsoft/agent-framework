@@ -85,6 +85,7 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider
         Throw.IfNull(context);
         cancellationToken.ThrowIfCancellationRequested();
 
+        FeatureUsageMarker.MarkUsed();
         var state = this._sessionState.GetOrInitializeState(context.Session);
         var db = this._connection.GetDatabase();
         var key = this.BuildKey(state);
@@ -146,6 +147,7 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider
             return;
         }
 
+        FeatureUsageMarker.MarkUsed();
         var db = this._connection.GetDatabase();
         var key = this.BuildKey(state);
 
@@ -179,6 +181,7 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider
     public async Task ClearMessagesAsync(AgentSession? session, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        FeatureUsageMarker.MarkUsed();
         var state = this._sessionState.GetOrInitializeState(session);
         var db = this._connection.GetDatabase();
         var key = this.BuildKey(state);
@@ -194,6 +197,7 @@ public sealed class ValkeyChatHistoryProvider : ChatHistoryProvider
     public async Task<long> GetMessageCountAsync(AgentSession? session, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        FeatureUsageMarker.MarkUsed();
         var state = this._sessionState.GetOrInitializeState(session);
         var db = this._connection.GetDatabase();
         var key = this.BuildKey(state);

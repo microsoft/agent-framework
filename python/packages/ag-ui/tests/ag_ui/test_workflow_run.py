@@ -4,6 +4,7 @@
 
 import json
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, make_dataclass
 from enum import Enum
 from types import SimpleNamespace
 from typing import Any, cast
@@ -28,9 +29,12 @@ from agent_framework import (
     response_handler,
     tool,
 )
+from agent_framework.orchestrations import MagenticPlanReviewResponse
 from conftest import StreamingChatClientStub  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+from pydantic import BaseModel
 
 from agent_framework_ag_ui._workflow_run import (
+    _as_reasoning_content,
     _coerce_content,
     _coerce_json_value,
     _coerce_message,
@@ -117,6 +121,178 @@ async def test_workflow_run_maps_custom_and_text_events():
     assert custom_events[0].value == {"progress": 10}  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
+async def test_workflow_run_maps_intermediate_text_to_reasoning_events():
+    """Intermediate workflow output is surfaced as AG-UI reasoning, not a generic CustomEvent."""
+
+    @executor(id="thinker")
+    async def thinker(message: Any, ctx: WorkflowContext[str, str]) -> None:
+        # Intermediate-designated executor: text should render as reasoning.
+        await ctx.yield_output("Analyzing the problem...")
+        await ctx.send_message("go")
+
+    @executor(id="finalizer")
+    async def finalizer(message: str, ctx: WorkflowContext[None, str]) -> None:
+        # Output-designated executor: final assistant text.
+        await ctx.yield_output("Here's my answer!")
+
+    workflow = (
+        WorkflowBuilder(
+            start_executor=thinker,
+            output_from=[finalizer],
+            intermediate_output_from=[thinker],
+        )
+        .add_edge(thinker, finalizer)
+        .build()
+    )
+    input_data = {"messages": [{"role": "user", "content": "solve it"}]}
+
+    events = [event async for event in run_workflow_stream(input_data, workflow)]
+    event_types = [event.type for event in events]
+
+    # The intermediate text renders as reasoning ...
+    assert "REASONING_MESSAGE_CONTENT" in event_types
+    reasoning_deltas = [event.delta for event in events if event.type == "REASONING_MESSAGE_CONTENT"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert "Analyzing the problem..." in reasoning_deltas
+
+    # ... and is not swallowed by the generic custom-event fallback.
+    assert not [event for event in events if event.type == "CUSTOM" and event.name == "intermediate"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    # The final output still renders as an assistant text message.
+    assert "TEXT_MESSAGE_CONTENT" in event_types
+    text_deltas = [event.delta for event in events if event.type == "TEXT_MESSAGE_CONTENT"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert "Here's my answer!" in text_deltas
+
+
+async def test_workflow_run_maps_data_alias_text_to_reasoning_events():
+    """The deprecated ``type='data'`` alias is treated like ``intermediate`` and renders as reasoning."""
+
+    @executor(id="emitter")
+    async def emitter(message: Any, ctx: WorkflowContext[Any, str]) -> None:
+        # Deprecated compatibility alias for an intermediate emission.
+        await ctx.add_event(WorkflowEvent.emit("emitter", "legacy reasoning"))
+        await ctx.yield_output("final answer")
+
+    workflow = WorkflowBuilder(start_executor=emitter).build()
+    input_data = {"messages": [{"role": "user", "content": "go"}]}
+
+    with pytest.warns(DeprecationWarning):
+        events = [event async for event in run_workflow_stream(input_data, workflow)]
+
+    reasoning_deltas = [event.delta for event in events if event.type == "REASONING_MESSAGE_CONTENT"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert "legacy reasoning" in reasoning_deltas
+    assert not [event for event in events if event.type == "CUSTOM" and event.name == "data"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    # The genuine output is still emitted as an assistant text message.
+    text_deltas = [event.delta for event in events if event.type == "TEXT_MESSAGE_CONTENT"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert "final answer" in text_deltas
+
+
+def test_as_reasoning_content_preserves_protected_data():
+    """Re-tagging text as reasoning keeps encrypted protected_data and passes non-text through."""
+    text = Content("text", text="thinking", protected_data="enc-blob")
+
+    reasoning = _as_reasoning_content(text)
+
+    assert reasoning.type == "text_reasoning"
+    assert reasoning.text == "thinking"
+    # Without this the ReasoningEncryptedValueEvent and snapshot encryptedValue are lost.
+    assert reasoning.protected_data == "enc-blob"
+
+    # Non-text content (e.g. a tool call) is returned unchanged.
+    call = Content.from_function_call(call_id="c1", name="tool", arguments="{}")
+    assert _as_reasoning_content(call) is call
+
+
+async def test_workflow_run_closes_reasoning_before_run_finished():
+    """Intermediate reasoning with no terminal text still closes before the terminal event."""
+
+    @executor(id="thinker")
+    async def thinker(message: Any, ctx: WorkflowContext[Any, str]) -> None:
+        # Intermediate output only -- no terminal assistant text follows.
+        await ctx.yield_output("Thinking, but no final answer...")
+
+    workflow = WorkflowBuilder(
+        start_executor=thinker,
+        output_from=[],
+        intermediate_output_from=[thinker],
+    ).build()
+    input_data = {"messages": [{"role": "user", "content": "go"}]}
+
+    events = [event async for event in run_workflow_stream(input_data, workflow)]
+    event_types = [event.type for event in events]
+
+    assert "REASONING_END" in event_types
+    assert "RUN_FINISHED" in event_types
+    run_finished_idx = next(i for i, event in enumerate(events) if event.type == "RUN_FINISHED")
+    # Every reasoning event -- including the closing REASONING_MESSAGE_END / REASONING_END --
+    # must precede RUN_FINISHED so clients that stop at the terminal event get a complete stream.
+    reasoning_idxs = [i for i, event in enumerate(events) if "REASONING" in str(event.type)]
+    assert reasoning_idxs
+    assert max(reasoning_idxs) < run_finished_idx
+
+
+async def test_workflow_run_closes_reasoning_before_request_info():
+    """An open reasoning block is closed before a request_info tool call (not left spanning it)."""
+
+    @executor(id="asker")
+    async def asker(message: Any, ctx: WorkflowContext[Any, str]) -> None:
+        # Intermediate reasoning, then a human-in-the-loop request in the same run.
+        await ctx.yield_output("Thinking before I ask...")
+        await ctx.request_info("Need approval", str, request_id="approval-1")
+
+    workflow = WorkflowBuilder(
+        start_executor=asker,
+        output_from=[],
+        intermediate_output_from=[asker],
+    ).build()
+    input_data = {"messages": [{"role": "user", "content": "go"}]}
+
+    events = [event async for event in run_workflow_stream(input_data, workflow)]
+    event_types = [event.type for event in events]
+
+    assert "REASONING_END" in event_types
+    reasoning_end_idx = max(i for i, event in enumerate(events) if "REASONING" in str(event.type))
+    request_start_idx = next(
+        i
+        for i, event in enumerate(events)
+        if event.type == "TOOL_CALL_START" and getattr(event, "tool_call_id", None) == "approval-1"
+    )
+    # The reasoning block must be fully closed before the request_info tool call.
+    assert reasoning_end_idx < request_start_idx
+
+
+async def test_workflow_run_roleless_intermediate_update_becomes_reasoning():
+    """A role-less AgentResponseUpdate on the intermediate path surfaces its text as reasoning."""
+
+    @executor(id="thinker")
+    async def thinker(message: Any, ctx: WorkflowContext[str, Any]) -> None:
+        # role=None is the common shape for streamed continuation chunks.
+        await ctx.yield_output(AgentResponseUpdate(contents=[Content.from_text("Role-less thought")], role=None))
+        await ctx.send_message("go")
+
+    @executor(id="finalizer")
+    async def finalizer(message: str, ctx: WorkflowContext[None, str]) -> None:
+        await ctx.yield_output("Done.")
+
+    workflow = (
+        WorkflowBuilder(
+            start_executor=thinker,
+            output_from=[finalizer],
+            intermediate_output_from=[thinker],
+        )
+        .add_edge(thinker, finalizer)
+        .build()
+    )
+    input_data = {"messages": [{"role": "user", "content": "go"}]}
+
+    events = [event async for event in run_workflow_stream(input_data, workflow)]
+
+    reasoning_deltas = [event.delta for event in events if event.type == "REASONING_MESSAGE_CONTENT"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert "Role-less thought" in reasoning_deltas
+    # The role-less text must not be dropped into a generic custom event.
+    assert not [event for event in events if event.type == "CUSTOM" and event.name == "workflow_output"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
 async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(monkeypatch: pytest.MonkeyPatch) -> None:
     """Workflow spans use supplied AG-UI threads without replacing provider fallback behavior."""
     import agent_framework.observability as observability
@@ -130,7 +306,11 @@ async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(monkeypatch:
     monkeypatch.setattr(
         observability,
         "OBSERVABILITY_SETTINGS",
-        SimpleNamespace(ENABLED=True, SENSITIVE_DATA_ENABLED=False),
+        SimpleNamespace(
+            ENABLED=True,
+            SENSITIVE_DATA_ENABLED=False,
+            use_latest_experimental_gen_ai_semconv=True,
+        ),
     )
     monkeypatch.setattr(observability, "get_tracer", lambda *args, **kwargs: tracer_provider.get_tracer("test"))
 
@@ -1314,6 +1494,93 @@ def test_coerce_response_for_request_bool_int_float_and_mismatch() -> None:
     assert _coerce_response_for_request(dict_request, "[1,2,3]") is None
 
 
+def test_coerce_response_for_request_builds_dataclass_from_json() -> None:
+    """JSON objects should map onto dataclass response types such as plan review."""
+    request = SimpleNamespace(response_type=MagenticPlanReviewResponse)
+
+    approved = _coerce_response_for_request(request, {"review": []})
+    assert isinstance(approved, MagenticPlanReviewResponse)
+    assert approved.review == []
+
+    revised = _coerce_response_for_request(request, '{"review": [{"role": "user", "content": "add tests"}]}')
+    assert isinstance(revised, MagenticPlanReviewResponse)
+    assert len(revised.review) == 1
+    assert revised.review[0].text == "add tests"
+
+    from_strings = _coerce_response_for_request(request, {"review": ["add tests"]})
+    assert isinstance(from_strings, MagenticPlanReviewResponse)
+    assert from_strings.review[0].text == "add tests"
+
+    assert _coerce_response_for_request(request, {"unknown": 1}) is None
+    assert _coerce_response_for_request(request, "approve") is None
+
+
+def test_coerce_response_for_request_leaves_non_message_fields_untouched() -> None:
+    """Message normalization must follow field annotations, not payload shape."""
+
+    @dataclass
+    class Tagged:
+        note: Message
+        revision: Message | None
+        metadata: dict[str, str]
+
+    request = SimpleNamespace(response_type=Tagged)
+    message_shaped = {"role": "admin", "content": "keep raw"}
+
+    tagged = _coerce_response_for_request(
+        request,
+        {
+            "note": {"role": "user", "content": "translate me"},
+            "revision": {"role": "user", "content": "optional fields too"},
+            "metadata": message_shaped,
+        },
+    )
+    assert isinstance(tagged, Tagged)
+    assert tagged.note.text == "translate me"
+    assert tagged.revision is not None
+    assert tagged.revision.text == "optional fields too"
+    assert tagged.metadata == message_shaped
+
+
+def test_coerce_response_for_request_rejects_malformed_message_field_payloads() -> None:
+    """A Message-typed field that is not message-shaped must fail, not crash normalization."""
+
+    @dataclass
+    class Review:
+        notes: list[Message]
+
+    request = SimpleNamespace(response_type=Review)
+
+    assert _coerce_response_for_request(request, {"notes": "not-a-list"}) is None
+    assert _coerce_response_for_request(request, {"notes": [42]}) is None
+
+
+def test_coerce_response_for_request_skips_normalization_without_resolvable_hints() -> None:
+    """Unresolvable annotations skip message normalization instead of failing the resume."""
+
+    mystery_type = make_dataclass("Mystery", [("value", "DoesNotExist")])
+    request = SimpleNamespace(response_type=mystery_type)
+
+    mystery = _coerce_response_for_request(request, {"value": 1})
+    assert type(mystery) is mystery_type
+    assert vars(mystery) == {"value": 1}
+
+
+def test_coerce_response_for_request_builds_pydantic_model_from_json() -> None:
+    """JSON objects should validate into pydantic response types."""
+
+    class ReviewDecision(BaseModel):
+        approved: bool
+
+    request = SimpleNamespace(response_type=ReviewDecision)
+
+    decision = _coerce_response_for_request(request, {"approved": True})
+    assert isinstance(decision, ReviewDecision)
+    assert decision.approved is True
+
+    assert _coerce_response_for_request(request, {"approved": "not-a-bool"}) is None
+
+
 async def test_workflow_run_emits_run_error_when_stream_raises() -> None:
     """Unexpected stream exceptions should be converted into RUN_ERROR events."""
 
@@ -1744,9 +2011,10 @@ class TestWorkflowPayloadToContents:
         assert _workflow_payload_to_contents(update) is None
 
     def test_agent_response_update_none_role(self):
-        """AgentResponseUpdate with None role returns None."""
-        update = AgentResponseUpdate(contents=[Content.from_text(text="hi")], role=None)
-        assert _workflow_payload_to_contents(update) is None
+        """AgentResponseUpdate with None role keeps text (role-less continuation chunks)."""
+        text = Content.from_text(text="hi")
+        update = AgentResponseUpdate(contents=[text], role=None)
+        assert _workflow_payload_to_contents(update) == [text]
 
     def test_agent_response_update_function_call_without_role(self) -> None:
         """Function call content passes through without role metadata."""
@@ -1789,10 +2057,18 @@ class TestWorkflowPayloadToContents:
         assert _workflow_payload_to_contents(update) == [mcp_result]
 
     def test_agent_response_update_mixed_content_without_role(self) -> None:
-        """Non-assistant updates keep tool content and drop text content."""
+        """Role-less updates keep both text and tool content in order."""
         text = Content.from_text(text="calling the tool")
         function_call = Content.from_function_call(call_id="call-1", name="search", arguments={"query": "weather"})
         update = AgentResponseUpdate(contents=[text, function_call], role=None)
+
+        assert _workflow_payload_to_contents(update) == [text, function_call]
+
+    def test_agent_response_update_explicit_non_assistant_role_drops_text(self) -> None:
+        """An explicit non-assistant role still keeps only tool content and drops text."""
+        text = Content.from_text(text="calling the tool")
+        function_call = Content.from_function_call(call_id="call-1", name="search", arguments={"query": "weather"})
+        update = AgentResponseUpdate(contents=[text, function_call], role="tool")
 
         assert _workflow_payload_to_contents(update) == [function_call]
 

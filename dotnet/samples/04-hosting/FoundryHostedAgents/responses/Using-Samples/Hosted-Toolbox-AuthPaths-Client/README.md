@@ -1,6 +1,7 @@
-﻿# Hosted Toolbox Auth Paths — OAuth consent client
+﻿# Hosted Toolbox Auth Paths — consent and approval client
 
-A REPL client for the [`Hosted-Toolbox-AuthPaths/`](../../Hosted-Toolbox-AuthPaths/) agent that understands the **OAuth user-consent** path.
+A REPL client for hosted toolbox agents that understands **OAuth user consent**, Agent Framework
+function-tool approvals, and native OpenAI MCP approvals.
 
 The plain [`SimpleAgent/`](../SimpleAgent/) REPL is enough for the key-based, agent-identity, and inline-`Authorization` tools. It is **not** enough for a tool fronted by a **per-user OAuth connection** (for example a delegated Microsoft Graph connector or a Logic Apps connector), because that tool cannot run until the end user has consented. This client handles that flow.
 
@@ -12,7 +13,14 @@ When a toolbox tool source needs the user's delegated token, the hosted agent su
 2. **Prints the consent link** so you can open it in any browser and complete the OAuth flow out of band. It never auto-opens a browser, so it works in headless, SSH, and container shells.
 3. Waits for you to press Enter, then **re-sends the original prompt on the same session**. The toolbox proxy now holds your delegated token, so the retried tool call succeeds.
 
-> **Why re-send instead of replying with an approval?** An OAuth consent request records no approval-id mapping on the server, so a `ToolApprovalResponseContent` (`CreateResponse(...)`) reply would be rejected. The user's token lives on the proxy after consent, so simply re-sending the same prompt resumes the call. Function-tool approvals are different: those *do* use `CreateResponse(...)`, and this client handles them too for completeness.
+For tool approvals, the client prompts for `Y` or `N` and replies on the same session:
+
+- Agent Framework function-tool approvals use `ToolApprovalRequestContent.CreateResponse(...)`.
+- Hosted MCP approvals (`mcpr_...`) use OpenAI's native `McpToolCallApprovalResponseItem`.
+
+> **Why re-send instead of replying with an approval for OAuth?** An OAuth consent request records
+> no approval-id mapping on the server. The user's token lives on the proxy after consent, so
+> re-sending the same prompt resumes the call.
 
 ## How the consent flows (no token ever touches this client)
 
@@ -47,7 +55,9 @@ The client never sees the user's token. Consent and the on-behalf-of token excha
 
 ## Prerequisites
 
-- The [`Hosted-Toolbox-AuthPaths/`](../../Hosted-Toolbox-AuthPaths/) agent running (locally or deployed) with at least one toolbox tool source configured for a per-user OAuth connection. See that sample's README, **Auth path #4 (OAuth user consent)**.
+- A compatible hosted toolbox agent running locally or deployed:
+  - [`Hosted-Toolbox-AuthPaths/`](../../Hosted-Toolbox-AuthPaths/) for OAuth consent.
+  - [`Hosted-ToolboxMcpSkills/`](../../Hosted-ToolboxMcpSkills/) for MCP skill approvals.
 - `az login` so the client can mint a bearer token to reach the agent endpoint.
 
 ## Run
@@ -67,6 +77,9 @@ dotnet run --tl:off
 ```
 
 Then ask something that needs the OAuth-protected tool. When the consent prompt appears, the client prints the consent link. Open it in any browser, complete sign-in, then press Enter and the client re-sends automatically.
+
+For `Hosted-ToolboxMcpSkills`, set `AZURE_AI_AGENT_NAME=hosted-toolbox-mcp-skills`. When the
+approval prompt appears, enter `Y` to let the agent execute `load_skill`.
 
 ## Environment variables
 

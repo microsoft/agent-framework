@@ -49,37 +49,99 @@ else:
 SettingsT = TypeVar("SettingsT", default=dict[str, Any])
 
 
-class SecretString(str):
-    """A string subclass that masks its value in repr() to prevent accidental exposure.
+class SecretString:
+    """A secret value that masks string conversion to prevent accidental exposure.
 
-    SecretString behaves exactly like a regular string in all operations,
-    but its repr() shows '**********' instead of the actual value.
-    This helps prevent secrets from being accidentally logged or displayed.
+    ``str()``, ``repr()``, formatting, and concatenation display '**********'
+    instead of the actual value. Equality, hashing, length, and truthiness
+    operate on the underlying value.
 
-    It also provides a ``get_secret_value()`` method for backward compatibility
-    with code that previously used ``pydantic.SecretStr``.
+    This is not a ``str`` subclass. Use ``get_secret_value()`` when passing a
+    credential to an SDK or another API that requires a real string. String-only
+    operations such as ``str.join()`` and JSON encoding reject the wrapper
+    rather than implicitly exposing its value. Explicitly extracted secrets
+    are ordinary strings and are no longer protected from accidental exposure.
+
+    Args:
+        value: The secret string or an existing ``SecretString`` to wrap.
 
     Example:
         ```python
         api_key = SecretString("sk-secret-key")
-        print(api_key)  # sk-secret-key (normal string behavior)
+        print(api_key)  # **********
         print(repr(api_key))  # SecretString('**********')
-        print(f"Key: {api_key}")  # Key: sk-secret-key
+        print(f"Key: {api_key}")  # Key: **********
+        print("Bearer " + api_key)  # Bearer **********
         print(api_key.get_secret_value())  # sk-secret-key
         ```
     """
+
+    __slots__ = ("_value",)
+
+    _value: str
+
+    def __init__(self, value: str | SecretString) -> None:
+        if isinstance(value, SecretString):
+            value = value.get_secret_value()
+        if not isinstance(value, str):
+            raise TypeError("SecretString requires a string value.")
+        object.__setattr__(self, "_value", value)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        """Reject mutation after construction."""
+        raise AttributeError("SecretString is immutable.")
+
+    def __copy__(self) -> SecretString:
+        """Return this immutable instance for shallow copies."""
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> SecretString:
+        """Return this immutable instance for deep copies."""
+        return self
+
+    def __str__(self) -> str:
+        """Return a masked string to prevent secret exposure."""
+        return "**********"
 
     def __repr__(self) -> str:
         """Return a masked representation to prevent secret exposure."""
         return "SecretString('**********')"
 
-    def get_secret_value(self) -> str:
-        """Return the underlying string value.
+    def __format__(self, format_spec: str) -> str:
+        """Apply string formatting to the masked value."""
+        return format(str(self), format_spec)
 
-        Provided for backward compatibility with ``pydantic.SecretStr``.
-        Since SecretString *is* a str, this simply returns ``str(self)``.
-        """
-        return str(self)
+    def __add__(self, other: str | SecretString) -> str:
+        """Concatenate strings without exposing secret values."""
+        if isinstance(other, (str, SecretString)):
+            return str(self) + str(other)
+        return NotImplemented
+
+    def __radd__(self, other: str | SecretString) -> str:
+        """Concatenate strings without exposing secret values."""
+        if isinstance(other, (str, SecretString)):
+            return str(other) + str(self)
+        return NotImplemented
+
+    def __eq__(self, other: object) -> bool:
+        """Compare the underlying values."""
+        if isinstance(other, SecretString):
+            return self._value == other._value
+        if isinstance(other, str):
+            return self._value == other
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        """Hash the underlying value."""
+        return hash(self._value)
+
+    def __len__(self) -> int:
+        """Return the length of the underlying value."""
+        return len(self._value)
+
+    def get_secret_value(self) -> str:
+        """Explicitly return the unmasked string value for credential use."""
+        return self._value
 
 
 def _coerce_value(value: str, target_type: type) -> Any:
@@ -115,6 +177,19 @@ def _coerce_value(value: str, target_type: type) -> Any:
     return value
 
 
+def _runtime_class(annotation: Any) -> type | None:
+    """Return the class ``isinstance`` can test *annotation* against, or ``None``.
+
+    Parameterized generics such as ``dict[str, Any]`` cannot be passed to ``isinstance``
+    and are instances of ``type`` on Python 3.10 but not on later versions, so the origin
+    is always preferred. Annotations without a runtime class, such as ``Literal[...]``,
+    return ``None`` so callers can skip validation instead of guessing.
+    """
+    origin = get_origin(annotation)
+    candidate = annotation if origin is None else origin
+    return candidate if isinstance(candidate, type) else None
+
+
 def _check_override_type(value: Any, field_type: type, field_name: str) -> None:
     """Validate that *value* is compatible with *field_type*.
 
@@ -135,21 +210,34 @@ def _check_override_type(value: Any, field_type: type, field_name: str) -> None:
 
     allowed: tuple[type, ...]
     if origin is Union or origin is type(int | str):
-        allowed = tuple(a for a in args if isinstance(a, type) and a is not type(None))
         # If any arm is a Callable, allow anything callable
         if any(get_origin(a) is Callable or a is Callable for a in args):
             return
-    elif isinstance(field_type, type):
-        allowed = (field_type,)
+        resolved: list[type] = []
+        for arm in args:
+            if arm is type(None):
+                continue
+            # ``isinstance`` rejects parameterized generics, and on Python 3.10 they are
+            # themselves instances of ``type``, so resolve through the origin first.
+            runtime_type = _runtime_class(arm)
+            if runtime_type is None:
+                # An arm such as ``Literal[...]`` has no runtime class to test against;
+                # checking the remaining arms would reject values the annotation allows.
+                return
+            resolved.append(runtime_type)
+        allowed = tuple(resolved)
     else:
-        return  # complex / unknown annotation — skip check
+        field_class = _runtime_class(field_type)
+        if field_class is None:
+            return  # complex / unknown annotation — skip check
+        allowed = (field_class,)
 
     if not allowed:
         return
 
     if not isinstance(value, allowed):
         # Allow str for SecretString fields (will be coerced)
-        if isinstance(value, str) and any(isinstance(a, type) and issubclass(a, str) for a in allowed):
+        if isinstance(value, str) and any(issubclass(a, (str, SecretString)) for a in allowed):
             return
         # Allow int for float fields (standard numeric promotion)
         if isinstance(value, int) and float in allowed:
@@ -230,7 +318,7 @@ def load_settings(
             override_value = overrides[field_name]
             _check_override_type(override_value, field_type, field_name)
             # Coerce plain str → SecretString if the annotation expects it
-            if isinstance(override_value, str) and not isinstance(override_value, SecretString):
+            if isinstance(override_value, str):
                 with suppress(ValueError, TypeError):
                     coerced = _coerce_value(override_value, field_type)
                     if isinstance(coerced, SecretString):

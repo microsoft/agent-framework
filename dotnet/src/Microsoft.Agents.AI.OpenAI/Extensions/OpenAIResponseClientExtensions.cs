@@ -89,12 +89,14 @@ public static class OpenAIResponseClientExtensions
         Throw.IfNull(options);
 
         var chatClient = client.AsIChatClient(model);
+        _ = Microsoft.Agents.AI.OpenAI.OpenAIUserAgentPolicies.Registration.TryRegister(chatClient);
 
         if (clientFactory is not null)
         {
             chatClient = clientFactory(chatClient);
         }
 
+        chatClient = new Microsoft.Agents.AI.OpenAI.FeatureUsageChatClient(chatClient);
         return new ChatClientAgent(chatClient, options, loggerFactory, services);
     }
 
@@ -117,11 +119,14 @@ public static class OpenAIResponseClientExtensions
     [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public static IChatClient AsIChatClientWithStoredOutputDisabled(this ResponsesClient responseClient, string? model = null, bool includeReasoningEncryptedContent = true)
     {
-        return Throw.IfNull(responseClient)
-            .AsIChatClient(model)
+        IChatClient chatClient = Throw.IfNull(responseClient).AsIChatClient(model);
+        _ = Microsoft.Agents.AI.OpenAI.OpenAIUserAgentPolicies.Registration.TryRegister(chatClient);
+
+        return chatClient
             .AsBuilder()
             .ConfigureOptions(x =>
             {
+                Microsoft.Agents.AI.OpenAI.FeatureUsageMarker.MarkUsed();
                 var previousFactory = x.RawRepresentationFactory;
                 x.RawRepresentationFactory = state =>
                 {

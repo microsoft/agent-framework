@@ -2,6 +2,7 @@
 
 """AgentFrameworkAgent wrapper for AG-UI protocol."""
 
+import warnings
 from collections.abc import AsyncGenerator
 from typing import Any, cast
 
@@ -25,6 +26,10 @@ class AgentConfig:
         use_service_session: bool = False,
         require_confirmation: bool = True,
         snapshot_store: AGUIThreadSnapshotStore | None = None,
+        a2ui_config: dict[str, Any] | None = None,
+        service_session_id_from_thread_id: bool = False,
+        emit_messages_snapshot: bool = True,
+        legacy_session_id_from_thread_id: bool = False,
     ):
         """Initialize agent configuration.
 
@@ -32,18 +37,32 @@ class AgentConfig:
             state_schema: Optional state schema for state management; accepts dict or Pydantic model/class
             predict_state_config: Configuration for predictive state updates
             use_service_session: Whether the agent session is service-managed
+            service_session_id_from_thread_id: Compatibility option that treats the
+                client-owned AG-UI Thread id as the provider service-session id.
             require_confirmation: When True (default), emit a ``confirm_changes`` tool call for
                 approval-gated tools so a human-in-the-loop frontend can prompt for approval, and require
                 confirmation for predictive state updates. When False, no ``confirm_changes`` call is
                 emitted; tools remain gated server-side.
             snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence remains inactive unless
                 endpoint setup also provides an explicit Snapshot Scope resolver.
+            require_confirmation: Whether predictive updates require user confirmation before applying
+            a2ui_config: Optional backend A2UI config consumed by auto-injection
+                (``forwardedProps.injectA2UITool``). See ``plan_a2ui_injection``.
+            emit_messages_snapshot: Whether to emit a terminal MessagesSnapshotEvent at the end of runs.
+                Defaults to True for backward compatibility. Set to False when using HistoryProvider
+                to prevent redundant full-transcript rewrites on the client.
+            legacy_session_id_from_thread_id: Deprecated compatibility option that uses the client-owned
+                AG-UI Thread id directly as the internal Agent Session id.
         """
         self.state_schema = self._normalize_state_schema(state_schema)
         self.predict_state_config = predict_state_config or {}
         self.use_service_session = use_service_session
+        self.service_session_id_from_thread_id = service_session_id_from_thread_id
         self.require_confirmation = require_confirmation
         self.snapshot_store = snapshot_store
+        self.a2ui_config = a2ui_config
+        self.emit_messages_snapshot = emit_messages_snapshot
+        self.legacy_session_id_from_thread_id = legacy_session_id_from_thread_id
 
     @staticmethod
     def _normalize_state_schema(state_schema: Any | None) -> dict[str, Any]:
@@ -90,6 +109,10 @@ class AgentFrameworkAgent:
         require_confirmation: bool = True,
         use_service_session: bool = False,
         snapshot_store: AGUIThreadSnapshotStore | None = None,
+        a2ui_config: dict[str, Any] | None = None,
+        service_session_id_from_thread_id: bool = False,
+        emit_messages_snapshot: bool = True,
+        legacy_session_id_from_thread_id: bool = False,
     ):
         """Initialize the AG-UI compatible agent wrapper.
 
@@ -104,9 +127,26 @@ class AgentFrameworkAgent:
                 confirmation for predictive state updates. When False, no ``confirm_changes`` call is
                 emitted; tools remain gated server-side.
             use_service_session: Whether the agent session is service-managed
+            service_session_id_from_thread_id: Compatibility option that treats the
+                client-owned AG-UI Thread id as the provider service-session id.
             snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence remains inactive unless
                 endpoint setup also provides an explicit Snapshot Scope resolver.
+            a2ui_config: Optional backend A2UI config consumed by auto-injection.
+            emit_messages_snapshot: Whether to emit a terminal MessagesSnapshotEvent at the end of runs.
+                Defaults to True. Set to False when using HistoryProvider.
+            legacy_session_id_from_thread_id: Deprecated compatibility option that uses the client-owned
+                AG-UI Thread id directly as the internal Agent Session id. This disables Snapshot Scope
+                isolation for context-provider state.
         """
+        if legacy_session_id_from_thread_id:
+            warnings.warn(
+                "legacy_session_id_from_thread_id=True is deprecated because client-owned AG-UI Thread ids "
+                "do not isolate server-side state. Migrate provider state to scoped session ids and remove "
+                "this option.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         self.agent = agent
         self.name = name or getattr(agent, "name", "agent")
         self.description = description or getattr(agent, "description", "")
@@ -115,8 +155,12 @@ class AgentFrameworkAgent:
             state_schema=state_schema,
             predict_state_config=predict_state_config,
             use_service_session=use_service_session,
+            service_session_id_from_thread_id=service_session_id_from_thread_id,
             require_confirmation=require_confirmation,
             snapshot_store=snapshot_store,
+            a2ui_config=a2ui_config,
+            emit_messages_snapshot=emit_messages_snapshot,
+            legacy_session_id_from_thread_id=legacy_session_id_from_thread_id,
         )
 
         # Server-side Approval State. Populated when approval requests are emitted

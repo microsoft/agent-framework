@@ -78,7 +78,7 @@ jobs:
 
       - name: Upload dependency validation reports
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dependency-maintenance-results
           path: |
@@ -88,7 +88,7 @@ jobs:
 
       - name: Create issue for failed dependency bounds test
         if: steps.validate_bounds_test.outcome != 'success'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -158,7 +158,7 @@ jobs:
 
       - name: Create issues for failed dependency candidates
         if: always()
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -321,7 +321,7 @@ jobs:
 
       - name: Create or update dependency maintenance tracking issue
         if: steps.commit_updates.outputs.has_changes == 'true'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -343,7 +343,7 @@ jobs:
             const prBody = [
               "### Motivation & Context",
               "",
-              "This automated update keeps Python dependency metadata coherent across the uv workspace. Python dependencies can be declared in multiple `pyproject.toml` files, but the workspace has one shared `python/uv.lock`, so dependency maintenance should update and validate them together instead of through per-manifest Dependabot PRs.",
+              "This automated update keeps dependency metadata coherent across the released Python uv workspace. Its packages share `python/uv.lock`, so dependency maintenance updates and validates them together instead of through per-manifest Dependabot PRs. The standalone Lab project maintains its dependencies separately.",
               "",
               "### Description & Review Guide",
               "",

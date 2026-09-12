@@ -71,6 +71,7 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
             => await AIAgentChatCompletionsProcessor.CreateChatCompletionAsync(agent, request, mapOptions, cancellationToken).ConfigureAwait(false))
             .WithName(endpointAgentName + "/CreateChatCompletion");
 
+        MarkFeatureUsed();
         return group;
     }
 }

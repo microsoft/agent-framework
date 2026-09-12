@@ -20,15 +20,29 @@ The sample shows:
 - .NET 10.0 or later
 - A running TestOAuthServer (for OAuth authentication), see [Start the Test OAuth Server](https://github.com/modelcontextprotocol/csharp-sdk/tree/main/samples/ProtectedMcpClient#step-1-start-the-test-oauth-server)
 - A running ProtectedMCPServer (for MCP services), see [Start the Protected MCP Server](https://github.com/modelcontextprotocol/csharp-sdk/tree/main/samples/ProtectedMcpClient#step-2-start-the-protected-mcp-server)
- 
+
+Clone the MCP .NET SDK if it is not already available locally:
+
+```powershell
+git clone https://github.com/modelcontextprotocol/csharp-sdk.git
+dotnet dev-certs https --trust
+```
+
 ## Configuring Environment Variables
 
 Set the following environment variables:
 
 ```powershell
-$env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/" # Replace with your Azure OpenAI resource endpoint
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"  # Optional, defaults to gpt-5.4-mini
+# Azure OpenAI resource root (the sample appends /openai/v1 automatically):
+$env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"
+
+# A Foundry project OpenAI v1 endpoint also works:
+# $env:AZURE_OPENAI_ENDPOINT="https://your-resource.services.ai.azure.com/api/projects/your-project/openai/v1/"
 ```
+
+The OpenAI-compatible model is separate from MCP OAuth. MCP OAuth authenticates access to the weather
+tools. The model chooses when to call those tools.
 
 ## Setup and Running
 
@@ -100,11 +114,14 @@ sequenceDiagram
 ## OAuth Configuration
 
 The client is configured with:
-- **Client ID**: `demo-client`
-- **Client Secret**: `demo-secret` 
+- **Client registration**: Dynamic Client Registration performed automatically by the MCP client
+- **Client name**: `ProtectedMcpClient`
 - **Redirect URI**: `http://localhost:1179/callback`
 - **OAuth Server**: `https://localhost:7029`
 - **Protected Resource**: `http://localhost:7071`
+
+The test authorization endpoint immediately redirects back with an authorization code. No test username,
+password, client ID, or client secret needs to be entered.
 
 ## Available Tools
 

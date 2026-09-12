@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import copy
-import hashlib
 import json
 import logging
 import math
@@ -28,7 +27,6 @@ import uuid
 import warnings
 import weakref
 from abc import abstractmethod
-from base64 import urlsafe_b64encode
 from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Iterable, Mapping, Sequence
 from contextvars import ContextVar, Token
@@ -40,6 +38,10 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, ca
 import msgspec
 
 from ._feature_stage import ExperimentalFeature, experimental
+from ._filesystem import (
+    _is_literal_storage_key_segment_safe,  # pyright: ignore[reportPrivateUsage]
+    _storage_key_segment,  # pyright: ignore[reportPrivateUsage]
+)
 from ._middleware import ChatContext, ChatMiddleware
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import (
@@ -68,40 +70,11 @@ _MESSAGE_INJECTION_LOCK = threading.Lock()
 JsonDumps: TypeAlias = Callable[[Any], str | bytes]
 JsonLoads: TypeAlias = Callable[[str | bytes], Any]
 ServiceSessionId: TypeAlias = Mapping[str, Any]
+MessageIdentity: TypeAlias = tuple[str, ...]
 StateT = TypeVar("StateT")
 StateEncoder: TypeAlias = Callable[[Any], Mapping[str, Any]]
 StateDecoder: TypeAlias = Callable[[Mapping[str, Any]], Any]
 _STATE_SCALAR_TYPES = (str, int, float, bool, type(None))
-_WINDOWS_RESERVED_FILE_STEMS: frozenset[str] = frozenset({
-    "CON",
-    "PRN",
-    "AUX",
-    "NUL",
-    "COM1",
-    "COM2",
-    "COM3",
-    "COM4",
-    "COM5",
-    "COM6",
-    "COM7",
-    "COM8",
-    "COM9",
-    "LPT1",
-    "LPT2",
-    "LPT3",
-    "LPT4",
-    "LPT5",
-    "LPT6",
-    "LPT7",
-    "LPT8",
-    "LPT9",
-    "COM¹",
-    "COM²",
-    "COM³",
-    "LPT¹",
-    "LPT²",
-    "LPT³",
-})
 
 
 _DEFAULT_JSON_ENCODER = msgspec.json.Encoder()
@@ -112,7 +85,6 @@ _JSON_FILE_EXTENSION = ".json"
 _JSON_LINES_FILE_EXTENSION = ".jsonl"
 _MSGPACK_FILE_EXTENSION = ".msgpack"
 _SESSION_SNAPSHOT_VERSION = "1.0"
-_MAX_ENCODED_SESSION_FILE_STEM_LENGTH = 180
 
 
 def _default_json_dumps(value: Any) -> bytes:
@@ -151,29 +123,17 @@ def _is_literal_session_file_stem_safe(session_id: str) -> bool:
     with separators and platform-reserved names such as ``CON``. Unsafe values
     are encoded by :func:`_session_file_stem` rather than rejected.
     """
-    windows_stem = session_id.split(".", maxsplit=1)[0].upper()
-    if (
-        not session_id
-        or session_id.startswith(".")
-        or session_id.endswith((" ", "."))
-        or windows_stem in _WINDOWS_RESERVED_FILE_STEMS
-    ):
-        return False
-    if any(ord(character) < 32 for character in session_id):
-        return False
-    return all(character.isascii() and (character.isalnum() or character in "._-") for character in session_id)
+    return _is_literal_storage_key_segment_safe(session_id)
 
 
 def _session_file_stem(session_id: str, *, encoded_prefix: str) -> str:
-    """Return a safe filename stem for an opaque session ID."""
-    if _is_literal_session_file_stem_safe(session_id):
-        return session_id
-    encoded_session_id = urlsafe_b64encode(session_id.encode("utf-8")).decode("ascii").rstrip("=")
-    encoded_stem = f"{encoded_prefix}{encoded_session_id}"
-    if len(encoded_stem) <= _MAX_ENCODED_SESSION_FILE_STEM_LENGTH:
-        return encoded_stem
-    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-    return f"{encoded_prefix}sha256-{digest}"
+    """Return a safe filename stem for an opaque session ID.
+
+    Delegates to the shared :func:`~agent_framework._filesystem._storage_key_segment`
+    derivation so every component that maps an identifier onto storage produces
+    the same injective result.
+    """
+    return _storage_key_segment(session_id, encoded_prefix=encoded_prefix)
 
 
 def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[str]:
@@ -185,6 +145,62 @@ def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[s
             seen_origin_session_ids.add(origin_session_id)
             unique_origin_session_ids.append(origin_session_id)
     return unique_origin_session_ids
+
+
+def get_message_identity(message: Message) -> MessageIdentity:
+    """Return a stable identity for a message for deduplication.
+
+    Uses the message's ID if available, otherwise falls back to a hash of
+    its role and serialized contents to prevent duplicate persistence.
+    """
+    msg_id = getattr(message, "message_id", None)
+    if msg_id is None:
+        msg_id = getattr(message, "id", None)
+    if msg_id is not None:
+        return ("id", str(msg_id))
+
+    try:
+        contents_data = [c.to_dict() for c in message.contents] if message.contents else []
+        serialized = json.dumps(contents_data, sort_keys=True, ensure_ascii=False)
+        return ("content", str(message.role), serialized)
+    except Exception:
+        return ("content", str(message.role), str(message.contents))
+
+
+def _get_message_hash(message: Message) -> MessageIdentity:
+    """Stable hash for sequence matching."""
+    return get_message_identity(message)
+
+
+def filter_new_messages(existing: Sequence[Message], incoming: Sequence[Message]) -> list[Message]:
+    """Filters incoming messages to only those that are truly new.
+
+    Handles both 'append-only' and 'full transcript replay' scenarios.
+    Prevents superlinear growth and preserves legitimate duplicate turns.
+    """
+    if not existing:
+        return list(incoming)
+
+    existing_hashes = [_get_message_hash(m) for m in existing]
+    incoming_hashes = [_get_message_hash(m) for m in incoming]
+
+    if len(incoming) >= len(existing) and incoming_hashes[: len(existing_hashes)] == existing_hashes:
+        return list(incoming[len(existing) :])
+
+    try:
+        for i in range(len(incoming_hashes) - len(existing_hashes) + 1):
+            if incoming_hashes[i : i + len(existing_hashes)] == existing_hashes:
+                return list(incoming[i + len(existing_hashes) :])
+    except Exception:
+        logger.debug("sequence alignment check failed, falling back to set-based deduplication")
+
+    existing_set = set(existing_hashes)
+    new_msgs: list[Message] = []
+    for m, h in zip(incoming, incoming_hashes):
+        if h not in existing_set:
+            new_msgs.append(m)
+            existing_set.add(h)
+    return new_msgs
 
 
 @dataclass(frozen=True, slots=True)
@@ -753,7 +769,14 @@ class ContextProvider:
     Attributes:
         source_id: Unique identifier for this provider instance (required).
             Used for message/tool attribution so other providers can filter.
+        after_run_once_per_turn: When True, ``after_run`` is scoped to the user
+            turn instead of the individual agent run: inside an
+            ``AgentLoopMiddleware`` loop it is deferred until the loop ends.
+            Providers that mutate persisted history (e.g. compaction) opt in,
+            since firing mid-task would rewrite history the task still needs.
     """
+
+    after_run_once_per_turn: bool = False
 
     def __init__(self, source_id: str):
         """Initialize the provider.
@@ -813,20 +836,34 @@ def _is_approval_placeholder_result(content: Content) -> bool:
 
 def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
     unresolved_requests_by_id: dict[str, Content] = {}
+    local_request_ids_by_call_id: dict[str, deque[str]] = {}
+    local_request_ids_by_occurrence: dict[str, str] = {}
     unresolved_local_responses_by_id: dict[str, Content] = {}
-    local_response_ids_by_call_id: dict[str, deque[str]] = {}
+    local_responses_by_call_id: dict[str, deque[tuple[str, str | None]]] = {}
 
     for message in messages:
         for content in message.contents:
             if content.type == "function_approval_request":
                 function_call = content.function_call
                 if content.id is not None and function_call is not None and function_call.call_id is not None:
-                    unresolved_requests_by_id.setdefault(content.id, content)
+                    if content.id not in unresolved_requests_by_id:
+                        unresolved_requests_by_id[content.id] = content
+                        local_request_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
+                        if function_call.id is not None:
+                            local_request_ids_by_occurrence[function_call.id] = content.id
+                    # A replacement request supersedes the decision that triggered
+                    # reapproval; that old decision is no longer executable authority.
+                    unresolved_local_responses_by_id.pop(content.id, None)
+                    if (
+                        content.additional_properties.get("_replacement_approval_request") is True
+                        and function_call.id is not None
+                    ):
+                        unresolved_local_responses_by_id.pop(function_call.id, None)
                 continue
             if content.type == "function_approval_response":
                 function_call = content.function_call
                 if content.id is not None:
-                    unresolved_requests_by_id.pop(content.id, None)
+                    unresolved_requests_by_id.pop(local_request_ids_by_occurrence.get(content.id, content.id), None)
                 if (
                     content.id is not None
                     and function_call is not None
@@ -835,7 +872,11 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                     and content.id not in unresolved_local_responses_by_id
                 ):
                     unresolved_local_responses_by_id[content.id] = content
-                    local_response_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
+                    request_id = local_request_ids_by_occurrence.get(content.id)
+                    local_responses_by_call_id.setdefault(function_call.call_id, deque()).append((
+                        content.id,
+                        request_id,
+                    ))
                 continue
             if content.call_id is None:
                 continue
@@ -846,8 +887,21 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
             }
             if not (is_terminal_result or is_follow_up_request):
                 continue
-            if response_ids := local_response_ids_by_call_id.get(content.call_id):
-                unresolved_local_responses_by_id.pop(response_ids.popleft(), None)
+            resolved_response = False
+            if responses := local_responses_by_call_id.get(content.call_id):
+                while responses and responses[0][0] not in unresolved_local_responses_by_id:
+                    responses.popleft()
+                if responses:
+                    response_id, request_id = responses.popleft()
+                    unresolved_local_responses_by_id.pop(response_id, None)
+                    if request_id is not None:
+                        unresolved_requests_by_id.pop(request_id, None)
+                    resolved_response = True
+            if not resolved_response and (request_ids := local_request_ids_by_call_id.get(content.call_id)):
+                while request_ids and request_ids[0] not in unresolved_requests_by_id:
+                    request_ids.popleft()
+                if request_ids:
+                    unresolved_requests_by_id.pop(request_ids.popleft(), None)
 
     return {
         id(content) for content in (*unresolved_requests_by_id.values(), *unresolved_local_responses_by_id.values())
@@ -2095,10 +2149,13 @@ class InMemoryHistoryProvider(HistoryProvider):
     ) -> None:
         """Persist messages to session state."""
         mark_feature_used(FeatureIndex.CORE_IN_MEMORY_HISTORY_PROVIDER)
-        if state is None:
+        if state is None or not messages:
             return
         existing = state.get("messages", [])
-        state["messages"] = [*existing, *messages]
+        new_messages = filter_new_messages(existing, messages)
+
+        if new_messages:
+            state["messages"] = [*existing, *new_messages]
 
 
 @experimental(feature_id=ExperimentalFeature.FILE_HISTORY)
@@ -2257,12 +2314,33 @@ class FileHistoryProvider(HistoryProvider):
         def _append_messages() -> None:
             with file_lock:
                 if self.serialization_format == "json":
-                    with file_path.open("a", encoding="utf-8") as file_handle:
-                        for message in messages:
-                            file_handle.write(f"{self._serialize_json_message(message)}\n")
+                    existing_messages: list[Message] = []
+                    if file_path.exists():
+                        with file_path.open("r", encoding="utf-8") as f:
+                            for line in f:
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                try:
+                                    payload = self.loads(line)
+                                    msg = Message.from_dict(dict(cast(Mapping[str, Any], payload)))
+                                    existing_messages.append(msg)
+                                except Exception:
+                                    logger.debug("failed to parse history line for deduplication")
+                                    continue
+
+                    new_messages = filter_new_messages(existing_messages, messages)
+                    if new_messages:
+                        with file_path.open("a", encoding="utf-8") as file_handle:
+                            for message in new_messages:
+                                file_handle.write(f"{self._serialize_json_message(message)}\n")
+                    return
+                existing_messages = self._read_msgpack_messages(file_path) if file_path.exists() else []
+                new_messages = filter_new_messages(existing_messages, messages)
+                if not new_messages:
                     return
                 with file_path.open("ab") as file_handle:
-                    for message in messages:
+                    for message in new_messages:
                         serialized = _DEFAULT_MSGPACK_ENCODER.encode(message.to_dict())
                         file_handle.write(len(serialized).to_bytes(self._MSGPACK_RECORD_HEADER_BYTES, "big"))
                         file_handle.write(serialized)

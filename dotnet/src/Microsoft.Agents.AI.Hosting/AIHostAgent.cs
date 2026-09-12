@@ -1,8 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Hosting;
@@ -51,6 +54,7 @@ public class AIHostAgent : DelegatingAIAgent
     {
         _ = Throw.IfNullOrWhitespace(conversationId);
 
+        MarkFeatureUsed();
         return this._sessionStore.GetSessionAsync(this.InnerAgent, conversationId, cancellationToken);
     }
 
@@ -68,6 +72,39 @@ public class AIHostAgent : DelegatingAIAgent
         _ = Throw.IfNullOrWhitespace(conversationId);
         _ = Throw.IfNull(session);
 
+        MarkFeatureUsed();
         return this._sessionStore.SaveSessionAsync(this.InnerAgent, conversationId, session, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    protected override Task<AgentResponse> RunCoreAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentSession? session = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        MarkFeatureUsed();
+        return base.RunCoreAsync(messages, session, options, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentSession? session = null,
+        AgentRunOptions? options = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        MarkFeatureUsed();
+        await foreach (AgentResponseUpdate update in base.RunCoreStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
+        {
+            yield return update;
+        }
+    }
+
+    private static void MarkFeatureUsed()
+    {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.HostingAgent);
+#pragma warning restore MAAI001
     }
 }

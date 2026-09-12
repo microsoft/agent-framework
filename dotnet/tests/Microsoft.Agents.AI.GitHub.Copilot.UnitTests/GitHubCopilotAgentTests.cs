@@ -141,15 +141,15 @@ public sealed class GitHubCopilotAgentTests
         Assert.Equal("gpt-4o", result.Model);
         Assert.Equal("high", result.ReasoningEffort);
         Assert.Equal(systemMessage, result.SystemMessage);
-        Assert.Equal(new List<string> { "tool1", "tool2" }, result.AvailableTools);
-        Assert.Equal(new List<string> { "tool3" }, result.ExcludedTools);
+        Assert.Equal(["tool1", "tool2"], result.AvailableTools);
+        Assert.Equal(["tool3"], result.ExcludedTools);
         Assert.Equal("/workspace", result.WorkingDirectory);
         Assert.Equal("/config", result.ConfigDirectory);
         Assert.Same(hooks, result.Hooks);
         Assert.Same(infiniteSessions, result.InfiniteSessions);
         Assert.Same(permissionHandler, result.OnPermissionRequest);
         Assert.Same(userInputHandler, result.OnUserInputRequest);
-        Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
+        Assert.Equal(["skill1"], result.DisabledSkills);
         Assert.True(result.Streaming);
     }
 
@@ -169,6 +169,8 @@ public sealed class GitHubCopilotAgentTests
         {
             Model = "gpt-4o",
             ReasoningEffort = "high",
+            ReasoningSummary = ReasoningSummary.Detailed,
+            ContextTier = ContextTier.LongContext,
             Tools = tools,
             SystemMessage = systemMessage,
             AvailableTools = ["tool1", "tool2"],
@@ -189,10 +191,12 @@ public sealed class GitHubCopilotAgentTests
         // Assert
         Assert.Equal("gpt-4o", result.Model);
         Assert.Equal("high", result.ReasoningEffort);
+        Assert.Equal(ReasoningSummary.Detailed, result.ReasoningSummary);
+        Assert.Equal(ContextTier.LongContext, result.ContextTier);
         Assert.Same(tools, result.Tools);
         Assert.Same(systemMessage, result.SystemMessage);
-        Assert.Equal(new List<string> { "tool1", "tool2" }, result.AvailableTools);
-        Assert.Equal(new List<string> { "tool3" }, result.ExcludedTools);
+        Assert.Equal(["tool1", "tool2"], result.AvailableTools);
+        Assert.Equal(["tool3"], result.ExcludedTools);
         Assert.Equal("/workspace", result.WorkingDirectory);
         Assert.Equal("/config", result.ConfigDirectory);
         Assert.Same(hooks, result.Hooks);
@@ -200,7 +204,7 @@ public sealed class GitHubCopilotAgentTests
         Assert.Same(permissionHandler, result.OnPermissionRequest);
         Assert.Same(userInputHandler, result.OnUserInputRequest);
         Assert.Same(mcpServers, result.McpServers);
-        Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
+        Assert.Equal(["skill1"], result.DisabledSkills);
         Assert.True(result.Streaming);
     }
 
@@ -213,6 +217,8 @@ public sealed class GitHubCopilotAgentTests
         // Assert
         Assert.Null(result.Model);
         Assert.Null(result.ReasoningEffort);
+        Assert.Null(result.ReasoningSummary);
+        Assert.Null(result.ContextTier);
         Assert.Null(result.Tools);
         Assert.Null(result.SystemMessage);
         Assert.Null(result.OnPermissionRequest);
@@ -221,6 +227,26 @@ public sealed class GitHubCopilotAgentTests
         Assert.Null(result.WorkingDirectory);
         Assert.Null(result.ConfigDirectory);
         Assert.True(result.Streaming);
+    }
+
+    [Fact]
+    public void CopyResumeSessionConfig_RoundTripsReasoningSummary()
+    {
+        // Regression: ReasoningSummary controls whether the model returns readable
+        // extended-thinking summaries. It must round-trip onto resumed turns, just like
+        // ReasoningEffort, otherwise callers lose readable reasoning after the first turn.
+        var source = new SessionConfig
+        {
+            ReasoningEffort = "high",
+            ReasoningSummary = ReasoningSummary.Detailed,
+        };
+
+        // Act
+        ResumeSessionConfig result = GitHubCopilotAgent.CopyResumeSessionConfig(source);
+
+        // Assert
+        Assert.Equal(ReasoningSummary.Detailed, result.ReasoningSummary);
+        Assert.Equal("high", result.ReasoningEffort);
     }
 
     [Fact]

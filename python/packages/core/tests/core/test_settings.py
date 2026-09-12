@@ -2,9 +2,14 @@
 
 """Tests for load_settings() function."""
 
+import json
+import logging
 import os
 import tempfile
-from typing import TypedDict
+from collections.abc import Callable
+from copy import copy, deepcopy
+from pathlib import Path
+from typing import Any, Literal, TypedDict
 
 import pytest
 
@@ -164,16 +169,169 @@ class TestSecretString:
         assert isinstance(settings["api_key"], SecretString)
         assert settings["api_key"] == "kwarg-secret"
 
+    def test_secretstring_from_wrapped_override(self) -> None:
+        secret = SecretString("my-secret")
+
+        settings = load_settings(SecretSettings, env_prefix="SECRET_", api_key=secret)
+        resolved_api_key = settings["api_key"]
+
+        assert resolved_api_key is secret
+        assert isinstance(resolved_api_key, SecretString)
+        assert resolved_api_key.get_secret_value() == "my-secret"
+
+    def test_secretstring_from_dotenv(self, tmp_path: Path) -> None:
+        env_file = tmp_path / ".env"
+        env_file.write_text("SECRET_API_KEY=my-secret\n", encoding="utf-8")
+
+        settings = load_settings(SecretSettings, env_prefix="SECRET_", env_file_path=str(env_file))
+
+        assert isinstance(settings["api_key"], SecretString)
+        assert settings["api_key"].get_secret_value() == "my-secret"
+        assert str(settings["api_key"]) == "**********"
+
     def test_secretstring_masked_in_repr(self) -> None:
         s = SecretString("my-secret")
         assert "my-secret" not in repr(s)
         assert "**********" in repr(s)
 
+    @pytest.mark.parametrize("value", ["my-secret", "", "x", "secret\nwith\tcontrols"])
+    @pytest.mark.parametrize(
+        "render",
+        [
+            pytest.param(str, id="str"),
+            pytest.param(lambda secret: f"{secret}", id="f-string"),
+            pytest.param(lambda secret: f"{secret!s}", id="f-string-str"),
+            pytest.param(lambda secret, template="%s": template % secret, id="percent"),
+            pytest.param(lambda secret, template="%(key)s": template % {"key": secret}, id="percent-mapping"),
+            pytest.param("{}".format, id="format"),
+            pytest.param(lambda secret: "{key}".format_map({"key": secret}), id="format-map"),
+        ],
+    )
+    def test_secretstring_masked_in_string_conversion(self, value: str, render: Callable[[SecretString], str]) -> None:
+        assert render(SecretString(value)) == "**********"
+
+    @pytest.mark.parametrize("format_spec", ["", "s", ">20", "*^20", ".3", "20.3"])
+    def test_secretstring_format_spec_applies_to_mask(self, format_spec: str) -> None:
+        secret = SecretString("my-secret")
+
+        assert format(secret, format_spec) == format("**********", format_spec)
+        assert f"{secret:{format_spec}}" == format("**********", format_spec)
+        assert "{0:{1}}".format(secret, format_spec) == format("**********", format_spec)
+
+    def test_secretstring_concatenation_masks_both_operands(self) -> None:
+        secret = SecretString("my-secret")
+
+        assert "Bearer " + secret == "Bearer **********"
+        assert secret + " suffix" == "********** suffix"
+        assert secret + SecretString("another-secret") == "********************"
+        assert "prefix " + secret + " suffix" == "prefix ********** suffix"
+
+    def test_secretstring_masked_in_containers(self) -> None:
+        secret = SecretString("my-secret")
+
+        assert str({"key": secret}) == "{'key': SecretString('**********')}"
+        assert repr([secret]) == "[SecretString('**********')]"
+        assert str({secret: "value"}) == "{SecretString('**********'): 'value'}"
+
+    def test_secretstring_masked_in_print(self, capsys: pytest.CaptureFixture[str]) -> None:
+        print(SecretString("my-secret"))  # noqa: T201
+
+        assert capsys.readouterr().out == "**********\n"
+
+    def test_secretstring_masked_in_logging(self, caplog: pytest.LogCaptureFixture) -> None:
+        secret = SecretString("my-secret")
+        logger = logging.getLogger(__name__)
+        format_message = "Key: {}".format
+
+        with caplog.at_level(logging.INFO, logger=__name__):
+            logger.info("Key: %s", secret)
+            logger.info("Key: %(key)s", {"key": secret})
+            logger.info(f"Key: {secret}")
+            logger.info(format_message(secret))
+            logger.info("Key: " + secret)
+            logger.info(secret)
+
+        assert caplog.messages == ["Key: **********"] * 5 + ["**********"]
+
+    def test_secretstring_masked_in_exception(self) -> None:
+        secret = SecretString("my-secret")
+
+        assert str(ValueError(secret)) == "**********"
+        assert str(ValueError(f"Invalid key: {secret}")) == "Invalid key: **********"
+        assert "my-secret" not in repr(ValueError(secret))
+
+    @pytest.mark.parametrize(
+        "consume",
+        [
+            pytest.param(lambda secret: "".join([secret]), id="join"),
+            pytest.param(lambda secret: json.dumps(secret), id="json-value"),
+            pytest.param(lambda secret: json.dumps({"key": secret}), id="json-container"),
+            pytest.param(lambda secret: json.dumps({secret: "value"}), id="json-key"),
+            pytest.param(lambda secret: str.__str__(secret), id="str-base-method"),
+            pytest.param(lambda secret: secret[:], id="slice"),
+            pytest.param(lambda secret: secret + 1, id="add-non-string"),
+            pytest.param(lambda secret: 1 + secret, id="radd-non-string"),
+        ],
+    )
+    def test_secretstring_rejects_implicit_raw_string_use(self, consume: Callable[[Any], Any]) -> None:
+        secret = SecretString("my-secret")
+
+        assert not isinstance(secret, str)
+        with pytest.raises(TypeError) as exc_info:
+            consume(secret)
+        assert "my-secret" not in str(exc_info.value)
+
+    def test_secretstring_json_with_explicit_string_conversion_masks(self) -> None:
+        assert json.dumps({"key": SecretString("my-secret")}, default=str) == '{"key": "**********"}'
+
+    @pytest.mark.parametrize("value", ["my-secret", ""])
+    def test_secretstring_value_semantics(self, value: str) -> None:
+        secret = SecretString(value)
+
+        assert len(secret) == len(value)
+        assert bool(secret) == bool(value)
+        assert secret == SecretString(value)
+        assert secret == value
+        assert value == secret
+        assert secret != SecretString("another-secret")
+        assert secret != "another-secret"
+        assert secret != object()
+        assert hash(secret) == hash(value)
+        assert {secret, SecretString(value), value} == {value}
+
+    def test_secretstring_is_immutable(self) -> None:
+        secret = SecretString("my-secret")
+        secrets = {secret}
+
+        with pytest.raises(AttributeError, match="^SecretString is immutable\\.$"):
+            secret._value = "another-secret"
+
+        assert secret.get_secret_value() == "my-secret"
+        assert secret in secrets
+
+    def test_secretstring_copy_returns_same_immutable_instance(self) -> None:
+        secret = SecretString("my-secret")
+
+        assert copy(secret) is secret
+        assert deepcopy(secret) is secret
+
+    def test_secretstring_can_wrap_existing_secret(self) -> None:
+        secret = SecretString(SecretString("my-secret"))
+
+        assert secret.get_secret_value() == "my-secret"
+        assert str(secret) == "**********"
+
+    @pytest.mark.parametrize("value", [None, 123, b"my-secret"])
+    def test_secretstring_rejects_non_strings(self, value: Any) -> None:
+        with pytest.raises(TypeError, match="^SecretString requires a string value\\.$"):
+            SecretString(value)
+
     def test_get_secret_value_compat(self) -> None:
         s = SecretString("my-secret")
 
         assert s.get_secret_value() == "my-secret"
-        assert isinstance(s.get_secret_value(), str)
+        assert type(s.get_secret_value()) is str
+        assert f"Bearer {s.get_secret_value()}" == "Bearer my-secret"
 
 
 class TestTypeCoercion:
@@ -260,6 +418,62 @@ class TestOverrideTypeValidation:
 
         assert isinstance(settings["api_key"], SecretString)
         assert settings["api_key"] == "plain-string"
+
+    def test_str_accepted_for_required_secretstring(self) -> None:
+        class RequiredSecretSettings(TypedDict):
+            api_key: SecretString
+
+        settings = load_settings(RequiredSecretSettings, api_key="my-secret", required_fields=["api_key"])
+
+        assert isinstance(settings["api_key"], SecretString)
+        assert settings["api_key"].get_secret_value() == "my-secret"
+
+    def test_invalid_secretstring_override_rejected(self) -> None:
+        with pytest.raises(ValueError, match="expected SecretString, got int"):
+            load_settings(SecretSettings, api_key=123)
+
+    def test_secretstring_requires_explicit_unwrapping_for_str_field(self) -> None:
+        with pytest.raises(ValueError, match="expected str, got SecretString"):
+            load_settings(SimpleSettings, api_key=SecretString("my-secret"))
+
+    def test_parameterized_generic_union_arm_accepted(self) -> None:
+        """A ``dict`` override is valid for ``dict[str, Any] | str | None``."""
+
+        class GenericUnionSettings(TypedDict, total=False):
+            config: dict[str, Any] | str | None
+
+        settings = load_settings(GenericUnionSettings, env_prefix="TEST_", config={"key": "value"})
+
+        assert settings["config"] == {"key": "value"}
+
+    def test_parameterized_generic_union_arm_rejects_unrelated_type(self) -> None:
+        class GenericUnionSettings(TypedDict, total=False):
+            config: dict[str, Any] | str | None
+
+        with pytest.raises(ValueError, match="Invalid type for setting 'config'"):
+            load_settings(GenericUnionSettings, env_prefix="TEST_", config=1.5)
+
+    def test_bare_parameterized_generic_field(self) -> None:
+        """A non-union ``dict[str, Any]`` is validated against its origin, not the alias."""
+
+        class GenericSettings(TypedDict, total=False):
+            config: dict[str, Any]
+
+        settings = load_settings(GenericSettings, env_prefix="TEST_", config={"key": "value"})
+        assert settings["config"] == {"key": "value"}
+
+        with pytest.raises(ValueError, match="Invalid type for setting 'config'"):
+            load_settings(GenericSettings, env_prefix="TEST_", config=1.5)
+
+    def test_union_with_literal_arm_skips_check(self) -> None:
+        """``Literal`` arms have no runtime class, so validation is skipped rather than wrong."""
+
+        class LiteralUnionSettings(TypedDict, total=False):
+            mode: Literal["all"] | list[str] | None
+
+        settings = load_settings(LiteralUnionSettings, env_prefix="TEST_", mode=["a", "b"])
+
+        assert settings["mode"] == ["a", "b"]
 
 
 class TestMutuallyExclusive:

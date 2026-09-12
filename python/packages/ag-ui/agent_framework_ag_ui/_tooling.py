@@ -7,7 +7,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from agent_framework import BaseChatClient
 from agent_framework._tools import _append_unique_tools  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
@@ -69,26 +68,6 @@ def collect_server_tools(agent: SupportsAgentRun) -> list[Any]:
         approval_mode = getattr(tool, "approval_mode", None)
         logger.info(f"[TOOLS]   - {tool_name}: approval_mode={approval_mode}")
     return server_tools
-
-
-def register_additional_client_tools(agent: SupportsAgentRun, client_tools: list[Any] | None) -> None:
-    """Register client tools as additional declaration-only tools to avoid server execution.
-
-    Args:
-        agent: Agent instance to register tools on. Works with Agent
-            or any agent with a client attribute.
-        client_tools: List of client tools to register.
-    """
-    if not client_tools:
-        return
-
-    client = getattr(agent, "client", None)
-    if client is None:
-        return
-
-    if isinstance(client, BaseChatClient) and client.function_invocation_configuration is not None:  # type: ignore[attr-defined]
-        client.function_invocation_configuration["additional_tools"] = client_tools  # type: ignore[attr-defined]
-        logger.debug(f"[TOOLS] Registered {len(client_tools)} client tools as additional_tools (declaration-only)")
 
 
 def _has_approval_tools(tools: list[Any]) -> bool:

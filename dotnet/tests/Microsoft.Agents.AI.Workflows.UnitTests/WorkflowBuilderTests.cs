@@ -2,7 +2,9 @@
 
 using System;
 using System.Collections.Generic;
-using FluentAssertions;
+using System.Globalization;
+using System.Numerics;
+using System.Reflection;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -25,27 +27,27 @@ public partial class WorkflowBuilderTests
     [Fact]
     public void Test_Validation_FailsWhenUnboundExecutors()
     {
-        Func<Workflow> act = () =>
+        static Workflow act()
         {
             return new WorkflowBuilder("start")
                        .AddEdge(new NoOpExecutor("start"), "unbound")
                        .Build();
-        };
+        }
 
-        act.Should().Throw<InvalidOperationException>();
+        Assert.Throws<InvalidOperationException>((Func<Workflow>)act);
     }
 
     [Fact]
     public void Test_Validation_FailsWhenUnreachableExecutors()
     {
-        Func<Workflow> act = () =>
+        static Workflow act()
         {
             return new WorkflowBuilder("start")
                        .BindExecutor(new NoOpExecutor("start"))
                        .AddEdge(new NoOpExecutor("unreachable"), new NoOpExecutor("also-unreachable"))
                        .Build();
-        };
-        act.Should().Throw<InvalidOperationException>();
+        }
+        Assert.Throws<InvalidOperationException>((Func<Workflow>)act);
     }
 
     [Fact]
@@ -57,14 +59,14 @@ public partial class WorkflowBuilderTests
                                 .AddEdge("start", "not-unreachable")
                                 .Build();
 
-        workflow.StartExecutorId.Should().Be("start");
+        Assert.Equal("start", workflow.StartExecutorId);
 
-        workflow.ExecutorBindings.Should().HaveCount(3);
-        workflow.ExecutorBindings.Should().ContainKey("start");
-        workflow.ExecutorBindings.Should().ContainKey("not-unreachable");
-        workflow.ExecutorBindings.Should().ContainKey("also-not-unreachable");
+        Assert.Equal(3, workflow.ExecutorBindings.Count);
+        Assert.Contains("start", workflow.ExecutorBindings);
+        Assert.Contains("not-unreachable", workflow.ExecutorBindings);
+        Assert.Contains("also-not-unreachable", workflow.ExecutorBindings);
 
-        workflow.ExecutorBindings.Values.Should().AllSatisfy(binding => binding.ExecutorType.Should().Be<NoOpExecutor>());
+        Assert.All(workflow.ExecutorBindings.Values, binding => Assert.Equal(typeof(NoOpExecutor), binding.ExecutorType));
     }
 
     [Fact]
@@ -74,11 +76,11 @@ public partial class WorkflowBuilderTests
                                 .BindExecutor(new NoOpExecutor("start"))
                                 .Build();
 
-        workflow.StartExecutorId.Should().Be("start");
+        Assert.Equal("start", workflow.StartExecutorId);
 
-        workflow.ExecutorBindings.Should().HaveCount(1);
-        workflow.ExecutorBindings.Should().ContainKey("start");
-        workflow.ExecutorBindings["start"].ExecutorType.Should().Be<NoOpExecutor>();
+        Assert.Single(workflow.ExecutorBindings);
+        Assert.Contains("start", workflow.ExecutorBindings!);
+        Assert.Equal(typeof(NoOpExecutor), workflow.ExecutorBindings["start"].ExecutorType);
     }
 
     [Fact]
@@ -89,11 +91,11 @@ public partial class WorkflowBuilderTests
                                 .AddEdge(start, start)
                                 .Build();
 
-        workflow.StartExecutorId.Should().Be("start");
+        Assert.Equal("start", workflow.StartExecutorId);
 
-        workflow.ExecutorBindings.Should().HaveCount(1);
-        workflow.ExecutorBindings.Should().ContainKey("start");
-        workflow.ExecutorBindings["start"].ExecutorType.Should().Be<NoOpExecutor>();
+        Assert.Single(workflow.ExecutorBindings);
+        Assert.Contains("start", workflow.ExecutorBindings!);
+        Assert.Equal(typeof(NoOpExecutor), workflow.ExecutorBindings["start"].ExecutorType);
     }
 
     [Fact]
@@ -102,14 +104,14 @@ public partial class WorkflowBuilderTests
         NoOpExecutor executor1 = new("start");
         SomeOtherNoOpExecutor executor2 = new("start");
 
-        Func<Workflow> act = () =>
+        Workflow act()
         {
             return new WorkflowBuilder("start")
                        .AddEdge(executor1, executor2)
                        .Build();
-        };
+        }
 
-        act.Should().Throw<InvalidOperationException>();
+        Assert.Throws<InvalidOperationException>((Func<Workflow>)act);
     }
 
     [Fact]
@@ -121,11 +123,11 @@ public partial class WorkflowBuilderTests
                                 .AddEdge(executor1, executor1)
                                 .Build();
 
-        workflow.StartExecutorId.Should().Be("start");
+        Assert.Equal("start", workflow.StartExecutorId);
 
-        workflow.ExecutorBindings.Should().HaveCount(1);
-        workflow.ExecutorBindings.Should().ContainKey("start");
-        workflow.ExecutorBindings["start"].ExecutorType.Should().Be<NoOpExecutor>();
+        Assert.Single(workflow.ExecutorBindings);
+        Assert.Contains("start", workflow.ExecutorBindings!);
+        Assert.Equal(typeof(NoOpExecutor), workflow.ExecutorBindings["start"].ExecutorType);
     }
 
     [Fact]
@@ -138,16 +140,16 @@ public partial class WorkflowBuilderTests
             .BindExecutor(new NoOpExecutor("start"))
             .Build();
 
-        workflow1.Name.Should().Be("Test Pipeline");
-        workflow1.Description.Should().Be("Test workflow description");
+        Assert.Equal("Test Pipeline", workflow1.Name);
+        Assert.Equal("Test workflow description", workflow1.Description);
 
         // Test without (defaults to null)
         Workflow workflow2 = new WorkflowBuilder("start2")
             .BindExecutor(new NoOpExecutor("start2"))
             .Build();
 
-        workflow2.Name.Should().BeNull();
-        workflow2.Description.Should().BeNull();
+        Assert.Null(workflow2.Name);
+        Assert.Null(workflow2.Description);
 
         // Test with only name (no description)
         Workflow workflow3 = new WorkflowBuilder("start3")
@@ -155,8 +157,8 @@ public partial class WorkflowBuilderTests
             .BindExecutor(new NoOpExecutor("start3"))
             .Build();
 
-        workflow3.Name.Should().Be("Named Only");
-        workflow3.Description.Should().BeNull();
+        Assert.Equal("Named Only", workflow3.Name);
+        Assert.Null(workflow3.Description);
     }
 
     [Fact]
@@ -173,14 +175,14 @@ public partial class WorkflowBuilderTests
 
         // Assert
         Edge edge = GetSingleEdge(workflow, source.Id);
-        edge.Kind.Should().Be(EdgeKind.Direct);
-        edge.DirectEdgeData.Should().NotBeNull();
-        edge.DirectEdgeData!.SourceId.Should().Be(source.Id);
-        edge.DirectEdgeData!.SinkId.Should().Be(target.Id);
-        edge.DirectEdgeData.Condition.Should().NotBeNull();
-        edge.DirectEdgeData.Condition!("message").Should().BeTrue();
-        edge.DirectEdgeData.Condition!(42).Should().BeFalse();
-        edge.DirectEdgeData.Condition!(null).Should().BeFalse();
+        Assert.Equal(EdgeKind.Direct, edge.Kind);
+        Assert.NotNull(edge.DirectEdgeData);
+        Assert.Equal(source.Id, edge.DirectEdgeData!.SourceId);
+        Assert.Equal(target.Id, edge.DirectEdgeData!.SinkId);
+        Assert.NotNull(edge.DirectEdgeData.Condition);
+        Assert.True(edge.DirectEdgeData.Condition!("message"));
+        Assert.False(edge.DirectEdgeData.Condition!(42));
+        Assert.False(edge.DirectEdgeData.Condition!(null));
     }
 
     [Fact]
@@ -198,14 +200,14 @@ public partial class WorkflowBuilderTests
 
         // Assert
         Edge edge = GetSingleEdge(workflow, source.Id);
-        edge.Kind.Should().Be(EdgeKind.FanOut);
-        edge.FanOutEdgeData.Should().NotBeNull();
-        edge.FanOutEdgeData!.SourceId.Should().Be(source.Id);
-        edge.FanOutEdgeData!.SinkIds.Should().Equal([target1.Id, target2.Id]);
-        edge.FanOutEdgeData.EdgeAssigner.Should().NotBeNull();
-        edge.FanOutEdgeData.EdgeAssigner!("match", 2).Should().Equal([0, 1]);
-        edge.FanOutEdgeData.EdgeAssigner!("other", 2).Should().BeEmpty();
-        edge.FanOutEdgeData.EdgeAssigner!(42, 2).Should().BeEmpty();
+        Assert.Equal(EdgeKind.FanOut, edge.Kind);
+        Assert.NotNull(edge.FanOutEdgeData);
+        Assert.Equal(source.Id, edge.FanOutEdgeData!.SourceId);
+        Assert.Equal([target1.Id, target2.Id], edge.FanOutEdgeData!.SinkIds);
+        Assert.NotNull(edge.FanOutEdgeData.EdgeAssigner);
+        Assert.Equal([0, 1], edge.FanOutEdgeData.EdgeAssigner!("match", 2));
+        Assert.Empty(edge.FanOutEdgeData.EdgeAssigner!("other", 2) ?? []);
+        Assert.Empty(edge.FanOutEdgeData.EdgeAssigner!(42, 2) ?? []);
     }
 
     [Fact]
@@ -222,14 +224,14 @@ public partial class WorkflowBuilderTests
 
         // Assert
         Edge edge = GetSingleEdge(workflow, source.Id);
-        edge.Kind.Should().Be(EdgeKind.Direct);
-        edge.DirectEdgeData.Should().NotBeNull();
-        edge.DirectEdgeData!.SourceId.Should().Be(source.Id);
-        edge.DirectEdgeData!.SinkId.Should().Be(target.Id);
-        edge.DirectEdgeData.Condition.Should().NotBeNull();
-        edge.DirectEdgeData.Condition!("message").Should().BeFalse();
-        edge.DirectEdgeData.Condition!(42).Should().BeTrue();
-        edge.DirectEdgeData.Condition!(null).Should().BeTrue();
+        Assert.Equal(EdgeKind.Direct, edge.Kind);
+        Assert.NotNull(edge.DirectEdgeData);
+        Assert.Equal(source.Id, edge.DirectEdgeData!.SourceId);
+        Assert.Equal(target.Id, edge.DirectEdgeData!.SinkId);
+        Assert.NotNull(edge.DirectEdgeData.Condition);
+        Assert.False(edge.DirectEdgeData.Condition!("message"));
+        Assert.True(edge.DirectEdgeData.Condition!(42));
+        Assert.True(edge.DirectEdgeData.Condition!(null));
     }
 
     [Fact]
@@ -247,13 +249,13 @@ public partial class WorkflowBuilderTests
 
         // Assert
         Edge edge = GetSingleEdge(workflow, source.Id);
-        edge.Kind.Should().Be(EdgeKind.FanOut);
-        edge.FanOutEdgeData.Should().NotBeNull();
-        edge.FanOutEdgeData!.SourceId.Should().Be(source.Id);
-        edge.FanOutEdgeData!.SinkIds.Should().Equal([target1.Id, target2.Id]);
-        edge.FanOutEdgeData.EdgeAssigner.Should().NotBeNull();
-        edge.FanOutEdgeData.EdgeAssigner!(42, 2).Should().Equal([0, 1]);
-        edge.FanOutEdgeData.EdgeAssigner!("message", 2).Should().BeEmpty();
+        Assert.Equal(EdgeKind.FanOut, edge.Kind);
+        Assert.NotNull(edge.FanOutEdgeData);
+        Assert.Equal(source.Id, edge.FanOutEdgeData!.SourceId);
+        Assert.Equal([target1.Id, target2.Id], edge.FanOutEdgeData!.SinkIds);
+        Assert.NotNull(edge.FanOutEdgeData.EdgeAssigner);
+        Assert.Equal([0, 1], edge.FanOutEdgeData.EdgeAssigner!(42, 2));
+        Assert.Empty(edge.FanOutEdgeData.EdgeAssigner!("message", 2) ?? []);
     }
 
     [Fact]
@@ -271,14 +273,14 @@ public partial class WorkflowBuilderTests
 
         // Assert
         Edge firstEdge = GetSingleEdge(workflow, source.Id);
-        firstEdge.Kind.Should().Be(EdgeKind.Direct);
-        firstEdge.DirectEdgeData!.SourceId.Should().Be(source.Id);
-        firstEdge.DirectEdgeData.SinkId.Should().Be(middle.Id);
+        Assert.Equal(EdgeKind.Direct, firstEdge.Kind);
+        Assert.Equal(source.Id, firstEdge.DirectEdgeData!.SourceId);
+        Assert.Equal(middle.Id, firstEdge.DirectEdgeData.SinkId);
 
         Edge secondEdge = GetSingleEdge(workflow, middle.Id);
-        secondEdge.Kind.Should().Be(EdgeKind.Direct);
-        secondEdge.DirectEdgeData!.SourceId.Should().Be(middle.Id);
-        secondEdge.DirectEdgeData.SinkId.Should().Be(end.Id);
+        Assert.Equal(EdgeKind.Direct, secondEdge.Kind);
+        Assert.Equal(middle.Id, secondEdge.DirectEdgeData!.SourceId);
+        Assert.Equal(end.Id, secondEdge.DirectEdgeData.SinkId);
     }
 
     [Fact]
@@ -289,12 +291,11 @@ public partial class WorkflowBuilderTests
         NoOpExecutor middle = new("middle");
 
         // Act
-        Action act = () => new WorkflowBuilder(source.Id)
+        void act() => new WorkflowBuilder(source.Id)
             .AddChain(source, [middle, source]);
 
         // Assert
-        act.Should().Throw<ArgumentException>()
-            .WithParameterName("executors");
+        Assert.Equal("executors", Assert.Throws<ArgumentException>(act).ParamName);
     }
 
     [Fact]
@@ -310,20 +311,20 @@ public partial class WorkflowBuilderTests
             .Build();
 
         // Assert
-        workflow.Ports.Should().ContainKey(PortId);
-        workflow.Ports[PortId].Request.Should().Be(typeof(string));
-        workflow.Ports[PortId].Response.Should().Be(typeof(int));
-        workflow.ExecutorBindings.Should().ContainKey(PortId);
+        Assert.Contains(PortId, workflow.Ports);
+        Assert.Equal(typeof(string), workflow.Ports[PortId].Request);
+        Assert.Equal(typeof(int), workflow.Ports[PortId].Response);
+        Assert.Contains(PortId, workflow.ExecutorBindings);
 
         Edge requestEdge = GetSingleEdge(workflow, source.Id);
-        requestEdge.Kind.Should().Be(EdgeKind.Direct);
-        requestEdge.DirectEdgeData!.SourceId.Should().Be(source.Id);
-        requestEdge.DirectEdgeData.SinkId.Should().Be(PortId);
+        Assert.Equal(EdgeKind.Direct, requestEdge.Kind);
+        Assert.Equal(source.Id, requestEdge.DirectEdgeData!.SourceId);
+        Assert.Equal(PortId, requestEdge.DirectEdgeData.SinkId);
 
         Edge responseEdge = GetSingleEdge(workflow, PortId);
-        responseEdge.Kind.Should().Be(EdgeKind.Direct);
-        responseEdge.DirectEdgeData!.SourceId.Should().Be(PortId);
-        responseEdge.DirectEdgeData.SinkId.Should().Be(source.Id);
+        Assert.Equal(EdgeKind.Direct, responseEdge.Kind);
+        Assert.Equal(PortId, responseEdge.DirectEdgeData!.SourceId);
+        Assert.Equal(source.Id, responseEdge.DirectEdgeData.SinkId);
     }
 
     [Fact]
@@ -345,14 +346,14 @@ public partial class WorkflowBuilderTests
 
         // Assert
         Edge edge = GetSingleEdge(workflow, source.Id);
-        edge.Kind.Should().Be(EdgeKind.FanOut);
-        edge.FanOutEdgeData.Should().NotBeNull();
-        edge.FanOutEdgeData!.SourceId.Should().Be(source.Id);
-        edge.FanOutEdgeData!.SinkIds.Should().Equal([stringTarget.Id, intTarget.Id, defaultTarget.Id]);
-        edge.FanOutEdgeData.EdgeAssigner.Should().NotBeNull();
-        edge.FanOutEdgeData.EdgeAssigner!("match", 3).Should().Equal([0]);
-        edge.FanOutEdgeData.EdgeAssigner!(2, 3).Should().Equal([1]);
-        edge.FanOutEdgeData.EdgeAssigner!("other", 3).Should().Equal([2]);
+        Assert.Equal(EdgeKind.FanOut, edge.Kind);
+        Assert.NotNull(edge.FanOutEdgeData);
+        Assert.Equal(source.Id, edge.FanOutEdgeData!.SourceId);
+        Assert.Equal([stringTarget.Id, intTarget.Id, defaultTarget.Id], edge.FanOutEdgeData!.SinkIds);
+        Assert.NotNull(edge.FanOutEdgeData.EdgeAssigner);
+        Assert.Equal([0], edge.FanOutEdgeData.EdgeAssigner!("match", 3));
+        Assert.Equal([1], edge.FanOutEdgeData.EdgeAssigner!(2, 3));
+        Assert.Equal([2], edge.FanOutEdgeData.EdgeAssigner!("other", 3));
     }
 
     [Fact]
@@ -454,7 +455,7 @@ public partial class WorkflowBuilderTests
     /// Gets the only edge emitted by the specified workflow source.
     /// </summary>
     private static Edge GetSingleEdge(Workflow workflow, string sourceId)
-        => workflow.Edges[sourceId].Should().ContainSingle().Subject;
+        => Assert.Single(workflow.Edges[sourceId]);
 
     // --- Tag-aware WithOutputFrom / WithIntermediateOutputFrom tests ---
 
@@ -468,8 +469,8 @@ public partial class WorkflowBuilderTests
             .WithOutputFrom(b)
             .Build();
 
-        workflow.OutputExecutors.Should().ContainKey("b");
-        workflow.OutputExecutors["b"].Should().BeEmpty("regular outputs are untagged");
+        Assert.Contains("b", workflow.OutputExecutors);
+        Assert.Empty(workflow.OutputExecutors["b"] ?? []);
     }
 
     [Fact]
@@ -482,7 +483,7 @@ public partial class WorkflowBuilderTests
             .WithIntermediateOutputFrom([b])
             .Build();
 
-        workflow.OutputExecutors["b"].Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+        Assert.Equivalent(new[] { OutputTag.Intermediate }, workflow.OutputExecutors["b"]);
     }
 
     [Fact]
@@ -497,9 +498,9 @@ public partial class WorkflowBuilderTests
             .WithOutputFrom(b, c)
             .Build();
 
-        workflow.OutputExecutors.Should().HaveCount(2);
-        workflow.OutputExecutors["b"].Should().BeEmpty();
-        workflow.OutputExecutors["c"].Should().BeEmpty();
+        Assert.Equal(2, workflow.OutputExecutors.Count);
+        Assert.Empty(workflow.OutputExecutors["b"] ?? []);
+        Assert.Empty(workflow.OutputExecutors["c"] ?? []);
     }
 
     [Fact]
@@ -514,7 +515,7 @@ public partial class WorkflowBuilderTests
             .Build();
 
         // WithOutputFrom doesn't add a tag; WithIntermediateOutputFrom adds Intermediate.
-        workflow.OutputExecutors["b"].Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+        Assert.Equivalent(new[] { OutputTag.Intermediate }, workflow.OutputExecutors["b"]);
     }
 
     [Fact]
@@ -528,7 +529,7 @@ public partial class WorkflowBuilderTests
             .WithIntermediateOutputFrom([b])
             .Build();
 
-        workflow.OutputExecutors["b"].Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+        Assert.Equivalent(new[] { OutputTag.Intermediate }, workflow.OutputExecutors["b"]);
     }
 
     [Fact]
@@ -543,8 +544,8 @@ public partial class WorkflowBuilderTests
             .WithIntermediateOutputFrom([b])
             .Build();
 
-        workflow.OutputExecutors.Should().ContainKey("b");
-        workflow.OutputExecutors["b"].Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+        Assert.Contains("b", workflow.OutputExecutors);
+        Assert.Equivalent(new[] { OutputTag.Intermediate }, workflow.OutputExecutors["b"]);
     }
 
     [Fact]
@@ -560,7 +561,119 @@ public partial class WorkflowBuilderTests
             .BindExecutor(future)
             .Build();
 
-        workflow.OutputExecutors.Should().ContainKey("future");
-        workflow.OutputExecutors["future"].Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+        Assert.Contains("future", workflow.OutputExecutors);
+        Assert.Equivalent(new[] { OutputTag.Intermediate }, workflow.OutputExecutors["future"]);
     }
+}
+
+[CollectionDefinition("WorkflowFeatureUsage", DisableParallelization = true)]
+public sealed class WorkflowFeatureUsageScope;
+
+[Collection("WorkflowFeatureUsage")]
+public sealed class WorkflowFeatureUsageTests
+{
+    private sealed class NoOpExecutor(string id) : Executor(id)
+    {
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+            => protocolBuilder.ConfigureRoutes(routeBuilder =>
+                routeBuilder.AddHandler<object>((message, context) => context.SendMessageAsync(message)));
+    }
+
+    [Fact]
+    public void Build_MarksOnlyTheActivatedWorkflowFeature()
+    {
+        // Arrange
+        ResetFeatureUsage();
+        WorkflowBuilder custom = new(new NoOpExecutor("custom"));
+        OrchestrationTestHelpers.DoubleEchoAgent sequentialAgent = new("sequential");
+        OrchestrationTestHelpers.DoubleEchoAgent concurrentAgent = new("concurrent");
+        OrchestrationTestHelpers.DoubleEchoAgent groupChatAgent = new("group-chat");
+        OrchestrationTestHelpers.DoubleEchoAgent magenticManager = new("magentic-manager");
+        OrchestrationTestHelpers.DoubleEchoAgent magenticAgent = new("magentic-agent");
+        OrchestrationTestHelpers.DoubleEchoAgent handoffCoordinator = new("handoff-coordinator");
+        OrchestrationTestHelpers.DoubleEchoAgent handoffSpecialist = new("handoff-specialist");
+
+        SequentialWorkflowBuilder sequential = new(sequentialAgent);
+        ConcurrentWorkflowBuilder concurrent = new(concurrentAgent);
+        GroupChatWorkflowBuilder groupChat = AgentWorkflowBuilder
+            .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents))
+            .AddParticipants(groupChatAgent);
+        MagenticWorkflowBuilder magentic = new MagenticWorkflowBuilder(magenticManager)
+            .AddParticipants(magenticAgent)
+            .RequirePlanSignoff(false);
+        HandoffWorkflowBuilder handoff = AgentWorkflowBuilder
+            .CreateHandoffBuilderWith(handoffCoordinator)
+            .WithHandoff(handoffCoordinator, handoffSpecialist);
+
+        (string Name, int FeatureIndex, Func<Workflow> Build)[] specialized =
+        [
+            ("sequential", (int)FeatureIndex.OrchestrationSequential, sequential.Build),
+            ("concurrent", (int)FeatureIndex.OrchestrationConcurrent, concurrent.Build),
+            ("group chat", (int)FeatureIndex.OrchestrationGroupChat, groupChat.Build),
+            ("magentic", (int)FeatureIndex.OrchestrationMagentic, magentic.Build),
+            ("handoff", (int)FeatureIndex.OrchestrationHandoff, handoff.Build),
+        ];
+
+        // Act and assert
+        Assert.Equal(BigInteger.Zero, GetFeatureMask());
+
+        _ = custom.Build();
+        AssertFeatureMask(FeatureIndex.CoreWorkflow, "custom");
+
+        foreach ((string name, int featureIndex, Func<Workflow> build) in specialized)
+        {
+            ResetFeatureUsage();
+            _ = build();
+            AssertFeatureMask(featureIndex, name);
+        }
+    }
+
+    [Fact]
+    public void Build_WhenValidationFails_DoesNotMarkCoreWorkflow()
+    {
+        // Arrange
+        ResetFeatureUsage();
+        WorkflowBuilder builder = new("unbound");
+
+        // Act
+        void build() => builder.Build();
+
+        // Assert
+        Assert.Throws<InvalidOperationException>(build);
+        Assert.Equal(BigInteger.Zero, GetFeatureMask());
+    }
+
+    private static void AssertFeatureMask(FeatureIndex featureIndex, string workflowKind)
+        => AssertFeatureMask((int)featureIndex, workflowKind);
+
+    private static void AssertFeatureMask(int featureIndex, string workflowKind)
+    {
+        BigInteger expected = BigInteger.One << featureIndex;
+        BigInteger actual = GetFeatureMask();
+        Assert.True(
+            actual == expected,
+            $"Expected {workflowKind} workflow build to mark only feature bit {featureIndex}, but found mask 0x{actual:x}.");
+    }
+
+    private static BigInteger GetFeatureMask()
+    {
+#pragma warning disable MAAI001
+        string userAgent = FeatureUsage.ApplyToUserAgent("test");
+#pragma warning restore MAAI001
+        const string Prefix = "test (feat=v1.";
+        if (userAgent == "test")
+        {
+            return BigInteger.Zero;
+        }
+
+        Assert.StartsWith(Prefix, userAgent);
+        Assert.EndsWith(")", userAgent);
+        string mask = userAgent.Substring(Prefix.Length, userAgent.Length - Prefix.Length - 1);
+        return BigInteger.Parse($"0{mask}", NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture);
+    }
+
+    private static void ResetFeatureUsage()
+        => typeof(FeatureUsage)
+            .GetMethod("ResetStateForTests", BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, null);
 }

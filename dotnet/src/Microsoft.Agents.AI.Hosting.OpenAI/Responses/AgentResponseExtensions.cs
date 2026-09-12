@@ -53,6 +53,7 @@ internal static class AgentResponseExtensions
             Error = null,
             Id = context.ResponseId,
             Instructions = request.Instructions,
+            Logprobs = request.Logprobs,
             MaxOutputTokens = request.MaxOutputTokens,
             MaxToolCalls = request.MaxToolCalls,
             Metadata = request.Metadata is IReadOnlyDictionary<string, string> metadata ? new Dictionary<string, string>(metadata) : [],

@@ -8,7 +8,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import patch
 
 import msgspec
@@ -27,6 +27,7 @@ from agent_framework import (
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
+    SecretString,
     SessionContext,
     SessionStore,
     agent_middleware,
@@ -46,6 +47,11 @@ from agent_framework._sessions import (
 )
 from agent_framework._telemetry import FeatureIndex
 from agent_framework.exceptions import MiddlewareException
+
+from .test_filesystem import COLLIDING_IDENTIFIERS
+
+if TYPE_CHECKING:
+    from agent_framework._agents import SupportsAgentRun
 
 # ---------------------------------------------------------------------------
 # SessionContext tests
@@ -443,6 +449,60 @@ def test_filter_approval_controls_keeps_response_for_pending_placeholder() -> No
     ]
     assert controls == [response]
     assert any(placeholder in message.contents for message in filtered)
+
+
+def _replacement_approval_round(
+    *,
+    call_id: str,
+    occurrence_id: str,
+    request_id: str,
+) -> tuple[Content, Content]:
+    function_call = Content.from_function_call(
+        call_id=call_id,
+        name="guarded",
+        arguments="{}",
+        id=occurrence_id,
+    )
+    request = Content.from_function_approval_request(
+        id=request_id,
+        function_call=function_call,
+        additional_properties={"_replacement_approval_request": True},
+    )
+    return function_call, request
+
+
+def test_filter_approval_controls_correlates_replacement_by_occurrence() -> None:
+    """Resolving one reused-call-id replacement must leave its sibling pending."""
+    first_call, first_request = _replacement_approval_round(
+        call_id="reused",
+        occurrence_id="occurrence-1",
+        request_id="replacement-1",
+    )
+    second_call, second_request = _replacement_approval_round(
+        call_id="reused",
+        occurrence_id="occurrence-2",
+        request_id="replacement-2",
+    )
+    second_response = Content.from_function_approval_response(
+        approved=True,
+        id="occurrence-2",
+        function_call=second_call,
+    )
+
+    filtered = _filter_approval_control_messages([
+        Message(role="assistant", contents=[first_call, first_request]),
+        Message(role="assistant", contents=[second_call, second_request]),
+        Message(role="user", contents=[second_response]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="reused", result="done")]),
+    ])
+
+    controls = [
+        content
+        for message in filtered
+        for content in message.contents
+        if content.type in {"function_approval_request", "function_approval_response"}
+    ]
+    assert controls == [first_request]
 
 
 class TestHistoryProviderBase:
@@ -881,6 +941,18 @@ class TestSessionStore:
         assert reread is not None
         assert reread.state["nested"]["values"] == ["original"]
 
+    async def test_set_and_get_preserves_immutable_secret_string(self) -> None:
+        store = SessionStore()
+        secret = SecretString("my-secret")
+        session = AgentSession(session_id="session-1")
+        session.state["secret"] = secret
+
+        await store.set("session-1", session)
+
+        stored = await store.get("session-1")
+        assert stored is not None
+        assert stored.state["secret"] is secret
+
     async def test_set_stores_independent_snapshot(self) -> None:
         store = SessionStore()
         session = AgentSession(session_id="session-1")
@@ -1282,6 +1354,31 @@ class TestFileSessionStore:
         assert session_file.name.startswith("~session-")
         assert session_file.is_file()
 
+    def test_colliding_session_ids_get_distinct_history_files(self, tmp_path: Path) -> None:
+        """Session IDs that a path normalizer would fold together stay separate.
+
+        ``FileHistoryProvider`` shares the storage-key derivation with the todo
+        store, the memory store, and the file-memory provider, so it is held to
+        the same injectivity contract.
+        """
+        provider = FileHistoryProvider(tmp_path)
+        paths = {session_id: provider._session_file_path(session_id) for session_id in COLLIDING_IDENTIFIERS}
+
+        assert len(set(paths.values())) == len(COLLIDING_IDENTIFIERS), paths
+        assert len({str(path).lower() for path in paths.values()}) == len(COLLIDING_IDENTIFIERS), paths
+        for path in paths.values():
+            assert path.parent == tmp_path.resolve()
+
+    def test_non_ascii_session_ids_are_encoded(self, tmp_path: Path) -> None:
+        """NFC and NFD spellings of one word must not share a history file."""
+        provider = FileHistoryProvider(tmp_path)
+        nfc = provider._session_file_path("caf\u00e9")
+        nfd = provider._session_file_path("cafe\u0301")
+
+        assert nfc != nfd
+        assert nfc.name.isascii()
+        assert nfd.name.isascii()
+
 
 # ---------------------------------------------------------------------------
 # InMemoryHistoryProvider tests
@@ -1381,6 +1478,130 @@ class TestInMemoryHistoryProvider:
         ctx.extend_messages("custom-source", [Message(role="user", contents=["test"])])
         assert "custom-source" in ctx.context_messages
 
+    async def test_save_messages_deduplicates_identical_messages(self) -> None:
+        """Test that save_messages does not re-append messages already in the store."""
+        provider = InMemoryHistoryProvider()
+        state: dict[str, Any] = {}
+
+        msg1 = Message(role="user", contents=["hello"])
+        msg2 = Message(role="assistant", contents=["hi there"])
+
+        await provider.save_messages("s1", [msg1, msg2], state=state)
+        assert len(state["messages"]) == 2
+
+        await provider.save_messages("s1", [msg1, msg2], state=state)
+        assert len(state["messages"]) == 2
+
+    async def test_save_messages_only_appends_new_messages(self) -> None:
+        """Test that save_messages filters out old messages and only appends new ones"""
+        provider = InMemoryHistoryProvider()
+        state: dict[str, Any] = {}
+
+        msg1 = Message(role="user", contents=["hello"])
+        msg2 = Message(role="assistant", contents=["hi there"])
+        msg3 = Message(role="user", contents=["how are you?"])
+
+        await provider.save_messages("s1", [msg1, msg2], state=state)
+        assert len(state["messages"]) == 2
+
+        await provider.save_messages("s1", [msg1, msg2, msg3], state=state)
+        assert len(state["messages"]) == 3
+        assert state["messages"][2].text == "how are you?"
+
+    async def test_save_messages_different_roles_same_text_not_deduplicated(self) -> None:
+        """Test that messages with the same text but different roles are kept separate."""
+        provider = InMemoryHistoryProvider()
+        state: dict[str, Any] = {}
+
+        msg1 = Message(role="user", contents=["ping"])
+        msg2 = Message(role="assistant", contents=["ping"])
+
+        await provider.save_messages("s1", [msg1, msg2], state=state)
+        assert len(state["messages"]) == 2
+
+    async def test_save_messages_deduplication_with_none_state(self) -> None:
+        """Test that save_messages with None state does not raise."""
+        provider = InMemoryHistoryProvider()
+        msg = Message(role="user", contents=["hello"])
+        await provider.save_messages("s1", [msg], state=None)
+
+    async def test_full_loop_does_not_grow_superlinearly(self) -> None:
+        """Regression test: a multi-round looped run must not re-persist the whole
+        conversation on every round."""
+        from agent_framework import AgentResponse
+
+        provider = InMemoryHistoryProvider()
+        session = AgentSession()
+        provider_state = session.state.setdefault(provider.source_id, {})
+        ctx1 = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["turn 1"])])
+
+        await provider.before_run(
+            agent=cast("SupportsAgentRun", None),
+            session=session,
+            context=ctx1,
+            state=provider_state,
+        )
+        ctx1._response = AgentResponse(messages=[Message(role="assistant", contents=["reply 1"])])
+        await provider.after_run(
+            agent=cast("SupportsAgentRun", None),
+            session=session,
+            context=ctx1,
+            state=provider_state,
+        )
+
+        ctx2 = SessionContext(session_id="s1", input_messages=[Message(role="user", contents=["turn 2"])])
+        await provider.before_run(
+            agent=cast("SupportsAgentRun", None),
+            session=session,
+            context=ctx2,
+            state=provider_state,
+        )
+        ctx2._response = AgentResponse(messages=[Message(role="assistant", contents=["reply 2"])])
+        await provider.after_run(
+            agent=cast("SupportsAgentRun", None),
+            session=session,
+            context=ctx2,
+            state=provider_state,
+        )
+
+        stored = session.state[provider.source_id]["messages"]
+        assert len(stored) == 4
+        texts = [m.text for m in stored]
+        assert texts == ["turn 1", "reply 1", "turn 2", "reply 2"]
+
+    async def test_save_messages_preserves_duplicate_content(self) -> None:
+        """Two separate user 'yes' replies in the same batch must both be persisted."""
+        provider = InMemoryHistoryProvider()
+        state: dict[str, Any] = {}
+
+        yes_1 = Message(role="user", contents=["yes"])
+        yes_2 = Message(role="user", contents=["yes"])
+
+        await provider.save_messages("s1", [yes_1, yes_2], state=state)
+
+        assert len(state["messages"]) == 2
+        assert state["messages"][0].text == "yes"
+        assert state["messages"][1].text == "yes"
+
+    async def test_save_messages_handles_replayed_transcript_with_duplicates(self) -> None:
+        provider = InMemoryHistoryProvider()
+        state: dict[str, Any] = {}
+
+        msg_b = Message(role="user", contents=["B"])
+        await provider.save_messages("s1", [msg_b], state=state)
+        assert len(state["messages"]) == 1
+
+        msg_a = Message(role="user", contents=["A"])
+        msg_c = Message(role="user", contents=["C"])
+        msg_b2 = Message(role="user", contents=["B"])
+        msg_d = Message(role="user", contents=["D"])
+
+        await provider.save_messages("s1", [msg_a, msg_b, msg_c, msg_b2, msg_d], state=state)
+
+        assert len(state["messages"]) == 4
+        texts = [m.text for m in state["messages"]]
+        assert texts == ["B", "C", "B", "D"]
+
 
 class TestFileHistoryProvider:
     def test_is_marked_experimental(self) -> None:
@@ -1414,6 +1635,55 @@ class TestFileHistoryProvider:
         first_record_length = int.from_bytes(raw[:4], "big")
         assert first_record_length > 0
         assert raw[4 : 4 + first_record_length] == msgspec.msgpack.encode(messages[0].to_dict())
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_save_messages_deduplicates_replayed_transcript(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
+        first_turn = [
+            Message(role="user", contents=["hello"]),
+            Message(role="assistant", contents=["hi there"]),
+        ]
+        full_transcript = [
+            Message(role="user", contents=["hello"]),
+            Message(role="assistant", contents=["hi there"]),
+            Message(role="user", contents=["follow-up"]),
+            Message(role="assistant", contents=["reply"]),
+        ]
+
+        await provider.save_messages("replayed-transcript", first_turn)
+        await provider.save_messages("replayed-transcript", full_transcript)
+
+        loaded = await provider.get_messages("replayed-transcript")
+        assert [message.text for message in loaded] == ["hello", "hi there", "follow-up", "reply"]
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_round_trips_marked_refusal_text(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
+        message = Message(
+            role="assistant",
+            contents=[
+                Content.from_text(
+                    "I cannot help with that.",
+                    additional_properties={"model_output_kind": "refusal"},
+                )
+            ],
+        )
+
+        await provider.save_messages("refusal-session", [message])
+        restored = await provider.get_messages("refusal-session")
+
+        assert len(restored) == 1
+        assert restored[0].contents == [
+            Content.from_text(
+                "I cannot help with that.",
+                additional_properties={"model_output_kind": "refusal"},
+            )
+        ]
+        assert restored[0].text == "I cannot help with that."
 
     def test_msgpack_rejects_custom_json_codecs(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="Custom dumps and loads"):
@@ -1664,6 +1934,93 @@ class TestFileHistoryProvider:
         assert not overlap_detected
         loaded = await provider.get_messages(session_id)
         assert [message.text for message in loaded] == ["first", "second"]
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_save_messages_deduplicates_identical_messages(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        """Test that FileHistoryProvider does not re-append already persisted messages."""
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
+
+        msg1 = Message(role="user", contents=["hello"])
+        msg2 = Message(role="assistant", contents=["hi there"])
+
+        await provider.save_messages("s1", [msg1, msg2])
+        loaded = await provider.get_messages("s1")
+        assert len(loaded) == 2
+
+        await provider.save_messages("s1", [msg1, msg2])
+        loaded = await provider.get_messages("s1")
+        assert len(loaded) == 2
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_save_messages_only_appends_new_messages(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        """Test that FileHistoryProvider filters out old messages and only appends new ones"""
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
+
+        msg1 = Message(role="user", contents=["hello"])
+        msg2 = Message(role="assistant", contents=["hi there"])
+        msg3 = Message(role="user", contents=["how are you?"])
+
+        await provider.save_messages("s1", [msg1, msg2])
+        loaded = await provider.get_messages("s1")
+        assert len(loaded) == 2
+
+        await provider.save_messages("s1", [msg1, msg2, msg3])
+        loaded = await provider.get_messages("s1")
+        assert len(loaded) == 3
+        assert loaded[2].text == "how are you?"
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_save_messages_different_roles_same_text_not_deduplicated(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        """Test that messages with the same text but different roles are kept separate."""
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
+
+        msg1 = Message(role="user", contents=["ping"])
+        msg2 = Message(role="assistant", contents=["ping"])
+
+        await provider.save_messages("s1", [msg1, msg2])
+        loaded = await provider.get_messages("s1")
+        assert len(loaded) == 2
+
+    async def test_deduplication_file_integrity(self, tmp_path: Path) -> None:
+        """Test that deduplication writes the correct number of lines to the JSONL file."""
+        provider = FileHistoryProvider(tmp_path)
+
+        msg1 = Message(role="user", contents=["hello"])
+        msg2 = Message(role="assistant", contents=["hi there"])
+        msg3 = Message(role="user", contents=["follow-up"])
+
+        await provider.save_messages("s1", [msg1, msg2])
+
+        session_file = provider._session_file_path("s1")
+        raw_lines = (await asyncio.to_thread(session_file.read_text, encoding="utf-8")).splitlines()
+        assert len(raw_lines) == 2
+
+        await provider.save_messages("s1", [msg1, msg2, msg3])
+        raw_lines = (await asyncio.to_thread(session_file.read_text, encoding="utf-8")).splitlines()
+        assert len(raw_lines) == 3
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_save_messages_preserves_duplicate_content(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        """Test that two identical user turns in the same batch are both persisted."""
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
+
+        yes_1 = Message(role="user", contents=["yes"])
+        yes_2 = Message(role="user", contents=["yes"])
+
+        await provider.save_messages("s1", [yes_1, yes_2])
+        loaded = await provider.get_messages("s1")
+
+        assert len(loaded) == 2
+        assert loaded[0].text == "yes"
+        assert loaded[1].text == "yes"
 
 
 # ---------------------------------------------------------------------------

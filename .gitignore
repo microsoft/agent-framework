@@ -207,6 +207,10 @@ temp*/
 
 # AI
 **/.checkpoints/
+# Local AgentServer file store + crash-recovery HOME roots used by hosted samples
+**/.agentserver-state/
+**/.agentserver-state-*/
+**/.home-*/
 .claude/
 .omc/
 .omx/
@@ -244,6 +248,9 @@ python/dotnet-ref
 # Generated filtered solution files (created by eng/scripts/New-FilteredSolution.ps1)
 dotnet/filtered-*.slnx
 **/*.lscache
+
+# Local .NET build overrides
+/dotnet/Directory.Build.rsp
 
 # Local tool state
 .omc/

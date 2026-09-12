@@ -31,6 +31,8 @@ from ._middleware import (
     FunctionInvocationContext,
     MiddlewareTypes,
     _as_middleware_list,  # pyright: ignore[reportPrivateUsage]
+    _copy_middleware_sequence,  # pyright: ignore[reportPrivateUsage]
+    _select_run_level_tools,  # pyright: ignore[reportPrivateUsage]
     categorize_middleware,
 )
 from ._serialization import SerializationMixin
@@ -56,6 +58,7 @@ from ._types import (
     ChatResponseUpdate,
     Message,
     ResponseStream,
+    _append_instructions,  # pyright: ignore[reportPrivateUsage]
     _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
     map_chat_to_agent_update,
     normalize_messages,
@@ -83,6 +86,15 @@ if TYPE_CHECKING:
     from ._types import ChatOptions
 
 logger = logging.getLogger("agent_framework")
+
+# AgentLoopMiddleware stamps this key into the run options while a loop
+# iteration is running, so providers scoped to the whole user turn
+# (``after_run_once_per_turn``) skip their per-iteration ``after_run`` and only
+# fire once at the loop boundary. It rides the run's options rather than a
+# context variable: options reach only the runs the loop itself drives, so a
+# nested ``agent.run()`` (fresh options, its own session) keeps its own turn,
+# and nothing leaks into the caller's context while a stream is paused.
+_LOOP_ITERATION_TOKEN_KEY = "_agent_loop_iteration"  # nosec B105 - a context-options key, not a credential  # ruff: ignore[hardcoded-password-string]
 
 if TYPE_CHECKING:
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -159,8 +171,8 @@ def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
             # Merge metadata dicts
             result["metadata"] = {**result["metadata"], **value}
         elif key == "instructions" and result.get("instructions"):
-            # Concatenate instructions
-            result["instructions"] = f"{result['instructions']}\n{value}"
+            # Concatenate instructions, preserving provider-native structured values
+            result["instructions"] = _append_instructions(result["instructions"], value)
         else:
             result[key] = value
     return {key: value for key, value in result.items() if value is not None}
@@ -429,7 +441,7 @@ class BaseAgent(SerializationMixin):
         name: str | None = None,
         description: str | None = None,
         context_providers: Sequence[ContextProvider] | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
     ) -> None:
         """Initialize a BaseAgent instance.
@@ -440,10 +452,8 @@ class BaseAgent(SerializationMixin):
             name: The name of the agent, can be None.
             description: The description of the agent.
             context_providers: Context providers to include during agent invocation.
-            middleware: List of middleware, or a single middleware object (including a
-                ``MiddlewareBundle``) which is treated as a one-element list. The
-                constructor copies the sequence; assign to or mutate the
-                ``middleware`` attribute for post-construction changes.
+            middleware: List of middleware. The constructor copies the sequence; assign
+                to or mutate the ``middleware`` attribute for post-construction changes.
             additional_properties: Additional properties set on the agent.
         """
         if id is None:
@@ -452,11 +462,8 @@ class BaseAgent(SerializationMixin):
         self.name = name
         self.description = description
         self.context_providers: list[ContextProvider] = list(context_providers or [])
-        # Canonicalize storage: the bare-source rule (a single middleware object or a
-        # MiddlewareBundle is one element) is owned by _as_middleware_list; storing a
-        # normalized list keeps the declared attribute type honest.
         self.middleware: list[MiddlewareTypes] | None = (
-            _as_middleware_list(middleware) if middleware is not None else None
+            _copy_middleware_sequence(middleware) if middleware is not None else None
         )
         self.additional_properties: dict[str, Any] = cast(dict[str, Any], additional_properties or {})
 
@@ -545,6 +552,7 @@ class BaseAgent(SerializationMixin):
         *,
         session: AgentSession | None,
         context: SessionContext,
+        only_per_turn: bool = False,
     ) -> None:
         """Run after_run on all context providers in reverse order.
 
@@ -557,6 +565,10 @@ class BaseAgent(SerializationMixin):
         Keyword Args:
             session: The conversation session.
             context: The invocation context with response populated.
+            only_per_turn: When True, run only providers that opted into
+                once-per-turn semantics (``after_run_once_per_turn``); used by
+                AgentLoopMiddleware when a loop ends. When False, those
+                providers are skipped while a loop iteration is in progress.
         """
         if _defer_run_persistence(partial(self._run_after_providers, session=session, context=context)):
             return
@@ -570,8 +582,16 @@ class BaseAgent(SerializationMixin):
         per_service_call_history_required = self.require_per_service_call_history_persistence and any(
             isinstance(provider, HistoryProvider) for provider in self.context_providers
         )
+        # The loop stamps the runs it drives via their options; anything else
+        # (nested run, caller-side run while a stream is paused) is its own turn.
+        in_loop_iteration = context.options.get(_LOOP_ITERATION_TOKEN_KEY) is not None
         for provider in reversed(self.context_providers):
             if per_service_call_history_required and isinstance(provider, HistoryProvider):
+                continue
+            once_per_turn = getattr(provider, "after_run_once_per_turn", False)
+            if only_per_turn and not once_per_turn:
+                continue
+            if in_loop_iteration and once_per_turn:
                 continue
             if provider_session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")
@@ -796,7 +816,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[ContextProvider] | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         require_per_service_call_history_persistence: bool = False,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
@@ -815,8 +835,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             description: A brief description of the agent's purpose.
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
-                A single middleware object (including a ``MiddlewareBundle``) is
-                treated as a one-element list.
             require_per_service_call_history_persistence: When True (and a HistoryProvider is
                 present), the provider always persists history via per-service-call middleware,
                 regardless of whether the client stores history server-side. If the client does
@@ -1342,8 +1360,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         opts = dict(options) if options else {}
         existing_additional_args: dict[str, Any] = opts.pop("additional_function_arguments", None) or {}
 
-        # Get tools from options or named parameter (named param takes precedence)
-        tools_ = tools if tools is not None else opts.pop("tools", None)
+        # Run-level tools: the named parameter takes precedence over an options entry
+        # (_select_run_level_tools is the framework's single statement of that rule,
+        # shared with the middleware layer's run-start resolution). The options entry
+        # is consumed either way, so a losing options["tools"] can never ride the
+        # remaining options into the request and silently override the resolved list.
+        tools_ = _select_run_level_tools(tools, opts)
+        opts.pop("tools", None)
 
         input_messages = normalize_messages(messages)
 
@@ -1432,11 +1455,20 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # Normalize tools
         normalized_tools = _normalize_tools(tools_)
 
+        # Extract additional function arguments
+        effective_function_invocation_kwargs = (
+            dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
+        )
+        additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
+
         # Resolve final tool list (configured tools + runtime provided tools + local MCP server tools)
         final_tools = list(base_tools)
         for tool in normalized_tools:
             if isinstance(tool, MCPTool):
                 if not tool.is_connected:
+                    # The handshake and discovery requests are issued before any tool call, so the run's
+                    # kwargs must reach header_provider here or those requests go out unauthenticated.
+                    tool._seed_connection_kwargs(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
                     await self._async_exit_stack.enter_async_context(tool)
                 _append_unique_tools(
                     final_tools,
@@ -1448,17 +1480,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         for mcp_server in self.mcp_tools:
             if not mcp_server.is_connected:
+                mcp_server._seed_connection_kwargs(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
                 await self._async_exit_stack.enter_async_context(mcp_server)
             _append_unique_tools(
                 final_tools,
                 mcp_server.functions,
                 duplicate_error_message=mcp_duplicate_message,
             )
-
-        effective_function_invocation_kwargs = (
-            dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
-        )
-        additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
 
         model = opts.pop("model", None)
 
@@ -1489,6 +1517,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # _merge_options strips unset (None) options, so e.g. an unset `store` is not forwarded
         # and the service decides its own default.
         co = _merge_options(chat_options, run_opts)
+        # The loop marker must remain on SessionContext.options for after_run provider
+        # scoping, but it is framework-private metadata and must not reach the client.
+        co.pop(_LOOP_ITERATION_TOKEN_KEY, None)
 
         # Build session_messages from session context: context messages + input messages
         session_messages: list[Message] = session_context.get_messages(include_input=True)
@@ -1623,10 +1654,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # Merge provider-contributed instructions into chat_options
         if session_context.instructions:
             combined_instructions = "\n".join(session_context.instructions)
-            if "instructions" in chat_options:
-                chat_options["instructions"] = f"{chat_options['instructions']}\n{combined_instructions}"
-            else:
-                chat_options["instructions"] = combined_instructions
+            chat_options["instructions"] = _append_instructions(chat_options.get("instructions"), combined_instructions)
 
         return session_context, chat_options
 
@@ -1785,7 +1813,7 @@ class Agent(
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[ResponseModelBoundT],
         compaction_strategy: CompactionStrategy | None = None,
@@ -1801,7 +1829,7 @@ class Agent(
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[None] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -1817,7 +1845,7 @@ class Agent(
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -1832,7 +1860,7 @@ class Agent(
         *,
         stream: bool = False,
         session: AgentSession | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -1870,7 +1898,7 @@ class Agent(
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[ContextProvider] | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         require_per_service_call_history_persistence: bool = False,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,

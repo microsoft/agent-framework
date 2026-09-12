@@ -31,6 +31,8 @@ internal sealed class WorkflowSession : AgentSession
     private readonly bool _includeWorkflowOutputsInResponse;
 
     private InMemoryCheckpointManager? _inMemoryCheckpointManager;
+    private bool _resumeWithoutNewTurn;
+    private WorkflowSessionCheckpointRecovery? _checkpointRecovery;
 
     /// <summary>
     /// Tracks pending external requests by their workflow-facing request ID.
@@ -131,6 +133,31 @@ internal sealed class WorkflowSession : AgentSession
     }
 
     public CheckpointInfo? LastCheckpoint { get; set; }
+
+    /// <inheritdoc/>
+    public override object? GetService(Type serviceType, object? serviceKey = null)
+    {
+        return base.GetService(serviceType, serviceKey)
+            ?? (serviceKey is null && serviceType == typeof(WorkflowSessionCheckpointRecovery)
+                ? this._checkpointRecovery ??= new(this)
+                : null);
+    }
+
+    internal bool TryPrepareCheckpointRecovery(string? checkpointId)
+    {
+        if (checkpointId is not null)
+        {
+            _ = Throw.IfNullOrWhitespace(checkpointId);
+            this.LastCheckpoint = new CheckpointInfo(this.SessionId, checkpointId);
+        }
+        else if (this.LastCheckpoint is null)
+        {
+            return false;
+        }
+
+        this._resumeWithoutNewTurn = true;
+        return true;
+    }
 
     internal JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
     {
@@ -449,6 +476,8 @@ internal sealed class WorkflowSession : AgentSession
 
         ResumeRunResult resumeResult =
             await this.CreateOrResumeRunAsync(messages, cancellationToken).ConfigureAwait(false);
+        bool resumeWithoutNewTurn = this._resumeWithoutNewTurn;
+        this._resumeWithoutNewTurn = false;
 
 #pragma warning disable CA2007 // Analyzer misfiring.
         await using StreamingRun run = resumeResult.Run;
@@ -462,8 +491,9 @@ internal sealed class WorkflowSession : AgentSession
         // ContinueTurnAsync). Non-start executors (e.g., RequestInfoExecutor) do not emit
         // TurnTokens after processing responses, so the session must always provide one.
         bool shouldSendTurnToken =
-            !dispatchInfo.HasMatchedExternalResponses
-            || !dispatchInfo.HasMatchedResponseForStartExecutor;
+            !resumeWithoutNewTurn
+            && (!dispatchInfo.HasMatchedExternalResponses
+                || !dispatchInfo.HasMatchedResponseForStartExecutor);
         if (shouldSendTurnToken)
         {
             await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);

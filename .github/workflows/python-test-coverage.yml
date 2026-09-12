@@ -9,11 +9,22 @@ on:
       - "python/scripts/workspace_poe_tasks.py"
       - ".github/scripts/python_check_coverage.py"
       - ".github/workflows/python-test-coverage.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "python/packages/**"
+      - "python/tests/unit/**"
+      - "python/scripts/workspace_poe_tasks.py"
+      - ".github/scripts/python_check_coverage.py"
+      - ".github/workflows/python-test-coverage.yml"
 env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
   # Coverage threshold percentage for enforced modules
   COVERAGE_THRESHOLD: 85
+
+permissions:
+  contents: read
 
 jobs:
   python-tests-coverage:
@@ -26,11 +37,6 @@ jobs:
       UV_PYTHON: "3.11"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Save the PR number to a file since the workflow_run event
-      # in the coverage report workflow does not have access to it
-      - name: Save PR number
-        run: |
-          echo ${{ github.event.number }} > ./pr_number
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -41,16 +47,38 @@ jobs:
           # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache
       - name: Run aggregate tests with coverage report
-        run: uv run poe test -A -C --cov-report=xml:python-coverage.xml -q --junitxml=pytest.xml
+        run: uv run poe test -A -C --cov-report=xml:python-coverage.xml -q
       - name: Check coverage threshold
         run: python ${{ github.workspace }}/.github/scripts/python_check_coverage.py python-coverage.xml ${{ env.COVERAGE_THRESHOLD }}
       - name: Upload coverage report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
+          name: python-coverage-report
           path: |
             python/python-coverage.xml
-            python/pytest.xml
-            python/pr_number
           overwrite: true
           retention-days: 1
           if-no-files-found: error
+
+  python-upload-coverage:
+    needs: python-tests-coverage
+    if: github.event_name != 'merge_group' && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') || (github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch))
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      code-quality: write
+      pull-requests: read
+    steps:
+      - name: Download coverage report
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: python-coverage-report
+          path: python
+      - name: Upload coverage report to GitHub
+        uses: actions/upload-code-coverage@d8e329117199404bba6fc81efe8093dc7c015e34 # v1.4.2
+        with:
+          file: python/python-coverage.xml
+          language: Python
+          label: code-coverage/python
+          fail-on-error: false

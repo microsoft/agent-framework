@@ -145,7 +145,14 @@ public abstract class AgentClassSkill<
     /// Returns a synthesized XML document containing name, description, instructions, resources, and scripts.
     /// The result is cached after the first access. Override to provide custom content.
     /// </remarks>
-    public override ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default) => new(this._content.Value);
+    public override ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default)
+    {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreClassSkill);
+#pragma warning restore MAAI001
+
+        return new(this._content.Value);
+    }
 
     /// <summary>
     /// Gets the resources associated with this skill, or <see langword="null"/> if none.
@@ -188,6 +195,10 @@ public abstract class AgentClassSkill<
     /// <inheritdoc/>
     public sealed override ValueTask<AgentSkillResource?> GetResourceAsync(string name, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreClassSkill);
+#pragma warning restore MAAI001
+
         var resource = this.Resources?.FirstOrDefault(r => r.Name == name);
         return new(resource);
     }
@@ -195,6 +206,10 @@ public abstract class AgentClassSkill<
     /// <inheritdoc/>
     public sealed override ValueTask<AgentSkillScript?> GetScriptAsync(string name, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreClassSkill);
+#pragma warning restore MAAI001
+
         var script = this.Scripts?.FirstOrDefault(s => s.Name == name);
         return new(script);
     }

@@ -434,7 +434,7 @@ public sealed class FoundryChatClientTests
         // the well-known private field. If the SDK field shape changes this guard fails loudly.
         var field = typeof(AIProjectClient).GetField("_endpoint", BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(field);
-        var actualEndpoint = (Uri)field!.GetValue(aiProjectClient!)!;
+        var actualEndpoint = (Uri)field!.GetValue(aiProjectClient)!;
         Assert.Equal("https://example.com/api/projects/myproj", actualEndpoint.AbsoluteUri.TrimEnd('/'));
     }
 
@@ -561,14 +561,17 @@ public sealed class FoundryChatClientTests
     public void Register_AgentFrameworkUserAgentPolicy_OnUnderlyingOpenAIRequestPolicies()
     {
         // Arrange + Act: constructing a FoundryChatClient should register the
-        // AgentFrameworkUserAgentPolicy and ServedModelPolicy on the inner chat client's OpenAIRequestPolicies.
+        // base User-Agent, feature-usage, and served-model policies on the inner chat client's OpenAIRequestPolicies.
         var chatClient = new FoundryChatClient(CreateProjectClient(), "gpt-4o-mini");
 
         // Assert: the inner chat client (MEAI's OpenAIResponsesChatClient) exposes
-        // OpenAIRequestPolicies via GetService, and both policies are present in its entries.
+        // OpenAIRequestPolicies via GetService, and all three policies are present in its entries.
         var policies = chatClient.GetService<OpenAIRequestPolicies>();
         Assert.NotNull(policies);
-        Assert.Equal(2, EntriesCount(policies!));
+        Assert.Equal(3, EntriesCount(policies!));
+        Assert.True(OpenAIRequestPoliciesReflection.ContainsPolicy(
+            policies!,
+            FoundryUserAgentPolicies.Registration.FeatureUsagePolicy));
     }
 
     [Fact]
@@ -576,7 +579,7 @@ public sealed class FoundryChatClientTests
     {
         // Arrange: construct via the ProjectsAgentVersion mode-2 variant, which chains via
         // :this(...) into the AgentReference ctor. If the policy registration code were
-        // inadvertently called twice along the chain, we would see more than 2 entries.
+        // inadvertently called twice along the chain, we would see more than 3 entries.
         var projectClient = CreateProjectClient();
         var agentVersion = ModelReaderWriter.Read<ProjectsAgentVersion>(
             BinaryData.FromString(TestDataUtil.GetAgentVersionResponseJson()))!;
@@ -588,9 +591,73 @@ public sealed class FoundryChatClientTests
         // via :this(...), each policy is registered exactly once on the inner pipeline.
         var policies = chatClient.GetService<OpenAIRequestPolicies>();
         Assert.NotNull(policies);
-        Assert.Equal(2, EntriesCount(policies!));
+        Assert.Equal(3, EntriesCount(policies!));
         Assert.Same(agentVersion, chatClient.GetService<ProjectsAgentVersion>());
         Assert.NotNull(chatClient.GetService<AgentReference>());
+    }
+
+    [Fact]
+    public void Register_FeatureUsagePolicy_ForAgentEndpointDefaultTransport()
+    {
+        // Arrange / Act
+        var chatClient = new FoundryChatClient(
+            new Uri("https://project.services.ai.azure.com/api/projects/test/agents/agent/endpoint/protocols/openai"),
+            new FakeAuthenticationTokenProvider(),
+            clientOptions: null);
+
+        // Assert
+        var policies = chatClient.GetService<OpenAIRequestPolicies>();
+        Assert.NotNull(policies);
+        Assert.Equal(3, EntriesCount(policies!));
+        Assert.True(OpenAIRequestPoliciesReflection.ContainsPolicy(
+            policies!,
+            FoundryUserAgentPolicies.Registration.FeatureUsagePolicy));
+    }
+
+    [Fact]
+    public void Register_FeatureUsagePolicy_ForCustomTransport()
+    {
+        // Arrange
+        using var httpClient = new HttpClient();
+        var options = new ProjectOpenAIClientOptions
+        {
+            Transport = new HttpClientPipelineTransport(httpClient),
+        };
+
+        // Act
+        var chatClient = new FoundryChatClient(
+            new Uri("https://project.services.ai.azure.com/api/projects/test/agents/agent/endpoint/protocols/openai"),
+            new FakeAuthenticationTokenProvider(),
+            options);
+
+        // Assert
+        var policies = chatClient.GetService<OpenAIRequestPolicies>();
+        Assert.NotNull(policies);
+        Assert.Equal(3, EntriesCount(policies!));
+        Assert.True(OpenAIRequestPoliciesReflection.ContainsPolicy(
+            policies!,
+            FoundryUserAgentPolicies.Registration.FeatureUsagePolicy));
+    }
+
+    [Fact]
+    public void Register_FeatureUsagePolicy_ForCallerOwnedProjectClient()
+    {
+        // Arrange
+        AIProjectClient projectClient = CreateProjectClient();
+
+        // Act
+        var chatClient = new FoundryChatClient(
+            projectClient,
+            new Uri("https://project.services.ai.azure.com/api/projects/test/agents/agent/endpoint/protocols/openai"),
+            clientOptions: null);
+
+        // Assert
+        var policies = chatClient.GetService<OpenAIRequestPolicies>();
+        Assert.NotNull(policies);
+        Assert.Equal(3, EntriesCount(policies!));
+        Assert.True(OpenAIRequestPoliciesReflection.ContainsPolicy(
+            policies!,
+            FoundryUserAgentPolicies.Registration.FeatureUsagePolicy));
     }
 
     #endregion

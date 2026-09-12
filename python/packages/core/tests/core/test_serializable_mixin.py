@@ -2,7 +2,10 @@
 
 """Tests for SerializationMixin functionality."""
 
+import copy
+import json
 import logging
+from datetime import date, datetime, time
 from typing import Any
 
 import pytest
@@ -303,19 +306,82 @@ class TestSerializationMixin:
         assert data["items_dict"]["a"]["name"] == "item1"
         assert data["items_dict"]["b"]["name"] == "item2"
 
-    def test_to_dict_with_datetime_in_dict(self):
-        """Test to_dict converts datetime objects in dicts to strings."""
-        from datetime import datetime
+    def test_to_dict_recursively_serializes_nested_containers(self):
+        """Test to_dict serializes protocol objects nested in containers."""
+
+        class ItemClass(SerializationMixin):
+            def __init__(self, name: str):
+                self.name = name
+
+        class ContainerClass(SerializationMixin):
+            def __init__(self, payload: dict):
+                self.payload = payload
+
+        container = ContainerClass(payload={"groups": [{"items": [ItemClass(name="item1")]}]})
+
+        data = container.to_dict()
+
+        assert data["payload"]["groups"][0]["items"][0]["name"] == "item1"
+        assert json.loads(container.to_json()) == data
+
+    def test_to_dict_preserves_nested_non_string_dict_keys(self):
+        """Test recursive serialization preserves non-string keys below the attribute dictionary."""
+
+        class ContainerClass(SerializationMixin):
+            def __init__(self, payload: dict):
+                self.payload = payload
+
+        container = ContainerClass(payload={7: "direct", "nested": {True: "enabled", None: "missing"}})
+
+        data = container.to_dict()
+
+        assert data["payload"]["7"] == "direct"
+        assert data["payload"]["nested"] == {True: "enabled", None: "missing"}
+        json_payload = json.loads(container.to_json())["payload"]
+        assert json_payload["7"] == "direct"
+        assert json_payload["nested"] == {"true": "enabled", "null": "missing"}
+
+    def test_to_dict_rejects_circular_list(self):
+        """Test recursive serialization reports a controlled error for a circular list."""
+
+        class ContainerClass(SerializationMixin):
+            def __init__(self, payload: list[Any]):
+                self.payload = payload
+
+        payload: list[Any] = []
+        payload.append(payload)
+
+        with pytest.raises(ValueError, match="Circular reference detected"):
+            ContainerClass(payload).to_dict()
+
+    def test_to_dict_rejects_circular_dict(self):
+        """Test recursive serialization reports a controlled error for a circular dictionary."""
+
+        class ContainerClass(SerializationMixin):
+            def __init__(self, payload: dict[str, Any]):
+                self.payload = payload
+
+        payload: dict[str, Any] = {}
+        payload["self"] = payload
+
+        with pytest.raises(ValueError, match="Circular reference detected"):
+            ContainerClass(payload).to_dict()
+
+    @pytest.mark.parametrize("value", [datetime(2025, 1, 27, 12), date(2025, 1, 27), time(12)])
+    def test_to_dict_only_converts_date_time_in_dict_values(self, value):
+        """Test to_dict preserves the existing date/time conversion contexts."""
 
         class TestClass(SerializationMixin):
-            def __init__(self, metadata: dict):
-                self.metadata = metadata
+            def __init__(self):
+                self.top_level = value
+                self.items = [value]
+                self.metadata = {"created_at": value}
 
-        now = datetime(2025, 1, 27, 12, 0, 0)
-        obj = TestClass(metadata={"created_at": now})
-        data = obj.to_dict()
+        data = TestClass().to_dict()
 
-        assert isinstance(data["metadata"]["created_at"], str)
+        assert "top_level" not in data
+        assert data["items"] == []
+        assert data["metadata"]["created_at"] == str(value)
 
     def test_to_dict_skips_non_serializable_in_dict(self, caplog):
         """Test to_dict skips non-serializable values in dicts with debug logging."""
@@ -570,3 +636,168 @@ class TestSerializationMixin:
         # Normal field: deep-copied
         assert cloned.items is not obj.items
         assert cloned.items == ["a"]
+
+    def test_shallow_copy_preserves_pickle_omitted_fields(self):
+        """Shallow copies retain runtime fields that pickle omits."""
+
+        class TestClass(SerializationMixin):
+            def __init__(self, raw_representation: Any):
+                self.raw_representation = raw_representation
+
+        raw = object()
+        cloned = copy.copy(TestClass(raw))
+
+        assert cloned.raw_representation is raw
+
+    def test_pickle_restores_slot_fields(self):
+        """Pickle state should include fields declared in slots."""
+
+        class TestClass(SerializationMixin):
+            __slots__ = ("value",)
+
+            def __init__(self, value: str):
+                self.value = value
+
+        original = TestClass("value")
+        restored = TestClass.__new__(TestClass)
+        restored.__setstate__(original.__getstate__())
+
+        assert restored.value == "value"
+
+    def test_pickle_restores_legacy_tuple_state(self):
+        """Pickle restoration should accept the legacy dict-and-slots tuple."""
+
+        class TestClass(SerializationMixin):
+            __slots__ = ("value",)
+
+            def __init__(self):
+                self.value = "new"
+
+        restored = TestClass.__new__(TestClass)
+        restored.__setstate__(({"other": "dict"}, {"value": "legacy"}))
+
+        assert restored.value == "legacy"
+
+    def test_pickle_omission_is_separate_from_shallow_copy_policy(self):
+        """Fields shallow-copied by default remain persistent unless explicitly omitted."""
+
+        class TestClass(SerializationMixin):
+            _PICKLE_OMIT_FIELDS = set()
+
+            def __init__(self, raw_representation: Any):
+                self.raw_representation = raw_representation
+
+        raw = {"provider": "value"}
+        state = TestClass(raw).__getstate__()
+
+        assert state["raw_representation"] == raw
+
+    def test_dependency_dict_merge_does_not_mutate_input(self):
+        """Test that dict dependency merging does not mutate the caller's input dictionary."""
+
+        class TestClass(SerializationMixin):
+            INJECTABLE = {"config"}
+
+            def __init__(self, name: str, config: dict | None = None):
+                self.name = name
+                self.config = config or {}
+
+        # Create input with nested dict
+        input_data = {"type": "test_class", "name": "test", "config": {"base": True}}
+        original_input = copy.deepcopy(input_data)
+
+        # Call from_dict with dict-shaped dependency
+        dependencies = {"test_class": {"config": {"injected": True}}}
+        obj = TestClass.from_dict(input_data, dependencies=dependencies)
+
+        # Verify the object received the merged values
+        assert obj.config["base"] is True
+        assert obj.config["injected"] is True
+
+        # Verify the input was NOT mutated
+        assert input_data == original_input
+        assert input_data["config"] == {"base": True}
+        assert "injected" not in input_data["config"]
+
+    def test_dependency_dict_merge_preserves_override_semantics(self):
+        """Test that dict dependency merging preserves existing override behavior."""
+
+        class TestClass(SerializationMixin):
+            INJECTABLE = {"options"}
+
+            def __init__(self, name: str, options: dict | None = None):
+                self.name = name
+                self.options = options or {}
+
+        # Existing options in data
+        data = {"type": "test_class", "name": "test", "options": {"timeout": 10, "name": "original"}}
+        # Dependency with conflicting and new keys
+        dependencies = {"test_class": {"options": {"timeout": 20, "new_key": "value"}}}
+
+        obj = TestClass.from_dict(data, dependencies=dependencies)
+
+        # Dependency values should override existing values
+        assert obj.options["timeout"] == 20  # Overridden by dependency
+        assert obj.options["name"] == "original"  # Preserved from original
+        assert obj.options["new_key"] == "value"  # Added from dependency
+
+    def test_repeated_from_dict_calls_do_not_leak_state(self):
+        """Test that reusing the same input dictionary across calls does not leak state."""
+
+        class TestClass(SerializationMixin):
+            INJECTABLE = {"config"}
+
+            def __init__(self, name: str, config: dict | None = None):
+                self.name = name
+                self.config = config or {}
+
+        # Shared input specification
+        spec = {"type": "test_class", "name": "test", "config": {"base": True}}
+        original_spec = copy.deepcopy(spec)
+
+        # First call with first dependency
+        first = TestClass.from_dict(spec, dependencies={"test_class": {"config": {"first": True}}})
+
+        # Verify first result
+        assert first.config["base"] is True
+        assert first.config["first"] is True
+        assert "second" not in first.config
+
+        # Second call with second dependency (reusing same spec)
+        second = TestClass.from_dict(spec, dependencies={"test_class": {"config": {"second": True}}})
+
+        # Verify second result does NOT leak state from first call
+        assert second.config["base"] is True
+        assert second.config["second"] is True
+        assert "first" not in second.config
+
+        # Verify the original spec was never mutated
+        assert spec == original_spec
+        assert spec["config"] == {"base": True}
+
+    def test_instance_specific_dict_merge_does_not_mutate_input(self):
+        """Test that instance-specific dict dependency merging does not mutate input."""
+
+        class TestClass(SerializationMixin):
+            INJECTABLE = {"config"}
+
+            def __init__(self, name: str, config: dict | None = None):
+                self.name = name
+                self.config = config or {}
+
+        # Create input with nested dict
+        input_data = {"type": "test_class", "name": "special_instance", "config": {"base": True}}
+        original_input = copy.deepcopy(input_data)
+
+        # Call from_dict with instance-specific dict-shaped dependency
+        dependencies = {"test_class": {"name:special_instance": {"config": {"injected": True}}}}
+        obj = TestClass.from_dict(input_data, dependencies=dependencies)
+
+        # Verify the object received the merged values
+        assert obj.config["base"] is True
+        assert obj.config["injected"] is True
+
+        # Verify the input was NOT mutated
+        assert input_data == original_input
+        assert input_data["config"] == {"base": True}
+        assert "injected" not in input_data["config"]

@@ -37,7 +37,13 @@ Enforcement semantics (``mode="enforce"``):
   not executed (or its result is discarded) and a tool-error payload is surfaced to the
   model so the agent loop can continue, per the spec's block-propagation rules. A
   ``host_error:*`` deny at the tool seam additionally halts the run (the enforcement
-  layer itself failed, so continuing would be unreliable).
+  layer itself failed, so continuing would be unreliable): the run is aborted through
+  the function-invocation loop's fail-closed escape
+  (:class:`~agent_framework.MiddlewareFailure`) and the
+  :class:`agent_hooks.InterceptionBlocked` propagates to the caller, exactly like a
+  run-level deny. Other unexpected failures inside the enforcement layer (projection
+  bug, emitter fault) abort the run the same way and surface as
+  :class:`~agent_framework.MiddlewareFailure`.
 - Framework middleware short-circuits (``MiddlewareTermination``) are guarded: a result
   substituted by another middleware still passes ``output`` / ``post_model_call`` /
   ``post_tool_call`` before it egresses or enters the transcript.
@@ -87,7 +93,7 @@ per-run points and the host owns the session boundaries.
 
 The ``agent-hooks-sdk`` dependency is optional: importing this module (and the lazy root
 exports) works without it, and the factories raise a descriptive ``ModuleNotFoundError``
-when the SDK is missing. Install it via ``pip install agent-framework-core[agent-hooks]``.
+when the SDK is missing. Install it via ``pip install agent-hooks-sdk``.
 """
 
 from __future__ import annotations
@@ -113,6 +119,7 @@ from ._middleware import (
     FunctionInvocationContext,
     FunctionMiddleware,
     MiddlewareBundle,
+    MiddlewareFailure,
     MiddlewareTermination,
 )
 from ._serialization import make_json_safe
@@ -155,7 +162,7 @@ _DEFAULT_TIMEOUT = 5.0
 
 _SDK_MISSING_MESSAGE = (
     "The agent-hooks middleware requires the optional `agent-hooks-sdk` package. "
-    "Please install `agent-framework-core[agent-hooks]` (or `agent-hooks-sdk`)."
+    "Please install it with `pip install agent-hooks-sdk`."
 )
 
 _TRIO_REQUIRED_MESSAGE = (
@@ -184,7 +191,7 @@ def _require_sdk() -> None:
     """Import the SDK surface this module uses at runtime, with a helpful install hint.
 
     Only a genuinely missing ``agent_hooks`` package is translated into the
-    install-the-extra message; anything else (a broken installation, an incompatible
+    SDK installation message; anything else (a broken installation, an incompatible
     SDK version missing symbols, a failing transitive import) propagates unchanged so
     real breakage is not masked as a missing extra.
     """
@@ -231,7 +238,6 @@ class _RunState:
     builder: AgentContextBuilder
     session_scoped: bool
     config: _AgentHooksConfig
-    halted: BaseException | None = None
 
 
 _RUN_STATE: ContextVar[_RunState | None] = ContextVar("agent_framework_agent_hooks_run_state", default=None)
@@ -856,23 +862,99 @@ def _agent_updates_from_response(response: AgentResponse[Any]) -> list[AgentResp
     return updates
 
 
-def _tool_names(context: AgentContext) -> list[str]:
-    """Project the registered tool names for ``agent_startup`` (spec ``tools_registered``)."""
-    from ._tools import _get_tool_name, normalize_tools  # type: ignore[reportPrivateUsage]
+def _normalized_tools(tools: Any, *, point: str) -> list[Any]:
+    """Normalize a tools value for projection; empty (with a warning) when it cannot be.
 
-    tools: Any = context.tools if context.tools is not None else getattr(context.agent, "tools", None)
-    if tools is None:
-        return []
+    Everything — including the emptiness check inside ``normalize_tools`` — runs under
+    the guard, so a tools container whose ``__bool__``/``__len__``/``__iter__`` raises
+    degrades to omitting the projection instead of aborting the emission mid-run.
+    """
+    from ._tools import normalize_tools
+
     try:
-        normalized = normalize_tools(tools)
+        return list(normalize_tools(tools))
     except Exception:
-        logger.warning("agent-hooks could not normalize the run's tools for the agent_startup projection.")
+        logger.warning("agent-hooks could not normalize the tools for the %s projection.", point)
         return []
-    names: list[str] = []
-    for item in normalized:
-        name = _get_tool_name(item)
-        names.append(name if name else type(item).__name__)
-    return names
+
+
+def _projected_tool_name(item: Any) -> str:
+    """Project a tool's display name; hosted-tool mappings fall back to their ``type``."""
+    from ._tools import _get_tool_name  # type: ignore[reportPrivateUsage]
+
+    fallback = type(item).__name__
+    name = _get_tool_name(item)
+    if name:
+        return name
+    if isinstance(item, Mapping):
+        # Hosted-tool mappings carry top-level fields (no nested "function"), e.g.
+        # {"type": "web_search"} or {"type": "web_search_20250305", "name": "web_search"}.
+        mapping = cast("Mapping[str, Any]", item)
+        for key in ("name", "type"):
+            value = mapping.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return fallback
+
+
+def _tool_description(item: Any) -> str | None:
+    """Extract a tool description from a tool object or dict tool definition."""
+    if isinstance(item, Mapping):
+        mapping = cast("Mapping[str, Any]", item)
+        function = mapping.get("function")
+        # Function-tool dicts nest the description; hosted-tool mappings keep it top-level.
+        description = (
+            cast("Mapping[str, Any]", function).get("description")
+            if isinstance(function, Mapping)
+            else mapping.get("description")
+        )
+        return description if isinstance(description, str) else None
+    description = getattr(item, "description", None)
+    return description if isinstance(description, str) else None
+
+
+def _tool_names(context: AgentContext) -> list[str]:
+    """Project the run-start tool names for ``agent_startup`` (spec ``tools_registered``).
+
+    The framework owns the run-start resolution — ``AgentContext._resolve_run_start_tools``
+    returns the agent-declared tools plus this invocation's run-level tools (the named
+    ``tools`` parameter takes precedence over a ``tools`` entry in the options mapping),
+    already normalized — so this helper is projection only. This is deliberately the
+    run-start snapshot: tools registered dynamically during the run (for example by
+    context providers during run preparation, or by MCP servers whose functions expand
+    at connect time) cannot be known at ``agent_startup`` time; they surface in each
+    ``pre_model_call`` emission's ``tools`` projection (the completed per-call set) and
+    are bracketed by ``pre_tool_call``/``post_tool_call`` like any other tool when
+    invoked. An unresolvable set degrades to a warning and an empty snapshot rather
+    than aborting the emission.
+    """
+    try:
+        resolved = context._resolve_run_start_tools()  # pyright: ignore[reportPrivateUsage]
+    except Exception:
+        logger.warning("agent-hooks could not resolve the run-start tools for the agent_startup projection.")
+        return []
+    return [_projected_tool_name(item) for item in resolved]
+
+
+def _pre_model_call_tools(options: Mapping[str, Any]) -> list[dict[str, Any]] | None:
+    """Project the per-call effective tool set for ``pre_model_call`` (spec ``tools``).
+
+    This is the completed set for this model call — the run-start tools plus anything
+    registered during the run (context-provider tools, connected MCP-server functions,
+    progressive tool exposure) — whereas ``agent_startup``'s ``tools_registered`` is the
+    run-start snapshot. Entries carry ``{"name", "description"?}`` (description omitted
+    when the tool has none). Returns ``None`` — the spec's optional field is omitted —
+    when the call offers no tools or the set cannot be projected, so an unprojectable
+    set is never misreported as "no tools".
+    """
+    projected: list[dict[str, Any]] = []
+    for item in _normalized_tools(options.get("tools"), point="pre_model_call"):
+        entry: dict[str, Any] = {"name": _projected_tool_name(item)}
+        description = _tool_description(item)
+        if description:
+            entry["description"] = description
+        projected.append(entry)
+    return projected or None
 
 
 def _is_host_error(record: InterceptionRecord) -> bool:
@@ -895,27 +977,63 @@ def _is_approval_request(result: Any) -> bool:
     return isinstance(result, Content) and result.type == "function_approval_request"
 
 
-def _halt_on_enforcement_failure(
-    state: _RunState, context: FunctionInvocationContext, exc: BaseException, point: str
-) -> NoReturn:
-    """Route an unexpected failure inside the enforcement layer through the fail-closed halt path.
+def _halt_on_enforcement_failure(exc: BaseException, point: str) -> NoReturn:
+    """Abort the run fail-closed on an unexpected failure inside the enforcement layer.
 
     The function-invocation loop converts arbitrary exceptions raised by function
     middleware into tool-error results and keeps running; for a failure of the
     enforcement layer itself (projection bug, emitter fault) that would fail open —
     the failure would vanish from the audit trail and the run would continue unguarded.
-    Instead the loop is stopped via ``MiddlewareTermination`` (its only loud escape) and
-    the agent middleware re-raises the failure to the caller at the run boundary.
+    :class:`MiddlewareFailure` is the loop's explicit fail-closed escape: it propagates
+    to the caller at the run boundary, with the underlying failure chained as its cause.
     """
-    message = f"agent-hooks {point} enforcement failed: {type(exc).__name__}"
-    context.result = {"error": message}
     if isinstance(exc, MiddlewareException):
-        failure: BaseException = exc
-    else:
-        failure = MiddlewareException(message)
-        failure.__cause__ = exc
-    state.halted = failure
-    raise MiddlewareTermination(message) from exc
+        raise MiddlewareFailure(str(exc)) from exc
+    raise MiddlewareFailure(f"agent-hooks {point} enforcement failed: {type(exc).__name__}") from exc
+
+
+class _ToolSeamBlockFailure(MiddlewareFailure):
+    """Private tag for this feature's own tool-seam ``host_error`` halts.
+
+    Only failures raised by :meth:`_AgentHooksFunctionMiddleware._maybe_halt` carry
+    this type, which is what authorizes :func:`_reraise_tool_seam_block` to unwrap
+    the chained :class:`agent_hooks.InterceptionBlocked` at the run boundary. A plain
+    ``MiddlewareFailure`` raised by third-party middleware is never unwrapped — even
+    when its ``__cause__`` happens to be an ``InterceptionBlocked`` — so untrusted
+    code cannot launder a crafted interception record into this feature's deny
+    surface.
+    """
+
+
+def _reraise_tool_seam_block(failure: MiddlewareFailure) -> NoReturn:
+    """Surface a tool-seam ``host_error`` block as the block itself at the run boundary.
+
+    The tool seam sits behind the function-invocation loop, so its fail-closed halts
+    travel as :class:`MiddlewareFailure` (the loop's loud escape) with the triggering
+    exception chained as the cause. When the failure is this feature's own tagged
+    :class:`_ToolSeamBlockFailure`, re-raise its :class:`agent_hooks.InterceptionBlocked`
+    cause so callers see the same deny surface — ``InterceptionBlocked`` carrying the
+    interception record — at every seam (run-, model-, and tool-level). Any other
+    failure (including a third-party ``MiddlewareFailure`` with a crafted
+    ``InterceptionBlocked`` cause) propagates exactly as raised.
+    """
+    from agent_hooks import InterceptionBlocked
+
+    block = failure.__cause__
+    if isinstance(failure, _ToolSeamBlockFailure) and isinstance(block, InterceptionBlocked):
+        # Detach the transport wrapper's back-links (both were set to the block when
+        # _maybe_halt raised the wrapper from it) before re-raising: re-raising the
+        # block while they are intact would make the two exceptions each other's
+        # cause/context — a chain cycle that every consumer walking
+        # __cause__/__context__ would have to guard against. The bare raise below
+        # records the wrapper as the block's __context__ instead (truthful: the block
+        # is re-raised while the wrapper is being handled), keeping both exceptions
+        # visible in tracebacks, acyclically.
+        failure.__cause__ = None
+        if failure.__context__ is block:
+            failure.__context__ = None
+        raise block
+    raise failure
 
 
 # endregion
@@ -1025,8 +1143,6 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
                         # A middleware short-circuited the run; any substituted result
                         # still egresses to the caller, so it passes the output point.
                         termination = exc
-                if state.halted is not None:
-                    raise state.halted
                 result = context.result
                 if isinstance(result, AgentResponse):
                     await self._emit_output(state, result)
@@ -1046,6 +1162,14 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
                 shutdown_reason = "error"
                 context.result = None
                 raise
+            except MiddlewareFailure as failure:
+                # A fail-closed abort from behind the function-invocation loop: the
+                # gated persistence is dropped and, for a tool-seam host_error block,
+                # the block itself is surfaced (one deny surface at every seam).
+                gate.drop()
+                shutdown_reason = "error"
+                context.result = None
+                _reraise_tool_seam_block(failure)
             except asyncio.CancelledError:
                 shutdown_reason = "cancelled"
                 raise
@@ -1093,10 +1217,6 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
                     termination = exc
             inner = context.result
             if inner is None and termination is not None:
-                if state.halted is not None:
-                    # The enforcement layer itself failed: strand the deferred
-                    # persistence (fail-closed) and surface the halt.
-                    raise state.halted
                 # Terminated without a result: nothing will egress, so the no-egress
                 # termination is a permitted outcome. Release the persistence the
                 # drained in-pipeline work deferred — history of model calls that
@@ -1119,6 +1239,12 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
                 # A middleware substituted its own stream: it is guarded, and the
                 # termination still short-circuits the rest of the pipeline.
                 raise termination
+        except MiddlewareFailure as failure:
+            # A fail-closed abort during the pipeline descent (e.g. a retry middleware
+            # drained an attempt whose tool seam hit a host_error block): surface the
+            # block itself for tool-seam blocks (one deny surface at every seam). The
+            # deferred persistence is stranded un-flushed — fail-closed.
+            _reraise_tool_seam_block(failure)
         except asyncio.CancelledError:
             shutdown_reason = "cancelled"
             raise
@@ -1151,6 +1277,14 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
             except asyncio.CancelledError:
                 await self._emit_shutdown(state, "cancelled")
                 raise
+            except MiddlewareFailure as failure:
+                # A fail-closed abort from behind the function-invocation loop: close
+                # the trail and, for a tool-seam host_error block, surface the block
+                # itself (one deny surface at every seam). The deferred persistence
+                # is dropped — denied content never becomes durable.
+                gate_handle.drop()
+                await self._emit_shutdown(state, "error")
+                _reraise_tool_seam_block(failure)
             except BaseException:
                 await self._emit_shutdown(state, "error")
                 raise
@@ -1164,8 +1298,6 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
             from agent_hooks import InterceptionBlocked
 
             try:
-                if state.halted is not None:
-                    raise state.halted
                 if not isinstance(final, AgentResponse):
                     raise MiddlewareException(
                         f"agent-hooks cannot guard a streamed run result of type {type(final).__name__}; "
@@ -1213,7 +1345,7 @@ class _AgentHooksChatMiddleware(_AgentHooksMiddlewareBase, ChatMiddleware):
         model_id = str(options.get("model") or type(context.client).__name__)
         before = _ModelRequestCodec.to_wire(context.messages)
         outcome: EmitOutcome = await state.emitter.emit(
-            state.builder.pre_model_call(model_id=model_id, messages=before)
+            state.builder.pre_model_call(model_id=model_id, messages=before, tools=_pre_model_call_tools(options))
         )
         transformed_messages = _ModelRequestCodec.write_back(context.messages, before, outcome.target)
         if transformed_messages is not None:
@@ -1323,21 +1455,20 @@ class _AgentHooksChatMiddleware(_AgentHooksMiddlewareBase, ChatMiddleware):
 class _AgentHooksFunctionMiddleware(_AgentHooksMiddlewareBase, FunctionMiddleware):
     """Tool bracket: ``pre_tool_call`` and ``post_tool_call``."""
 
-    def _block(
-        self, state: _RunState, context: FunctionInvocationContext, exc: InterceptionBlocked, point: str
-    ) -> None:
+    def _block(self, context: FunctionInvocationContext, exc: InterceptionBlocked, point: str) -> None:
         """Enforce a tool-seam deny: surface a tool error and, on host errors, halt the run."""
         context.result = _blocked_tool_result(point, exc.result)
-        self._maybe_halt(state, exc, point)
+        self._maybe_halt(exc, point)
 
-    def _maybe_halt(self, state: _RunState, exc: InterceptionBlocked, point: str) -> None:
+    def _maybe_halt(self, exc: InterceptionBlocked, point: str) -> None:
         record: InterceptionRecord = exc.result
         if _is_host_error(record):
             # The enforcement layer itself failed (interceptor crash/timeout, invalid
-            # context): continuing the loop would run unguarded. Halt the run; the
-            # agent middleware re-raises the block to the caller.
-            state.halted = exc
-            raise MiddlewareTermination(
+            # context): continuing the loop would run unguarded. Abort the run through
+            # the loop's fail-closed escape; the agent middleware re-raises the block
+            # itself to the caller (the private tag is what authorizes the unwrap —
+            # see _reraise_tool_seam_block).
+            raise _ToolSeamBlockFailure(
                 f"agent-hooks {point} failed closed: {record.verdict.reason}",
             ) from exc
 
@@ -1346,21 +1477,15 @@ class _AgentHooksFunctionMiddleware(_AgentHooksMiddlewareBase, FunctionMiddlewar
 
         state = _RUN_STATE.get()
         if state is None:
-            # No run state means the bundle's agent middleware never ran. A plain
-            # exception raised here would be converted into a tool error by the
-            # function-invocation loop and the run would continue unguarded (fail
-            # open); MiddlewareTermination is the only loud escape: the tool is never
-            # dispatched and the loop stops.
-            message = _TRIO_REQUIRED_MESSAGE.format(seam="function")
-            context.result = {"error": message}
-            raise MiddlewareTermination(message)
+            # No run state means the bundle's agent middleware never ran (a partial
+            # install the public API makes impossible). The tool must never be
+            # dispatched: abort the run through the loop's fail-closed escape.
+            raise MiddlewareFailure(_TRIO_REQUIRED_MESSAGE.format(seam="function"))
         if not self._shares_config(state.config):
             # A different bundle owns the innermost run state (stacked bundles):
-            # binding to it would silently misroute emissions. Halt the run
-            # fail-closed (the loop swallows plain exceptions, so route through the
-            # halt path).
+            # binding to it would silently misroute emissions. Abort fail-closed.
             _halt_on_enforcement_failure(
-                state, context, MiddlewareException(_FOREIGN_TRIO_MESSAGE.format(seam="function")), "pre_tool_call"
+                MiddlewareException(_FOREIGN_TRIO_MESSAGE.format(seam="function")), "pre_tool_call"
             )
 
         try:
@@ -1379,23 +1504,20 @@ class _AgentHooksFunctionMiddleware(_AgentHooksMiddlewareBase, FunctionMiddlewar
             args = effective
         except InterceptionBlocked as exc:
             # §6.2: the tool is not dispatched and no post_tool_call is emitted.
-            self._block(state, context, exc, "pre_tool_call")
+            self._block(context, exc, "pre_tool_call")
             return
-        except (MiddlewareTermination, asyncio.CancelledError):
+        except (MiddlewareTermination, MiddlewareFailure, asyncio.CancelledError):
             raise
         except BaseException as exc:
-            _halt_on_enforcement_failure(state, context, exc, "pre_tool_call")
+            _halt_on_enforcement_failure(exc, "pre_tool_call")
 
         termination: MiddlewareTermination | None = None
         try:
             await call_next()
         except MiddlewareTermination as exc:
-            if state.halted is not None or _is_approval_request(context.result):
-                # Our own halt path, or framework approval control flow (the tool did
-                # not run; an approved replay re-enters through pre_tool_call).
-                raise
             # A middleware short-circuited with a substituted result; that result
-            # still enters the transcript, so it is bracketed below.
+            # still enters the transcript, so it is bracketed below (approval-request
+            # control flow is passed through un-emitted further down instead).
             termination = exc
         except asyncio.CancelledError:
             raise
@@ -1411,19 +1533,21 @@ class _AgentHooksFunctionMiddleware(_AgentHooksMiddlewareBase, FunctionMiddlewar
             except InterceptionBlocked as blocked:
                 # A policy deny over an already-errored call changes nothing (the
                 # result is discarded either way); a host error still halts the run.
-                self._maybe_halt(state, blocked, "post_tool_call")
-            except asyncio.CancelledError:
+                self._maybe_halt(blocked, "post_tool_call")
+            except (MiddlewareTermination, MiddlewareFailure, asyncio.CancelledError):
                 raise
             except BaseException as emit_exc:
-                _halt_on_enforcement_failure(state, context, emit_exc, "post_tool_call")
+                _halt_on_enforcement_failure(emit_exc, "post_tool_call")
             raise
 
         if _is_approval_request(context.result):
-            # Framework approval control flow on the normal return path (a middleware
-            # set an approval request and returned): the tool has not run, so there is
-            # no result to bracket — pass the control object through un-emitted, exactly
-            # like the termination branch above. The approved replay re-enters through
-            # pre_tool_call.
+            # Framework approval control flow (a middleware set an approval request,
+            # whether it returned or short-circuited): the tool has not run, so there
+            # is no result to bracket — pass the control object through un-emitted.
+            # The approved replay re-enters through pre_tool_call. A short-circuit is
+            # re-raised so the loop still stops and surfaces the request.
+            if termination is not None:
+                raise termination
             return
 
         try:
@@ -1434,11 +1558,11 @@ class _AgentHooksFunctionMiddleware(_AgentHooksMiddlewareBase, FunctionMiddlewar
             context.result = _ToolResultCodec.write_back(context.result, value, outcome.target)
         except InterceptionBlocked as exc:
             # §6.1: the result must be discarded as if the call had errored.
-            self._block(state, context, exc, "post_tool_call")
-        except (MiddlewareTermination, asyncio.CancelledError):
+            self._block(context, exc, "post_tool_call")
+        except (MiddlewareTermination, MiddlewareFailure, asyncio.CancelledError):
             raise
         except BaseException as exc:
-            _halt_on_enforcement_failure(state, context, exc, "post_tool_call")
+            _halt_on_enforcement_failure(exc, "post_tool_call")
         if termination is not None:
             raise termination
 

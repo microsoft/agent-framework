@@ -284,6 +284,10 @@ public sealed partial class AgentSkillsProvider : AIContextProvider, IDisposable
             return await base.ProvideAIContextAsync(context, cancellationToken).ConfigureAwait(false);
         }
 
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreSkillsProvider);
+#pragma warning restore MAAI001
+
         return new AIContext
         {
             Instructions = this.BuildSkillsInstructions(skills),

@@ -26,6 +26,7 @@ from agent_framework import (
     Message,
     MiddlewareBundle,
     MiddlewareException,
+    MiddlewareFailure,
     MiddlewareTermination,
     ResponseStream,
     create_agent_hooks_middleware,
@@ -190,15 +191,12 @@ async def test_from_emitter_factory_requires_both_arguments() -> None:
 
 
 @requires_sdk
-async def test_bare_bundle_at_construction_is_fully_enforced(chat_client_base: MockBaseChatClient) -> None:
-    # Passing the bundle bare (instead of inside a list) at construction must install
-    # it exactly like `middleware=[bundle]` — previously it was silently dropped and
-    # the run executed fully unhooked.
+async def test_bundle_at_construction_is_fully_enforced(chat_client_base: MockBaseChatClient) -> None:
     records: list[InterceptionRecord] = []
     guard = PointGuard("output", Verdict.deny(reason="egress_blocked"))
     agent = Agent(
         client=chat_client_base,
-        middleware=create_agent_hooks_middleware([guard], record_sink=records.append),
+        middleware=[create_agent_hooks_middleware([guard], record_sink=records.append)],
     )
 
     with pytest.raises(InterceptionBlocked) as exc_info:
@@ -368,6 +366,354 @@ async def test_tool_result_projection_preserves_canonical_values(chat_client_bas
     assert "Content(" not in str(value)
     assert "840.5" in str(value)
     assert post_tool["target"] == value
+
+
+@requires_sdk
+async def test_pre_model_call_projects_per_call_effective_tools(chat_client_base: MockBaseChatClient) -> None:
+    """Every ``pre_model_call`` carries the effective tool set for that call (spec ``tools``).
+
+    Constructor-registered and run-level tools are both part of the effective set the
+    model is offered, so both must appear — a registration-time-only projection would
+    hide the run-level tools from auditors (the Python half of #7560; parity with the
+    .NET per-call ``ChatOptions.Tools`` projection).
+    """
+
+    @tool(approval_mode="never_require")
+    def run_only_tool(city: str) -> str:
+        """Look up a city."""
+        return city
+
+    guard = AllowGuard()
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([guard])],
+    )
+
+    await agent.run("Get weather for Seattle", tools=[run_only_tool])
+
+    pre_models = guard.contexts_for("pre_model_call")
+    assert len(pre_models) == 2
+    for pre_model in pre_models:
+        assert [entry["name"] for entry in pre_model["tools"]] == ["weather_tool", "run_only_tool"]
+    # Descriptions ride along ({name, description?}), so auditors see what the model saw.
+    assert pre_models[0]["tools"][0]["description"] == "Get the weather for a location."
+    # agent_startup's tools_registered is the run-start snapshot: both are known at run
+    # start here, so both appear (constructor tools were previously dropped entirely).
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == ["weather_tool", "run_only_tool"]
+
+
+@requires_sdk
+async def test_agent_startup_projects_constructor_registered_tools(chat_client_base: MockBaseChatClient) -> None:
+    """Constructor-registered tools appear in ``tools_registered`` (#7560)."""
+    guard = AllowGuard()
+    agent = Agent(client=chat_client_base, tools=[weather_tool], middleware=[create_agent_hooks_middleware([guard])])
+
+    await agent.run("hello")
+
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == ["weather_tool"]
+
+
+@requires_sdk
+async def test_pre_model_call_tools_include_provider_contributed_tools(chat_client_base: MockBaseChatClient) -> None:
+    """Tools registered during run preparation surface in the per-call ``tools`` projection.
+
+    Context providers contribute tools after ``agent_startup`` has been emitted, so the
+    run-start snapshot cannot know them — the per-call projection is where they become
+    visible to auditors (same contract as the .NET fix on #7564).
+    """
+    from agent_framework import ContextProvider
+
+    @tool(approval_mode="never_require")
+    def provider_tool(query: str) -> str:
+        """A tool contributed by a context provider."""
+        return query
+
+    class ToolContextProvider(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__(source_id="tool-context")
+
+        async def before_run(self, *, agent: Any, session: Any, context: Any, state: Any) -> None:
+            context.extend_tools("tool-context", [provider_tool])
+
+    guard = AllowGuard()
+    agent = Agent(
+        client=chat_client_base,
+        context_providers=[ToolContextProvider()],
+        middleware=[create_agent_hooks_middleware([guard])],
+    )
+
+    await agent.run("hello")
+
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == []
+    pre_model = guard.contexts_for("pre_model_call")[0]
+    assert [entry["name"] for entry in pre_model["tools"]] == ["provider_tool"]
+
+
+@requires_sdk
+@pytest.mark.parametrize("max_iterations", [1], indirect=True)
+async def test_tools_disabled_final_call_still_projects_effective_tools(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """The loop's ``tool_choice="none"`` final call projects its effective options' tools.
+
+    When the iteration budget is exhausted the function-invocation loop requests one
+    final response with ``tool_choice="none"`` but the tools still in the options —
+    the projection reflects exactly those effective options (parity with the .NET
+    per-call ``ChatOptions.Tools`` projection), not a guess about tool availability.
+    """
+    guard = AllowGuard()
+    chat_client_base.run_responses = [tool_call_response(), tool_call_response()]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([guard])],
+    )
+
+    response = await agent.run("Get weather for Seattle")
+
+    assert "broke out" in response.text
+    pre_models = guard.contexts_for("pre_model_call")
+    assert len(pre_models) == 2
+    for pre_model in pre_models:
+        assert [entry["name"] for entry in pre_model["tools"]] == ["weather_tool"]
+
+
+@requires_sdk
+async def test_pre_model_call_omits_tools_when_call_has_none(chat_client_base: MockBaseChatClient) -> None:
+    """A call with no tools omits the optional ``tools`` field instead of claiming an empty set."""
+    guard = AllowGuard()
+    agent = Agent(client=chat_client_base, middleware=[create_agent_hooks_middleware([guard])])
+
+    await agent.run("hello")
+
+    pre_model = guard.contexts_for("pre_model_call")[0]
+    assert "tools" not in pre_model
+
+
+@requires_sdk
+async def test_hosted_tool_mappings_project_top_level_name_and_description(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """Hosted-tool mappings project their top-level fields, with ``type`` naming unnamed tools.
+
+    The provider factories return plain mappings without a nested ``function`` object
+    (e.g. OpenAI's ``{"type": "web_search"}``, Anthropic's ``{"type": "web_search_20250305",
+    "name": "web_search"}``); those must not be projected as ``{"name": "dict"}``.
+    """
+    guard = AllowGuard()
+    agent = Agent(
+        client=chat_client_base,
+        tools=[
+            {"type": "web_search"},
+            {"type": "web_search_20250305", "name": "web_search"},
+            {"type": "custom_hosted", "name": "lookup", "description": "Look things up."},
+        ],
+        middleware=[create_agent_hooks_middleware([guard])],
+    )
+
+    await agent.run("hello")
+
+    pre_model = guard.contexts_for("pre_model_call")[0]
+    assert pre_model["tools"] == [
+        {"name": "web_search"},
+        {"name": "web_search"},
+        {"name": "lookup", "description": "Look things up."},
+    ]
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == ["web_search", "web_search", "lookup"]
+
+
+@requires_sdk
+def test_tools_projection_survives_hostile_tools_container(caplog: pytest.LogCaptureFixture) -> None:
+    """A tools container whose ``__bool__`` raises degrades to omission, never an emission abort."""
+    from agent_framework._agent_hooks import _pre_model_call_tools
+
+    class HostileTools:
+        def __bool__(self) -> bool:
+            raise RuntimeError("hostile __bool__")
+
+        def __iter__(self) -> Any:
+            return iter([])
+
+    with caplog.at_level("WARNING", logger="agent_framework._agent_hooks"):
+        assert _pre_model_call_tools({"tools": HostileTools()}) is None
+    assert "could not normalize the tools" in caplog.text
+
+    # The startup snapshot degrades the same way when the run-start resolution raises.
+    from agent_framework._agent_hooks import _tool_names
+
+    class HostileAgent:
+        tools = HostileTools()
+
+    context = AgentContext(agent=cast("Any", HostileAgent()), messages=[])
+    with caplog.at_level("WARNING", logger="agent_framework._agent_hooks"):
+        assert _tool_names(context) == []
+    assert "could not resolve the run-start tools" in caplog.text
+
+
+@requires_sdk
+def test_startup_snapshot_falls_back_to_legacy_tools_attribute() -> None:
+    """A custom agent whose ``default_options`` mapping has no tools entry keeps its
+    ``tools``-attribute projection (the pre-existing fallback for non-``Agent`` hosts)."""
+    from agent_framework._agent_hooks import _tool_names
+
+    class LegacyAgent:
+        default_options = {"temperature": 0.2}  # mapping-valued, but no "tools" key
+        tools = [weather_tool]
+
+    context = AgentContext(agent=cast("Any", LegacyAgent()), messages=[])
+    assert _tool_names(context) == ["weather_tool"]
+
+
+@requires_sdk
+async def test_options_route_run_tools_appear_on_both_projections(chat_client_base: MockBaseChatClient) -> None:
+    """Run-level tools passed as ``options={"tools": ...}`` (instead of the ``tools=``
+    keyword) appear in the run-start snapshot and the per-call projection alike."""
+
+    @tool(approval_mode="never_require")
+    def options_route_tool(city: str) -> str:
+        """Arrives through the options dict."""
+        return city
+
+    guard = AllowGuard()
+    agent = Agent(client=chat_client_base, tools=[weather_tool], middleware=[create_agent_hooks_middleware([guard])])
+
+    await agent.run("hello", options={"tools": [options_route_tool]})
+
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == ["weather_tool", "options_route_tool"]
+    pre_model = guard.contexts_for("pre_model_call")[0]
+    assert [entry["name"] for entry in pre_model["tools"]] == ["weather_tool", "options_route_tool"]
+
+
+@requires_sdk
+@pytest.mark.parametrize("route", ["tools_kwarg", "options_dict"])
+async def test_one_shot_iterable_run_tools_survive_the_snapshot(
+    chat_client_base: MockBaseChatClient, route: str
+) -> None:
+    """Observing the tools never consumes them: one-shot iterables stay usable by the run.
+
+    ``normalize_tools`` flattens any iterable tool collection, so a generator is a
+    supported run-level container. The framework materializes it exactly once when it
+    builds the middleware context; snapshot, per-call projection, and the run itself
+    all see the same tools. (Previously the startup projection exhausted the iterable
+    and enabling agent-hooks silently removed every run-level tool it contained.)
+    """
+    guard = AllowGuard()
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(client=chat_client_base, middleware=[create_agent_hooks_middleware([guard])])
+
+    one_shot = (item for item in [weather_tool])
+    if route == "tools_kwarg":
+        response = await agent.run("Get weather for Seattle", tools=one_shot)
+    else:
+        response = await agent.run("Get weather for Seattle", options={"tools": one_shot})
+
+    # The run kept its tools: the tool call resolved and the loop completed.
+    assert response.text == "Final response"
+    assert weather_tool_calls == ["Seattle"]
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == ["weather_tool"]
+    for pre_model in guard.contexts_for("pre_model_call"):
+        assert [entry["name"] for entry in pre_model["tools"]] == ["weather_tool"]
+
+
+@requires_sdk
+async def test_nested_one_shot_collection_survives_the_snapshot(chat_client_base: MockBaseChatClient) -> None:
+    """Nested one-shot containers are materialized too, at every level flattening walks.
+
+    ``normalize_tools`` flattens iterable collections recursively, so a generator
+    nested inside a list is a supported shape; the run-start materialization must
+    cover it, or the startup projection drains the inner iterator and the run loses
+    that tool (the same silent degradation one level down).
+    """
+    guard = AllowGuard()
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(client=chat_client_base, middleware=[create_agent_hooks_middleware([guard])])
+
+    response = await agent.run("Get weather for Seattle", tools=[(item for item in [weather_tool])])
+
+    assert response.text == "Final response"
+    assert weather_tool_calls == ["Seattle"]
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == ["weather_tool"]
+    for pre_model in guard.contexts_for("pre_model_call"):
+        assert [entry["name"] for entry in pre_model["tools"]] == ["weather_tool"]
+
+
+@requires_sdk
+@pytest.mark.parametrize("backing", ["one_shot", "reusable"])
+async def test_wrapper_tools_collections_survive_the_snapshot(
+    chat_client_base: MockBaseChatClient, backing: str
+) -> None:
+    """Wrapper objects' ``.tools`` collections survive observation.
+
+    ``normalize_tools`` flattens a wrapper object through its iterable ``.tools``
+    attribute, so a one-shot (generator-backed) collection is a supported shape the
+    boundary must materialize — otherwise the startup projection drains it and the
+    run executes without the tool. A wrapper whose collection is reusable passes
+    through untouched, keeping its identity for the middleware pipeline.
+    """
+
+    from types import SimpleNamespace
+
+    toolbox = SimpleNamespace(tools=(item for item in [weather_tool]) if backing == "one_shot" else [weather_tool])
+    seen: dict[str, Any] = {}
+
+    class CaptureToolsMiddleware(AgentMiddleware):
+        async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            seen["tools"] = context.tools
+            await call_next()
+
+    guard = AllowGuard()
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(
+        client=chat_client_base,
+        middleware=[create_agent_hooks_middleware([guard]), CaptureToolsMiddleware()],
+    )
+
+    response = await agent.run("Get weather for Seattle", tools=toolbox)
+
+    assert response.text == "Final response"
+    assert weather_tool_calls == ["Seattle"]
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == ["weather_tool"]
+    for pre_model in guard.contexts_for("pre_model_call"):
+        assert [entry["name"] for entry in pre_model["tools"]] == ["weather_tool"]
+    if backing == "reusable":
+        # A reusable wrapper keeps its identity through the pipeline.
+        assert seen["tools"] is toolbox
+
+
+@requires_sdk
+async def test_snapshot_and_per_call_agree_when_both_run_tool_routes_are_supplied(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """With both ``tools=`` and ``options={"tools": ...}`` supplied, the named parameter
+    wins everywhere: ``tools_registered`` and the per-call ``tools`` projection report
+    the same set the run executes. (Previously the losing options entry silently
+    overrode the request's tools, so the run-start view and the executed set
+    disagreed.)"""
+
+    @tool(approval_mode="never_require")
+    def options_entry_tool(x: str) -> str:
+        """Arrives through the options dict and loses the precedence."""
+        return x
+
+    guard = AllowGuard()
+    agent = Agent(client=chat_client_base, middleware=[create_agent_hooks_middleware([guard])])
+
+    await agent.run("hello", tools=[weather_tool], options={"tools": [options_entry_tool]})
+
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == ["weather_tool"]
+    pre_model = guard.contexts_for("pre_model_call")[0]
+    assert [entry["name"] for entry in pre_model["tools"]] == ["weather_tool"]
 
 
 # endregion
@@ -706,6 +1052,184 @@ async def test_interceptor_crash_fails_closed_and_halts_run(chat_client_base: Mo
     # The tool ran, but the enforcement layer failed: the run halted fail-closed and
     # the shutdown record still closed the trail.
     assert points(records)[-1] == "agent_shutdown"
+
+
+@requires_sdk
+async def test_interceptor_crash_at_tool_seam_fails_closed_streaming(chat_client_base: MockBaseChatClient) -> None:
+    # The streaming twin of the halt above: the tool-seam host_error block travels the
+    # function-invocation loop as MiddlewareFailure and is surfaced to the stream
+    # consumer as the InterceptionBlocked itself — one deny surface at every seam.
+    records: list[InterceptionRecord] = []
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_1", name="weather_tool", arguments='{"location": "Seattle"}'
+                    )
+                ],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+        ],
+    ]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([CrashingGuard("post_tool_call")], record_sink=records.append)],
+    )
+
+    updates: list[AgentResponseUpdate] = []
+    with pytest.raises(InterceptionBlocked) as exc_info:
+        async for update in agent.run("get the weather", stream=True):
+            updates.append(update)
+
+    assert exc_info.value.result.verdict.reason == "host_error:interceptor_failed"
+    assert updates == []  # nothing egressed before the halt
+    assert points(records)[-1] == "agent_shutdown"
+
+
+@requires_sdk
+async def test_tool_seam_block_exception_chain_is_acyclic(chat_client_base: MockBaseChatClient) -> None:
+    # Re-raising the InterceptionBlocked with the transport wrapper's back-links
+    # intact would make the two exceptions each other's cause/context — a chain
+    # cycle every __cause__/__context__ walker would have to guard against. The
+    # unwrap must detach the wrapper first, keeping both exceptions visible in a
+    # finite traceback.
+    import traceback
+
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([CrashingGuard("post_tool_call")])],
+    )
+
+    with pytest.raises(InterceptionBlocked) as exc_info:
+        await agent.run("get the weather")
+
+    block = exc_info.value
+    seen: set[int] = set()
+    node: BaseException | None = block
+    while node is not None:
+        assert id(node) not in seen, "exception chain contains a cycle"
+        seen.add(id(node))
+        # Follow the chain the way traceback rendering does.
+        node = node.__cause__ if (node.__cause__ is not None or node.__suppress_context__) else node.__context__
+
+    formatted = "".join(traceback.format_exception(type(block), block, block.__traceback__))
+    assert "InterceptionBlocked" in formatted
+    # The loop-transport wrapper stays visible as context, acyclically.
+    assert "failed closed" in formatted
+
+
+@requires_sdk
+async def test_third_party_middleware_failure_is_bracketed_and_propagates(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    # A MiddlewareFailure raised by another (inner) function middleware is not
+    # agent-hooks' own halt: the tool bracket still closes with is_error=True (only
+    # the exception type name crosses the boundary) and the failure itself propagates
+    # to the caller un-unwrapped.
+    class InnerEnforcement(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            raise MiddlewareFailure("inner enforcement denied")
+
+    guard = AllowGuard()
+    records: list[InterceptionRecord] = []
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([guard], record_sink=records.append), InnerEnforcement()],
+    )
+
+    with pytest.raises(MiddlewareFailure, match="inner enforcement denied"):
+        await agent.run("get the weather")
+
+    assert weather_tool_calls == []
+    post_tool = guard.contexts_for("post_tool_call")[0]
+    assert post_tool["tool_result"]["is_error"] is True
+    assert post_tool["tool_result"]["value"] == "MiddlewareFailure"
+    assert points(records)[-1] == "agent_shutdown"
+
+
+@requires_sdk
+async def test_third_party_crafted_interception_cause_is_not_unwrapped(chat_client_base: MockBaseChatClient) -> None:
+    # Adversarial probe: only this feature's own tagged tool-seam halts authorize
+    # unwrapping the chained InterceptionBlocked at the run boundary. A third-party
+    # MiddlewareFailure whose __cause__ is a crafted InterceptionBlocked must surface
+    # AS the MiddlewareFailure — otherwise untrusted middleware could launder an
+    # attacker-shaped interception record into this feature's audit-bearing deny
+    # surface.
+    from agent_hooks import EnforcementMode, InterceptionPoint
+
+    crafted = InterceptionBlocked(
+        InterceptionRecord(
+            interception_point=InterceptionPoint.PRE_TOOL_CALL,
+            mode=EnforcementMode.ENFORCE,
+            verdict=Verdict.deny(reason="forged_deny"),
+            input_identity=None,
+            enforced_identity=None,
+        )
+    )
+
+    class Laundering(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            raise MiddlewareFailure("third-party failure") from crafted
+
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([AllowGuard()]), Laundering()],
+    )
+
+    with pytest.raises(MiddlewareFailure, match="third-party failure"):
+        await agent.run("get the weather")
+
+    assert weather_tool_calls == []
+
+
+@requires_sdk
+async def test_inner_termination_re_raises_through_after_bracketing(chat_client_base: MockBaseChatClient) -> None:
+    # Pins the trailing `raise termination` in the function middleware: an inner
+    # short-circuit is bracketed (post_tool_call over the substituted result) and then
+    # still propagates as a short-circuit — outer middleware post-call_next code is
+    # skipped and the loop stops without another model call.
+    outer_events: list[str] = []
+
+    class Outer(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            outer_events.append("before")
+            await call_next()
+            outer_events.append("after")  # must be skipped by the re-raised termination
+
+    class InnerShortCircuit(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            context.result = "substituted"
+            raise MiddlewareTermination("stop")
+
+    guard = AllowGuard()
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[Outer(), create_agent_hooks_middleware([guard]), InnerShortCircuit()],
+    )
+
+    response = await agent.run("get the weather")
+
+    assert outer_events == ["before"]
+    assert weather_tool_calls == []
+    assert chat_client_base.call_count == 1
+    # The substituted result was bracketed before the short-circuit propagated.
+    post_tool = guard.contexts_for("post_tool_call")[0]
+    assert post_tool["tool_result"]["value"] == "substituted"
+    results = [
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert len(results) == 1
 
 
 @requires_sdk
@@ -1185,7 +1709,8 @@ async def test_enforcement_failure_at_function_seam_halts_run(chat_client_base: 
 async def test_function_seam_without_run_state_blocks_tool(chat_client_base: MockBaseChatClient) -> None:
     # The bundle makes a partial install impossible through the public API; this
     # exercises the internal defense directly: the private function middleware invoked
-    # without an active agent-hooks run must never dispatch the tool.
+    # without an active agent-hooks run must never dispatch the tool. The run aborts
+    # loudly through the loop's fail-closed escape (MiddlewareFailure).
     bundle = create_agent_hooks_middleware([AllowGuard()])
     chat_client_base.run_responses = [tool_call_response(), final_response()]
     agent = Agent(
@@ -1194,13 +1719,12 @@ async def test_function_seam_without_run_state_blocks_tool(chat_client_base: Moc
         middleware=[_bundle_member(bundle, "FunctionMiddleware")],
     )
 
-    response = await agent.run("get the weather")
+    with pytest.raises(MiddlewareFailure, match="without an active agent-hooks run"):
+        await agent.run("get the weather")
 
-    # The tool is never dispatched and the loop terminates instead of continuing.
+    # The tool is never dispatched and the loop stops instead of continuing.
     assert weather_tool_calls == []
     assert chat_client_base.call_count == 1
-    transcript = str([content.result for message in response.messages for content in message.contents])
-    assert "without an active agent-hooks run" in transcript
 
 
 @requires_sdk
@@ -1208,7 +1732,7 @@ async def test_bundle_passed_to_chat_client_call_raises_instead_of_dropping_the_
     chat_client_base: MockBaseChatClient,
 ) -> None:
     # The chat-client middleware seam installs only chat and function middleware; the
-    # bundle's agent member carries the output gate and the halt re-raise, so silently
+    # bundle's agent member carries the output gate and the deny surface, so silently
     # dropping it would install partial enforcement. The seam must raise instead.
     bundle = create_agent_hooks_middleware([AllowGuard()])
     with pytest.raises(MiddlewareException, match="cannot be partially installed"):
@@ -1893,7 +2417,7 @@ async def test_drained_and_discarded_attempt_flushes_on_allow(streaming: bool) -
     expected_response = "update - hello there" if streaming else "test response - hello there"
     assert final.text == expected_response
     stored = cast("list[Message]", session.state[provider.source_id]["messages"])
-    assert [message.text for message in stored] == ["hello there", expected_response] * 2
+    assert [message.text for message in stored] == ["hello there", expected_response]
 
 
 class _DrainThenTerminateWithoutResultMiddleware(AgentMiddleware):
@@ -2249,6 +2773,45 @@ async def test_approval_request_on_normal_return_path_passes_through(chat_client
     assert len(approval_requests) == 1
 
 
+@requires_sdk
+async def test_approval_request_on_termination_path_passes_through(chat_client_base: MockBaseChatClient) -> None:
+    class ApprovalGate(FunctionMiddleware):
+        """Framework pattern: request human approval and short-circuit the pipeline."""
+
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            context.result = Content.from_function_approval_request(
+                id=str(context.metadata.get("call_id")),
+                function_call=Content.from_function_call(
+                    str(context.metadata.get("call_id")), context.function.name, arguments={}
+                ),
+            )
+            raise MiddlewareTermination("needs approval")
+
+    records: list[InterceptionRecord] = []
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([AllowGuard()], record_sink=records.append), ApprovalGate()],
+    )
+
+    response = await agent.run("get the weather")
+
+    # The tool never ran and the short-circuit still stopped the loop: the control
+    # object is passed through un-bracketed (no post_tool_call reporting a value for
+    # a tool that never executed) and surfaces to the caller.
+    assert weather_tool_calls == []
+    assert "post_tool_call" not in points(records)
+    assert chat_client_base.call_count == 1
+    approval_requests = [
+        content
+        for message in response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    ]
+    assert len(approval_requests) == 1
+
+
 # endregion
 
 # region Tool-call transforms at post_model_call
@@ -2518,16 +3081,16 @@ def test_agent_hooks_middleware_importable_without_sdk(monkeypatch: pytest.Monke
         is agent_hooks_module.create_agent_hooks_middleware_from_emitter
     )
 
-    with pytest.raises(ModuleNotFoundError, match=r"agent-framework-core\[agent-hooks\]"):
+    with pytest.raises(ModuleNotFoundError, match="pip install agent-hooks-sdk"):
         agent_framework.create_agent_hooks_middleware([cast("Any", object())])
-    with pytest.raises(ModuleNotFoundError, match=r"agent-framework-core\[agent-hooks\]"):
+    with pytest.raises(ModuleNotFoundError, match="pip install agent-hooks-sdk"):
         agent_framework.create_agent_hooks_middleware_from_emitter(cast("Any", object()), cast("Any", object()))
 
 
-def test_broken_sdk_installation_is_not_masked_as_missing_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_broken_sdk_installation_is_not_masked_as_missing_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     # A transitively missing dependency (or any other breakage inside the SDK) must
-    # propagate unchanged — only a genuinely absent `agent_hooks` package gets the
-    # install-the-extra hint.
+    # propagate unchanged; only a genuinely absent `agent_hooks` package gets the
+    # SDK installation hint.
     _hide_agent_hooks(
         monkeypatch, error=ModuleNotFoundError("No module named 'some_native_dep'", name="some_native_dep")
     )

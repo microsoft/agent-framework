@@ -120,6 +120,19 @@ def test_init_derives_name_and_defaults() -> None:
     assert toolbox.load_prompts_flag is False
 
 
+def test_init_forwards_additional_tool_arguments_and_parent_kwargs() -> None:
+    toolbox = FoundryToolbox(
+        _FakeCredential(),  # type: ignore
+        url="https://h/toolboxes/sales/mcp?api-version=v1",
+        description="Sales tools",
+        additional_tool_argument_names={"*": ["tenant_id"], "search": ["thread"]},
+    )
+
+    assert toolbox.description == "Sales tools"
+    assert toolbox._global_extra_arg_names == {"tenant_id"}
+    assert toolbox._tool_extra_arg_names == {"search": {"thread"}}
+
+
 def test_toolbox_owns_feature_index_53() -> None:
     assert FeatureIndex.FOUNDRY_TOOLBOX == 53
 

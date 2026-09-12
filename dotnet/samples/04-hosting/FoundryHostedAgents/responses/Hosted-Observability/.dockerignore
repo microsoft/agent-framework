@@ -1,6 +1,0 @@
-.env
-bin/
-obj/
-.vs/
-.vscode/
-*.user

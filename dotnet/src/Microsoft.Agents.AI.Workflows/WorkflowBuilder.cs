@@ -670,12 +670,19 @@ public class WorkflowBuilder
     /// <exception cref="InvalidOperationException">Thrown if there are unbound executors in the workflow definition,
     /// or if the start executor is not bound.</exception>
     public Workflow Build(bool validateOrphans = true)
+        => this.BuildForFeature((int)FeatureIndex.CoreWorkflow, validateOrphans);
+
+    internal Workflow BuildForFeature(int featureIndex, bool validateOrphans = true)
     {
         using Activity? activity = this._telemetryContext.StartWorkflowBuildActivity();
 
         var workflow = this.BuildInternal(validateOrphans, activity);
 
         activity?.AddEvent(new ActivityEvent(EventNames.BuildCompleted));
+
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed(featureIndex);
+#pragma warning restore MAAI001
 
         return workflow;
     }

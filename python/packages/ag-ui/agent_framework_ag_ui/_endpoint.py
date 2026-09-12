@@ -92,6 +92,7 @@ def add_agent_framework_fastapi_endpoint(
     snapshot_scope_resolver: SnapshotScopeResolver | None = None,
     checkpoint_storage: CheckpointStorage | None = None,
     keepalive_seconds: float | None = 15,
+    a2ui_config: dict[str, Any] | None = None,
 ) -> None:
     """Add an AG-UI endpoint to a FastAPI app.
 
@@ -113,7 +114,9 @@ def add_agent_framework_fastapi_endpoint(
             explicit Snapshot Scope resolver.
         snapshot_scope_resolver: Optional resolver for the application-defined Snapshot Scope. Required whenever
             a snapshot store is configured because an AG-UI Thread id is not an authorization boundary. Also scopes
-            in-memory workflow_factory instances when provided without a snapshot store.
+            the internal Agent Session id used by context providers and in-memory workflow_factory instances when
+            provided without a snapshot store. A configured resolver must return a non-empty string derived from
+            authorized request context; invalid results fail the request before accessing state or invoking the runner.
         checkpoint_storage: Optional workflow checkpoint storage, applied when the endpoint exposes a workflow.
             When provided, each run creates a checkpoint at the end of every superstep, and a run may resume from
             a persisted checkpoint by supplying its id in the AG-UI forwarded props
@@ -121,6 +124,10 @@ def add_agent_framework_fastapi_endpoint(
         keepalive_seconds: Endpoint SSE keepalive interval in seconds. Defaults to 15. Positive values emit fixed
             SSE comments while the stream is open. None disables keepalive and preserves the non-keepalive response
             path. Keepalive comments are transport traffic and do not change AG-UI events.
+        a2ui_config: Optional backend A2UI config used when the runtime auto-injects
+            the surface-generation tool (``forwardedProps.injectA2UITool``). Keys:
+            ``inject_a2ui_tool`` (backend opt-in override), ``default_catalog_id``,
+            ``catalog``, ``guidelines``, ``recovery``, ``default_surface_id``.
     """
     _validate_keepalive_seconds(keepalive_seconds)
 
@@ -137,6 +144,7 @@ def add_agent_framework_fastapi_endpoint(
             state_schema=state_schema,
             predict_state_config=predict_state_config,
             snapshot_store=snapshot_store,
+            a2ui_config=a2ui_config,
         )
     else:
         raise TypeError("agent must be SupportsAgentRun, Workflow, AgentFrameworkAgent, or AgentFrameworkWorkflow.")
@@ -173,6 +181,8 @@ def add_agent_framework_fastapi_endpoint(
                 snapshot_scope = snapshot_scope_resolver(request_body)
                 if isawaitable(snapshot_scope):
                     snapshot_scope = await snapshot_scope
+                if not isinstance(snapshot_scope, str) or not snapshot_scope:
+                    raise ValueError("snapshot_scope_resolver must return a non-empty string.")
                 input_data[_APPROVAL_SCOPE_INPUT_KEY] = snapshot_scope
                 input_data[_SNAPSHOT_SCOPE_INPUT_KEY] = snapshot_scope
             if default_state:

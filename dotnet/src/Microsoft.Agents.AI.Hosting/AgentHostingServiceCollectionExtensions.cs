@@ -30,7 +30,7 @@ public static class AgentHostingServiceCollectionExtensions
         {
             var chatClient = sp.GetRequiredService<IChatClient>();
             var tools = sp.GetKeyedServices<AITool>(name).ToList();
-            return new ChatClientAgent(chatClient, instructions, key, tools: tools);
+            return new ChatClientAgent(chatClient, instructions, key, tools: tools, services: sp);
         }, lifetime);
     }
 
@@ -51,7 +51,7 @@ public static class AgentHostingServiceCollectionExtensions
         return services.AddAIAgent(name, (sp, key) =>
         {
             var tools = sp.GetKeyedServices<AITool>(name).ToList();
-            return new ChatClientAgent(chatClient, instructions, key, tools: tools);
+            return new ChatClientAgent(chatClient, instructions, key, tools: tools, services: sp);
         }, lifetime);
     }
 
@@ -73,7 +73,7 @@ public static class AgentHostingServiceCollectionExtensions
         {
             var chatClient = chatClientServiceKey is null ? sp.GetRequiredService<IChatClient>() : sp.GetRequiredKeyedService<IChatClient>(chatClientServiceKey);
             var tools = sp.GetKeyedServices<AITool>(name).ToList();
-            return new ChatClientAgent(chatClient, instructions, key, tools: tools);
+            return new ChatClientAgent(chatClient, instructions, key, tools: tools, services: sp);
         }, lifetime);
     }
 
@@ -96,7 +96,7 @@ public static class AgentHostingServiceCollectionExtensions
         {
             var chatClient = chatClientServiceKey is null ? sp.GetRequiredService<IChatClient>() : sp.GetRequiredKeyedService<IChatClient>(chatClientServiceKey);
             var tools = sp.GetKeyedServices<AITool>(name).ToList();
-            return new ChatClientAgent(chatClient, instructions: instructions, name: key, description: description, tools: tools);
+            return new ChatClientAgent(chatClient, instructions: instructions, name: key, description: description, tools: tools, services: sp);
         }, lifetime);
     }
 

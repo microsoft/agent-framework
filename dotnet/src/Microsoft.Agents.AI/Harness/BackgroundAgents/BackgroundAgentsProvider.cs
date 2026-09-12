@@ -27,7 +27,7 @@ namespace Microsoft.Agents.AI;
 /// This provider exposes the following tools to the agent:
 /// <list type="bullet">
 /// <item><description><c>background_agents_start_task</c> — Start a background task on a named agent with text input. Returns the task ID.</description></item>
-/// <item><description><c>background_agents_wait_for_first_completion</c> — Block until the first of the specified tasks completes. Returns the completed task's ID.</description></item>
+/// <item><description><c>background_agents_wait_for_first_completion</c> — Wait until the first specified task completes or the configured timeout expires. A timeout leaves the tasks running so the tool can be called again.</description></item>
 /// <item><description><c>background_agents_get_task_results</c> — Retrieve the text output of a completed background task.</description></item>
 /// <item><description><c>background_agents_get_all_tasks</c> — List all background tasks with their IDs, statuses, descriptions, and agent names.</description></item>
 /// <item><description><c>background_agents_continue_task</c> — Send follow-up input to a completed background task's session to resume work.</description></item>
@@ -78,6 +78,7 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
     private readonly ProviderSessionState<BackgroundAgentState> _sessionState;
     private readonly ProviderSessionState<BackgroundAgentRuntimeState> _runtimeSessionState;
     private readonly string _instructions;
+    private readonly TimeSpan _waitTimeout;
     private IReadOnlyList<string>? _stateKeys;
 
     /// <summary>
@@ -92,11 +93,30 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
     /// <param name="options">Optional settings controlling the provider behavior.</param>
     /// <exception cref="ArgumentNullException"><paramref name="agents"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">An agent has a null or empty name, or agent names are not unique.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <see cref="BackgroundAgentsProviderOptions.WaitTimeout"/> is not positive or exceeds the maximum supported delay.
+    /// </exception>
     public BackgroundAgentsProvider(IEnumerable<AIAgent> agents, BackgroundAgentsProviderOptions? options = null)
     {
         _ = Throw.IfNull(agents);
 
         this._agents = ValidateAndBuildAgentDictionary(agents);
+        this._waitTimeout = options?.WaitTimeout ?? BackgroundAgentsProviderOptions.DefaultWaitTimeout;
+        if (this._waitTimeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                this._waitTimeout,
+                $"{nameof(BackgroundAgentsProviderOptions.WaitTimeout)} must be positive.");
+        }
+
+        if (this._waitTimeout > BackgroundAgentsProviderOptions.MaximumWaitTimeout)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                this._waitTimeout,
+                $"{nameof(BackgroundAgentsProviderOptions.WaitTimeout)} must not exceed {BackgroundAgentsProviderOptions.MaximumWaitTimeout.TotalMilliseconds} milliseconds.");
+        }
 
         string baseInstructions = options?.Instructions ?? DefaultInstructions;
         string agentListText = options?.AgentListBuilder is not null
@@ -121,6 +141,10 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
     /// <inheritdoc />
     protected override ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreBackgroundAgentsProvider);
+#pragma warning restore MAAI001
+
         BackgroundAgentState state = this._sessionState.GetOrInitializeState(context.Session);
         BackgroundAgentRuntimeState runtimeState = this._runtimeSessionState.GetOrInitializeState(context.Session);
 
@@ -668,8 +692,20 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                         return "Error: None of the specified task IDs correspond to running tasks.";
                     }
 
-                    // Wait for the first one to complete.
-                    Task completedTask = await Task.WhenAny(waitableTasks.Select(t => t.Task)).ConfigureAwait(false);
+                    // Wait for the first task to complete, but return control without stopping the tasks if the timeout elapses.
+                    Task<Task<AgentResponse>> firstCompletionTask = Task.WhenAny(waitableTasks.Select(t => t.Task));
+                    using var timeoutCts = new CancellationTokenSource();
+                    Task timeoutTask = Task.Delay(this._waitTimeout, timeoutCts.Token);
+                    Task winner = await Task.WhenAny(firstCompletionTask, timeoutTask).ConfigureAwait(false);
+                    timeoutCts.Cancel();
+
+                    if (winner == timeoutTask && !firstCompletionTask.IsCompleted)
+                    {
+                        return FormattableString.Invariant(
+                            $"No background task completed within {this._waitTimeout.TotalSeconds:g} seconds. The tasks are still running; call this tool again if you wish to continue waiting.");
+                    }
+
+                    Task<AgentResponse> completedTask = await firstCompletionTask.ConfigureAwait(false);
 
                     // Find which ID completed.
                     var completedEntry = waitableTasks.First(t => t.Task == completedTask);
@@ -694,7 +730,7 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                 new AIFunctionFactoryOptions
                 {
                     Name = "background_agents_wait_for_first_completion",
-                    Description = "Block until the first of the specified background tasks completes. Provide one or more task IDs. Returns a status message containing the ID of the task that completed first.",
+                    Description = "Wait until the first of the specified background tasks completes or the configured timeout expires. Provide one or more task IDs. Returns a status message containing the ID of the task that completed first. On timeout, the tasks remain running and this tool can be called again to continue waiting.",
                     SerializerOptions = serializerOptions,
                 }),
 

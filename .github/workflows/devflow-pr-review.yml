@@ -22,8 +22,36 @@ permissions:
   issues: write
   pull-requests: write
 
+# Keep likely review-capable requests ordered from the moment they are created,
+# while bounding other per-PR events in a separate lane. Team membership is
+# still verified before review work begins.
 concurrency:
-  group: devflow-pr-review-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number || github.run_id }}
+  group: >-
+    devflow-pr-review-${{ github.repository }}-${{
+      github.event.pull_request.number || github.event.issue.number || inputs.pr_number || github.run_id
+    }}-${{
+      (
+        (
+          github.event_name == 'pull_request_target' &&
+          (
+            github.event.pull_request.author_association == 'MEMBER' ||
+            github.event.pull_request.author_association == 'OWNER'
+          )
+        ) ||
+        (
+          github.event_name == 'issue_comment' &&
+          github.event.issue.pull_request &&
+          github.event.comment.body == '/review' &&
+          (
+            github.event.comment.author_association == 'MEMBER' ||
+            github.event.comment.author_association == 'OWNER'
+          )
+        ) ||
+        github.event_name == 'workflow_dispatch'
+      )
+      && 'review'
+      || 'gate'
+    }}
   cancel-in-progress: true
 
 env:
@@ -34,17 +62,41 @@ env:
   MODEL_CONFIG_PATH: ${{ github.workspace }}/devflow/config.ci.yaml
 
 jobs:
-  team_check:
+  command_check:
     if: >-
       github.event_name != 'issue_comment' ||
       (
         github.event.issue.pull_request &&
-        github.event.comment.body == '/review' &&
         (
           github.event.comment.author_association == 'MEMBER' ||
           github.event.comment.author_association == 'OWNER'
         )
       )
+    runs-on: ubuntu-latest
+    outputs:
+      should_review: ${{ steps.check.outputs.should_review }}
+    steps:
+      - name: Checkout review command validation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
+          sparse-checkout: .github/scripts/review_command.js
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check review command
+        id: check
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const isReviewCommand = require('./.github/scripts/review_command.js');
+            const shouldReview = context.eventName !== 'issue_comment' ||
+              isReviewCommand(context.payload.comment?.body);
+            core.setOutput('should_review', shouldReview ? 'true' : 'false');
+
+  team_check:
+    needs: command_check
+    if: ${{ needs.command_check.outputs.should_review == 'true' }}
     runs-on: ubuntu-latest
     environment: github-app-auth
     outputs:
@@ -111,9 +163,14 @@ jobs:
 
       - name: Check review requester team membership
         id: check
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          MEMBERSHIP_USER: ${{ github.event_name == 'issue_comment' && github.event.comment.user.login || '' }}
+          MEMBERSHIP_USER: >-
+            ${{
+              github.event_name == 'issue_comment' && github.event.comment.user.login ||
+              github.event_name == 'workflow_dispatch' && github.actor ||
+              ''
+            }}
           TEAM_NAME: ${{ secrets.DEVELOPER_TEAM }}
           PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
         with:
@@ -137,7 +194,7 @@ jobs:
 
       - name: React to authorized review command
         if: ${{ github.event_name == 'issue_comment' && steps.check.outputs.is_team_member == 'true' }}
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ steps.github-auth.outputs.token }}
           script: |
@@ -184,15 +241,15 @@ jobs:
           path: devflow
 
       - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.x"
-          enable-cache: true
+          enable-cache: auto
 
       - name: Install DevFlow dependencies
         working-directory: ${{ env.DEVFLOW_PATH }}

@@ -19,5 +19,8 @@
     "@vitejs/plugin-react": "^6.0.2",
     "typescript": "^5.5.4",
     "vite": "^8.0.16"
+  },
+  "overrides": {
+    "nanoid": "3.3.18"
   }
 }

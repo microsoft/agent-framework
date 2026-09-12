@@ -123,6 +123,27 @@ class RequestingExecutor(Executor):
         )
 
 
+class OAuthConsentRequestingExecutor(Executor):
+    """Executor that pauses for OAuth consent through a specialized request content."""
+
+    @handler
+    async def handle_message(self, _: list[Message], ctx: WorkflowContext) -> None:
+        await ctx.request_info(
+            Content.from_oauth_consent_request(consent_link="https://example.com/consent"),
+            Content,
+            request_id="oauth-consent",
+        )
+
+    @response_handler
+    async def handle_response(
+        self,
+        original_request: Content,
+        response: Content,
+        ctx: WorkflowContext,
+    ) -> None:
+        del original_request, response, ctx
+
+
 class ConversationHistoryCapturingExecutor(Executor):
     """Executor that captures the received conversation history for verification."""
 
@@ -303,6 +324,17 @@ class TestWorkflowAgent:
         # Verify cleanup - pending requests should be cleared after function response handling
         pending_requests = await workflow._runner_context.get_pending_request_info_events()
         assert len(pending_requests) == 0
+
+    async def test_oauth_consent_request_remains_specialized_content(self) -> None:
+        """Workflow agents expose OAuth consent directly instead of wrapping it as a function call."""
+        workflow = WorkflowBuilder(start_executor=OAuthConsentRequestingExecutor(id="oauth")).build()
+        agent = workflow.as_agent(name="OAuth Workflow Agent")
+
+        response = await agent.run("Connect my account")
+
+        [request] = response.user_input_requests
+        assert request.type == "oauth_consent_request"
+        assert request.consent_link == "https://example.com/consent"
 
     def test_request_info_dataclass_arguments_are_serialized_when_content_is_created(self) -> None:
         """Test WorkflowAgent prepares request_info arguments before observability captures messages."""

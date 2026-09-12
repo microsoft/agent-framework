@@ -105,6 +105,26 @@ individual projects may opt out (for example by setting `EnablePackageValidation
 
 For more details, see the [Package Validation diagnostic IDs](https://learn.microsoft.com/dotnet/fundamentals/package-validation/diagnostic-ids).
 
+#### Public API Baselines
+
+Released .NET packages also use `Microsoft.CodeAnalysis.PublicApiAnalyzers` to make source-level public API changes visible during builds. The `PublicAPI.*.txt` files use `#nullable enable` so nullability annotations are tracked as part of the public API surface. When adding, changing, or removing public APIs in a released package, update the package's `PublicAPI.Unshipped.txt` file with the analyzer-provided entries and include that change in your PR. The build will fail if public API changes are not reflected in the baseline files.
+
+If local or CI builds report Public API Analyzer warnings or errors, handle each diagnostic separately:
+
+- `RS0016` reports a newly exposed public API that is missing from the baseline. The preferred fix is to use the analyzer code fix on the affected code symbol to add the missing API entry automatically. Alternatively, run `dotnet format` for `RS0016` from the repository root:
+
+  ```powershell
+  dotnet format .\dotnet\agent-framework-dotnet.slnx analyzers --diagnostics RS0016
+  ```
+
+- `RS0017` reports that a declared public API was deleted. Restore the API if the deletion was accidental; otherwise, record the removed signature in the package's `PublicAPI.Unshipped.txt` file with the `*REMOVED*` prefix by using the corresponding code fix, or the following dotnet format script:
+
+  ```powershell
+  dotnet format .\dotnet\agent-framework-dotnet.slnx analyzers --diagnostics RS0017
+  ```
+
+After a release, the `Promote Shipped APIs` workflow moves entries from `PublicAPI.Unshipped.txt` to `PublicAPI.Shipped.txt` and opens or updates a promotion PR. Publish builds fail if released packages still contain unshipped public API entries.
+
 ### Suggested Workflow
 
 We use and recommend the following workflow:
@@ -127,8 +147,27 @@ We use and recommend the following workflow:
 7. Create a PR against the repository's **main** branch.
    - State in the description what issue or improvement your change is addressing.
    - Verify that all the Continuous Integration checks are passing.
-8. Wait for feedback or approval of your changes from the code maintainers.
+8. Address feedback from the code maintainers. Reply to every review comment with
+   the outcome and resolve each completed review conversation yourself before
+   requesting another review.
 9. When area owners have signed off, and all checks are green, your PR will be merged.
+
+### Resolving PR Review Comments
+
+PR authors are responsible for closing out all review conversations on their pull
+requests, including conversations opened by reviewers. Do not wait for the reviewer
+or a maintainer to resolve completed conversations for you.
+
+For every review comment:
+
+- If the feedback was addressed, reply with a brief explanation and, preferably,
+  the commit containing the change.
+- If the feedback was not addressed, reply with the reason why.
+
+After replying and completing any necessary discussion, **resolve the conversation
+yourself**. Leave a conversation open only while it has an unanswered question or
+active discussion. Reviewers may reopen a conversation if further changes or
+discussion are needed.
 
 ### Development Setup
 
@@ -147,6 +186,18 @@ Each language has its own dev setup guide, coding standards, and build scripts:
     - Unit tests: `dotnet test --filter-query "/*UnitTests*/*/*/*"`
     - Integration tests: `dotnet test --filter-query "/*IntegrationTests*/*/*/*"` (requires API keys/endpoints)
     - Linting (auto-fix): `dotnet format`
+
+#### Microsoft Internal Feed Proxy for GitHub Copilot SDK (.NET)
+
+Microsoft contributors can route GitHub Copilot SDK npm downloads through the internal proxy without passing extra `dotnet` arguments:
+
+1. Create `dotnet/Directory.Build.rsp` with:
+
+   ```text
+   -p:CopilotNpmRegistryUrl=https://packagefeedproxy.microsoft.io/npm/
+   ```
+
+When running `dotnet build` (or other `dotnet` commands) from the `./dotnet` directory, this property is applied automatically.
 
 ### PR - CI Process
 

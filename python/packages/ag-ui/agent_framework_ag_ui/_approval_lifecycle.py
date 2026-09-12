@@ -179,8 +179,11 @@ class ApprovalOccurrence:
     name: str
     arguments: str
     owner: ApprovalExecutionOwner
+    function_call_id: str
+    active_interrupt_id: str
     scope: str | None = None
     aliases: tuple[str, ...] = ()
+    response_id: str | None = None
     already_approved_requests: tuple[dict[str, Any], ...] = ()
     server_label: str | None = None
     idempotency_key: str | None = None
@@ -275,7 +278,9 @@ class ApprovalLifecycle:
         call_id: str,
         name: str,
         arguments: str,
+        function_call_id: str | None = None,
         aliases: list[str] | None = None,
+        response_id: str | None = None,
         already_approved_requests: list[dict[str, Any]] | None = None,
         server_label: str | None = None,
         idempotency_key: str | None = None,
@@ -291,8 +296,10 @@ class ApprovalLifecycle:
             name=name,
             arguments=arguments,
             owner=owner,
+            function_call_id=function_call_id or interrupt_id,
             scope=scope,
             aliases=aliases,
+            response_id=response_id,
             already_approved_requests=already_approved_requests,
             server_label=server_label,
             idempotency_key=idempotency_key,
@@ -308,8 +315,10 @@ class ApprovalLifecycle:
         name: str,
         arguments: str,
         owner: ApprovalExecutionOwner,
+        function_call_id: str,
         scope: str | None = None,
         aliases: list[str] | None = None,
+        response_id: str | None = None,
         already_approved_requests: list[dict[str, Any]] | None = None,
         server_label: str | None = None,
         idempotency_key: str | None = None,
@@ -341,7 +350,9 @@ class ApprovalLifecycle:
                 or occurrence.name != name
                 or occurrence.arguments != arguments
                 or occurrence.owner is not owner
+                or occurrence.function_call_id != function_call_id
                 or occurrence.scope != scope
+                or occurrence.response_id != response_id
                 or occurrence.idempotency_key != idempotency_key
                 or occurrence.already_approved_requests != tuple(already_approved_requests or ())
                 or occurrence.server_label != server_label
@@ -369,8 +380,11 @@ class ApprovalLifecycle:
             name=name,
             arguments=arguments,
             owner=owner,
+            function_call_id=function_call_id,
+            active_interrupt_id=interrupt_id,
             scope=scope,
             aliases=occurrence_aliases,
+            response_id=response_id,
             already_approved_requests=tuple(already_approved_requests or ()),
             server_label=server_label,
             idempotency_key=idempotency_key,
@@ -425,7 +439,7 @@ class ApprovalLifecycle:
         with self._index_lock:
             self._purge_expired_terminal()
             return {
-                occurrence.identity.interrupt_id
+                occurrence.active_interrupt_id
                 for occurrence in self._occurrences.values()
                 if thread_id in occurrence.thread_ids and occurrence.status is ApprovalStatus.PENDING
             }
@@ -460,7 +474,7 @@ class ApprovalLifecycle:
     @staticmethod
     def _snapshot_reconciliation(occurrence: ApprovalOccurrence) -> ApprovalSnapshotReconciliation:
         return ApprovalSnapshotReconciliation(
-            interrupt_id=occurrence.identity.interrupt_id,
+            interrupt_id=occurrence.active_interrupt_id,
             identity=occurrence.identity,
             status=occurrence.status,
             retire_interrupt=occurrence.status.is_terminal,
@@ -542,6 +556,19 @@ class ApprovalLifecycle:
                 continue
             occurrence.decision = decision
             if not decision.accepted:
+                if occurrence.owner is ApprovalExecutionOwner.DEFERRED:
+                    occurrence.status = ApprovalStatus.CLAIMED
+                    self._emit_event("claim", occurrence)
+                    intents.append(
+                        AuthorizedExecution(
+                            identity=occurrence.identity,
+                            name=occurrence.name,
+                            arguments=occurrence.arguments,
+                            owner=occurrence.owner,
+                            idempotency_key=occurrence.idempotency_key,
+                        )
+                    )
+                    continue
                 result = Content.from_function_result(
                     call_id=occurrence.identity.call_id,
                     result="Error: Tool call invocation was rejected by user.",
@@ -778,6 +805,53 @@ class ApprovalLifecycle:
         logger.info("AG-UI approval lifecycle transition", extra=extra)
 
     @_serialized_by_occurrence
+    def rotate_request_generation(self, intent: AuthorizedExecution, *, request_id: str) -> None:
+        """Replace the pending client interrupt alias after local execution defers for reapproval."""
+        occurrence = self._occurrences[intent.identity]
+        if occurrence.status is not ApprovalStatus.PENDING:
+            raise ApprovalClaimConflictError(f"Approval occurrence is not pending: {occurrence.status}.")
+        self._rotate_request_generation(occurrence, request_id=request_id)
+
+    @_serialized_by_occurrence
+    def defer_for_reapproval(
+        self,
+        intent: AuthorizedExecution,
+        *,
+        owner: ApprovalExecutionOwner,
+        request_id: str,
+    ) -> None:
+        """Return forwarded execution to pending under a fresh request generation."""
+        occurrence = self._occurrences[intent.identity]
+        if intent.owner is not owner or occurrence.owner is not owner:
+            raise ValueError(
+                f"Approval occurrence belongs to the {occurrence.owner.value} transition owner, not {owner.value}."
+            )
+        if occurrence.status is not ApprovalStatus.EXECUTING:
+            raise ApprovalSettlementConflictError(f"Approval occurrence is not executing: {occurrence.status}.")
+        occurrence.status = ApprovalStatus.PENDING
+        self._rotate_request_generation(occurrence, request_id=request_id)
+
+    def _rotate_request_generation(self, occurrence: ApprovalOccurrence, *, request_id: str) -> None:
+        if not request_id:
+            raise ValueError("A replacement approval request id cannot be empty.")
+        for thread_id in occurrence.thread_ids:
+            key = (thread_id, request_id)
+            existing = self._pending_by_interrupt.get(key) or self._terminal_by_interrupt.get(key)
+            if existing is not None and existing != occurrence.identity:
+                raise ValueError("Replacement approval request id conflicts with another occurrence.")
+            for alias in occurrence.aliases:
+                if self._pending_by_interrupt.get((thread_id, alias)) == occurrence.identity:
+                    self._pending_by_interrupt.pop((thread_id, alias), None)
+        occurrence.aliases = (request_id,)
+        occurrence.active_interrupt_id = request_id
+        occurrence.response_id = request_id
+        occurrence.decision = None
+        occurrence.pending_since = self._clock()
+        for thread_id in occurrence.thread_ids:
+            self._pending_by_interrupt[(thread_id, request_id)] = occurrence.identity
+        self._emit_event("generation_rotation", occurrence)
+
+    @_serialized_by_occurrence
     def begin_execution(self, intent: AuthorizedExecution, *, owner: ApprovalExecutionOwner) -> None:
         """Mark that an external side effect may begin.
 
@@ -840,6 +914,11 @@ class ApprovalLifecycle:
             )
         if occurrence.status is not ApprovalStatus.EXECUTING:
             raise ApprovalSettlementConflictError(f"Approval occurrence is not executing: {occurrence.status}.")
+        if occurrence.decision is not None and not occurrence.decision.accepted:
+            occurrence.status = ApprovalStatus.PENDING
+            occurrence.pending_since = self._clock()
+            self._emit_event("rejection_recovery", occurrence)
+            return None
         if intent.idempotency_key is not None and intent.idempotency_key == occurrence.idempotency_key:
             occurrence.status = ApprovalStatus.CLAIMED
             return intent
@@ -901,19 +980,30 @@ class ApprovalLifecycle:
             result
             for result in results
             if result.type == "function_approval_response"
-            and result.approved is True
+            and isinstance(result.approved, bool)
             and result.function_call is not None
             and result.function_call.call_id == occurrence.identity.call_id
         ]
         if len(replayable_results) + len(forwarded_responses) != 1:
             raise ValueError("A hosted approval must record exactly one outcome for its original call.")
+        is_rejection = len(forwarded_responses) == 1 and forwarded_responses[0].approved is False
+        if is_rejection:
+            rejection_result = Content.from_function_result(
+                call_id=occurrence.identity.call_id,
+                result="Error: Tool call invocation was rejected by user.",
+            )
+            replayable_results = [ReplayableToolResult(content=rejection_result)]
+            result_group = (rejection_result,)
+            occurrence.status = ApprovalStatus.REJECTED
+        else:
+            result_group = tuple(results)
+            occurrence.status = ApprovalStatus.SETTLED
         occurrence.replayable_results = replayable_results
-        occurrence.status = ApprovalStatus.SETTLED
         self._remove_pending_aliases(occurrence)
         outcome = ApprovalOutcome(
             identity=occurrence.identity,
             replayable_results=tuple(replayable_results),
-            result_group=tuple(results),
+            result_group=result_group,
             snapshot_reconciliation=self._snapshot_reconciliation(occurrence),
         )
         occurrence.outcome = outcome
@@ -987,6 +1077,18 @@ class ForwardedPendingToolTransitionOwner:
         except (Exception, CancelledError):
             lifecycle.recover_execution(intent, owner=self._owner)
             raise
+
+    def record_reapproval(
+        self,
+        intent: AuthorizedExecution,
+        request: Content,
+        *,
+        lifecycle: ApprovalLifecycle,
+    ) -> None:
+        """Return forwarded authority to pending under the replacement request."""
+        if request.id is None:
+            raise ValueError("A replacement approval request requires an id.")
+        lifecycle.defer_for_reapproval(intent, owner=self._owner, request_id=request.id)
 
     def record_outcome(
         self,

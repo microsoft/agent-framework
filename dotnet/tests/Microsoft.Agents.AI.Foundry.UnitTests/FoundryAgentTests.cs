@@ -97,6 +97,54 @@ public class FoundryAgentTests
         Assert.Equal("A test agent", agent.Description);
     }
 
+    [Fact]
+    public void ProjectEndpointConstructor_DefaultTransport_RegistersFeatureUsagePolicy()
+    {
+        // Arrange / Act
+        var agent = new FoundryAgent(
+            projectEndpoint: s_testEndpoint,
+            credential: new FakeAuthenticationTokenProvider(),
+            model: "gpt-4o-mini",
+            instructions: "Test instructions");
+
+        // Assert
+        FoundryChatClient chatClient = Assert.IsType<FoundryChatClient>(
+            agent.GetService<FoundryChatClient>());
+        OpenAIRequestPolicies policies = Assert.IsType<OpenAIRequestPolicies>(
+            chatClient.GetService<OpenAIRequestPolicies>());
+        Assert.True(OpenAIRequestPoliciesReflection.ContainsPolicy(
+            policies,
+            FoundryUserAgentPolicies.Registration.FeatureUsagePolicy));
+    }
+
+    [Fact]
+    public void ProjectEndpointConstructor_CustomTransport_RegistersFeatureUsagePolicy()
+    {
+        // Arrange
+        using var httpClient = new HttpClient();
+        var options = new AIProjectClientOptions
+        {
+            Transport = new HttpClientPipelineTransport(httpClient),
+        };
+
+        // Act
+        var agent = new FoundryAgent(
+            projectEndpoint: s_testEndpoint,
+            credential: new FakeAuthenticationTokenProvider(),
+            model: "gpt-4o-mini",
+            instructions: "Test instructions",
+            clientOptions: options);
+
+        // Assert
+        FoundryChatClient chatClient = Assert.IsType<FoundryChatClient>(
+            agent.GetService<FoundryChatClient>());
+        OpenAIRequestPolicies policies = Assert.IsType<OpenAIRequestPolicies>(
+            chatClient.GetService<OpenAIRequestPolicies>());
+        Assert.True(OpenAIRequestPoliciesReflection.ContainsPolicy(
+            policies,
+            FoundryUserAgentPolicies.Registration.FeatureUsagePolicy));
+    }
+
     #endregion
 
     #region Property tests
@@ -358,7 +406,7 @@ public class FoundryAgentTests
         // FoundryAgent-built chat client carries the new agent-framework-dotnet/{version}
         // segment (stamped by AgentFrameworkUserAgentPolicy registered via the MEAI
         // OpenAIRequestPolicies hook). The local MEAI/{version} stamp was removed because
-        // MEAI 10.5.1 stamps that itself; this test only verifies the framework-wide segment
+        // MEAI 10.9.0 stamps that itself; this test only verifies the framework-wide segment
         // that the Foundry package now guarantees.
         bool agentFrameworkUserAgentFound = false;
         using HttpHandlerAssert httpHandler = new(request =>

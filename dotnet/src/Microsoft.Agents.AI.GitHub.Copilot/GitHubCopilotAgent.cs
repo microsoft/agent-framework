@@ -172,6 +172,8 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                 $"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(GitHubCopilotAgentSession)}' can be used by this agent.");
         }
 
+        FeatureUsageMarker.MarkUsed();
+
         // Ensure the client is started
         await this.EnsureClientStartedAsync(cancellationToken).ConfigureAwait(false);
 
@@ -331,6 +333,8 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         {
             Model = source?.Model,
             ReasoningEffort = source?.ReasoningEffort,
+            ReasoningSummary = source?.ReasoningSummary,
+            ContextTier = source?.ContextTier,
             Tools = source?.Tools,
             SystemMessage = source?.SystemMessage,
             AvailableTools = source?.AvailableTools,

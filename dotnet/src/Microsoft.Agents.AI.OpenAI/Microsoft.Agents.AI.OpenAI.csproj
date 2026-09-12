@@ -3,6 +3,7 @@
   <PropertyGroup>
     <IsReleased>true</IsReleased>
     <ImplicitUsings>enable</ImplicitUsings>
+    <InjectSharedFeatureUsageUserAgent>true</InjectSharedFeatureUsageUserAgent>
     <InjectSharedThrow>true</InjectSharedThrow>
   </PropertyGroup>
 

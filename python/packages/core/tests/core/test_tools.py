@@ -343,6 +343,72 @@ async def test_tool_decorator_with_async():
     assert (await async_test_tool(1, 2)) == 3
 
 
+async def test_async_tool_exception_limit_counts_awaited_failures() -> None:
+    """Async tool failures count toward the configured exception limit."""
+    from agent_framework.exceptions import ToolException
+
+    @tool(name="failing_async_tool", max_invocation_exceptions=1)
+    async def failing_async_tool() -> str:
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await failing_async_tool.invoke(skip_parsing=True)
+
+    assert failing_async_tool.invocation_count == 1
+    assert failing_async_tool.invocation_exception_count == 1
+
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await failing_async_tool.invoke(skip_parsing=True)
+
+    assert failing_async_tool.invocation_count == 1
+    assert failing_async_tool.invocation_exception_count == 1
+
+
+async def test_direct_async_tool_exception_limit_counts_awaited_failures() -> None:
+    """Direct async tool calls count failures toward the configured exception limit."""
+    from agent_framework.exceptions import ToolException
+
+    @tool(name="failing_direct_async_tool", max_invocation_exceptions=1)
+    async def failing_direct_async_tool() -> str:
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await failing_direct_async_tool()
+
+    assert failing_direct_async_tool.invocation_count == 1
+    assert failing_direct_async_tool.invocation_exception_count == 1
+
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await failing_direct_async_tool()
+
+    assert failing_direct_async_tool.invocation_count == 1
+    assert failing_direct_async_tool.invocation_exception_count == 1
+
+
+async def test_sync_awaitable_tool_exception_limit_counts_awaited_failures() -> None:
+    """Sync tools returning awaitables count failures during async invocation."""
+    from agent_framework.exceptions import ToolException
+
+    @tool(name="failing_sync_awaitable_tool", max_invocation_exceptions=1)
+    def failing_sync_awaitable_tool() -> Any:
+        async def fail_later() -> str:
+            raise RuntimeError("boom")
+
+        return fail_later()
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await failing_sync_awaitable_tool.invoke(skip_parsing=True)
+
+    assert failing_sync_awaitable_tool.invocation_count == 1
+    assert failing_sync_awaitable_tool.invocation_exception_count == 1
+
+    with pytest.raises(ToolException, match="maximum exception limit"):
+        await failing_sync_awaitable_tool.invoke(skip_parsing=True)
+
+    assert failing_sync_awaitable_tool.invocation_count == 1
+    assert failing_sync_awaitable_tool.invocation_exception_count == 1
+
+
 def test_tool_decorator_in_class():
     """Test the tool decorator."""
 
@@ -650,6 +716,35 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     attributes = call_args[1]["attributes"]
     assert attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] == "telemetry_test_tool"
     assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_tool_invoke_telemetry_omits_tool_call_attrs_under_baseline_semconv(span_exporter: InMemorySpanExporter):
+    """gen_ai.tool.call.arguments/result were introduced above v1.36.0; omit them under the baseline semconv."""
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+
+    @tool(
+        name="telemetry_test_tool",
+        description="A test tool for telemetry",
+    )
+    def telemetry_test_tool(x: int, y: int) -> int:
+        """A function that adds two numbers for telemetry testing."""
+        return x + y
+
+    span_exporter.clear()
+    result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
+
+    assert isinstance(result, list)
+    assert result[0].text == "3"
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.attributes is not None
+    assert OtelAttr.TOOL_ARGUMENTS not in span.attributes
+    assert OtelAttr.TOOL_RESULT not in span.attributes
 
 
 async def test_tool_invoke_rejects_unexpected_runtime_kwargs() -> None:

@@ -232,6 +232,10 @@ public sealed class AgentModeProvider : AIContextProvider, IDisposable
     /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreAgentModeProvider);
+#pragma warning restore MAAI001
+
         string currentMode;
         string? previousModeForNotification;
 

@@ -12,7 +12,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using AGUI.Abstractions;
 using AGUI.Client;
-using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
@@ -23,6 +22,8 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests;
 
 public sealed class SessionPersistenceTests : IAsyncDisposable
 {
+    private static readonly JsonSerializerOptions s_aguiJsonSerializerOptions = CreateAGUIJsonSerializerOptions();
+
     private WebApplication? _app;
     private HttpClient? _client;
 
@@ -53,11 +54,11 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
         RunStartedEvent? firstRunStarted = firstTurnUpdates
             .Select(u => u.AsChatResponseUpdate().RawRepresentation as RunStartedEvent)
             .FirstOrDefault(e => e is not null);
-        firstRunStarted.Should().NotBeNull();
+        Assert.NotNull(firstRunStarted);
         string threadId = firstRunStarted!.ThreadId;
         string previousRunId = firstRunStarted.RunId;
-        threadId.Should().NotBeNullOrEmpty();
-        previousRunId.Should().NotBeNullOrEmpty();
+        Assert.False(string.IsNullOrEmpty(threadId));
+        Assert.False(string.IsNullOrEmpty(previousRunId));
 
         ChatMessage secondUserMessage = new(ChatRole.User, "Second message");
         var continuationOptions = new ChatClientAgentRunOptions
@@ -68,10 +69,11 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
                 {
                     ThreadId = threadId,
                     ParentRunId = previousRunId,
-                    Messages = new[] { secondUserMessage }.AsAGUIMessages().ToList(),
+                    Messages = new[] { secondUserMessage }.AsAGUIMessages(s_aguiJsonSerializerOptions).ToList(),
                 },
             },
         };
+
         List<AgentResponseUpdate> secondTurnUpdates = [];
         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([secondUserMessage], session, continuationOptions, CancellationToken.None))
         {
@@ -82,14 +84,14 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
         // If session persistence were broken, both turns would return "Turn 1"
         // because a fresh session (with turn count 0) would be created each time.
         AgentResponse firstResponse = firstTurnUpdates.ToAgentResponse();
-        firstResponse.Messages.Should().HaveCount(1);
-        firstResponse.Messages[0].Role.Should().Be(ChatRole.Assistant);
-        firstResponse.Messages[0].Text.Should().Contain("Turn 1:");
+        ChatMessage firstResponseMessage = Assert.Single(firstResponse.Messages);
+        Assert.Equal(ChatRole.Assistant, firstResponseMessage.Role);
+        Assert.Contains("Turn 1:", firstResponseMessage.Text);
 
         AgentResponse secondResponse = secondTurnUpdates.ToAgentResponse();
-        secondResponse.Messages.Should().HaveCount(1);
-        secondResponse.Messages[0].Role.Should().Be(ChatRole.Assistant);
-        secondResponse.Messages[0].Text.Should().Contain("Turn 2:");
+        ChatMessage secondResponseMessage = Assert.Single(secondResponse.Messages);
+        Assert.Equal(ChatRole.Assistant, secondResponseMessage.Role);
+        Assert.Contains("Turn 2:", secondResponseMessage.Text);
     }
 
     [Fact]
@@ -111,13 +113,13 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
         }
 
         // Assert
-        updates.Should().NotBeEmpty();
-        updates.Should().AllSatisfy(u => u.Role.Should().Be(ChatRole.Assistant));
+        Assert.NotEmpty(updates);
+        Assert.All(updates, u => Assert.Equal(ChatRole.Assistant, u.Role));
 
         AgentResponse response = updates.ToAgentResponse();
-        response.Messages.Should().HaveCount(1);
-        response.Messages[0].Role.Should().Be(ChatRole.Assistant);
-        response.Messages[0].Text.Should().Be("Turn 1: Hello from session agent!");
+        ChatMessage responseMessage = Assert.Single(response.Messages);
+        Assert.Equal(ChatRole.Assistant, responseMessage.Role);
+        Assert.Equal("Turn 1: Hello from session agent!", responseMessage.Text);
     }
 
     private async Task SetupTestServerWithSessionStoreAsync()
@@ -152,6 +154,14 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
         {
             await this._app.DisposeAsync();
         }
+    }
+
+    private static JsonSerializerOptions CreateAGUIJsonSerializerOptions()
+    {
+        JsonSerializerOptions options = new(AgentAbstractionsJsonUtilities.DefaultOptions);
+        options.TypeInfoResolverChain.Add(AGUIJsonSerializerContext.Default.Options.TypeInfoResolver!);
+        options.MakeReadOnly();
+        return options;
     }
 }
 

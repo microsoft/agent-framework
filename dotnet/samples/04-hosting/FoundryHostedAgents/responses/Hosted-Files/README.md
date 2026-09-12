@@ -1,156 +1,208 @@
-﻿# Hosted-Files
+# Hosted-Files
 
-A hosted agent that demonstrates **two distinct file knowledge sources** through scoped, security-hardened tools:
+A hosted agent that answers questions over two file sources through scoped, path-safe tools: bundled files baked into the upload (read from /app/resources/) and per-session files uploaded at runtime (read from the session HOME volume).
 
-- **Bundled files** (image-baked) — files the author packages with the agent at build time. Live at `/app/resources/` inside the container, copied from this project's [`resources/`](./resources/) folder via the csproj `<Content Include="resources\**\*" CopyToOutputDirectory="PreserveNewest" />` rule.
-- **Session files** (per-session `$HOME` volume) — files the user uploads at runtime via the alpha `Azure.AI.Projects.AgentSessionFiles` SDK. Live at `$HOME` inside the per-session container. The Foundry platform sets `HOME=/home/session` by default and roots the session-files API there per [`container-image-spec.md` line 172](https://github.com/microsoft/foundrysdk-specs/blob/main/specs/agents/hosted_agents/container-spec/docs/container-image-spec.md): *"If you use the session files API, `$HOME` is also the base path for those operations; any paths given in those API endpoints will be relative to `$HOME`."*
-
-## Tool surface
-
-Each source is exposed via its own tool pair, rooted at its own directory. The model picks by intent.
-
-| Tool | Source | Root |
-|------|--------|------|
-| `ListBundledFiles` | Bundled (image-baked) | `/app/resources/` |
-| `ReadBundledFile` | Bundled (image-baked) | `/app/resources/` |
-| `ListSessionFiles` | Session-uploaded | `$HOME` (`/home/session`) |
-| `ReadSessionFile` | Session-uploaded | `$HOME` (`/home/session`) |
-
-## Security model — distinct tools, distinct sandboxes
-
-Each tool takes a `fileName` (no directory components allowed) and enforces three layers of defence inside the implementation:
-
-1. **`Path.GetFileName(input)`** strips any directory parts from the model-supplied name. `"../../etc/passwd"` becomes `"passwd"`.
-2. **`Path.GetFullPath(Combine(root, name))`** canonicalises the path.
-3. **`fullPath.StartsWith(root + DirectorySeparatorChar)`** rejects anything that resolves outside the tool's root.
-
-Failures return a controlled `"File '<input>' not found in <scope>."` rather than throwing or exposing the canonical path.
-
-This is why the agent has four narrowly-scoped tools instead of a single `ReadFile(path)`:
-
-- **Smaller per-tool attack surface.** Each tool has one purpose, one root, and no path-typed parameter. Even a buggy implementation can only leak its own directory.
-- **Cross-boundary access is impossible by schema.** A prompt-injection attempt to make the bundled tool read a session path (or vice versa) does not even compile in the tool schema the model sees.
-- **Read-only, non-recursive listing.** No write tools, no glob, no `..`.
-
-## Companion
-
-[`Using-Samples/SessionFilesClient`](../Using-Samples/SessionFilesClient/) — a thin chat REPL (same shape as [`SimpleAgent`](../Using-Samples/SimpleAgent/)) that points at the deployed Hosted-Files endpoint via `FoundryAgent` and lets you ask questions whose answers come from either file source.
-
-## Live proof of the session-files contract
-
-The end-to-end alpha-SDK round trip (client uploads via `AgentSessionFiles.UploadSessionFileAsync` → file arrives at `$HOME/<name>` inside the per-session container → agent's `ReadSessionFile` tool reads it → response quotes the verbatim contents) is exercised live by [`SessionFilesHostedAgentTests.UploadedFile_IsReadByHostedAgentAsync`](../../../../../tests/Foundry.Hosting.IntegrationTests/SessionFilesHostedAgentTests.cs) against the matching `session-files` scenario in the integration test container.
+This sample deploys to Foundry **directly from source (code / ZIP upload)**: the platform builds and runs your code with no container image, so there is no Dockerfile to author or container registry to manage. Source deploy is the default for .NET.
 
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- A Foundry project with a deployed model (e.g., `gpt-4o`)
+- An **existing** Foundry project with an **existing** model deployment (for example `gpt-4o`).
+  This sample's `azure.yaml` declares no `deployments:` block, so `azd` connects to a project and
+  a deployment you already have rather than creating them. `azd ai agent init` prompts you to pick
+  the project, and takes the deployment name as the `-d` argument.
 - Azure CLI logged in (`az login`)
+- Azure Developer CLI (`azd`) with the AI agents extension: `azd extension install azure.ai.agents`
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `Program.cs` | The agent: exposes scoped, path-safe tools over bundled and session files, hosts it with the Responses protocol. |
+| `azure.yaml` | The unified `azd` project file. Declares the Foundry project and the hosted agent with `codeConfiguration` (source/ZIP deploy), and passes the listen port and the model deployment name to the container through env. |
+| `.agentignore` | Controls which files are excluded from the code-deploy ZIP upload (`.gitignore` syntax). |
+| `HostedFiles.csproj` | Self-contained project: single target framework and explicit package versions. It also opts out of the repository's central package management, which does not travel inside the ZIP. |
+| `.env.example` | Template for local configuration. |
+| `../../scripts/Add-LocalFrameworkFeed.ps1`, `../../scripts/add-local-framework-feed.sh` | Contributor-only helpers, see [Deploy your local framework changes](#deploy-your-local-framework-changes-contributors). |
 
 ## Configuration
 
 Copy the template and fill in your project endpoint:
 
+PowerShell:
+
+```powershell
+copy .env.example .env
+```
+
+Bash:
+
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
-
 ```env
 FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
 ASPNETCORE_URLS=http://+:8088
-ASPNETCORE_ENVIRONMENT=Development
-FOUNDRY_MODEL=gpt-4o
+AZURE_TOKEN_CREDENTIALS=dev
 ```
 
 > `.env` is gitignored. The `.env.example` template is checked in as a reference.
 
-## Running directly (contributors)
+> `ASPNETCORE_URLS` pins the local run to the port the `Using-Samples` REPLs expect. Recent
+> `Microsoft.Agents.AI.Foundry.Hosting` versions bind that port themselves, so it only matters
+> while this project is pinned to an older published package.
 
-```bash
+> **Windows note:** write `.env` as UTF-8 **without** a byte order mark. `azd` reads the file
+> during `azd ai agent init` and fails with `unexpected character` when a mark is present.
+
+> **Local development on a machine without a managed identity:** set `AZURE_TOKEN_CREDENTIALS=dev`.
+> `Program.cs` authenticates with `DefaultAzureCredential`. On a developer machine with no
+> managed identity, `DefaultAzureCredential` probes the Azure Instance Metadata Service (IMDS,
+> `169.254.169.254`) and blocks for a long time before every model call. `AZURE_TOKEN_CREDENTIALS=dev`
+> restricts it to developer credentials (Azure CLI, Visual Studio, `azd`) and skips that probe.
+> Only for local runs; the deployed agent uses the platform-injected managed identity.
+
+## Run and test locally
+
+Local runs use two terminals: one hosts the agent, the other is a code-first client that talks to it,
+see the sibling [`Using-Samples`](../Using-Samples/) REPLs.
+
+**Terminal 1 — host the agent:**
+
+```
 cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Files
-AGENT_NAME=hosted-files dotnet run
+az login
+dotnet run
 ```
 
 The agent starts on `http://localhost:8088`.
 
-## Try it from the SessionFilesClient REPL
+**Terminal 2 — chat with it (code-first REPL):**
 
-### Bundled files (works against any deployment, including local)
+PowerShell:
 
-```bash
-cd ../Using-Samples/SessionFilesClient
-$env:AGENT_ENDPOINT = "http://localhost:8088"
-$env:AGENT_NAME = "hosted-files"
-dotnet run
-
-You> What is the total revenue in the contoso file?
-Agent> The contoso file reports total revenue of "$1,482.6M".
+```powershell
+cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SimpleAgent
+$env:AZURE_AI_AGENT_NAME = "hosted-files"
+dotnet run -- --local
 ```
 
-The agent calls `ListBundledFiles`, sees `contoso_q1_2026_report.txt`, calls `ReadBundledFile("contoso_q1_2026_report.txt")` (which resolves under `/app/resources/`), and quotes the figure verbatim.
-
-### Session files (against a deployed agent)
-
-Upload a file to a specific session via `azd ai agent files upload` or via the alpha `AgentSessionFiles` SDK (see the integration test for the SDK call), then ask the agent about it. The agent's `ReadSessionFile` tool reads from `$HOME` and surfaces the content the same way.
-
-## Running with Docker
-
-This project uses `ProjectReference`, so use `Dockerfile.contributor` which takes a pre-published output:
+Bash:
 
 ```bash
-dotnet publish -c Debug -f net10.0 -r linux-musl-x64 --self-contained false -o out
-docker build -f Dockerfile.contributor -t hosted-files .
-
-export AZURE_BEARER_TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
-docker run --rm -p 8088:8088 \
-  -e AGENT_NAME=hosted-files \
-  -e AZURE_BEARER_TOKEN=$AZURE_BEARER_TOKEN \
-  --env-file .env \
-  hosted-files
+cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SimpleAgent
+export AZURE_AI_AGENT_NAME="hosted-files"
+dotnet run -- --local
 ```
 
-The bundled `resources/` folder is part of the published output and ships inside the image.
+Try: `List the bundled files and summarize the Contoso Q1 2026 report.`
 
-## Deploying to Foundry (azd spec)
+## Deploy to Foundry (source / ZIP)
 
-This sample includes an `azd` manifest (`agent.manifest.yaml`) and hosted agent spec (`agent.yaml`) for deployment to Foundry.
+`azd` scaffolds the project into a working folder, so every step below runs from an **empty
+directory outside the repository**, and `-m` points at this sample's `azure.yaml`.
 
-Initialize an `azd` project from this sample's manifest:
+### Step 1: create the working directory and enter it
 
-```bash
-mkdir hosted-files && cd hosted-files
-azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Files/agent.manifest.yaml
+PowerShell:
+
+```powershell
+$work = Join-Path $env:TEMP "hosted-files-work"
+mkdir $work
+cd $work
 ```
 
-Then deploy:
+### Step 2: scaffold the project
 
-```bash
+`azd ai agent init` copies the sample into a subfolder named `hosted-files` (the top-level `name:`
+in `azure.yaml`) and writes the adopted `azure.yaml` and the `azd` environment there. It prompts
+you to pick the Foundry project; `-d` is the name of an existing model deployment in that project.
+
+PowerShell:
+
+```powershell
+$sample = "<repo>/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Files/azure.yaml"
+
+azd auth login
+azd ai agent init -m $sample -d <model-deployment>
+```
+
+### Step 3: provision and deploy
+
+Contributors changing the Agent Framework source: do the extra step in
+[Deploy your local framework changes](#deploy-your-local-framework-changes-contributors) now,
+before the commands below. Everyone else can ignore it.
+
+```
+cd hosted-files
+azd env get-values
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME <model-deployment>
+azd provision
 azd deploy
+azd ai agent invoke "List the bundled files and summarize the Contoso Q1 2026 report."
 ```
 
-If you need to override defaults, set deployment-time environment variables in the `azd` environment before deploying:
+`azd` packages the source into a ZIP (honoring `.agentignore`), uploads it, and Foundry runs
+`dotnet restore` + `dotnet publish` on it during provisioning (`dependencyResolution: remote_build`
+in `azure.yaml`). No Dockerfile, no container registry.
+
+### Step 4: clean up
+
+```
+azd down
+```
+
+> **`azd down` does not delete the hosted agent.** It reports success but leaves the deployed agent
+> in place. Delete it explicitly with a REST call:
+>
+> ```bash
+> az rest --method delete \
+>   --url "<project-endpoint>/agents/hosted-files" \
+>   --url-parameters api-version=v1 force=true \
+>   --resource https://ai.azure.com
+> ```
+
+Then delete the working directory.
+
+## Deploy your local framework changes (contributors)
+
+**Skip this section unless you are changing the Agent Framework itself.** The project restores the
+**published** Agent Framework packages, and Foundry restores from nuget.org when it builds the
+upload, so editing framework source in this repository changes nothing about the deployed agent.
+
+The helper script packs your local framework source into NuGet packages and puts them **inside the
+upload**, together with a `nuget.config` that points the restore at them. Run it in the flow above,
+**between step 2 and step 3**:
+
+PowerShell:
+
+```powershell
+cd $work
+<repo>/dotnet/samples/04-hosting/FoundryHostedAgents/scripts/Add-LocalFrameworkFeed.ps1 -Path ./hosted-files
+```
+
+Bash:
 
 ```bash
-azd env set AGENT_NAME hosted-files
-azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-4o
+cd "$WORK"
+<repo>/dotnet/samples/04-hosting/FoundryHostedAgents/scripts/add-local-framework-feed.sh ./hosted-files
 ```
 
-For end-to-end hosted agent deployment guidance, see the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
+See the
+[`Hosted-ChatClientAgent`](../Hosted-ChatClientAgent/README.md#deploy-your-local-framework-changes-contributors)
+README for the full explanation of what the script changes and why.
 
----
+## Troubleshooting
 
-## NuGet package users
+**`azd ai agent invoke` fails with `404 not_found: Conversation '<id>' not found`**
 
-If consuming the Agent Framework as a NuGet package, use the standard `Dockerfile` instead of `Dockerfile.contributor` and switch the `ProjectReference` entries in `HostedFiles.csproj` to `PackageReference` (commented section in the csproj).
+`azd` reuses the saved session and conversation per agent. Once the agent is redeployed or deleted,
+that conversation no longer exists on the server. Start a fresh one:
 
-## Adding more bundled files
+```
+azd ai agent invoke --new-conversation "Hello!"
+```
 
-Drop additional text files into [`resources/`](./resources/). The csproj `<Content Include="resources\**\*" CopyToOutputDirectory="PreserveNewest" />` rule picks them up on the next `dotnet build` / `docker build`.
-
-## Overrides
-
-| Env var | Purpose | Default |
-|---------|---------|---------|
-| `BUNDLED_FILES_DIR` | Override the bundled-files root the tools read from. | `<process base dir>/resources` (`/app/resources/` in container) |
-| `HOME` | The per-session sandbox volume root the session-files tools read from. Set by the Foundry platform; can be overridden for local testing. | `/home/session` |
+For the full hosted-agent deployment guide, see the [official source-code deployment doc](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent-code).

@@ -1303,6 +1303,7 @@ internal static class AgentsSamples
             OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
             MustContain =
             [
+                "MCP 2026-07-28 Tasks extension enabled.",
                 "=== Transparent long-running MCP task (RunAsync) ===",
                 "=== Transparent long-running MCP task (RunStreamingAsync) ===",
             ],

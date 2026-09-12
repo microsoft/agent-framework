@@ -4,10 +4,14 @@
 
 import base64
 import inspect
+import json
+import logging
 import os
 import unittest.mock
 from collections.abc import Sequence
 from datetime import datetime, timezone
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -23,11 +27,12 @@ from agent_framework import (
     Content,
     ContextProvider,
     HistoryProvider,
+    MCPStdioTool,
     Message,
     tool,
 )
 from agent_framework.exceptions import AgentException
-from copilot.session import PermissionHandler, PreToolUseHookInput
+from copilot.session import PermissionHandler, PermissionInvocation, PreToolUseHookInput
 from copilot.session_events import (
     AssistantUsageData,
     Data,
@@ -419,6 +424,76 @@ class TestGitHubCopilotAgentLifecycle:
 
             kwargs = MockClient.call_args.kwargs
             assert kwargs["base_directory"] == "/custom/copilot/home"
+
+    async def test_start_passes_telemetry_to_client(self) -> None:
+        """Test that telemetry settings are passed to the Copilot client."""
+        telemetry = {
+            "exporter_type": "otlp-http",
+            "otlp_endpoint": "http://localhost:4318",
+            "otlp_protocol": "http/json",
+            "capture_content": True,
+        }
+        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent(
+                default_options=copilot_options(cast(GitHubCopilotOptions, {"telemetry": telemetry}))
+            )
+            await agent.start()
+
+            assert MockClient.call_args.kwargs["telemetry"] == telemetry
+
+    async def test_start_parses_json_telemetry_string(self) -> None:
+        """JSON strings from env/.env settings are parsed before reaching the client."""
+        telemetry = {
+            "exporter_type": "otlp-http",
+            "otlp_endpoint": "http://localhost:4318",
+            "capture_content": True,
+        }
+        with (
+            patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient,
+            patch.dict("os.environ", {"GITHUB_COPILOT_TELEMETRY": json.dumps(telemetry)}),
+        ):
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            await agent.start()
+
+            assert MockClient.call_args.kwargs["telemetry"] == telemetry
+
+    async def test_start_ignores_malformed_telemetry_string(self) -> None:
+        """A malformed telemetry JSON value is dropped instead of breaking startup."""
+        with (
+            patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient,
+            patch.dict("os.environ", {"GITHUB_COPILOT_TELEMETRY": "{not json"}),
+        ):
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            await agent.start()
+
+            assert "telemetry" not in MockClient.call_args.kwargs
+
+    async def test_start_ignores_non_object_telemetry_string(self) -> None:
+        """Valid JSON that is not an object cannot be a TelemetryConfig and is dropped."""
+        with (
+            patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient,
+            patch.dict("os.environ", {"GITHUB_COPILOT_TELEMETRY": "[1, 2]"}),
+        ):
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            await agent.start()
+
+            assert "telemetry" not in MockClient.call_args.kwargs
 
     async def test_start_base_directory_not_set_when_unspecified(self) -> None:
         """Test that base_directory is not included in client kwargs when not specified."""
@@ -1155,6 +1230,7 @@ class TestGitHubCopilotAgentSessionManagement:
             streaming=unittest.mock.ANY,
             model=unittest.mock.ANY,
             on_permission_request=unittest.mock.ANY,
+            enable_file_hooks=unittest.mock.ANY,
             hooks=unittest.mock.ANY,
         )
 
@@ -1258,7 +1334,7 @@ class TestGitHubCopilotAgentSessionManagement:
         from copilot.session import PermissionDecisionApproveOnce, PermissionRequestResult
         from copilot.session_events import PermissionRequest
 
-        def my_handler(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+        def my_handler(request: PermissionRequest, context: PermissionInvocation) -> PermissionRequestResult:
             return PermissionDecisionApproveOnce()
 
         def my_tool(arg: str) -> str:
@@ -1869,6 +1945,48 @@ class TestGitHubCopilotAgentOptionsPassthrough:
         assert config["reasoning_effort"] == "high"
         assert config["context_tier"] == "large"
 
+    async def test_mcp_tool_is_rejected_with_the_native_configuration(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """An MCP server cannot keep its framework behavior here, so it is refused, not dropped."""
+        with pytest.raises(TypeError, match="mcp_servers"):
+            GitHubCopilotAgent(client=mock_client, tools=[MCPStdioTool(name="weather", command="python")])
+
+    async def test_mcp_tool_in_a_tuple_is_rejected(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """``tools`` takes any sequence, so a tuple must not slip past the refusal."""
+        with pytest.raises(TypeError, match="mcp_servers"):
+            GitHubCopilotAgent(client=mock_client, tools=(MCPStdioTool(name="weather", command="python"),))
+
+    async def test_mcp_tool_from_default_options_is_rejected(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Tools reach the SDK from the options too, so the refusal cannot live in the constructor alone."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"tools": [MCPStdioTool(name="weather", command="python")]}),
+        )
+        await agent.start()
+
+        with pytest.raises(AgentException, match="mcp_servers"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+    async def test_mcp_tool_inside_a_tool_collection_from_options_is_rejected(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Option-supplied tools are normalized too, so a wrapper cannot hide an MCP server."""
+        toolbox = SimpleNamespace(tools=[MCPStdioTool(name="weather", command="python")])
+        agent = GitHubCopilotAgent(client=mock_client, default_options=cast(Any, {"tools": [toolbox]}))
+        await agent.start()
+
+        with pytest.raises(AgentException, match="mcp_servers"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
     async def test_tools_from_default_options_are_honored(
         self,
         mock_client: MagicMock,
@@ -1927,13 +2045,252 @@ class TestGitHubCopilotAgentOptionsPassthrough:
 
         agent = GitHubCopilotAgent(client=mock_client)
         # timeout and on_pre_tool_use are consumed by the agent, not create_session.
-        await agent.run("hello", options=cast(Any, {"timeout": 30, "on_pre_tool_use": runtime_hook}))
+        await agent.run(
+            "hello",
+            options=cast(
+                Any,
+                {
+                    "timeout": 30,
+                    "on_pre_tool_use": runtime_hook,
+                    "telemetry": {"exporter_type": "file", "file_path": "/tmp/copilot.jsonl"},
+                },
+            ),
+        )
 
         config = mock_client.create_session.call_args.kwargs
-        for leaked in ("timeout", "on_pre_tool_use", "on_function_approval", "cli_path", "log_level", "base_directory"):
+        for leaked in (
+            "timeout",
+            "on_pre_tool_use",
+            "on_function_approval",
+            "cli_path",
+            "log_level",
+            "base_directory",
+            "telemetry",
+        ):
             assert leaked not in config
         # on_pre_tool_use is still honored via the hooks parameter.
         assert config["hooks"]["on_pre_tool_use"] is runtime_hook
+
+    async def test_workspace_config_options_default_to_off(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Workspace-driven options are disabled unless the caller opts in."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["enable_file_hooks"] is False
+        # Options that only shape prompt context are left untouched.
+        assert "enable_host_git_operations" not in config
+
+    async def test_workspace_config_options_honor_default_options(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """A caller opting in through default_options is not overridden."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"enable_file_hooks": True}),
+        )
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["enable_file_hooks"] is True
+
+    async def test_workspace_config_options_honor_runtime_options(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Per-run options override the agent-level value for workspace-driven options."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"enable_file_hooks": True}),
+        )
+        await agent.run("hello", options=cast(Any, {"enable_file_hooks": False}))
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["enable_file_hooks"] is False
+
+
+def _write_file_hook(working_directory: Path) -> None:
+    """Create a hook definition the CLI would load if file hooks were enabled."""
+    hooks_dir = working_directory / ".github" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (hooks_dir / "sessionStart.json").write_text(
+        json.dumps({
+            "version": 1,
+            "hooks": {"sessionStart": [{"type": "command", "command": "echo hello"}]},
+        }),
+        encoding="utf-8",
+    )
+
+
+class TestGitHubCopilotAgentFileHooksWarning:
+    """Test cases for the warning raised when file hooks are present but not loaded."""
+
+    async def test_warns_when_working_directory_defines_file_hooks(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Hooks that will not run are called out so the behavior is not silent."""
+        _write_file_hook(tmp_path)
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(tmp_path)}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert "Not loading the file hooks" in caplog.text
+
+    async def test_no_warning_without_file_hooks(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Nothing is reported when the working directory defines no hooks."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(tmp_path)}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert "Not loading the file hooks" not in caplog.text
+
+    async def test_no_warning_when_caller_opted_in(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A caller who enabled file hooks has nothing to be warned about."""
+        _write_file_hook(tmp_path)
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(tmp_path), "enable_file_hooks": True}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert "Not loading the file hooks" not in caplog.text
+
+    async def test_no_warning_when_caller_opted_out(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An explicit opt-out is a deliberate choice, not something to report."""
+        _write_file_hook(tmp_path)
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(tmp_path), "enable_file_hooks": False}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert "Not loading the file hooks" not in caplog.text
+
+    async def test_warning_is_emitted_once_per_agent(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A long-lived agent does not repeat the warning on every session."""
+        _write_file_hook(tmp_path)
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(tmp_path)}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert caplog.text.count("Not loading the file hooks") == 1
+
+    async def test_uses_working_directory_configured_on_injected_client(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A client built with its own working_directory decides where the CLI looks."""
+        _write_file_hook(tmp_path)
+        # The CLI process runs in the client's directory, so hooks resolve relative to it
+        # even though this process is running somewhere else entirely.
+        mock_client._options.working_directory = str(tmp_path)
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert "Not loading the file hooks" in caplog.text
+        assert str(tmp_path) in caplog.text
+
+    async def test_session_working_directory_takes_precedence_over_client(
+        self,
+        mock_client: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """An explicit session working_directory wins, matching the SDK's own resolution."""
+        session_dir = tmp_path / "session"
+        client_dir = tmp_path / "client"
+        session_dir.mkdir()
+        client_dir.mkdir()
+        _write_file_hook(session_dir)
+        mock_client._options.working_directory = str(client_dir)
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"working_directory": str(session_dir)}),
+        )
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        assert str(session_dir) in caplog.text
+
+    async def test_unreadable_client_options_fall_back_to_process_directory(
+        self,
+        mock_client: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A client that does not expose its options degrades quietly instead of raising."""
+        del mock_client._options
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        with caplog.at_level(logging.WARNING, logger="agent_framework.github_copilot"):
+            await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["enable_file_hooks"] is False
 
 
 class TestGitHubCopilotAgentToolConversion:
@@ -2514,7 +2871,7 @@ class TestGitHubCopilotAgentPermissions:
         from copilot.session import PermissionDecisionApproveOnce, PermissionRequestResult
         from copilot.session_events import PermissionRequest
 
-        def approve_shell(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+        def approve_shell(request: PermissionRequest, context: PermissionInvocation) -> PermissionRequestResult:
             if request.kind == "shell":
                 return PermissionDecisionApproveOnce()
             return PermissionDecisionDeniedInteractivelyByUser()
@@ -2532,7 +2889,7 @@ class TestGitHubCopilotAgentPermissions:
         from copilot.session import PermissionDecisionApproveOnce, PermissionRequestResult
         from copilot.session_events import PermissionRequest
 
-        def approve_shell_read(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+        def approve_shell_read(request: PermissionRequest, context: PermissionInvocation) -> PermissionRequestResult:
             if request.kind in ("shell", "read"):
                 return PermissionDecisionApproveOnce()
             return PermissionDecisionDeniedInteractivelyByUser()
@@ -2853,6 +3210,24 @@ class TestNormalizeApproveForSession:
 
         assert isinstance(result, PermissionDecisionApproveForSession)
         assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalCommands)
+
+    async def test_legacy_dict_permission_handlers_are_supported(self) -> None:
+        """The wrapper continues to support handlers typed for the legacy dictionary context."""
+        from copilot.generated.rpc import PermissionDecisionApproveOnce
+        from copilot.session_events import PermissionRequest
+
+        received_context: dict[str, str] = {}
+
+        def legacy_handler(request: PermissionRequest, context: dict[str, str]) -> Any:
+            received_context.update(context)
+            return PermissionDecisionApproveOnce()
+
+        from agent_framework_github_copilot._agent import _with_normalized_permission_decisions
+
+        handler = _with_normalized_permission_decisions(legacy_handler)  # type: ignore[arg-type]
+        await handler(shell_request(["ls"]), {"session_id": "test-session"})
+
+        assert received_context == {"session_id": "test-session"}
 
     async def test_handler_exceptions_propagate(self) -> None:
         """Handler failures must keep reaching the SDK, which denies the request."""

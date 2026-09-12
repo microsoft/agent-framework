@@ -139,6 +139,7 @@ public sealed class LocalShellExecutor : ShellExecutor
                 $"Command rejected by policy: {decision.Reason ?? "(unspecified)"}");
         }
 
+        FeatureUsageMarker.MarkUsed();
         return this._mode == ShellMode.Persistent
             ? await this.RunPersistentAsync(command, cancellationToken).ConfigureAwait(false)
             : await this.RunStatelessAsync(command, cancellationToken).ConfigureAwait(false);
@@ -168,6 +169,8 @@ public sealed class LocalShellExecutor : ShellExecutor
         {
             return Task.CompletedTask;
         }
+
+        FeatureUsageMarker.MarkUsed();
         ShellSession session;
         lock (this._sessionGate)
         {

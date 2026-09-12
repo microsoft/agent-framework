@@ -94,3 +94,62 @@ internal sealed class ThrowingStreamingAgent(string id, Exception exception) : A
         CancellationToken cancellationToken = default) =>
         throw new NotImplementedException();
 }
+
+/// <summary>
+/// A test agent that blocks until its run is cancelled.
+/// </summary>
+internal sealed class CancellationCheckingWorkflowAgent(string id) : AIAgent
+{
+    public new string Id => id;
+
+    public TaskCompletionSource Started { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public TaskCompletionSource CancellationObserved { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentSession? session,
+        AgentRunOptions? options,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        this.Started.TrySetResult();
+        try
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            this.CancellationObserved.TrySetResult();
+            throw;
+        }
+
+        yield break;
+    }
+
+    protected override Task<AgentResponse> RunCoreAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentSession? session,
+        AgentRunOptions? options,
+        CancellationToken cancellationToken = default) =>
+        throw new NotImplementedException();
+
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(
+        CancellationToken cancellationToken = default) =>
+        new(new TestAgentSession());
+
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(
+        AgentSession session,
+        JsonSerializerOptions? jsonSerializerOptions,
+        CancellationToken cancellationToken = default) =>
+        new(JsonSerializer.SerializeToElement(new { }));
+
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(
+        JsonElement serializedState,
+        JsonSerializerOptions? jsonSerializerOptions,
+        CancellationToken cancellationToken = default) =>
+        new(new TestAgentSession());
+
+    private sealed class TestAgentSession : AgentSession;
+}

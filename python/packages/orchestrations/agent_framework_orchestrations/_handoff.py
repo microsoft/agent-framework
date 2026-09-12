@@ -9,7 +9,7 @@ The flow is typically:
 
     user input -> Agent A -> Agent B -> Agent C -> Agent A -> ... -> output
 
-Depending of wether request info is enabled, the flow may include user input (except when an agent hands off):
+Depending on whether request info is enabled, the flow may include user input (except when an agent hands off):
 
     user input -> [Agent A -> Request info] -> [Agent B -> Request info] -> [Agent C -> ... -> output
 
@@ -300,6 +300,7 @@ class HandoffAgentExecutor(AgentExecutor):
             middleware=agent.middleware,
             require_per_service_call_history_persistence=agent.require_per_service_call_history_persistence,
             default_options=cloned_options,  # type: ignore[assignment]
+            additional_properties=deepcopy(agent.additional_properties),
         )
 
     def _apply_auto_tools(self, agent: Agent, targets: Sequence[HandoffConfiguration]) -> None:

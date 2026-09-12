@@ -127,6 +127,22 @@ def test_constructor_custom_source_id() -> None:
     assert provider.source_id == "custom_bg"
 
 
+def test_constructor_uses_default_wait_timeout() -> None:
+    """Should use a bounded five-minute wait by default."""
+    provider = _make_provider(_FakeAgent("Worker"))
+    assert provider._wait_timeout_seconds == 300
+
+
+@pytest.mark.parametrize("wait_timeout_seconds", [0, -1, True, 1.5, float("inf"), float("nan")])
+def test_constructor_rejects_invalid_wait_timeout(wait_timeout_seconds: object) -> None:
+    """Should reject wait timeouts that are not positive integers."""
+    with pytest.raises(ValueError, match="positive integer"):
+        BackgroundAgentsProvider(
+            [_FakeAgent("Worker")],  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+            wait_timeout_seconds=wait_timeout_seconds,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        )
+
+
 # --- Tool Injection Tests ---
 
 
@@ -144,6 +160,18 @@ async def test_before_run_injects_six_tools() -> None:
         "background_agents_clear_completed_task",
     }
     assert set(tools.keys()) == expected_names
+
+
+async def test_wait_timeout_is_not_model_settable() -> None:
+    """The model-facing wait tool should only accept task IDs."""
+    provider = _make_provider(_FakeAgent("Worker"))
+    tools = await _get_tools(provider, _make_session())
+    wait_tool = tools["background_agents_wait_for_first_completion"]
+    wait_parameters = wait_tool.parameters()
+    assert set(wait_parameters["properties"]) == {"task_ids"}
+    assert "configured timeout expires" in wait_tool.description
+    assert "tasks remain running" in wait_tool.description
+    assert "called again" in wait_tool.description
 
 
 async def test_before_run_injects_instructions() -> None:
@@ -291,6 +319,55 @@ async def test_wait_no_running_tasks() -> None:
         task_ids=[999],
     )
     assert "Error" in result or "not running" in result.lower()
+
+
+async def test_wait_timeout_returns_without_stopping_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Should return normally on timeout and leave the child task running."""
+    observed_timeout: float | None = None
+
+    async def _return_timeout(
+        tasks: Any,
+        *,
+        timeout: float | None = None,
+        return_when: Any = asyncio.ALL_COMPLETED,
+    ) -> tuple[set[Any], set[Any]]:
+        nonlocal observed_timeout
+        observed_timeout = timeout
+        return set(), set(tasks)
+
+    monkeypatch.setattr(asyncio, "wait", _return_timeout)
+    provider = BackgroundAgentsProvider(
+        [_FakeAgent("Slow", delay=10.0)],  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        wait_timeout_seconds=7,
+    )
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Slow",
+        input="go",
+        description="slow task",
+    )
+
+    try:
+        result = await _invoke_tool(
+            tools["background_agents_wait_for_first_completion"],
+            task_ids=[1],
+        )
+        assert result == (
+            "No background task completed within 7 seconds. "
+            "The tasks are still running; call this tool again if you wish to continue waiting."
+        )
+        assert observed_timeout == 7
+
+        runtime = provider._get_runtime(session)
+        assert not runtime.in_flight_tasks[1].done()
+
+        task_result = await _invoke_tool(tools["background_agents_get_task_results"], task_id=1)
+        assert "still running" in task_result.lower()
+    finally:
+        await provider.release_session(session)
 
 
 # --- Get Task Results Tests ---
