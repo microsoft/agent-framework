@@ -2864,6 +2864,355 @@ async def test_function_invocation_config_terminate_on_unknown_calls_true(chat_c
     assert exec_counter == 0
 
 
+@pytest.mark.parametrize("approval_first", [True, False], ids=["approval-first", "declaration-only-first"])
+async def test_mixed_batch_approval_enforced_regardless_of_call_order(
+    chat_client_base: SupportsChatGetResponse, approval_first: bool
+):
+    """A tool with approval_mode='always_require' must pause for approval even when a declaration-only
+    call precedes it in the same batch.
+
+    Regression: batch classification used to stop at the first matching call, so a declaration-only call
+    appearing before an approval-required call caused the whole batch to be returned as user input and the
+    approval gate to be silently bypassed. Classification must travel with each call, not with its position.
+    """
+    from agent_framework import FunctionTool
+
+    approval_calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func(arg1: str) -> str:
+        nonlocal approval_calls
+        approval_calls += 1
+        return f"Approved {arg1}"
+
+    declaration_func = FunctionTool(
+        name="declaration_func",
+        func=None,
+        description="A declaration-only function for testing",
+        input_model={"type": "object", "properties": {"arg1": {"type": "string"}}, "required": ["arg1"]},
+    )
+
+    approval_call = Content.from_function_call(call_id="a1", name="approval_func", arguments='{"arg1": "x"}')
+    declaration_call = Content.from_function_call(call_id="d1", name="declaration_func", arguments='{"arg1": "y"}')
+    contents = [approval_call, declaration_call] if approval_first else [declaration_call, approval_call]
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=contents)),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [approval_func, declaration_func]},
+    )
+
+    approval_requests = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if content.type == "function_approval_request"
+        and content.function_call is not None
+        and content.function_call.name == "approval_func"
+    ]
+    assert len(approval_requests) == 1, "approval gate must be surfaced regardless of call order"
+    # The declaration-only sibling must be surfaced as user input, never wrapped as an approval request,
+    # so that an "approve" decision cannot drive it into local execution on resume (spec 004).
+    declaration_as_approval = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if content.type == "function_approval_request"
+        and content.function_call is not None
+        and content.function_call.name == "declaration_func"
+    ]
+    assert not declaration_as_approval, "declaration-only call must not be wrapped as an approval request"
+    declaration_user_input = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if content.type == "function_call" and content.user_input_request and content.name == "declaration_func"
+    ]
+    assert len(declaration_user_input) == 1, "declaration-only call must be surfaced as user input"
+    assert approval_calls == 0, "approval-required tool must not execute before approval"
+
+
+async def test_mixed_batch_pause_groups_preserve_model_call_order():
+    """Approval and declaration-only pause groups retain the model call order."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import _try_execute_function_call_groups
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func(arg1: str) -> str:
+        return arg1
+
+    declaration_func = FunctionTool(
+        name="declaration_func",
+        func=None,
+        description="A declaration-only function for testing",
+        input_model={"type": "object", "properties": {"arg1": {"type": "string"}}, "required": ["arg1"]},
+    )
+    calls = [
+        Content.from_function_call(call_id="d1", name="declaration_func", arguments={"arg1": "1"}),
+        Content.from_function_call(call_id="a1", name="approval_func", arguments={"arg1": "2"}),
+        Content.from_function_call(call_id="d2", name="declaration_func", arguments={"arg1": "3"}),
+    ]
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=calls,
+        tools=[approval_func, declaration_func],
+        config={},
+    )
+
+    ordered_call_ids: list[str | None] = []
+    for group in result_groups:
+        content = group[0]
+        if content.type == "function_approval_request":
+            assert content.function_call is not None
+            ordered_call_ids.append(content.function_call.call_id)
+        else:
+            ordered_call_ids.append(content.call_id)
+    assert ordered_call_ids == ["d1", "a1", "d2"]
+    assert should_terminate is False
+
+
+@pytest.mark.parametrize("unknown_first", [True, False], ids=["unknown-first", "approval-first"])
+async def test_mixed_batch_unknown_call_fails_closed_before_approval(
+    chat_client_base: SupportsChatGetResponse, unknown_first: bool
+):
+    """With terminate_on_unknown_calls=True, an unknown call aborts the whole batch before any tool runs."""
+    approval_calls = 0
+    safe_calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func(arg1: str) -> str:
+        nonlocal approval_calls
+        approval_calls += 1
+        return f"Approved {arg1}"
+
+    @tool(name="safe_func", approval_mode="never_require")
+    def safe_func(arg1: str) -> str:
+        nonlocal safe_calls
+        safe_calls += 1
+        return f"Safe {arg1}"
+
+    unknown_call = Content.from_function_call(call_id="u1", name="unknown_function", arguments={"arg1": "x"})
+    approval_call = Content.from_function_call(call_id="a1", name="approval_func", arguments={"arg1": "y"})
+    safe_call = Content.from_function_call(call_id="s1", name="safe_func", arguments={"arg1": "z"})
+    contents = [unknown_call, approval_call, safe_call] if unknown_first else [approval_call, safe_call, unknown_call]
+
+    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=contents)),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    with pytest.raises(KeyError, match=r'Requested function "unknown_function" not found'):
+        await chat_client_base.get_response(
+            [Message(role="user", contents=["hello"])],
+            options={"tool_choice": "auto", "tools": [approval_func, safe_func]},
+        )
+
+    assert approval_calls == 0
+    assert safe_calls == 0
+
+
+async def test_removed_tool_approval_response_does_not_trigger_unknown_termination():
+    """An approval response for a removed tool is inert even when new unknown calls are fatal."""
+    from agent_framework._tools import _try_execute_function_call_groups
+
+    function_call = Content.from_function_call(
+        call_id="removed-call",
+        name="removed_function",
+        arguments={},
+    )
+    approval_request = Content.from_function_approval_request(
+        id="removed-request",
+        function_call=function_call,
+    )
+    approval_response = approval_request.to_function_approval_response(approved=True)
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[approval_response],
+        tools=[],
+        config={"terminate_on_unknown_calls": True},
+    )
+
+    assert should_terminate is False
+    assert result_groups == [[approval_response]]
+
+
+async def test_legacy_declaration_only_approval_response_is_reclassified_before_execution():
+    """An old approval wrapper cannot make a declaration-only call executable after an upgrade."""
+    from agent_framework import FunctionTool
+    from agent_framework._middleware import FunctionMiddlewarePipeline
+    from agent_framework._tools import _try_execute_function_call_groups
+
+    middleware_calls = 0
+
+    class RejectUnexpectedInvocationMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Any) -> None:
+            nonlocal middleware_calls
+            middleware_calls += 1
+            pytest.fail("declaration-only calls must not enter local function middleware")
+
+    declaration_func = FunctionTool(
+        name="declaration_func",
+        func=None,
+        description="A declaration-only function for testing",
+        input_model={"type": "object", "properties": {"arg1": {"type": "string"}}, "required": ["arg1"]},
+    )
+    function_call = Content.from_function_call(
+        call_id="legacy-declaration",
+        name="declaration_func",
+        arguments={"arg1": "value"},
+    )
+    legacy_request = Content.from_function_approval_request(
+        id="legacy-request",
+        function_call=function_call,
+    )
+
+    result_groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[legacy_request.to_function_approval_response(approved=True)],
+        tools=[declaration_func],
+        config={},
+        middleware_pipeline=FunctionMiddlewarePipeline(RejectUnexpectedInvocationMiddleware()),
+    )
+
+    assert should_terminate is False
+    assert len(result_groups) == 1
+    assert len(result_groups[0]) == 1
+    result = result_groups[0][0]
+    assert result.type == "function_call"
+    assert result.call_id == "legacy-declaration"
+    assert result.user_input_request is True
+    assert middleware_calls == 0
+    assert function_call.user_input_request is None
+
+
+async def test_legacy_additional_tool_approval_response_is_reclassified_before_execution():
+    """An old approval wrapper cannot hide an additional-tool user-input pause after an upgrade."""
+    from agent_framework._tools import _execute_function_calls
+
+    additional_tool_calls = 0
+
+    @tool(name="additional_func")
+    def additional_func(arg1: str) -> str:
+        nonlocal additional_tool_calls
+        additional_tool_calls += 1
+        return arg1
+
+    function_call = Content.from_function_call(
+        call_id="legacy-additional",
+        name="additional_func",
+        arguments={"arg1": "value"},
+    )
+    legacy_request = Content.from_function_approval_request(
+        id="legacy-additional-request",
+        function_call=function_call,
+    )
+
+    execution = await _execute_function_calls(
+        custom_args={},
+        function_calls=[legacy_request.to_function_approval_response(approved=True)],
+        options=None,
+        config={"additional_tools": [additional_func]},
+    )
+
+    assert execution.should_terminate is False
+    assert len(execution.result_groups) == 1
+    assert len(execution.result_groups[0]) == 1
+    result = execution.result_groups[0][0]
+    assert result.type == "function_call"
+    assert result.call_id == "legacy-additional"
+    assert result.user_input_request is True
+    assert additional_tool_calls == 0
+    assert function_call.user_input_request is None
+
+
+async def test_mixed_batch_declaration_only_not_executed_after_approval_resume(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """After approving a mixed batch, the declaration-only sibling must not be executed locally.
+
+    Regression: the approval branch wrapped every call in the batch as an approval request, so approving
+    the batch drove the declaration-only call into local execution on resume, where it raised because it
+    has no implementation. A declaration-only call must surface as user input and never produce a local
+    result or error, regardless of an approval-required sibling in the same batch.
+    """
+    from agent_framework import FunctionTool
+
+    approval_calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func(arg1: str) -> str:
+        nonlocal approval_calls
+        approval_calls += 1
+        return f"Approved {arg1}"
+
+    declaration_func = FunctionTool(
+        name="declaration_func",
+        func=None,
+        description="A declaration-only function for testing",
+        input_model={"type": "object", "properties": {"arg1": {"type": "string"}}, "required": ["arg1"]},
+    )
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="d1", name="declaration_func", arguments='{"arg1": "y"}'),
+                    Content.from_function_call(call_id="a1", name="approval_func", arguments='{"arg1": "x"}'),
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    first_response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [approval_func, declaration_func]},
+    )
+
+    approval_responses = [
+        content.to_function_approval_response(approved=True)
+        for msg in first_response.messages
+        for content in msg.contents
+        if content.type == "function_approval_request"
+    ]
+    assert len(approval_responses) == 1, "only the approval-required call should surface an approval request"
+
+    resumed_response = await chat_client_base.get_response(
+        [Message(role="user", contents=approval_responses)],
+        options={"tool_choice": "auto", "tools": [approval_func, declaration_func]},
+    )
+
+    declaration_results = [
+        content
+        for msg in resumed_response.messages
+        for content in msg.contents
+        if content.type == "function_result" and content.call_id == "d1"
+    ]
+    assert not declaration_results, "declaration-only call must not be executed locally on approval resume"
+    assert approval_calls == 1, "approved tool executes exactly once"
+
+
+async def test_nameless_call_honors_unknown_call_termination():
+    """A nameless call is still unknown and must terminate when configured to do so."""
+    from agent_framework._tools import _try_execute_function_call_groups
+
+    with pytest.raises(KeyError, match='Requested function "None" not found'):
+        await _try_execute_function_call_groups(
+            custom_args={},
+            function_calls=[Content("function_call", call_id="nameless-call", arguments="{}")],
+            tools=[],
+            config={"terminate_on_unknown_calls": True},
+        )
+
+
 async def test_function_invocation_config_additional_tools(chat_client_base: SupportsChatGetResponse):
     """Test that additional_tools are available but treated as declaration_only."""
     exec_counter_visible = 0

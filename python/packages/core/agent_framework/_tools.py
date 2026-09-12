@@ -1834,6 +1834,19 @@ def _underlying_function_call(content: Content) -> Content:
     return content
 
 
+def _mark_user_input_pause(function_call: Content) -> None:
+    """Surface a declaration-only/additional call as a user-input pause instead of executing it.
+
+    These tools have no local implementation (spec 004); AgentExecutor emits its request_info events off
+    ``user_input_request``, and the id is backfilled from ``call_id`` so the resume can correlate the reply.
+    Both the approval-pausing batch branch and the standalone declaration-only branch route through here so
+    the two pause surfaces cannot silently diverge if one is later changed in isolation.
+    """
+    function_call.user_input_request = True
+    if function_call.id is None:
+        function_call.id = function_call.call_id
+
+
 async def _execute_single_function_call(
     function_call: Content,
     *,
@@ -1848,6 +1861,17 @@ async def _execute_single_function_call(
     from ._middleware import MiddlewareTermination
     from ._sessions import _suspend_run_persistence_gate  # pyright: ignore[reportPrivateUsage]
     from ._types import Content
+
+    # Older persisted batches can contain an approval wrapper around a
+    # declaration-only call. Reclassify it before the execution boundary so
+    # host-owned calls never enter local middleware or a tool implementation.
+    source_function_call = _underlying_function_call(function_call)
+    source_tool = tool_map.get(source_function_call.name) if source_function_call.name is not None else None
+    additional_tool_names = {tool.name for tool in config.get("additional_tools") or []}
+    if (source_tool is not None and source_tool.declaration_only) or source_function_call.name in additional_tool_names:
+        declaration_only_call = copy.copy(source_function_call)
+        _mark_user_input_pause(declaration_only_call)
+        return [declaration_only_call], False
 
     try:
         # A run-persistence gate defers only the gated run's own persistence; nested
@@ -1945,59 +1969,83 @@ async def _try_execute_function_call_groups(
     )
     declaration_only_tool_names = {tool_name for tool_name, tool in tool_map.items() if tool.declaration_only}
     additional_tool_names = {tool.name for tool in config.get("additional_tools") or []}
-    actionable_calls = [
-        function_call for function_call in function_calls if _is_actionable_function_call(function_call)
-    ]
-
-    # Classify the entire batch first: any required user interaction pauses the batch before execution.
+    # Classify the entire batch first so classification travels with each call, not with its position in
+    # the batch. Scan every call before acting on any of it. Precedence (highest first): unknown-call
+    # termination > approval pause > declaration-only user-input. unknown-call termination is a fail-closed
+    # security gate: when terminate_on_unknown_calls is enabled, an unknown call aborts the whole batch up
+    # front, before any approval is solicited or any sibling executes, so it can never be downgraded into a
+    # rejectable approval request and slip past the abort on a rejection or a dropped response. Approval and
+    # declaration-only calls otherwise pause together (see the approval branch) so neither is bypassed.
     requires_approval = False
     has_declaration_only_call = False
-    # A user-input pause takes precedence over unknown-call termination in mixed batches.
-    for function_call in actionable_calls:
-        function_name = function_call.name
+    unknown_call_found = False
+    unknown_call_name: str | None = None
+    for function_call in function_calls:
+        source_function_call = _underlying_function_call(function_call)
+        function_name = source_function_call.name
         logger.debug(
             "Checking function call: type=%s, name=%s, in approval_tools=%s",
             function_call.type,
             function_name,
             function_name in approval_tool_names,
         )
-        if function_name in approval_tool_names:
+        if _is_actionable_function_call(function_call) and function_name in approval_tool_names:
             logger.debug("Approval needed for function: %s", function_name)
             requires_approval = True
-            break
-        if function_name in declaration_only_tool_names or function_name in additional_tool_names:
+            continue
+        if _is_actionable_function_call(function_call) and (
+            function_name in declaration_only_tool_names or function_name in additional_tool_names
+        ):
             has_declaration_only_call = True
-            break
-        if config.get("terminate_on_unknown_calls", False) and function_name not in tool_map:
-            raise KeyError(f'Error: Requested function "{function_name}" not found.')
+            continue
+        if (
+            _is_actionable_function_call(function_call)
+            and not unknown_call_found
+            and config.get("terminate_on_unknown_calls", False)
+            and function_name not in tool_map
+        ):
+            unknown_call_found = True
+            unknown_call_name = function_name
+    # Fail-closed precedence: an unknown call in a batch configured to terminate aborts the whole batch
+    # before any approval is solicited or any sibling executes. unknown_call_found is only set when
+    # terminate_on_unknown_calls is enabled (see the scan above), so this never fires for tolerated unknown
+    # calls. Wrapping the unknown call as a rejectable approval request instead would let a rejection or a
+    # dropped response silently skip the abort, turning a fail-closed gate back into a running loop.
+    if unknown_call_found:
+        raise KeyError(f'Error: Requested function "{unknown_call_name}" not found.')
     if requires_approval:
         # Surface only the approvals the host must decide; session-backed safe siblings wait for that resume.
         # approval can only be needed for Function Call Content, not Approval Responses.
         logger.debug("Returning visible function_approval_request contents and storing already-approved requests")
         visible_requests: list[Content] = []
         already_approved_requests: list[Content] = []
+        pause_groups: list[list[Content]] = []
         for function_call in function_calls:
             if function_call.type != "function_call":
+                continue
+            tool_name = function_call.name
+            # Declaration-only and additional tools are surfaced as user input and never executed locally
+            # (spec 004). Wrapping them as approval requests here made an "approve" decision drive them into
+            # local execution on resume, where they raise because they have no implementation. Classification
+            # must travel with each call even inside an approval-pausing batch.
+            if tool_name is not None and (
+                tool_name in declaration_only_tool_names or tool_name in additional_tool_names
+            ):
+                _mark_user_input_pause(function_call)
+                pause_groups.append([function_call])
                 continue
             approval_request = Content.from_function_approval_request(
                 id=function_call.id or function_call.call_id,  # type: ignore[arg-type]
                 function_call=function_call,
             )
-            tool_name = function_call.name
-            if tool_name is None:
+            tool = tool_map.get(tool_name) if tool_name is not None else None
+            if tool_name is None or tool_name in approval_tool_names or tool is None:
                 visible_requests.append(approval_request)
-                continue
-            tool = tool_map.get(tool_name)
-            if (
-                tool_name in approval_tool_names
-                or tool is None
-                or tool_name in declaration_only_tool_names
-                or tool_name in additional_tool_names
-            ):
-                visible_requests.append(approval_request)
+                pause_groups.append([approval_request])
                 continue
             if not _has_authoritative_approval_session(invocation_session):
                 visible_requests.append(approval_request)
+                pause_groups.append([approval_request])
                 continue
             already_approved_requests.append(approval_request)
         _store_already_approved_approval_requests(
@@ -2006,7 +2054,9 @@ async def _try_execute_function_call_groups(
             already_approved_requests,
         )
         _store_pending_approval_requests(invocation_session, visible_requests)
-        return [[request] for request in visible_requests], False
+        # Surface approval pauses and declaration-only user-input pauses together so a mixed batch neither
+        # bypasses approval nor executes a declaration-only call.
+        return pause_groups, False
     if has_declaration_only_call:
         # Declaration-only calls are returned as user input rather than executed locally.
         # return the declaration only tools to the user, since we cannot execute them.
@@ -2014,9 +2064,7 @@ async def _try_execute_function_call_groups(
         declaration_only_calls: list[Content] = []
         for function_call in function_calls:
             if function_call.type == "function_call":
-                function_call.user_input_request = True
-                if function_call.id is None:
-                    function_call.id = function_call.call_id
+                _mark_user_input_pause(function_call)
                 declaration_only_calls.append(function_call)
         return [[function_call] for function_call in declaration_only_calls], False
 
@@ -2108,7 +2156,7 @@ async def _execute_function_calls(
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
 ) -> _FunctionExecutionBatch:
     tools = _extract_tools(options)
-    if not tools:
+    if not tools and not config.get("additional_tools"):
         return _FunctionExecutionBatch(result_groups=[])
     result_groups, should_terminate = await _try_execute_function_call_groups(
         custom_args=custom_args,
