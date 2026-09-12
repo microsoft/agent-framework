@@ -47,12 +47,15 @@ def resolve_executor_run_kwargs(
     """
     if not isinstance(resolved, dict):
         return None
+    # isinstance against bare ``dict`` narrows the value type to Unknown under
+    # strict pyright; pin the mapping type explicitly.
+    resolved_map: dict[str, Any] = resolved
     # Use explicit key-presence checks so that an empty per-executor dict is
     # honoured (e.g. to clear kwargs) instead of falling through to global.
-    if executor_id in resolved:
-        executor_kwargs = resolved[executor_id]
-    elif GLOBAL_KWARGS_KEY in resolved:
-        executor_kwargs = resolved[GLOBAL_KWARGS_KEY]
+    if executor_id in resolved_map:
+        executor_kwargs = resolved_map[executor_id]
+    elif GLOBAL_KWARGS_KEY in resolved_map:
+        executor_kwargs = resolved_map[GLOBAL_KWARGS_KEY]
     else:
         return None
 
@@ -75,9 +78,9 @@ def prepare_agent_run_kwargs(
 
     Extracts ``function_invocation_kwargs`` and ``client_kwargs`` from the
     workflow state dict, resolving per-executor entries using ``executor_id``.
-    Shared by ``AgentExecutor`` and the orchestrator/manager call sites that
-    invoke an agent inside a workflow (GroupChat orchestrator, Magentic
-    manager), so run kwargs reach every agent run, not just participants.
+    Shared by ``AgentExecutor`` and the GroupChat orchestrator call site, so
+    run kwargs reach every agent run in those workflows, not just
+    participants.
 
     Returns:
         A 2-tuple of (function_invocation_kwargs, client_kwargs).
