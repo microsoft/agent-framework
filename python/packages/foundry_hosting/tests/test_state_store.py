@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -70,6 +71,18 @@ def _config(*, is_hosted: bool) -> AgentConfig:
 
 def _platform_context(call_id: str = "call-1", user_id: str = "user-1") -> FoundryAgentRequestContext:
     return FoundryAgentRequestContext(call_id=call_id, user_id=user_id)
+
+
+@pytest.fixture(autouse=True)
+def _reset_agent_session_store_cache() -> None:
+    """Guard the FoundryAgentSessionStore per-(loop, scope) state-store cache.
+
+    The backing store is cached on the running event loop itself, so a store (and
+    its mocked ``get_or_create``) cannot outlive the loop that created it. Every
+    test runs on its own function-scoped event loop, so the cache is inherently
+    isolated per test -- no explicit teardown is required.
+    """
+    return None
 
 
 def test_storage_providers_use_public_abstraction() -> None:
@@ -508,3 +521,74 @@ def test_agent_session_storage_provider_creates_request_scoped_storage() -> None
 
     assert storage_type.call_args_list[0].args == (first_context,)
     assert storage_type.call_args_list[1].args == (second_context,)
+
+
+async def test_agent_session_store_is_cached_across_operations() -> None:
+    store = _store()
+    store.get_item = AsyncMock(return_value=None)
+    session_store = FoundryAgentSessionStore(_platform_context())
+
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(return_value=store),
+    ) as get_or_create:
+        await session_store.set("s1", AgentSession(session_id="agent-session-1"))
+        await session_store.get("s1")
+        await session_store.delete("s1")
+
+    # The backing state store is resolved once via get_or_create and reused for
+    # every subsequent operation instead of being rebuilt per call.
+    get_or_create.assert_awaited_once_with("agent_sessions", user_isolation=True)
+    store.set_item.assert_awaited_once()
+    store.get_item.assert_awaited_once()
+    store.delete_item.assert_awaited_once()
+
+
+async def test_agent_session_store_concurrent_init_resolves_once() -> None:
+    store = _store()
+    store.get_item = AsyncMock(return_value=None)
+    session_store = FoundryAgentSessionStore(_platform_context())
+
+    async def _slow_get_or_create(scope: str, *, user_isolation: bool) -> MagicMock:
+        # Suspend before returning so every gathered task reaches ``_get_store``
+        # and blocks on the creation lock while the first resolve is in flight.
+        # A non-suspending mock would let the first task populate the cache
+        # synchronously, so even a lock-less implementation would pass -- this
+        # forces genuine contention that exercises the lock + second cache check.
+        await asyncio.sleep(0)
+        return store
+
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(side_effect=_slow_get_or_create),
+    ) as get_or_create:
+        await asyncio.gather(*(session_store.get(f"s{i}") for i in range(25)))
+
+    # Concurrent first-use must resolve the backing store exactly once.
+    get_or_create.assert_awaited_once_with("agent_sessions", user_isolation=True)
+    assert store.get_item.await_count == 25
+
+
+async def test_agent_session_store_subclass_scope_is_isolated() -> None:
+    class OtherScopeSessionStore(FoundryAgentSessionStore):
+        DEFAULT_ROOT_SCOPE = "other_sessions"
+
+    base_store = _store()
+    base_store.get_item = AsyncMock(return_value=None)
+    other_store = _store()
+    other_store.get_item = AsyncMock(return_value=None)
+
+    async def _fake_get_or_create(scope: str, *, user_isolation: bool) -> MagicMock:
+        return other_store if scope == "other_sessions" else base_store
+
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(side_effect=_fake_get_or_create),
+    ) as get_or_create:
+        await FoundryAgentSessionStore(_platform_context()).get("s1")
+        await OtherScopeSessionStore(_platform_context()).get("s1")
+
+    # Each scope resolves and caches its own backing store -- no cross-routing.
+    assert get_or_create.await_count == 2
+    base_store.get_item.assert_awaited_once()
+    other_store.get_item.assert_awaited_once()
