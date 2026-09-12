@@ -48,6 +48,44 @@ _TOOL_CALL_CONTENT_TYPES: Final[set[str]] = {
 }
 
 
+def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[str]:
+    """Return origin session IDs in first-seen order without duplicates."""
+    unique_origin_session_ids: list[str] = []
+    seen_origin_session_ids: set[str] = set()
+    for origin_session_id in origin_session_ids:
+        if origin_session_id not in seen_origin_session_ids:
+            seen_origin_session_ids.add(origin_session_id)
+            unique_origin_session_ids.append(origin_session_id)
+    return unique_origin_session_ids
+
+
+def _aggregate_origin_session_ids(messages: Sequence[Message]) -> list[str]:
+    """Aggregate origin_session_ids from a sequence of Message objects.
+
+    Extracts origin_session_ids from each message's _attribution and returns
+    a deduplicated list preserving first-seen order. Messages without attribution
+    or without origin_session_ids are silently skipped.
+
+    Args:
+        messages: The Message objects to aggregate provenance from.
+
+    Returns:
+        Deduplicated origin_session_ids in first-seen order.
+    """
+    origin_session_ids: list[str] = []
+    for message in messages:
+        attribution = message.additional_properties.get("_attribution")
+        if not isinstance(attribution, Mapping):
+            continue
+        origins = attribution.get("origin_session_ids")
+        if not isinstance(origins, Sequence) or isinstance(origins, str):
+            continue
+        for origin in cast("Sequence[Any]", origins):
+            if isinstance(origin, str):
+                origin_session_ids.append(origin)
+    return _deduplicate_origin_session_ids(origin_session_ids)
+
+
 @runtime_checkable
 class TokenizerProtocol(Protocol):
     """Protocol for token counters used by token-aware compaction strategies."""
@@ -1142,19 +1180,28 @@ class ToolResultCompactionStrategy:
                 _set_group_summarized_by_summary_id(msg, summary_id)
                 changed = set_excluded(msg, excluded=True, reason="tool_result_compaction") or changed
 
+            # Aggregate provenance directly from the actual Message objects being summarized
+            # This ensures origin_session_ids are preserved even when message_id is None
+            aggregated_origins = _aggregate_origin_session_ids(group_msgs)
+
             # Insert summary with forward links to the originals.
             summary_annotation = {
                 SUMMARY_OF_MESSAGE_IDS_KEY: original_message_ids,
                 SUMMARY_OF_GROUP_IDS_KEY: [group_id],
             }
             insertion_index = starts.get(group_id, 0)
+            
+            summary_additional_properties: dict[str, Any] = {
+                GROUP_ANNOTATION_KEY: summary_annotation,
+            }
+            if aggregated_origins:
+                summary_additional_properties["_attribution"] = {"origin_session_ids": aggregated_origins}
+            
             summary_message = Message(
                 role="assistant",
                 contents=[summary_text],
                 message_id=summary_id,
-                additional_properties={
-                    GROUP_ANNOTATION_KEY: summary_annotation,
-                },
+                additional_properties=summary_additional_properties,
             )
             messages.insert(insertion_index, summary_message)
             annotate_message_groups(messages, from_index=insertion_index, force_reannotate=False)
@@ -1570,13 +1617,21 @@ class SummarizationStrategy:
             SUMMARY_OF_GROUP_IDS_KEY: summary_of_group_ids,
         }
 
+        # Aggregate provenance directly from the actual Message objects being summarized
+        # This ensures origin_session_ids are preserved even when message_id is None
+        aggregated_origins = _aggregate_origin_session_ids(messages_to_summarize)
+
+        summary_additional_properties: dict[str, Any] = {
+            GROUP_ANNOTATION_KEY: summary_annotation,
+        }
+        if aggregated_origins:
+            summary_additional_properties["_attribution"] = {"origin_session_ids": aggregated_origins}
+
         summary_message = Message(
             role="assistant",
             contents=[summary_text],
             message_id=summary_id,
-            additional_properties={
-                GROUP_ANNOTATION_KEY: summary_annotation,
-            },
+            additional_properties=summary_additional_properties,
         )
 
         for message in messages_to_summarize:
@@ -1817,6 +1872,11 @@ class CompactionProvider(ContextProvider):
         if not all_messages:
             return
 
+        # Track each original message's source before compaction
+        source_by_id: dict[int, str] = {
+            id(message): sid for sid, msgs in context.context_messages.items() for message in msgs
+        }
+
         await _run_compaction_strategy(
             all_messages,
             strategy=self.before_strategy,
@@ -1825,9 +1885,23 @@ class CompactionProvider(ContextProvider):
         )
 
         projected = project_included_messages(all_messages)
-        projected_set = {id(m) for m in projected}
-        for sid in list(context.context_messages):
-            context.context_messages[sid] = [m for m in context.context_messages[sid] if id(m) in projected_set]
+        
+        # Rebuild provider message lists from the projected list, preserving source attribution
+        # and including new synthetic messages created by compaction strategies
+        rebuilt: dict[str, list[Message]] = {sid: [] for sid in context.context_messages}
+        fallback_sid = next(iter(rebuilt), self.source_id)
+        last_sid = fallback_sid
+        for message in projected:
+            # For new synthetic messages, use the last known source; for original messages, use their tracked source
+            sid = source_by_id.get(id(message), last_sid)
+            if sid not in rebuilt:
+                # If the source was somehow removed during compaction, fall back to the last known source
+                sid = last_sid
+            rebuilt[sid].append(message)
+            last_sid = sid
+        
+        context.context_messages.clear()
+        context.context_messages.update(rebuilt)
 
     async def after_run(
         self,
