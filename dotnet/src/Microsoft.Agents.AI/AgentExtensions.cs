@@ -157,9 +157,9 @@ public static partial class AIAgentExtensions
     /// By default the returned client is stateless: no <see cref="AgentSession"/> is used, so every call must supply the
     /// full conversation history, just as when calling an <see cref="IChatClient"/> directly. Such a client reports no
     /// conversation id on its response surface and accepts none. An id carried by the agent's raw response or streamed
-    /// update is cleared on a copy rather than forwarded, while a response that carries none is returned unchanged, so
-    /// the instance identity the agent established survives the adapter; a non-blank
-    /// <see cref="ChatOptions.ConversationId"/> supplied by the caller is rejected with an
+    /// update is cleared on a copy rather than forwarded, while a response whose conversation id is already
+    /// <see langword="null"/> is returned unchanged, so the instance identity the agent established survives the
+    /// adapter; a non-blank <see cref="ChatOptions.ConversationId"/> supplied by the caller is rejected with an
     /// <see cref="InvalidOperationException"/>, and a blank one is treated as absent and cleared before the agent sees
     /// it. Only the conversation id is withheld; every other member, including
     /// <see cref="ChatResponse.RawRepresentation"/>, <see cref="ChatResponse.ResponseId"/> and

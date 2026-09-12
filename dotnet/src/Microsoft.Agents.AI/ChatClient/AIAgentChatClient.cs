@@ -25,8 +25,8 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// The invariant everything else serves is that every conversation id this adapter reports is one it accepts back. A
 /// bound adapter therefore reports a single fixed id rather than anything derived from the response, the session or the
-/// service, and mints it per instance rather than taking a shared constant, so an id handed out by an adapter bound to
-/// one session cannot be replayed against an adapter bound to another.
+/// service, and, when the caller supplies none, mints it per instance, so a generated id handed out by an adapter bound
+/// to one session cannot be replayed against an adapter bound to another.
 /// </para>
 /// <para>
 /// The same invariant is why a stateless adapter clears ids instead of forwarding them. The case that makes that
@@ -41,16 +41,15 @@ namespace Microsoft.Agents.AI;
 /// it with the adapter's own id, and stateless mode clears it.
 /// </para>
 /// <para>
-/// An incoming blank id is normalized to null rather than passed along. Forwarding it as it stands would be no better
-/// than rejecting it: downstream blankness checks use <see cref="string.IsNullOrEmpty(string?)"/> rather than
-/// <see cref="string.IsNullOrWhiteSpace(string?)"/>, so a whitespace id would be read further down as naming a
-/// service-managed conversation, and an empty one would suppress the id the agent is configured with.
+/// An incoming blank id is normalized to null rather than passed along; see <see cref="ResolveRequestOptions"/> for
+/// what forwarding one would cost.
 /// </para>
 /// <para>
 /// Nothing is rewritten in place. Responses and updates belong to the inner client and callers rely on getting them
 /// back as they were, so an id is stamped or cleared on a copy and the inner instance travels on only when there is
 /// nothing to change. <see cref="ChatResponse"/> exposes no <c>Clone</c> of its own, so that copy is member-wise by
-/// hand, and the set of members it covers is pinned by a test that fails if the type gains or loses a settable member.
+/// hand, and the set of members it covers is pinned by <c>ChatResponse_SettableMembersMatchTheConversationIdStampCopySet</c>
+/// in <c>AIAgentChatClientTests</c>, which fails if the type gains or loses a settable member.
 /// </para>
 /// </remarks>
 internal sealed class AIAgentChatClient : IChatClient
@@ -284,9 +283,7 @@ internal sealed class AIAgentChatClient : IChatClient
 
         if (string.IsNullOrWhiteSpace(incomingId))
         {
-            // Blank names no conversation. Normalized to absent so that downstream blankness checks, which use
-            // IsNullOrEmpty rather than IsNullOrWhiteSpace, cannot read it as a service-managed conversation, and so
-            // the agent's own configured id still applies.
+            // Blank names no conversation, and forwarding it as it stands is not neutral; see the remarks above.
             return WithoutConversationId(options);
         }
 
@@ -354,8 +351,9 @@ internal sealed class AIAgentChatClient : IChatClient
     /// rather than duplicated so that everything reachable from the original stays reachable from the copy.
     /// </para>
     /// <para>
-    /// The set of members copied here is pinned by a test that fails if <see cref="ChatResponse"/> ever gains or loses
-    /// a settable member.
+    /// The set of members copied here is pinned by
+    /// <c>ChatResponse_SettableMembersMatchTheConversationIdStampCopySet</c> in <c>AIAgentChatClientTests</c>, which
+    /// fails if <see cref="ChatResponse"/> ever gains or loses a settable member.
     /// </para>
     /// </remarks>
     private static ChatResponse CloneWithConversationId(ChatResponse response, string? conversationId) =>
