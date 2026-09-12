@@ -20,8 +20,25 @@ namespace Microsoft.Agents.AI;
 /// <see cref="ChatClientBuilder"/> pipelines or <see cref="ChatClientExtensions"/> helpers.
 /// </para>
 /// <para>
-/// Without a session the adapter is stateless and behaves exactly like any other <see cref="IChatClient"/>: the caller
-/// owns the history and supplies it in full on every call, and nothing about the conversation id is interpreted.
+/// Without a session the adapter is stateless: the caller owns the history and supplies it in full on every call. Such
+/// an adapter reports no conversation id and accepts none. An id the agent's raw response or streamed update carries is
+/// cleared on a copy rather than forwarded, and an incoming non-blank <see cref="ChatOptions.ConversationId"/> is
+/// rejected with an <see cref="InvalidOperationException"/>; a blank one is read as absent and cleared before the agent
+/// sees it. A blank id is normalized to null on the way out as well, so the agent's own response instance survives the
+/// adapter only when it carries no conversation id at all.
+/// </para>
+/// <para>
+/// Clearing rather than forwarding is what keeps that symmetry usable. The case that makes it load-bearing is
+/// <see cref="ChatClientAgent"/>'s own session: turn this adapter back into an agent with
+/// <see cref="ChatClientExtensions.AsAIAgent(IChatClient, ChatClientAgentOptions?, Microsoft.Extensions.Logging.ILoggerFactory?, IServiceProvider?)"/>
+/// and that session records whatever conversation id the client below it reported, then sends it back on the next turn
+/// — straight into a rejection, were an id ever reported that this adapter does not accept. The same mechanism, a
+/// caller round-tripping a reported id, recurs throughout the stack, <see cref="FunctionInvokingChatClient"/> and
+/// <see cref="MessageInjectingChatClient"/> included. An id this adapter would reject on the way in must therefore
+/// never leave it on the way out. One consequence is that the
+/// <see cref="PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId"/> sentinel, which marks history
+/// as handled in process rather than naming a resumable conversation, is surfaced in neither mode: bound mode replaces
+/// it with the adapter's own id, and stateless mode clears it.
 /// </para>
 /// <para>
 /// With a bound session the history is stored by the session, which is what <see cref="ChatResponse.ConversationId"/>
@@ -117,11 +134,13 @@ internal sealed class AIAgentChatClient : IChatClient
         var response = (await this._agent.RunAsync(messages, this._session, ToAgentRunOptions(options), cancellationToken).ConfigureAwait(false))
             .AsChatResponse();
 
-        // An id exists exactly when a session is bound. Without one the caller owns the history, so the response is
-        // already conformant and is returned untouched, preserving the identity the inner client established.
-        return this._conversationId is { } conversationId
-            ? CloneWithConversationId(response, conversationId)
-            : response;
+        // The reported id is always this adapter's own: the single bound id, or none at all when stateless. Applying
+        // it means a copy, because the response belongs to the inner client — stamped in bound mode, cleared in
+        // stateless mode. Only when there is nothing to change is the instance returned as it stands, which preserves
+        // the identity the inner client established.
+        return this._conversationId is null && response.ConversationId is null
+            ? response
+            : CloneWithConversationId(response, this._conversationId);
     }
 
     /// <inheritdoc/>
@@ -152,8 +171,10 @@ internal sealed class AIAgentChatClient : IChatClient
     /// </para>
     /// <para>
     /// In bound mode every update is re-stamped with the adapter's single conversation id, so whatever the service
-    /// does with its own ids mid-stream cannot change what the caller is told. The stamp is applied to a copy, so the
-    /// inner client's own updates are left unmodified.
+    /// does with its own ids mid-stream cannot change what the caller is told. In stateless mode there is no id to
+    /// report, so an update that arrives carrying one has it cleared instead; an update that carries none is passed
+    /// through as it stands. Either way the change is applied to a copy, so the inner client's own updates are left
+    /// unmodified.
     /// </para>
     /// </remarks>
     private async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseCoreAsync(
@@ -170,16 +191,19 @@ internal sealed class AIAgentChatClient : IChatClient
             var converted = update.AsChatResponseUpdate();
             yieldedAnyUpdate = true;
 
-            if (this._conversationId is not { } conversationId)
+            if (this._conversationId is null && converted.ConversationId is null)
             {
+                // Nothing to change, so the converted instance travels on as it stands.
                 yield return converted;
-                continue;
             }
-
-            // The update belongs to the inner client, so the id is stamped on a copy rather than in place.
-            var stamped = converted.Clone();
-            stamped.ConversationId = conversationId;
-            yield return stamped;
+            else
+            {
+                // Bound mode stamps its single id, stateless mode clears whatever the update arrived with. Either way
+                // the change lands on a copy, because the update belongs to the inner client.
+                var restamped = converted.Clone();
+                restamped.ConversationId = this._conversationId;
+                yield return restamped;
+            }
         }
 
         if (!yieldedAnyUpdate && this._conversationId is { } trailingConversationId)
@@ -188,8 +212,9 @@ internal sealed class AIAgentChatClient : IChatClient
             // IChatClient contract means "no stored history" and invites the caller to resend everything into a
             // session that is already accumulating it. One id-only update repairs the aggregate.
             //
-            // This is reachable only on the zero-update stream: the branch above stamps a non-null id on every update
-            // whenever a session is bound, so any stream that yielded at all has already carried the id to the caller.
+            // This is reachable only on the zero-update stream: when a session is bound the loop above stamps the
+            // adapter's non-null id on every update it yields, so any stream that yielded at all has already carried
+            // the id to the caller.
             yield return new ChatResponseUpdate { ConversationId = trailingConversationId };
         }
     }
@@ -235,17 +260,22 @@ internal sealed class AIAgentChatClient : IChatClient
     /// </summary>
     /// <param name="options">The chat options supplied by the caller, or <see langword="null"/> if none were.</param>
     /// <returns>
-    /// The options to forward: <paramref name="options"/> itself in every case except the echoed adapter id, which is
-    /// stripped from a copy so that the caller's own instance is never mutated.
+    /// The options to forward: <paramref name="options"/> itself unless a conversation id has to be removed, which is
+    /// done on a copy so that the caller's own instance is never mutated. An id is removed when it is blank, which is
+    /// normalized to absent, and when it is the adapter's own id echoed back, which is stripped.
     /// </returns>
     /// <exception cref="InvalidOperationException">
-    /// A bound adapter was given a conversation id other than the one it reports.
+    /// A bound adapter was given a non-blank conversation id other than the one it reports, or a stateless adapter was
+    /// given a non-blank conversation id at all.
     /// </exception>
     /// <remarks>
     /// <para>
-    /// A bound adapter reports exactly one id and accepts exactly that id, so the check is a single comparison. The
-    /// session's own service conversation id is not accepted: it is never reported either, and honoring an id the
-    /// adapter does not hand out would let a caller steer the run by an identifier it was never given.
+    /// The rule either mode enforces is the same one: the adapter never accepts an id it did not hand out. A bound
+    /// adapter hands out exactly one, so the check is a single comparison; the session's own service conversation id is
+    /// not among them, since honoring an id the adapter never gave the caller would let the caller steer the run by an
+    /// identifier it was never shown. A stateless adapter hands out none, so there is nothing for it to accept and
+    /// every non-blank id is rejected. Forwarding one instead would let an untrusted caller name a service-side
+    /// conversation of its choosing and have the agent read and extend it under the host's credentials.
     /// </para>
     /// <para>
     /// The rejection message deliberately names only the caller's own value. This adapter is expected to sit behind
@@ -253,24 +283,47 @@ internal sealed class AIAgentChatClient : IChatClient
     /// them by probing.
     /// </para>
     /// <para>
-    /// A blank id is read as an absent one. Transports routinely materialize an omitted field as an empty string, and
-    /// the id this adapter hands out is never blank, so treating blank as unknown would reject the caller for
-    /// following the very advice the rejection gives.
+    /// A blank id is read as an absent one and cleared before the agent sees it. Transports routinely materialize an
+    /// omitted field as an empty string, and the id this adapter hands out is never blank, so treating blank as
+    /// unknown would reject the caller for following the very advice the rejection gives. Forwarding it as it stands
+    /// would be no better: downstream blankness checks use <see cref="string.IsNullOrEmpty(string?)"/> rather than
+    /// <see cref="string.IsNullOrWhiteSpace(string?)"/>, so a whitespace id would be read there as naming a
+    /// service-managed conversation, and an empty one would suppress the id the agent is configured with.
     /// </para>
     /// <para>
-    /// A stateless adapter interprets nothing: the id, like every other option, is the caller's to set and is passed
-    /// through untouched.
+    /// To address a specific service conversation, bind a session obtained from
+    /// <see cref="ChatClientAgent.CreateSessionAsync(string, CancellationToken)"/>, which is the one route by which a
+    /// conversation id legitimately enters this adapter.
     /// </para>
     /// </remarks>
     private ChatOptions? ResolveRequestOptions(ChatOptions? options)
     {
-        // No id of this adapter's own means no session and so nothing to interpret. A blank incoming id names no
-        // conversation and is treated exactly as an absent one: reuse the bound session.
-        if (this._conversationId is not { } conversationId ||
-            options?.ConversationId is not { } incomingId ||
-            string.IsNullOrWhiteSpace(incomingId))
+        if (options?.ConversationId is not { } incomingId)
         {
             return options;
+        }
+
+        if (string.IsNullOrWhiteSpace(incomingId))
+        {
+            // Blank names no conversation. Normalized to absent on a copy so that downstream blankness checks, which
+            // use IsNullOrEmpty rather than IsNullOrWhiteSpace, cannot read it as a service-managed conversation, and
+            // so the agent's own configured id still applies.
+            var normalized = options.Clone();
+            normalized.ConversationId = null;
+            return normalized;
+        }
+
+        if (this._conversationId is not { } conversationId)
+        {
+            // Stateless: this adapter hands out no id, so there is none it can take back. The message names the
+            // caller's own value and the route that does accept an id; unlike the bound rejection below there is
+            // nothing here to withhold, because this adapter accepts no id at all.
+            throw new InvalidOperationException(
+                $"The supplied {nameof(ChatOptions)}.{nameof(ChatOptions.ConversationId)} '{incomingId}' cannot be used: this " +
+                $"{nameof(AIAgentExtensions.AsIChatClient)} client is not bound to a session, so it has no conversation to continue and does " +
+                "not accept a conversation id. Send the full history on every call, or bind a session with " +
+                $"{nameof(AIAgentExtensions.AsIChatClient)}(agent, session); to continue an existing service conversation, bind a session " +
+                $"obtained from {nameof(ChatClientAgent)}.{nameof(ChatClientAgent.CreateSessionAsync)}(conversationId).");
         }
 
         if (incomingId == conversationId)
@@ -295,7 +348,10 @@ internal sealed class AIAgentChatClient : IChatClient
     /// Creates a copy of <paramref name="response"/> carrying the specified conversation id.
     /// </summary>
     /// <param name="response">The response to copy.</param>
-    /// <param name="conversationId">The conversation id to report on the copy.</param>
+    /// <param name="conversationId">
+    /// The conversation id to report on the copy, or <see langword="null"/> to report none, which is what a stateless
+    /// adapter does with an id the agent's raw response carried.
+    /// </param>
     /// <returns>A new <see cref="ChatResponse"/> equivalent to <paramref name="response"/> apart from its conversation id.</returns>
     /// <remarks>
     /// <para>
@@ -309,7 +365,7 @@ internal sealed class AIAgentChatClient : IChatClient
     /// a settable member.
     /// </para>
     /// </remarks>
-    private static ChatResponse CloneWithConversationId(ChatResponse response, string conversationId) =>
+    private static ChatResponse CloneWithConversationId(ChatResponse response, string? conversationId) =>
         new()
         {
             AdditionalProperties = response.AdditionalProperties,
