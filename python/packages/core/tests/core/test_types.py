@@ -1970,6 +1970,29 @@ def test_function_call_merge_falls_back_to_trailing_item_without_call_id():
     assert fcs[0].arguments == "{}"
 
 
+def test_function_call_tagged_chunk_does_not_absorb_into_untagged_trailing_call():
+    """A tagged chunk with no matching in-progress call must not merge into an untagged one.
+
+    Content.__add__ only rejects a merge when *both* sides carry a call_id and they
+    differ, so an untagged trailing item (call_id falsy) would otherwise silently
+    accept a chunk tagged with a brand-new call_id, adopting that id and
+    concatenating unrelated arguments. The trailing-item fallback must be reserved
+    for chunks that carry no call_id at all.
+    """
+    untagged = Content("function_call", call_id=None, name="a", arguments="partial-a")
+    resp = ChatResponse.from_updates([
+        ChatResponseUpdate(contents=[untagged]),
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_new", name="b", arguments="{}")]),
+    ])
+
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 2
+    assert fcs[0].call_id is None
+    assert fcs[0].arguments == "partial-a"
+    assert fcs[1].call_id == "call_new"
+    assert fcs[1].arguments == "{}"
+
+
 # region Role & FinishReason basics
 
 

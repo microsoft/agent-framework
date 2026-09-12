@@ -2090,6 +2090,10 @@ def _merge_function_call_content(message: Message, content: Content) -> None:
                 except (AdditionItemMismatch, ContentError):
                     break
                 return
+        # A tagged chunk that matches no in-progress call is a new call, not a
+        # continuation - an untagged trailing item would silently absorb it otherwise.
+        message.contents.append(content)
+        return
     if message.contents and message.contents[-1].type == "function_call":
         try:
             message.contents[-1] += content
