@@ -72,25 +72,69 @@ def _validate_agent_executor_checkpoint_state(state: Mapping[str, Any]) -> None:
             f"AgentExecutor checkpoint state must be a mapping, got {type(state).__name__}."
         )
 
-    list_keys = ("cache", "full_conversation", "pending_responses_to_agent")
-    for key in list_keys:
-        if key in state and state[key] is not None and not isinstance(state[key], list):
+    message_list_keys = ("cache", "full_conversation")
+    for key in message_list_keys:
+        if key not in state or state[key] is None:
+            continue
+        value = state[key]
+        if not isinstance(value, list):
             raise WorkflowCheckpointException(
-                f"AgentExecutor checkpoint field '{key}' must be a list, got {type(state[key]).__name__}."
+                f"AgentExecutor checkpoint field '{key}' must be a list, got {type(value).__name__}."
             )
+        for index, item in enumerate(value):
+            if not isinstance(item, Message):
+                raise WorkflowCheckpointException(
+                    f"AgentExecutor checkpoint field '{key}'[{index}] must be Message, "
+                    f"got {type(item).__name__}."
+                )
+
+    if "pending_responses_to_agent" in state and state["pending_responses_to_agent"] is not None:
+        responses = state["pending_responses_to_agent"]
+        if not isinstance(responses, list):
+            raise WorkflowCheckpointException(
+                "AgentExecutor checkpoint field 'pending_responses_to_agent' must be a list, "
+                f"got {type(responses).__name__}."
+            )
+        for index, item in enumerate(responses):
+            if not isinstance(item, Content):
+                raise WorkflowCheckpointException(
+                    "AgentExecutor checkpoint field "
+                    f"'pending_responses_to_agent'[{index}] must be Content, "
+                    f"got {type(item).__name__}."
+                )
 
     if "pending_agent_requests" in state and state["pending_agent_requests"] is not None:
-        if not isinstance(state["pending_agent_requests"], dict):
+        pending = state["pending_agent_requests"]
+        if not isinstance(pending, dict):
             raise WorkflowCheckpointException(
                 "AgentExecutor checkpoint field 'pending_agent_requests' must be a dict, "
-                f"got {type(state['pending_agent_requests']).__name__}."
+                f"got {type(pending).__name__}."
             )
+        for request_id, content in pending.items():
+            if not isinstance(request_id, str):
+                raise WorkflowCheckpointException(
+                    "AgentExecutor checkpoint field 'pending_agent_requests' keys must be str, "
+                    f"got {type(request_id).__name__}."
+                )
+            if not isinstance(content, Content):
+                raise WorkflowCheckpointException(
+                    "AgentExecutor checkpoint field "
+                    f"'pending_agent_requests[{request_id!r}]' must be Content, "
+                    f"got {type(content).__name__}."
+                )
 
     if "agent_session" in state and state["agent_session"] is not None:
-        if not isinstance(state["agent_session"], dict):
+        session = state["agent_session"]
+        if not isinstance(session, dict):
             raise WorkflowCheckpointException(
                 "AgentExecutor checkpoint field 'agent_session' must be a dict, "
-                f"got {type(state['agent_session']).__name__}."
+                f"got {type(session).__name__}."
+            )
+        session_id = session.get("session_id")
+        if not isinstance(session_id, str):
+            raise WorkflowCheckpointException(
+                "AgentExecutor checkpoint field 'agent_session.session_id' must be a str, "
+                f"got {type(session_id).__name__}."
             )
 
 
