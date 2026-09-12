@@ -131,6 +131,20 @@ class TestExecutorFutureAnnotations:
         assert spec["output_types"] == [str]
         assert spec["workflow_output_types"] == [bool]
 
+    def test_response_handler_unresolvable_annotation_raises(self):
+        """Test that an unresolvable response-handler annotation raises ValueError."""
+        with pytest.raises(ValueError, match="Response handler parameter 'ctx' must be annotated as"):
+
+            class BadResponseHandler(Executor):  # pyright: ignore[reportUnusedClass]
+                @response_handler  # pyright: ignore[reportUnknownArgumentType]
+                async def handle_response(
+                    self,
+                    original_request: NonExistentType,  # type: ignore[name-defined]  # noqa: F821
+                    response: int,
+                    ctx: WorkflowContext[MyTypeA, MyTypeB],
+                ) -> None:
+                    pass
+
     def test_handler_unresolvable_annotation_raises(self):
         """Test that an unresolvable forward-reference annotation raises ValueError.
 
