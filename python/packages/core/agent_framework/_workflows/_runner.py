@@ -128,6 +128,9 @@ class RunnerImpl:
             # Run iteration concurrently with live event streaming: we poll
             # for new events while the iteration coroutine progresses.
             iteration_task = asyncio.create_task(self._run_iteration())
+            # Track commit so cancel/abort cleanup spans the whole superstep
+            # (polling → await iteration → drain → commit), not only the poll loop (#7859).
+            committed = False
             try:
                 while not iteration_task.done():
                     try:
@@ -137,42 +140,51 @@ class RunnerImpl:
                     except asyncio.TimeoutError:
                         # Periodically continue to let iteration advance
                         continue
-            except asyncio.CancelledError:
-                # Propagate cancellation to the iteration task to avoid orphaned work
-                iteration_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await iteration_task
-                raise
 
-            # Propagate errors from iteration, but first surface any pending events
-            try:
-                await iteration_task
-            except Exception:
-                # Make sure failure-related events (like ExecutorFailedEvent) are surfaced
+                # Propagate errors from iteration, but first surface any pending events
+                try:
+                    await iteration_task
+                except Exception:
+                    # Discard staged writes immediately — before any await/yield — so a
+                    # streaming consumer that stops after executor_failed cannot leave
+                    # pending state for a later run to commit (#7859).
+                    self._state.discard()
+                    if await self._ctx.has_events():
+                        for event in await self._ctx.drain_events():
+                            yield event
+                    raise
+
+                self._iteration += 1
+
+                # Drain any straggler events emitted at tail end
                 if await self._ctx.has_events():
                     for event in await self._ctx.drain_events():
                         yield event
+
+                logger.info(f"Completed superstep {self._iteration}")
+
+                # Commit pending state changes at superstep boundary
+                self._state.commit()
+                committed = True
+
+                # Create checkpoint after each superstep iteration
+                await self.create_checkpoint_if_enabled()
+
+                yield WorkflowEvent.superstep_completed(iteration=self._iteration)
+
+                # Check for convergence: no more messages to process
+                if not await self._ctx.has_messages():
+                    break
+            except BaseException:
+                # Cancel during poll/drain, or an iteration task that ends cancelled,
+                # must still abandon staged writes before the commit boundary (#7859).
+                if not iteration_task.done():
+                    iteration_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await iteration_task
+                if not committed:
+                    self._state.discard()
                 raise
-            self._iteration += 1
-
-            # Drain any straggler events emitted at tail end
-            if await self._ctx.has_events():
-                for event in await self._ctx.drain_events():
-                    yield event
-
-            logger.info(f"Completed superstep {self._iteration}")
-
-            # Commit pending state changes at superstep boundary
-            self._state.commit()
-
-            # Create checkpoint after each superstep iteration
-            await self.create_checkpoint_if_enabled()
-
-            yield WorkflowEvent.superstep_completed(iteration=self._iteration)
-
-            # Check for convergence: no more messages to process
-            if not await self._ctx.has_messages():
-                break
 
         logger.info(f"Workflow completed after {self._iteration} supersteps")
 

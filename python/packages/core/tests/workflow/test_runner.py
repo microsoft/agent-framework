@@ -1496,3 +1496,71 @@ async def test_runner_drains_straggler_events_at_iteration_end():
     output_events = [e for e in events if e.type == "output"]
     # We should have output events from both executors
     assert len(output_events) >= 2
+
+@pytest.mark.asyncio
+async def test_failed_superstep_discards_pending_state_before_next_run() -> None:
+    """Pending State writes from a failed superstep must not leak into a later run (#7859)."""
+    from agent_framework import WorkflowBuilder
+
+    @dataclass
+    class Msg:
+        fail: bool
+
+    class FlakyExecutor(Executor):
+        @handler
+        async def run(self, message: Msg, ctx: WorkflowContext) -> None:
+            if message.fail:
+                ctx.set_state("secret", "leaked-from-failed-run")
+                raise RuntimeError("simulated transient failure")
+            await ctx.yield_output("ok")  # type: ignore[arg-type]
+
+    workflow = WorkflowBuilder(start_executor=FlakyExecutor(id="flaky")).build()
+
+    with pytest.raises(RuntimeError, match="simulated transient failure"):
+        async for _ in workflow.run(Msg(fail=True), stream=True):
+            pass
+
+    async for _ in workflow.run(Msg(fail=False), stream=True):
+        pass
+
+    committed = workflow._runner.state.export_state()  # pyright: ignore[reportPrivateUsage]
+    assert "secret" not in committed
+
+
+@pytest.mark.asyncio
+async def test_cancelled_superstep_discards_pending_state_before_next_run() -> None:
+    """Pending State writes from a cancelled superstep must not leak into a later run (#7859)."""
+    from agent_framework import WorkflowBuilder
+
+    @dataclass
+    class Msg:
+        cancel: bool
+
+    started = asyncio.Event()
+
+    class StagingThenBlockingExecutor(Executor):
+        @handler
+        async def run(self, message: Msg, ctx: WorkflowContext) -> None:
+            if message.cancel:
+                ctx.set_state("secret", "leaked-from-cancelled-run")
+                started.set()
+                await asyncio.sleep(3600)
+            await ctx.yield_output("ok")  # type: ignore[arg-type]
+
+    workflow = WorkflowBuilder(start_executor=StagingThenBlockingExecutor(id="blocker")).build()
+
+    async def run_and_cancel() -> None:
+        async for _ in workflow.run(Msg(cancel=True), stream=True):
+            pass
+
+    task = asyncio.create_task(run_and_cancel())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    async for _ in workflow.run(Msg(cancel=False), stream=True):
+        pass
+
+    committed = workflow._runner.state.export_state()  # pyright: ignore[reportPrivateUsage]
+    assert "secret" not in committed
