@@ -73,6 +73,7 @@ public partial class AIAgentChatClientTests
         using var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
 
         // Assert
+        // The assertion that matters is that the Act did not throw: a GetService request would have.
         Assert.NotNull(chatClient);
     }
 
@@ -86,6 +87,7 @@ public partial class AIAgentChatClientTests
         using var chatClient = agent.AsIChatClient();
 
         // Assert
+        // The assertion that matters is that the Act did not throw: without the opt-in, a rejected agent would have.
         Assert.NotNull(chatClient);
     }
 
@@ -105,6 +107,7 @@ public partial class AIAgentChatClientTests
         using var chatClient = agent.AsIChatClient();
 
         // Assert
+        // The assertion that matters is that the Act did not throw: without the opt-in, a rejected agent would have.
         Assert.NotNull(chatClient);
     }
 
@@ -1242,6 +1245,40 @@ public partial class AIAgentChatClientTests
         Assert.Equal(conversationId, chatOptions.ConversationId);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task GetStreamingResponseAsync_WithoutSessionAndBlankConversationId_NormalizesItToAbsentOnACloneAsync(string conversationId)
+    {
+        // Arrange
+        // Both entry points resolve options through the same path, so the streaming half of the matrix must agree.
+        AgentRunOptions? capturedOptions = null;
+
+        var agent = new TestAIAgent
+        {
+            RunStreamingAsyncFunc = (messages, session, options, cancellationToken) =>
+            {
+                capturedOptions = options;
+                return ToAsyncEnumerableAsync<AgentResponseUpdate>([new(ChatRole.Assistant, "ok")], cancellationToken);
+            }
+        };
+
+        using var chatClient = agent.AsIChatClient(allowNonChatClientAgents: true);
+        var chatOptions = new ChatOptions { ConversationId = conversationId };
+
+        // Act
+        await foreach (var _ in chatClient.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Hi")], chatOptions))
+        {
+            // Enumerate to completion.
+        }
+
+        // Assert
+        var forwarded = Assert.IsType<ChatClientAgentRunOptions>(capturedOptions).ChatOptions;
+        Assert.NotSame(chatOptions, forwarded);
+        Assert.Null(forwarded!.ConversationId);
+        Assert.Equal(conversationId, chatOptions.ConversationId);
+    }
+
     [Fact]
     public async Task GetResponseAsync_WithoutSessionAndRawConversationId_ReturnsCloneWithoutConversationIdAsync()
     {
@@ -1825,6 +1862,47 @@ public partial class AIAgentChatClientTests
 
         // Assert
         Assert.Null(outerSession.GetService<ChatClientAgentSession>()!.ConversationId);
+    }
+
+    [Fact]
+    public async Task AsAIAgent_OverBoundClient_ContinuesTheInnerSessionAcrossTurnsAsync()
+    {
+        // Arrange
+        // The bound half of the round trip. Here the adapter does report an id, so the outer session switches to
+        // service-managed mode on it and stops keeping a transcript of its own: the inner bound session supplies the
+        // history instead, which is the division of labour a reported conversation id is meant to signal.
+        List<int> innerMessageCounts = [];
+
+        var mockChatClient = new Mock<IChatClient>();
+        mockChatClient
+            .Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((messages, _, _) => innerMessageCounts.Add(messages.Count()))
+            .ReturnsAsync(() => new ChatResponse(new ChatMessage(ChatRole.Assistant, "Response from the service.")));
+
+        var innerAgent = new ChatClientAgent(mockChatClient.Object);
+        var innerSession = await innerAgent.CreateSessionAsync();
+
+        using var chatClient = innerAgent.AsIChatClient(innerSession, "adapter-conversation");
+
+        var outerAgent = chatClient.AsAIAgent();
+        var outerSession = await outerAgent.CreateSessionAsync();
+
+        // Act
+        await outerAgent.RunAsync("Hi", outerSession);
+        await outerAgent.RunAsync("Again", outerSession);
+
+        // Assert
+        Assert.Equal("adapter-conversation", outerSession.GetService<ChatClientAgentSession>()!.ConversationId);
+
+        // Turn 1 sent one user message. Turn 2 reached the service with three — the two the inner bound session had
+        // accumulated plus one new — which is only possible if the outer agent sent a single new message rather than
+        // resending its own transcript on top of the session's.
+        Assert.Equal(2, innerMessageCounts.Count);
+        Assert.Equal(1, innerMessageCounts[0]);
+        Assert.Equal(3, innerMessageCounts[1]);
     }
 
     [Fact]

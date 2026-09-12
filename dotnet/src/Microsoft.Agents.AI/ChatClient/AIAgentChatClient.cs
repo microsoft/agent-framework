@@ -17,61 +17,40 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// This adapter is the inverse of <see cref="ChatClientAgent"/>: rather than building an agent on top of a chat client,
 /// it exposes an existing agent to any component that consumes the <see cref="IChatClient"/> abstraction, such as
-/// <see cref="ChatClientBuilder"/> pipelines or <see cref="ChatClientExtensions"/> helpers.
+/// <see cref="ChatClientBuilder"/> pipelines or <see cref="ChatClientExtensions"/> helpers. The contract it presents
+/// — what it reports, what it accepts and what it rejects, in both stateless and session-bound mode — is documented on
+/// <see cref="AIAgentExtensions.AsIChatClient"/>, the only entry point through which this type is constructed. What
+/// follows is the reasoning behind the implementation rather than a second statement of that contract.
 /// </para>
 /// <para>
-/// Without a session the adapter is stateless: the caller owns the history and supplies it in full on every call. Such
-/// an adapter reports no conversation id and accepts none. An id the agent's raw response or streamed update carries is
-/// cleared on a copy rather than forwarded, and an incoming non-blank <see cref="ChatOptions.ConversationId"/> is
-/// rejected with an <see cref="InvalidOperationException"/>; a blank one is read as absent and cleared before the agent
-/// sees it. A blank id is normalized to null on the way out as well, so the agent's own response instance survives the
-/// adapter only when it carries no conversation id at all.
+/// The invariant everything else serves is that every conversation id this adapter reports is one it accepts back. A
+/// bound adapter therefore reports a single fixed id rather than anything derived from the response, the session or the
+/// service, and mints it per instance rather than taking a shared constant, so an id handed out by an adapter bound to
+/// one session cannot be replayed against an adapter bound to another.
 /// </para>
 /// <para>
-/// Clearing rather than forwarding is what keeps that symmetry usable. The case that makes it load-bearing is
-/// <see cref="ChatClientAgent"/>'s own session: turn this adapter back into an agent with
+/// The same invariant is why a stateless adapter clears ids instead of forwarding them. The case that makes that
+/// load-bearing is <see cref="ChatClientAgent"/>'s own session: turn this adapter back into an agent with
 /// <see cref="ChatClientExtensions.AsAIAgent(IChatClient, ChatClientAgentOptions?, Microsoft.Extensions.Logging.ILoggerFactory?, IServiceProvider?)"/>
 /// and that session records whatever conversation id the client below it reported, then sends it back on the next turn
 /// — straight into a rejection, were an id ever reported that this adapter does not accept. The same mechanism, a
 /// caller round-tripping a reported id, recurs throughout the stack, <see cref="FunctionInvokingChatClient"/> and
-/// <see cref="MessageInjectingChatClient"/> included. An id this adapter would reject on the way in must therefore
-/// never leave it on the way out. One consequence is that the
+/// <see cref="MessageInjectingChatClient"/> included. One consequence is that the
 /// <see cref="PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId"/> sentinel, which marks history
 /// as handled in process rather than naming a resumable conversation, is surfaced in neither mode: bound mode replaces
 /// it with the adapter's own id, and stateless mode clears it.
 /// </para>
 /// <para>
-/// With a bound session the history is stored by the session, which is what <see cref="ChatResponse.ConversationId"/>
-/// exists to signal. The adapter therefore reports a conversation id on every response so that a protocol-conformant
-/// caller sends only the new messages on subsequent turns instead of resending the whole history into a session that
-/// is already accumulating it. That id is a single constant for the lifetime of the adapter: the value the caller
-/// supplied, or one generated per instance. It never varies with the response, the session, or the service.
+/// An incoming blank id is normalized to null rather than passed along. Forwarding it as it stands would be no better
+/// than rejecting it: downstream blankness checks use <see cref="string.IsNullOrEmpty(string?)"/> rather than
+/// <see cref="string.IsNullOrWhiteSpace(string?)"/>, so a whitespace id would be read further down as naming a
+/// service-managed conversation, and an empty one would suppress the id the agent is configured with.
 /// </para>
 /// <para>
-/// Because the reported id never changes, the promise that every id it reports is an id it accepts back holds
-/// trivially. The id is per instance rather than a shared constant, so an id minted by one adapter cannot be replayed
-/// against another. When the caller echoes it back it is stripped before the agent sees it, which restores the
-/// as-if-absent semantics of the first turn; a fixed bound session cannot fork, so an absent id means "continue this
-/// conversation" rather than "start a new one".
-/// </para>
-/// <para>
-/// Service-side conversation ids are not surfaced in bound mode at all. Responses and streamed updates are copied and
-/// re-stamped, so an id minted by the service is replaced rather than forwarded, and the session's own id is not
-/// reported either. The session tracks the service conversation internally; callers that need to address a specific
-/// service conversation should bind a session obtained from
-/// <see cref="ChatClientAgent.CreateSessionAsync(string, CancellationToken)"/>. Consequently the session's service
-/// conversation id is not an accepted input either; only the id this adapter hands out is.
-/// </para>
-/// <para>
-/// A bound run that yields no updates at all ends with one final update carrying nothing but the conversation id, so
-/// that aggregating the stream still reports stored history rather than an absent id.
-/// </para>
-/// <para>
-/// A session-bound adapter supports one in-flight request at a time. Concurrent calls over the same bound session
-/// race on the session's history state, which is not synchronized, so the caller is responsible for serializing them.
-/// </para>
-/// <para>
-/// The adapter does not own the lifetime of the wrapped agent or session, so <see cref="Dispose"/> is a no-op.
+/// Nothing is rewritten in place. Responses and updates belong to the inner client and callers rely on getting them
+/// back as they were, so an id is stamped or cleared on a copy and the inner instance travels on only when there is
+/// nothing to change. <see cref="ChatResponse"/> exposes no <c>Clone</c> of its own, so that copy is member-wise by
+/// hand, and the set of members it covers is pinned by a test that fails if the type gains or loses a settable member.
 /// </para>
 /// </remarks>
 internal sealed class AIAgentChatClient : IChatClient
@@ -305,12 +284,10 @@ internal sealed class AIAgentChatClient : IChatClient
 
         if (string.IsNullOrWhiteSpace(incomingId))
         {
-            // Blank names no conversation. Normalized to absent on a copy so that downstream blankness checks, which
-            // use IsNullOrEmpty rather than IsNullOrWhiteSpace, cannot read it as a service-managed conversation, and
-            // so the agent's own configured id still applies.
-            var normalized = options.Clone();
-            normalized.ConversationId = null;
-            return normalized;
+            // Blank names no conversation. Normalized to absent so that downstream blankness checks, which use
+            // IsNullOrEmpty rather than IsNullOrWhiteSpace, cannot read it as a service-managed conversation, and so
+            // the agent's own configured id still applies.
+            return WithoutConversationId(options);
         }
 
         if (this._conversationId is not { } conversationId)
@@ -322,7 +299,7 @@ internal sealed class AIAgentChatClient : IChatClient
                 $"The supplied {nameof(ChatOptions)}.{nameof(ChatOptions.ConversationId)} '{incomingId}' cannot be used: this " +
                 $"{nameof(AIAgentExtensions.AsIChatClient)} client is not bound to a session, so it has no conversation to continue and does " +
                 "not accept a conversation id. Send the full history on every call, or bind a session with " +
-                $"{nameof(AIAgentExtensions.AsIChatClient)}(agent, session); to continue an existing service conversation, bind a session " +
+                $"agent.{nameof(AIAgentExtensions.AsIChatClient)}(session); to continue an existing service conversation, bind a session " +
                 $"obtained from {nameof(ChatClientAgent)}.{nameof(ChatClientAgent.CreateSessionAsync)}(conversationId).");
         }
 
@@ -330,9 +307,7 @@ internal sealed class AIAgentChatClient : IChatClient
         {
             // The caller is echoing the id this adapter reported. Removing it restores the as-if-absent semantics of
             // the first turn, which the bound session interprets as "continue".
-            var stripped = options.Clone();
-            stripped.ConversationId = null;
-            return stripped;
+            return WithoutConversationId(options);
         }
 
         // Only the caller's own value is named. The accepted id is a live conversation identifier and this message may
@@ -342,6 +317,24 @@ internal sealed class AIAgentChatClient : IChatClient
             $"{nameof(AIAgentExtensions.AsIChatClient)} client. Send back the conversation id from the most recent response, or omit it to " +
             "continue the bound conversation. To converse over a different existing service conversation, bind the client to a session " +
             $"obtained from {nameof(ChatClientAgent)}.{nameof(ChatClientAgent.CreateSessionAsync)}(conversationId).");
+    }
+
+    /// <summary>
+    /// Creates a copy of <paramref name="options"/> carrying no conversation id.
+    /// </summary>
+    /// <param name="options">The options to copy.</param>
+    /// <returns>
+    /// A copy of <paramref name="options"/> whose <see cref="ChatOptions.ConversationId"/> is <see langword="null"/>.
+    /// </returns>
+    /// <remarks>
+    /// The caller owns the instance it supplied and may reuse it across calls, so an id is removed on a copy rather
+    /// than in place.
+    /// </remarks>
+    private static ChatOptions WithoutConversationId(ChatOptions options)
+    {
+        var copy = options.Clone();
+        copy.ConversationId = null;
+        return copy;
     }
 
     /// <summary>

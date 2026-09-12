@@ -98,7 +98,11 @@ public static partial class AIAgentExtensions
     /// <param name="session">
     /// Optional <see cref="AgentSession"/> to use for every request made through the returned client. If not provided,
     /// each request is made without a session and the caller is responsible for supplying the conversation history.
-    /// The agent would also not be able to retain any state or memories across invocations.
+    /// The agent is not given a session to accumulate history in, so nothing the returned client carries survives a
+    /// call. State the agent holds independently of a session still persists: an agent configured with a
+    /// <see cref="ChatOptions.ConversationId"/> keeps extending that service conversation on every call, and an
+    /// <see cref="AIContextProvider"/> scoped to something other than the session, such as a user or application id,
+    /// still reads and writes its store.
     /// </param>
     /// <param name="conversationId">
     /// Optional conversation id for the returned client to report on its responses, representing the active session.
@@ -157,11 +161,12 @@ public static partial class AIAgentExtensions
     /// the instance identity the agent established survives the adapter; a non-blank
     /// <see cref="ChatOptions.ConversationId"/> supplied by the caller is rejected with an
     /// <see cref="InvalidOperationException"/>, and a blank one is treated as absent and cleared before the agent sees
-    /// it. Only the reported id is withheld: the provider-native payload behind
-    /// <see cref="ChatResponse.RawRepresentation"/> and the services reachable through
-    /// <see cref="IChatClient.GetService"/> are left exactly as the agent produced them, being in-process concerns
-    /// rather than anything a host serializes back to a caller. The trade-off is explicit: a session-less client cannot
-    /// continue a service conversation by id. To do that, bind a session obtained from
+    /// it. Only the conversation id is withheld; every other member, including
+    /// <see cref="ChatResponse.RawRepresentation"/>, <see cref="ChatResponse.ResponseId"/> and
+    /// <see cref="ChatResponse.AdditionalProperties"/>, passes through as the agent produced it, and a host that
+    /// serializes a response to an untrusted caller remains responsible for what the provider put there. The trade-off
+    /// is explicit: a session-less client cannot continue a service conversation by id. To do that, bind a session
+    /// obtained from
     /// <see cref="ChatClientAgent.CreateSessionAsync(string, CancellationToken)"/>.
     /// </para>
     /// <para>
@@ -197,11 +202,9 @@ public static partial class AIAgentExtensions
     /// forwarded, and the <paramref name="session"/>'s own id is not reported either. The service's id is consequently
     /// not accepted as input: only the id this client hands out is. The <paramref name="session"/> tracks the service
     /// conversation internally, so callers that need to address a specific service conversation should bind a session
-    /// obtained from <see cref="ChatClientAgent.CreateSessionAsync(string, CancellationToken)"/>. As in the stateless
-    /// case this concerns the reported id alone: the provider-native payload behind
-    /// <see cref="ChatResponse.RawRepresentation"/> and the services reachable through
-    /// <see cref="IChatClient.GetService"/> are unchanged, being in-process concerns rather than anything a host
-    /// serializes back to a caller.
+    /// obtained from <see cref="ChatClientAgent.CreateSessionAsync(string, CancellationToken)"/>. Here too only the
+    /// conversation id is withheld: as in the stateless case every other member of the response passes through as the
+    /// agent produced it.
     /// </para>
     /// <para>
     /// Any <see cref="ChatOptions"/> supplied to the returned client are passed to the agent as
@@ -238,9 +241,11 @@ public static partial class AIAgentExtensions
     /// <para>
     /// Calling this method on a <see cref="ChatClientAgent"/> returns an adapter over the full agent pipeline, including
     /// its instructions, tools, chat history management, and any middleware. An unkeyed
-    /// <see cref="IChatClient.GetService"/> request for <see cref="IChatClient"/> returns the adapter itself, not the
-    /// agent's inner client. Keyed requests, and requests for other service types, are forwarded to
-    /// <see cref="AIAgent.GetService(Type, object?)"/> and may therefore return the inner client.
+    /// <see cref="IChatClient.GetService"/> request for any type the adapter itself satisfies, <see cref="IChatClient"/>
+    /// among them, returns the adapter rather than the agent's inner client. Every other request is forwarded to
+    /// <see cref="AIAgent.GetService(Type, object?)"/> and may therefore return the inner client. Should the agent
+    /// answer nothing, an unkeyed request for <see cref="ChatClientMetadata"/> is satisfied with metadata synthesized
+    /// from the agent's <see cref="AIAgentMetadata"/>.
     /// </para>
     /// <para>
     /// The returned client does not own the lifetime of the <paramref name="agent"/> or the <paramref name="session"/>;
@@ -285,7 +290,7 @@ public static partial class AIAgentExtensions
         {
             throw new InvalidOperationException(
                 $"The agent of type '{agent.GetType().Name}' is not a {nameof(ChatClientAgent)} and does not expose one through {nameof(AIAgent.GetService)}, " +
-                $"so every {nameof(ChatOptions)} member except {nameof(ChatOptions)}.{nameof(ChatOptions.ResponseFormat)} would be silently ignored by the returned {nameof(IChatClient)}. " +
+                $"so every {nameof(ChatOptions)} member except {nameof(ChatOptions)}.{nameof(ChatOptions.ResponseFormat)} is liable to be silently ignored by the returned {nameof(IChatClient)}. " +
                 $"To wrap this agent anyway, accepting the limitations documented on {nameof(AsIChatClient)}, pass {nameof(allowNonChatClientAgents)}: true.");
         }
 
