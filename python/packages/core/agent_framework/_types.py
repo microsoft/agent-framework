@@ -2032,12 +2032,8 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
                 logger.warning(f"Skipping unknown content type or invalid content: {exc}")
                 continue
         match content_type:
-            # mypy doesn't narrow type based on match/case, but we know these are FunctionCallContents
-            case "function_call" if message.contents and message.contents[-1].type == "function_call":
-                try:
-                    message.contents[-1] += content
-                except (AdditionItemMismatch, ContentError):
-                    message.contents.append(content)
+            case "function_call":
+                _merge_function_call_content(message, content)
             case "usage":
                 if response.usage_details is None:
                     response.usage_details = UsageDetails()
@@ -2073,6 +2069,34 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
     ):
         response.finish_reason = update.finish_reason
     response.continuation_token = update.continuation_token
+
+
+def _merge_function_call_content(message: Message, content: Content) -> None:
+    """Merge a streamed function_call chunk into the in-progress call it belongs to.
+
+    Providers can stream multiple tool calls in parallel, so the next function_call
+    chunk is not necessarily a continuation of the most recently appended one; a chunk
+    with a call_id is matched against existing contents by that id first. Chunks with
+    no call_id (continuation deltas some providers only stamp on the first chunk) fall
+    back to merging with the trailing function_call item, preserving prior behavior.
+    """
+    call_id = getattr(content, "call_id", None)
+    if call_id:
+        for index in range(len(message.contents) - 1, -1, -1):
+            existing = message.contents[index]
+            if existing.type == "function_call" and getattr(existing, "call_id", None) == call_id:
+                try:
+                    message.contents[index] = existing + content
+                except (AdditionItemMismatch, ContentError):
+                    break
+                return
+    if message.contents and message.contents[-1].type == "function_call":
+        try:
+            message.contents[-1] += content
+            return
+        except (AdditionItemMismatch, ContentError):
+            pass
+    message.contents.append(content)
 
 
 def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "text_reasoning"]) -> None:
