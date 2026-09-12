@@ -2,6 +2,7 @@
 
 using System;
 using System.IO;
+using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
@@ -102,6 +103,24 @@ public static class DeclarativeWorkflowBuilder
         if (rootElement is not AdaptiveDialog workflowElement)
         {
             throw new DeclarativeModelException($"Unsupported root element: {rootElement.GetType().Name}. Expected an {nameof(Workflow)}.");
+        }
+
+        // Unknown template properties are retained as extension data by the YAML reader.
+        // Reject them here rather than silently emitting an empty or incomplete message.
+        foreach (MessageActivityTemplate template in workflowElement.Descendants().OfType<MessageActivityTemplate>())
+        {
+            if (template.ExtensionData is { Properties.Count: > 0 } extensionData)
+            {
+                BotElement? owner = template.Parent;
+                while (owner is not null && owner is not DialogAction)
+                {
+                    owner = owner.Parent;
+                }
+
+                string action = owner is DialogAction dialogAction ? $" in action #{dialogAction.Id} ({dialogAction.GetType().Name})" : string.Empty;
+                string properties = string.Join(", ", extensionData.Properties.Keys.OrderBy(key => key, StringComparer.Ordinal));
+                throw new DeclarativeModelException($"Unknown message template properties{action}: {properties}. Check the YAML property names, such as 'text'.");
+            }
         }
 
         return workflowElement;
