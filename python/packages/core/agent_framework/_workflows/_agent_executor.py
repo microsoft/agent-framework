@@ -14,8 +14,8 @@ from agent_framework import Content
 from .._agents import SupportsAgentRun
 from .._sessions import AgentSession
 from .._types import AgentResponse, AgentResponseUpdate, Message, ResponseStream
-from ._agent_utils import resolve_agent_id
-from ._const import GLOBAL_KWARGS_KEY, INTERNAL_SOURCE_ID, WORKFLOW_RUN_KWARGS_KEY
+from ._agent_utils import prepare_agent_run_args, resolve_agent_id, resolve_executor_kwargs
+from ._const import INTERNAL_SOURCE_ID, WORKFLOW_RUN_KWARGS_KEY
 from ._executor import Executor, handler
 from ._message_utils import normalize_messages_input
 from ._request_info_mixin import response_handler
@@ -594,12 +594,7 @@ class AgentExecutor(Executor):
         Returns:
             A 2-tuple of (function_invocation_kwargs, client_kwargs).
         """
-        fi_resolved = raw_run_kwargs.get("function_invocation_kwargs")
-        ci_resolved = raw_run_kwargs.get("client_kwargs")
-        function_invocation_kwargs = self._resolve_executor_kwargs(fi_resolved)
-        client_kwargs = self._resolve_executor_kwargs(ci_resolved)
-
-        return function_invocation_kwargs, client_kwargs
+        return prepare_agent_run_args(self.id, raw_run_kwargs)
 
     def _resolve_executor_kwargs(self, resolved: dict[str, Any] | None) -> dict[str, Any] | None:
         """Extract this executor's kwargs from a resolved invocation kwargs dict.
@@ -612,28 +607,4 @@ class AgentExecutor(Executor):
         Returns:
             The kwargs for this executor, or ``None`` if not applicable.
         """
-        if not isinstance(resolved, dict):
-            return None
-        global_kwargs: Any = resolved.get(GLOBAL_KWARGS_KEY)
-        executor_kwargs: Any = resolved.get(self.id)
-        if global_kwargs is None and executor_kwargs is None:
-            return None
-
-        if global_kwargs is not None and not isinstance(global_kwargs, dict):
-            logger.warning(
-                "Executor %s expected a dict for global kwargs, but got %s. Ignoring.",
-                self.id,
-                cast(type[Any], type(global_kwargs)),
-            )
-            return None
-
-        if executor_kwargs is not None and not isinstance(executor_kwargs, dict):
-            logger.warning(
-                "Executor %s expected a dict for its kwargs, but got %s. Ignoring.",
-                self.id,
-                cast(type[Any], type(executor_kwargs)),
-            )
-            return None
-
-        # Specific values override global values for the same function argument.
-        return {**(global_kwargs or {}), **(executor_kwargs or {})}
+        return resolve_executor_kwargs(self.id, resolved)
