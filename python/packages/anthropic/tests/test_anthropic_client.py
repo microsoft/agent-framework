@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
+import asyncio
 import os
 import re
 from pathlib import Path
@@ -16,14 +17,16 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FunctionInvocationLayer,
+    FunctionTool,
     InlineSkill,
     Message,
+    ResponseStream,
     SkillFrontmatter,
     SkillsProvider,
     SupportsChatGetResponse,
     tool,
 )
-from agent_framework._settings import load_settings
+from agent_framework._settings import SecretString, load_settings
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from agent_framework.exceptions import (
     ChatClientException,
@@ -41,7 +44,7 @@ from anthropic.types.beta import (
 from pydantic import BaseModel, Field
 
 from agent_framework_anthropic import AnthropicChatOptions, AnthropicClient, RawAnthropicClient
-from agent_framework_anthropic._chat_client import AnthropicSettings
+from agent_framework_anthropic._chat_client import AnthropicSettings, _AnthropicRequestState
 from agent_framework_anthropic._feature_usage import FeatureIndex
 
 # Test constants
@@ -75,8 +78,6 @@ def create_test_anthropic_client(
     # Set attributes directly
     client.anthropic_client = mock_anthropic_client
     client.model = model or anthropic_settings["chat_model"]
-    client._last_call_id_name = None
-    client._tool_name_aliases = {}
     client.additional_properties = {}
     cast(Any, client).middleware = None
     client.additional_beta_flags = []
@@ -101,17 +102,20 @@ def test_anthropic_settings_init(anthropic_unit_test_env: dict[str, str]) -> Non
     assert settings["chat_model"] == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"]
 
 
-def test_anthropic_settings_init_with_explicit_values() -> None:
+@pytest.mark.parametrize("api_key", ["custom-api-key", SecretString("custom-api-key")], ids=["str", "secret"])
+def test_anthropic_settings_init_with_explicit_values(api_key: str | SecretString) -> None:
     """Test AnthropicSettings initialization with explicit values."""
     settings = load_settings(
         AnthropicSettings,
         env_prefix="ANTHROPIC_",
-        api_key="custom-api-key",
+        api_key=api_key,
         chat_model="claude-3-opus-20240229",
     )
 
-    assert settings["api_key"] is not None
+    assert isinstance(settings["api_key"], SecretString)
     assert settings["api_key"].get_secret_value() == "custom-api-key"
+    assert "custom-api-key" not in str(settings["api_key"])
+    assert "custom-api-key" not in repr(settings)
     assert settings["chat_model"] == "claude-3-opus-20240229"
 
 
@@ -160,16 +164,21 @@ def test_agent_accepts_anthropic_clients() -> None:
     assert agent.client is client
 
 
+@pytest.mark.parametrize("secret_type", [str, SecretString], ids=["str", "secret"])
 def test_anthropic_client_init_auto_create_client(
     anthropic_unit_test_env: dict[str, str],
+    secret_type: type[str] | type[SecretString],
 ) -> None:
     """Test AnthropicClient initialization with auto-created anthropic_client."""
     client = AnthropicClient(
-        api_key=anthropic_unit_test_env["ANTHROPIC_API_KEY"],
+        api_key=secret_type(anthropic_unit_test_env["ANTHROPIC_API_KEY"]),
         model=anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"],
     )
 
-    assert client.anthropic_client is not None
+    anthropic_client = client.anthropic_client
+    assert isinstance(anthropic_client, anthropic_sdk.AsyncAnthropic)
+    assert type(anthropic_client.api_key) is str
+    assert anthropic_client.api_key == anthropic_unit_test_env["ANTHROPIC_API_KEY"]
     assert client.model == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"]
 
 
@@ -540,6 +549,90 @@ def test_prepare_message_for_anthropic_attaches_signature_only_reasoning(
     assert result["content"] == [
         {"type": "thinking", "thinking": "Let me think about this...", "signature": "sig_abc123"}
     ]
+
+
+def test_prepare_message_for_anthropic_empty_signed_thinking_is_replayed(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Empty signed thinking blocks must serialize as thinking, not be skipped.
+
+    Anthropic requires thinking blocks (including empty thinking text) to be
+    replayed unchanged before tool results. See microsoft/agent-framework#8168.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text_reasoning(text="", protected_data="synthetic-signature"),
+            Content.from_function_call(
+                call_id="toolu_test",
+                name="lookup",
+                arguments={},
+            ),
+        ],
+    )
+
+    result = client._prepare_message_for_anthropic(message)
+
+    assert result["content"][0] == {
+        "type": "thinking",
+        "thinking": "",
+        "signature": "synthetic-signature",
+    }
+    assert result["content"][1]["type"] == "tool_use"
+    assert result["content"][1]["id"] == "toolu_test"
+
+
+def test_streaming_replay_preserves_empty_signed_thinking_block(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Stream empty thinking + signature_delta + tool_use, then replay via from_updates.
+
+    Offline synthetic SDK events — no network. Regression for #8168.
+    """
+    from anthropic.types.beta import (
+        BetaRawContentBlockDeltaEvent,
+        BetaRawContentBlockStartEvent,
+        BetaRawMessageStreamEvent,
+    )
+
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    events: list[BetaRawMessageStreamEvent] = [
+        BetaRawContentBlockStartEvent.model_validate({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "thinking", "thinking": "", "signature": ""},
+        }),
+        BetaRawContentBlockDeltaEvent.model_validate({
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "signature_delta", "signature": "synthetic-signature"},
+        }),
+        BetaRawContentBlockStartEvent.model_validate({
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {
+                "type": "tool_use",
+                "id": "toolu_test",
+                "name": "lookup",
+                "input": {},
+            },
+        }),
+    ]
+
+    updates = [client._process_stream_event(event) for event in events]
+    response = ChatResponse.from_updates([u for u in updates if u is not None])
+    message = response.messages[0]
+    reasoning = next(c for c in message.contents if c.type == "text_reasoning")
+    assert reasoning.text == ""
+    assert reasoning.protected_data == "synthetic-signature"
+
+    prepared = client._prepare_message_for_anthropic(message)
+    assert prepared["content"][0]["type"] == "thinking"
+    assert prepared["content"][0]["thinking"] == ""
+    assert prepared["content"][0]["signature"] == "synthetic-signature"
+    assert prepared["content"][1]["type"] == "tool_use"
 
 
 def test_prepare_message_for_anthropic_skips_orphan_signature_only_reasoning(
@@ -1670,15 +1763,16 @@ def test_parse_contents_from_anthropic_input_json_delta_no_duplicate_name(
     ag-ui from emitting duplicate ToolCallStartEvents.
     """
     client = create_test_anthropic_client(mock_anthropic_client)
+    request_state = _AnthropicRequestState()
 
-    # First, simulate a tool_use event that sets _last_call_id_name
+    # First, simulate a tool_use event that establishes the active call.
     tool_use_content = MagicMock()
     tool_use_content.type = "tool_use"
     tool_use_content.id = "call_123"
     tool_use_content.name = "get_weather"
     tool_use_content.input = {}
 
-    result = client._parse_contents_from_anthropic([tool_use_content])
+    result = client._parse_contents_from_anthropic([tool_use_content], request_state)
     assert len(result) == 1
     assert result[0].type == "function_call"
     assert result[0].call_id == "call_123"
@@ -1689,7 +1783,7 @@ def test_parse_contents_from_anthropic_input_json_delta_no_duplicate_name(
     delta_content_1.type = "input_json_delta"
     delta_content_1.partial_json = '{"location":'
 
-    result = client._parse_contents_from_anthropic([delta_content_1])
+    result = client._parse_contents_from_anthropic([delta_content_1], request_state)
     assert len(result) == 1
     assert result[0].type == "function_call"
     assert result[0].call_id == "call_123"
@@ -1701,7 +1795,7 @@ def test_parse_contents_from_anthropic_input_json_delta_no_duplicate_name(
     delta_content_2.type = "input_json_delta"
     delta_content_2.partial_json = '"San Francisco"}'
 
-    result = client._parse_contents_from_anthropic([delta_content_2])
+    result = client._parse_contents_from_anthropic([delta_content_2], request_state)
     assert len(result) == 1
     assert result[0].type == "function_call"
     assert result[0].call_id == "call_123"
@@ -1719,27 +1813,28 @@ def test_parse_contents_server_tool_use_input_json_delta_ignored(
     entries that would cause Anthropic API 400 errors on subsequent turns.
     """
     client = create_test_anthropic_client(mock_anthropic_client)
+    request_state = _AnthropicRequestState()
 
-    # Simulate a server_tool_use event that sets _last_call_content_type
+    # Simulate a server_tool_use event that establishes the hosted call type.
     server_tool_content = MagicMock()
     server_tool_content.type = "server_tool_use"
     server_tool_content.id = "srvtool_abc"
     server_tool_content.name = "web_search"
     server_tool_content.input = {}
 
-    result = client._parse_contents_from_anthropic([server_tool_content])
+    result = client._parse_contents_from_anthropic([server_tool_content], request_state)
     # server_tool_use falls through to informational-only function_call (not mcp_tool_use / code_execution)
     assert len(result) == 1
     assert result[0].type == "function_call"
     assert result[0].informational_only is True
-    assert client._last_call_content_type == "server_tool_use"  # type: ignore[attr-defined]
+    assert request_state.active_call_content_type == "server_tool_use"
 
     # input_json_delta events after server_tool_use must be silently ignored
     delta_content = MagicMock()
     delta_content.type = "input_json_delta"
     delta_content.partial_json = '{"query": "latest news"}'
 
-    result = client._parse_contents_from_anthropic([delta_content])
+    result = client._parse_contents_from_anthropic([delta_content], request_state)
     assert result == [], "input_json_delta after server_tool_use should produce no content, but got: %r" % result
 
     # A second delta must also be ignored
@@ -1747,7 +1842,7 @@ def test_parse_contents_server_tool_use_input_json_delta_ignored(
     delta_content_2.type = "input_json_delta"
     delta_content_2.partial_json = '{"extra": true}'
 
-    result = client._parse_contents_from_anthropic([delta_content_2])
+    result = client._parse_contents_from_anthropic([delta_content_2], request_state)
     assert result == [], (
         "subsequent input_json_delta after server_tool_use should also be ignored, but got: %r" % result
     )
@@ -1949,6 +2044,300 @@ async def test_inner_get_response_streaming_wraps_sdk_errors(mock_anthropic_clie
             messages=messages, options=chat_options, stream=True
         ):
             pass
+
+
+def _message_start_event(response_id: str) -> MagicMock:
+    event = MagicMock()
+    event.type = "message_start"
+    event.message.id = response_id
+    event.message.role = "assistant"
+    event.message.model = "claude-test"
+    event.message.content = []
+    event.message.stop_reason = None
+    event.message.usage = None
+    return event
+
+
+def _tool_start_event(*, block_type: str, call_id: str, name: str) -> MagicMock:
+    event = MagicMock()
+    event.type = "content_block_start"
+    event.content_block.type = block_type
+    event.content_block.id = call_id
+    event.content_block.name = name
+    event.content_block.input = {}
+    return event
+
+
+def _argument_delta_event(partial_json: str) -> MagicMock:
+    event = MagicMock()
+    event.type = "content_block_delta"
+    event.delta.type = "input_json_delta"
+    event.delta.partial_json = partial_json
+    return event
+
+
+def _message_delta_event(stop_reason: str) -> MagicMock:
+    event = MagicMock()
+    event.type = "message_delta"
+    event.delta.stop_reason = stop_reason
+    event.usage = None
+    return event
+
+
+async def test_concurrent_streams_isolate_tool_state_when_peer_fails(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A failing hosted-tool stream must not affect a concurrent local-tool stream."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    def run_primary_shell(command: str) -> str:
+        return command
+
+    def run_peer_shell(command: str) -> str:
+        return command
+
+    primary_tool = client.get_shell_tool(func=run_primary_shell, approval_mode="never_require")
+    peer_tool = client.get_shell_tool(func=run_peer_shell, approval_mode="never_require")
+    hosted_tool = client.get_mcp_tool(name="hosted-search", url="https://example.com/mcp")
+    primary_started = asyncio.Event()
+    hosted_started = asyncio.Event()
+    hosted_failed = asyncio.Event()
+
+    async def primary_events() -> Any:
+        yield _message_start_event("primary-response")
+        yield _tool_start_event(block_type="tool_use", call_id="shared-call", name="bash")
+        primary_started.set()
+        await asyncio.wait_for(hosted_started.wait(), timeout=1)
+        yield _argument_delta_event('{"command":')
+        await asyncio.wait_for(hosted_failed.wait(), timeout=1)
+        yield _argument_delta_event('"pwd"}')
+        yield _message_delta_event("tool_use")
+
+    async def hosted_events() -> Any:
+        await asyncio.wait_for(primary_started.wait(), timeout=1)
+        yield _message_start_event("hosted-response")
+        yield _tool_start_event(block_type="server_tool_use", call_id="shared-call", name="web_search")
+        hosted_started.set()
+        yield _argument_delta_event('{"query":"framework"}')
+        hosted_failed.set()
+        raise RuntimeError("peer stream failed")
+
+    async def create(**kwargs: Any) -> Any:
+        if kwargs.get("mcp_servers"):
+            return hosted_events()
+        return primary_events()
+
+    mock_anthropic_client.beta.messages.create.side_effect = create
+    primary_stream = client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["primary"])],
+        options={"tools": [primary_tool], "max_tokens": 64},
+        stream=True,
+    )
+    hosted_stream = client._inner_get_response(  # type: ignore[attr-defined]
+        messages=[Message(role="user", contents=["hosted"])],
+        options={"tools": [peer_tool, hosted_tool], "max_tokens": 64},
+        stream=True,
+    )
+    assert isinstance(primary_stream, ResponseStream)
+    assert isinstance(hosted_stream, ResponseStream)
+
+    async def consume_primary() -> tuple[list[ChatResponseUpdate], ChatResponse]:
+        updates = [update async for update in primary_stream]
+        return updates, await primary_stream.get_final_response()
+
+    primary_task = asyncio.create_task(consume_primary())
+    hosted_contents: list[Content] = []
+    with pytest.raises(ChatClientException, match="Anthropic"):
+        async for update in hosted_stream:
+            hosted_contents.extend(update.contents)
+
+    primary_updates, primary_response = await asyncio.wait_for(primary_task, timeout=1)
+    primary_fragments = [
+        content for update in primary_updates for content in update.contents if content.type == "function_call"
+    ]
+    assert [(content.name, content.call_id, content.arguments) for content in primary_fragments] == [
+        (primary_tool.name, "shared-call", {}),
+        ("", "shared-call", '{"command":'),
+        ("", "shared-call", '"pwd"}'),
+    ]
+    primary_calls = [
+        content
+        for message in primary_response.messages
+        for content in message.contents
+        if content.type == "function_call"
+    ]
+    assert len(primary_calls) == 1
+    assert primary_calls[0].name == primary_tool.name
+    assert primary_calls[0].call_id == "shared-call"
+    assert primary_calls[0].parse_arguments() == {"command": "pwd"}
+
+    hosted_calls = [content for content in hosted_contents if content.type == "function_call"]
+    assert len(hosted_calls) == 1
+    assert hosted_calls[0].name == "web_search"
+    assert hosted_calls[0].call_id == "shared-call"
+    assert hosted_calls[0].arguments == {}
+    assert hosted_calls[0].informational_only is True
+
+
+async def test_concurrent_streams_keep_approval_requests_request_local(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Concurrent approval-required shell calls must retain their request's tool identity."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    def first_shell(command: str) -> str:
+        return command
+
+    def second_shell(command: str) -> str:
+        return command
+
+    first_tool = client.get_shell_tool(func=first_shell, approval_mode="always_require")
+    second_tool = client.get_shell_tool(func=second_shell, approval_mode="always_require")
+    requests_ready = asyncio.Event()
+    request_count = 0
+
+    async def approval_events(response_id: str, command: str) -> Any:
+        yield _message_start_event(response_id)
+        yield _tool_start_event(block_type="tool_use", call_id="shared-approval-call", name="bash")
+        yield _argument_delta_event('{"command":')
+        yield _argument_delta_event(f'"{command}"}}')
+        yield _message_delta_event("tool_use")
+
+    async def create(**kwargs: Any) -> Any:
+        nonlocal request_count
+        prompt = kwargs["messages"][0]["content"][0]["text"]
+        request_count += 1
+        if request_count == 2:
+            requests_ready.set()
+        await asyncio.wait_for(requests_ready.wait(), timeout=1)
+        return approval_events(f"{prompt}-response", prompt)
+
+    mock_anthropic_client.beta.messages.create.side_effect = create
+    first_stream = client.get_response(
+        messages=[Message(role="user", contents=["first"])],
+        options={"tools": [first_tool], "max_tokens": 64},
+        stream=True,
+    )
+    second_stream = client.get_response(
+        messages=[Message(role="user", contents=["second"])],
+        options={"tools": [second_tool], "max_tokens": 64},
+        stream=True,
+    )
+
+    async def consume(
+        stream: ResponseStream[ChatResponseUpdate, ChatResponse],
+    ) -> tuple[list[ChatResponseUpdate], ChatResponse]:
+        updates = [update async for update in stream]
+        return updates, await stream.get_final_response()
+
+    (first_updates, first_response), (second_updates, second_response) = await asyncio.gather(
+        consume(first_stream), consume(second_stream)
+    )
+
+    def assert_request_owned(
+        updates: list[ChatResponseUpdate],
+        response: ChatResponse,
+        expected_tool: FunctionTool,
+        expected_command: str,
+    ) -> tuple[Content, Content]:
+        update_contents = [content for update in updates for content in update.contents]
+        named_update_calls = [
+            content for content in update_contents if content.type == "function_call" and content.name
+        ]
+        update_requests = [content for content in update_contents if content.type == "function_approval_request"]
+        assert named_update_calls
+        assert {content.name for content in named_update_calls} == {expected_tool.name}
+        assert len(update_requests) == 1
+
+        response_contents = [content for message in response.messages for content in message.contents]
+        response_calls = [content for content in response_contents if content.type == "function_call"]
+        response_requests = [content for content in response_contents if content.type == "function_approval_request"]
+        assert len(response_calls) == 1
+        assert len(response_requests) == 1
+        function_call = response_calls[0]
+        approval_request = response_requests[0]
+        assert function_call.name == expected_tool.name
+        assert function_call.call_id == "shared-approval-call"
+        assert function_call.parse_arguments() == {"command": expected_command}
+        assert approval_request.function_call is not None
+        assert approval_request.function_call.name == expected_tool.name
+        assert approval_request.function_call.call_id == "shared-approval-call"
+        assert approval_request.function_call.parse_arguments() == {"command": expected_command}
+        assert approval_request.id == function_call.id
+        return function_call, approval_request
+
+    first_call, _ = assert_request_owned(first_updates, first_response, first_tool, "first")
+    second_call, _ = assert_request_owned(second_updates, second_response, second_tool, "second")
+    assert first_call.id != second_call.id
+
+
+async def test_concurrent_non_streaming_responses_keep_tool_aliases_request_local(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Concurrent non-streaming responses must retain their request's shell alias."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    def first_shell(command: str) -> str:
+        return command
+
+    def second_shell(command: str) -> str:
+        return command
+
+    first_tool = client.get_shell_tool(func=first_shell, approval_mode="never_require")
+    second_tool = client.get_shell_tool(func=second_shell, approval_mode="never_require")
+    requests_ready = asyncio.Event()
+    request_count = 0
+
+    def tool_response(response_id: str, command: str) -> MagicMock:
+        message = MagicMock(spec=BetaMessage)
+        message.id = response_id
+        message.model = "claude-test"
+        message.content = [
+            BetaToolUseBlock(
+                type="tool_use",
+                id="shared-non-stream-call",
+                name="bash",
+                input={"command": command},
+            )
+        ]
+        message.usage = None
+        message.stop_reason = "tool_use"
+        return message
+
+    async def create(**kwargs: Any) -> Any:
+        nonlocal request_count
+        prompt = kwargs["messages"][0]["content"][0]["text"]
+        request_count += 1
+        if request_count == 2:
+            requests_ready.set()
+        await asyncio.wait_for(requests_ready.wait(), timeout=1)
+        return tool_response(f"{prompt}-response", prompt)
+
+    async def get_response(prompt: str, function_tool: FunctionTool) -> ChatResponse:
+        response = client._inner_get_response(  # type: ignore[attr-defined]
+            messages=[Message(role="user", contents=[prompt])],
+            options={"tools": [function_tool], "max_tokens": 64},
+        )
+        assert not isinstance(response, ResponseStream)
+        return await response
+
+    mock_anthropic_client.beta.messages.create.side_effect = create
+    first_response, second_response = await asyncio.gather(
+        get_response("first", first_tool),
+        get_response("second", second_tool),
+    )
+
+    def assert_response_owned(response: ChatResponse, expected_tool: FunctionTool, command: str) -> None:
+        calls = [
+            content for message in response.messages for content in message.contents if content.type == "function_call"
+        ]
+        assert len(calls) == 1
+        assert calls[0].name == expected_tool.name
+        assert calls[0].call_id == "shared-non-stream-call"
+        assert calls[0].parse_arguments() == {"command": command}
+
+    assert_response_owned(first_response, first_tool, "first")
+    assert_response_owned(second_response, second_tool, "second")
 
 
 def test_process_stream_event_message_start_sets_assistant_role(mock_anthropic_client: MagicMock) -> None:
@@ -2601,7 +2990,6 @@ def test_parse_contents_mcp_tool_result_list_content(
 ) -> None:
     """Test parsing MCP tool result with list content."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client._last_call_id_name = ("call_123", "test_tool")
 
     # Create mock MCP tool result with list content
     mock_text_block = MagicMock()
@@ -2624,7 +3012,6 @@ def test_parse_contents_mcp_tool_result_string_content(
 ) -> None:
     """Test parsing MCP tool result with string content."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client._last_call_id_name = ("call_123", "test_tool")
 
     # Create mock MCP tool result with string content
     mock_block = MagicMock()
@@ -2643,7 +3030,6 @@ def test_parse_contents_mcp_tool_result_bytes_content(
 ) -> None:
     """Test parsing MCP tool result with bytes content."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client._last_call_id_name = ("call_123", "test_tool")
 
     # Create mock MCP tool result with bytes content
     mock_block = MagicMock()
@@ -2662,7 +3048,6 @@ def test_parse_contents_mcp_tool_result_object_content(
 ) -> None:
     """Test parsing MCP tool result with object content."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client._last_call_id_name = ("call_123", "test_tool")
 
     # Create mock MCP tool result with object content
     mock_content_obj = MagicMock()
@@ -2685,7 +3070,6 @@ def test_parse_contents_web_search_tool_result(
 ) -> None:
     """Test parsing web search tool result."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client._last_call_id_name = ("call_789", "web_search")
 
     # Create mock web search tool result
     mock_block = MagicMock()
@@ -2702,7 +3086,6 @@ def test_parse_contents_web_search_tool_result(
 def test_parse_contents_web_fetch_tool_result(mock_anthropic_client: MagicMock) -> None:
     """Test parsing web fetch tool result."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client._last_call_id_name = ("call_101", "web_fetch")
 
     # Create mock web fetch tool result
     mock_block = MagicMock()
@@ -3030,7 +3413,6 @@ def test_parse_code_execution_result_with_error(
 ) -> None:
     """Test parsing code execution result with error."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client._last_call_id_name = ("call_code1", "code_execution_tool")
 
     # Create mock code execution result with error
     from anthropic.types.beta.beta_code_execution_tool_result_error import (
@@ -3055,7 +3437,6 @@ def test_parse_code_execution_result_with_stdout(
 ) -> None:
     """Test parsing code execution result with stdout."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client._last_call_id_name = ("call_code2", "code_execution_tool")
 
     # Create mock code execution result with stdout
     mock_content = MagicMock()
@@ -3079,7 +3460,6 @@ def test_parse_code_execution_result_with_stderr(
 ) -> None:
     """Test parsing code execution result with stderr."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client._last_call_id_name = ("call_code3", "code_execution_tool")
 
     # Create mock code execution result with stderr
     mock_content = MagicMock()
@@ -3103,7 +3483,6 @@ def test_parse_code_execution_result_with_files(
 ) -> None:
     """Test parsing code execution result with file outputs."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client._last_call_id_name = ("call_code4", "code_execution_tool")
 
     # Create mock file output
     mock_file = MagicMock()
@@ -3134,7 +3513,6 @@ def test_parse_bash_execution_result_with_stdout(
 ) -> None:
     """Test parsing bash execution result with stdout."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client._last_call_id_name = ("call_bash2", "bash_code_execution")
 
     # Create mock bash execution result with stdout
     mock_content = MagicMock()
@@ -3166,7 +3544,6 @@ def test_parse_bash_execution_result_with_stderr(
 ) -> None:
     """Test parsing bash execution result with stderr."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client._last_call_id_name = ("call_bash3", "bash_code_execution")
 
     # Create mock bash execution result with stderr
     mock_content = MagicMock()
@@ -3200,7 +3577,6 @@ def test_parse_bash_execution_result_with_error(
     )
 
     client = create_test_anthropic_client(mock_anthropic_client)
-    client._last_call_id_name = ("call_bash_err", "bash_code_execution")
 
     mock_error = MagicMock(spec=BetaBashCodeExecutionToolResultError)
     mock_error.error_code = "execution_time_exceeded"
@@ -3226,7 +3602,6 @@ def test_parse_bash_execution_result_with_error(
 def test_parse_text_editor_result_error(mock_anthropic_client: MagicMock) -> None:
     """Test parsing text editor result with error."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client._last_call_id_name = ("call_editor1", "text_editor_code_execution")
 
     # Create mock text editor result with error
     mock_content = MagicMock()
@@ -3247,7 +3622,6 @@ def test_parse_text_editor_result_error(mock_anthropic_client: MagicMock) -> Non
 def test_parse_text_editor_result_view(mock_anthropic_client: MagicMock) -> None:
     """Test parsing text editor view result."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client._last_call_id_name = ("call_editor2", "text_editor_code_execution")
 
     # Create mock text editor view result
     mock_content = MagicMock()
@@ -3270,7 +3644,6 @@ def test_parse_text_editor_result_view(mock_anthropic_client: MagicMock) -> None
 def test_parse_text_editor_result_str_replace(mock_anthropic_client: MagicMock) -> None:
     """Test parsing text editor string replace result."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client._last_call_id_name = ("call_editor3", "text_editor_code_execution")
 
     # Create mock text editor str_replace result
     mock_content = MagicMock()
@@ -3295,7 +3668,6 @@ def test_parse_text_editor_result_str_replace(mock_anthropic_client: MagicMock) 
 def test_parse_text_editor_result_file_create(mock_anthropic_client: MagicMock) -> None:
     """Test parsing text editor file create result."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client._last_call_id_name = ("call_editor4", "text_editor_code_execution")
 
     # Create mock text editor create result
     mock_content = MagicMock()

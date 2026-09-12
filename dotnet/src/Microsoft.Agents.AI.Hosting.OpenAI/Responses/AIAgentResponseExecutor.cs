@@ -17,13 +17,15 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 internal sealed class AIAgentResponseExecutor : IResponseExecutor
 {
     private readonly AIAgent _agent;
-    private readonly Func<OpenAIResponseRequestInfo, AgentRunOptions?> _runOptionsFactory;
+    private readonly OpenAIResponsesMapOptions _mapOptions;
 
-    public AIAgentResponseExecutor(AIAgent agent, OpenAIResponsesMapOptions? mapOptions = null)
+    public AIAgentResponseExecutor(
+        AIAgent agent,
+        OpenAIResponsesMapOptions? mapOptions = null)
     {
         ArgumentNullException.ThrowIfNull(agent);
         this._agent = agent;
-        this._runOptionsFactory = (mapOptions ?? new OpenAIResponsesMapOptions()).RunOptionsFactory;
+        this._mapOptions = mapOptions ?? new OpenAIResponsesMapOptions();
     }
 
     public ValueTask<ResponseError?> ValidateRequestAsync(
@@ -35,9 +37,9 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
     {
         try
         {
-            // Invoke the factory during validation so that unsupported request settings are surfaced
+            // Map options during validation so that unsupported request settings are surfaced
             // as a clean request error rather than an unhandled exception during execution.
-            _ = this._runOptionsFactory(request.ToRequestInfo());
+            _ = this._mapOptions.RunOptionsFactory(request.ToRequestInfo());
             return null;
         }
         catch (NotSupportedException ex)
@@ -58,7 +60,7 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
     {
         // The hosting developer controls, via OpenAIResponsesMapOptions.RunOptionsFactory, which (if any)
         // request settings are mapped onto the agent run. By default no request setting is mapped.
-        AgentRunOptions? options = this._runOptionsFactory(request.ToRequestInfo());
+        AgentRunOptions? options = this._mapOptions.RunOptionsFactory(request.ToRequestInfo());
 
         // Convert input to chat messages, prepending conversation history if available
         var messages = new List<ChatMessage>();

@@ -229,38 +229,46 @@ class InlineCodeBridge:
         NameLookupSnapshot = monty_module.NameLookupSnapshot
 
         printer = _PrintCollector()
-        monty = Monty(
-            _build_code(code),
-            script_name="codeact.py",
-            type_check=self.type_stubs is not None,
-            type_check_stubs=self.type_stubs,
-        )
-        start_kwargs: dict[str, Any] = {"print_callback": printer}
-        if self._mounts:
-            start_kwargs["mount"] = list(self._mounts)
+        checkout_kwargs: dict[str, Any] = {
+            "script_name": "codeact.py",
+            "type_check": self.type_stubs is not None,
+            "type_check_stubs": self.type_stubs,
+        }
         if self._resource_limits:
-            start_kwargs["limits"] = self._resource_limits
-        progress = monty.start(**start_kwargs)
+            checkout_kwargs["limits"] = self._resource_limits
 
-        while True:
-            if isinstance(progress, MontyComplete):
-                return {
-                    "output": _ensure_json_value(progress.output),
-                    "stdout": printer.output,
-                    "truncated": printer.truncated,
-                }
-            if isinstance(progress, FunctionSnapshot):
-                progress = self._handle_function(progress)
-                continue
-            if isinstance(progress, FutureSnapshot):
-                progress = await self._handle_future(progress)
-                continue
-            if isinstance(progress, NameLookupSnapshot):
-                raise RuntimeError(f"Name lookup not supported: {progress.variable_name!r}")
-            raise RuntimeError(f"Unsupported Monty progress type: {type(progress).__name__}")
+        feed_kwargs: dict[str, Any] = {"print_callback": printer}
+        if self._mounts:
+            feed_kwargs["mount"] = list(self._mounts)
+
+        with Monty() as pool:
+            with pool.checkout(**checkout_kwargs) as session:
+                progress = session.feed_start(_build_code(code), **feed_kwargs)
+
+                while True:
+                    if isinstance(progress, MontyComplete):
+                        return {
+                            "output": _ensure_json_value(progress.output),
+                            "stdout": printer.output,
+                            "truncated": printer.truncated,
+                        }
+                    if isinstance(progress, FunctionSnapshot):
+                        progress = self._handle_function(progress)
+                        continue
+                    if isinstance(progress, FutureSnapshot):
+                        progress = await self._handle_future(progress)
+                        continue
+                    if isinstance(progress, NameLookupSnapshot):
+                        raise RuntimeError(f"Name lookup not supported: {progress.variable_name!r}")
+                    raise RuntimeError(f"Unsupported Monty progress type: {type(progress).__name__}")
 
     def _handle_function(self, snapshot: Any) -> Any:
         if snapshot.is_os_function:
+            # pydantic-monty pool API: feed_start always surfaces OS calls as
+            # snapshots. Mounts (and os=) are consulted only by resume_auto(),
+            # not by a plain resume(...) payload.
+            if self._mounts:
+                return snapshot.resume_auto()
             return snapshot.resume({
                 "exc_type": "PermissionError",
                 "message": "OS and filesystem calls are not available.",

@@ -75,6 +75,7 @@ public static class DeclarativeWorkflowBuilder
 
         WorkflowFormulaState state = new(options.CreateRecalcEngine());
         state.Initialize(workflowElement.WrapWithBot(), options.Configuration);
+        state.CaptureInitialState();
         DeclarativeWorkflowExecutor<TInput> rootExecutor =
             new(rootId,
                 options,

@@ -41,7 +41,15 @@ from ._snapshots import (
     AGUIThreadSnapshot,
     AGUIThreadSnapshotStore,
 )
-from ._utils import generate_event_id, make_json_safe
+from ._utils import (
+    _AGUI_MCP_TOOL_RESULT_KEY,
+    _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY,
+    _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY,
+    _bound_host_payload_history,
+    _persistable_host_payload_history,
+    generate_event_id,
+    make_json_safe,
+)
 from ._workflow_run import _pending_request_events, run_workflow_stream  # pyright: ignore[reportPrivateUsage]
 
 logger = logging.getLogger(__name__)
@@ -170,7 +178,12 @@ class _WorkflowSnapshotBuilder:
         """Return the replayable thread snapshot."""
         self._flush_open_text_message()
         messages = self._emitted_messages if self._emitted_messages is not None else self._synthesized_messages
-        return AGUIThreadSnapshot(messages=messages, state=self.state, interrupt=self.interrupt)
+        persisted = _persistable_host_payload_history(messages)
+        return AGUIThreadSnapshot(
+            messages=_bound_host_payload_history(persisted),
+            state=self.state,
+            interrupt=self.interrupt,
+        )
 
     def _observe_text_start(self, event: TextMessageStartEvent) -> None:
         if self._open_text_message is not None and self._open_text_message.get("id") != event.message_id:
@@ -223,14 +236,23 @@ class _WorkflowSnapshotBuilder:
         function_payload["arguments"] = f"{function_payload.get('arguments', '')}{event.delta}"
 
     def _observe_tool_call_result(self, event: ToolCallResultEvent) -> None:
-        self._synthesized_messages.append(
-            {
-                "id": event.message_id,
-                "role": "tool",
-                "toolCallId": event.tool_call_id,
-                "content": event.content,
-            }
-        )
+        message: dict[str, Any] = {
+            "id": event.message_id,
+            "role": "tool",
+            "toolCallId": event.tool_call_id,
+            "content": event.content,
+        }
+        if getattr(event, _AGUI_MCP_TOOL_RESULT_KEY, False) is True:
+            message[_AGUI_MCP_TOOL_RESULT_KEY] = True
+            message[_AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY] = getattr(
+                event, _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY, event.content
+            )
+            message[_AGUI_TOOL_RESULT_MODEL_CONTENT_KEY] = getattr(
+                event,
+                _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY,
+                [{"type": "text", "text": "Tool result unavailable."}],
+            )
+        self._synthesized_messages.append(message)
         # A result closes the current tool-call group; later tool calls start a new
         # assistant message so replayed transcripts keep results adjacent to their
         # tool_calls message, which provider APIs require.

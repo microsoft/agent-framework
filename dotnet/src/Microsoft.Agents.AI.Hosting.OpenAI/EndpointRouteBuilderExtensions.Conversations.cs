@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using Microsoft.Agents.AI.Hosting;
+using Microsoft.Agents.AI.Hosting.OpenAI;
 using Microsoft.Agents.AI.Hosting.OpenAI.Conversations;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -17,13 +19,47 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// Maps OpenAI Conversations API endpoints to the specified <see cref="IEndpointRouteBuilder"/>.
     /// </summary>
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI Conversations endpoints to.</param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Trust model.</strong> A conversation identifier arrives from the wire and is a resume identifier,
+    /// not an authorization token. Hosts that serve more than one user must register an
+    /// <see cref="AgentIsolationKeyProvider"/> - typically by calling <c>UseClaimsBasedAgentIsolation(...)</c> -
+    /// so that conversations are partitioned by the calling principal. Without it, any caller who knows a
+    /// conversation identifier can read, modify, or delete that conversation, and
+    /// <c>GET /v1/conversations?agent_id=</c> lists every conversation for the agent rather than the caller's own.
+    /// </para>
+    /// <para>
+    /// Isolation does not replace authentication. Hosts should also require an authenticated caller, for example
+    /// by calling <c>RequireAuthorization()</c> on the returned builder.
+    /// </para>
+    /// </remarks>
     public static IEndpointConventionBuilder MapOpenAIConversations(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
+        // Resolve the optional caller isolation provider.
+        var isolationKeyProvider = endpoints.ServiceProvider.GetService<AgentIsolationKeyProvider>();
+
+        // Require a key whenever isolation is configured.
+        var isolationKeyResolver = new IsolationKeyResolver(isolationKeyProvider, strict: isolationKeyProvider is not null);
+
+        // Resolve the underlying conversation services.
         var storage = endpoints.ServiceProvider.GetService<IConversationStorage>()
             ?? throw new InvalidOperationException("IConversationStorage is not registered. Call AddOpenAIConversations() in your service configuration.");
         var conversationIndex = endpoints.ServiceProvider.GetService<IAgentConversationIndex>();
+
+        // Wrap conversation storage so each operation is scoped by the caller's isolation key.
+        if (storage is not IsolationKeyScopedConversationStorage)
+        {
+            storage = new IsolationKeyScopedConversationStorage(storage, isolationKeyResolver);
+        }
+
+        // Wrap agent conversation lookup so each operation is scoped by the caller's isolation key.
+        if (conversationIndex is not null and not IsolationKeyScopedAgentConversationIndex)
+        {
+            conversationIndex = new IsolationKeyScopedAgentConversationIndex(conversationIndex, isolationKeyResolver);
+        }
+
         var handlers = new ConversationsHttpHandler(storage, conversationIndex);
 
         var group = endpoints.MapGroup("/v1/conversations")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import json
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
@@ -757,7 +758,16 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         """
         if not messages:
             return ""
-        return "\n".join([msg.text or "" for msg in messages])
+        if len(messages) == 1 and messages[0].role == "user":
+            return messages[0].text or ""
+        prefix = "The following messages were supplied to this agent in conversation order.\n"
+        prefix += "Each JSON record contains the original speaker's role and message content.\n"
+        prefix += (
+            "Use these messages as context. If the final message is a user request, "
+            "respond to it while following your instructions.\n"
+        )
+
+        return prefix + "\n".join(json.dumps({"role": m.role, "content": m.text or ""}) for m in messages)
 
     @property
     def default_options(self) -> dict[str, Any]:
@@ -1042,8 +1052,8 @@ class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[Options
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         compaction_strategy: Any = None,
         tokenizer: Any = None,
-        function_invocation_kwargs: dict[str, Any] | None = None,
-        client_kwargs: dict[str, Any] | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
@@ -1059,8 +1069,8 @@ class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[Options
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         compaction_strategy: Any = None,
         tokenizer: Any = None,
-        function_invocation_kwargs: dict[str, Any] | None = None,
-        client_kwargs: dict[str, Any] | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
@@ -1075,8 +1085,8 @@ class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[Options
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         compaction_strategy: Any = None,
         tokenizer: Any = None,
-        function_invocation_kwargs: dict[str, Any] | None = None,
-        client_kwargs: dict[str, Any] | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the Claude agent with telemetry enabled."""

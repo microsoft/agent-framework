@@ -9,7 +9,7 @@ import sys
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Iterable, Mapping, Sequence
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeAlias, cast, overload, runtime_checkable
 
 from ._clients import SupportsChatGetResponse
 from ._feature_stage import ExperimentalFeature, experimental
@@ -19,6 +19,7 @@ from ._types import (
     AgentRunInputs,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     Message,
     ResponseStream,
     normalize_messages,
@@ -372,8 +373,18 @@ class FunctionInvocationContext:
         arguments: The validated arguments for the function.
         session: The agent session for this invocation, if any.
         metadata: Metadata dictionary for sharing data between function middleware.
-        result: Function execution result. Can be observed after calling ``call_next()``
-                to see the actual execution result or can be set to override the execution result.
+        result: Function execution result. This attribute carries no guaranteed type.
+                The pipeline assigns :meth:`FunctionTool.invoke`'s output — a
+                ``list[Content]``, or the wrapped function's raw return value when the
+                tool is configured with ``result_parser=SKIP_PARSING`` — at the innermost
+                link of the chain, so only the innermost middleware observes it directly.
+                Every middleware above observes whatever the ones below it left behind,
+                and any middleware may overwrite it with a value of any type. On the way
+                out, only ``list[Content]`` and ``str`` survive intact: every other value,
+                a bare ``Content`` included, is stringified into a single text item, so
+                rebuild the list rather than assigning one item back. The exception is a
+                bare ``Content`` of type ``function_approval_request``, which the
+                invocation layer passes through untouched to drive the approval flow.
         kwargs: Additional runtime keyword arguments forwarded to the function invocation.
         tools: The live, mutable list of tools available to the model for the current
                 agent run, or ``None`` when the function is invoked outside of a
@@ -430,7 +441,8 @@ class FunctionInvocationContext:
             arguments: The validated arguments for the function.
             session: The agent session for this invocation, if any.
             metadata: Metadata dictionary for sharing data between function middleware.
-            result: Function execution result.
+            result: Function execution result. Observed and overridden values do not
+                share a type; see the class docstring before type-checking it.
             kwargs: Additional runtime keyword arguments forwarded to the function invocation.
             tools: The live, mutable list of tools for the current agent run. When provided,
                 this is the same list object the model sees on the next iteration, so
@@ -685,6 +697,19 @@ class AgentMiddleware(ABC):
         ...
 
 
+@runtime_checkable
+class _ApprovalResponseObserver(Protocol):
+    """Private capability for authenticated approval lifecycle notifications."""
+
+    def _on_approval_responses(
+        self,
+        responses: Sequence[Content],
+        *,
+        session: AgentSession | None,
+    ) -> None:
+        """Observe non-executing responses already bound to authoritative state."""
+
+
 class FunctionMiddleware(ABC):
     """Abstract base class for function middleware that can intercept function invocations.
 
@@ -752,6 +777,13 @@ class FunctionMiddleware(ABC):
             MiddlewareTypes should not return anything. All data manipulation should happen
             within the context object. Set context.result to override execution,
             or observe context.result after calling call_next() for actual results.
+            The observed value has no guaranteed type: the innermost middleware sees
+            :meth:`FunctionTool.invoke`'s output — ``list[Content]``, or the raw return
+            value under ``SKIP_PARSING`` — while an outer one sees whatever the inner
+            middleware left. Overriding with anything but ``list[Content]`` or ``str``
+            collapses the result into a single stringified text item, except a bare
+            ``Content`` of type ``function_approval_request``, which passes through
+            untouched to drive the approval flow.
         """
         ...
 
@@ -1217,6 +1249,19 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
     def matches(self, middleware: Sequence[FunctionMiddlewareTypes]) -> bool:
         """Return whether this pipeline was built from the provided middleware sequence."""
         return self._source_middleware == tuple(middleware)
+
+    def _notify_approval_responses(
+        self,
+        responses: Sequence[Content],
+        *,
+        session: AgentSession | None,
+    ) -> None:
+        """Notify class-based middleware implementing the private observer capability."""
+        for middleware in self._middleware:
+            if isinstance(middleware, _ApprovalResponseObserver):
+                middleware._on_approval_responses(  # pyright: ignore[reportPrivateUsage]
+                    responses, session=session
+                )
 
     def _register_middleware(self, middleware: FunctionMiddlewareTypes) -> None:
         """Register a function middleware item.

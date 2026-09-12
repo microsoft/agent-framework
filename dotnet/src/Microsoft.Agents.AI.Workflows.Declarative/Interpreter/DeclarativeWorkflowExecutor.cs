@@ -42,8 +42,13 @@ internal sealed class DeclarativeWorkflowExecutor<TInput>(
     /// <inheritdoc/>
     public ValueTask ResetAsync()
     {
+        state.Reset();
         return default;
     }
+
+    /// <inheritdoc/>
+    protected override ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) =>
+        state.RestoreAsync(context, cancellationToken);
 
     /// <inheritdoc/>
     [SendsMessage(typeof(ActionExecutorResult))]

@@ -458,13 +458,15 @@ public class AIAgentTests
                 ItExpr.IsAny<AgentSession?>(),
                 ItExpr.IsAny<AgentRunOptions?>(),
                 ItExpr.IsAny<CancellationToken>())
-            .Returns(async () =>
-            {
-                outerContextBeforeInnerRun = AIAgent.CurrentRunContext;
-                await innerAgentMock.Object.RunAsync("Inner request", innerSession);
-                outerContextAfterInnerRun = AIAgent.CurrentRunContext;
-                return new AgentResponse(new ChatMessage(ChatRole.Assistant, "Outer response"));
-            });
+            .Returns(RunCoreAsync);
+
+        async Task<AgentResponse> RunCoreAsync()
+        {
+            outerContextBeforeInnerRun = AIAgent.CurrentRunContext;
+            await innerAgentMock.Object.RunAsync("Inner request", innerSession);
+            outerContextAfterInnerRun = AIAgent.CurrentRunContext;
+            return new AgentResponse(new ChatMessage(ChatRole.Assistant, "Outer response"));
+        }
 
         // Act
         await outerAgentMock.Object.RunAsync("Outer request", outerSession);
