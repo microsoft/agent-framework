@@ -95,6 +95,184 @@ def _interrupt_metadata_value(interrupt: dict[str, Any]) -> dict[str, Any]:
     return cast(dict[str, Any], value)
 
 
+def test_attach_checkpoint_id_to_interrupts_setdefault() -> None:
+    """Issue #8150: attach pause checkpoint_id without overwriting an existing one."""
+    from agent_framework_ag_ui._workflow_run import _attach_checkpoint_id_to_interrupts
+
+    empty = _attach_checkpoint_id_to_interrupts([{"id": "r1"}], None)
+    assert empty == [{"id": "r1"}]
+
+    attached = _attach_checkpoint_id_to_interrupts(
+        [{"id": "r1", "metadata": {"agent_framework": {"type": "workflow_request_info"}}}],
+        "cp-123",
+    )
+    assert attached[0]["metadata"]["agent_framework"]["checkpoint_id"] == "cp-123"
+    assert attached[0]["metadata"]["agent_framework"]["type"] == "workflow_request_info"
+
+    preserved = _attach_checkpoint_id_to_interrupts(attached, "cp-other")
+    assert preserved[0]["metadata"]["agent_framework"]["checkpoint_id"] == "cp-123"
+
+
+@pytest.mark.asyncio
+async def test_pause_checkpoint_id_ignores_competing_shared_latest() -> None:
+    """Prefer this runner's pause checkpoint over a newer shared get_latest() winner."""
+    from agent_framework import WorkflowCheckpoint
+
+    from agent_framework_ag_ui._run_common import _build_run_finished_event
+    from agent_framework_ag_ui._workflow_run import (
+        _interrupts_with_pause_checkpoint,
+        _pause_checkpoint_id_for_interrupts,
+    )
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345"},
+            )
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+            del original_request, response
+            await ctx.yield_output("done")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor(), checkpoint_storage=storage).build()
+    first_events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "go"}]},
+            workflow,
+            checkpoint_storage=storage,
+        )
+    ]
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    interrupt_payload = _interrupts_from_run_finished(first_finished)
+    pause_id = interrupt_payload[0]["metadata"]["agent_framework"]["checkpoint_id"]
+
+    # Inject a newer shared checkpoint that does not cover this interrupt (other owner / stale).
+    competing = WorkflowCheckpoint(
+        workflow_name=workflow.name,
+        graph_signature_hash="competing",
+        pending_request_info_events={},
+        timestamp="9999-01-01T00:00:00+00:00",
+    )
+    await storage.save(competing)
+    latest = await storage.get_latest(workflow_name=workflow.name)
+    assert latest is not None
+    assert latest.checkpoint_id == competing.checkpoint_id
+
+    # Workflow-owned baseline from the pause run should already allow advertising pause_id.
+    resolved = await _pause_checkpoint_id_for_interrupts(
+        workflow=workflow,
+        checkpoint_storage=storage,
+        interrupts=interrupt_payload,
+    )
+    assert resolved == pause_id
+
+    rebuilt = _build_run_finished_event(
+        "run-1",
+        "thread-1",
+        interrupts=await _interrupts_with_pause_checkpoint(
+            interrupts=interrupt_payload,
+            workflow=workflow,
+            checkpoint_storage=storage,
+        ),
+    )
+    rebuilt_interrupts = _interrupts_from_run_finished(rebuilt)
+    assert rebuilt_interrupts[0]["metadata"]["agent_framework"]["checkpoint_id"] == pause_id
+
+
+@pytest.mark.asyncio
+async def test_builder_checkpoint_storage_attaches_id_without_run_arg() -> None:
+    """WorkflowBuilder(checkpoint_storage=...) alone must still advertise pause checkpoint_id."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345"},
+            )
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+            del original_request, response
+            await ctx.yield_output("done")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor(), checkpoint_storage=storage).build()
+    # Deliberately omit checkpoint_storage= on the AG-UI entrypoint (builder path only).
+    events = [
+        event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
+    ]
+    finished = [event for event in events if event.type == "RUN_FINISHED"][0]
+    interrupt_payload = _interrupts_from_run_finished(finished)
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+    assert checkpoints
+    assert interrupt_payload[0]["metadata"]["agent_framework"]["checkpoint_id"] == checkpoints[-1].checkpoint_id
+
+
+@pytest.mark.asyncio
+async def test_resolve_pause_checkpoint_id_is_run_scoped_without_storage() -> None:
+    """Stale runner ids must not be advertised when baseline shows this run did not persist."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            await ctx.request_info("need-input", str, request_id="req-1")
+
+        @response_handler
+        async def handle(self, original_request: str, response: str, ctx: WorkflowContext) -> None:
+            del original_request, response
+            await ctx.yield_output("done")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    # Simulate a leftover id from a prior run on a workflow with no checkpoint storage.
+    workflow._runner._previous_checkpoint_id = "stale-from-prior-run"  # pyright: ignore[reportPrivateUsage]
+
+    from agent_framework_ag_ui._workflow_run import _pause_checkpoint_id_for_interrupts
+
+    interrupts = [{"id": "req-1", "value": "need-input"}]
+    workflow._run_baseline_checkpoint_id = "stale-from-prior-run"  # pyright: ignore[reportPrivateUsage]
+    assert (
+        await _pause_checkpoint_id_for_interrupts(
+            workflow=workflow,
+            checkpoint_storage=None,
+            interrupts=interrupts,
+        )
+        is None
+    )
+    assert (
+        await _pause_checkpoint_id_for_interrupts(
+            workflow=workflow,
+            checkpoint_storage=None,
+            interrupts=interrupts,
+            baseline_checkpoint_id=None,
+        )
+        == "stale-from-prior-run"
+    )
+
+
 async def test_workflow_run_maps_custom_and_text_events():
     """Custom workflow events and yielded text are mapped to AG-UI events."""
 
@@ -682,6 +860,8 @@ async def test_workflow_run_resume_content_response_after_checkpoint_restore() -
     )
     assert checkpoints, "expected the interrupted run to create a checkpoint"
     resume_checkpoint_id = checkpoints[-1].checkpoint_id
+    # Issue #8150: interrupt metadata must carry the pause checkpoint for multi-worker resume.
+    assert interrupt_payload[0]["metadata"]["agent_framework"]["checkpoint_id"] == resume_checkpoint_id
 
     # Resume on a FRESH workflow instance so no pending requests exist in memory until
     # the checkpoint is restored -- a cold restore, as after a process restart.
