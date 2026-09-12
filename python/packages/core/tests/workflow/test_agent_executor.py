@@ -620,7 +620,7 @@ async def test_agent_executor_checkpoint_restore_missing_optional_fields() -> No
 
 async def test_agent_executor_checkpoint_restore_rejects_malformed_fields() -> None:
     """Restore raises WorkflowCheckpointException for wrong field types."""
-    from agent_framework import WorkflowCheckpointException
+    from agent_framework import Content, WorkflowCheckpointException
 
     agent = _CountingAgent(id="bad_agent", name="BadAgent")
     executor = AgentExecutor(agent)
@@ -628,11 +628,29 @@ async def test_agent_executor_checkpoint_restore_rejects_malformed_fields() -> N
     with pytest.raises(WorkflowCheckpointException, match="cache"):
         await executor.on_checkpoint_restore({"cache": "not-a-list"})  # type: ignore[typeddict-item]
 
+    with pytest.raises(WorkflowCheckpointException, match=r"'cache'\[0\]"):
+        await executor.on_checkpoint_restore({"cache": ["not-a-message"]})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_responses_to_agent"):
+        await executor.on_checkpoint_restore({"pending_responses_to_agent": ["bad"]})  # type: ignore[typeddict-item]
+
     with pytest.raises(WorkflowCheckpointException, match="agent_session"):
         await executor.on_checkpoint_restore({"agent_session": "not-a-dict"})  # type: ignore[typeddict-item]
 
+    with pytest.raises(WorkflowCheckpointException, match="agent_session.session_id"):
+        await executor.on_checkpoint_restore({"agent_session": {}})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="agent_session.session_id"):
+        await executor.on_checkpoint_restore({"agent_session": {"session_id": 1}})  # type: ignore[typeddict-item]
+
     with pytest.raises(WorkflowCheckpointException, match="pending_agent_requests"):
         await executor.on_checkpoint_restore({"pending_agent_requests": []})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_agent_requests"):
+        await executor.on_checkpoint_restore({"pending_agent_requests": {1: Content(type="text", text="x")}})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="pending_agent_requests"):
+        await executor.on_checkpoint_restore({"pending_agent_requests": {"req": "not-content"}})  # type: ignore[typeddict-item]
 
 
 async def test_agent_executor_checkpoint_restore_ignores_unknown_keys() -> None:
