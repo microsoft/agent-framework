@@ -546,7 +546,7 @@ def test_parse_tool_result_from_mcp_structured_content_only():
 
 
 def test_parse_tool_result_from_mcp_structured_content_with_text():
-    """Test that structuredContent is appended alongside regular content items."""
+    """When content is present, do not also dump structuredContent into model text (#7866)."""
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="Summary")],
         structuredContent={"data": [1, 2, 3]},
@@ -554,13 +554,9 @@ def test_parse_tool_result_from_mcp_structured_content_with_text():
     result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
 
     assert isinstance(result, list)
-    assert len(result) == 2
+    assert len(result) == 1
     assert result[0].type == "text"
     assert result[0].text == "Summary"
-    assert result[1].type == "text"
-    assert result[1].text is not None
-    parsed = json.loads(result[1].text)
-    assert parsed == {"data": [1, 2, 3]}
 
 
 async def test_generated_mcp_tool_preserves_complete_host_payload_once() -> None:
@@ -584,7 +580,7 @@ async def test_generated_mcp_tool_preserves_complete_host_payload_once() -> None
         "isError": False,
     }
 
-    assert [item.additional_properties["_meta"] for item in function_result.items] == [{"widget": "image"}] * 2
+    assert [item.additional_properties["_meta"] for item in function_result.items] == [{"widget": "image"}]
     assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY] == expected_host_payload
     assert all(_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY not in item.additional_properties for item in function_result.items)
     restored = Content.from_dict(function_result.to_dict())
@@ -1198,7 +1194,7 @@ async def test_secure_mcp_builtin_parser_restricts_all_result_shapes(result_shap
     )
 
     assert function_result.items is not None
-    assert len(function_result.items) == (2 if result_shape == "both" else 1)
+    assert len(function_result.items) == 1
     for hidden_item in function_result.items:
         assert hidden_item.additional_properties["_variable_reference"] is True
         assert hidden_item.additional_properties["security_label"]["integrity"] == "untrusted"
@@ -8268,7 +8264,7 @@ async def test_secure_mcp_task_results_cannot_relax_local_label(result_path: str
     )
 
     assert function_result.items is not None
-    assert len(function_result.items) == 2
+    assert len(function_result.items) == 1
     for item in function_result.items:
         assert item.additional_properties["_variable_reference"] is True
         assert item.additional_properties["security_label"]["integrity"] == "untrusted"
