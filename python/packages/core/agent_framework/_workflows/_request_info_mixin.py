@@ -6,6 +6,7 @@ import inspect
 import logging
 import sys
 import types
+import typing
 from builtins import type as builtin_type
 from collections.abc import Awaitable, Callable
 from types import UnionType
@@ -348,20 +349,32 @@ def _validate_response_handler_signature(
     if not skip_annotations and response_param.annotation == inspect.Parameter.empty:
         raise ValueError(f"Response handler {func.__name__} must have a type annotation for the response parameter")
 
+    # Resolve string annotations from `from __future__ import annotations`.
+    # Fall back to raw annotations if resolution fails (e.g. unresolvable forward refs,
+    # AttributeError, or RecursionError), so registration failures are easier to diagnose.
+    try:
+        type_hints = typing.get_type_hints(func)
+    except (NameError, AttributeError, RecursionError):
+        type_hints = {p.name: p.annotation for p in params}
+
     # Validate ctx parameter is WorkflowContext and extract type args (if annotated)
     ctx_param = params[3]
+    ctx_annotation = type_hints.get(ctx_param.name, ctx_param.annotation)
     if ctx_param.annotation != inspect.Parameter.empty:
         output_types, workflow_output_types = validate_workflow_context_annotation(
-            ctx_param.annotation, f"parameter '{ctx_param.name}'", "Response handler"
+            ctx_annotation, f"parameter '{ctx_param.name}'", "Response handler"
         )
     else:
         output_types, workflow_output_types = [], []
 
-    request_type = (
-        original_request_param.annotation if original_request_param.annotation != inspect.Parameter.empty else None
-    )
-    response_type = response_param.annotation if response_param.annotation != inspect.Parameter.empty else None
-    ctx_annotation = ctx_param.annotation if ctx_param.annotation != inspect.Parameter.empty else None
+    request_type = type_hints.get(original_request_param.name, original_request_param.annotation)
+    if request_type == inspect.Parameter.empty:
+        request_type = None
+    response_type = type_hints.get(response_param.name, response_param.annotation)
+    if response_type == inspect.Parameter.empty:
+        response_type = None
+    if ctx_annotation == inspect.Parameter.empty:
+        ctx_annotation = None
 
     return request_type, response_type, ctx_annotation, output_types, workflow_output_types
 
