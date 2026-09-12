@@ -118,7 +118,9 @@ class TestExecutorFutureAnnotations:
                 pass
 
             @response_handler
-            async def handle_response(self, original_request: str, response: int, ctx: WorkflowContext[str]) -> None:
+            async def handle_response(
+                self, original_request: str, response: int, ctx: WorkflowContext[str, bool]
+            ) -> None:
                 pass
 
         exec_instance = MyExecutor(id="test")
@@ -127,6 +129,7 @@ class TestExecutorFutureAnnotations:
         assert spec["request_type"] is str
         assert spec["response_type"] is int
         assert spec["output_types"] == [str]
+        assert spec["workflow_output_types"] == [bool]
 
     def test_handler_unresolvable_annotation_raises(self):
         """Test that an unresolvable forward-reference annotation raises ValueError.
