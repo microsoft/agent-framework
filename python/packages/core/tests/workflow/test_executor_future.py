@@ -198,3 +198,45 @@ class TestExecutorFutureAnnotations:
         spec = exec_instance._response_handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["request_type"] is str
         assert spec["response_type"] is int
+
+    def test_response_handler_future_annotations_quoted(self):
+        """Explicitly quoted annotations resolve fully under future annotations."""
+
+        class MyExecutor(Executor):
+            @handler
+            async def example(self, input: str, ctx: WorkflowContext) -> None:
+                pass
+
+            @response_handler
+            async def handle_response(
+                self, original_request: "str", response: "int", ctx: "WorkflowContext[str]"
+            ) -> None:
+                pass
+
+        exec_instance = MyExecutor(id="test")
+        spec = exec_instance._response_handler_specs[0]  # pyright: ignore[reportPrivateUsage]
+        assert spec["request_type"] is str
+        assert spec["response_type"] is int
+        assert spec["output_types"] == [str]
+
+    def test_response_handler_unresolvable_annotation_raises(self):
+        """An unresolvable request/response annotation fails at decoration time.
+
+        Registering the raw string would only blow up later at dispatch
+        (isinstance against a str key), so validation raises ValueError instead.
+        """
+        with pytest.raises(ValueError, match="unresolvable"):
+
+            class Bad(Executor):  # pyright: ignore[reportUnusedClass]
+                @handler
+                async def example(self, input: str, ctx: WorkflowContext) -> None:
+                    pass
+
+                @response_handler  # pyright: ignore[reportUnknownArgumentType]
+                async def handle_response(
+                    self,
+                    original_request: NonExistentType,  # type: ignore[name-defined]  # ty: ignore[unresolved-reference]  # noqa: F821
+                    response: int,
+                    ctx: WorkflowContext,
+                ) -> None:
+                    pass

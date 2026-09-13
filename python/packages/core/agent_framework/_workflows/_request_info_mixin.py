@@ -349,15 +349,22 @@ def _validate_response_handler_signature(
         raise ValueError(f"Response handler {func.__name__} must have a type annotation for the response parameter")
 
     # Resolve string annotations from `from __future__ import annotations`, the same way
-    # the explicit-parameter path in the decorator does. Fall back to the raw annotation
-    # when resolution fails so registration failures stay diagnosable.
+    # the explicit-parameter path in the decorator does. An explicitly quoted annotation
+    # arrives quoted again (`"'WorkflowContext[str]'"`), so keep resolving until a
+    # non-string lands (bounded, like typing.get_type_hints). Fall back to the last
+    # string when resolution fails so registration failures stay diagnosable.
     def _resolve(annotation: Any) -> Any:
         if annotation is inspect.Parameter.empty:
             return annotation
-        try:
-            return resolve_type_annotation(annotation, func.__globals__)
-        except (NameError, AttributeError, RecursionError, SyntaxError):
-            return annotation
+        resolved = annotation
+        for _ in range(3):
+            if not isinstance(resolved, str):
+                break
+            try:
+                resolved = resolve_type_annotation(resolved, func.__globals__)
+            except (NameError, AttributeError, RecursionError, SyntaxError):
+                break
+        return resolved
 
     # Validate ctx parameter is WorkflowContext and extract type args (if annotated)
     ctx_param = params[3]
@@ -377,6 +384,16 @@ def _validate_response_handler_signature(
         response_type = None
     if ctx_annotation is inspect.Parameter.empty:
         ctx_annotation = None
+
+    # An annotation that never resolved to a real type would be registered as its raw
+    # string and only blow up at dispatch (isinstance against a str key). Fail at
+    # decoration time instead, the same as every other invalid signature here.
+    if not skip_annotations:
+        for name, value in (("original_request", request_type), ("response", response_type)):
+            if isinstance(value, str):
+                raise ValueError(
+                    f"Response handler {func.__name__} parameter '{name}' has an unresolvable type annotation {value!r}"
+                )
 
     return request_type, response_type, ctx_annotation, output_types, workflow_output_types
 
