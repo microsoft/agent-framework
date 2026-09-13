@@ -20,6 +20,11 @@ namespace Microsoft.Agents.AI.LocalCodeAct;
 /// Use this when you want to expose code execution directly as a model-facing function without
 /// the <see cref="LocalCodeActProvider"/> indirection. Tools and file mounts are captured at
 /// construction time and immutable for the lifetime of the function.
+/// When the configuration requires approval (per
+/// <see cref="LocalCodeActProviderOptions.ApprovalMode"/> or because a configured tool is itself
+/// an <see cref="ApprovalRequiredAIFunction"/>), the instance surfaces an
+/// <see cref="ApprovalRequiredAIFunction"/> via <see cref="AITool.GetService(Type, object?)"/>,
+/// which is how the rest of the framework discovers approval requirements.
 /// </remarks>
 public sealed class LocalExecuteCodeFunction : AIFunction
 {
@@ -28,6 +33,8 @@ public sealed class LocalExecuteCodeFunction : AIFunction
     private readonly CodeExecutor _executor;
     private readonly CodeExecutor.RunSnapshot _snapshot;
     private readonly AIFunction _inner;
+    private readonly bool _approvalRequired;
+    private ApprovalRequiredAIFunction? _approvalProxy;
 
     /// <summary>Initializes a new instance of the <see cref="LocalExecuteCodeFunction"/> class.</summary>
     /// <param name="pythonExecutablePath">Path to the Python interpreter used for execution and validation.</param>
@@ -73,6 +80,8 @@ public sealed class LocalExecuteCodeFunction : AIFunction
                 Name = ExecuteCodeName,
                 Description = InstructionBuilder.BuildExecuteCodeDescription(tools, fileMounts),
             });
+
+        this._approvalRequired = LocalCodeActProvider.ComputeApprovalRequired(options.ApprovalMode, tools);
     }
 
     /// <inheritdoc/>
@@ -83,6 +92,19 @@ public sealed class LocalExecuteCodeFunction : AIFunction
 
     /// <inheritdoc/>
     public override JsonElement JsonSchema => this._inner.JsonSchema;
+
+    /// <inheritdoc/>
+    public override object? GetService(Type serviceType, object? serviceKey = null)
+    {
+        if (serviceKey is null
+            && this._approvalRequired
+            && serviceType == typeof(ApprovalRequiredAIFunction))
+        {
+            return this._approvalProxy ??= new ApprovalRequiredAIFunction(this);
+        }
+
+        return base.GetService(serviceType, serviceKey);
+    }
 
     /// <inheritdoc/>
     protected override ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken) =>

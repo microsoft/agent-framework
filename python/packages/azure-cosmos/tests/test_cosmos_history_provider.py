@@ -256,6 +256,47 @@ class TestCosmosHistoryProviderSaveMessages:
 
         mock_container.execute_item_batch.assert_not_awaited()
 
+    async def test_filters_replayed_transcript_prefix(self, mock_container: MagicMock) -> None:
+        existing_messages = [
+            Message(role="user", contents=["A"]),
+            Message(role="assistant", contents=["B"]),
+        ]
+        mock_container.query_items.return_value = _to_async_iter([
+            {"message": message.to_dict()} for message in existing_messages
+        ])
+        provider = CosmosHistoryProvider(source_id="mem", container_client=mock_container)
+        incoming_messages = [
+            Message(role="user", contents=["A"]),
+            Message(role="assistant", contents=["B"]),
+            Message(role="user", contents=["C"]),
+        ]
+
+        await provider.save_messages("s1", incoming_messages)
+
+        batch_operations = mock_container.execute_item_batch.await_args.kwargs["batch_operations"]
+        assert len(batch_operations) == 1
+        assert batch_operations[0][1][0]["message"]["contents"][0]["text"] == "C"
+        mock_container.query_items.assert_called_once()
+
+    async def test_skips_exact_replayed_transcript(self, mock_container: MagicMock) -> None:
+        existing_messages = [
+            Message(role="user", contents=["A"]),
+            Message(role="assistant", contents=["B"]),
+        ]
+        mock_container.query_items.return_value = _to_async_iter([
+            {"message": message.to_dict()} for message in existing_messages
+        ])
+        provider = CosmosHistoryProvider(source_id="mem", container_client=mock_container)
+        incoming_messages = [
+            Message(role="user", contents=["A"]),
+            Message(role="assistant", contents=["B"]),
+        ]
+
+        await provider.save_messages("s1", incoming_messages)
+
+        mock_container.query_items.assert_called_once()
+        mock_container.execute_item_batch.assert_not_awaited()
+
     async def test_batches_when_message_count_exceeds_limit(self, mock_container: MagicMock) -> None:
         provider = CosmosHistoryProvider(source_id="mem", container_client=mock_container)
         messages = [Message(role="user", contents=[f"msg-{index}"]) for index in range(101)]
