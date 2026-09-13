@@ -700,6 +700,16 @@ def _serialize_content(content: Content) -> dict[str, Any]:
     # ``items`` mirrors ``result`` for function_result content; exclude it
     # to avoid double-counting tokens during estimation.
     payload.pop("items", None)
+    # ``protected_data`` holds provider-encrypted reasoning payloads (e.g.
+    # OpenAI ``encrypted_content``, Anthropic thinking ``signature``) that the
+    # model replays opaquely and never tokenises; exclude them so estimation
+    # measures the text the model actually sees.
+    payload.pop("protected_data", None)
+    additional_properties = payload.get("additional_properties")
+    if isinstance(additional_properties, dict) and "encrypted_content" in additional_properties:
+        payload["additional_properties"] = {
+            key: value for key, value in additional_properties.items() if key != "encrypted_content"
+        }
     return payload
 
 

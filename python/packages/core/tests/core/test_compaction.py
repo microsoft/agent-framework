@@ -434,6 +434,44 @@ def test_annotate_message_groups_with_tokenizer_adds_token_counts() -> None:
     assert isinstance(_token_count(messages[1]), int)
 
 
+def test_annotate_message_groups_token_counts_ignore_protected_data() -> None:
+    encrypted_blob = "A" * 4096
+    with_payload = Message(
+        role="assistant",
+        contents=[
+            Content.from_text_reasoning(id="rs_1", text="", protected_data=encrypted_blob),
+            Content.from_text("final answer"),
+        ],
+    )
+    without_payload = Message(
+        role="assistant",
+        contents=[
+            Content.from_text_reasoning(id="rs_1", text=""),
+            Content.from_text("final answer"),
+        ],
+    )
+
+    annotate_message_groups([with_payload], tokenizer=CharacterEstimatorTokenizer())
+    annotate_message_groups([without_payload], tokenizer=CharacterEstimatorTokenizer())
+
+    assert _token_count(with_payload) == _token_count(without_payload)
+
+
+def test_annotate_message_groups_token_counts_ignore_encrypted_content_in_additional_properties() -> None:
+    encrypted_blob = "A" * 4096
+    with_blob = Content.from_text_reasoning(id="rs_1", text="")
+    with_blob.additional_properties["encrypted_content"] = encrypted_blob
+    without_blob = Content.from_text_reasoning(id="rs_1", text="")
+
+    with_message = Message(role="assistant", contents=[with_blob, Content.from_text("final answer")])
+    without_message = Message(role="assistant", contents=[without_blob, Content.from_text("final answer")])
+
+    annotate_message_groups([with_message], tokenizer=CharacterEstimatorTokenizer())
+    annotate_message_groups([without_message], tokenizer=CharacterEstimatorTokenizer())
+
+    assert _token_count(with_message) == _token_count(without_message)
+
+
 def test_extend_compaction_messages_preserves_existing_annotations_and_tokens() -> None:
     tokenizer = CharacterEstimatorTokenizer()
     messages = [_assistant_function_call("c3")]
