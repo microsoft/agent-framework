@@ -5871,6 +5871,42 @@ async def test_chat_client_records_duration_when_stream_setup_fails(
     assert attributes[OtelAttr.OPERATION] == OtelAttr.CHAT_COMPLETION_OPERATION
 
 
+async def test_chat_client_records_duration_when_stream_finalizer_fails(
+    mock_chat_client: Any, span_exporter: InMemorySpanExporter
+) -> None:
+    """A stream whose finalizer raises records the duration metric with error.type."""
+
+    class FailingFinalizerChatClient(mock_chat_client):  # type: ignore[misc, valid-type]
+        def _get_streaming_response(self, **kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(contents=[Content.from_text("Hello")], role="assistant")
+
+            def _broken_finalizer(updates: Any) -> ChatResponse:
+                raise ValueError("finalizer failed")
+
+            return ResponseStream(_stream(), finalizer=_broken_finalizer)
+
+    client = FailingFinalizerChatClient()
+    histogram = Mock()
+    client.duration_histogram = histogram
+    span_exporter.clear()
+
+    with pytest.raises(ValueError, match="finalizer failed"):
+        stream = client.get_response(
+            messages=[Message(role="user", contents=["hi"])], stream=True, options={"model": "Test"}
+        )
+        async for _ in stream:
+            pass
+
+    histogram.record.assert_called_once()
+    duration, kwargs = histogram.record.call_args[0][0], histogram.record.call_args[1]
+    assert duration >= 0
+    attributes = kwargs["attributes"]
+    assert attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+    assert attributes[OtelAttr.REQUEST_MODEL] == "Test"
+    assert attributes[OtelAttr.OPERATION] == OtelAttr.CHAT_COMPLETION_OPERATION
+
+
 async def test_embedding_client_records_duration_on_error(span_exporter: InMemorySpanExporter) -> None:
     """A failed embedding call records gen_ai.client.operation.duration with error.type."""
     from agent_framework import BaseEmbeddingClient, GeneratedEmbeddings

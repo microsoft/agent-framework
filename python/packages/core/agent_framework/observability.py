@@ -2129,6 +2129,12 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                         )
                 except Exception as exception:
                     capture_exception(span=span, exception=exception, timestamp=time_ns())
+                    _capture_operation_error(
+                        attributes=attributes,
+                        exception=exception,
+                        operation_duration_histogram=getattr(self, "duration_histogram", None),
+                        duration=duration_state.get("duration", perf_counter() - start_time),
+                    )
                 finally:
                     _close_span()
 
