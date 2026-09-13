@@ -404,10 +404,11 @@ class FunctionTool(SerializationMixin):
             max_invocations: The maximum number of times this function can be invoked
                 across the **lifetime of this tool instance**. If None (default),
                 there is no limit. Should be at least 1. If the tool is called multiple
-                times in one iteration, those will execute, after that it will stop working. For example,
-                if max_invocations is 3 and the tool is called 5 times in a single iteration,
-                these will complete, but any subsequent calls to the tool (in the same or future iterations)
-                will raise a ToolException.
+                times in one iteration, those will execute, after that it will stop
+                working. For example, if max_invocations is 3 and the tool is called 5
+                times in a single iteration, these will complete, but any subsequent
+                calls to the tool (in the same or future iterations) will raise a
+                ToolException.
 
                 .. note::
                     This counter lives on the tool instance and is never automatically
@@ -418,30 +419,32 @@ class FunctionTool(SerializationMixin):
                     ``FunctionInvocationConfiguration["max_function_calls"]``
                     for per-request limits instead.
 
-            max_invocation_exceptions: The maximum number of exceptions allowed during invocations.
-                If None, there is no limit. Should be at least 1.
+            max_invocation_exceptions: The maximum number of exceptions allowed
+                during invocations. If None, there is no limit. Should be at least 1.
             additional_properties: Additional properties to set on the function.
-            func: The function to wrap. When ``None``, creates a declaration-only tool
-                that has no implementation. Declaration-only tools are useful when you want
-                the agent to reason about tool usage without executing them, or when the
-                actual implementation exists elsewhere (e.g., client-side rendering).
-            input_model: The Pydantic model that defines the input parameters for the function.
-                This can also be a JSON schema dictionary.
-                If not provided and ``func`` is not ``None``, it will be inferred from
-                the function signature. When ``func`` is ``None`` and ``input_model`` is
-                not provided, the tool will use an empty input model (no parameters) in
-                its JSON schema. For declaration-only tools that should declare
-                parameters, explicitly provide ``input_model`` (either a Pydantic
-                ``BaseModel`` or a JSON schema dictionary) so the model can reason about
-                the expected arguments.
-            result_parser: An optional callable with signature ``Callable[[Any], str]`` that
-                overrides the default result parsing behavior. When provided, this callable
-                is used to convert the raw function return value to a string instead of the
-                built-in :meth:`parse_result` logic. Pass the :data:`SKIP_PARSING` sentinel
-                instead of a callable to opt out of parsing entirely; in that case
-                :meth:`invoke` returns the wrapped function's raw return value. Depending
-                on your function, it may be easiest to just do the serialization directly
-                in the function body rather than providing a custom ``result_parser``.
+            func: The function to wrap. When ``None``, creates a declaration-only
+                tool that has no implementation. Declaration-only tools are useful
+                when you want the agent to reason about tool usage without executing
+                them, or when the actual implementation exists elsewhere (e.g.,
+                client-side rendering).
+            input_model: The Pydantic model that defines the input parameters for the
+                function. This can also be a JSON schema dictionary.
+                If not provided and ``func`` is not ``None``, it will be inferred
+                from the function signature. When ``func`` is ``None`` and
+                ``input_model`` is not provided, the tool will use an empty input
+                model (no parameters) in its JSON schema. For declaration-only tools
+                that should declare parameters, explicitly provide ``input_model``
+                (either a Pydantic ``BaseModel`` or a JSON schema dictionary) so the
+                model can reason about the expected arguments.
+            result_parser: An optional callable with signature ``Callable[[Any], str]``
+                that overrides the default result parsing behavior. When provided,
+                this callable is used to convert the raw function return value to a
+                string instead of the built-in :meth:`parse_result` logic. Pass the
+                :data:`SKIP_PARSING` sentinel instead of a callable to opt out of
+                parsing entirely; in that case :meth:`invoke` returns the wrapped
+                function's raw return value. Depending on your function, it may be
+                easiest to just do the serialization directly in the function body
+                rather than providing a custom ``result_parser``.
             **kwargs: Additional keyword arguments.
         """
         # Core attributes (formerly from BaseTool)
@@ -1002,7 +1005,7 @@ class FunctionTool(SerializationMixin):
         as_dict = super().to_dict(exclude=exclude, exclude_none=exclude_none)
         if (exclude and "input_model" in exclude) or not self.input_model:
             return as_dict
-        as_dict["input_model"] = self.parameters()  # Use cached parameters()
+        as_dict["input_model"] = self.parameters()
         return as_dict
 
 
@@ -1463,6 +1466,14 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
       advertised to the model in the tool list.
     - ``include_detailed_errors``: Whether to include exception details in the
       function result returned to the model.
+    - ``allow_concurrent_invocation``: Dictates whether multiple tool calls in a
+      single message batch are executed concurrently (``True``, default) or
+      one-by-one (``False``). When set to ``False``, tools run sequentially. If a
+      call requests termination (e.g., via middleware), the loop immediately stops
+      dequeuing subsequent calls and safely skips them, ensuring provider
+      continuation history remains resolved. Ordinary tool failures do not stop
+      the loop; they are converted to error results and the next tool in the
+      batch is executed.
 
     Note:
         ``max_iterations``, ``max_function_calls``, and ``max_duration_seconds``
@@ -1495,6 +1506,7 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
     terminate_on_unknown_calls: bool
     additional_tools: Sequence[FunctionTool]
     include_detailed_errors: bool
+    allow_concurrent_invocation: bool
 
 
 def normalize_function_invocation_configuration(
@@ -1509,6 +1521,7 @@ def normalize_function_invocation_configuration(
         "terminate_on_unknown_calls": False,
         "additional_tools": [],
         "include_detailed_errors": False,
+        "allow_concurrent_invocation": True,
     }
     if config:
         normalized.update(config)
@@ -1546,6 +1559,11 @@ def _function_execution_error_result(
         base_additional_properties=function_call.additional_properties,
         context=context,
     )
+
+
+def _is_server_managed_tool(tool: FunctionTool) -> bool:
+    """Check if a tool is server-managed and should not be executed locally."""
+    return bool(tool.additional_properties and tool.additional_properties.get("server_label"))
 
 
 def _finalize_function_result(
@@ -1820,7 +1838,7 @@ def _get_tool_map(
     return {
         tool_item.name: tool_item
         for tool_item in _ensure_unique_tool_names(tools)
-        if isinstance(tool_item, FunctionTool)
+        if isinstance(tool_item, FunctionTool) and not _is_server_managed_tool(tool_item)
     }
 
 
@@ -1849,6 +1867,22 @@ async def _execute_single_function_call(
     from ._sessions import _suspend_run_persistence_gate  # pyright: ignore[reportPrivateUsage]
     from ._types import Content
 
+    source_function_call = _underlying_function_call(function_call)
+    tool_name = source_function_call.name
+
+    if (
+        source_function_call.additional_properties and source_function_call.additional_properties.get("server_label")
+    ) or tool_name not in tool_map:
+        exc = KeyError(f'Function "{tool_name}" not found.')
+        return [
+            Content.from_function_result(
+                call_id=source_function_call.call_id,  # type: ignore[arg-type]
+                result=f'Error: Requested function "{tool_name}" not found.',
+                exception=str(exc),
+                additional_properties=source_function_call.additional_properties,
+            )
+        ], False
+
     try:
         # A run-persistence gate defers only the gated run's own persistence; nested
         # agent runs persist inline at their own boundaries. Run-identity ownership
@@ -1867,11 +1901,10 @@ async def _execute_single_function_call(
                 live_tools=live_tools,
                 host_payload_budget=host_payload_budget,
             )
-        return [result], False
+            return [result], False
     except MiddlewareTermination as exc:
         if isinstance(exc.result, Content):
             return [exc.result], True
-        source_function_call = _underlying_function_call(function_call)
         return [
             Content.from_function_result(
                 call_id=source_function_call.call_id,  # type: ignore[arg-type]
@@ -1879,7 +1912,6 @@ async def _execute_single_function_call(
             )
         ], True
     except UserInputRequiredException as exc:
-        source_function_call = _underlying_function_call(function_call)
         call_id = source_function_call.call_id
         propagated_contents = [item for item in exc.contents if isinstance(item, Content)] if exc.contents else []
         for item in propagated_contents:
@@ -1954,7 +1986,8 @@ async def _try_execute_function_call_groups(
     has_declaration_only_call = False
     # A user-input pause takes precedence over unknown-call termination in mixed batches.
     for function_call in actionable_calls:
-        function_name = function_call.name
+        function_name = _underlying_function_call(function_call).name
+
         logger.debug(
             "Checking function call: type=%s, name=%s, in approval_tools=%s",
             function_call.type,
@@ -1971,18 +2004,19 @@ async def _try_execute_function_call_groups(
         if config.get("terminate_on_unknown_calls", False) and function_name not in tool_map:
             raise KeyError(f'Error: Requested function "{function_name}" not found.')
     if requires_approval:
-        # Surface only the approvals the host must decide; session-backed safe siblings wait for that resume.
-        # approval can only be needed for Function Call Content, not Approval Responses.
         logger.debug("Returning visible function_approval_request contents and storing already-approved requests")
         visible_requests: list[Content] = []
-        already_approved_requests: list[Content] = []
-        for function_call in function_calls:
+        already_approved_requests: list[tuple[int, Content]] = []
+        batch_id = str(uuid4())
+        for idx, function_call in enumerate(function_calls):
             if function_call.type != "function_call":
                 continue
             approval_request = Content.from_function_approval_request(
                 id=function_call.id or function_call.call_id,  # type: ignore[arg-type]
                 function_call=function_call,
             )
+            approval_request.additional_properties["original_index"] = idx
+            approval_request.additional_properties["batch_id"] = batch_id
             tool_name = function_call.name
             if tool_name is None:
                 visible_requests.append(approval_request)
@@ -1999,7 +2033,7 @@ async def _try_execute_function_call_groups(
             if not _has_authoritative_approval_session(invocation_session):
                 visible_requests.append(approval_request)
                 continue
-            already_approved_requests.append(approval_request)
+            already_approved_requests.append((idx, approval_request))
         _store_already_approved_approval_requests(
             invocation_session,
             visible_requests,
@@ -2023,11 +2057,16 @@ async def _try_execute_function_call_groups(
     # Only a fully executable batch reaches this point; run calls concurrently but retain per-call result groups.
     # Create each task inside a copied context so the active agent span is
     # preserved for every parallel tool invocation.
-    execution_tasks = [
-        contextvars.copy_context().run(
+
+    allow_concurrent = config.get("allow_concurrent_invocation", True)
+    execution_results: list[tuple[list[Content], bool]] = []
+
+    def _create_execution_task(call: Content) -> asyncio.Task[tuple[list[Content], bool]]:
+        ctx = contextvars.copy_context()
+        return ctx.run(
             asyncio.create_task,
             _execute_single_function_call(
-                function_call,
+                call,
                 custom_args=custom_args,
                 config=config,
                 tool_map=tool_map,
@@ -2037,22 +2076,35 @@ async def _try_execute_function_call_groups(
                 host_payload_budget=host_payload_budget,
             ),
         )
-        for function_call in function_calls
-    ]
-    try:
-        execution_results = await asyncio.gather(*execution_tasks)
-    except BaseException:
-        # A loud escape from one call (e.g. MiddlewareFailure aborting the run
-        # fail-closed) fails the whole batch: cancel in-flight siblings and wait for
-        # them so no new tool work starts after the loop is abandoned. Cancellation
-        # is cooperative — a synchronous tool body already running in a worker thread
-        # (asyncio.to_thread) cannot be interrupted and may complete its side effects,
-        # but its result is discarded with the batch and never reaches the transcript,
-        # the model, or history.
-        for task in execution_tasks:
-            task.cancel()
-        await asyncio.gather(*execution_tasks, return_exceptions=True)
-        raise
+
+    if allow_concurrent:
+        tasks = [_create_execution_task(call) for call in function_calls]
+        try:
+            execution_results = await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+    else:
+        for idx, call in enumerate(function_calls):
+            task = _create_execution_task(call)
+            try:
+                res = await task
+            except BaseException:
+                task.cancel()
+                raise
+
+            execution_results.append(res)
+            if res[1]:
+                for skipped in function_calls[idx + 1 :]:
+                    skipped_call = _underlying_function_call(skipped)
+                    skipped_result = Content.from_function_result(
+                        call_id=skipped_call.call_id,  # type: ignore[arg-type]
+                        result="Skipped: a prior tool call in this batch requested termination.",
+                    )
+                    execution_results.append(([skipped_result], False))
+                break
 
     should_terminate = any(terminate for _, terminate in execution_results)
     return [result_contents for result_contents, _ in execution_results], should_terminate
@@ -2102,21 +2154,28 @@ async def _execute_function_calls(
     custom_args: dict[str, Any],
     function_calls: list[Content],
     options: dict[str, Any] | None,
-    config: FunctionInvocationConfiguration,
+    config_provider: Callable[[], FunctionInvocationConfiguration],
     invocation_session: AgentSession | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
 ) -> _FunctionExecutionBatch:
+    config = config_provider()
+    run_config = cast(
+        "FunctionInvocationConfiguration",
+        dict(config) if config else {},
+    )
+
     tools = _extract_tools(options)
     if not tools:
         return _FunctionExecutionBatch(result_groups=[])
+
     result_groups, should_terminate = await _try_execute_function_call_groups(
         custom_args=custom_args,
         function_calls=function_calls,
         tools=tools,
         invocation_session=invocation_session,
         middleware_pipeline=middleware_pipeline,
-        config=config,
+        config=run_config,
         host_payload_budget=host_payload_budget,
     )
     return _FunctionExecutionBatch(
@@ -2459,6 +2518,12 @@ def _bind_approval_response_to_pending_request(
         additional_properties=rebound_properties,
         raw_representation=response.raw_representation,
     )
+    if request.additional_properties:
+        if "original_index" in request.additional_properties:
+            rebound.additional_properties["original_index"] = request.additional_properties["original_index"]
+        if "batch_id" in request.additional_properties:
+            rebound.additional_properties["batch_id"] = request.additional_properties["batch_id"]
+
     if consume:
         pending.pop(request_key, None)
         _save_pending_approval_requests(invocation_session, pending)
@@ -2502,7 +2567,7 @@ def _bind_approval_responses_to_pending_requests(
 def _store_already_approved_approval_requests(
     invocation_session: AgentSession | None,
     visible_approval_requests: Sequence[Content],
-    already_approved_requests: Sequence[Content],
+    already_approved_requests: Sequence[tuple[int, Content] | Content],
 ) -> None:
     """Store hidden already-approved requests keyed by the visible approvals that resume the batch."""
     if not already_approved_requests:
@@ -2510,15 +2575,33 @@ def _store_already_approved_approval_requests(
     state = _get_tool_approval_state(invocation_session)
     if state is None:
         return
-    visible_ids = [request.id for request in visible_approval_requests if request.id]
+    visible_ids: list[str] = [request.id for request in visible_approval_requests if request.id]
     if not visible_ids:
         return
 
     existing_groups = state.get(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY)
-    pending_groups = list(cast(list[Any], existing_groups)) if isinstance(existing_groups, list) else []
+
+    pending_groups: list[dict[str, Any]] = (
+        cast("list[dict[str, Any]]", existing_groups) if isinstance(existing_groups, list) else []
+    )
+
+    serialized_requests: list[dict[str, Any]] = []
+    request_indices: list[int] = []
+    for i, item in enumerate(already_approved_requests):
+        idx: int
+        request: Content
+        if isinstance(item, tuple):
+            idx, request = item
+        else:
+            idx, request = i, item
+
+        serialized_requests.append(request.to_dict())
+        request_indices.append(idx)
+
     pending_groups.append({
         "approval_request_ids": visible_ids,
-        "approval_requests": [request.to_dict() for request in already_approved_requests],
+        "approval_requests": serialized_requests,
+        "approval_request_indices": request_indices,
     })
     state[_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY] = pending_groups
 
@@ -2527,7 +2610,7 @@ def _pop_already_approved_approval_responses(
     invocation_session: AgentSession | None,
     approval_response_ids: set[str],
 ) -> list[Content]:
-    """Pop already-approved requests for the visible approval ids being answered."""
+    """Pop already-approved requests for the visible approval ids being answered, preserving original order."""
     if not approval_response_ids:
         return []
     state = _get_tool_approval_state(invocation_session)
@@ -2536,27 +2619,55 @@ def _pop_already_approved_approval_responses(
     raw_groups = state.get(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY, [])
     if not isinstance(raw_groups, list):
         return []
-    typed_groups = cast(list[Any], raw_groups)
+    typed_groups = cast("list[Mapping[str, Any]]", raw_groups)
 
-    responses: list[Content] = []
-    remaining_groups: list[Any] = []
+    tagged_responses: list[tuple[int, Content]] = []
+    remaining_groups: list[Mapping[str, Any]] = []
     for raw_group in typed_groups:
         if not isinstance(raw_group, Mapping):
             continue
-        group = cast(Mapping[str, Any], raw_group)
+        group = raw_group
         raw_ids = group.get("approval_request_ids")
-        group_ids: set[str] = {str(item) for item in cast(list[Any], raw_ids)} if isinstance(raw_ids, list) else set()
-        if group_ids.isdisjoint(approval_response_ids):
-            remaining_groups.append(raw_group)
+        group_ids: set[str] = {str(item) for item in cast("list[Any]", raw_ids)} if isinstance(raw_ids, list) else set()
+
+        answered_ids = group_ids.intersection(approval_response_ids)
+        if not answered_ids:
+            remaining_groups.append(group)
             continue
+
+        remaining_visible_ids = list(group_ids - answered_ids)
+
+        if remaining_visible_ids:
+            updated_group = dict(group)
+            updated_group["approval_request_ids"] = remaining_visible_ids
+            remaining_groups.append(updated_group)
+            continue
+
         raw_requests = group.get("approval_requests")
         if not isinstance(raw_requests, list):
             continue
-        for raw_request in cast(list[Any], raw_requests):
-            request = _content_from_state(raw_request)
+
+        raw_indices = group.get("approval_request_indices")
+        indices = cast("list[int]", raw_indices) if isinstance(raw_indices, list) else []
+
+        for i, raw_request in enumerate(cast(list[Any], raw_requests)):
+            if isinstance(raw_request, Mapping) and "original_index" in raw_request:
+                req_map = cast("Mapping[str, Any]", raw_request)
+                original_index: int = int(req_map["original_index"])
+                request_dict: dict[str, Any] = dict(req_map)
+                request_dict.pop("original_index", None)
+                request = _content_from_state(request_dict)
+            else:
+                original_index = indices[i] if i < len(indices) else 0
+                request = _content_from_state(raw_request)
+
             if request is None or request.type != "function_approval_request":
                 continue
-            responses.append(request.to_function_approval_response(approved=True))
+            tagged_responses.append((original_index, request.to_function_approval_response(approved=True)))
+
+    tagged_responses.sort(key=lambda item: item[0])
+    responses = [content for _, content in tagged_responses]
+
     if remaining_groups:
         state[_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY] = remaining_groups
     else:
@@ -3291,6 +3402,12 @@ async def _resolve_approval_responses(
     responses_to_execute = [
         response for response in pending_approval_responses.values() if _is_approval_granted(response.approved)
     ]
+
+    # Sort by original batch index to restore model order (critical for sequential mode)
+    responses_to_execute.sort(
+        key=lambda c: c.additional_properties.get("original_index", 0) if c.additional_properties else 0
+    )
+
     responses_not_granted = [
         response for response in pending_approval_responses.values() if not _is_approval_granted(response.approved)
     ]
@@ -3298,6 +3415,7 @@ async def _resolve_approval_responses(
         middleware_pipeline._notify_approval_responses(  # pyright: ignore[reportPrivateUsage]
             responses_not_granted, session=invocation_session
         )
+
     execution_result_groups: list[list[Content]] = []
     should_terminate = False
     reached_error_limit = False
@@ -4150,18 +4268,21 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             setattr(invocation_session, _RUN_LOCAL_MIDDLEWARE_SESSION_ATTR, True)
 
         # Bind one executor with the run's custom arguments, middleware, configuration, and session.
+        mutable_options: dict[str, Any] = dict(options) if options else {}
+
+        def _get_run_config() -> FunctionInvocationConfiguration:
+            base = dict(self.function_invocation_configuration) if self.function_invocation_configuration else {}
+            return cast("FunctionInvocationConfiguration", base)
+
         execute_function_calls = partial(
             _execute_function_calls,
             custom_args=additional_function_arguments,
-            config=self.function_invocation_configuration,
+            config_provider=_get_run_config,
             invocation_session=invocation_session,
             middleware_pipeline=function_middleware_pipeline,
             host_payload_budget=host_payload_budget,
         )
 
-        # Give the loop private mutable options and one shared run-local tool list for progressive tool changes.
-        # Make options mutable so we can update conversation_id during function invocation loop
-        mutable_options: dict[str, Any] = dict(options) if options else {}
         # Remove additional_function_arguments from options passed to underlying chat client
         # It's for tool invocation only and not recognized by chat service APIs
         mutable_options.pop("additional_function_arguments", None)
