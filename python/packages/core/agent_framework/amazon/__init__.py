@@ -14,6 +14,8 @@ Supported classes:
 - BedrockEmbeddingOptions
 - BedrockEmbeddingSettings
 - BedrockGuardrailConfig
+- BedrockKnowledgeBaseProvider
+- BedrockKnowledgeBaseTool
 - BedrockSettings
 - RawAnthropicBedrockClient
 """
@@ -29,6 +31,8 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "BedrockEmbeddingOptions": ("agent_framework_bedrock", "agent-framework-bedrock"),
     "BedrockEmbeddingSettings": ("agent_framework_bedrock", "agent-framework-bedrock"),
     "BedrockGuardrailConfig": ("agent_framework_bedrock", "agent-framework-bedrock"),
+    "BedrockKnowledgeBaseProvider": ("agent_framework_bedrock", "agent-framework-bedrock"),
+    "BedrockKnowledgeBaseTool": ("agent_framework_bedrock", "agent-framework-bedrock"),
     "BedrockSettings": ("agent_framework_bedrock", "agent-framework-bedrock"),
     "RawAnthropicBedrockClient": ("agent_framework_anthropic", "agent-framework-anthropic"),
 }
