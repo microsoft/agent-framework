@@ -176,6 +176,14 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
     if origin is None:
         return isinstance(data, target_type)
 
+    # Case 1b: target_type is Literal[...]
+    # isinstance() cannot be used with Literal, so match by allowed values with
+    # strict member types, mirroring ``_matches_annotation``. Without this,
+    # executors whose handlers declare Literal message annotations crash at
+    # delivery time (Executor.can_handle/_find_handler call this directly).
+    if origin is Literal:
+        return any(data == member and type(data) is type(member) for member in args)
+
     # Case 2: target_type is Optional[T] or Union[T1, T2, ...]
     # Optional[T] is really just as Union[T, None]
     if origin is UnionType:
