@@ -4848,6 +4848,36 @@ def test_prepend_instructions_custom_role():
     assert result[0].role == "developer"
 
 
+def test_prepend_instructions_partial_dedup_preserves_order():
+    """Test that a partial dedup keeps the instruction order."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [
+        Message("system", ["First"]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, ["First", "Second"])
+    assert len(result) == 3
+    assert result[0].role == "system"
+    assert result[0].text == "First"
+    assert result[1].role == "system"
+    assert result[1].text == "Second"
+    assert result[2].role == "user"
+
+
+def test_prepend_instructions_partial_dedup_multiline():
+    """Test order preservation when several leading instructions already exist."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [
+        Message("system", ["First"]),
+        Message("system", ["Second"]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, ["First", "Second", "Third"])
+    assert [message.text for message in result] == ["First", "Second", "Third", "Hello"]
+
+
 # endregion
 
 

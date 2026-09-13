@@ -1987,8 +1987,19 @@ def prepend_instructions_to_messages(
     if not deduplicated:
         return messages
 
+    # Insert the remaining instructions after the leading matched messages
+    # instead of in front of them.  Prepending them before the skipped
+    # duplicates would silently reorder the instructions on a partial match
+    # (microsoft/agent-framework#8352).
+    insert_at = 0
+    for idx, instr in enumerate(instructions):
+        if idx < len(messages) and messages[idx].role == role and messages[idx].text == instr:
+            insert_at = idx + 1
+        else:
+            break
+
     instruction_messages = [Message(role, [instr]) for instr in deduplicated]
-    return [*instruction_messages, *messages]
+    return [*messages[:insert_at], *instruction_messages, *messages[insert_at:]]
 
 
 # region ChatResponse
