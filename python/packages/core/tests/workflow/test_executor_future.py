@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from agent_framework import Executor, WorkflowContext, handler
+from agent_framework import Executor, WorkflowContext, handler, response_handler
 
 
 class MyTypeA(BaseModel):
@@ -122,3 +122,79 @@ class TestExecutorFutureAnnotations:
                 @handler  # pyright: ignore[reportUnknownArgumentType]
                 async def example(self, input: NonExistentType, ctx: WorkflowContext[MyTypeA, MyTypeB]) -> None:  # type: ignore[name-defined]  # ty: ignore[unresolved-reference]  # noqa: F821
                     pass
+
+    def test_response_handler_future_annotations(self):
+        """Test @response_handler introspection with stringified annotations (issue #8327)."""
+
+        class MyExecutor(Executor):
+            @handler
+            async def example(self, input: str, ctx: WorkflowContext) -> None:
+                pass
+
+            @response_handler
+            async def handle_response(self, original_request: str, response: int, ctx: WorkflowContext[str]) -> None:
+                pass
+
+        exec_instance = MyExecutor(id="test")
+        spec = exec_instance._response_handler_specs[0]  # pyright: ignore[reportPrivateUsage]
+        assert spec["request_type"] is str
+        assert spec["response_type"] is int
+        assert spec["output_types"] == [str]
+        assert spec["workflow_output_types"] == []
+
+    def test_response_handler_future_annotations_two_type_args(self):
+        """Test @response_handler with WorkflowContext[T, U] under future annotations."""
+
+        class MyExecutor(Executor):
+            @handler
+            async def example(self, input: str, ctx: WorkflowContext) -> None:
+                pass
+
+            @response_handler
+            async def handle_response(
+                self, original_request: MyTypeA, response: MyTypeB, ctx: WorkflowContext[MyTypeB, MyTypeC]
+            ) -> None:
+                pass
+
+        exec_instance = MyExecutor(id="test")
+        spec = exec_instance._response_handler_specs[0]  # pyright: ignore[reportPrivateUsage]
+        assert spec["request_type"] is MyTypeA
+        assert spec["response_type"] is MyTypeB
+        assert spec["output_types"] == [MyTypeB]
+        assert spec["workflow_output_types"] == [MyTypeC]
+
+    def test_response_handler_future_annotations_bare_context(self):
+        """Test @response_handler with a bare WorkflowContext under future annotations."""
+
+        class MyExecutor(Executor):
+            @handler
+            async def example(self, input: str, ctx: WorkflowContext) -> None:
+                pass
+
+            @response_handler
+            async def handle_response(self, original_request: str, response: int, ctx: WorkflowContext) -> None:
+                pass
+
+        exec_instance = MyExecutor(id="test")
+        spec = exec_instance._response_handler_specs[0]  # pyright: ignore[reportPrivateUsage]
+        assert spec["request_type"] is str
+        assert spec["response_type"] is int
+        assert spec["output_types"] == []
+        assert spec["workflow_output_types"] == []
+
+    def test_response_handler_future_annotations_explicit_types(self):
+        """Test explicit @response_handler type parameters stay unchanged under future annotations."""
+
+        class MyExecutor(Executor):
+            @handler
+            async def example(self, input: str, ctx: WorkflowContext) -> None:
+                pass
+
+            @response_handler(request=str, response=int)
+            async def handle_response(self, original_request, response, ctx):  # type: ignore[no-untyped-def]
+                pass
+
+        exec_instance = MyExecutor(id="test")
+        spec = exec_instance._response_handler_specs[0]  # pyright: ignore[reportPrivateUsage]
+        assert spec["request_type"] is str
+        assert spec["response_type"] is int

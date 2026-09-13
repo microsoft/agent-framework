@@ -348,20 +348,35 @@ def _validate_response_handler_signature(
     if not skip_annotations and response_param.annotation == inspect.Parameter.empty:
         raise ValueError(f"Response handler {func.__name__} must have a type annotation for the response parameter")
 
+    # Resolve string annotations from `from __future__ import annotations`, the same way
+    # the explicit-parameter path in the decorator does. Fall back to the raw annotation
+    # when resolution fails so registration failures stay diagnosable.
+    def _resolve(annotation: Any) -> Any:
+        if annotation is inspect.Parameter.empty:
+            return annotation
+        try:
+            return resolve_type_annotation(annotation, func.__globals__)
+        except (NameError, AttributeError, RecursionError, SyntaxError):
+            return annotation
+
     # Validate ctx parameter is WorkflowContext and extract type args (if annotated)
     ctx_param = params[3]
-    if ctx_param.annotation != inspect.Parameter.empty:
+    ctx_annotation = _resolve(ctx_param.annotation)
+    if ctx_annotation != inspect.Parameter.empty:
         output_types, workflow_output_types = validate_workflow_context_annotation(
-            ctx_param.annotation, f"parameter '{ctx_param.name}'", "Response handler"
+            ctx_annotation, f"parameter '{ctx_param.name}'", "Response handler"
         )
     else:
         output_types, workflow_output_types = [], []
 
-    request_type = (
-        original_request_param.annotation if original_request_param.annotation != inspect.Parameter.empty else None
-    )
-    response_type = response_param.annotation if response_param.annotation != inspect.Parameter.empty else None
-    ctx_annotation = ctx_param.annotation if ctx_param.annotation != inspect.Parameter.empty else None
+    request_type = _resolve(original_request_param.annotation)
+    if request_type is inspect.Parameter.empty:
+        request_type = None
+    response_type = _resolve(response_param.annotation)
+    if response_type is inspect.Parameter.empty:
+        response_type = None
+    if ctx_annotation is inspect.Parameter.empty:
+        ctx_annotation = None
 
     return request_type, response_type, ctx_annotation, output_types, workflow_output_types
 
