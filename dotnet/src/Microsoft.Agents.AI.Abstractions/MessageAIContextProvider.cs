@@ -124,7 +124,7 @@ public abstract class MessageAIContextProvider : AIContextProvider
 
         // Stamp and merge provided messages.
         providedMessages = providedMessages.Select(m => m.WithAgentRequestMessageSource(AgentRequestMessageSourceType.AIContextProvider, this.GetType().FullName!));
-        return inputMessages.Concat(providedMessages);
+        return this.MergeMessages(inputMessages, providedMessages);
     }
 
     /// <summary>
