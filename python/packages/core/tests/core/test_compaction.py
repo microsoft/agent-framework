@@ -2391,7 +2391,8 @@ async def test_compaction_provider_before_run_preserves_synthetic_summary_messag
     summary_messages = [
         m
         for m in final_messages
-        if m.role == "assistant" and any(hasattr(c, "text") and c.text is not None and "Tool results" in c.text for c in m.contents)
+        if m.role == "assistant"
+        and any(hasattr(c, "text") and c.text is not None and "Tool results" in c.text for c in m.contents)
     ]
     assert len(summary_messages) == 1, "Summary message should be present in final messages"
 
@@ -2402,7 +2403,8 @@ async def test_compaction_provider_before_run_preserves_synthetic_summary_messag
     history_summary_messages = [
         m
         for m in ctx.context_messages["history"]
-        if m.role == "assistant" and any(hasattr(c, "text") and c.text is not None and "Tool results" in c.text for c in m.contents)
+        if m.role == "assistant"
+        and any(hasattr(c, "text") and c.text is not None and "Tool results" in c.text for c in m.contents)
     ]
     assert len(history_summary_messages) == 1, "Summary message should be in history provider's message list"
 
@@ -2462,7 +2464,8 @@ async def test_compaction_provider_before_run_preserves_summarization_strategy_m
     summary_messages = [
         m
         for m in final_messages
-        if m.role == "assistant" and any(hasattr(c, "text") and c.text is not None and "Summary of conversation" in c.text for c in m.contents)
+        if m.role == "assistant"
+        and any(hasattr(c, "text") and c.text is not None and "Summary of conversation" in c.text for c in m.contents)
     ]
     assert len(summary_messages) == 1, "Summary message should be present in final messages"
 
@@ -2475,7 +2478,8 @@ async def test_compaction_provider_before_run_preserves_summarization_strategy_m
     history_summary_messages = [
         m
         for m in ctx.context_messages["history"]
-        if m.role == "assistant" and any(hasattr(c, "text") and c.text is not None and "Summary of conversation" in c.text for c in m.contents)
+        if m.role == "assistant"
+        and any(hasattr(c, "text") and c.text is not None and "Summary of conversation" in c.text for c in m.contents)
     ]
     assert len(history_summary_messages) == 1, "Summary message should be in history provider's message list"
 
@@ -2535,7 +2539,8 @@ async def test_compaction_provider_preserves_attribution_on_synthetic_summaries(
     summary_messages = [
         m
         for m in final_messages
-        if m.role == "assistant" and any(hasattr(c, "text") and c.text is not None and "Summary of conversation" in c.text for c in m.contents)
+        if m.role == "assistant"
+        and any(hasattr(c, "text") and c.text is not None and "Summary of conversation" in c.text for c in m.contents)
     ]
     assert len(summary_messages) == 1, "Summary message should be present"
 
@@ -2588,7 +2593,8 @@ async def test_compaction_provider_preserves_attribution_on_tool_result_summarie
     summary_messages = [
         m
         for m in final_messages
-        if m.role == "assistant" and any(hasattr(c, "text") and c.text is not None and "Tool results" in c.text for c in m.contents)
+        if m.role == "assistant"
+        and any(hasattr(c, "text") and c.text is not None and "Tool results" in c.text for c in m.contents)
     ]
     assert len(summary_messages) == 1, "Tool result summary should be present"
 
@@ -2651,7 +2657,8 @@ async def test_compaction_provider_deduplicates_origin_session_ids() -> None:
     summary_messages = [
         m
         for m in final_messages
-        if m.role == "assistant" and any(hasattr(c, "text") and c.text is not None and "Summary" in c.text for c in m.contents)
+        if m.role == "assistant"
+        and any(hasattr(c, "text") and c.text is not None and "Summary" in c.text for c in m.contents)
     ]
     assert len(summary_messages) == 1
 
@@ -2698,7 +2705,8 @@ async def test_compaction_provider_no_attribution_when_sources_have_none() -> No
     summary_messages = [
         m
         for m in final_messages
-        if m.role == "assistant" and any(hasattr(c, "text") and c.text is not None and "Summary" in c.text for c in m.contents)
+        if m.role == "assistant"
+        and any(hasattr(c, "text") and c.text is not None and "Summary" in c.text for c in m.contents)
     ]
     assert len(summary_messages) == 1
 
@@ -3226,7 +3234,8 @@ async def test_compaction_provider_synthetic_summary_retention_after_fix() -> No
     summary_messages = [
         m
         for m in final_messages
-        if m.role == "assistant" and any(hasattr(c, "text") and c.text is not None and "Summary" in c.text for c in m.contents)
+        if m.role == "assistant"
+        and any(hasattr(c, "text") and c.text is not None and "Summary" in c.text for c in m.contents)
     ]
     assert len(summary_messages) == 1, "Synthetic summary should be retained in context"
 
