@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import pickle
 from collections.abc import AsyncIterable, Awaitable
 from typing import Any, Literal, overload
 

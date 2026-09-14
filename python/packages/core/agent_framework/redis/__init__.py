@@ -6,8 +6,11 @@ This module lazily re-exports objects from:
 - ``agent-framework-redis``
 
 Supported classes:
+- RedisCollection
 - RedisContextProvider
 - RedisHistoryProvider
+- RedisSettings
+- RedisStore
 """
 
 import importlib
@@ -15,7 +18,7 @@ from typing import Any
 
 IMPORT_PATH = "agent_framework_redis"
 PACKAGE_NAME = "agent-framework-redis"
-_IMPORTS = ["RedisContextProvider", "RedisHistoryProvider"]
+_IMPORTS = ["RedisCollection", "RedisContextProvider", "RedisHistoryProvider", "RedisSettings", "RedisStore"]
 
 
 def __getattr__(name: str) -> Any:

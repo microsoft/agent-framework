@@ -21,6 +21,7 @@ from mcp.shared.exceptions import McpError
 from pydantic import AnyUrl, BaseModel
 
 from agent_framework import (
+    Agent,
     ChatResponse,
     ChatResponseUpdate,
     Content,
@@ -31,6 +32,7 @@ from agent_framework import (
     MCPStreamableHTTPTool,
     MCPWebsocketTool,
     Message,
+    SupportsChatGetResponse,
 )
 from agent_framework._feature_stage import _WARNED_FEATURES, ExperimentalFeature, ExperimentalWarning
 from agent_framework._mcp import (
@@ -75,6 +77,10 @@ def _mcp_result_to_text(result: str | list[Content]) -> str:
 _HELPER_MCP_TOOL = MCPTool(name="helper")  # type: ignore[abstract]
 
 
+def _raise_result_parser(_: Any) -> str:
+    raise ValueError("parser failed")
+
+
 async def _call_generated_mcp_tool(
     tool: MCPTool,
     tool_name: str,
@@ -82,6 +88,8 @@ async def _call_generated_mcp_tool(
     result_parser: Any = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
+    mcp_local_label: tuple[str, str] | None = None,
+    trust_server_ifc: bool = False,
     **kwargs: Any,
 ) -> Content:
     function_kwargs: dict[str, Any] = {}
@@ -94,6 +102,17 @@ async def _call_generated_mcp_tool(
         input_model={"type": "object", "properties": {name: {} for name in kwargs}},
         **function_kwargs,
     )
+    if mcp_local_label is not None:
+        from agent_framework.security import IntegrityLabel, _wrap_mcp_function_for_ifc
+
+        source_integrity, confidentiality = mcp_local_label
+        function.additional_properties = {
+            "_mcp_remote_name": tool_name,
+            "source_integrity": source_integrity,
+            "confidentiality": confidentiality,
+            "_mcp_trust_server_ifc": trust_server_ifc,
+        }
+        _wrap_mcp_function_for_ifc(function, IntegrityLabel(source_integrity))
     return await _auto_invoke_function(
         Content.from_function_call(call_id=f"call-{tool_name}", name=tool_name, arguments=kwargs),
         config=normalize_function_invocation_configuration(None),
@@ -616,7 +635,8 @@ async def test_custom_mcp_result_parser_preserves_direct_shape_and_generated_hos
     assert direct_result == "Custom model summary"
     assert function_result.items is not None
     assert [item.text for item in function_result.items] == ["Custom model summary"]
-    assert function_result.items[0].additional_properties["_meta"] == {"source": "server"}
+    assert "_meta" not in function_result.items[0].additional_properties
+    assert function_result.additional_properties["_meta"] == {"source": "server"}
     assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["structuredContent"] == {
         "image_url": "https://example.test/widget.png"
     }
@@ -644,7 +664,8 @@ async def test_oversized_mcp_host_payload_is_omitted_without_changing_model_resu
 
     assert function_result.items is not None
     assert [item.text for item in function_result.items] == ["Bounded model summary"]
-    assert function_result.items[0].additional_properties["_meta"] == {"source": "oversized"}
+    assert "_meta" not in function_result.items[0].additional_properties
+    assert function_result.additional_properties["_meta"] == {"source": "oversized"}
     assert _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY not in function_result.additional_properties
     assert "Omitting MCP Host payload" in caplog.text
 
@@ -714,6 +735,26 @@ async def test_generated_mcp_error_preserves_complete_host_payload_on_function_r
     assert host_payload["isError"] is True
 
 
+async def test_generated_mcp_parser_failure_preserves_complete_host_payload_on_function_result() -> None:
+    """Capture raw MCP data before a custom parser can fail."""
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Server summary")],
+        structuredContent={"widget": "complete"},
+        _meta={"source": "server"},
+    )
+    tool = MCPTool(name="helper", parse_tool_results=_raise_result_parser)  # type: ignore[abstract]
+    tool.session = Mock()
+    tool.session.call_tool = AsyncMock(return_value=mcp_result)
+
+    function_result = await _call_generated_mcp_tool(tool, "widget")
+
+    assert function_result.result == "Error: Function failed."
+    assert function_result.additional_properties["_meta"] == {"source": "server"}
+    assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["structuredContent"] == {
+        "widget": "complete"
+    }
+
+
 async def test_direct_mcp_calls_do_not_materialize_host_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     """Public direct success and error calls retain their established behavior."""
     success = types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
@@ -733,6 +774,26 @@ async def test_direct_mcp_calls_do_not_materialize_host_payload(monkeypatch: pyt
 
     assert await tool.call_tool("widget") == "ok"
     with pytest.raises(ToolExecutionException, match="failed"):
+        await tool.call_tool("widget")
+
+
+async def test_direct_mcp_parser_failure_does_not_materialize_host_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    tool = MCPTool(name="helper", parse_tool_results=_raise_result_parser)  # type: ignore[abstract]
+    tool.session = Mock()
+    tool.session.call_tool = AsyncMock(
+        return_value=types.CallToolResult(
+            content=[types.TextContent(type="text", text="ok")],
+            _meta={"source": "server"},
+        )
+    )
+
+    def fail_if_captured(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("direct parser failures must not materialize Host metadata")
+
+    monkeypatch.setattr("agent_framework._mcp._mcp_tool_result_host_payload", fail_if_captured)
+    monkeypatch.setattr("agent_framework._mcp._mcp_tool_result_meta", fail_if_captured)
+
+    with pytest.raises(ToolExecutionException, match="Failed to call tool"):
         await tool.call_tool("widget")
 
 
@@ -757,7 +818,8 @@ async def test_function_tool_result_parser_cannot_discard_mcp_host_payload() -> 
         "widget": "complete"
     }
     assert function_result.items is not None
-    assert function_result.items[0].additional_properties["_meta"] == {"source": "server"}
+    assert "_meta" not in function_result.items[0].additional_properties
+    assert function_result.additional_properties["_meta"] == {"source": "server"}
 
 
 @pytest.mark.parametrize("parser_layer", ["mcp", "function"])
@@ -827,6 +889,33 @@ def test_mcp_result_meta_has_independent_boundary_and_early_abort(monkeypatch: p
 
     monkeypatch.setattr("agent_framework._mcp.to_jsonable_python", fail_if_copied)
     assert _mcp_tool_result_meta(oversized, max_size_bytes=128) is None
+
+
+async def test_exhausted_aggregate_budget_rejects_meta_before_copy(monkeypatch: pytest.MonkeyPatch) -> None:
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="ok")],
+        _meta={"large": "x" * 1024},
+    )
+    tool = MCPTool(  # type: ignore[abstract]
+        name="helper",
+        parse_tool_results=lambda _: "model projection",
+        max_host_payload_size_bytes=128,
+    )
+    tool.session = Mock()
+    tool.session.call_tool = AsyncMock(return_value=mcp_result)
+    budget = _FunctionResultPayloadBudget()
+    assert budget.reserve(128, 128)
+
+    def fail_if_copied(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("exhausted aggregate budget must reject _meta before copying")
+
+    monkeypatch.setattr("agent_framework._mcp.to_jsonable_python", fail_if_copied)
+
+    function_result = await _call_generated_mcp_tool(tool, "widget", host_payload_budget=budget)
+
+    assert function_result.result == "model projection"
+    assert "_meta" not in function_result.additional_properties
+    assert _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY not in function_result.additional_properties
 
 
 async def test_oversized_mcp_meta_is_omitted_from_host_and_model_items() -> None:
@@ -944,7 +1033,7 @@ async def test_mcp_host_payload_survives_real_function_loop(
 
 @pytest.mark.parametrize(
     ("size_limit", "expected_markers"),
-    [(512, 1), (None, 2)],
+    [(768, 1), (None, 2)],
     ids=["bounded", "unlimited"],
 )
 async def test_mcp_host_payload_has_aggregate_request_budget(
@@ -959,6 +1048,7 @@ async def test_mcp_host_payload_has_aggregate_request_budget(
         return types.CallToolResult(
             content=[types.TextContent(type="text", text=tool_name)],
             structuredContent={"data": tool_name * 120},
+            _meta={"source": tool_name * 12},
         )
 
     tool.session.call_tool = AsyncMock(side_effect=call_tool)
@@ -999,7 +1089,13 @@ async def test_mcp_host_payload_has_aggregate_request_budget(
     ]
     assert len(retained_payloads) == expected_markers
     if size_limit is not None:
-        assert sum(len(json.dumps(payload).encode("utf-8")) for payload in retained_payloads) <= size_limit
+        retained_meta = [
+            result.additional_properties["_meta"]
+            for result in function_results
+            if "_meta" in result.additional_properties
+        ]
+        retained_size = sum(len(json.dumps(value).encode("utf-8")) for value in [*retained_payloads, *retained_meta])
+        assert retained_size <= size_limit
 
 
 async def test_secure_mcp_auto_hide_preserves_outer_host_payload() -> None:
@@ -1012,9 +1108,14 @@ async def test_secure_mcp_auto_hide_preserves_outer_host_payload() -> None:
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="untrusted payload")],
         structuredContent={"widget": "complete"},
-        _meta={"ifc": {"integrity": "untrusted", "confidentiality": "public"}},
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "public"}},
     )
-    tool = MCPTool(name="helper", parse_tool_results=lambda _: "untrusted payload")  # type: ignore[abstract]
+    tool = MCPTool(  # type: ignore[abstract]
+        name="helper",
+        parse_tool_results=lambda result: [
+            Content.from_text("untrusted payload", additional_properties={"_meta": result.meta})
+        ],
+    )
     tool.session = Mock()
     tool.session.call_tool = AsyncMock(return_value=mcp_result)
     function = FunctionTool(
@@ -1025,6 +1126,7 @@ async def test_secure_mcp_auto_hide_preserves_outer_host_payload() -> None:
         additional_properties={
             "_mcp_remote_name": "widget",
             "source_integrity": "untrusted",
+            "confidentiality": "private",
             "max_allowed_confidentiality": "public",
         },
     )
@@ -1042,12 +1144,122 @@ async def test_secure_mcp_auto_hide_preserves_outer_host_payload() -> None:
     assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["structuredContent"] == {
         "widget": "complete"
     }
+    assert function_result.additional_properties["_meta"] == mcp_result.meta
     assert function_result.items is not None
     assert len(function_result.items) == 1
     for hidden_item in function_result.items:
         assert hidden_item.additional_properties["_variable_reference"] is True
-        assert hidden_item.additional_properties["_meta"] == mcp_result.meta
+        assert hidden_item.additional_properties["security_label"]["integrity"] == "untrusted"
+        assert hidden_item.additional_properties["security_label"]["confidentiality"] == "private"
+        assert "_meta" not in hidden_item.additional_properties
         assert hidden_item.text != "untrusted payload"
+
+
+@pytest.mark.parametrize("result_shape", ["content", "structured", "both"])
+async def test_secure_mcp_builtin_parser_restricts_all_result_shapes(result_shape: str) -> None:
+    from agent_framework.security import (
+        IntegrityLabel,
+        LabelTrackingFunctionMiddleware,
+        _wrap_mcp_function_for_ifc,
+    )
+
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="server trusted payload")]
+        if result_shape in ("content", "both")
+        else [],
+        structuredContent={"payload": "server trusted structured payload"}
+        if result_shape in ("structured", "both")
+        else None,
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "public"}},
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]
+    tool.session = Mock()
+    tool.session.call_tool = AsyncMock(return_value=mcp_result)
+    function = FunctionTool(
+        name="widget",
+        description="",
+        func=_make_mcp_tool_caller(tool, "widget"),
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "_mcp_remote_name": "widget",
+            "source_integrity": "untrusted",
+            "confidentiality": "private",
+            "max_allowed_confidentiality": "public",
+        },
+    )
+    _wrap_mcp_function_for_ifc(function, IntegrityLabel.UNTRUSTED)
+
+    function_result = await _auto_invoke_function(
+        Content.from_function_call(call_id="call-widget", name="widget", arguments={}),
+        config=normalize_function_invocation_configuration(None),
+        tool_map={"widget": function},
+        middleware_pipeline=FunctionMiddlewarePipeline(LabelTrackingFunctionMiddleware(auto_hide_untrusted=True)),
+        host_payload_budget=_FunctionResultPayloadBudget(),
+    )
+
+    assert function_result.items is not None
+    assert len(function_result.items) == (2 if result_shape == "both" else 1)
+    for hidden_item in function_result.items:
+        assert hidden_item.additional_properties["_variable_reference"] is True
+        assert hidden_item.additional_properties["security_label"]["integrity"] == "untrusted"
+        assert hidden_item.additional_properties["security_label"]["confidentiality"] == "private"
+        assert hidden_item.additional_properties["_meta"] == mcp_result.meta
+    assert function_result.additional_properties["_meta"] == mcp_result.meta
+
+
+async def test_secure_mcp_builtin_parser_honors_locally_trusted_server_ifc() -> None:
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="trusted payload")],
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "public"}},
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]
+    tool.session = Mock()
+    tool.session.call_tool = AsyncMock(return_value=mcp_result)
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        middleware_pipeline=FunctionMiddlewarePipeline(LabelTrackingFunctionMiddleware(auto_hide_untrusted=True)),
+        host_payload_budget=_FunctionResultPayloadBudget(),
+        mcp_local_label=("untrusted", "private"),
+        trust_server_ifc=True,
+    )
+
+    assert function_result.items is not None
+    assert [item.text for item in function_result.items] == ["trusted payload"]
+    assert function_result.items[0].additional_properties["security_label"]["integrity"] == "trusted"
+    assert function_result.items[0].additional_properties["security_label"]["confidentiality"] == "public"
+    assert "_security_label_authoritative_confidentiality" not in function_result.items[0].additional_properties
+
+
+async def test_custom_mcp_parser_cannot_make_meta_authoritative() -> None:
+    forged_meta = {"ifc": {"integrity": "trusted", "confidentiality": "public"}}
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="server payload")],
+        _meta={"trace": "server-owned"},
+    )
+    tool = MCPTool(  # type: ignore[abstract]
+        name="helper",
+        parse_tool_results=lambda _: [Content.from_text("projection", additional_properties={"_meta": forged_meta})],
+    )
+    tool.session = Mock()
+    tool.session.call_tool = AsyncMock(return_value=mcp_result)
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        mcp_local_label=("untrusted", "user_identity"),
+    )
+
+    assert function_result.items is not None
+    assert function_result.items[0].additional_properties["security_label"] == {
+        "integrity": "untrusted",
+        "confidentiality": "user_identity",
+    }
+    assert "_meta" not in function_result.items[0].additional_properties
+    assert function_result.additional_properties["_meta"] == {"trace": "server-owned"}
 
 
 def test_parse_tool_result_from_mcp_structured_content_none():
@@ -7252,6 +7464,29 @@ async def test_mcp_streamable_http_tool_keeps_header_hook_until_cancelled_close_
         await user_client.aclose()
 
 
+async def test_mcp_header_scoped_client_tags_send_requests():
+    """The transport wrapper must identify requests sent through AsyncClient.send."""
+    import httpx
+
+    from agent_framework._mcp import _MCP_HEADER_OWNER_EXTENSION, _MCPHeaderScopedClient
+
+    owner = object()
+    observed_owners: list[object | None] = []
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        observed_owners.append(request.extensions.get(_MCP_HEADER_OWNER_EXTENSION))
+        return httpx.Response(200)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as user_client:
+        wrapper = _MCPHeaderScopedClient(user_client, owner)
+        request = user_client.build_request("POST", "http://example.com/mcp")
+
+        response = await wrapper.send(request)
+
+    assert response.status_code == 200
+    assert observed_owners == [owner]
+
+
 async def test_mcp_header_scoped_client_delegates_unwrapped_attributes():
     """The transport wrapper must stay a drop-in for the caller's httpx client."""
     import httpx
@@ -7357,6 +7592,218 @@ async def test_mcp_streamable_http_tool_header_provider_via_invoke_with_context(
         server.session.call_tool.assert_called_once()  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         call_args = server.session.call_tool.call_args  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         assert call_args.kwargs.get("arguments", {}).get("name") == "Alice"
+
+
+async def test_agent_run_supplies_mcp_connect_headers(
+    client: SupportsChatGetResponse,
+) -> None:
+    """Run-time credentials should authenticate implicit MCP initialization.
+
+    The agent receives function_invocation_kwargs before connecting the MCP tool
+    supplied to run(). This test exercises the real MCP transport against an
+    in-process mock HTTP endpoint and asserts that header_provider can use those
+    credentials on the initialize request, before any tool invocation occurs.
+    """
+    import httpx
+
+    captured_requests: list[tuple[str, str, dict[str, str]]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            return httpx.Response(200)
+        if request.method == "GET":
+            return httpx.Response(405)
+        body = json.loads(request.content.decode())
+        method = body.get("method", "")
+        captured_requests.append((request.method, method, {k.lower(): v for k, v in request.headers.items()}))
+        if method == "initialize":
+            result = {
+                "protocolVersion": body["params"]["protocolVersion"],
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "mock-server", "version": "1.0.0"},
+            }
+            return httpx.Response(
+                200,
+                headers={"mcp-session-id": "test-session"},
+                json={"jsonrpc": "2.0", "id": body["id"], "result": result},
+            )
+        if method == "tools/list":
+            result = {
+                "tools": [
+                    {
+                        "name": "greet",
+                        "description": "Says hello",
+                        "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}},
+                    }
+                ]
+            }
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+        if method == "tools/call":
+            result = {"content": [{"type": "text", "text": "Hello!"}], "isError": False}
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+        if "id" in body:
+            # Any other request (e.g. ping) gets an empty result so the session doesn't block on it.
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {}})
+        # Notifications (e.g. notifications/initialized)
+        return httpx.Response(202)
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://127.0.0.1:8000/mcp",
+        load_prompts=False,
+        http_client=http_client,
+        header_provider=lambda kw: {"x-api-key": kw["api_key"]},  # failing scenario
+        # header_provider=lambda _: {"x-api-key": "connect-token"} # working scenario (no lambda)
+    )
+    try:
+        async with Agent(client=client) as agent:
+            # placement of tools, matters as we defer the resolution until the agent calls `run`
+            await agent.run("Hello", tools=[tool], function_invocation_kwargs={"api_key": "connect-token"})
+    finally:
+        await http_client.aclose()
+
+    initialize_headers = [headers for _, method, headers in captured_requests if method == "initialize"]
+    assert len(initialize_headers) == 1
+    assert initialize_headers[0].get("x-api-key") == "connect-token"
+
+
+async def test_agent_context_manager_authenticates_connect_with_closure_provider(
+    client: SupportsChatGetResponse,
+) -> None:
+    """A constructor-supplied MCP tool authenticates its eager handshake with no run involved.
+
+    Pins that ``header_provider`` already covers construction-time credentials: entering the
+    agent context connects before any run exists, and the server rejects unauthenticated calls.
+    """
+    import httpx
+
+    captured_requests: list[tuple[str, dict[str, str]]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            return httpx.Response(200)
+        if request.method == "GET":
+            return httpx.Response(405)
+        if request.headers.get("x-api-key") != "constructor-token":
+            return httpx.Response(401)
+        body = json.loads(request.content.decode())
+        method = body.get("method", "")
+        captured_requests.append((method, {k.lower(): v for k, v in request.headers.items()}))
+        if method == "initialize":
+            return httpx.Response(
+                200,
+                headers={"mcp-session-id": "test-session"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {
+                        "protocolVersion": body["params"]["protocolVersion"],
+                        "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "mock-server", "version": "1.0.0"},
+                    },
+                },
+            )
+        if method == "tools/list":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"tools": [{"name": "greet", "inputSchema": {"type": "object", "properties": {}}}]},
+                },
+            )
+        if "id" in body:
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {}})
+        return httpx.Response(202)
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    # The credential is known at construction, so the provider closes over it and ignores kwargs.
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://127.0.0.1:8000/mcp",
+        load_prompts=False,
+        http_client=http_client,
+        header_provider=lambda _kwargs: {"x-api-key": "constructor-token"},
+    )
+    try:
+        async with Agent(client=client, tools=[tool]):
+            assert tool.is_connected
+    finally:
+        await http_client.aclose()
+
+    assert [method for method, _ in captured_requests].count("initialize") == 1
+    assert all(headers.get("x-api-key") == "constructor-token" for _, headers in captured_requests)
+
+
+async def test_constructor_supplied_mcp_tool_uses_run_credentials_on_lazy_connect(
+    client: SupportsChatGetResponse,
+) -> None:
+    """A constructor-supplied MCP tool connected at first run authenticates with that run's kwargs.
+
+    Without the agent context manager the handshake is deferred to ``run()``, so the run's
+    credentials are available and must reach ``header_provider``.
+    """
+    import httpx
+
+    captured_requests: list[tuple[str, dict[str, str]]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            return httpx.Response(200)
+        if request.method == "GET":
+            return httpx.Response(405)
+        if request.headers.get("x-api-key") != "run-token":
+            return httpx.Response(401)
+        body = json.loads(request.content.decode())
+        method = body.get("method", "")
+        captured_requests.append((method, {k.lower(): v for k, v in request.headers.items()}))
+        if method == "initialize":
+            return httpx.Response(
+                200,
+                headers={"mcp-session-id": "test-session"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {
+                        "protocolVersion": body["params"]["protocolVersion"],
+                        "capabilities": {"tools": {}},
+                        "serverInfo": {"name": "mock-server", "version": "1.0.0"},
+                    },
+                },
+            )
+        if method == "tools/list":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"tools": [{"name": "greet", "inputSchema": {"type": "object", "properties": {}}}]},
+                },
+            )
+        if "id" in body:
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {}})
+        return httpx.Response(202)
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://127.0.0.1:8000/mcp",
+        load_prompts=False,
+        http_client=http_client,
+        header_provider=lambda kw: {"x-api-key": kw["api_key"]},
+    )
+    agent = Agent(client=client, tools=[tool])
+    try:
+        # No agent context manager, so the tool is still unconnected when the run starts.
+        assert not tool.is_connected
+        await agent.run("Hello", function_invocation_kwargs={"api_key": "run-token"})
+    finally:
+        await tool.close()
+        await http_client.aclose()
+
+    assert [method for method, _ in captured_requests].count("initialize") == 1
+    assert all(headers.get("x-api-key") == "run-token" for _, headers in captured_requests)
 
 
 async def test_mcp_streamable_http_tool_header_provider_applies_across_transport_tasks():
@@ -7721,7 +8168,8 @@ async def test_call_tool_routes_required_through_task_lifecycle(monkeypatch: pyt
     assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["structuredContent"] == {
         "widget": "task"
     }
-    assert function_result.items[0].additional_properties["_meta"] == {"source": "completed-task"}
+    assert "_meta" not in function_result.items[0].additional_properties
+    assert function_result.additional_properties["_meta"] == {"source": "completed-task"}
     assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["_meta"] == {
         "source": "completed-task"
     }
@@ -7774,8 +8222,101 @@ async def test_call_tool_as_task_fallback_preserves_custom_parser_host_payload()
     assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["structuredContent"] == {
         "widget": "fallback"
     }
-    assert function_result.items[0].additional_properties["_meta"] == {"source": "fallback"}
+    assert "_meta" not in function_result.items[0].additional_properties
+    assert function_result.additional_properties["_meta"] == {"source": "fallback"}
     assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["_meta"] == {"source": "fallback"}
+
+
+@pytest.mark.parametrize("result_path", ["fallback", "completed"], ids=["task-fallback", "completed-task"])
+async def test_secure_mcp_task_results_cannot_relax_local_label(result_path: str) -> None:
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    tool = _make_task_tool()
+    result_meta = {"ifc": {"integrity": "trusted", "confidentiality": "public"}}
+    structured_content = {"widget": result_path}
+    if result_path == "fallback":
+        raw_result = types.CallToolResult(
+            content=[types.TextContent(type="text", text="fallback")],
+            structuredContent=structured_content,
+            _meta=result_meta,
+        )
+        tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+            return_value=types.Result.model_validate(raw_result.model_dump(by_alias=True, exclude_none=True))
+        )
+    else:
+        tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+            side_effect=_send_request_dispatcher(
+                ("tools/call", _make_create_task_result()),
+                ("tasks/get", _make_task_snapshot(status="completed")),
+                (
+                    "tasks/result",
+                    _make_payload(
+                        "completed",
+                        structured_content=structured_content,
+                        meta=result_meta,
+                    ),
+                ),
+            )
+        )
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "slow_op",
+        middleware_pipeline=FunctionMiddlewarePipeline(LabelTrackingFunctionMiddleware(auto_hide_untrusted=True)),
+        host_payload_budget=_FunctionResultPayloadBudget(),
+        mcp_local_label=("untrusted", "private"),
+    )
+
+    assert function_result.items is not None
+    assert len(function_result.items) == 2
+    for item in function_result.items:
+        assert item.additional_properties["_variable_reference"] is True
+        assert item.additional_properties["security_label"]["integrity"] == "untrusted"
+        assert item.additional_properties["security_label"]["confidentiality"] == "private"
+        assert item.additional_properties["_meta"] == result_meta
+    assert function_result.additional_properties["_meta"] == result_meta
+    assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["structuredContent"] == (
+        structured_content
+    )
+
+
+@pytest.mark.parametrize("result_path", ["fallback", "completed"], ids=["task-fallback", "completed-task"])
+async def test_task_parser_failure_preserves_complete_host_payload(result_path: str) -> None:
+    tool = _make_task_tool()
+    tool.parse_tool_results = _raise_result_parser
+    result_meta = {"source": result_path}
+    if result_path == "fallback":
+        raw_result = types.CallToolResult(
+            content=[types.TextContent(type="text", text="fallback")],
+            structuredContent={"widget": result_path},
+            _meta=result_meta,
+        )
+        tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+            return_value=types.Result.model_validate(raw_result.model_dump(by_alias=True, exclude_none=True))
+        )
+    else:
+        tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+            side_effect=_send_request_dispatcher(
+                ("tools/call", _make_create_task_result()),
+                ("tasks/get", _make_task_snapshot(status="completed")),
+                (
+                    "tasks/result",
+                    _make_payload(
+                        "completed",
+                        structured_content={"widget": result_path},
+                        meta=result_meta,
+                    ),
+                ),
+            )
+        )
+
+    function_result = await _call_generated_mcp_tool(tool, "slow_op")
+
+    assert function_result.result == "Error: Function failed."
+    assert function_result.additional_properties["_meta"] == result_meta
+    assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY]["structuredContent"] == {
+        "widget": result_path
+    }
 
 
 async def test_call_tool_as_task_default_ttl_propagates() -> None:
