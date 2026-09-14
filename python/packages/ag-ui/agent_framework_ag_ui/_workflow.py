@@ -197,7 +197,6 @@ def _append_unique_snapshot_messages(
             continue
         if message_id:
             seen_ids.add(message_id)
-        remaining_content[content_key] += 1
         merged.append(message)
     return merged
 

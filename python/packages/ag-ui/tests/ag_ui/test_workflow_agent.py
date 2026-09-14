@@ -514,3 +514,15 @@ def test_append_unique_snapshot_messages_dedupes_different_ids_same_content() ->
     existing = [{"id": "client-id", "role": "user", "content": "same turn"}]
     incoming = [{"id": "generated-id", "role": "user", "content": "same turn"}]
     assert _append_unique_snapshot_messages(existing, incoming) == existing
+
+
+def test_append_unique_snapshot_messages_keeps_intentional_repeated_replies() -> None:
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    existing = [{"id": "u0", "role": "user", "content": "hello"}]
+    incoming = [
+        {"id": "r1", "role": "user", "content": "repeat"},
+        {"id": "r2", "role": "user", "content": "repeat"},
+    ]
+    merged = _append_unique_snapshot_messages(existing, incoming)
+    assert [m["id"] for m in merged] == ["u0", "r1", "r2"]
