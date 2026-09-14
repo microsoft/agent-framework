@@ -3660,9 +3660,9 @@ class MCPStreamableHTTPTool(MCPTool):
                 generated tool and prompt calls perform the same check before sending. Connection-lifetime
                 requests - including discovery, background pings, resource and prompt reloads,
                 and long-running task polling - always use the session-bound header set. A
-                caller-supplied session cannot be reconnected by this wrapper, so changing its
-                effective header identity raises ``ToolExecutionException`` and requires a
-                separate tool instance.
+                caller-supplied session's established identity is unknown and cannot be
+                reconnected by this wrapper, so dynamic header resolution raises
+                ``ToolExecutionException`` and requires a separate framework-managed tool instance.
                 A tool connected outside any run (eagerly via ``async with``, or standalone)
                 has no kwargs to reuse and the provider is called with an empty mapping, in
                 which case a ``KeyError`` from the provider is tolerated and the request is
@@ -3989,6 +3989,11 @@ class MCPStreamableHTTPTool(MCPTool):
             return
         identity = _mcp_header_identity(headers)
         if self._session_header_identity is None:
+            if not self._owns_session:
+                raise ToolExecutionException(
+                    "MCP header identity is unknown for a caller-supplied session; "
+                    "use a separate framework-managed tool instance."
+                )
             self._bind_session_headers(headers)
             return
         if identity == self._session_header_identity:

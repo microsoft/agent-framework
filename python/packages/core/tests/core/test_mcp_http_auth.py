@@ -934,13 +934,10 @@ async def test_caller_supplied_session_rejects_header_identity_changes(mcp_http_
         )
         try:
             await borrowed.connect()
-            await borrowed.call_tool("record", credential="token-a")
-
             with pytest.raises(ToolExecutionException, match="caller-supplied session"):
                 await borrowed._prepare_for_run({"credential": "token-b"})
             with pytest.raises(ToolExecutionException, match="caller-supplied session"):
                 await borrowed.call_tool("record", credential="token-b")
-
             assert borrowed.is_connected
             assert borrowed.session is supplied_session
 
@@ -948,21 +945,10 @@ async def test_caller_supplied_session_rejects_header_identity_changes(mcp_http_
             assert not borrowed.is_connected
             assert borrowed.session is supplied_session
             await borrowed.connect()
-
             with pytest.raises(ToolExecutionException, match="caller-supplied session"):
-                await borrowed._prepare_for_run({"credential": "token-b"})
+                await borrowed._prepare_for_run({"credential": "token-a"})
             with pytest.raises(ToolExecutionException, match="caller-supplied session"):
-                await borrowed.call_tool("record", credential="token-b")
-
-            await borrowed.close()
-            assert not borrowed.is_connected
-            assert borrowed.session is supplied_session
-            await borrowed.connect()
-
-            with pytest.raises(ToolExecutionException, match="caller-supplied session"):
-                await borrowed._prepare_for_run({"credential": "token-b"})
-            with pytest.raises(ToolExecutionException, match="caller-supplied session"):
-                await borrowed.call_tool("record", credential="token-b")
+                await borrowed.call_tool("record", credential="token-a")
         finally:
             await borrowed.close()
 
