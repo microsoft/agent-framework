@@ -12,6 +12,7 @@ from agent_framework import (
     CheckpointStorage,
     FunctionalWorkflowAgent,
     SessionStore,
+    SupportsAgentRun,
     WorkflowAgent,
     WorkflowRunState,
 )
@@ -85,7 +86,8 @@ class InvocationsHostServer(InvocationAgentServerHost):
                 workflows, mutable executors, providers, and tools. An async context manager
                 returned by the factory is entered and exited within that request.
             checkpoint_store_provider: Optional provider for user/session-scoped workflow checkpoints.
-            agent_session_store_provider: Optional provider for persisted workflow provider state.
+            agent_session_store_provider: Optional provider for persisted factory agent sessions,
+                including workflow provider state. Storage retention is controlled by the provider.
             openapi_spec: The OpenAPI specification for the server.
             **kwargs: Additional keyword arguments.
 
@@ -95,6 +97,8 @@ class InvocationsHostServer(InvocationAgentServerHost):
         The text-only exchange cannot answer pending workflow requests or approvals.
         Functional workflows support fresh messages after clean completion, but not
         pending or interrupted continuation. Such continuation fails explicitly.
+        Ordinary factory sessions are persisted after each run, including interrupted runs,
+        rather than retained in this host. Ordinary agent instances retain sessions in memory.
         Factories own cleanup of nested resources not exposed by an async context manager.
         """
         validate_agent_source(agent, agent_factory)
@@ -241,7 +245,19 @@ class InvocationsHostServer(InvocationAgentServerHost):
             async with self._workflow_session(agent, storage_id) as (session, storage):
                 yield session, {"checkpoint_storage": storage}
         else:
-            yield self._sessions.setdefault(storage_id, AgentSession(session_id=storage_id)), {}
+            # Keep ordinary snapshots separate from workflow metadata in the same provider.
+            storage_id = f"ordinary-{storage_id}"
+            sessions = self._agent_session_storage_provider.get_store(
+                config=self.config, platform_context=get_request_context()
+            )
+            session = await sessions.get(storage_id)
+            if session is None:
+                session = cast(SupportsAgentRun, agent).create_session(session_id=storage_id)
+            try:
+                yield session, {}
+            finally:
+                with CancelScope(shield=True):
+                    await sessions.set(storage_id, session)
 
     async def _handle_factory_invoke(self, user_message: Any, *, stream: bool) -> Response:
         context = get_request_context()

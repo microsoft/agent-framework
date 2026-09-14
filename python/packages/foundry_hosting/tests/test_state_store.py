@@ -90,12 +90,12 @@ async def test_invocations_namespaces_cannot_overlap_responses_records(is_hosted
         "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ) as get_or_create:
-        for provider in (CheckpointStoreProvider(), _InvocationsCheckpointStoreProvider()):
-            await provider.get_store(config=config, context_id="same-id", platform_context=context).save(
+        for checkpoint_provider in (CheckpointStoreProvider(), _InvocationsCheckpointStoreProvider()):
+            await checkpoint_provider.get_store(config=config, context_id="same-id", platform_context=context).save(
                 _checkpoint("same-checkpoint")
             )
-        for provider in (AgentSessionStoreProvider(), _InvocationsAgentSessionStoreProvider()):
-            await provider.get_store(config=config, platform_context=context).set("same-id", AgentSession())
+        for session_provider in (AgentSessionStoreProvider(), _InvocationsAgentSessionStoreProvider()):
+            await session_provider.get_store(config=config, platform_context=context).set("same-id", AgentSession())
     assert [call.args[0] for call in get_or_create.await_args_list] == [
         "checkpoints/same-id",
         "invocations_checkpoints/same-id",

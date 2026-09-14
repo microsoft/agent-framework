@@ -35,9 +35,33 @@ server = ResponsesHostServer(agent_factory=create_agent)
 
 The host calls the factory inside the current request's platform context, not during startup. The resulting agent
 belongs to that request, including its entire stream. Responses recovery also creates a new agent through the factory.
-Returning the same workflow instance repeatedly is not supported. Neither is building a new workflow around previously
-used mutable executors. Keep workflow names, executor IDs, and serialized state type registrations stable so a new
-instance can restore the previous instance's checkpoints.
+The factory implementer is responsible for creating fresh mutable workflows, executors, wrapped agents, and their
+sessions inside the factory. Returning an existing workflow or rebuilding around shared mutable executors can carry
+state across requests. The host does not inspect or track object identities, clone execution objects, or enforce
+weak-reference support.
+
+For example, construct the agent and executor inside the factory, not once outside it:
+
+```python
+from agent_framework import Agent, AgentExecutor, WorkflowBuilder
+from agent_framework_foundry_hosting import ResponsesHostServer
+
+
+def create_agent():
+    agent = Agent(client=client, name="assistant")
+    executor = AgentExecutor(agent, id="assistant")
+    return WorkflowBuilder(
+        name="assistant-workflow", start_executor=executor
+    ).build().as_agent()
+
+
+server = ResponsesHostServer(agent_factory=create_agent)
+```
+
+Here `client` is an application-owned model client whose concurrency and resource lifetime support sharing.
+Any mutable objects captured by tools or functional workflow functions also remain the implementer's responsibility.
+Keep workflow names, executor IDs, and serialized state type registrations stable so a new instance can restore the
+previous instance's checkpoints.
 
 Factories are also useful for ordinary agents with request-specific configuration. They do not automatically persist
 custom fields on an agent: state needed on the next request must use the supported session or checkpoint stores.
@@ -164,6 +188,29 @@ but not all output buffered inside those steps. Recovering from such a checkpoin
 that configuration instead of silently losing output or rerunning application work. Functional workflows can use
 the factory for normal Responses requests and supported pending-response continuation.
 
+Functional continuation validates every supplied result against the authorized pending request and its declared
+response type, using the same supported conversions as graph workflows. A string such as `"false"` is not a boolean
+decision. Invalid types, unknown request IDs, and duplicate responses fail the whole submitted batch before the host
+copies a checkpoint, records an execution attempt, or runs the workflow. The original pending state remains available
+for a corrected retry.
+
+### Invocations ordinary factory sessions
+
+`InvocationsHostServer(agent_factory=...)` also persists ordinary agents' `AgentSession` through
+`agent_session_store_provider`. The default provider uses Foundry storage when hosted and file-based storage locally.
+Sessions are scoped by the platform user and invocation session, with ordinary factory records separated from workflow
+metadata and Responses records.
+
+Each request loads the stored session or calls the new agent's `create_session` method, passes that session to the run,
+and saves it when the run finishes or is interrupted. For streaming requests, saving occurs after the iterator closes.
+The host holds its per-scope lock through execution, saving, and resource cleanup. A new host can continue the stored
+session, but custom mutable agent fields are not persisted automatically.
+
+Factory sessions are not retained in the host's session dictionary. Retention, expiration, storage quotas, and any
+in-memory caching are the configured storage provider's responsibility; the host adds no expiry or eviction policy.
+Ordinary **instance** calls remain unchanged: they retain sessions in the host's unbounded in-memory dictionary and
+do not use this persistence provider. Changing that legacy retention behavior is outside this factory feature.
+
 ### Invocations workflows
 
 `InvocationsHostServer(agent_factory=...)` persists workflow checkpoints for the platform user and invocation session.
@@ -177,7 +224,7 @@ message is not an approval response. Use Responses when callers need that struct
 Functional workflows accept a new message after a completed invocation, but pending or interrupted functional
 continuation is rejected. They do not acquire graph-workflow recovery semantics by being passed through a factory.
 
-Requests updating the same workflow scope are serialized within one host; independent scopes can execute concurrently.
+Requests updating the same factory scope are serialized within one host; independent scopes can execute concurrently.
 This is not a distributed lock across multiple host processes. Invocations does not automatically recover an
 interrupted HTTP response, and checkpoints do not guarantee that external side effects execute exactly once.
 

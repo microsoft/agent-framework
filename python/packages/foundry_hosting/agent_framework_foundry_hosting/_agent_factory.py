@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import weakref
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -44,27 +43,19 @@ def validate_agent_source(agent: HostedAgent | None, agent_factory: AgentFactory
 
 
 class AgentFactoryResolver:
-    """Resolve request agents without retaining completed workflow runtimes."""
+    """Resolve request agents without caching them or inspecting their execution objects.
+
+    Factory authors are responsible for constructing independent mutable runtimes.
+    """
 
     def __init__(self, factory: AgentFactory) -> None:
         self._factory = factory
-        self._seen: weakref.WeakValueDictionary[int, object] = weakref.WeakValueDictionary()
 
     async def resolve(self) -> HostedAgent:
         result = self._factory()
         agent = await result if inspect.isawaitable(result) else result
         if not isinstance(agent, (SupportsAgentRun, FunctionalWorkflowAgent)):
             raise TypeError("agent_factory must return an agent implementing SupportsAgentRun or a workflow agent.")
-        if is_workflow_agent(agent):
-            workflow = agent.workflow if isinstance(agent, WorkflowAgent) else agent._workflow  # pyright: ignore[reportPrivateUsage]
-            for value in (agent, workflow):
-                if self._seen.get(id(value)) is value:
-                    raise RuntimeError(
-                        "agent_factory reused a workflow agent or workflow. Create a new workflow and "
-                        "new mutable executors for each request."
-                    )
-            for value in (agent, workflow):
-                self._seen[id(value)] = value
         return agent
 
 
