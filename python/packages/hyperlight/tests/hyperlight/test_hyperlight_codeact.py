@@ -1293,16 +1293,19 @@ async def test_execute_code_tool_clears_output_after_rejection(
         max_output_file_bytes=3,
     )
     config = execute_code._build_run_config()
-    output_root = Path(cast(Any, execute_code._registry)._get_or_create_entry(config).output_dir.name)
+    registry = cast(Any, execute_code._registry)
+    output_root = Path(registry._get_or_create_entry(config).output_dir.name)
 
     try:
         contents = await execute_code.invoke(arguments={"code": "create-memory-output"})
 
         _assert_bounded_output_error(contents, "per-file output limit")
-        remaining_outputs = await asyncio.to_thread(lambda: list(output_root.iterdir()))
-        assert remaining_outputs == []
+        assert registry._entries == {}
     finally:
+        # Closing waits for background disposal of the retired entry's directories.
         _close_execute_code_registry(execute_code)
+
+    assert not await asyncio.to_thread(output_root.exists)
 
 
 async def test_execute_code_tool_preserves_result_when_post_cleanup_fails(
