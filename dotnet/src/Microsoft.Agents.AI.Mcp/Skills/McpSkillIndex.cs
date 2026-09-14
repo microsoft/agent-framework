@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Microsoft.Agents.AI;
@@ -90,8 +91,9 @@ internal sealed class McpSkillIndexEntry
     /// Gets or sets the SHA-256 digest of the artifact bytes (e.g. <c>sha256:abcd1234...</c>).
     /// Required by the base v0.2.0 schema, but OMITTED under the SEP-2640 MCP binding because
     /// integrity is the transport's concern over an authenticated MCP connection. When an archive
-    /// entry supplies it for compatibility, the loader verifies it before parsing the archive.
+    /// entry supplies it for compatibility, the loader validates its JSON type and verifies it
+    /// before parsing the archive.
     /// </summary>
     [JsonPropertyName("digest")]
-    public string? Digest { get; set; }
+    public JsonElement? Digest { get; set; }
 }

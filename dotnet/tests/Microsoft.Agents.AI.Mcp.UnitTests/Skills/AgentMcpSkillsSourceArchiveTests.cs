@@ -116,6 +116,22 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
     }
 
     [Fact]
+    public async Task GetSkillsAsync_NonStringDigest_SkipsOnlyMalformedEntryAsync()
+    {
+        // Arrange
+        await using var server = new InMemoryMcpServer(builder => builder.WithResources<NonStringDigestServer>());
+        await using var client = await server.CreateClientAsync();
+        var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = this._extractionRoot });
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var skill = Assert.Single(skills);
+        Assert.Equal("skill-b", skill.Frontmatter.Name);
+    }
+
+    [Fact]
     public async Task GetSkillsAsync_ArchiveWithMismatchedDigest_SkipsSkillAsync()
     {
         // Arrange
@@ -886,6 +902,28 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
               "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
               "skills": [
                 { "name": "skill-a", "type": "archive", "description": "Skill A.", "url": "skill://archives/skill-a.zip" },
+                { "name": "skill-b", "type": "archive", "description": "Skill B.", "url": "skill://archives/skill-b.zip" }
+              ]
+            }
+            """;
+
+        [McpServerResource(UriTemplate = "skill://archives/skill-a.zip", Name = "skill-a", MimeType = "application/zip")]
+        public static BlobResourceContents SkillA() => BlobResourceContents.FromBytes(
+            BuildZip(("SKILL.md", SkillAMd)), "skill://archives/skill-a.zip", "application/zip");
+
+        [McpServerResource(UriTemplate = "skill://archives/skill-b.zip", Name = "skill-b", MimeType = "application/zip")]
+        public static BlobResourceContents SkillB() => BlobResourceContents.FromBytes(
+            BuildZip(("SKILL.md", SkillBMd)), "skill://archives/skill-b.zip", "application/zip");
+    }
+
+    [McpServerResourceType]
+    private sealed class NonStringDigestServer
+    {
+        [McpServerResource(UriTemplate = "skill://index.json", Name = "index", MimeType = "application/json")]
+        public static string Index() => """
+            {
+              "skills": [
+                { "name": "skill-a", "type": "archive", "description": "Skill A.", "url": "skill://archives/skill-a.zip", "digest": 123 },
                 { "name": "skill-b", "type": "archive", "description": "Skill B.", "url": "skill://archives/skill-b.zip" }
               ]
             }

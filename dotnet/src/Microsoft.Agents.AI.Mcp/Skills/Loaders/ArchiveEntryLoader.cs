@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -228,7 +229,7 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
         }
 
         // Verify any advertised digest before parsing the archive bytes.
-        if (entry.Digest is not null && !this.VerifyDigest(entry, bytes))
+        if (entry.Digest is JsonElement digest && !this.VerifyDigest(entry, digest, bytes))
         {
             return [];
         }
@@ -319,9 +320,15 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
         return (bytes, blobContent.MimeType);
     }
 
-    private bool VerifyDigest(McpSkillIndexEntry entry, byte[] bytes)
+    private bool VerifyDigest(McpSkillIndexEntry entry, JsonElement digestElement, byte[] bytes)
     {
-        string digest = entry.Digest!;
+        if (digestElement.ValueKind != JsonValueKind.String)
+        {
+            LogInvalidArchiveDigest(this._logger, entry.Name!);
+            return false;
+        }
+
+        string digest = digestElement.GetString()!;
         if (digest.Length != Sha256DigestPrefix.Length + Sha256HexLength ||
             !digest.StartsWith(Sha256DigestPrefix, StringComparison.Ordinal))
         {
