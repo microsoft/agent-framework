@@ -267,11 +267,14 @@ class _SandboxWorker:
                     contents = build_contents(
                         result=result,
                         output_dir=output_dir,
-                        code=code,
                         max_output_files=max_output_files,
                         max_output_file_bytes=max_output_file_bytes,
                         max_output_total_bytes=max_output_total_bytes,
                     )
+                    if output_dir is not None and not any(item.type == "data" for item in contents):
+                        # Isolate any file that becomes visible after the finite discovery window
+                        # from later invocations by retiring this output generation.
+                        self._reusable = False
                     return contents
                 finally:
                     # ``result`` may carry a back-reference to the sandbox. Force its
@@ -360,15 +363,20 @@ class _SandboxEntry:
     input_dir: TemporaryDirectory[str] | None
     output_dir: TemporaryDirectory[str] | None
 
+    def cleanup_temp_dirs(self) -> None:
+        """Clean up temporary directories after the sandbox worker has stopped."""
+        temp_dirs = (self.input_dir, self.output_dir)
+        self.input_dir = None
+        self.output_dir = None
+        for tmp_dir in temp_dirs:
+            if tmp_dir is not None:
+                with suppress(Exception):
+                    _remove_temporary_directory(tmp_dir)
+
     def dispose(self) -> None:
         """Release the sandbox+snapshot on the worker thread and clean up temp dirs."""
         self.worker.dispose()
-        for tmp_dir in (self.input_dir, self.output_dir):
-            if tmp_dir is not None:
-                with suppress(Exception):
-                    tmp_dir.cleanup()
-        self.input_dir = None
-        self.output_dir = None
+        self.cleanup_temp_dirs()
 
 
 def _load_sandbox_class() -> type[Any]:
@@ -1176,7 +1184,6 @@ def _build_execution_contents(
     *,
     result: Any,
     output_dir: TemporaryDirectory[str] | None,
-    code: str,
     max_output_files: int,
     max_output_file_bytes: int,
     max_output_total_bytes: int,
@@ -1193,7 +1200,7 @@ def _build_execution_contents(
     try:
         output_files = _parse_output_files(
             output_dir=output_dir,
-            expect_output_files="/output" in code,
+            expect_output_files=output_dir is not None,
             max_output_files=max_output_files,
             max_output_file_bytes=max_output_file_bytes,
             max_output_total_bytes=max_output_total_bytes,
@@ -1316,10 +1323,57 @@ def _clear_directory(
     _remove_contents(root, 0)
 
 
+def _remove_temporary_directory(tmp_dir: TemporaryDirectory[str]) -> None:
+    """Remove a stopped sandbox's temporary tree without recursive traversal."""
+    root = Path(tmp_dir.name)
+    scan_stack: list[tuple[Path, Any]] = []
+
+    try:
+        try:
+            scan_stack.append((root, os.scandir(root)))
+        except FileNotFoundError:
+            tmp_dir.cleanup()
+            return
+
+        while scan_stack:
+            current, entries = scan_stack[-1]
+            try:
+                entry = next(entries)
+            except StopIteration:
+                entries.close()
+                scan_stack.pop()
+                current.rmdir()
+                continue
+
+            child = Path(entry.path)
+            child_stat = child.lstat()
+            if _is_link_or_reparse_point(child, child_stat):
+                if stat.S_ISDIR(child_stat.st_mode):
+                    child.rmdir()
+                else:
+                    try:
+                        child.unlink()
+                    except OSError:
+                        child.rmdir()
+                continue
+
+            if stat.S_ISDIR(child_stat.st_mode):
+                scan_stack.append((child, os.scandir(child)))
+                continue
+
+            child.unlink()
+    finally:
+        for _, entries in scan_stack:
+            with suppress(OSError):
+                entries.close()
+
+    tmp_dir.cleanup()
+
+
 class _SandboxRegistry(SandboxRuntime):
     def __init__(self) -> None:
         self._entries: dict[tuple[Any, ...], _SandboxEntry] = {}
-        self._retired_entries: list[_SandboxEntry] = []
+        self._cleanup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hl-cleanup")
         self._entries_lock = threading.RLock()
 
     def execute(self, *, config: _RunConfig, code: str) -> list[Content]:
@@ -1352,8 +1406,8 @@ class _SandboxRegistry(SandboxRuntime):
             if self._entries.get(cache_key) is not entry:
                 return
             del self._entries[cache_key]
-            self._retired_entries.append(entry)
-        entry.worker.dispose()
+            entry.worker.dispose()
+            self._cleanup_executor.submit(entry.cleanup_temp_dirs)
 
     def _get_or_create_entry(self, config: _RunConfig) -> _SandboxEntry:
         cache_key = config.cache_key()
@@ -1371,13 +1425,13 @@ class _SandboxRegistry(SandboxRuntime):
         worker thread that created it to honor the PyO3 ``unsendable`` invariant.
         """
         with self._entries_lock:
-            entries = [*self._entries.values(), *self._retired_entries]
+            entries = list(self._entries.values())
             self._entries.clear()
-            self._retired_entries.clear()
         try:
             for entry in entries:
                 entry.dispose()
         finally:
+            self._cleanup_executor.shutdown(wait=True, cancel_futures=False)
             # Drop our local strong references; entries' own refs to sandbox/snapshot
             # were already moved into the per-worker disposal closure inside dispose().
             del entries
