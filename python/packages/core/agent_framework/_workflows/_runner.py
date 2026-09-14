@@ -401,6 +401,11 @@ class RunnerImpl:
             # Try the updated behavior only if backward compatibility did not yield state
             try:
                 state_dict = await executor.on_checkpoint_save()
+                # Validate at save time so restore cannot fail later on a non-dict payload (#8183).
+                if not isinstance(state_dict, dict) or not all(isinstance(k, str) for k in state_dict):
+                    raise WorkflowCheckpointException(
+                        f"Executor state for {exec_id} is not a dict[str, Any]. Unable to save."
+                    )
                 await self._set_executor_state(exec_id, state_dict)
             except WorkflowCheckpointException:
                 raise

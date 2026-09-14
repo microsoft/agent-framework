@@ -46,5 +46,11 @@
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.39.1",
     "vite": "^8.0.16"
+  },
+  "overrides": {
+    "ajv": "6.14.0",
+    "brace-expansion@1": "1.1.18",
+    "brace-expansion@2": "2.1.4",
+    "nanoid": "3.3.18"
   }
 }

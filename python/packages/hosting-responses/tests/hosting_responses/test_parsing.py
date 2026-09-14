@@ -340,6 +340,78 @@ class TestResponsesRunHelpers:
         assert payload["output"][0]["output"] == [{"type": "input_text", "text": "sunny"}]
         assert payload["output"][0]["status"] == "completed"
 
+    def test_responses_from_run_omits_internal_function_exception(self) -> None:
+        diagnostic = "test-token-value at /srv/private/tool.py"
+        result = AgentResponse(
+            messages=Message(
+                role="tool",
+                contents=[
+                    Content.from_function_result(
+                        "call_1",
+                        result="Error: Function failed.",
+                        exception=diagnostic,
+                    )
+                ],
+            )
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+        serialized = json.dumps(payload)
+
+        assert "Error: Function failed." in serialized
+        assert diagnostic not in serialized
+
+    @pytest.mark.parametrize("diagnostic", ["test-token-value at /srv/private/tool.py", ""])
+    def test_responses_from_run_uses_generic_output_for_exception_only_result(self, diagnostic: str) -> None:
+        result = AgentResponse(
+            messages=Message(
+                role="tool",
+                contents=[Content.from_function_result("call_1", exception=diagnostic)],
+            )
+        )
+
+        payload = responses_from_run(result, response_id="resp_new")
+        serialized = json.dumps(payload)
+
+        assert "Error: Function failed." in serialized
+        if diagnostic:
+            assert diagnostic not in serialized
+
+    @pytest.mark.parametrize(
+        ("result", "expected_output"),
+        [
+            (0, "0"),
+            (False, "false"),
+            ([], "[]"),
+            ({}, "{}"),
+        ],
+    )
+    def test_responses_from_run_preserves_falsey_error_result(self, result: object, expected_output: str) -> None:
+        diagnostic = "test-token-value at /srv/private/tool.py"
+        content = Content("function_result", call_id="call_1", result=result, exception=diagnostic)
+        response = AgentResponse(messages=Message(role="tool", contents=[content]))
+
+        payload = responses_from_run(response, response_id="resp_new")
+        serialized = json.dumps(payload)
+
+        assert payload["output"][0]["output"] == expected_output
+        assert diagnostic not in serialized
+
+    def test_responses_from_run_uses_generic_error_when_items_project_to_nothing(self) -> None:
+        diagnostic = "test-token-value at /srv/private/tool.py"
+        content = Content.from_function_result(
+            "call_1",
+            result=[Content("uri", uri=None)],
+            exception=diagnostic,
+        )
+        response = AgentResponse(messages=Message(role="tool", contents=[content]))
+
+        payload = responses_from_run(response, response_id="resp_new")
+        serialized = json.dumps(payload)
+
+        assert payload["output"][0]["output"] == "Error: Function failed."
+        assert diagnostic not in serialized
+
     def test_responses_from_run_rejects_standalone_media(self) -> None:
         result = AgentResponse(
             messages=Message(
@@ -808,6 +880,34 @@ class TestResponsesRunHelpers:
         completed_response = cast("dict[str, object]", _sse_payload(events[-1])["response"])
         completed_output = cast("list[dict[str, object]]", completed_response["output"])
         assert done_item["id"] == completed_output[0]["id"]
+
+    async def test_responses_from_streaming_run_omits_internal_function_exception(self) -> None:
+        diagnostic = "test-token-value at /srv/private/tool.py"
+
+        async def updates() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(
+                role="tool",
+                contents=[
+                    Content.from_function_result(
+                        "call_1",
+                        result="Error: Function failed.",
+                        exception=diagnostic,
+                    )
+                ],
+            )
+
+        stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+        events = [
+            event
+            async for event in responses_from_streaming_run(
+                stream,
+                response_id="resp_new",
+            )
+        ]
+        serialized = "".join(events)
+
+        assert "Error: Function failed." in serialized
+        assert diagnostic not in serialized
 
     async def test_responses_from_streaming_run_preserves_marked_refusal_deltas(self) -> None:
         marker = {"model_output_kind": "refusal"}

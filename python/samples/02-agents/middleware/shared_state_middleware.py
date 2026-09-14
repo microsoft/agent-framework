@@ -7,6 +7,7 @@ from typing import Annotated
 
 from agent_framework import (
     Agent,
+    Content,
     FunctionInvocationContext,
     tool,
 )
@@ -86,10 +87,13 @@ class MiddlewareContainer:
         # Call the next middleware/function
         await call_next()
 
-        # After function execution, enhance the result using shared state
+        # After function execution, enhance the result using shared state. This middleware
+        # is registered last, so it is innermost: context.result is invoke's list[Content].
         if context.result:
-            enhanced_result = f"[Call #{self.call_count}] {context.result}"
-            context.result = enhanced_result
+            context.result = [
+                Content.from_text(f"[Call #{self.call_count}] {item.text}") if item.type == "text" else item
+                for item in context.result
+            ]
             print("[ResultEnhancer] Enhanced result with call number")
 
 

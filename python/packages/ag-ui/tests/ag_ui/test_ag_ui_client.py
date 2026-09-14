@@ -3,9 +3,11 @@
 """Tests for AGUIChatClient."""
 
 import json
-from collections.abc import AsyncGenerator, Awaitable, MutableSequence
+from collections.abc import AsyncGenerator, Awaitable, Mapping, MutableSequence
 from typing import Any, cast
 
+import httpx
+import pytest
 from ag_ui.core import Interrupt, ResumeEntry
 from agent_framework import (
     ChatOptions,
@@ -46,7 +48,7 @@ class StubAGUIChatClient(AGUIChatClient):
         self,
         *,
         messages: MutableSequence[Message],
-        options: ChatOptions[Any] | dict[str, Any] | None,
+        options: Mapping[str, Any],
         stream: bool = False,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Proxy to protected response call."""
@@ -82,20 +84,18 @@ class TestAGUIChatClient:
         assert state is None
 
     async def test_extract_state_from_messages_with_state(self) -> None:
-        """Test state extraction from last message."""
-        import base64
+        """A marked state carrier populates the request state."""
+        from agent_framework_ag_ui import state_carrier
 
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
 
         state_data = {"key": "value", "count": 42}
-        state_json = json.dumps(state_data)
-        state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("utf-8")
 
         messages = [
             Message(role="user", contents=["Hello"]),
             Message(
                 role="user",
-                contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
+                contents=[state_carrier(state_data)],
             ),
         ]
 
@@ -105,9 +105,52 @@ class TestAGUIChatClient:
         assert result_messages[0].text == "Hello"
         assert state == state_data
 
+    async def test_extract_state_from_messages_removes_historical_carriers_and_uses_latest_state(self) -> None:
+        """Historical carriers are removed and the most recent carrier supplies state."""
+        from agent_framework_ag_ui import state_carrier
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        old_carrier = Message(role="user", contents=[state_carrier({"version": "old"})])
+        new_carrier = Message(role="user", contents=[state_carrier({"version": "new"})])
+        messages = [
+            Message(role="user", contents=["Initial prompt"]),
+            old_carrier,
+            Message(role="assistant", contents=["Initial response"]),
+            new_carrier,
+            Message(role="user", contents=["Follow-up prompt"]),
+        ]
+
+        result_messages, state = client.extract_state_from_messages(messages)
+
+        assert result_messages == [messages[0], messages[2], messages[4]]
+        assert state == {"version": "new"}
+
+    async def test_explicit_final_carrier_wins_over_legacy_fallback(self) -> None:
+        """Legacy mode does not reinterpret an earlier document after removing a final carrier."""
+        from agent_framework_ag_ui import state_carrier
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        messages = [
+            Message(
+                role="user",
+                contents=[Content.from_data(b'{"document":"keep"}', media_type="application/json")],
+            ),
+            Message(role="user", contents=[state_carrier({"source": "explicit"})]),
+        ]
+
+        result_messages, state = client._extract_state_from_messages(
+            messages,
+            allow_legacy_state_carrier=True,
+        )
+
+        assert result_messages == messages[:1]
+        assert state == {"source": "explicit"}
+
     async def test_extract_state_from_messages_with_parameterized_data_uri(self) -> None:
         """Test state extraction from JSON data URIs with media type parameters."""
         import base64
+
+        from agent_framework_ag_ui._state import STATE_CARRIER_KEY
 
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
 
@@ -119,7 +162,12 @@ class TestAGUIChatClient:
             Message(role="user", contents=["Hello"]),
             Message(
                 role="user",
-                contents=[Content.from_uri(uri=f"data:application/json;charset=utf-8;base64,{state_b64}")],
+                contents=[
+                    Content.from_uri(
+                        uri=f"data:application/json;charset=utf-8;base64,{state_b64}",
+                        additional_properties={STATE_CARRIER_KEY: True},
+                    )
+                ],
             ),
         ]
 
@@ -133,6 +181,8 @@ class TestAGUIChatClient:
         """Test state extraction with invalid JSON."""
         import base64
 
+        from agent_framework_ag_ui._state import STATE_CARRIER_KEY
+
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
 
         invalid_json = "not valid json"
@@ -141,29 +191,41 @@ class TestAGUIChatClient:
         messages = [
             Message(
                 role="user",
-                contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
+                contents=[
+                    Content.from_uri(
+                        uri=f"data:application/json;base64,{state_b64}",
+                        additional_properties={STATE_CARRIER_KEY: True},
+                    )
+                ],
             ),
         ]
 
         result_messages, state = client.extract_state_from_messages(messages)
 
-        assert result_messages == messages
+        assert result_messages == []
         assert state is None
 
     async def test_extract_state_invalid_base64(self) -> None:
         """Test state extraction with invalid base64."""
+        from agent_framework_ag_ui._state import STATE_CARRIER_KEY
+
         client = StubAGUIChatClient(endpoint="http://localhost:8888/")
 
         messages = [
             Message(
                 role="user",
-                contents=[Content.from_uri(uri="data:application/json;base64,not-valid-base64!")],
+                contents=[
+                    Content.from_uri(
+                        uri="data:application/json;base64,not-valid-base64!",
+                        additional_properties={STATE_CARRIER_KEY: True},
+                    )
+                ],
             ),
         ]
 
         result_messages, state = client.extract_state_from_messages(messages)
 
-        assert result_messages == messages
+        assert result_messages == []
         assert state is None
 
     async def test_convert_messages_to_agui_format(self) -> None:
@@ -182,6 +244,187 @@ class TestAGUIChatClient:
         assert agui_messages[1]["role"] == "assistant"
         assert agui_messages[1]["content"] == "Let me check."
         assert agui_messages[1]["id"] == "msg_123"
+
+    async def test_sends_multimodal_messages_in_request(self) -> None:
+        """The client sends ordered multimodal content in the HTTP request JSON."""
+        captured_request: dict[str, Any] = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            captured_request.update(json.loads(request.content))
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=(
+                    b'data: {"type":"RUN_STARTED","threadId":"thread_1","runId":"run_1"}\n\n'
+                    b'data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg_1","delta":"ok"}\n\n'
+                    b'data: {"type":"RUN_FINISHED","threadId":"thread_1","runId":"run_1"}\n\n'
+                ),
+            )
+
+        message = Message(
+            role="user",
+            contents=[
+                Content.from_text("describe this"),
+                Content.from_uri("https://example.com/cat.png", media_type="image/png"),
+                Content.from_data(b"abc", media_type="image/png"),
+            ],
+            message_id="msg-request",
+        )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StubAGUIChatClient(endpoint="http://localhost:8888/", http_client=http_client)
+            response = await client.inner_get_response(messages=[message], options={})
+
+        assert response is not None
+        assert captured_request["messages"] == [
+            {
+                "id": "msg-request",
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "describe this"},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "url",
+                            "value": "https://example.com/cat.png",
+                            "mimeType": "image/png",
+                        },
+                    },
+                    {
+                        "type": "image",
+                        "source": {"type": "data", "value": "YWJj", "mimeType": "image/png"},
+                    },
+                ],
+            }
+        ]
+
+    async def test_sends_mixed_json_attachment_when_legacy_compatibility_is_enabled(self) -> None:
+        """Legacy compatibility does not consume a prompt with a JSON attachment."""
+        captured_request: dict[str, Any] = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            captured_request.update(json.loads(request.content))
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=(
+                    b'data: {"type":"RUN_STARTED","threadId":"thread_1","runId":"run_1"}\n\n'
+                    b'data: {"type":"RUN_FINISHED","threadId":"thread_1","runId":"run_1"}\n\n'
+                ),
+            )
+
+        message = Message(
+            role="user",
+            contents=[
+                Content.from_text("summarize the attached JSON document"),
+                Content.from_data(b'{"document":"keep me"}', media_type="application/json"),
+            ],
+            message_id="msg-json-document",
+        )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StubAGUIChatClient(endpoint="http://localhost:8888/", http_client=http_client)
+            response = await client.inner_get_response(
+                messages=[message],
+                options={"allow_legacy_state_carrier": True},
+            )
+
+        assert response is not None
+        assert "state" not in captured_request
+        assert captured_request["messages"] == [
+            {
+                "id": "msg-json-document",
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "summarize the attached JSON document"},
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "data",
+                            "value": "eyJkb2N1bWVudCI6ImtlZXAgbWUifQ==",
+                            "mimeType": "application/json",
+                        },
+                    },
+                ],
+            }
+        ]
+
+    async def test_sends_json_attachment_without_state_carrier_in_request(self) -> None:
+        """An unmarked JSON-only document is sent as AG-UI document input."""
+        captured_request: dict[str, Any] = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            captured_request.update(json.loads(request.content))
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=(
+                    b'data: {"type":"RUN_STARTED","threadId":"thread_1","runId":"run_1"}\n\n'
+                    b'data: {"type":"RUN_FINISHED","threadId":"thread_1","runId":"run_1"}\n\n'
+                ),
+            )
+
+        message = Message(
+            role="user",
+            contents=[Content.from_data(b'{"document":"keep me"}', media_type="application/json")],
+            message_id="msg-json-only-document",
+        )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StubAGUIChatClient(endpoint="http://localhost:8888/", http_client=http_client)
+            response = await client.inner_get_response(messages=[message], options={})
+
+        assert response is not None
+        assert "state" not in captured_request
+        assert captured_request["messages"] == [
+            {
+                "id": "msg-json-only-document",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "data",
+                            "value": "eyJkb2N1bWVudCI6ImtlZXAgbWUifQ==",
+                            "mimeType": "application/json",
+                        },
+                    }
+                ],
+            }
+        ]
+
+    async def test_sends_legacy_json_state_with_compatibility_option(self) -> None:
+        """The legacy option extracts an unmarked final JSON state during migration."""
+        captured_request: dict[str, Any] = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            captured_request.update(json.loads(request.content))
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=(
+                    b'data: {"type":"RUN_STARTED","threadId":"thread_1","runId":"run_1"}\n\n'
+                    b'data: {"type":"RUN_FINISHED","threadId":"thread_1","runId":"run_1"}\n\n'
+                ),
+            )
+
+        message = Message(
+            role="user",
+            contents=[Content.from_data(b'{"legacy":"keep"}', media_type="application/json")],
+            message_id="msg-legacy-state",
+        )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = StubAGUIChatClient(endpoint="http://localhost:8888/", http_client=http_client)
+            with pytest.warns(DeprecationWarning, match="state_carrier"):
+                response = await client.inner_get_response(
+                    messages=[message],
+                    options={"allow_legacy_state_carrier": True},
+                )
+
+        assert response is not None
+        assert captured_request["state"] == {"legacy": "keep"}
+        assert captured_request["messages"] == []
 
     async def test_get_thread_id_from_metadata(self) -> None:
         """Test thread ID extraction from metadata."""
@@ -370,18 +613,16 @@ class TestAGUIChatClient:
             pass
 
     async def test_state_transmission(self, monkeypatch: MonkeyPatch) -> None:
-        """Test state is properly transmitted to server."""
-        import base64
+        """A marked state carrier is transmitted through the request state field."""
+        from agent_framework_ag_ui import state_carrier
 
         state_data = {"user_id": "123", "session": "abc"}
-        state_json = json.dumps(state_data)
-        state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("utf-8")
 
         messages = [
             Message(role="user", contents=["Hello"]),
             Message(
                 role="user",
-                contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
+                contents=[state_carrier(state_data)],
             ),
         ]
 
