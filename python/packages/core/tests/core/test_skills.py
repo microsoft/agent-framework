@@ -509,6 +509,77 @@ class TestTryParseSkillDocument:
         assert result is not None
         assert result.name == "test-skill"
 
+    @pytest.mark.parametrize(
+        "duplicate_field",
+        [
+            "name: test-skill",
+            "description: Another description.",
+            "license: Apache-2.0",
+            "compatibility: Other",
+            "allowed-tools: write",
+            "metadata:\n  owner: second",
+        ],
+    )
+    def test_duplicate_singleton_field_is_rejected(self, duplicate_field: str) -> None:
+        content = (
+            "---\n"
+            "name: test-skill\n"
+            "description: A test skill.\n"
+            "license: MIT\n"
+            "compatibility: Python\n"
+            "allowed-tools: read\n"
+            "metadata:\n"
+            "  owner: first\n"
+            f"{duplicate_field}\n"
+            "---\nBody."
+        )
+
+        assert FileSkillsSource._extract_frontmatter(content, "test.md") is None
+
+    @pytest.mark.parametrize(
+        "duplicate_field",
+        [
+            "Name: test-skill",
+            "Description: Another description.",
+            "License: Apache-2.0",
+            "Compatibility: Other",
+            "Allowed-Tools: write",
+            "Metadata:\n  owner: second",
+        ],
+    )
+    def test_duplicate_singleton_field_is_case_insensitive(self, duplicate_field: str) -> None:
+        content = (
+            "---\n"
+            "name: test-skill\n"
+            "description: A test skill.\n"
+            "license: MIT\n"
+            "compatibility: Python\n"
+            "allowed-tools: read\n"
+            "metadata:\n"
+            "  owner: first\n"
+            f"{duplicate_field}\n"
+            "---\nBody."
+        )
+
+        assert FileSkillsSource._extract_frontmatter(content, "test.md") is None
+
+    def test_duplicate_metadata_field_is_rejected(self) -> None:
+        content = (
+            "---\nname: test-skill\ndescription: A test skill.\nmetadata:\n  owner: first\n  owner: second\n---\nBody."
+        )
+
+        assert FileSkillsSource._extract_frontmatter(content, "test.md") is None
+
+    def test_metadata_keys_remain_case_sensitive(self) -> None:
+        content = (
+            "---\nname: test-skill\ndescription: A test skill.\nmetadata:\n  owner: first\n  Owner: second\n---\nBody."
+        )
+
+        frontmatter = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert frontmatter is not None
+        assert frontmatter.metadata == {"owner": "first", "Owner": "second"}
+
 
 # ---------------------------------------------------------------------------
 # Tests: skill discovery and loading
@@ -539,6 +610,18 @@ class TestDiscoverAndLoadSkills:
         (skill_dir / "SKILL.md").write_text("No frontmatter here.", encoding="utf-8")
         skills = await _discover_file_skills_for_test([str(tmp_path)])
         assert len(skills) == 0
+
+    async def test_skips_skill_with_duplicate_frontmatter_field(self, tmp_path: Path) -> None:
+        skill_dir = tmp_path / "duplicate-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: duplicate-skill\ndescription: First description.\ndescription: Second description.\n---\nBody.",
+            encoding="utf-8",
+        )
+
+        skills = await _discover_file_skills_for_test([str(tmp_path)])
+
+        assert skills == {}
 
     async def test_skips_skill_with_name_directory_mismatch(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "wrong-dir-name"

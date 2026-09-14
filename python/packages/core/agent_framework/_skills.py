@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import inspect
 import io
 import json
@@ -1750,6 +1751,10 @@ FRONTMATTER_RE = re.compile(
     r"\A\uFEFF?---\s*$(.+?)^---\s*$",
     re.MULTILINE | re.DOTALL,
 )
+
+# Matches top-level YAML keys (unindented), including mapping keys such as
+# "metadata:" that have no value on the same line.
+YAML_TOP_LEVEL_KEY_RE = re.compile(r"^([\w-]+)\s*:", re.MULTILINE)
 
 # Matches top-level YAML "key: value" lines (unindented). Group 1 = key,
 # Group 2 = quoted value, Group 3 = unquoted value. Only matches keys at
@@ -3566,6 +3571,21 @@ class FileSkillsSource(SkillsSource):
         license_value: str | None = None
         compatibility: str | None = None
         allowed_tools: str | None = None
+        singleton_keys = {"name", "description", "license", "compatibility", "allowed-tools", "metadata"}
+        seen_singleton_keys: set[str] = set()
+
+        # Reject ambiguous repeated fields before parsing their values.
+        for key_match in YAML_TOP_LEVEL_KEY_RE.finditer(yaml_content):
+            key_lower = key_match.group(1).lower()
+            if key_lower in singleton_keys:
+                if key_lower in seen_singleton_keys:
+                    logger.error(
+                        "SKILL.md at '%s' contains duplicate frontmatter key '%s'",
+                        skill_file_path,
+                        key_lower,
+                    )
+                    return None
+                seen_singleton_keys.add(key_lower)
 
         for kv_match in YAML_KV_RE.finditer(yaml_content):
             key = kv_match.group(1)
@@ -3590,8 +3610,18 @@ class FileSkillsSource(SkillsSource):
         metadata_match = YAML_METADATA_BLOCK_RE.search(yaml_content)
         if metadata_match:
             metadata = {}
+            seen_metadata_keys: set[str] = set()
             for kv_match in YAML_INDENTED_KV_RE.finditer(metadata_match.group(1)):
                 mk = kv_match.group(1)
+                # Metadata keys remain case-sensitive but must still be unique.
+                if mk in seen_metadata_keys:
+                    logger.error(
+                        "SKILL.md at '%s' contains duplicate frontmatter key 'metadata.%s'",
+                        skill_file_path,
+                        mk,
+                    )
+                    return None
+                seen_metadata_keys.add(mk)
                 mv = kv_match.group(2) if kv_match.group(2) is not None else kv_match.group(3)
                 metadata[mk] = mv
 
@@ -4497,6 +4527,7 @@ _DEFAULT_ARCHIVE_MAX_UNCOMPRESSED_SIZE_BYTES: Final[int] = 1 * 1024 * 1024
 """Default maximum total uncompressed size, in bytes, of all files extracted from an archive skill."""
 
 _ARCHIVE_READ_BUFFER_SIZE: Final[int] = 81920
+_SHA256_DIGEST_RE = re.compile(r"sha256:([0-9a-f]{64})")
 
 
 class _ArchiveFormat(Enum):
@@ -4730,6 +4761,10 @@ class _ArchiveEntryLoader:
                 continue
 
             data, mime_type = downloaded
+
+            if entry.digest is not None and not self._verify_digest(entry, data):
+                continue
+
             skill = self._build_skill(entry, data, mime_type)
             if skill is None:
                 continue
@@ -4792,6 +4827,22 @@ class _ArchiveEntryLoader:
             return None
 
         return data, mime_type
+
+    @staticmethod
+    def _verify_digest(entry: _McpSkillIndexEntry, data: bytes) -> bool:
+        """Return whether downloaded archive bytes match the entry's SHA-256 digest."""
+        if not isinstance(entry.digest, str) or (match := _SHA256_DIGEST_RE.fullmatch(entry.digest)) is None:
+            logger.warning(
+                "Skipping skill '%s': archive digest must use the format 'sha256:<64 lowercase hex characters>'",
+                entry.name,
+            )
+            return False
+
+        if hashlib.sha256(data).hexdigest() != match.group(1):
+            logger.warning("Skipping skill '%s': downloaded archive does not match its advertised digest", entry.name)
+            return False
+
+        return True
 
     def _build_skill(self, entry: _McpSkillIndexEntry, data: bytes, mime_type: str | None) -> FileSkill | None:
         """Detect the format of and unpack one archive entry into an in-memory :class:`FileSkill`.

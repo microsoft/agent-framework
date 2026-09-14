@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import zipfile
@@ -723,18 +724,20 @@ Instructions from an archive.
 """
 
 
-def _make_archive_index(name: str, url: str, entry_type: str = "archive") -> str:
+def _make_archive_index(name: str, url: str, entry_type: str = "archive", digest: object | None = None) -> str:
     """Build a skill index JSON document with a single archive entry."""
+    entry: dict[str, object] = {
+        "name": name,
+        "type": entry_type,
+        "description": "A skill delivered as an archive.",
+        "url": url,
+    }
+    if digest is not None:
+        entry["digest"] = digest
+
     return json.dumps({
         "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
-        "skills": [
-            {
-                "name": name,
-                "type": entry_type,
-                "description": "A skill delivered as an archive.",
-                "url": url,
-            }
-        ],
+        "skills": [entry],
     })
 
 
@@ -771,6 +774,167 @@ class TestMCPSkillsSourceArchive:
         assert skill.frontmatter.name == "packaged-skill"
         content = await skill.get_content()
         assert "Instructions from an archive." in content
+
+    async def test_archive_with_matching_digest_is_loaded(self) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        digest = f"sha256:{hashlib.sha256(archive).hexdigest()}"
+        index = _make_archive_index("packaged-skill", url, digest=digest)
+        client = _archive_client(index, url, archive, "application/zip")
+
+        source = MCPSkillsSource(client=client)
+        skills = await source.get_skills(_SOURCE_CTX)
+
+        assert [skill.frontmatter.name for skill in skills] == ["packaged-skill"]
+
+    async def test_archive_without_digest_is_loaded(self) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        index = _make_archive_index("packaged-skill", url)
+        client = _archive_client(index, url, archive, "application/zip")
+
+        source = MCPSkillsSource(client=client)
+        skills = await source.get_skills(_SOURCE_CTX)
+
+        assert [skill.frontmatter.name for skill in skills] == ["packaged-skill"]
+
+    @pytest.mark.parametrize(
+        "digest",
+        [
+            "sha256:not-a-digest",
+            f"sha512:{'0' * 64}",
+            f"SHA256:{'0' * 64}",
+            123,
+        ],
+    )
+    async def test_archive_with_invalid_digest_is_skipped(
+        self, digest: object, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        index = _make_archive_index("packaged-skill", url, digest=digest)
+        client = _archive_client(index, url, archive, "application/zip")
+
+        source = MCPSkillsSource(client=client)
+        with caplog.at_level("WARNING", logger="agent_framework._skills"):
+            skills = await source.get_skills(_SOURCE_CTX)
+
+        assert skills == []
+        assert "archive digest must use the format" in caplog.text
+        assert str(digest) not in caplog.text
+
+    async def test_archive_with_mismatched_digest_is_skipped(self, caplog: pytest.LogCaptureFixture) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        index = _make_archive_index("packaged-skill", url, digest=f"sha256:{'0' * 64}")
+        client = _archive_client(index, url, archive, "application/zip")
+
+        source = MCPSkillsSource(client=client)
+        with caplog.at_level("WARNING", logger="agent_framework._skills"):
+            skills = await source.get_skills(_SOURCE_CTX)
+
+        assert skills == []
+        assert "does not match its advertised digest" in caplog.text
+
+    async def test_tampered_archive_is_skipped(self) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        original = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.encode()})
+        tampered = _make_zip({"SKILL.md": ARCHIVE_SKILL_MD.replace("Instructions", "Tampered").encode()})
+        digest = f"sha256:{hashlib.sha256(original).hexdigest()}"
+        index = _make_archive_index("packaged-skill", url, digest=digest)
+        client = _archive_client(index, url, tampered, "application/zip")
+
+        source = MCPSkillsSource(client=client)
+        skills = await source.get_skills(_SOURCE_CTX)
+
+        assert skills == []
+
+    @pytest.mark.parametrize(
+        ("frontmatter", "duplicate_key"),
+        [
+            (
+                "name: packaged-skill\nname: packaged-skill\ndescription: Valid description.",
+                "name",
+            ),
+            (
+                "name: packaged-skill\ndescription: First description.\ndescription: SECOND-VALUE-SHOULD-NOT-BE-LOGGED",
+                "description",
+            ),
+            (
+                "name: packaged-skill\ndescription: First description.\nDescription: SECOND-VALUE-SHOULD-NOT-BE-LOGGED",
+                "description",
+            ),
+            (
+                "name: packaged-skill\ndescription: Valid description.\nallowed-tools: read\nallowed-tools: write",
+                "allowed-tools",
+            ),
+            (
+                "name: packaged-skill\ndescription: Valid description.\nlicense: MIT\nlicense: Apache-2.0",
+                "license",
+            ),
+            (
+                "name: packaged-skill\ndescription: Valid description.\ncompatibility: Python\ncompatibility: Other",
+                "compatibility",
+            ),
+            (
+                (
+                    "name: packaged-skill\ndescription: Valid description.\nmetadata:\n"
+                    "  owner: first\n  owner: SECOND-VALUE-SHOULD-NOT-BE-LOGGED"
+                ),
+                "metadata.owner",
+            ),
+            (
+                (
+                    "name: packaged-skill\ndescription: Valid description.\nmetadata:\n"
+                    "  owner: first\nmetadata:\n  owner: SECOND-VALUE-SHOULD-NOT-BE-LOGGED"
+                ),
+                "metadata",
+            ),
+        ],
+    )
+    async def test_archive_with_duplicate_frontmatter_key_is_skipped(
+        self,
+        frontmatter: str,
+        duplicate_key: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        skill_md = f"---\n{frontmatter}\n---\n# Packaged Skill\n"
+        archive = _make_zip({"SKILL.md": skill_md.encode()})
+        index = _make_archive_index("packaged-skill", url)
+        client = _archive_client(index, url, archive, "application/zip")
+
+        source = MCPSkillsSource(client=client)
+        with caplog.at_level("WARNING", logger="agent_framework._skills"):
+            skills = await source.get_skills(_SOURCE_CTX)
+
+        assert skills == []
+        assert f"duplicate frontmatter key '{duplicate_key}'" in caplog.text
+        assert "SECOND-VALUE-SHOULD-NOT-BE-LOGGED" not in caplog.text
+
+    async def test_archive_with_unique_frontmatter_keys_is_loaded(self) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        skill_md = """\
+---
+name: packaged-skill
+description: Valid description.
+license: MIT
+compatibility: Python
+allowed-tools: read
+metadata:
+  owner: team
+  version: 1
+---
+# Packaged Skill
+"""
+        archive = _make_zip({"SKILL.md": skill_md.encode()})
+        index = _make_archive_index("packaged-skill", url)
+        client = _archive_client(index, url, archive, "application/zip")
+
+        source = MCPSkillsSource(client=client)
+        skills = await source.get_skills(_SOURCE_CTX)
+
+        assert [skill.frontmatter.name for skill in skills] == ["packaged-skill"]
 
     async def test_targz_archive_is_rejected(self) -> None:
         url = "skill://archives/packaged-skill.tar.gz"
