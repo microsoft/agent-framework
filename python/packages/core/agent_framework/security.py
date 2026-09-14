@@ -26,9 +26,10 @@ import uuid
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from contextvars import ContextVar, Token
 from copy import copy, deepcopy
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, NoReturn, cast
+from typing import TYPE_CHECKING, Annotated, Any, NoReturn, cast
 
 from pydantic import BaseModel, Field
 
@@ -89,8 +90,11 @@ _INSPECT_VARIABLE_ERROR = "_inspect_variable_error"
 _INTERNAL_RESULT_MARKER = object()
 _MAX_VARIABLE_REFERENCE_DEPTH = 16
 _MAX_VARIABLE_REFERENCE_COUNT = 100
+_LEGACY_AUTHORITATIVE_CONFIDENTIALITY = "_security_label_authoritative_confidentiality"
 PRINCIPAL_METADATA_KEY = "agent_framework.security.principals"
 
+_INTERNAL_SECURITY_TOOL = "_agent_framework_internal_security_tool"
+_INTERNAL_SECURITY_TOOL_MARKER = object()
 # Tools that consume variable IDs literally (as opaque references) and therefore
 # must NOT have ``var_xxx`` arguments expanded to stored content before execution.
 # ``inspect_variable`` looks the ID up itself; ``quarantined_llm`` resolves the
@@ -105,12 +109,20 @@ def _get_additional_properties(obj: Any) -> dict[str, Any]:
     return cast(dict[str, Any], props) if isinstance(props, dict) else {}
 
 
-def _canonical_principals(value: Any, *, source: str) -> tuple[tuple[str, str], ...]:
+@dataclass(frozen=True, order=True, slots=True)
+class _Principal:
+    """Canonical tenant/user identity used internally for comparisons."""
+
+    tenant_id: str
+    user_id: str
+
+
+def _canonical_principals(value: Any, *, source: str) -> tuple[_Principal, ...]:
     """Validate and canonicalize a principal-set declaration."""
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)) or not value:
         raise ValueError(f"{source} principals must be a non-empty sequence")
 
-    principals: set[tuple[str, str]] = set()
+    principals: set[_Principal] = set()
     for item in cast(Sequence[Any], value):
         if not isinstance(item, Mapping):
             raise ValueError(f"{source} principals must contain mappings")
@@ -121,13 +133,13 @@ def _canonical_principals(value: Any, *, source: str) -> tuple[tuple[str, str], 
         user_id = principal.get("user_id")
         if type(tenant_id) is not str or not tenant_id.strip() or type(user_id) is not str or not user_id.strip():
             raise ValueError(f"{source} principal identifiers must be non-empty strings")
-        principals.add((tenant_id, user_id))
+        principals.add(_Principal(tenant_id=tenant_id, user_id=user_id))
     return tuple(sorted(principals))
 
 
-def _principal_list(principals: Sequence[tuple[str, str]]) -> list[dict[str, str]]:
+def _principal_list(principals: Sequence[_Principal]) -> list[dict[str, str]]:
     """Return the serialized canonical representation of a principal set."""
-    return [{"tenant_id": tenant_id, "user_id": user_id} for tenant_id, user_id in principals]
+    return [{"tenant_id": principal.tenant_id, "user_id": principal.user_id} for principal in principals]
 
 
 def _principal_binding_key(value: Any, *, source: str) -> str:
@@ -349,7 +361,7 @@ def combine_labels(*labels: ContentLabel) -> ContentLabel:
             })
 
     if confidentiality == ConfidentialityLabel.USER_IDENTITY:
-        principal_sets: list[tuple[tuple[str, str], ...]] = []
+        principal_sets: list[tuple[_Principal, ...]] = []
         principals_valid = True
         for label in labels:
             if label.confidentiality != ConfidentialityLabel.USER_IDENTITY:
@@ -2020,7 +2032,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         """
         additional_props = _get_additional_properties(item)
         authoritative_marker = additional_props.pop(_AUTHORITATIVE_SECURITY_LABEL, None)
-        additional_props.pop("_security_label_authoritative_confidentiality", None)
+        additional_props.pop(_LEGACY_AUTHORITATIVE_CONFIDENTIALITY, None)
         inspect_error_marker = additional_props.pop(_INSPECT_VARIABLE_ERROR, None)
         authoritative_label = authoritative_marker is _INTERNAL_RESULT_MARKER
         inspect_error = function_name == "inspect_variable" and inspect_error_marker is _INTERNAL_RESULT_MARKER
@@ -2225,7 +2237,8 @@ def get_current_middleware() -> LabelTrackingFunctionMiddleware | None:
     return _current_middleware.get()
 
 
-class _PendingPolicyApproval(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class _PendingPolicyApproval:
     """Immutable binding record for a pending policy-violation approval.
 
     Captures every dimension a granted approval is bound to so a reused ``call_id`` cannot
@@ -2265,16 +2278,16 @@ class _PendingPolicyApproval(NamedTuple):
             "created_at": self.created_at,
         }
 
-    def binding_key(self) -> tuple[str, str, str, str, str, str, tuple[str, ...]]:
-        """Return every authorization dimension except lifecycle metadata."""
+    def matches_binding(self, other: _PendingPolicyApproval) -> bool:
+        """Return whether another record represents the same reviewed authorization."""
         return (
-            self.body_signature,
-            self.resolved_signature,
-            self.label_key,
-            self.effective_label_key,
-            self.destination_principal_key,
-            self.session_key,
-            self.disclosed_violations,
+            self.body_signature == other.body_signature
+            and self.resolved_signature == other.resolved_signature
+            and self.label_key == other.label_key
+            and self.effective_label_key == other.effective_label_key
+            and self.destination_principal_key == other.destination_principal_key
+            and self.session_key == other.session_key
+            and self.disclosed_violations == other.disclosed_violations
         )
 
     @classmethod
@@ -2535,7 +2548,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
                 )
                 principal_key = _principal_binding_key(principal_value, source="approval label")
             return f"{label_dict.get('integrity', '')}/{confidentiality}/{principal_key}"
-        return "//"
+        return "/"
 
     def _destination_principal_key(self, context: FunctionInvocationContext) -> str:
         function_props = _get_additional_properties(context.function)
@@ -2611,7 +2624,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
             and approval_response.approved is True
         ):
             return False
-        return current_binding.binding_key() == pending.binding_key() and self._response_matches_pending(
+        return current_binding.matches_binding(pending) and self._response_matches_pending(
             approval_response, approval_id, call_id, pending.body_signature, pending.request_id
         )
 
@@ -2685,7 +2698,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
         )
         request_id = f"{approval_id}:replacement:{uuid.uuid4().hex}" if is_replacement else approval_id
         if approval_id:
-            self._store_pending_approval(approval_id, binding._replace(request_id=request_id))
+            self._store_pending_approval(approval_id, replace(binding, request_id=request_id))
         additional_properties: dict[str, Any] = {
             _APPROVAL_REQUEST_ID_KEY: request_id,
             "_replacement_approval_request": is_replacement,
@@ -2964,12 +2977,6 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
                     }
 
         if label.confidentiality == ConfidentialityLabel.USER_IDENTITY:
-            if max_allowed_conf != ConfidentialityLabel.USER_IDENTITY.value:
-                return {
-                    "passed": False,
-                    "failure_type": "principal_mismatch",
-                    "reason": "USER_IDENTITY destination does not declare an authorized principal set",
-                }
             try:
                 source_principals = set(
                     _canonical_principals(
@@ -2977,12 +2984,21 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware, _SecurityScopeBind
                         source="source label",
                     )
                 )
-                destination_principals = set(
-                    _canonical_principals(
-                        function_props.get(PRINCIPAL_METADATA_KEY),
-                        source=f"tool {context.function.name}",
+                if function_props.get(_INTERNAL_SECURITY_TOOL) is _INTERNAL_SECURITY_TOOL_MARKER:
+                    destination_principals = source_principals
+                else:
+                    if max_allowed_conf != ConfidentialityLabel.USER_IDENTITY.value:
+                        return {
+                            "passed": False,
+                            "failure_type": "principal_mismatch",
+                            "reason": "USER_IDENTITY destination does not declare an authorized principal set",
+                        }
+                    destination_principals = set(
+                        _canonical_principals(
+                            function_props.get(PRINCIPAL_METADATA_KEY),
+                            source=f"tool {context.function.name}",
+                        )
                     )
-                )
             except ValueError:
                 return {
                     "passed": False,
@@ -3502,6 +3518,7 @@ def _quarantined_llm_result_parser(result: Any) -> list[Content]:
         "confidentiality": "private",
         "accepts_untrusted": True,
         "source_integrity": "untrusted",
+        _INTERNAL_SECURITY_TOOL: _INTERNAL_SECURITY_TOOL_MARKER,
         # source_integrity is declared as UNTRUSTED because this tool
         # processes external/untrusted data. The middleware uses this
         # (Tier 2) to label the output UNTRUSTED and auto-hide it via
@@ -3791,6 +3808,7 @@ def _inspect_variable_result_parser(result: Any) -> list[Content]:
     result_parser=_inspect_variable_result_parser,
     additional_properties={
         "confidentiality": _INSPECT_VARIABLE_CONFIDENTIALITY.value,
+        _INTERNAL_SECURITY_TOOL: _INTERNAL_SECURITY_TOOL_MARKER,
         # No source_integrity declared: output inherits the label of the
         # inspected content via Tier 3. The variable store is just a
         # container — the data inside it is untrusted external content.
@@ -4221,7 +4239,7 @@ def _stamp_mcp_content_labels(
             continue
         props = item.additional_properties or {}
         props.pop(_AUTHORITATIVE_SECURITY_LABEL, None)
-        props.pop("_security_label_authoritative_confidentiality", None)
+        props.pop(_LEGACY_AUTHORITATIVE_CONFIDENTIALITY, None)
         server_meta = props.pop(_MCP_RESULT_META_KEY, None)
         dynamic = _label_from_mcp_meta(server_meta) if server_meta else None
         if dynamic is None:
