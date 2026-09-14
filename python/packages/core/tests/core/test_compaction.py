@@ -1016,18 +1016,27 @@ def test_format_summary_message_includes_function_call_details() -> None:
     assert "[call_id=call_1]" in rendered
 
 
-def test_format_summary_message_includes_function_result_and_exception() -> None:
+def test_format_summary_message_redacts_function_result_exception() -> None:
+    diagnostic = "test-token-value at /srv/private/tool.py"
     message = Message(
         role="tool",
-        contents=[Content.from_function_result(call_id="call_1", result="42", exception="ValueError")],
+        contents=[Content.from_function_result(call_id="call_1", result="42", exception=diagnostic)],
     )
 
     rendered = _format_summary_message(2, message)
 
     assert "function_result" in rendered
     assert "42" in rendered
-    assert "error(ValueError)" in rendered
+    assert "error" in rendered
+    assert diagnostic not in rendered
     assert "[call_id=call_1]" in rendered
+
+    empty_diagnostic_message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id="call_2", result="failed", exception="")],
+    )
+    empty_diagnostic_rendered = _format_summary_message(3, empty_diagnostic_message)
+    assert "error: failed" in empty_diagnostic_rendered
 
 
 def test_format_summary_message_renders_function_result_without_call_id() -> None:
