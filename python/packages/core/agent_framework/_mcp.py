@@ -97,6 +97,29 @@ class MCPSpecificApproval(TypedDict, total=False):
     never_require_approval: Collection[str] | None
 
 
+
+MCPToolResultContentMode = Literal[
+    "structured_first",
+    "content_first",
+    "content_only",
+    "structured_only",
+    "both",
+]
+"""How model-visible text is selected when a tool result has both ``content`` and ``structuredContent``.
+
+MCP servers disagree on whether the two fields are duplicates or complementary (#7866).
+Callers pick an explicit policy:
+
+- ``structured_first`` (default): use ``structuredContent`` when present, else ``content``
+- ``content_first``: use ``content`` when non-empty, else ``structuredContent``
+- ``content_only``: ignore ``structuredContent`` for the model-visible result
+- ``structured_only``: ignore ``content`` for the model-visible result
+- ``both``: append serialized ``structuredContent`` after ``content`` blocks
+
+The full MCP payload is still retained on the Host channel regardless of mode.
+Custom ``parse_tool_results`` overrides this policy entirely.
+"""
+
 _MCP_REMOTE_NAME_KEY = "_mcp_remote_name"
 _MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
 _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY = "_mcp_tool_result_host_payload"
@@ -839,6 +862,7 @@ class MCPTool:
         always_load: Collection[str] | None = None,
         *,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
+        tool_result_content: MCPToolResultContentMode = "structured_first",
     ) -> None:
         """Initialize the MCP Tool base.
 
@@ -908,6 +932,9 @@ class MCPTool:
             max_host_payload_size_bytes: Maximum encoded size of the complete MCP result retained
                 for Host transports. Oversized payloads are omitted from the Host channel while
                 the parsed model result is preserved. Set to ``None`` to disable the limit.
+            tool_result_content: How to choose model-visible text when both ``content`` and
+                ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
+                Ignored when ``parse_tool_results`` is set. Default ``structured_first``.
         """
         if use_progressive_disclosure and not load_tools:
             raise ValueError("use_progressive_disclosure=True requires load_tools=True.")
@@ -920,6 +947,18 @@ class MCPTool:
             )
         if max_host_payload_size_bytes is not None and max_host_payload_size_bytes <= 0:
             raise ValueError("max_host_payload_size_bytes must be positive or None.")
+        allowed_modes = {
+            "structured_first",
+            "content_first",
+            "content_only",
+            "structured_only",
+            "both",
+        }
+        if tool_result_content not in allowed_modes:
+            raise ValueError(
+                f"tool_result_content must be one of {sorted(allowed_modes)}, "
+                f"got {tool_result_content!r}."
+            )
         self.name = name
         self.description = description or ""
         self.approval_mode = approval_mode
@@ -928,6 +967,7 @@ class MCPTool:
         self.additional_properties = additional_properties
         self.load_tools_flag = load_tools
         self.parse_tool_results = parse_tool_results
+        self.tool_result_content = tool_result_content
         self.load_prompts_flag = load_prompts
         self.parse_prompt_results = parse_prompt_results
         self.max_host_payload_size_bytes = max_host_payload_size_bytes
@@ -1110,11 +1150,30 @@ class MCPTool:
                 case _:
                     result.append(Content.from_text(str(item), **additional_kwargs))
 
-        # Prefer content blocks for the model-visible result. structuredContent is
-        # still retained on the Host payload; appending it again here duplicates
-        # what many servers already serialize into content (#7866).
-        if mcp_type.structuredContent is not None and not result:
-            result.append(Content.from_text(json.dumps(mcp_type.structuredContent, default=str), **additional_kwargs))
+        structured_block: Content | None = None
+        if mcp_type.structuredContent is not None:
+            structured_block = Content.from_text(
+                json.dumps(mcp_type.structuredContent, default=str), **additional_kwargs
+            )
+
+        # Select model-visible content per explicit policy (#7866). Host payload still
+        # retains the full MCP result regardless of this choice.
+        mode = self.tool_result_content
+        if mode == "both":
+            if structured_block is not None:
+                result.append(structured_block)
+        elif mode == "content_only":
+            pass
+        elif mode == "structured_only":
+            result = [structured_block] if structured_block is not None else []
+        elif mode == "content_first":
+            if not result and structured_block is not None:
+                result.append(structured_block)
+        elif mode == "structured_first":
+            if structured_block is not None:
+                result = [structured_block]
+        else:  # pragma: no cover - validated in __init__
+            raise ValueError(f"Unknown tool_result_content mode: {mode!r}")
 
         if not result:
             result.append(Content.from_text("null", **additional_kwargs))
@@ -3284,6 +3343,7 @@ class MCPStdioTool(MCPTool):
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
+        tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP stdio tool.
@@ -3400,6 +3460,7 @@ class MCPStdioTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
+            tool_result_content=tool_result_content,
         )
         self.command = command
         self.args = args or []
@@ -3486,6 +3547,7 @@ class MCPStreamableHTTPTool(MCPTool):
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
+        tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP streamable HTTP tool.
@@ -3646,6 +3708,7 @@ class MCPStreamableHTTPTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
+            tool_result_content=tool_result_content,
         )
         self.url = url
         self.terminate_on_close = terminate_on_close
@@ -3892,6 +3955,7 @@ class MCPWebsocketTool(MCPTool):
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
+        tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP WebSocket tool.
@@ -4006,6 +4070,7 @@ class MCPWebsocketTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
+            tool_result_content=tool_result_content,
         )
         self.url = url
         self._client_kwargs = kwargs

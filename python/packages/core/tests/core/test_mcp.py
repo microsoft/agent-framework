@@ -546,7 +546,7 @@ def test_parse_tool_result_from_mcp_structured_content_only():
 
 
 def test_parse_tool_result_from_mcp_structured_content_with_text():
-    """When content is present, do not also dump structuredContent into model text (#7866)."""
+    """Default structured_first prefers structuredContent when both are present (#7866)."""
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="Summary")],
         structuredContent={"data": [1, 2, 3]},
@@ -556,7 +556,35 @@ def test_parse_tool_result_from_mcp_structured_content_with_text():
     assert isinstance(result, list)
     assert len(result) == 1
     assert result[0].type == "text"
-    assert result[0].text == "Summary"
+    assert json.loads(result[0].text) == {"data": [1, 2, 3]}
+
+
+def test_parse_tool_result_content_modes_for_complementary_and_duplicate_payloads():
+    """tool_result_content covers structured-only, content-only, either-first, and both."""
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Summary")],
+        structuredContent={"data": [1, 2, 3]},
+    )
+
+    content_first = MCPTool(name="helper", tool_result_content="content_first")  # type: ignore[abstract]
+    assert [c.text for c in content_first._parse_tool_result_from_mcp(mcp_result)] == ["Summary"]
+
+    content_only = MCPTool(name="helper", tool_result_content="content_only")  # type: ignore[abstract]
+    assert [c.text for c in content_only._parse_tool_result_from_mcp(mcp_result)] == ["Summary"]
+
+    structured_only = MCPTool(name="helper", tool_result_content="structured_only")  # type: ignore[abstract]
+    assert json.loads(structured_only._parse_tool_result_from_mcp(mcp_result)[0].text) == {"data": [1, 2, 3]}
+
+    both = MCPTool(name="helper", tool_result_content="both")  # type: ignore[abstract]
+    both_result = both._parse_tool_result_from_mcp(mcp_result)
+    assert both_result[0].text == "Summary"
+    assert json.loads(both_result[1].text) == {"data": [1, 2, 3]}
+
+    structured_only_empty = types.CallToolResult(content=[], structuredContent={"x": 1})
+    assert json.loads(content_first._parse_tool_result_from_mcp(structured_only_empty)[0].text) == {"x": 1}
+
+    empty = types.CallToolResult(content=[], structuredContent=None)
+    assert content_only._parse_tool_result_from_mcp(empty)[0].text == "null"
 
 
 async def test_generated_mcp_tool_preserves_complete_host_payload_once() -> None:
