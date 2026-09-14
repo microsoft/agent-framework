@@ -75,6 +75,7 @@ if TYPE_CHECKING:
     from pydantic import AnyUrl
 
     from ._agents import SupportsAgentRun
+    from ._middleware import FunctionInvocationContext
     from ._sessions import AgentSession, SessionContext
     from ._types import Content
 
@@ -2549,13 +2550,41 @@ class SkillsProvider(ContextProvider):
         async def _load(skill_name: str) -> str:
             return await self._load_skill(skills, skill_name)
 
-        async def _read_resource(skill_name: str, resource_name: str, **kwargs: Any) -> Any:
-            return await self._read_skill_resource(skills, skill_name, resource_name, **kwargs)
+        # The runtime kwargs these handlers forward come from the host's
+        # ``agent.run(function_invocation_kwargs=...)``, never from the model. Two
+        # things keep the channels apart at this seam, and both are required.
+        #
+        # First, declaring ``ctx`` opts the handler into FunctionInvocationContext
+        # injection; without it the function-invocation layer has nowhere to put the
+        # host values and silently drops them. Second, the handlers take no ``**kwargs``
+        # and the outer schemas below set ``additionalProperties: False``, so an
+        # undeclared top-level argument returned by the model is rejected during
+        # validation instead of binding into the runtime namespace.
+        #
+        # ``ctx`` is injected by name and is absent from the advertised schema, so it is
+        # never something the model can supply or override.
+        #
+        # This guarantee covers ``ctx.kwargs``, not everything a skill callback ends up
+        # seeing. ``args`` stays deliberately free-form because scripts declare their own
+        # parameters, and :meth:`InlineSkillScript.run` expands it alongside these runtime
+        # kwargs, so a script's ``**kwargs`` can also hold model-supplied entries that are
+        # not declared parameters. Resources take no model arguments, so a resource's
+        # ``**kwargs`` is runtime-only. Do not treat a name appearing in a script's
+        # ``**kwargs`` as proof the host supplied it.
+        async def _read_resource(
+            ctx: FunctionInvocationContext,
+            skill_name: str,
+            resource_name: str,
+        ) -> Any:
+            return await self._read_skill_resource(skills, skill_name, resource_name, **ctx.kwargs)
 
         async def _run_script(
-            skill_name: str, script_name: str, args: dict[str, Any] | list[str] | None = None, **kwargs: Any
+            ctx: FunctionInvocationContext,
+            skill_name: str,
+            script_name: str,
+            args: dict[str, Any] | list[str] | None = None,
         ) -> Any:
-            return await self._run_skill_script(skills, skill_name, script_name, args, **kwargs)
+            return await self._run_skill_script(skills, skill_name, script_name, args, **ctx.kwargs)
 
         return [
             FunctionTool(
@@ -2569,6 +2598,7 @@ class SkillsProvider(ContextProvider):
                         "skill_name": {"type": "string", "description": "The name of the skill to load."},
                     },
                     "required": ["skill_name"],
+                    "additionalProperties": False,
                 },
             ),
             FunctionTool(
@@ -2586,6 +2616,7 @@ class SkillsProvider(ContextProvider):
                         },
                     },
                     "required": ["skill_name", "resource_name"],
+                    "additionalProperties": False,
                 },
             ),
             FunctionTool(
@@ -2637,6 +2668,9 @@ class SkillsProvider(ContextProvider):
                         },
                     },
                     "required": ["skill_name", "script_name"],
+                    # Scripts declare their own parameters, so the nested ``args`` object
+                    # above stays free-form; only the outer envelope is closed.
+                    "additionalProperties": False,
                 },
             ),
         ]
@@ -2692,8 +2726,14 @@ class SkillsProvider(ContextProvider):
             args: Optional arguments for the script, provided by the
                 agent/LLM.
             **kwargs: Runtime keyword arguments forwarded only to script
-                functions that accept ``**kwargs`` (e.g. arguments passed via
-                ``agent.run(user_id="123")``).
+                functions that accept ``**kwargs``. This parameter carries host
+                request context supplied via
+                ``agent.run(..., function_invocation_kwargs={"user_id": "123"})``
+                and delivered through :class:`FunctionInvocationContext`; it is
+                never sourced from model-supplied tool arguments. Note that the
+                receiving script's own ``**kwargs`` is not runtime-only: these
+                values are expanded alongside any undeclared entries in *args*,
+                which the model supplies.
 
         Returns:
             The script result. Returns a user-facing error string for
@@ -2738,8 +2778,11 @@ class SkillsProvider(ContextProvider):
             skill_name: The name of the owning skill.
             resource_name: The resource name to look up (case-insensitive).
             **kwargs: Runtime keyword arguments forwarded to resource functions
-                that accept ``**kwargs`` (e.g. arguments passed via
-                ``agent.run(user_id="123")``).
+                that accept ``**kwargs``. These carry host request context
+                supplied via
+                ``agent.run(..., function_invocation_kwargs={"user_id": "123"})``
+                and delivered through :class:`FunctionInvocationContext`; they are
+                never sourced from model-supplied tool arguments.
 
         Returns:
             The resource content (any type). Returns a user-facing error

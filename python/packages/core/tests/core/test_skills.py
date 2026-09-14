@@ -16,8 +16,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from agent_framework import (
+    Agent,
     AggregatingSkillsSource,
     CachingSkillsSource,
+    ChatResponse,
     ClassSkill,
     Content,
     DeduplicatingSkillsSource,
@@ -26,6 +28,7 @@ from agent_framework import (
     FileSkillsSource,
     InlineSkill,
     InMemorySkillsSource,
+    Message,
     SessionContext,
     Skill,
     SkillFrontmatter,
@@ -37,6 +40,7 @@ from agent_framework import (
     SkillsSource,
     SkillsSourceContext,
 )
+from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._skills import (
     DEFAULT_RESOURCE_EXTENSIONS,
     DEFAULT_SCRIPT_EXTENSIONS,
@@ -49,7 +53,7 @@ from agent_framework._skills import (
     _SkillPathScope,
 )
 
-from .conftest import MockAgent, MockAgentSession, create_junction_or_skip
+from .conftest import MockAgent, MockAgentSession, MockBaseChatClient, create_junction_or_skip
 
 # Cross-platform absolute path prefix for tests
 _ABS = "C:\\skills" if os.name == "nt" else "/skills"
@@ -78,6 +82,17 @@ _SOURCE_CTX = _make_source_context()
 async def _noop_script_runner(skill: Any, script: Any, args: Any = None) -> None:
     """No-op script runner for tests that need a SkillScriptRunner."""
     return
+
+
+def _invocation_context(tool: Any, **runtime_kwargs: Any) -> FunctionInvocationContext:
+    """Build the invocation context a skill tool handler receives at dispatch time.
+
+    ``read_skill_resource`` and ``run_skill_script`` take host runtime values through
+    :class:`FunctionInvocationContext` rather than through model-supplied arguments, so
+    tests that call ``tool.func(...)`` directly must supply one. Pass runtime values as
+    keyword arguments to stand in for ``agent.run(function_invocation_kwargs=...)``.
+    """
+    return FunctionInvocationContext(function=tool, arguments={}, kwargs=runtime_kwargs)
 
 
 class _CountingSkillsSource(SkillsSource):
@@ -3676,7 +3691,12 @@ class TestSkillsProviderFactories:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
-        result = await run_tool.func(skill_name="my-skill", script_name="s1", args={"key": "hello"})
+        result = await run_tool.func(
+            _invocation_context(run_tool),
+            skill_name="my-skill",
+            script_name="s1",
+            args={"key": "hello"},
+        )
 
         assert result == "executed: hello"
 
@@ -3723,7 +3743,7 @@ class TestSkillsProviderFactories:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         read_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "read_skill_resource")
-        result = await read_tool.func(skill_name="my-skill", resource_name="ref")
+        result = await read_tool.func(_invocation_context(read_tool), skill_name="my-skill", resource_name="ref")
         assert result == "reference data"
 
     async def test_file_skills_with_custom_runner(self, tmp_path: Path) -> None:
@@ -3791,7 +3811,12 @@ class TestSkillsProviderFactories:
         )
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
-        result = await run_tool.func(skill_name="my-skill", script_name="scripts/run.py", args={"key": "val"})
+        result = await run_tool.func(
+            _invocation_context(run_tool),
+            skill_name="my-skill",
+            script_name="scripts/run.py",
+            args={"key": "val"},
+        )
         assert result == "sync: scripts/run.py args={'key': 'val'}"
 
     async def test_file_skills_with_callback_runner(self, tmp_path: Path) -> None:
@@ -3861,12 +3886,12 @@ class TestSkillsProviderFactories:
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
 
         # Code script works
-        result = await run_tool.func(skill_name="my-skill", script_name="code-s")
+        result = await run_tool.func(_invocation_context(run_tool), skill_name="my-skill", script_name="code-s")
         assert result == "ok"
 
         # File script without runner propagates an error by default
         with pytest.raises(TypeError, match="requires a FileSkill"):
-            await run_tool.func(skill_name="my-skill", script_name="file-s")
+            await run_tool.func(_invocation_context(run_tool), skill_name="my-skill", script_name="file-s")
 
     async def test_async_code_script_runs_directly(self) -> None:
         async def async_func(x: int = 0) -> str:
@@ -3878,7 +3903,12 @@ class TestSkillsProviderFactories:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
-        result = await run_tool.func(skill_name="my-skill", script_name="s1", args={"x": 42})
+        result = await run_tool.func(
+            _invocation_context(run_tool),
+            skill_name="my-skill",
+            script_name="s1",
+            args={"x": 42},
+        )
         assert result == "async: 42"
 
     async def test_code_script_returns_object(self) -> None:
@@ -3893,7 +3923,7 @@ class TestSkillsProviderFactories:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
-        result = await run_tool.func(skill_name="my-skill", script_name="s1")
+        result = await run_tool.func(_invocation_context(run_tool), skill_name="my-skill", script_name="s1")
         assert result == {"status": "ok", "value": 42}
 
     async def test_code_script_returns_none(self) -> None:
@@ -3904,7 +3934,7 @@ class TestSkillsProviderFactories:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
-        result = await run_tool.func(skill_name="my-skill", script_name="s1")
+        result = await run_tool.func(_invocation_context(run_tool), skill_name="my-skill", script_name="s1")
         assert result is None
 
     async def test_script_with_path_errors_without_runner(self) -> None:
@@ -3918,12 +3948,12 @@ class TestSkillsProviderFactories:
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
 
         # Code-only script still works
-        result = await run_tool.func(skill_name="my-skill", script_name="code-s")
+        result = await run_tool.func(_invocation_context(run_tool), skill_name="my-skill", script_name="code-s")
         assert result == "ok"
 
         # Path+function script without runner propagates an error by default
         with pytest.raises(TypeError, match="requires a FileSkill"):
-            await run_tool.func(skill_name="my-skill", script_name="path-s")
+            await run_tool.func(_invocation_context(run_tool), skill_name="my-skill", script_name="path-s")
 
     async def test_run_skill_script_error_on_missing_skill(self) -> None:
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
@@ -3932,7 +3962,7 @@ class TestSkillsProviderFactories:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
-        result = await run_tool.func(skill_name="nonexistent", script_name="s1")
+        result = await run_tool.func(_invocation_context(run_tool), skill_name="nonexistent", script_name="s1")
         assert "Error" in result
         assert "nonexistent" in result
 
@@ -4003,7 +4033,7 @@ class TestSkillsProviderFactories:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
-        result = await run_tool.func(skill_name="my-skill", script_name="nonexistent")
+        result = await run_tool.func(_invocation_context(run_tool), skill_name="my-skill", script_name="nonexistent")
         assert "Error" in result
         assert "nonexistent" in result
 
@@ -4015,10 +4045,10 @@ class TestSkillsProviderFactories:
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
 
-        result = await run_tool.func(skill_name="", script_name="s1")
+        result = await run_tool.func(_invocation_context(run_tool), skill_name="", script_name="s1")
         assert "Error" in result
 
-        result = await run_tool.func(skill_name="my-skill", script_name="")
+        result = await run_tool.func(_invocation_context(run_tool), skill_name="my-skill", script_name="")
         assert "Error" in result
 
     async def test_instructions_include_script_runner_hints(self) -> None:
@@ -4239,7 +4269,7 @@ class TestSkillsProviderFactories:
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
         with pytest.raises(RuntimeError, match="Something went wrong"):
-            await run_tool.func(skill_name="my-skill", script_name="boom")
+            await run_tool.func(_invocation_context(run_tool), skill_name="my-skill", script_name="boom")
 
     async def test_custom_template_without_runner_placeholder_raises(self) -> None:
         """Providers accept custom templates without {runner_instructions}."""
@@ -6167,7 +6197,7 @@ class TestSourceComposition:
 
         # The source-level runner should be discovered and used
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
-        result = await run_tool.func(skill_name="my-skill", script_name="scripts/run.py")
+        result = await run_tool.func(_invocation_context(run_tool), skill_name="my-skill", script_name="scripts/run.py")
         assert result == "source"
         assert call_log == ["source"]
 
@@ -6648,7 +6678,12 @@ class TestArrayStyleScriptArgs:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
-        result = await run_tool.func(skill_name="my-skill", script_name="run.py", args=["input.docx", "--verbose"])
+        result = await run_tool.func(
+            _invocation_context(run_tool),
+            skill_name="my-skill",
+            script_name="run.py",
+            args=["input.docx", "--verbose"],
+        )
         assert result == "list_result"
         assert captured["args"] == ["input.docx", "--verbose"]
 
@@ -6661,7 +6696,7 @@ class TestArrayStyleScriptArgs:
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
         with pytest.raises(TypeError, match="requires keyword arguments"):
-            await run_tool.func(skill_name="my-skill", script_name="s1", args=["arg1"])
+            await run_tool.func(_invocation_context(run_tool), skill_name="my-skill", script_name="s1", args=["arg1"])
 
     async def test_file_skill_content_includes_scripts_block(self) -> None:
         """FileSkill.content appends an <available_scripts> block when scripts are present."""
@@ -6846,7 +6881,12 @@ class TestSkillScriptArgumentParser:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         run_tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
-        result = await run_tool.func(skill_name="my-skill", script_name="greet", args={"q": "Eve"})
+        result = await run_tool.func(
+            _invocation_context(run_tool),
+            skill_name="my-skill",
+            script_name="greet",
+            args={"q": "Eve"},
+        )
         assert result == "hello Eve"
 
     async def test_inline_string_args_without_parser_raises(self) -> None:
@@ -6855,3 +6895,356 @@ class TestSkillScriptArgumentParser:
         skill = InlineSkill(frontmatter=SkillFrontmatter(name="s", description="d"), instructions="c")
         with pytest.raises(TypeError, match="argument_parser"):
             await script.run(skill, args='{"name": "Alice"}')
+
+
+# ---------------------------------------------------------------------------
+# Tests: runtime kwargs provenance (host context vs. model arguments)
+# ---------------------------------------------------------------------------
+
+
+def _function_call_response(*, call_id: str, name: str, arguments: str) -> ChatResponse:
+    """Build a chat response containing a single tool call."""
+    return ChatResponse(
+        messages=[
+            Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id=call_id, name=name, arguments=arguments)],
+            )
+        ]
+    )
+
+
+class TestSkillsRuntimeKwargsProvenance:
+    """End-to-end tests that runtime kwargs reach skills from the host, not the model.
+
+    The framework exposes two distinct argument channels for skill tools:
+
+    * **Trusted** — host values supplied via ``agent.run(function_invocation_kwargs=...)``,
+      delivered through :class:`FunctionInvocationContext`.
+    * **Untrusted** — the arguments the model produced for the tool call, which are
+      constrained by the tool's advertised JSON schema.
+
+    Runtime values such as ``tenant_id`` or ``auth_token`` must come only from the
+    trusted channel. These tests drive the real ``Agent.run`` dispatch path rather
+    than the provider's private helpers, so they cover schema validation and context
+    injection — the layers where the two channels are told apart.
+    """
+
+    @staticmethod
+    def _tenant_skill(calls: list[dict[str, Any]]) -> InlineSkill:
+        """Build a skill whose resource and script record the runtime kwargs they receive."""
+        skill = InlineSkill(
+            frontmatter=SkillFrontmatter(name="tenant-data", description="Tenant-scoped data."),
+            instructions="Body",
+        )
+
+        @skill.resource(name="account-record", description="The current tenant's account record.")
+        def account_record(**kwargs: Any) -> Any:
+            calls.append(dict(kwargs))
+            return f"record for {kwargs.get('tenant_id', 'MISSING')}"
+
+        @skill.script(name="export-report", description="Export the current tenant's report.")
+        def export_report(report: str, **kwargs: Any) -> Any:
+            calls.append(dict(kwargs))
+            return f"{report} for {kwargs.get('tenant_id', 'MISSING')}"
+
+        return skill
+
+    @staticmethod
+    def _agent(client: MockBaseChatClient, skill: InlineSkill) -> Agent:
+        """Build an agent exposing the skill's tools without approval prompts."""
+        provider = SkillsProvider(
+            [skill],
+            disable_load_skill_approval=True,
+            disable_read_skill_resource_approval=True,
+            disable_run_skill_script_approval=True,
+        )
+        return Agent(client=client, context_providers=[provider])
+
+    async def test_resource_receives_host_runtime_kwargs(self, chat_client_base: MockBaseChatClient) -> None:
+        """Host ``function_invocation_kwargs`` must reach a callable resource.
+
+        ``SkillsProvider`` documents ``agent.run(function_invocation_kwargs=...)`` as the
+        channel for request-scoped values, so a resource that accepts ``**kwargs`` has to
+        observe them on the real dispatch path.
+        """
+        calls: list[dict[str, Any]] = []
+        skill = self._tenant_skill(calls)
+
+        chat_client_base.run_responses = [
+            _function_call_response(
+                call_id="call_1",
+                name="read_skill_resource",
+                arguments='{"skill_name": "tenant-data", "resource_name": "account-record"}',
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["Done!"])]),
+        ]
+
+        agent = self._agent(chat_client_base, skill)
+        session = agent.create_session()
+        await agent.run(
+            "Read the account record.",
+            function_invocation_kwargs={"tenant_id": "host-tenant"},
+            session=session,
+        )
+
+        assert calls == [{"tenant_id": "host-tenant", "session": session}]
+
+    async def test_script_receives_host_runtime_kwargs(self, chat_client_base: MockBaseChatClient) -> None:
+        """Host ``function_invocation_kwargs`` must reach a callable script."""
+        calls: list[dict[str, Any]] = []
+        skill = self._tenant_skill(calls)
+
+        chat_client_base.run_responses = [
+            _function_call_response(
+                call_id="call_1",
+                name="run_skill_script",
+                arguments=(
+                    '{"skill_name": "tenant-data", "script_name": "export-report", "args": {"report": "summary"}}'
+                ),
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["Done!"])]),
+        ]
+
+        agent = self._agent(chat_client_base, skill)
+        session = agent.create_session()
+        await agent.run(
+            "Export the report.",
+            function_invocation_kwargs={"tenant_id": "host-tenant"},
+            session=session,
+        )
+
+        assert calls == [{"tenant_id": "host-tenant", "session": session}]
+
+    async def test_resource_rejects_undeclared_model_argument(self, chat_client_base: MockBaseChatClient) -> None:
+        """A model argument outside the advertised schema must not become a runtime kwarg.
+
+        ``read_skill_resource`` advertises only ``skill_name`` and ``resource_name``. An
+        extra top-level property returned by the model must be rejected before the
+        resource runs, otherwise the model — not the host — chooses the tenant.
+        """
+        calls: list[dict[str, Any]] = []
+        skill = self._tenant_skill(calls)
+
+        chat_client_base.run_responses = [
+            _function_call_response(
+                call_id="call_1",
+                name="read_skill_resource",
+                arguments=(
+                    '{"skill_name": "tenant-data", "resource_name": "account-record", "tenant_id": "model-tenant"}'
+                ),
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["Done!"])]),
+        ]
+
+        await self._agent(chat_client_base, skill).run(
+            "Read the account record.",
+            function_invocation_kwargs={"tenant_id": "host-tenant"},
+        )
+
+        assert calls == []
+
+    async def test_script_rejects_undeclared_model_argument(self, chat_client_base: MockBaseChatClient) -> None:
+        """An undeclared top-level model argument must not reach a script as a runtime kwarg.
+
+        Free-form script parameters belong inside the nested ``args`` property, which
+        stays permissive; the outer schema must not.
+        """
+        calls: list[dict[str, Any]] = []
+        skill = self._tenant_skill(calls)
+
+        chat_client_base.run_responses = [
+            _function_call_response(
+                call_id="call_1",
+                name="run_skill_script",
+                arguments=(
+                    '{"skill_name": "tenant-data", "script_name": "export-report", '
+                    '"args": {"report": "summary"}, "tenant_id": "model-tenant"}'
+                ),
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["Done!"])]),
+        ]
+
+        await self._agent(chat_client_base, skill).run(
+            "Export the report.",
+            function_invocation_kwargs={"tenant_id": "host-tenant"},
+        )
+
+        assert calls == []
+
+    async def test_script_kwargs_also_receive_undeclared_nested_args(
+        self, chat_client_base: MockBaseChatClient
+    ) -> None:
+        """Undeclared entries in the nested ``args`` object still reach a script's ``**kwargs``.
+
+        This pins the deliberate limit of the outer ``additionalProperties: False``
+        rule. Scripts declare their own parameters, so ``args`` stays free-form and
+        :meth:`InlineSkillScript.run` expands it alongside the host runtime kwargs.
+        A script therefore cannot treat a name in its ``**kwargs`` as host-supplied.
+        Closing ``args`` would be a deliberate behavior change and should fail here.
+        """
+        calls: list[dict[str, Any]] = []
+        skill = self._tenant_skill(calls)
+
+        chat_client_base.run_responses = [
+            _function_call_response(
+                call_id="call_1",
+                name="run_skill_script",
+                arguments=(
+                    '{"skill_name": "tenant-data", "script_name": "export-report", '
+                    '"args": {"report": "summary", "region": "model-region"}}'
+                ),
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["Done!"])]),
+        ]
+
+        agent = self._agent(chat_client_base, skill)
+        session = agent.create_session()
+        await agent.run(
+            "Export the report.",
+            function_invocation_kwargs={"tenant_id": "host-tenant"},
+            session=session,
+        )
+
+        assert calls == [{"tenant_id": "host-tenant", "region": "model-region", "session": session}]
+
+    async def test_model_cannot_override_host_value_through_nested_args(
+        self, chat_client_base: MockBaseChatClient
+    ) -> None:
+        """A model value colliding with a host runtime kwarg must not win.
+
+        ``args`` is free-form, so the model can name a key the host also supplies.
+        Binding both raises :class:`TypeError` in the script call, which the
+        function-invocation pipeline turns into a tool error. The point is that the
+        collision fails closed: the script never runs with the model's value.
+        """
+        calls: list[dict[str, Any]] = []
+        skill = self._tenant_skill(calls)
+
+        chat_client_base.run_responses = [
+            _function_call_response(
+                call_id="call_1",
+                name="run_skill_script",
+                arguments=(
+                    '{"skill_name": "tenant-data", "script_name": "export-report", '
+                    '"args": {"report": "summary", "tenant_id": "model-tenant"}}'
+                ),
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["Done!"])]),
+        ]
+
+        response = await self._agent(chat_client_base, skill).run(
+            "Export the report.",
+            function_invocation_kwargs={"tenant_id": "host-tenant"},
+        )
+
+        assert calls == []
+        # Assert the tool was actually dispatched and failed on the collision, so this
+        # cannot pass for the unrelated reason that the call never reached the script.
+        exceptions = [
+            content.exception
+            for message in response.messages
+            for content in message.contents
+            if content.type == "function_result" and content.exception
+        ]
+        assert any("multiple values for keyword argument 'tenant_id'" in str(exc) for exc in exceptions)
+
+    async def test_host_runtime_kwargs_win_over_model_argument(self, chat_client_base: MockBaseChatClient) -> None:
+        """When the model supplies a colliding value, the host value must still be used.
+
+        This is the cross-tenant case: the resource must never be invoked with the
+        model's tenant, whether the extra argument is rejected outright or ignored.
+        """
+        calls: list[dict[str, Any]] = []
+        skill = self._tenant_skill(calls)
+
+        chat_client_base.run_responses = [
+            _function_call_response(
+                call_id="call_1",
+                name="read_skill_resource",
+                arguments=(
+                    '{"skill_name": "tenant-data", "resource_name": "account-record", "tenant_id": "model-tenant"}'
+                ),
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["Done!"])]),
+        ]
+
+        await self._agent(chat_client_base, skill).run(
+            "Read the account record.",
+            function_invocation_kwargs={"tenant_id": "host-tenant"},
+        )
+
+        assert all(call.get("tenant_id") != "model-tenant" for call in calls)
+
+    async def test_resource_without_host_kwargs_receives_session(self, chat_client_base: MockBaseChatClient) -> None:
+        """Without caller-supplied kwargs, only the framework session is forwarded."""
+        calls: list[dict[str, Any]] = []
+        skill = self._tenant_skill(calls)
+
+        chat_client_base.run_responses = [
+            _function_call_response(
+                call_id="call_1",
+                name="read_skill_resource",
+                arguments='{"skill_name": "tenant-data", "resource_name": "account-record"}',
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["Done!"])]),
+        ]
+
+        agent = self._agent(chat_client_base, skill)
+        session = agent.create_session()
+        await agent.run("Read the account record.", session=session)
+
+        assert calls == [{"session": session}]
+
+    @pytest.mark.parametrize(
+        "tool_name",
+        ["load_skill", "read_skill_resource", "run_skill_script"],
+    )
+    async def test_outer_schema_forbids_additional_properties(self, tool_name: str) -> None:
+        """Each skill tool must close its outer schema to undeclared model arguments.
+
+        ``_validate_arguments_against_schema`` rejects unexpected arguments only when
+        ``additionalProperties`` is explicitly ``False``, so omitting the flag silently
+        admits them into the handler's ``**kwargs``.
+        """
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
+        skill._scripts.append(InlineSkillScript(name="s1", function=lambda: None))
+
+        provider = SkillsProvider([skill])
+        await _init_provider(provider)
+        tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == tool_name)
+
+        assert tool.parameters().get("additionalProperties") is False
+
+    async def test_script_args_property_still_allows_free_form_values(self) -> None:
+        """Closing the outer schema must not restrict the nested ``args`` property.
+
+        Scripts declare their own parameters, so ``args`` intentionally stays open.
+        """
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
+        skill._scripts.append(InlineSkillScript(name="s1", function=lambda: None))
+
+        provider = SkillsProvider([skill])
+        await _init_provider(provider)
+        tool = next(t for t in _ctx(provider)[2] if hasattr(t, "name") and t.name == "run_skill_script")
+
+        args_schema = tool.parameters()["properties"]["args"]
+        object_variant = next(v for v in args_schema["oneOf"] if v.get("type") == "object")
+        assert object_variant["additionalProperties"] is True
+
+    async def test_resource_handler_declares_invocation_context(self) -> None:
+        """The provider's tool handlers must opt in to trusted context injection.
+
+        ``FunctionTool`` forwards host runtime kwargs only to handlers that declare a
+        :class:`FunctionInvocationContext` parameter; without one the trusted values are
+        dropped before the handler runs.
+        """
+        skill = InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="test"), instructions="body")
+        skill._scripts.append(InlineSkillScript(name="s1", function=lambda: None))
+
+        provider = SkillsProvider([skill])
+        await _init_provider(provider)
+        tools = {t.name: t for t in _ctx(provider)[2] if hasattr(t, "name")}
+
+        assert tools["read_skill_resource"]._context_parameter_name is not None
+        assert tools["run_skill_script"]._context_parameter_name is not None
