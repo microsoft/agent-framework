@@ -2644,7 +2644,10 @@ async def run_agent_stream(
         raw_messages.extend(resume_messages)
         if snapshot_seed_messages is not None:
             snapshot_seed_messages.extend(copy.deepcopy(resume_messages))
-    if retained_approval_results and not raw_messages:
+    if retained_approval_results and not approval_resume_messages and not resume_messages:
+        # Fully handled via retained results. Reconstruction may have refilled
+        # ``raw_messages`` with the stored transcript on a client-replayed retry;
+        # do not fall through to a fresh agent run (#8140 / eavan review).
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         for event in _make_approval_tool_result_events(retained_approval_results):
             yield event
