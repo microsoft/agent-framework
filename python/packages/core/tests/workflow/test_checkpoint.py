@@ -1285,9 +1285,9 @@ async def test_file_checkpoint_storage_concurrent_saves_across_instances():
     previous per-instance, per-event-loop lock registry did not span a second
     FileCheckpointStorage instance pointed at the same directory, so concurrent
     saves could still reach os.replace together and trip the Windows PermissionError
-    race. The fix switched to a process-wide, per-destination threading.Lock
-    keyed by canonical path. Both instances must complete all saves without
-    surfacing filesystem errors.
+    race. Ownership now comes from a process-wide queue keyed by the canonical
+    destination path, shared by every instance in the process. Both instances must
+    complete all saves without surfacing filesystem errors.
     """
     with tempfile.TemporaryDirectory() as temp_dir:
         storage_a = FileCheckpointStorage(temp_dir)
@@ -2205,8 +2205,11 @@ def test_file_checkpoint_storage_serializes_across_event_loops(monkeypatch, tmp_
 
     Reviewer concern on #7757: ownership has to be established by something that is not
     bound to a loop, or two workers queued from different loops can reach `os.replace`
-    together. The queue hands ownership over a `concurrent.futures.Future`, which any
-    loop can await through `asyncio.wrap_future`, so a single chain orders both.
+    together. The queue hands ownership over a `concurrent.futures.Future`, which is not
+    tied to any loop, so a single chain orders both. Awaited through `_wait_for_signal`
+    -- a per-wait future fed by a done-callback -- and deliberately never through
+    `asyncio.wrap_future`, which would chain a waiter's cancellation into the shared
+    signal an earlier writer still has to resolve.
 
     Deliberately not an async test: it needs two real loops running at once.
     """
