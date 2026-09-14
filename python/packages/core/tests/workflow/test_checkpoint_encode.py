@@ -121,6 +121,30 @@ def test_encode_dict_with_stringified_key_collision_uses_pickle() -> None:
     assert restored["1"] == "string-key"
 
 
+def test_encode_dict_stringifies_each_key_once_for_stateful_str() -> None:
+    """Reserved/collision checks and encoding must reuse one str(key) per entry."""
+
+    class FlipStr:
+        def __init__(self) -> None:
+            self.n = 0
+
+        def __str__(self) -> str:
+            self.n += 1
+            return "stable" if self.n == 1 else "other"
+
+        def __hash__(self) -> int:
+            return id(self)
+
+        def __eq__(self, other: object) -> bool:
+            return self is other
+
+    key = FlipStr()
+    data = {key: "value"}
+    result = encode_checkpoint_value(data)
+    # First str() was "stable" for all checks; must not disagree across passes.
+    assert result == {"stable": "value"}
+
+
 def test_encode_empty_list() -> None:
     """Test encoding an empty list."""
     assert encode_checkpoint_value([]) == []
