@@ -73,7 +73,7 @@ To make these tools available to an existing agent, pass the MCP tool as `tools`
 
 ## Keyed web search with Serply MCP
 
-Use `MCPStreamableHTTPTool` with the [Serply MCP server](https://serply.io/docs) to search Google, Bing, Google News, Google Scholar, Google Maps, and more, or to scrape a page. [Serply](https://serply.io) requires an API key, which the example passes through `header_provider`, the same pattern as [`mcp_api_key_auth.py`](mcp_api_key_auth.py), so the key is attached only to requests for `api.serply.io`. The tools are called directly, so no model provider account is needed.
+Use `MCPStreamableHTTPTool` with the [Serply MCP server](https://serply.io/docs) to search Google, Bing, Google News, Google Scholar, Google Maps, and more, or to scrape a page. [Serply](https://serply.io) requires an API key, which the example passes through `static_headers`, so the key is attached only to requests for `api.serply.io` and is stripped on a cross-origin redirect. The key is fixed for the process, so it belongs in `static_headers` rather than `header_provider`; a `header_provider` holds a lock for the whole tool call, which would stop the agent from running Serply searches concurrently. Use `header_provider`, as [`mcp_api_key_auth.py`](mcp_api_key_auth.py) does, when the header value depends on the run. The tools are called directly, so no model provider account is needed.
 
 Install the client dependencies in a Python 3.10+ environment:
 
@@ -95,8 +95,8 @@ async def main() -> None:
     async with MCPStreamableHTTPTool(
         name="serply",
         url="https://api.serply.io/mcp",
-        # Sent only with requests to api.serply.io; see mcp_api_key_auth.py.
-        header_provider=lambda _: {"X-Api-Key": api_key},
+        # Sent only with requests to api.serply.io, and dropped on a cross-origin redirect.
+        static_headers={"X-Api-Key": api_key},
         load_prompts=False,
         request_timeout=30,
         # Use the text payload once; Serply also returns it as structured content.
