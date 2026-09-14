@@ -4,7 +4,7 @@ import contextlib
 import inspect
 import json
 import logging
-from collections.abc import AsyncIterable, Awaitable, Callable, MutableSequence, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableSequence, Sequence
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -1917,6 +1917,32 @@ async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -
     assert server is not None
     assert hasattr(server, "name")
     assert hasattr(server, "version")
+
+
+async def test_agent_prepares_mcp_run_before_copying_functions(chat_client_base: Any) -> None:
+    captured_options: list[dict[str, Any]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    async def capturing_inner(
+        *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ChatResponse:
+        captured_options.append(dict(options))
+        return await original_inner(messages=messages, options=options, **kwargs)
+
+    class RunPreparingMCPTool(_ConnectedMCPTool):
+        async def _prepare_for_run(self, kwargs: Mapping[str, Any]) -> None:
+            assert kwargs == {"credential": "token-b"}
+            replacement = _ConnectedMCPTool(name=self.name, function_names=["token-b-only"])
+            self._functions = list(replacement.functions)
+
+    chat_client_base._inner_get_response = capturing_inner
+    mcp_tool = RunPreparingMCPTool(name="principal-mcp", function_names=["token-a-only"])
+    agent = Agent(client=chat_client_base, tools=[mcp_tool])
+
+    await agent.run("hello", function_invocation_kwargs={"credential": "token-b"})
+
+    assert len(captured_options) >= 1
+    assert [tool.name for tool in captured_options[0]["tools"]] == ["token-b-only"]
 
 
 async def test_chat_agent_run_with_mcp_tools(client: SupportsChatGetResponse) -> None:

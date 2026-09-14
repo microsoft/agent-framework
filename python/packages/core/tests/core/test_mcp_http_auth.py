@@ -326,6 +326,23 @@ async def test_dynamic_headers_reconnect_before_principal_change_and_bind_ambien
         await tool.close()
 
 
+async def test_run_preparation_reconnects_before_exposing_principal_tools(mcp_http_server: MCPHTTPServer) -> None:
+    client, requests, _ = mcp_http_server
+    tool = _tool(client, "token-a")
+    try:
+        await tool.connect()
+
+        await tool._prepare_for_run({"credential": "token-b"})
+
+        assert {function.name for function in tool.functions} == {"record", "token-b-only"}
+        assert [request.headers["Authorization"] for request in _requests_for_method(requests, "initialize")] == [
+            "token-a",
+            "token-b",
+        ]
+    finally:
+        await tool.close()
+
+
 async def test_concurrent_callers_use_sessions_bound_to_their_own_headers(mcp_http_server: MCPHTTPServer) -> None:
     client, requests, writes = mcp_http_server
     tool = _tool(client, "token-a")
@@ -361,6 +378,7 @@ async def test_header_identity_normalizes_names_but_preserves_value_case(mcp_htt
         url="https://mcp.example/mcp",
         http_client=client,
         load_prompts=False,
+        static_headers={"X-Static": "fixed"},
         header_provider=provide_headers,
     )
     tool._seed_connection_kwargs({
@@ -420,16 +438,26 @@ async def test_cancelled_identity_switch_keeps_the_existing_session_bound(mcp_ht
     try:
         await tool.connect()
         existing_session = tool.session
+        existing_functions = list(tool.functions)
+        existing_call_meta = dict(tool._tool_call_meta_by_name)
+        existing_task_support = dict(tool._tool_task_support_by_name)
+        existing_param_names = {name: set(params) for name, params in tool._tool_param_names_by_name.items()}
 
-        async def cancel_reconnect(*, reset: bool = False) -> None:
-            assert reset
+        async def cancel_reconnect() -> None:
             raise asyncio.CancelledError
 
-        with patch.object(tool, "connect", new=cancel_reconnect), pytest.raises(asyncio.CancelledError):
-            await tool.call_tool("record", credential="token-b")
+        with (
+            patch.object(tool, "_reconnect_for_identity_change", new=cancel_reconnect),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await tool._prepare_for_run({"credential": "token-b"})
 
         assert tool.is_connected
         assert tool.session is existing_session
+        assert tool.functions == existing_functions
+        assert tool._tool_call_meta_by_name == existing_call_meta
+        assert tool._tool_task_support_by_name == existing_task_support
+        assert tool._tool_param_names_by_name == existing_param_names
 
         await tool.call_tool("record", credential="token-b")
         last_call = _calls(requests)[-1]
@@ -718,8 +746,14 @@ async def test_connect_cancelled_during_result_delivery_releases_session(mcp_htt
     connect_on_owner = tool._connect_on_owner
     close_on_owner = tool._close_on_owner
 
-    async def cancel_before_delivery(*, reset: bool = False, load_configured: bool = True) -> None:
-        await connect_on_owner(reset=reset, load_configured=load_configured)
+    async def cancel_before_delivery(
+        *, reset: bool = False, load_configured: bool = True, reset_discovery: bool = False
+    ) -> None:
+        await connect_on_owner(
+            reset=reset,
+            load_configured=load_configured,
+            reset_discovery=reset_discovery,
+        )
         # Setup succeeds, then the caller is cancelled before consuming the completed future.
         asyncio.get_running_loop().call_soon(caller.cancel, None)
 
@@ -836,6 +870,35 @@ async def test_failed_discovery_preserves_caller_supplied_session(
         await supplied_session.send_ping()
 
 
+async def test_caller_supplied_session_rejects_header_identity_changes(mcp_http_server: MCPHTTPServer) -> None:
+    client, _, _ = mcp_http_server
+    async with _tool(client, "token-a") as source:
+        supplied_session = source.session
+        assert supplied_session is not None
+        borrowed = MCPStreamableHTTPTool(
+            name="borrowed",
+            url="https://must-not-connect.example/mcp",
+            session=supplied_session,
+            load_prompts=False,
+            header_provider=lambda kwargs: {"Authorization": kwargs["credential"]},
+        )
+        try:
+            await borrowed.connect()
+            await borrowed.call_tool("record", credential="token-a")
+
+            with pytest.raises(ToolExecutionException, match="caller-supplied session"):
+                await borrowed._prepare_for_run({"credential": "token-b"})
+            with pytest.raises(ToolExecutionException, match="caller-supplied session"):
+                await borrowed.call_tool("record", credential="token-b")
+
+            assert borrowed.is_connected
+            assert borrowed.session is supplied_session
+        finally:
+            await borrowed.close()
+
+        await supplied_session.send_ping()
+
+
 async def test_cancelled_redundant_connect_keeps_existing_session(mcp_http_server: MCPHTTPServer) -> None:
     client, _, _ = mcp_http_server
     async with _tool(client, "token-a") as tool:
@@ -843,8 +906,14 @@ async def test_cancelled_redundant_connect_keeps_existing_session(mcp_http_serve
         original_hooks = list(client.event_hooks["request"])
         connect_on_owner = tool._connect_on_owner
 
-        async def cancel_before_delivery(*, reset: bool = False, load_configured: bool = True) -> None:
-            await connect_on_owner(reset=reset, load_configured=load_configured)
+        async def cancel_before_delivery(
+            *, reset: bool = False, load_configured: bool = True, reset_discovery: bool = False
+        ) -> None:
+            await connect_on_owner(
+                reset=reset,
+                load_configured=load_configured,
+                reset_discovery=reset_discovery,
+            )
             asyncio.get_running_loop().call_soon(caller.cancel, None)
 
         with patch.object(tool, "_connect_on_owner", cancel_before_delivery):

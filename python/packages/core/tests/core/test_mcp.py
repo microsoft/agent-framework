@@ -7956,6 +7956,9 @@ async def test_mcp_streamable_http_tool_header_provider_serializes_concurrent_ca
             self.session.send_ping = AsyncMock()
             self.is_connected = True
 
+        async def _reconnect_for_identity_change(self) -> None:
+            await self.connect(reset=True)
+
         def get_mcp_client(self):  # pyrefly: ignore[bad-override]
             return None
 
@@ -9574,6 +9577,9 @@ async def test_header_provider_reading_contextvar_keeps_credential_out_of_argume
             )
             self.session.send_ping = AsyncMock()
             self.is_connected = True
+
+        async def _reconnect_for_identity_change(self) -> None:
+            await self.connect(reset=True)
 
         def get_mcp_client(self):  # pyrefly: ignore[bad-override]
             return None
