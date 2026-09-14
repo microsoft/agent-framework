@@ -17,10 +17,14 @@ try:
 except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"  # Fallback for development mode
 
+from agent_framework import register_checkpoint_type
+
 from ._base_group_chat_orchestrator import (
     BaseGroupChatOrchestrator,
+    GroupChatParticipantMessage,
     GroupChatRequestMessage,
     GroupChatRequestSentEvent,
+    GroupChatResponseMessage,
     GroupChatResponseReceivedEvent,
     TerminationCondition,
 )
@@ -108,3 +112,37 @@ __all__ = [
     "clean_conversation_for_handoff",
     "create_completion_message",
 ]
+
+
+# Framework-owned types that cross a checkpoint boundary.
+#
+# Checkpoint restore runs pickle through a restricted unpickler whose default allowlist
+# auto-trusts the ``agent_framework.`` prefix. That prefix is dotted, so it covers core but
+# not sibling distributions such as this one -- deliberately, since dropping the dot would
+# auto-trust any installed package merely named ``agent_framework_*``. Built-in orchestration
+# envelopes therefore have to opt in by name, or users have to hand-maintain
+# ``allowed_checkpoint_types`` with framework-internal module paths (#7789).
+#
+# Each entry below crosses the boundary for a stated reason. Nothing belongs here that only
+# travels as a dict: ``_MagenticTaskLedger``, for instance, is persisted through
+# ``to_dict()``/``from_dict()`` and never reaches the unpickler.
+for _checkpoint_type in (
+    # Executor-to-executor message envelopes.
+    GroupChatRequestMessage,
+    GroupChatParticipantMessage,
+    GroupChatResponseMessage,
+    MagenticResetSignal,
+    # ``request_info`` payloads and their response types, which are checkpointed as
+    # pending request-info events while a workflow waits on a human.
+    HandoffAgentUserRequest,
+    AgentRequestInfoResponse,
+    MagenticPlanReviewRequest,
+    MagenticPlanReviewResponse,
+    # Nested inside ``MagenticPlanReviewRequest.current_progress``. The unpickler resolves
+    # nested classes too, so registering only the outer request is not enough.
+    MagenticProgressLedger,
+    MagenticProgressLedgerItem,
+):
+    register_checkpoint_type(_checkpoint_type)
+
+del _checkpoint_type
