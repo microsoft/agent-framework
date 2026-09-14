@@ -3970,10 +3970,11 @@ class MCPStreamableHTTPTool(MCPTool):
 
     def _release_connection_kwargs(self) -> None:
         self._connection_kwargs = None
-        self._session_headers = None
-        self._session_header_identity = None
         self._pending_session_headers = None
         self._pending_connection_kwargs = None
+        if self._owns_session:
+            self._session_headers = None
+            self._session_header_identity = None
 
     async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call a tool, injecting headers from the header_provider if configured.

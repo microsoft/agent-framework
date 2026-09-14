@@ -1991,9 +1991,13 @@ async def test_concurrent_agent_runs_reprepare_mcp_after_lazy_connect(chat_clien
     mcp_tool = ConcurrentRunMCPTool()
     first_agent = Agent(client=chat_client_base, tools=[mcp_tool])
     second_agent = Agent(client=chat_client_base, tools=[mcp_tool])
-    first_run = asyncio.create_task(first_agent.run("first", function_invocation_kwargs={"credential": "token-a"}))
+
+    async def run_with_credential(agent: Agent, prompt: str, credential: str) -> None:
+        await agent.run(prompt, function_invocation_kwargs={"credential": credential})
+
+    first_run = asyncio.create_task(run_with_credential(first_agent, "first", "token-a"))
     await asyncio.wait_for(mcp_tool.connect_started.wait(), timeout=5)
-    second_run = asyncio.create_task(second_agent.run("second", function_invocation_kwargs={"credential": "token-b"}))
+    second_run = asyncio.create_task(run_with_credential(second_agent, "second", "token-b"))
     try:
         await asyncio.wait_for(mcp_tool.both_runs_prepared.wait(), timeout=5)
         mcp_tool.allow_connect.set()
