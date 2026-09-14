@@ -2260,6 +2260,17 @@ class MCPTool:
             return None
         return self.approval_mode  # type: ignore[return-value]
 
+    async def _load_configured_discovery_locked(self) -> None:
+        """Load configured session discovery while the caller holds the discovery lock."""
+        if self.load_tools_flag:
+            if self._supports_tools:
+                await self._load_tools_locked()
+            self._tools_loaded = True
+        if self.load_prompts_flag:
+            if self._supports_prompts:
+                await self._load_prompts_locked()
+            self._prompts_loaded = True
+
     async def load_prompts(self) -> None:
         """Load prompts from the MCP server.
 
@@ -3973,35 +3984,53 @@ class MCPStreamableHTTPTool(MCPTool):
         self._pending_connection_kwargs = None
 
     async def _reconnect_for_identity_change(self) -> None:
-        if self._is_lifecycle_owner_task():
-            await self._connect_on_owner(reset=True, reset_discovery=True)
-            return
+        async with self._function_load_lock:
+            if self._is_lifecycle_owner_task():
+                await self._connect_on_owner(reset=True, load_configured=False, reset_discovery=True)
+            else:
+                async with self._lifecycle_request_lock:
+                    await self._run_on_lifecycle_owner(
+                        "connect",
+                        reset=True,
+                        load_configured=False,
+                        reset_discovery=True,
+                    )
 
-        async with self._lifecycle_request_lock:
-            await self._run_on_lifecycle_owner("connect", reset=True, reset_discovery=True)
+            try:
+                await self._load_configured_discovery_locked()
+            except (Exception, asyncio.CancelledError):
+                self._reset_session_discovery_state()
+                if self._is_lifecycle_owner_task():
+                    await self._close_on_owner()
+                else:
+                    await self.close()
+                raise
 
     async def _ensure_session_identity(
         self,
         headers: Mapping[str, str],
         kwargs: Mapping[str, Any],
     ) -> None:
-        if not self.is_connected:
-            return
         identity = _mcp_header_identity(headers)
-        if self._session_header_identity is None:
-            if not self._owns_session:
+        if not self._owns_session:
+            if self._session_header_identity is None:
                 raise ToolExecutionException(
                     "MCP header identity is unknown for a caller-supplied session; "
                     "use a separate framework-managed tool instance."
                 )
+            if identity != self._session_header_identity:
+                raise ToolExecutionException(
+                    "MCP header identity cannot change for a caller-supplied session; use a separate tool instance."
+                )
+            return
+
+        if not self.is_connected:
+            return
+        if self._session_header_identity is None:
             self._bind_session_headers(headers)
             return
         if identity == self._session_header_identity:
             return
-        if not self._owns_session:
-            raise ToolExecutionException(
-                "MCP header identity cannot change for a caller-supplied session; use a separate tool instance."
-            )
 
         self._stage_session_headers(headers, kwargs)
         try:

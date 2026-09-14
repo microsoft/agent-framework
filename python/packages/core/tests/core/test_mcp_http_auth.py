@@ -343,6 +343,50 @@ async def test_dynamic_headers_reconnect_before_principal_change_and_bind_ambien
         await tool.close()
 
 
+async def test_identity_switch_waits_for_public_discovery_before_teardown(mcp_http_server: MCPHTTPServer) -> None:
+    client, _, _ = mcp_http_server
+    tool = _tool(client, "token-a")
+    await tool.connect()
+    load_started = asyncio.Event()
+    release_load = asyncio.Event()
+    reset_started = asyncio.Event()
+    load_count = 0
+    original_load_tools_locked = tool._load_tools_locked
+    original_safe_close_exit_stack = tool._safe_close_exit_stack
+
+    async def blocking_load_tools_locked() -> None:
+        nonlocal load_count
+        load_count += 1
+        if load_count == 1:
+            load_started.set()
+            await release_load.wait()
+            return
+        await original_load_tools_locked()
+
+    async def recording_safe_close_exit_stack() -> BaseException | None:
+        reset_started.set()
+        return await original_safe_close_exit_stack()
+
+    with (
+        patch.object(tool, "_load_tools_locked", new=blocking_load_tools_locked),
+        patch.object(tool, "_safe_close_exit_stack", new=recording_safe_close_exit_stack),
+    ):
+        public_load = asyncio.create_task(tool.load_tools())
+        try:
+            await asyncio.wait_for(load_started.wait(), timeout=5)
+            identity_switch = asyncio.create_task(tool._prepare_for_run({"credential": "token-b"}))
+            await asyncio.sleep(0.05)
+            assert not reset_started.is_set()
+            release_load.set()
+            await asyncio.wait_for(asyncio.gather(public_load, identity_switch), timeout=5)
+            assert {function.name for function in tool.functions} == {"record", "token-b-only"}
+        finally:
+            release_load.set()
+            public_load.cancel()
+            await asyncio.gather(public_load, return_exceptions=True)
+            await tool.close()
+
+
 async def test_captured_prompt_reconciles_run_identity_at_invocation(mcp_http_server: MCPHTTPServer) -> None:
     client, requests, _ = mcp_http_server
     tool = MCPStreamableHTTPTool(
@@ -944,7 +988,10 @@ async def test_caller_supplied_session_rejects_header_identity_changes(mcp_http_
             await borrowed.close()
             assert not borrowed.is_connected
             assert borrowed.session is supplied_session
+            with pytest.raises(ToolExecutionException, match="caller-supplied session"):
+                await borrowed.call_tool("record", credential="token-a")
             await borrowed.connect()
+
             with pytest.raises(ToolExecutionException, match="caller-supplied session"):
                 await borrowed._prepare_for_run({"credential": "token-a"})
             with pytest.raises(ToolExecutionException, match="caller-supplied session"):
