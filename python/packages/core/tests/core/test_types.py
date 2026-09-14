@@ -1970,6 +1970,33 @@ def test_function_call_merge_falls_back_to_trailing_item_without_call_id():
     assert fcs[0].arguments == "{}"
 
 
+def test_function_call_reused_call_id_does_not_absorb_untagged_chunk():
+    """A reused call_id must not let an untagged chunk merge into an already-identified call.
+
+    The Chat Completions client stamps a stable occurrence ``id`` on every function-call
+    chunk it emits, precisely so a provider reusing a ``call_id`` (or a client that only
+    tags the first chunk) can't be confused with an unrelated call. If a later, untagged
+    chunk happens to carry the same ``call_id`` as a call that already has an occurrence
+    id, it must not be assumed to be that call's continuation - it should be treated as
+    a new, separate call instead of corrupting the finished one's arguments.
+    """
+    updates = [
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(id="af-call-1", call_id="call_1", name="get_weather", arguments="{}")]
+        ),
+        # No `id` and a reused call_id: an unrelated call, not a continuation.
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_1", name="get_time", arguments="{}")]),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 2
+    assert fcs[0].name == "get_weather"
+    assert fcs[0].arguments == "{}"
+    assert fcs[1].name == "get_time"
+    assert fcs[1].arguments == "{}"
+
+
 def test_function_call_tagged_chunk_does_not_absorb_into_untagged_trailing_call():
     """A tagged chunk with no matching in-progress call must not merge into an untagged one.
 

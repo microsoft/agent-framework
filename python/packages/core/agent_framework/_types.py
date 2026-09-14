@@ -2081,15 +2081,24 @@ def _merge_function_call_content(message: Message, content: Content) -> None:
     back to merging with the trailing function_call item, preserving prior behavior.
     """
     call_id = getattr(content, "call_id", None)
+    content_id = getattr(content, "id", None)
     if call_id:
         for index in range(len(message.contents) - 1, -1, -1):
             existing = message.contents[index]
-            if existing.type == "function_call" and getattr(existing, "call_id", None) == call_id:
-                try:
-                    message.contents[index] = existing + content
-                except (AdditionItemMismatch, ContentError):
-                    break
-                return
+            if existing.type != "function_call" or getattr(existing, "call_id", None) != call_id:
+                continue
+            if existing.id is not None and content_id is None:
+                # existing already has a stable occurrence id from its client (e.g. the
+                # Chat Completions client stamps one on every chunk); an untagged chunk
+                # that merely happens to share its call_id isn't proof it's a continuation
+                # of that specific occurrence - a provider could reuse a call_id for a
+                # later, unrelated call. Keep scanning rather than merge on a hunch.
+                continue
+            try:
+                message.contents[index] = existing + content
+            except (AdditionItemMismatch, ContentError):
+                break
+            return
         # A tagged chunk that matches no in-progress call is a new call, not a
         # continuation - an untagged trailing item would silently absorb it otherwise.
         message.contents.append(content)
