@@ -6,13 +6,19 @@ import inspect
 import logging
 import sys
 import types
-import typing
 from builtins import type as builtin_type
 from collections.abc import Awaitable, Callable
 from types import UnionType
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
-from ._typing_utils import is_instance_of, is_type_compatible, normalize_type_to_list, resolve_type_annotation
+from ._typing_utils import (
+    _resolve_function_annotations,
+    contains_typevar,
+    is_instance_of,
+    is_type_compatible,
+    normalize_type_to_list,
+    resolve_type_annotation,
+)
 from ._workflow_context import WorkflowContext, validate_workflow_context_annotation
 
 if sys.version_info >= (3, 11):
@@ -242,6 +248,19 @@ def response_handler(
                     f"Response handler {func.__name__} with explicit type parameters must specify 'response' type"
                 )
 
+            for param_name, param_type in [
+                ("request", resolved_request_type),
+                ("response", resolved_response_type),
+            ]:
+                if contains_typevar(param_type):
+                    raise ValueError(
+                        f"Response handler {func.__name__} has an unresolved TypeVar '{param_type}' "
+                        f"as its {param_name} type. "
+                        "Generic TypeVar annotations are not supported for workflow type validation. "
+                        "Use @response_handler(request=<concrete_type>, response=<concrete_type>) "
+                        "to specify explicit types."
+                    )
+
             final_request_type = resolved_request_type
             final_response_type = resolved_response_type
             final_output_types = normalize_type_to_list(resolved_output_type) if resolved_output_type else []
@@ -349,13 +368,7 @@ def _validate_response_handler_signature(
     if not skip_annotations and response_param.annotation == inspect.Parameter.empty:
         raise ValueError(f"Response handler {func.__name__} must have a type annotation for the response parameter")
 
-    # Resolve string annotations from `from __future__ import annotations`.
-    # Fall back to raw annotations if resolution fails (e.g. unresolvable forward refs,
-    # AttributeError, or RecursionError), so registration failures are easier to diagnose.
-    try:
-        type_hints = typing.get_type_hints(func)
-    except (NameError, AttributeError, RecursionError):
-        type_hints = {p.name: p.annotation for p in params}
+    type_hints = _resolve_function_annotations(func, params)
 
     # Validate ctx parameter is WorkflowContext and extract type args (if annotated)
     ctx_param = params[3]
@@ -375,6 +388,19 @@ def _validate_response_handler_signature(
         response_type = None
     if ctx_annotation == inspect.Parameter.empty:
         ctx_annotation = None
+
+    for param_name, param_type in [
+        ("original_request", request_type),
+        ("response", response_type),
+    ]:
+        if param_type is not None and contains_typevar(param_type):
+            raise ValueError(
+                f"Response handler {func.__name__} has an unresolved TypeVar '{param_type}' "
+                f"as its {param_name} type annotation. "
+                "Generic TypeVar annotations are not supported for workflow type validation. "
+                "Use @response_handler(request=<concrete_type>, response=<concrete_type>) "
+                "to specify explicit types."
+            )
 
     return request_type, response_type, ctx_annotation, output_types, workflow_output_types
 

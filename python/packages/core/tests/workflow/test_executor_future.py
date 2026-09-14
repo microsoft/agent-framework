@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+import inspect
+from typing import Any, TypeVar
 
 import pytest
 from pydantic import BaseModel
@@ -20,6 +21,9 @@ class MyTypeB(BaseModel):
 
 class MyTypeC(BaseModel):
     pass
+
+
+_T = TypeVar("_T")
 
 
 class TestExecutorFutureAnnotations:
@@ -144,6 +148,35 @@ class TestExecutorFutureAnnotations:
                     ctx: WorkflowContext[MyTypeA, MyTypeB],
                 ) -> None:
                     pass
+
+    def test_response_handler_rejects_unresolved_typevar_in_request_annotation(self):
+        """Test that response handlers reject an unresolved request TypeVar during registration."""
+        with pytest.raises(ValueError, match="unresolved TypeVar"):
+
+            class GenericRequestResponseExecutor(Executor):  # pyright: ignore[reportUnusedClass]
+                @response_handler  # pyright: ignore[reportUnknownArgumentType]
+                async def handle_response(self, original_request: _T, response: int, ctx: WorkflowContext) -> None:
+                    pass
+
+    def test_response_handler_rejects_unresolved_typevar_in_response_annotation(self):
+        """Test that response handlers reject an unresolved response TypeVar during registration."""
+        with pytest.raises(ValueError, match="unresolved TypeVar"):
+
+            class GenericResponseExecutor(Executor):  # pyright: ignore[reportUnusedClass]
+                @response_handler  # pyright: ignore[reportUnknownArgumentType]
+                async def handle_response(self, original_request: str, response: _T, ctx: WorkflowContext) -> None:
+                    pass
+
+    def test_annotation_resolver_falls_back_to_raw_annotations(self):
+        """Test that annotation resolution preserves raw annotations when a hint is unresolved."""
+        from agent_framework._workflows._typing_utils import _resolve_function_annotations
+
+        def sample(value: MissingType) -> None:  # type: ignore[name-defined]  # noqa: F821
+            pass
+
+        params = list(inspect.signature(sample).parameters.values())
+
+        assert _resolve_function_annotations(sample, params)["value"] == "MissingType"
 
     def test_handler_unresolvable_annotation_raises(self):
         """Test that an unresolvable forward-reference annotation raises ValueError.
