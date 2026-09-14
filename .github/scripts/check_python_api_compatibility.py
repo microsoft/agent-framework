@@ -24,7 +24,12 @@ from griffe import (
     load,
 )
 
-_EXPERIMENTAL_DECORATOR = "agent_framework._feature_stage.experimental"
+_UNRELEASED_DECORATORS = frozenset(
+    {
+        "agent_framework._feature_stage.experimental",
+        "agent_framework._feature_stage.release_candidate",
+    }
+)
 _GRIFFE_VERSION = version("griffe")
 _PACKAGE_STATUS_ROW = re.compile(
     r"^\| `(?P<name>[^`]+)` \| `(?P<path>python/packages/[^`]+)` \| `(?P<state>[^`]+)` \|$"
@@ -124,12 +129,12 @@ def _resolved(obj: Object | Alias) -> Object | None:
         return None
 
 
-def _experimental_owner(obj: Object | Alias) -> str | None:
+def _unreleased_owner(obj: Object | Alias) -> str | None:
     current = _resolved(obj)
     while current is not None:
         decorators = getattr(current, "decorators", ())
         if any(
-            decorator.callable_path == _EXPERIMENTAL_DECORATOR
+            decorator.callable_path in _UNRELEASED_DECORATORS
             for decorator in decorators
         ):
             return str(current.path)
@@ -222,9 +227,9 @@ def main() -> int:
                     )
                 except KeyError:
                     old_breakage_obj = breakage.obj
-                experimental_owner = _experimental_owner(old_breakage_obj)
+                unreleased_owner = _unreleased_owner(old_breakage_obj)
 
-                if experimental_owner is None:
+                if unreleased_owner is None:
                     breakage_count += 1
                     print(breakage.explain(style=ExplanationStyle.GITHUB))
 

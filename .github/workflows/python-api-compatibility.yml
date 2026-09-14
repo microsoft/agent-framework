@@ -95,11 +95,11 @@ jobs:
       - name: Compare public API with the PR base
         working-directory: ${{ runner.temp }}
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BREAKING_CHANGE_ACKNOWLEDGED: ${{ steps.breaking-change-ack.outputs.acknowledged == 'true' }}
           UV_NO_CONFIG: "1"
         shell: bash
         run: |
+          BASE_SHA="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD^1)"
           git -C "$GITHUB_WORKSPACE" show "$BASE_SHA:.github/scripts/check_python_api_compatibility.py" \
             > "$RUNNER_TEMP/check_python_api_compatibility.py"
           git -C "$GITHUB_WORKSPACE" show "$BASE_SHA:python/pyproject.toml" \

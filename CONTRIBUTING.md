@@ -85,11 +85,12 @@ with read-only permissions, and statically parses source without importing it. T
 the comparison current when a pull request branch is behind `main`.
 
 Only APIs from packages marked `released` in `python/PACKAGE_STATUS.md` are checked.
-Prerelease packages and APIs marked with `@experimental`—including members of an
-experimental class—are excluded. Package state and experimental markers are read from the
-base commit, so changing either in the same pull request cannot suppress a compatibility
-finding. The Griffe version is pinned with the other Python development dependencies in
-`python/pyproject.toml`; the workflow reads that pin from the trusted base commit.
+Prerelease packages and APIs marked with `@experimental` or `@release_candidate`—including
+members of a staged class—are excluded. Package state and feature-stage markers are read
+from the base commit, so changing either in the same pull request cannot suppress a
+compatibility finding. The Griffe version is pinned with the other Python development
+dependencies in `python/pyproject.toml`; the workflow reads that pin from the trusted base
+commit.
 
 If a breaking change is intentional and approved by maintainers, add the `breaking change`
 label to the pull request. The workflow accepts the label as an acknowledgement only when

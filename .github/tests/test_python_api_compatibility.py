@@ -110,41 +110,79 @@ class ApiCompatibilityTests(unittest.TestCase):
 
         self.assertEqual([spec.module for spec in specs], ["stable_api"])
 
-    def test_filters_base_experimental_apis_but_not_head_only_decorators(self) -> None:
+    def test_filters_base_unreleased_apis_but_not_head_only_decorators(self) -> None:
         self.write_status([("agent-framework-core", "core", "released")])
         self.write_module(
             "core",
             "agent_framework",
             {
                 "__init__.py": (
-                    "from ._api import ExperimentalBase, PublicChild, experimental_function, stable_function\n"
-                    '__all__ = ["ExperimentalBase", "PublicChild", "experimental_function", "stable_function"]\n'
+                    "from ._api import (\n"
+                    "    ExperimentalBase,\n"
+                    "    ExperimentalChild,\n"
+                    "    ReleaseCandidateBase,\n"
+                    "    ReleaseCandidateChild,\n"
+                    "    experimental_function,\n"
+                    "    release_candidate_function,\n"
+                    "    stable_experimental,\n"
+                    "    stable_release_candidate,\n"
+                    ")\n"
+                    "__all__ = [\n"
+                    '    "ExperimentalBase",\n'
+                    '    "ExperimentalChild",\n'
+                    '    "ReleaseCandidateBase",\n'
+                    '    "ReleaseCandidateChild",\n'
+                    '    "experimental_function",\n'
+                    '    "release_candidate_function",\n'
+                    '    "stable_experimental",\n'
+                    '    "stable_release_candidate",\n'
+                    "]\n"
                 ),
-                "_feature_stage.py": "def experimental(*, feature_id):\n    return lambda obj: obj\n",
+                "_feature_stage.py": (
+                    "def experimental(*, feature_id):\n"
+                    "    return lambda obj: obj\n\n"
+                    "def release_candidate(*, feature_id):\n"
+                    "    return lambda obj: obj\n"
+                ),
                 "_api.py": (
-                    "from ._feature_stage import experimental\n\n"
+                    "from ._feature_stage import experimental, release_candidate\n\n"
                     '@experimental(feature_id="TEST")\n'
                     "class ExperimentalBase:\n"
                     "    def inherited(self, value): pass\n\n"
-                    "class PublicChild(ExperimentalBase): pass\n\n"
+                    "class ExperimentalChild(ExperimentalBase): pass\n\n"
                     '@experimental(feature_id="TEST")\n'
                     "def experimental_function(value): pass\n\n"
-                    "def stable_function(value): pass\n"
+                    '@release_candidate(feature_id="TEST")\n'
+                    "class ReleaseCandidateBase:\n"
+                    "    def inherited(self, value): pass\n\n"
+                    "class ReleaseCandidateChild(ReleaseCandidateBase): pass\n\n"
+                    '@release_candidate(feature_id="TEST")\n'
+                    "def release_candidate_function(value): pass\n\n"
+                    "def stable_experimental(value): pass\n\n"
+                    "def stable_release_candidate(value): pass\n"
                 ),
             },
         )
         base_sha = self.commit()
         api_path = self.repo / "python/packages/core/agent_framework/_api.py"
         api_path.write_text(
-            "from ._feature_stage import experimental\n\n"
+            "from ._feature_stage import experimental, release_candidate\n\n"
             '@experimental(feature_id="TEST")\n'
             "class ExperimentalBase:\n"
             "    def inherited(self): pass\n\n"
-            "class PublicChild(ExperimentalBase): pass\n\n"
+            "class ExperimentalChild(ExperimentalBase): pass\n\n"
             '@experimental(feature_id="TEST")\n'
             "def experimental_function(): pass\n\n"
+            '@release_candidate(feature_id="TEST")\n'
+            "class ReleaseCandidateBase:\n"
+            "    def inherited(self): pass\n\n"
+            "class ReleaseCandidateChild(ReleaseCandidateBase): pass\n\n"
+            '@release_candidate(feature_id="TEST")\n'
+            "def release_candidate_function(): pass\n\n"
             '@experimental(feature_id="TEST")\n'
-            "def stable_function(): pass\n"
+            "def stable_experimental(): pass\n\n"
+            '@release_candidate(feature_id="TEST")\n'
+            "def stable_release_candidate(): pass\n"
         )
 
         result = self.run_checker(base_sha)
@@ -153,8 +191,13 @@ class ApiCompatibilityTests(unittest.TestCase):
         warnings = [
             line for line in result.stdout.splitlines() if line.startswith("::warning ")
         ]
-        self.assertEqual(len(warnings), 1)
-        self.assertIn("stable_function(value)", warnings[0])
+        self.assertEqual(len(warnings), 2)
+        self.assertTrue(
+            any("stable_experimental(value)" in warning for warning in warnings)
+        )
+        self.assertTrue(
+            any("stable_release_candidate(value)" in warning for warning in warnings)
+        )
 
     def test_removed_top_level_module_is_reported_and_acknowledgeable(self) -> None:
         self.write_status([("agent-framework-stable", "stable", "released")])
