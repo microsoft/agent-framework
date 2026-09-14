@@ -595,14 +595,17 @@ async def test_execute_code_tool_populates_input_dir_with_workspace_and_file_mou
         workspace_root=workspace_root,
         file_mounts=[FileMount(mounted_file, "data/input.txt")],
     )
-    result = await execute_code.invoke(arguments={"code": "None"})
+    try:
+        result = await execute_code.invoke(arguments={"code": "create-output"})
 
-    assert result[0].type == "text"
-    assert _FakeSandbox.instances[0].input_dir is not None
+        assert result[0].type == "text"
+        assert _FakeSandbox.instances[0].input_dir is not None
 
-    input_root = Path(_FakeSandbox.instances[0].input_dir)
-    assert (input_root / "notes.txt").read_text(encoding="utf-8") == "workspace note"
-    assert (input_root / "data" / "input.txt").read_text(encoding="utf-8") == "hello from mount"
+        input_root = Path(_FakeSandbox.instances[0].input_dir)
+        assert (input_root / "notes.txt").read_text(encoding="utf-8") == "workspace note"
+        assert (input_root / "data" / "input.txt").read_text(encoding="utf-8") == "hello from mount"
+    finally:
+        _close_execute_code_registry(execute_code)
 
 
 def _build_run_config(
@@ -1523,10 +1526,10 @@ async def test_execute_code_tool_streams_directory_enumeration_to_count_limit(
     try:
         contents = await execute_code.invoke(arguments={"code": "create-count-output"})
     finally:
-        monkeypatch.setattr(execute_code_module.os, "scandir", original_scandir)
         _close_execute_code_registry(execute_code)
+        monkeypatch.setattr(execute_code_module.os, "scandir", original_scandir)
 
-    assert scanned_entries == [0, 3, 3]
+    assert scanned_entries == [0, 3, 3, 0]
     _assert_bounded_output_error(contents, "output file count limit")
 
 
