@@ -670,6 +670,7 @@ class DeclarativeWorkflowState:
         Results are stored in temporary state variables so untrusted message text is
         passed to PowerFx as data rather than inserted into formula source.
         Temporary names avoid existing Local keys and references in the original formula.
+        Quoted strings, quoted identifiers, and comments are left untouched.
 
         Args:
             formula: The PowerFx formula to pre-process
@@ -682,6 +683,30 @@ class DeclarativeWorkflowState:
         Returns:
             The rewritten formula.
         """
+
+        def skip_opaque_token(start: int) -> int:
+            """Return the end of a quoted token or comment, or start if neither."""
+            quote = formula[start]
+            if quote in ('"', "'"):
+                pos = start + 1
+                while pos < len(formula):
+                    if formula[pos] == quote:
+                        if pos + 1 < len(formula) and formula[pos + 1] == quote:
+                            pos += 2
+                            continue
+                        return pos + 1
+                    pos += 1
+                return pos
+            if formula.startswith("//", start):
+                pos = start + 2
+                while pos < len(formula) and formula[pos] not in "\r\n":
+                    pos += 1
+                return pos
+            if formula.startswith("/*", start):
+                end = formula.find("*/", start + 2)
+                return len(formula) if end == -1 else end + 2
+            return start
+
         temp_var_counter = 0
         reserved_names = {name.casefold() for name in self.get_state_data().get("Local", {})}
         # Reserve formula references too, so previously undefined names stay undefined.
@@ -691,19 +716,10 @@ class DeclarativeWorkflowState:
         cursor = 0
 
         while cursor < len(formula):
-            if formula[cursor] == '"':
-                string_start = cursor
-                cursor += 1
-                while cursor < len(formula):
-                    if formula[cursor] != '"':
-                        cursor += 1
-                        continue
-                    if cursor + 1 < len(formula) and formula[cursor + 1] == '"':
-                        cursor += 2
-                        continue
-                    cursor += 1
-                    break
-                result.append(formula[string_start:cursor])
+            token_end = skip_opaque_token(cursor)
+            if token_end != cursor:
+                result.append(formula[cursor:token_end])
+                cursor = token_end
                 continue
 
             call_prefix = f"{function_name}("
@@ -715,19 +731,16 @@ class DeclarativeWorkflowState:
             paren_start = cursor + len(function_name)
             depth = 1
             pos = paren_start + 1
-            in_string = False
             while pos < len(formula) and depth > 0:
+                token_end = skip_opaque_token(pos)
+                if token_end != pos:
+                    pos = token_end
+                    continue
                 char = formula[pos]
-                if char == '"':
-                    if in_string and pos + 1 < len(formula) and formula[pos + 1] == '"':
-                        pos += 2
-                        continue
-                    in_string = not in_string
-                elif not in_string:
-                    if char == "(":
-                        depth += 1
-                    elif char == ")":
-                        depth -= 1
+                if char == "(":
+                    depth += 1
+                elif char == ")":
+                    depth -= 1
                 pos += 1
 
             if depth != 0:
