@@ -39,6 +39,7 @@ from agent_framework._middleware import (
     FunctionInvocationContext,
     FunctionMiddleware,
     FunctionMiddlewarePipeline,
+    MiddlewareFailure,
     MiddlewareTermination,
 )
 
@@ -3320,6 +3321,66 @@ async def test_prepared_arguments_support_noncopyable_validator_output() -> None
     assert result.result == "unlocked"
     assert len(received) == 1
     assert validation_count == 1
+
+
+async def test_approval_rejects_opaque_mutable_validator_output() -> None:
+    """Approval fails closed when normalized arguments cannot be safely snapshotted."""
+    from agent_framework._tools import _auto_invoke_function, normalize_function_invocation_configuration
+
+    middleware_called = False
+    tool_called = False
+
+    class MutableValue:
+        def __init__(self) -> None:
+            self.value = "initial"
+
+    class MutableArgs(BaseModel):
+        value: Any
+
+        @field_validator("value")
+        @classmethod
+        def create_mutable_value(cls, value: Any) -> Any:
+            return MutableValue() if value == "mutable" else value
+
+    class MutatingMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            nonlocal middleware_called
+            middleware_called = True
+            assert isinstance(context.arguments, dict)
+            context.arguments["value"].value = "changed"
+            await call_next()
+
+    @tool(name="opaque_approval_tool", schema=MutableArgs, approval_mode="always_require")
+    def opaque_approval_tool(value: Any) -> str:
+        nonlocal tool_called
+        tool_called = True
+        return value.value
+
+    function_call = Content.from_function_call(
+        call_id="opaque-approval",
+        id="opaque-approval-occurrence",
+        name=opaque_approval_tool.name,
+        arguments={"value": "mutable"},
+    )
+    approval_response = Content.from_function_approval_request(
+        id="opaque-approval-occurrence",
+        function_call=function_call,
+    ).to_function_approval_response(approved=True)
+
+    with pytest.raises(MiddlewareFailure, match="Cannot safely bind approval to opaque mutable function arguments"):
+        await _auto_invoke_function(
+            approval_response,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={opaque_approval_tool.name: opaque_approval_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(MutatingMiddleware()),
+        )
+
+    assert not middleware_called
+    assert not tool_called
 
 
 async def test_nan_prepared_and_approval_snapshots_are_stable() -> None:

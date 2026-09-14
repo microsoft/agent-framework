@@ -6038,6 +6038,64 @@ class TestVariableArgumentPolicy:
         assert received == ["dangerous-operation"]
         assert validation_count == 1
 
+    async def test_security_rejects_opaque_mutable_validator_output(self) -> None:
+        """Security fails closed when normalized arguments cannot be safely snapshotted."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        middleware_called = False
+        tool_called = False
+
+        class MutableValue:
+            def __init__(self) -> None:
+                self.value = "initial"
+
+        class MutableArgs(BaseModel):
+            value: Any
+
+            @field_validator("value")
+            @classmethod
+            def create_mutable_value(cls, value: Any) -> Any:
+                return MutableValue() if value == "mutable" else value
+
+        class MutatingMiddleware(FunctionMiddleware):
+            async def process(self, context, call_next):
+                nonlocal middleware_called
+                middleware_called = True
+                assert isinstance(context.arguments, dict)
+                cast(Any, context.arguments["value"]).value = "changed"
+                await call_next()
+
+        def opaque_security_tool(value: Any) -> str:
+            nonlocal tool_called
+            tool_called = True
+            return value.value
+
+        function = FunctionTool(
+            func=opaque_security_tool,
+            name="opaque_security_tool",
+            input_model=MutableArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="opaque-security",
+            name=function.name,
+            arguments={"value": "mutable"},
+        )
+
+        with pytest.raises(
+            MiddlewareFailure,
+            match="Cannot safely bind security policy to opaque mutable function arguments",
+        ):
+            await _auto_invoke_function(
+                function_call,
+                config=normalize_function_invocation_configuration(None),
+                tool_map={function.name: function},
+                middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy, MutatingMiddleware()),
+            )
+
+        assert not middleware_called
+        assert not tool_called
+
     async def test_argument_mutation_after_security_short_circuit_fails_closed(self) -> None:
         """Post-policy mutation cannot evade the guard by short-circuiting execution."""
         tracker = LabelTrackingFunctionMiddleware()

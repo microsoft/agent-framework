@@ -148,6 +148,14 @@ class _FunctionArgumentsChangedAfterApproval(Exception):
         self.arguments = dict(arguments)
 
 
+@dataclass(frozen=True)
+class _OpaqueArgumentToken:
+    """Identity token that is unsuitable for approval or security authority."""
+
+    value_type_name: str
+    identity: int
+
+
 def _argument_comparison_token(value: Any) -> Any:
     """Build an immutable, type-aware token without copying argument objects."""
     if isinstance(value, BaseModel):
@@ -168,7 +176,30 @@ def _argument_comparison_token(value: Any) -> Any:
         return ("float", struct.pack("!d", value))
     if value is None or isinstance(value, bool | int | str | bytes):
         return (type(value), value)
-    return ("object", type(value), id(value))
+    value_type = cast(type[object], type(value))
+    return _OpaqueArgumentToken(f"{value_type.__module__}.{value_type.__qualname__}", id(value))
+
+
+def _contains_opaque_argument_token(token: Any) -> bool:
+    """Return whether a comparison token contains identity-only values."""
+    if isinstance(token, _OpaqueArgumentToken):
+        return True
+    if isinstance(token, tuple | frozenset):
+        return any(_contains_opaque_argument_token(item) for item in cast(Iterable[Any], token))
+    return False
+
+
+def _argument_authority_token(value: Any, *, boundary: str) -> Any:
+    """Build an argument token that is safe to use as authority."""
+    token = _argument_comparison_token(value)
+    if _contains_opaque_argument_token(token):
+        from ._middleware import MiddlewareFailure
+
+        raise MiddlewareFailure(
+            f"Cannot safely bind {boundary} to opaque mutable function arguments. "
+            "Use JSON-native values or an immutable Pydantic representation."
+        )
+    return token
 
 
 @dataclass(frozen=True)
@@ -808,7 +839,8 @@ class FunctionTool(SerializationMixin):
             return
         security_token = context.metadata.get(_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY)
         if security_token is not None and (
-            current_arguments is None or _argument_comparison_token(dict(current_arguments)) != security_token
+            current_arguments is None
+            or _argument_authority_token(dict(current_arguments), boundary="security policy") != security_token
         ):
             from ._middleware import MiddlewareFailure
 
@@ -830,7 +862,7 @@ class FunctionTool(SerializationMixin):
         approved_token = context.metadata.get(_APPROVED_ARGUMENTS_CONTEXT_KEY)
         if approved_token is None:
             return
-        if _argument_comparison_token(dict(approval_visible_arguments)) != approved_token:
+        if _argument_authority_token(dict(approval_visible_arguments), boundary="approval") != approved_token:
             raise _FunctionArgumentsChangedAfterApproval(approval_visible_arguments)
 
     @overload
@@ -1983,7 +2015,10 @@ async def _auto_invoke_function(
     # this replay corresponds to a middleware-specific approval flow.
     if approval_response is not None:
         middleware_context.metadata["approval_response"] = approval_response
-        middleware_context.metadata[_APPROVED_ARGUMENTS_CONTEXT_KEY] = _argument_comparison_token(args)
+        middleware_context.metadata[_APPROVED_ARGUMENTS_CONTEXT_KEY] = _argument_authority_token(
+            args,
+            boundary="approval",
+        )
 
     final_handler_started = False
 
