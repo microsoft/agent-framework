@@ -22,6 +22,15 @@ a2a_agent = A2AAgent(url="http://remote-agent/a2a")
 response = await a2a_agent.run("Hello!")
 ```
 
+**Breaking change:** HTTP clients created by `A2AAgent` no longer persist response cookies. This prevents
+one run's cookies from being reused by another run through the same agent.
+Connection pooling and the client's existing lifetime are unchanged.
+
+If the remote service requires cookies for authentication, sessions, or load-balancer affinity, explicitly supply an
+`httpx.AsyncClient` using `http_client=`. Its cookie behavior is preserved.
+Scope that client to the intended authenticated user or security context and
+manage its lifetime; do not share a user-specific cookie jar across users.
+
 ### A2AExecutor (Hosting)
 
 The `A2AExecutor` class bridges local AI agents built with the `agent_framework` library to the A2A protocol, allowing them to be hosted and accessed by other A2A-compliant clients.

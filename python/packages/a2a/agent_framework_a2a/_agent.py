@@ -7,6 +7,7 @@ import sys
 import uuid
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any, Final, Literal, TypeAlias, cast, overload
 
 import httpx
@@ -244,7 +245,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             agent_card: The agent card for the agent.
             url: The URL for the A2A server.
             client: The A2A client for the agent.
-            http_client: Optional httpx.AsyncClient to use.
+            http_client: Optional httpx.AsyncClient to use. Agent-created clients do not persist
+                response cookies; supplied clients retain their configured cookie behavior.
             auth_interceptor: Optional authentication interceptor for secured endpoints.
             timeout: Request timeout configuration. Can be a float (applied to all timeout components),
                 httpx.Timeout object (for full control), or None (uses 10.0s connect, 60.0s read,
@@ -282,7 +284,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         # Create or use provided httpx client
         if http_client is None:
             headers = prepend_agent_framework_to_user_agent()
-            http_client = httpx.AsyncClient(timeout=self._timeout_config, headers=headers)
+            http_client = httpx.AsyncClient(
+                timeout=self._timeout_config,
+                headers=headers,
+                cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+            )
             self._http_client = http_client  # Store for cleanup
             self._close_http_client = True
 
