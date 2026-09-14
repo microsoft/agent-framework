@@ -470,6 +470,72 @@ async def test_workflow_run_request_info_closes_open_text_message() -> None:
     assert content_index < end_index < request_start_index
 
 
+async def test_workflow_run_approval_pause_closes_open_real_tool_call() -> None:
+    """Streamed function calls must receive TOOL_CALL_END before approval interrupt.
+
+    Regression for microsoft/agent-framework#8244: Workflow AG-UI clients reject
+    RUN_FINISHED while a real tool call id is still open after request_info.
+    """
+
+    @executor(id="approval_with_streamed_tool")
+    async def approval_with_streamed_tool(message: Any, ctx: WorkflowContext) -> None:
+        del message
+        function_call = Content.from_function_call(
+            call_id="weather-call",
+            name="api_getWeather",
+            arguments={"city": "Seattle"},
+        )
+        await ctx.yield_output(AgentResponseUpdate(contents=[function_call], role=None))
+        approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+        await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+    workflow = WorkflowBuilder(start_executor=approval_with_streamed_tool).build()
+    events = [event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)]
+
+    real_tool_start_index = next(
+        i
+        for i, event in enumerate(events)
+        if event.type == "TOOL_CALL_START" and getattr(event, "tool_call_id", None) == "weather-call"
+    )
+    real_tool_end_index = next(
+        i
+        for i, event in enumerate(events)
+        if event.type == "TOOL_CALL_END" and getattr(event, "tool_call_id", None) == "weather-call"
+    )
+    request_info_start_index = next(
+        i
+        for i, event in enumerate(events)
+        if event.type == "TOOL_CALL_START"
+        and getattr(event, "tool_call_name", None) == "request_info"
+        and getattr(event, "tool_call_id", None) == "approval-1"
+    )
+    request_info_end_index = next(
+        i
+        for i, event in enumerate(events)
+        if event.type == "TOOL_CALL_END" and getattr(event, "tool_call_id", None) == "approval-1"
+    )
+    run_finished_index = next(i for i, event in enumerate(events) if event.type == "RUN_FINISHED")
+
+    assert real_tool_start_index < real_tool_end_index
+    assert real_tool_end_index < request_info_start_index
+    assert request_info_start_index < request_info_end_index < run_finished_index
+
+    open_tool_ids: set[str] = set()
+    for event in events[: run_finished_index + 1]:
+        tool_call_id = getattr(event, "tool_call_id", None)
+        if not isinstance(tool_call_id, str):
+            continue
+        if event.type == "TOOL_CALL_START":
+            open_tool_ids.add(tool_call_id)
+        elif event.type == "TOOL_CALL_END":
+            open_tool_ids.discard(tool_call_id)
+    assert open_tool_ids == set(), f"Tool calls still open at RUN_FINISHED: {sorted(open_tool_ids)}"
+
+    finished = events[run_finished_index]
+    interrupts = _interrupts_from_run_finished(finished)
+    assert interrupts[0]["id"] == "approval-1"
+
+
 async def test_workflow_run_request_info_interrupt_uses_raw_dict_value():
     """Dict request payloads should be preserved in canonical interrupt metadata."""
 
