@@ -61,6 +61,8 @@ from ._utils import canonical_function_arguments, generate_event_id, make_json_s
 logger = logging.getLogger(__name__)
 
 
+_PUBLIC_WORKFLOW_ERROR_MESSAGE = "Workflow execution failed."
+
 _TERMINAL_STATES: set[str] = {
     WorkflowRunState.IDLE.value,
     WorkflowRunState.IDLE_WITH_PENDING_REQUESTS.value,
@@ -989,8 +991,9 @@ def _custom_event_value(event: Any) -> Any:
 
 
 def _details_message(details: Any) -> str:
+    """Extract an internal diagnostic message for server-side logging only."""
     if details is None:
-        return "Workflow execution failed."
+        return _PUBLIC_WORKFLOW_ERROR_MESSAGE
     if hasattr(details, "message"):
         message = getattr(details, "message")
         if isinstance(message, str) and message:
@@ -1016,6 +1019,9 @@ async def run_workflow_stream(
     checkpoint_id: str | None = None,
 ) -> AsyncGenerator[BaseEvent]:
     """Run a Workflow and emit AG-UI protocol events.
+
+    Execution failures expose a generic message and error code. Internal messages
+    and tracebacks are logged server-side, not included in public error events.
 
     Args:
         input_data: Normalized AG-UI request payload (a ``RunAgentInput`` dump).
@@ -1226,7 +1232,12 @@ async def run_workflow_stream(
                 for end_event in _drain_open_blocks():
                     yield end_event
                 details = getattr(event, "details", None)
-                yield RunErrorEvent(message=_details_message(details), code=_details_code(details))
+                logger.error(
+                    "Workflow execution failed: %s\n%s",
+                    _details_message(details),
+                    getattr(details, "traceback", None) or "",
+                )
+                yield RunErrorEvent(message=_PUBLIC_WORKFLOW_ERROR_MESSAGE, code=_details_code(details))
                 run_error_emitted = True
                 terminal_emitted = True
                 continue
@@ -1281,7 +1292,18 @@ async def run_workflow_stream(
                     "status": status,
                 }
                 if event_type == "executor_failed":
-                    executor_payload["details"] = make_json_safe(getattr(event, "details", None))
+                    details = getattr(event, "details", None)
+                    logger.error(
+                        "Workflow executor %s failed: %s\n%s",
+                        executor_id,
+                        _details_message(details),
+                        getattr(details, "traceback", None) or "",
+                    )
+                    # Only project public fields; traceback and extra can contain backend data.
+                    executor_payload["details"] = {
+                        "message": _PUBLIC_WORKFLOW_ERROR_MESSAGE,
+                        "error_type": _details_code(details),
+                    }
                 else:
                     executor_payload["data"] = make_json_safe(getattr(event, "data", None))
 
@@ -1375,7 +1397,7 @@ async def run_workflow_stream(
         for end_event in _drain_open_blocks():
             yield end_event
         if not run_error_emitted:
-            yield RunErrorEvent(message=str(exc), code=type(exc).__name__)
+            yield RunErrorEvent(message=_PUBLIC_WORKFLOW_ERROR_MESSAGE, code=type(exc).__name__)
             run_error_emitted = True
         terminal_emitted = True
 

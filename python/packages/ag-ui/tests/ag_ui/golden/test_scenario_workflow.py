@@ -444,25 +444,22 @@ async def test_workflow_emits_distinct_consecutive_outputs() -> None:
 
 
 async def test_workflow_error_emits_run_error_event() -> None:
-    """Exceptions during workflow streaming produce RUN_ERROR events."""
+    """Real executor failures reach the wrapper as sanitized RUN_ERROR events."""
 
-    class FailingWorkflow:
-        def run(self, **kwargs: Any):
-            async def _stream():
-                raise RuntimeError("workflow exploded")
-                yield  # pragma: no cover
+    @executor(id="failing")
+    async def failing(message: Any, ctx: WorkflowContext[Any, str]) -> None:
+        raise RuntimeError("workflow exploded")
 
-            return _stream()
-
-    wrapper = AgentFrameworkWorkflow(workflow=cast(Any, FailingWorkflow()))
+    wrapper = AgentFrameworkWorkflow(workflow=WorkflowBuilder(start_executor=failing).build())
     stream = await _run(wrapper, _payload())
 
-    # Should still have RUN_STARTED
-    stream.assert_has_type("RUN_STARTED")
-    # Should have RUN_ERROR
-    stream.assert_has_type("RUN_ERROR")
+    assert stream.types()[0] == "RUN_STARTED"
+    assert len(stream.get("RUN_ERROR")) == 1
+    assert "RUN_FINISHED" not in stream.types()
     error = stream.first("RUN_ERROR")
-    assert "workflow exploded" in error.message
+    assert error.code == "RuntimeError"
+    assert error.message
+    assert "workflow exploded" not in error.message
 
 
 async def test_workflow_error_preserves_bookend_structure() -> None:
