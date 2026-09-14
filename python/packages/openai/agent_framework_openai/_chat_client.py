@@ -2188,24 +2188,52 @@ class RawOpenAIChatClient(
         contents: list[Content] = []
         item_type = getattr(item, "type", None)
         if item_type == "shell_call":
-            shell_call_id = getattr(item, "call_id", None) or ""
-            shell_commands: list[str] = []
-            shell_timeout_ms: int | None = None
-            shell_max_output: int | None = None
-            if action := getattr(item, "action", None):
-                shell_commands = list(getattr(action, "commands", []) or [])
-                shell_timeout_ms = getattr(action, "timeout_ms", None)
-                shell_max_output = getattr(action, "max_output_length", None)
-            contents.append(
-                Content.from_shell_tool_call(
-                    call_id=shell_call_id,
-                    commands=shell_commands,
-                    timeout_ms=shell_timeout_ms,
-                    max_output_length=shell_max_output,
-                    status=getattr(item, "status", None),
-                    raw_representation=item,
-                )
+            raw_shell_call_id = getattr(item, "call_id", None)
+            shell_call_id = raw_shell_call_id if isinstance(raw_shell_call_id, str) else ""
+            raw_shell_call_item_id = getattr(item, "id", None)
+            shell_call_item_id = raw_shell_call_item_id if isinstance(raw_shell_call_item_id, str) else ""
+            action = getattr(item, "action", None)
+            raw_shell_commands = getattr(action, "commands", None)
+            shell_commands: list[str] = (
+                cast("list[str]", raw_shell_commands)
+                if isinstance(raw_shell_commands, list)
+                and raw_shell_commands
+                and all(isinstance(command, str) for command in cast("list[object]", raw_shell_commands))
+                else []
             )
+            shell_timeout_ms = getattr(action, "timeout_ms", None)
+            shell_max_output = getattr(action, "max_output_length", None)
+            is_local_environment = getattr(getattr(item, "environment", None), "type", None) == "local"
+            if (
+                local_shell_tool_name
+                and is_local_environment
+                and shell_call_id
+                and shell_call_item_id
+                and shell_commands
+            ):
+                contents.append(
+                    Content.from_function_call(
+                        call_id=shell_call_id,
+                        name=local_shell_tool_name,
+                        arguments=json.dumps({"command": "\n".join(shell_commands).strip()}),
+                        additional_properties={
+                            OPENAI_SHELL_OUTPUT_TYPE_KEY: OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL,
+                            OPENAI_LOCAL_SHELL_COMMAND_PARTS_KEY: shell_commands,
+                        },
+                        raw_representation=item,
+                    )
+                )
+            else:
+                contents.append(
+                    Content.from_shell_tool_call(
+                        call_id=shell_call_id,
+                        commands=shell_commands,
+                        timeout_ms=shell_timeout_ms,
+                        max_output_length=shell_max_output,
+                        status=getattr(item, "status", None),
+                        raw_representation=item,
+                    )
+                )
         elif item_type == "local_shell_call":
             raw_local_call_id = getattr(item, "call_id", None)
             local_call_id = raw_local_call_id if isinstance(raw_local_call_id, str) else ""
