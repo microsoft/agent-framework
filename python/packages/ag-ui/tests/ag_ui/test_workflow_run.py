@@ -229,6 +229,51 @@ async def test_builder_checkpoint_storage_attaches_id_without_run_arg() -> None:
 
 
 @pytest.mark.asyncio
+async def test_builder_checkpoint_storage_resume_round_trips_without_agui_storage() -> None:
+    """Pause IDs from builder storage must resume with resume payload even without AG-UI storage."""
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            await ctx.request_info("need-input", str, request_id="req-1")
+
+        @response_handler
+        async def handle(self, original_request: str, response: str, ctx: WorkflowContext) -> None:
+            del original_request
+            await ctx.yield_output(f"got:{response}")  # type: ignore[arg-type]
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor(), checkpoint_storage=storage).build()
+
+    pause_events = [
+        event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
+    ]
+    finished = [event for event in pause_events if event.type == "RUN_FINISHED"][0]
+    pause_id = _interrupts_from_run_finished(finished)[0]["metadata"]["agent_framework"]["checkpoint_id"]
+
+    # Cold resume: omit AG-UI checkpoint_storage; rely on builder storage only.
+    resume_events = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [],
+                "resume": {"interrupts": [{"id": "req-1", "value": "ok"}]},
+                "forwarded_props": {"checkpoint_id": pause_id},
+            },
+            workflow,
+        )
+    ]
+    assert "RUN_ERROR" not in [event.type for event in resume_events]
+    assert "RUN_FINISHED" in [event.type for event in resume_events]
+    text = "".join(getattr(event, "delta", "") for event in resume_events if event.type == "TEXT_MESSAGE_CONTENT")
+    assert "got:ok" in text
+
+
+@pytest.mark.asyncio
 async def test_resolve_pause_checkpoint_id_is_run_scoped_without_storage() -> None:
     """Stale runner ids must not be advertised when baseline shows this run did not persist."""
 
