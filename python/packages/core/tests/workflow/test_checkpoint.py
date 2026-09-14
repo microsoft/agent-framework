@@ -1080,6 +1080,84 @@ async def test_memory_checkpoint_storage_roundtrip_empty_collections():
     assert loaded.pending_request_info_events == {}
 
 
+async def test_workflow_resume_restores_partially_filled_fan_in_buffer():
+    """A fan-in still waiting on a source must keep the messages it already holds across a resume.
+
+    ``fast`` reaches the fan-in one superstep before ``slow``. At that boundary its message
+    lives only in the fan-in buffer - the runner context drained it on delivery - so a
+    checkpoint that omits the buffer strands the workflow with a fan-in that never fires.
+    """
+    from typing_extensions import Never
+
+    from agent_framework import WorkflowBuilder, WorkflowContext, handler
+    from agent_framework._workflows._const import EDGE_STATE_KEY
+    from agent_framework._workflows._executor import Executor
+
+    class Dispatcher(Executor):
+        @handler
+        async def dispatch(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message)
+
+    class Fast(Executor):
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(f"{message}-fast")
+
+    class Relay(Executor):
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message)
+
+    class Slow(Executor):
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(f"{message}-slow")
+
+    class Joiner(Executor):
+        @handler
+        async def join(self, messages: list[str], ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
+            await ctx.yield_output(", ".join(sorted(messages)))
+
+    storage = InMemoryCheckpointStorage()
+
+    def _build_workflow() -> Any:
+        dispatcher = Dispatcher(id="dispatcher")
+        fast = Fast(id="fast")
+        relay = Relay(id="relay")
+        slow = Slow(id="slow")
+        joiner = Joiner(id="joiner")
+        return (
+            WorkflowBuilder(
+                name="fan-in-resume-test",
+                max_iterations=10,
+                start_executor=dispatcher,
+                checkpoint_storage=storage,
+            )
+            .add_edge(dispatcher, fast)
+            .add_edge(dispatcher, relay)
+            .add_edge(relay, slow)
+            .add_fan_in_edges([fast, slow], joiner)
+            .build()
+        )
+
+    workflow = _build_workflow()
+    workflow_name = workflow.name
+    outputs = (await workflow.run("seed")).get_outputs()
+    assert outputs == ["seed-fast, seed-slow"]
+
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow_name)
+    buffered = [checkpoint for checkpoint in checkpoints if EDGE_STATE_KEY in checkpoint.state]
+    assert len(buffered) == 1, (
+        f"Exactly one superstep boundary should fall while the fan-in holds only the fast branch, got {len(buffered)}"
+    )
+
+    # Resume on a fresh instance of the same workflow definition, which has new edge group ids.
+    resumed_workflow = _build_workflow()
+    resumed_outputs = (await resumed_workflow.run(checkpoint_id=buffered[0].checkpoint_id)).get_outputs()
+
+    assert resumed_outputs == ["seed-fast, seed-slow"]
+
+
 # endregion
 
 # region FileCheckpointStorage

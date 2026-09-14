@@ -862,23 +862,99 @@ def _agent_updates_from_response(response: AgentResponse[Any]) -> list[AgentResp
     return updates
 
 
-def _tool_names(context: AgentContext) -> list[str]:
-    """Project the registered tool names for ``agent_startup`` (spec ``tools_registered``)."""
-    from ._tools import _get_tool_name, normalize_tools  # type: ignore[reportPrivateUsage]
+def _normalized_tools(tools: Any, *, point: str) -> list[Any]:
+    """Normalize a tools value for projection; empty (with a warning) when it cannot be.
 
-    tools: Any = context.tools if context.tools is not None else getattr(context.agent, "tools", None)
-    if tools is None:
-        return []
+    Everything — including the emptiness check inside ``normalize_tools`` — runs under
+    the guard, so a tools container whose ``__bool__``/``__len__``/``__iter__`` raises
+    degrades to omitting the projection instead of aborting the emission mid-run.
+    """
+    from ._tools import normalize_tools
+
     try:
-        normalized = normalize_tools(tools)
+        return list(normalize_tools(tools))
     except Exception:
-        logger.warning("agent-hooks could not normalize the run's tools for the agent_startup projection.")
+        logger.warning("agent-hooks could not normalize the tools for the %s projection.", point)
         return []
-    names: list[str] = []
-    for item in normalized:
-        name = _get_tool_name(item)
-        names.append(name if name else type(item).__name__)
-    return names
+
+
+def _projected_tool_name(item: Any) -> str:
+    """Project a tool's display name; hosted-tool mappings fall back to their ``type``."""
+    from ._tools import _get_tool_name  # type: ignore[reportPrivateUsage]
+
+    fallback = type(item).__name__
+    name = _get_tool_name(item)
+    if name:
+        return name
+    if isinstance(item, Mapping):
+        # Hosted-tool mappings carry top-level fields (no nested "function"), e.g.
+        # {"type": "web_search"} or {"type": "web_search_20250305", "name": "web_search"}.
+        mapping = cast("Mapping[str, Any]", item)
+        for key in ("name", "type"):
+            value = mapping.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return fallback
+
+
+def _tool_description(item: Any) -> str | None:
+    """Extract a tool description from a tool object or dict tool definition."""
+    if isinstance(item, Mapping):
+        mapping = cast("Mapping[str, Any]", item)
+        function = mapping.get("function")
+        # Function-tool dicts nest the description; hosted-tool mappings keep it top-level.
+        description = (
+            cast("Mapping[str, Any]", function).get("description")
+            if isinstance(function, Mapping)
+            else mapping.get("description")
+        )
+        return description if isinstance(description, str) else None
+    description = getattr(item, "description", None)
+    return description if isinstance(description, str) else None
+
+
+def _tool_names(context: AgentContext) -> list[str]:
+    """Project the run-start tool names for ``agent_startup`` (spec ``tools_registered``).
+
+    The framework owns the run-start resolution — ``AgentContext._resolve_run_start_tools``
+    returns the agent-declared tools plus this invocation's run-level tools (the named
+    ``tools`` parameter takes precedence over a ``tools`` entry in the options mapping),
+    already normalized — so this helper is projection only. This is deliberately the
+    run-start snapshot: tools registered dynamically during the run (for example by
+    context providers during run preparation, or by MCP servers whose functions expand
+    at connect time) cannot be known at ``agent_startup`` time; they surface in each
+    ``pre_model_call`` emission's ``tools`` projection (the completed per-call set) and
+    are bracketed by ``pre_tool_call``/``post_tool_call`` like any other tool when
+    invoked. An unresolvable set degrades to a warning and an empty snapshot rather
+    than aborting the emission.
+    """
+    try:
+        resolved = context._resolve_run_start_tools()  # pyright: ignore[reportPrivateUsage]
+    except Exception:
+        logger.warning("agent-hooks could not resolve the run-start tools for the agent_startup projection.")
+        return []
+    return [_projected_tool_name(item) for item in resolved]
+
+
+def _pre_model_call_tools(options: Mapping[str, Any]) -> list[dict[str, Any]] | None:
+    """Project the per-call effective tool set for ``pre_model_call`` (spec ``tools``).
+
+    This is the completed set for this model call — the run-start tools plus anything
+    registered during the run (context-provider tools, connected MCP-server functions,
+    progressive tool exposure) — whereas ``agent_startup``'s ``tools_registered`` is the
+    run-start snapshot. Entries carry ``{"name", "description"?}`` (description omitted
+    when the tool has none). Returns ``None`` — the spec's optional field is omitted —
+    when the call offers no tools or the set cannot be projected, so an unprojectable
+    set is never misreported as "no tools".
+    """
+    projected: list[dict[str, Any]] = []
+    for item in _normalized_tools(options.get("tools"), point="pre_model_call"):
+        entry: dict[str, Any] = {"name": _projected_tool_name(item)}
+        description = _tool_description(item)
+        if description:
+            entry["description"] = description
+        projected.append(entry)
+    return projected or None
 
 
 def _is_host_error(record: InterceptionRecord) -> bool:
@@ -1269,7 +1345,7 @@ class _AgentHooksChatMiddleware(_AgentHooksMiddlewareBase, ChatMiddleware):
         model_id = str(options.get("model") or type(context.client).__name__)
         before = _ModelRequestCodec.to_wire(context.messages)
         outcome: EmitOutcome = await state.emitter.emit(
-            state.builder.pre_model_call(model_id=model_id, messages=before)
+            state.builder.pre_model_call(model_id=model_id, messages=before, tools=_pre_model_call_tools(options))
         )
         transformed_messages = _ModelRequestCodec.write_back(context.messages, before, outcome.target)
         if transformed_messages is not None:

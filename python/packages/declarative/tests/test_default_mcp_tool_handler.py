@@ -2,12 +2,15 @@
 
 """Tests for ``DefaultMCPToolHandler``.
 
-These tests exercise the real handler against a fake ``MCPStreamableHTTPTool``
+Most tests exercise the real handler against a fake ``MCPStreamableHTTPTool``
 (no real MCP server, no real network) to cover the parts of the handler not
 exercisable through the executor stub: cache hit/miss/eviction, concurrent
 connect via in-flight futures, header isolation across cache keys,
 string-result normalisation, ``load_prompts=False`` verification, and
 owned-vs-caller httpx close semantics.
+
+The shared-client regression also exercises the real MCP SDK transport against
+an in-process HTTPX mock server.
 """
 
 from __future__ import annotations
@@ -145,6 +148,83 @@ def _invocation(
         tool_name=tool_name,
         **overrides,
     )
+
+
+@pytest.mark.parametrize("cache_max_size", [1, 2])
+async def test_shared_client_isolates_cached_authentication_and_cleans_up_hooks(cache_max_size: int) -> None:
+    sessions: dict[str, str] = {}
+    calls: list[tuple[str, str]] = []
+    writes: dict[str, list[str]] = {"token-a": [], "token-b": []}
+
+    async def caller_hook(request: httpx.Request) -> None:
+        request.headers["X-Caller"] = "preserved"
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        assert request.headers["X-Caller"] == "preserved"
+        principal = request.headers.get("Authorization", "")
+        if principal not in writes:
+            return httpx.Response(401)
+        if request.method == "GET":
+            return httpx.Response(405)
+        if request.method == "DELETE":
+            return httpx.Response(200)
+        body = json.loads(request.content)
+        headers: dict[str, str] = {}
+        result: dict[str, Any] = {}
+        if body.get("method") == "initialize":
+            session_id = f"session-{len(sessions)}"
+            sessions[session_id] = principal
+            headers["mcp-session-id"] = session_id
+            result = {
+                "protocolVersion": body["params"]["protocolVersion"],
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "auth-test", "version": "1"},
+            }
+        elif body.get("method") == "tools/list":
+            result = {
+                "tools": [
+                    {
+                        "name": "search",
+                        "inputSchema": {"type": "object", "properties": {"marker": {"type": "string"}}},
+                    }
+                ]
+            }
+        elif body.get("method") == "tools/call":
+            calls.append((request.headers["mcp-session-id"], principal))
+            if marker := body["params"].get("arguments", {}).get("marker"):
+                writes[principal].append(marker)
+            result = {"content": [{"type": "text", "text": principal}]}
+        if "id" not in body:
+            return httpx.Response(202)
+        return httpx.Response(200, headers=headers, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handle), event_hooks={"request": [caller_hook]}
+    ) as client:
+
+        async def client_provider(invocation: MCPToolInvocation) -> httpx.AsyncClient:
+            return client
+
+        async with DefaultMCPToolHandler(client_provider=client_provider, cache_max_size=cache_max_size) as handler:
+            outputs: list[str | None] = []
+            for index, principal in enumerate(("token-a", "token-b", "token-a")):
+                result = await handler.invoke_tool(
+                    _invocation(
+                        headers={"Authorization": principal},
+                        arguments={"marker": "a-only"} if index == 2 else {},
+                    )
+                )
+                assert not result.is_error
+                outputs.append(result.outputs[0].text)
+            assert outputs == ["token-a", "token-b", "token-a"]
+            assert len(client.event_hooks["request"]) == 1 + cache_max_size
+
+        assert [principal for _, principal in calls] == ["token-a", "token-b", "token-a"]
+        assert all(sessions[session_id] == principal for session_id, principal in calls)
+        assert len(sessions) == (3 if cache_max_size == 1 else 2)
+        assert writes == {"token-a": ["a-only"], "token-b": []}
+        assert client.event_hooks["request"] == [caller_hook]
+        assert not client.is_closed
 
 
 # ---------- Construction ---------------------------------------------------

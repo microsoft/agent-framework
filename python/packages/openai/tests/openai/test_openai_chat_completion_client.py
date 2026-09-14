@@ -1357,6 +1357,32 @@ def test_streaming_chunk_with_usage_and_text(
     assert text_content.text == "Hello world"
 
 
+def test_streaming_chunk_with_refusal(openai_unit_test_env: dict[str, str]) -> None:
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice, ChoiceDelta
+
+    client = OpenAIChatCompletionClient()
+    chunk = ChatCompletionChunk(
+        id="test-chunk",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="gpt-4o",
+        choices=[
+            Choice(
+                index=0,
+                delta=ChoiceDelta(refusal="I cannot help.", role="assistant"),
+                finish_reason=None,
+            )
+        ],
+    )
+
+    update = client._parse_response_update_from_openai(chunk)
+
+    assert len(update.contents) == 1
+    assert update.contents[0].type == "text"
+    assert update.contents[0].text == "I cannot help."
+    assert update.contents[0].additional_properties == {"model_output_kind": "refusal"}
+
+
 def test_parse_text_with_refusal(openai_unit_test_env: dict[str, str]) -> None:
     """Test that refusal content is parsed correctly."""
     from openai.types.chat.chat_completion import ChatCompletion, Choice
@@ -1391,6 +1417,101 @@ def test_parse_text_with_refusal(openai_unit_test_env: dict[str, str]) -> None:
     assert len(message.contents) == 1
     assert message.contents[0].type == "text"
     assert message.contents[0].text == "I cannot provide that information."
+    assert message.contents[0].additional_properties == {"model_output_kind": "refusal"}
+
+
+def test_parse_text_and_refusal_preserves_both(openai_unit_test_env: dict[str, str]) -> None:
+    from openai.types.chat.chat_completion import ChatCompletion, Choice
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    client = OpenAIChatCompletionClient()
+    response = ChatCompletion(
+        id="test-response",
+        object="chat.completion",
+        created=1234567890,
+        model="gpt-4o",
+        choices=[
+            Choice(
+                index=0,
+                message=ChatCompletionMessage(
+                    role="assistant",
+                    content="Partial answer.",
+                    refusal="I cannot continue.",
+                ),
+                finish_reason="stop",
+            )
+        ],
+    )
+
+    parsed = client._parse_response_from_openai(response, {})
+
+    assert [(content.text, content.additional_properties) for content in parsed.messages[0].contents] == [
+        ("Partial answer.", {}),
+        ("I cannot continue.", {"model_output_kind": "refusal"}),
+    ]
+
+
+def test_prepare_marked_refusal_uses_native_assistant_field_and_text_fallback(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    refusal = Content.from_text(
+        "I cannot help with that.",
+        additional_properties={"model_output_kind": "refusal"},
+    )
+
+    assert client._prepare_message_for_openai(Message(role="assistant", contents=[refusal])) == [
+        {"role": "assistant", "content": None, "refusal": "I cannot help with that."}
+    ]
+    assert client._prepare_message_for_openai(Message(role="user", contents=[refusal])) == [
+        {"role": "user", "content": "I cannot help with that."}
+    ]
+
+
+def test_prepare_mixed_text_and_refusal_uses_one_assistant_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text("Partial answer."),
+            Content.from_text(
+                "I cannot continue.",
+                additional_properties={"model_output_kind": "refusal"},
+            ),
+        ],
+    )
+
+    assert client._prepare_message_for_openai(message) == [
+        {
+            "role": "assistant",
+            "content": "Partial answer.",
+            "refusal": "I cannot continue.",
+        }
+    ]
+
+
+def test_prepare_text_refusal_text_uses_one_assistant_message(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    message = Message(
+        role="assistant",
+        contents=[
+            Content.from_text("A"),
+            Content.from_text("B", additional_properties={"model_output_kind": "refusal"}),
+            Content.from_text("C"),
+        ],
+    )
+
+    assert client._prepare_message_for_openai(message) == [
+        {
+            "role": "assistant",
+            "content": "A\nC",
+            "refusal": "B",
+        }
+    ]
 
 
 def test_prepare_options_without_model(openai_unit_test_env: dict[str, str]) -> None:
@@ -2354,6 +2475,275 @@ def test_streaming_chunk_with_null_delta_no_tool_calls_parsed(
 
     assert update.finish_reason == "tool_calls"
     assert not any(c.type == "function_call" for c in update.contents)
+
+
+def test_streaming_tool_call_preserves_choice_local_index_scope(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    client = OpenAIChatCompletionClient()
+    chunk = ChatCompletionChunk.model_validate({
+        "id": "test-tool-chunk",
+        "object": "chat.completion.chunk",
+        "created": 1234567890,
+        "model": "test-model",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call-a",
+                            "type": "function",
+                            "function": {"name": "first", "arguments": ""},
+                        }
+                    ]
+                },
+                "finish_reason": None,
+            },
+            {
+                "index": 1,
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call-b",
+                            "type": "function",
+                            "function": {"name": "second", "arguments": ""},
+                        }
+                    ]
+                },
+                "finish_reason": None,
+            },
+        ],
+    })
+
+    update = client._parse_response_update_from_openai(chunk)
+    function_calls = [content for content in update.contents if content.type == "function_call"]
+
+    assert [content.additional_properties["tool_call_index"] for content in function_calls] == [0, 0]
+    assert [content.additional_properties["tool_call_choice_index"] for content in function_calls] == [0, 1]
+
+
+async def test_streaming_tool_call_identity_is_request_local_and_scoped_by_choice_index(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    client = RawOpenAIChatCompletionClient()
+
+    def chunks() -> list[ChatCompletionChunk]:
+        common = {
+            "object": "chat.completion.chunk",
+            "created": 1234567890,
+            "model": "test-model",
+        }
+        return [
+            ChatCompletionChunk.model_validate({
+                **common,
+                "id": "opening",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "reused-provider-id",
+                                    "type": "function",
+                                    "function": {"name": "first", "arguments": '{"a":'},
+                                },
+                                {
+                                    "index": 1,
+                                    "id": "reused-provider-id",
+                                    "type": "function",
+                                    "function": {"name": "second", "arguments": '{"b":'},
+                                },
+                            ]
+                        },
+                        "finish_reason": None,
+                    },
+                    {
+                        "index": 1,
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "reused-provider-id",
+                                    "type": "function",
+                                    "function": {"name": "third", "arguments": '{"c":'},
+                                }
+                            ]
+                        },
+                        "finish_reason": None,
+                    },
+                ],
+            }),
+            ChatCompletionChunk.model_validate({
+                **common,
+                "id": "continuation",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [
+                                {"index": 0, "type": "function", "function": {"arguments": "1}"}},
+                                {"index": 1, "type": "function", "function": {"arguments": "2}"}},
+                            ]
+                        },
+                        "finish_reason": None,
+                    },
+                    {
+                        "index": 1,
+                        "delta": {"tool_calls": [{"index": 0, "type": "function", "function": {"arguments": "3}"}}]},
+                        "finish_reason": None,
+                    },
+                ],
+            }),
+        ]
+
+    async def create(**kwargs: Any) -> Any:
+        async def stream_chunks() -> Any:
+            for chunk in chunks():
+                yield chunk
+
+        return stream_chunks()
+
+    request_occurrence_ids: list[dict[tuple[int, int], str | None]] = []
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        for _ in range(2):
+            response_stream = client._inner_get_response(
+                messages=[Message(role="user", contents=["test"])], stream=True, options={}
+            )
+            assert isinstance(response_stream, ResponseStream)
+            calls = [
+                content
+                async for update in response_stream
+                for content in update.contents
+                if content.type == "function_call"
+            ]
+            by_index: dict[tuple[int, int], list[Content]] = {}
+            for call in calls:
+                key = (
+                    call.additional_properties["tool_call_choice_index"],
+                    call.additional_properties["tool_call_index"],
+                )
+                by_index.setdefault(key, []).append(call)
+
+            assert set(by_index) == {(0, 0), (0, 1), (1, 0)}
+            assert all(len(fragments) == 2 for fragments in by_index.values())
+            assert all(
+                fragments[0].id == fragments[1].id
+                and fragments[0].call_id == fragments[1].call_id == "reused-provider-id"
+                for fragments in by_index.values()
+            )
+            occurrence_ids = {key: fragments[0].id for key, fragments in by_index.items()}
+            assert len(set(occurrence_ids.values())) == 3
+            final_response = await response_stream.get_final_response()
+            final_calls = [
+                content
+                for message in final_response.messages
+                for content in message.contents
+                if content.type == "function_call"
+            ]
+            assert [(call.name, call.call_id, call.parse_arguments()) for call in final_calls] == [
+                ("first", "reused-provider-id", {"a": 1}),
+                ("second", "reused-provider-id", {"b": 2}),
+                ("third", "reused-provider-id", {"c": 3}),
+            ]
+            request_occurrence_ids.append(occurrence_ids)
+
+    assert set(request_occurrence_ids[0].values()).isdisjoint(request_occurrence_ids[1].values())
+
+
+async def test_streaming_tool_call_adopts_late_provider_id_without_changing_occurrence(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+
+    client = RawOpenAIChatCompletionClient()
+    common = {
+        "object": "chat.completion.chunk",
+        "created": 1234567890,
+        "model": "test-model",
+    }
+    chunks = [
+        ChatCompletionChunk.model_validate({
+            **common,
+            "id": "opening",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "type": "function",
+                                "function": {"name": "lookup", "arguments": '{"value":'},
+                            }
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        }),
+        ChatCompletionChunk.model_validate({
+            **common,
+            "id": "continuation",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "late-service-id",
+                                "type": "function",
+                                "function": {"arguments": "1}"},
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+        }),
+    ]
+
+    async def create(**kwargs: Any) -> Any:
+        async def stream_chunks() -> Any:
+            for chunk in chunks:
+                yield chunk
+
+        return stream_chunks()
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        response_stream = client._inner_get_response(
+            messages=[Message(role="user", contents=["test"])], stream=True, options={}
+        )
+        assert isinstance(response_stream, ResponseStream)
+        fragments = [
+            content
+            async for update in response_stream
+            for content in update.contents
+            if content.type == "function_call"
+        ]
+
+    assert len(fragments) == 2
+    assert fragments[0].id
+    assert fragments[0].id == fragments[1].id
+    assert [fragment.call_id for fragment in fragments] == ["", "late-service-id"]
+    final_response = await response_stream.get_final_response()
+    final_calls = [
+        content
+        for message in final_response.messages
+        for content in message.contents
+        if content.type == "function_call"
+    ]
+    assert [(call.id, call.call_id, call.name, call.parse_arguments()) for call in final_calls] == [
+        (fragments[0].id, "late-service-id", "lookup", {"value": 1})
+    ]
 
 
 # endregion

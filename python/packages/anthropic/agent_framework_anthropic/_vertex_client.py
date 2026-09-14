@@ -11,7 +11,7 @@ from agent_framework import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
 )
-from agent_framework._settings import load_settings
+from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic import NOT_GIVEN
@@ -43,7 +43,7 @@ class RawAnthropicVertexClient(RawAnthropicClient[AnthropicOptionsT], Generic[An
         model: str | None = None,
         region: str | None = None,
         project_id: str | None = None,
-        access_token: str | None = None,
+        access_token: str | SecretString | None = None,
         credentials: GoogleCredentials | None = None,
         base_url: str | None = None,
         anthropic_client: AsyncAnthropicVertex | None = None,
@@ -84,10 +84,13 @@ class RawAnthropicVertexClient(RawAnthropicClient[AnthropicOptionsT], Generic[An
         if anthropic_client is None:
             resolved_region = region_setting if region_setting is not None else NOT_GIVEN
             resolved_project_id = project_id_setting if project_id_setting is not None else NOT_GIVEN
+            resolved_access_token = (
+                access_token.get_secret_value() if isinstance(access_token, SecretString) else access_token
+            )
             anthropic_client = AsyncAnthropicVertex(
                 region=resolved_region,
                 project_id=resolved_project_id,
-                access_token=access_token,
+                access_token=resolved_access_token,
                 credentials=credentials,
                 base_url=settings.get("anthropic_vertex_base_url"),
                 default_headers={"User-Agent": get_user_agent()},
@@ -116,7 +119,7 @@ class AnthropicVertexClient(
         model: str | None = None,
         region: str | None = None,
         project_id: str | None = None,
-        access_token: str | None = None,
+        access_token: str | SecretString | None = None,
         credentials: GoogleCredentials | None = None,
         base_url: str | None = None,
         anthropic_client: AsyncAnthropicVertex | None = None,

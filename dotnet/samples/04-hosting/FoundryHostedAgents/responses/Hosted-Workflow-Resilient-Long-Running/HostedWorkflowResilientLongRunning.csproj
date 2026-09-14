@@ -19,6 +19,10 @@
     <UseLocalAgentFramework Condition="'$(UseLocalAgentFramework)' == '' and Exists('$(LocalAgentFrameworkRoot)\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj')">true</UseLocalAgentFramework>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Hosted_Shared_Contributor_Setup\Hosted_Shared_Contributor_Setup.csproj" />
+  </ItemGroup>
+
   <ItemGroup Condition="'$(UseLocalAgentFramework)' == 'true'">
     <ProjectReference Include="$(LocalAgentFrameworkRoot)\Microsoft.Agents.AI.Foundry.Hosting\Microsoft.Agents.AI.Foundry.Hosting.csproj" />
     <ProjectReference Include="$(LocalAgentFrameworkRoot)\Microsoft.Agents.AI.Workflows\Microsoft.Agents.AI.Workflows.csproj" />
@@ -30,7 +34,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="DotNetEnv" Version="3.1.1" />
+    <PackageReference Include="DotNetEnv" Version="3.2.0" />
   </ItemGroup>
 
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk.Web" />

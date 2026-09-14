@@ -674,25 +674,25 @@ public sealed class AIProjectClientExtensionsTests
         // Arrange
         var definition = new DeclarativeAgentDefinition("test-model") { Instructions = "Test instructions" };
 
-        var fabricToolOptions = new FabricDataAgentToolOptions();
-        fabricToolOptions.ProjectConnections.Add(new ToolProjectConnection("connection-id"));
+        var fabricToolOptions = new Azure.AI.Projects.Agents.FabricDataAgentToolOptions();
+        fabricToolOptions.ProjectConnections.Add(new Azure.AI.Projects.Agents.ToolProjectConnection("connection-id"));
 
-        var sharepointOptions = new SharePointGroundingToolOptions();
-        sharepointOptions.ProjectConnections.Add(new ToolProjectConnection("connection-id"));
+        var sharepointOptions = new Azure.AI.Projects.Agents.SharePointGroundingToolOptions();
+        sharepointOptions.ProjectConnections.Add(new Azure.AI.Projects.Agents.ToolProjectConnection("connection-id"));
 
-        var structuredOutputs = new StructuredOutputDefinition("name", "description", new Dictionary<string, BinaryData> { ["schema"] = BinaryData.FromString(AIJsonUtilities.CreateJsonSchema(new { id = "test" }.GetType()).ToString()) }, false);
+        var structuredOutputs = new Azure.AI.Projects.Agents.StructuredOutputDefinition("name", "description", new Dictionary<string, BinaryData> { ["schema"] = BinaryData.FromString(AIJsonUtilities.CreateJsonSchema(new { id = "test" }.GetType()).ToString()) }, false);
 
         // Add tools to the definition
         definition.Tools.Add(ResponseTool.CreateFunctionTool("create_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
-        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateBingCustomSearchTool(new BingCustomSearchToolOptions([new BingCustomSearchConfiguration("connection-id", "instance-name")])));
-        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateBrowserAutomationTool(new BrowserAutomationToolOptions(new BrowserAutomationToolConnectionParameters("id"))));
+        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateBingCustomSearchTool(new Azure.AI.Projects.Agents.BingCustomSearchToolOptions([new BingCustomSearchConfiguration("connection-id", "instance-name")])));
+        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateBrowserAutomationTool(new Azure.AI.Projects.Agents.BrowserAutomationToolOptions(new BrowserAutomationToolConnectionParameters("id"))));
         definition.Tools.Add(ProjectsAgentTool.CreateA2ATool(new Uri("https://test-uri.microsoft.com")));
-        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateBingGroundingTool(new BingGroundingSearchToolOptions([new BingGroundingSearchConfiguration("connection-id")])));
+        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateBingGroundingTool(new Azure.AI.Projects.Agents.BingGroundingSearchToolOptions([new BingGroundingSearchConfiguration("connection-id")])));
         definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateMicrosoftFabricTool(fabricToolOptions));
-        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateOpenApiTool(new OpenApiFunctionDefinition("name", BinaryData.FromString(OpenAPISpec), new OpenAPIAnonymousAuthenticationDetails())));
+        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateOpenApiTool(new Azure.AI.Projects.Agents.OpenApiFunctionDefinition("name", BinaryData.FromString(OpenAPISpec), new OpenAPIAnonymousAuthenticationDetails())));
         definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateSharepointTool(sharepointOptions));
         definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateStructuredOutputsTool(structuredOutputs));
-        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateAzureAISearchTool(new AzureAISearchToolOptions([new AzureAISearchToolIndex() { IndexName = "name" }])));
+        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateAzureAISearchTool(new Azure.AI.Projects.Agents.AzureAISearchToolOptions([new Azure.AI.Projects.Agents.AzureAISearchToolIndex() { IndexName = "name" }])));
 
         // Generate agent definition response with the tools
         var definitionResponse = GeneratePromptDefinitionResponse(definition, definition.Tools.Select(t => t.AsAITool()).ToList());

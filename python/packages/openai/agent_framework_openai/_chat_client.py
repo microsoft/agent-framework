@@ -136,6 +136,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_framework.openai")
 
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
+
+
+def _is_refusal_text_content(content: Content) -> bool:
+    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+
+
 DEFAULT_AZURE_OPENAI_RESPONSES_API_VERSION = "preview"
 
 OPENAI_SHELL_ENVIRONMENT_KEY = "openai.responses.shell.environment"
@@ -1878,6 +1886,11 @@ class RawOpenAIChatClient(
         role = Role(role)
         match content.type:
             case "text":
+                if role == "assistant" and _is_refusal_text_content(content):
+                    return {
+                        "type": "refusal",
+                        "refusal": content.text,
+                    }
                 if role == "assistant":
                     # Assistant history is represented as output text items; Azure validation
                     # requires `annotations` to be present for this type.
@@ -2120,10 +2133,8 @@ class RawOpenAIChatClient(
             payload = {
                 "stdout": "" if content.result is None else str(content.result),
             }
-        if content.exception is not None and "stderr" not in payload:
-            payload["stderr"] = str(content.exception)
         if "exit_code" not in payload:
-            payload["exit_code"] = 1 if content.exception else 0
+            payload["exit_code"] = 1 if content.exception is not None else 0
         return json.dumps(payload, ensure_ascii=False)
 
     @staticmethod
@@ -2136,8 +2147,6 @@ class RawOpenAIChatClient(
             payload = {
                 "stdout": "" if content.result is None else str(content.result),
             }
-        if content.exception is not None and "stderr" not in payload:
-            payload["stderr"] = str(content.exception)
 
         # Pass through native payload shape when tool already returns shell output entries.
         direct_output = payload.get("output")
@@ -2152,9 +2161,11 @@ class RawOpenAIChatClient(
         else:
             exit_code_raw = payload.get("exit_code")
             try:
-                exit_code = int(exit_code_raw) if exit_code_raw is not None else (1 if content.exception else 0)
+                exit_code = (
+                    int(exit_code_raw) if exit_code_raw is not None else (1 if content.exception is not None else 0)
+                )
             except (TypeError, ValueError):
-                exit_code = 1 if content.exception else 0
+                exit_code = 1 if content.exception is not None else 0
             outcome = {"type": "exit", "exit_code": exit_code}
         return [
             {
@@ -2751,6 +2762,7 @@ class RawOpenAIChatClient(
                                 contents.append(
                                     Content.from_text(
                                         text=message_content.refusal,
+                                        additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
                                         raw_representation=message_content,
                                     )
                                 )
@@ -3041,7 +3053,13 @@ class RawOpenAIChatClient(
                         )
                         metadata.update(self._get_metadata_from_response(event_part))
                     case "refusal":
-                        contents.append(Content.from_text(text=event_part.refusal, raw_representation=event))
+                        contents.append(
+                            Content.from_text(
+                                text=event_part.refusal,
+                                additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+                                raw_representation=event,
+                            )
+                        )
                     case _:
                         pass
             case "response.output_text.delta":
@@ -3053,6 +3071,14 @@ class RawOpenAIChatClient(
                     )
                 )
                 metadata.update(self._get_metadata_from_response(event))
+            case "response.refusal.delta":
+                contents.append(
+                    Content.from_text(
+                        text=event.delta,
+                        additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+                        raw_representation=event,
+                    )
+                )
             case "response.reasoning_text.delta":
                 if seen_reasoning_delta_item_ids is not None:
                     seen_reasoning_delta_item_ids.add(event.item_id)
@@ -3563,7 +3589,16 @@ class OpenAIChatClient(
     RawOpenAIChatClient[OpenAIChatOptionsT],
     Generic[OpenAIChatOptionsT],
 ):
-    """OpenAI Responses client class with middleware, telemetry, and function invocation support."""
+    """OpenAI Responses client class with middleware, telemetry, and function invocation support.
+
+    Note:
+        One client instance can be shared by concurrent asynchronous calls on the same event loop,
+        including any combination of streaming and non-streaming calls. Each call must use its own
+        ``Agent``, ``AgentSession``, messages, and options. User-supplied mutable extensions, such as
+        middleware, tools, and callbacks, are safe only if their implementations support concurrent use.
+        Sharing a client across OS threads or event loops, or mutating its configuration while calls are
+        active, is not supported.
+    """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "openai"
 
@@ -3572,7 +3607,7 @@ class OpenAIChatClient(
         self,
         model: str | None = None,
         *,
-        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
@@ -3619,7 +3654,7 @@ class OpenAIChatClient(
         azure_endpoint: str | None = None,
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         api_version: str | None = None,
-        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
@@ -3668,7 +3703,7 @@ class OpenAIChatClient(
         self,
         model: str | None = None,
         *,
-        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         org_id: str | None = None,
         base_url: str | None = None,

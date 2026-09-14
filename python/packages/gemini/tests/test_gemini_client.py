@@ -12,6 +12,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import Agent, Content, FunctionTool, Message
+from agent_framework._settings import SecretString
+from agent_framework.exceptions import (
+    ChatClientException,
+    ChatClientInvalidAuthException,
+    ChatClientInvalidRequestException,
+)
+from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel
 from typing_extensions import NotRequired, TypedDict
@@ -221,7 +228,10 @@ def test_client_created_from_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     assert client.model == "gemini-2.5-flash"
 
 
-def test_client_created_from_google_api_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("api_key", [None, "explicit-key", SecretString("explicit-key")], ids=["env", "str", "secret"])
+def test_client_created_from_google_api_key_env(
+    monkeypatch: pytest.MonkeyPatch, api_key: str | SecretString | None
+) -> None:
     """Initialises successfully when the SDK-standard Google API key environment variable is set."""
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
@@ -237,9 +247,10 @@ def test_client_created_from_google_api_key_env(monkeypatch: pytest.MonkeyPatch)
 
     with patch("agent_framework_gemini._chat_client.genai.Client") as client_factory:
         client_factory.return_value = mock_client
-        client = GeminiChatClient()
+        client = GeminiChatClient(api_key=api_key)
 
-    assert client_factory.call_args.kwargs["api_key"] == "test-key-123"
+    assert type(client_factory.call_args.kwargs["api_key"]) is str
+    assert client_factory.call_args.kwargs["api_key"] == ("test-key-123" if api_key is None else "explicit-key")
     assert "vertexai" not in client_factory.call_args.kwargs
     assert client.model == "gemini-2.5-flash-lite"
     assert client.service_url() == "https://generativelanguage.googleapis.com"
@@ -305,7 +316,10 @@ def test_missing_api_key_raises_when_no_client_injected(monkeypatch: pytest.Monk
         GeminiChatClient(model="gemini-2.5-flash")
 
 
-def test_vertex_ai_express_mode_uses_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("api_key", [None, "explicit-key", SecretString("explicit-key")], ids=["env", "str", "secret"])
+def test_vertex_ai_express_mode_uses_api_key(
+    monkeypatch: pytest.MonkeyPatch, api_key: str | SecretString | None
+) -> None:
     """Passes the API key in Vertex AI express mode when no project/location pair is configured."""
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_MODEL", raising=False)
@@ -319,10 +333,11 @@ def test_vertex_ai_express_mode_uses_api_key(monkeypatch: pytest.MonkeyPatch) ->
     mock_client._api_client._http_options.base_url = "https://aiplatform.googleapis.com/"
 
     with patch("agent_framework_gemini._chat_client.genai.Client", return_value=mock_client) as client_factory:
-        client = GeminiChatClient(model="gemini-2.5-flash-lite")
+        client = GeminiChatClient(model="gemini-2.5-flash-lite", api_key=api_key)
 
     assert client_factory.call_args.kwargs["vertexai"] is True
-    assert client_factory.call_args.kwargs["api_key"] == "test-key-123"
+    assert type(client_factory.call_args.kwargs["api_key"]) is str
+    assert client_factory.call_args.kwargs["api_key"] == ("test-key-123" if api_key is None else "explicit-key")
     assert "project" not in client_factory.call_args.kwargs
     assert "location" not in client_factory.call_args.kwargs
     assert client.service_url() == "https://aiplatform.googleapis.com"
@@ -376,6 +391,58 @@ async def test_get_response_returns_text() -> None:
 
     mark_feature_used.assert_called_once_with(FeatureIndex.GEMINI)
     assert response.messages[0].text == "Hello!"
+
+
+@pytest.mark.parametrize(
+    ("sdk_exception", "expected_exception"),
+    [
+        (genai_errors.ClientError(401, {"error": {"message": "invalid api key"}}), ChatClientInvalidAuthException),
+        (genai_errors.ClientError(403, {"error": {"message": "permission denied"}}), ChatClientInvalidAuthException),
+        (genai_errors.ClientError(400, {"error": {"message": "bad request"}}), ChatClientInvalidRequestException),
+        (genai_errors.ServerError(500, {"error": {"message": "server error"}}), ChatClientException),
+        # Not a google-genai APIError at all (transport failure, credential refresh, ...):
+        # must still be wrapped so ``except ChatClientException`` callers never see it raw.
+        (RuntimeError("connection reset"), ChatClientException),
+    ],
+)
+async def test_get_response_wraps_sdk_errors(sdk_exception: Exception, expected_exception: type[Exception]) -> None:
+    """Non-streaming get_response must translate raw google-genai SDK errors into the
+    framework's ChatClientException hierarchy, matching every other provider
+    (OpenAI, Anthropic, Mistral, Ollama, Bedrock)."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(side_effect=sdk_exception)
+
+    with pytest.raises(expected_exception, match="Gemini"):
+        await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+
+
+async def test_get_response_streaming_wraps_sdk_errors() -> None:
+    """Streaming get_response must translate raw google-genai SDK errors into the
+    framework's ChatClientException hierarchy too, both when the call itself fails
+    and when the failure happens partway through iterating the stream."""
+    # 1. Failure raised by the generate_content_stream call itself.
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content_stream = AsyncMock(
+        side_effect=genai_errors.ClientError(401, {"error": {"message": "invalid api key"}})
+    )
+    with pytest.raises(ChatClientInvalidAuthException, match="Gemini"):
+        async for _ in client.get_response(
+            messages=[Message(role="user", contents=[Content.from_text("Hi")])], stream=True
+        ):
+            pass
+
+    # 2. Failure raised mid-stream, after at least one chunk has been yielded.
+    async def _raise_after_first_chunk(**_: Any):
+        yield _make_response([_make_part(text="partial")])
+        raise genai_errors.ClientError(403, {"error": {"message": "permission denied"}})
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_raise_after_first_chunk())
+    with pytest.raises(ChatClientInvalidAuthException, match="Gemini"):
+        async for _ in client.get_response(
+            messages=[Message(role="user", contents=[Content.from_text("Hi")])], stream=True
+        ):
+            pass
 
 
 async def test_get_response_model_from_response() -> None:

@@ -52,10 +52,11 @@ class WorkflowCheckpoint:
             allows chaining checkpoints together to form a history of workflow states.
         timestamp: ISO 8601 timestamp when checkpoint was created
         messages: Messages exchanged between executors
-        state: Committed workflow state including user data and executor states.
-            This contains only committed state; pending state changes are not
-            included in checkpoints. Executor states are stored under the
-            reserved key '_executor_state'.
+        state: Committed workflow state including user data, executor states, and
+            edge runner delivery state. This contains only committed state; pending
+            state changes are not included in checkpoints. Executor states are stored
+            under the reserved key '_executor_state', and edge runner state, such as
+            partially filled fan-in buffers, under '_edge_state'.
         pending_request_info_events: Any pending request info events that have not
             yet been processed at the time of checkpointing. This allows the workflow
             to resume with the correct pending events after a restore.

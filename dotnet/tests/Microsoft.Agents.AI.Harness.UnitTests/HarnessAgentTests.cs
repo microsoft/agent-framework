@@ -1386,6 +1386,7 @@ public class HarnessAgentTests
 
         // DisableWriteTools = true => only the read-only tools are exposed.
         Assert.Contains(FileAccessProvider.ReadFileToolName, toolNames);
+        Assert.Contains(FileAccessProvider.ReadLinesToolName, toolNames);
         Assert.Contains(FileAccessProvider.LsToolName, toolNames);
         Assert.Contains(FileAccessProvider.GrepToolName, toolNames);
         Assert.DoesNotContain(FileAccessProvider.WriteToolName, toolNames);

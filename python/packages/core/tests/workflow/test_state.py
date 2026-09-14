@@ -4,6 +4,7 @@
 
 import pytest
 
+from agent_framework import SecretString
 from agent_framework._workflows._state import State
 
 
@@ -14,6 +15,14 @@ class TestStateBasicOperations:
         state = State()
         state.set("key", "value")
         assert state.get("key") == "value"
+
+    def test_set_and_get_secret_string(self) -> None:
+        state = State()
+        secret = SecretString("my-secret")
+
+        state.set("key", secret)
+
+        assert state.get("key") is secret
 
     def test_set_does_not_alias_caller_value(self) -> None:
         state = State()

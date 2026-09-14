@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import sys
-from asyncio import iscoroutine
+import warnings
 from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewTyp
 from typing_extensions import TypedDict
 
 from ._feature_stage import ExperimentalFeature, experimental
-from ._serialization import SerializationMixin
+from ._serialization import SerializationMixin, get_pickle_state, restore_pickle_state
 from .exceptions import AdditionItemMismatch, ContentError
 
 if sys.version_info >= (3, 13):
@@ -38,6 +38,8 @@ else:
     from typing_extensions import TypeVar  # pragma: no cover
 
 logger = logging.getLogger("agent_framework")
+
+_SERIALIZED_EXCEPTION_MARKER: Final[str] = "FunctionInvocationError"
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -271,16 +273,24 @@ def _validate_uri(uri: str, media_type: str | None) -> dict[str, Any]:
     raise ContentError("URI must contain a scheme (e.g., http://, data:, file://)")
 
 
-def _serialize_value(value: Any, exclude_none: bool) -> Any:
+def _serialize_value(value: Any, exclude_none: bool, *, redact_exception: bool = True) -> Any:
     """Recursively serialize a value for to_dict."""
     if value is None:
         return None
     if isinstance(value, Content):
-        return value.to_dict(exclude_none=exclude_none)
+        return value._to_dict(  # pyright: ignore[reportPrivateUsage]
+            exclude_none=exclude_none, redact_exception=redact_exception
+        )
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [_serialize_value(item, exclude_none) for item in cast(Iterable[Any], value)]
+        return [
+            _serialize_value(item, exclude_none, redact_exception=redact_exception)
+            for item in cast(Iterable[Any], value)
+        ]
     if isinstance(value, Mapping):
-        return {k: _serialize_value(v, exclude_none) for k, v in value.items()}  # type: ignore[reportUnknownVariableType]
+        return {
+            k: _serialize_value(v, exclude_none, redact_exception=redact_exception)
+            for k, v in cast(Mapping[Any, Any], value).items()
+        }
     if hasattr(value, "to_dict"):
         return value.to_dict()  # type: ignore[call-arg]
     return value
@@ -399,6 +409,8 @@ class Annotation(TypedDict, total=False):
 
 
 ContentT = TypeVar("ContentT", bound="Content")
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
 
 # endregion
 
@@ -477,9 +489,14 @@ class Content:
     This class provides a single unified type that handles all content variants.
     Use the class methods like `Content.from_text()`, `Content.from_data()`,
     `Content.from_uri()`, etc. to create instances.
+
+    The ``exception`` field is host-internal diagnostic state. Its value may originate from a tool, middleware,
+    provider, or caller and must always be treated as potentially sensitive. Dictionary serialization replaces it
+    with a fixed marker that preserves failure state; channel-visible error information belongs in the public result.
     """
 
     _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
+    _PICKLE_OMIT_FIELDS: ClassVar[set[str]] = {"raw_representation"}
 
     def __init__(
         self,
@@ -606,6 +623,28 @@ class Content:
             else:
                 object.__setattr__(result, k, deepcopy(v, memo))
         return result
+
+    def __copy__(self) -> Content:
+        """Create a shallow copy while preserving provider runtime fields."""
+        cls = type(self)
+        result = cls.__new__(cls)
+        for field_name, value in self.__dict__.items():
+            object.__setattr__(result, field_name, value)
+        return result
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Return pickle state without runtime-only shallow-copy fields."""
+        state = get_pickle_state(self, self._PICKLE_OMIT_FIELDS)
+        if self.annotations is not None:
+            state["annotations"] = [
+                {key: value for key, value in annotation.items() if key != "raw_representation"}
+                for annotation in self.annotations
+            ]
+        return state
+
+    def __setstate__(self, state: dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]) -> None:
+        """Restore pickle state and reset runtime-only shallow-copy fields."""
+        restore_pickle_state(self, state, self._PICKLE_OMIT_FIELDS)
 
     @classmethod
     def from_text(
@@ -816,6 +855,7 @@ class Content:
         arguments: str | Mapping[str, Any] | None = None,
         exception: str | None = None,
         informational_only: bool = False,
+        id: str | None = None,
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
@@ -830,10 +870,12 @@ class Content:
         Keyword Args:
             arguments: The arguments for the requested function call. May be a JSON string, a mapping that can be
                 serialized as arguments, or None when no arguments were provided.
-            exception: Error information associated with the function call, if the provider returned the call in an
-                error state.
+            exception: Host-internal diagnostic information when the provider returned the call in an error state.
+                Treat it as potentially sensitive regardless of its source; serialization replaces it with a marker.
             informational_only: Whether the function call is present only for transcript fidelity and should not be
                 executed by Agent Framework function invocation.
+            id: Stable Agent Framework identity for this occurrence. When omitted, the function invocation layer
+                assigns one before a locally actionable call is processed.
             annotations: Optional annotations attached to this content item.
             additional_properties: Extra provider-specific properties to preserve with the content item.
             raw_representation: The original provider-specific object or payload this content item was created from.
@@ -848,6 +890,7 @@ class Content:
             arguments=arguments,
             exception=exception,
             informational_only=informational_only,
+            id=id,
             annotations=annotations,
             additional_properties=additional_properties,
             raw_representation=raw_representation,
@@ -877,7 +920,9 @@ class Content:
             result: The tool output.  Accepts a ``list[Content]`` (the canonical
                 form produced by :meth:`~FunctionTool.parse_result`), a plain
                 ``str``, or any other value (which is stringified).
-            exception: The exception message if the function call failed.
+            exception: Host-internal diagnostic information when the function call failed. Treat it as potentially
+                sensitive regardless of whether it came from a tool, middleware, provider, or caller. Serialization
+                replaces it with a fixed failure marker; use ``result`` for channel-visible error text.
             annotations: Optional annotations for the content.
             additional_properties: Optional additional properties.
             raw_representation: Optional raw representation from the provider.
@@ -1282,6 +1327,20 @@ class Content:
         raw_representation: Any = None,
     ) -> ContentT:
         """Create function approval request content."""
+        if (
+            function_call.type == "function_call"
+            and function_call.id is not None
+            and id != function_call.id
+            and function_call.additional_properties.get("server_label") is None
+            and not (additional_properties or {}).get("_replacement_approval_request", False)
+        ):
+            warnings.warn(
+                "Creating a local function_approval_request whose id differs from function_call.id uses the legacy "
+                "provider call_id binding. Use function_call.id as the approval request id; legacy binding support "
+                "will be removed in a future release.",
+                FutureWarning,
+                stacklevel=2,
+            )
         return cls(
             "function_approval_request",
             id=id,
@@ -1364,7 +1423,21 @@ class Content:
         )
 
     def to_dict(self, *, exclude_none: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
-        """Serialize the content to a dictionary."""
+        """Serialize content without host-internal exception diagnostics.
+
+        Exception diagnostics are replaced with a fixed marker regardless of their source because they may contain
+        sensitive information. The marker preserves failure status across persistence round-trips.
+        """
+        return self._to_dict(exclude_none=exclude_none, exclude=exclude, redact_exception=True)
+
+    def _to_dict(
+        self,
+        *,
+        exclude_none: bool,
+        exclude: set[str] | None = None,
+        redact_exception: bool,
+    ) -> dict[str, Any]:
+        """Serialize content with explicit control over internal exception redaction."""
         fields_to_capture = (
             "text",
             "protected_data",
@@ -1412,11 +1485,13 @@ class Content:
             value = getattr(self, field, None)
             if field in exclude:
                 continue
+            if field == "exception" and value is not None and redact_exception:
+                value = _SERIALIZED_EXCEPTION_MARKER
             if field == "informational_only" and (self.type != "function_call" or not value):
                 continue
             if exclude_none and value is None:
                 continue
-            result[field] = _serialize_value(value, exclude_none)
+            result[field] = _serialize_value(value, exclude_none, redact_exception=redact_exception)
 
         if "annotations" not in exclude and self.annotations is not None:
             result["annotations"] = [dict(annotation) for annotation in self.annotations]
@@ -1427,7 +1502,10 @@ class Content:
         """Check if two Content instances are equal by comparing their dict representations."""
         if not isinstance(other, Content):
             return False
-        return self.to_dict(exclude_none=False) == other.to_dict(exclude_none=False)
+        return self._to_dict(exclude_none=False, redact_exception=False) == other._to_dict(
+            exclude_none=False,
+            redact_exception=False,
+        )
 
     def __str__(self) -> str:
         """Return a string representation of the Content."""
@@ -1515,7 +1593,11 @@ class Content:
             )
         combined_id = self.id or other.id
 
-        # Concatenate text, handling None values
+        # Concatenate text, handling None values.
+        # Preserve empty string "" as distinct from None. Anthropic can emit a thinking
+        # block with thinking="" followed by a signature_delta; collapsing "" to None
+        # makes a real empty signed thinking block look like an orphan signature and
+        # gets dropped on replay (see microsoft/agent-framework#8168).
         self_text = self.text or ""
         other_text = other.text or ""
         if (
@@ -1524,7 +1606,7 @@ class Content:
             and ("reasoning_text" in self.additional_properties) != ("reasoning_text" in other.additional_properties)
         ):
             raise AdditionItemMismatch("Cannot merge reasoning text with a reasoning summary")
-        combined_text = self_text + other_text if (self_text or other_text) else None
+        combined_text = None if self.text is None and other.text is None else self_text + other_text
 
         # Handle protected_data replacement
         protected_data = other.protected_data if other.protected_data is not None else self.protected_data
@@ -1541,9 +1623,11 @@ class Content:
 
     def _add_function_call_content(self, other: Content) -> Content:
         """Add two FunctionCallContent instances."""
+        if self.id and other.id and self.id != other.id:
+            raise AdditionItemMismatch("Cannot merge function calls with different ids")
         other_call_id = getattr(other, "call_id", None)
         self_call_id = getattr(self, "call_id", None)
-        if other_call_id and self_call_id != other_call_id:
+        if self_call_id and other_call_id and self_call_id != other_call_id:
             raise ContentError("Cannot add function calls with different call_ids")
 
         self_arguments = getattr(self, "arguments", None)
@@ -1562,7 +1646,7 @@ class Content:
 
         return Content(
             "function_call",
-            call_id=self_call_id,
+            call_id=self_call_id or other_call_id,
             name=getattr(self, "name", None) or getattr(other, "name", None),
             arguments=arguments,
             id=self.id or other.id,
@@ -2035,6 +2119,11 @@ def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "t
         if content.type == type_str:
             if first_new_content is None:
                 first_new_content = deepcopy(content)
+            elif type_str == "text" and first_new_content.additional_properties.get(
+                _MODEL_OUTPUT_KIND_KEY
+            ) != content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY):
+                coalesced_contents.append(first_new_content)
+                first_new_content = deepcopy(content)
             else:
                 try:
                     first_new_content += content
@@ -2148,6 +2237,30 @@ def _finalize_response(response: ChatResponse | AgentResponse) -> None:
         _coalesce_text_content(msg.contents, "text")
         _coalesce_text_content(msg.contents, "text_reasoning")
         _coalesce_code_interpreter_content(msg.contents)
+    _coalesce_function_call_occurrences(response)
+
+
+def _coalesce_function_call_occurrences(response: ChatResponse | AgentResponse) -> None:
+    """Merge streamed function-call fragments that share a stable occurrence id."""
+    occurrences: dict[str, tuple[list[Content], int, Content]] = {}
+    for message in response.messages:
+        original_contents = message.contents
+        coalesced_contents: list[Content] = []
+        message.contents = coalesced_contents
+        for content in original_contents:
+            if content.type != "function_call" or content.id is None:
+                coalesced_contents.append(content)
+                continue
+            existing = occurrences.get(content.id)
+            if existing is None:
+                coalesced_contents.append(content)
+                occurrences[content.id] = (coalesced_contents, len(coalesced_contents) - 1, content)
+                continue
+            contents, index, accumulated = existing
+            merged = accumulated + content
+            contents[index] = merged
+            occurrences[content.id] = (contents, index, merged)
+    response.messages[:] = [message for message in response.messages if message.contents]
 
 
 # region ContinuationToken
@@ -2210,7 +2323,18 @@ def _last_non_empty_assistant_message_text(messages: Sequence[Message]) -> str:
     for message in reversed(messages):
         if message.role != "assistant":
             continue
-        text = "".join((content.text or "") for content in message.contents if content.type == "text")
+        if any(
+            content.type == "text"
+            and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+            for content in message.contents
+        ):
+            return ""
+        text = "".join(
+            (content.text or "")
+            for content in message.contents
+            if content.type == "text"
+            and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) != _MODEL_OUTPUT_REFUSAL
+        )
         if text.strip():
             return text
     return ""
@@ -3289,8 +3413,8 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             if hasattr(self._stream_source, "__aiter__"):
                 self._stream = self._stream_source  # type: ignore[assignment]
             else:
-                if not iscoroutine(self._stream_source):
-                    self._stream = self._stream_source  # type: ignore[assignment]
+                if not isawaitable(self._stream_source):
+                    self._stream = self._stream_source
                 else:
                     self._stream = await self._stream_source
             if isinstance(self._stream, ResponseStream) and self._wrap_inner:

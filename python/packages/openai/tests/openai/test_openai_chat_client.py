@@ -1612,6 +1612,44 @@ def test_response_content_creation_with_refusal() -> None:
     assert len(response.messages[0].contents) == 1
     assert response.messages[0].contents[0].type == "text"
     assert response.messages[0].contents[0].text == "I cannot provide that information."
+    assert response.messages[0].contents[0].additional_properties == {"model_output_kind": "refusal"}
+
+
+def test_streaming_refusal_delta_creates_marked_text() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    event = MagicMock()
+    event.type = "response.refusal.delta"
+    event.delta = "I cannot help with that."
+
+    update = client._parse_chunk_from_openai(event, {}, {})
+
+    assert len(update.contents) == 1
+    assert update.contents[0].type == "text"
+    assert update.contents[0].text == "I cannot help with that."
+    assert update.contents[0].additional_properties == {"model_output_kind": "refusal"}
+
+
+def test_prepare_marked_refusal_text_uses_native_assistant_shape_and_input_text_fallback() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    refusal = Content.from_text(
+        "I cannot help with that.",
+        additional_properties={"model_output_kind": "refusal"},
+    )
+
+    assert client._prepare_message_for_openai(Message(role="assistant", contents=[refusal])) == [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "refusal", "refusal": "I cannot help with that."}],
+        }
+    ]
+    assert client._prepare_message_for_openai(Message(role="user", contents=[refusal])) == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "I cannot help with that."}],
+        }
+    ]
 
 
 def test_response_content_creation_with_reasoning() -> None:
@@ -2119,6 +2157,32 @@ def test_get_shell_tool_local_executor_maps_to_shell_tool() -> None:
     assert len(response_tools) == 1
     assert response_tools[0]["type"] == "shell"
     assert response_tools[0]["environment"]["type"] == "local"
+
+
+def test_shell_output_payloads_do_not_expose_exception_diagnostics() -> None:
+    diagnostic = "test-token-value at /srv/private/tool.py"
+    content = Content.from_function_result(
+        call_id="call-1",
+        result="Error: Function failed.",
+        exception=diagnostic,
+    )
+
+    local_payload = json.loads(OpenAIChatClient._to_local_shell_output_payload(content))
+    shell_payload = OpenAIChatClient._to_shell_call_output_payload(content)
+    serialized = json.dumps({"local": local_payload, "shell": shell_payload})
+
+    assert local_payload["stdout"] == "Error: Function failed."
+    assert local_payload["exit_code"] == 1
+    assert shell_payload == [
+        {"stdout": "Error: Function failed.", "stderr": "", "outcome": {"type": "exit", "exit_code": 1}}
+    ]
+    assert diagnostic not in serialized
+
+    empty_diagnostic = Content.from_function_result(call_id="call-2", result="failed", exception="")
+    empty_local_payload = json.loads(OpenAIChatClient._to_local_shell_output_payload(empty_diagnostic))
+    empty_shell_payload = OpenAIChatClient._to_shell_call_output_payload(empty_diagnostic)
+    assert empty_local_payload["exit_code"] == 1
+    assert empty_shell_payload[0]["outcome"] == {"type": "exit", "exit_code": 1}
 
 
 def test_prepared_local_shell_tool_survives_make_tools() -> None:

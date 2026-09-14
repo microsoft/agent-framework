@@ -26,9 +26,13 @@ from openai.types.responses import (
     ResponseFunctionToolCallOutputItem,
     ResponseInputFile,
     ResponseInputImage,
+    ResponseOutputRefusal,
 )
 
 from ._utils import infer_media_type
+
+_MODEL_OUTPUT_KIND_KEY = "model_output_kind"
+_MODEL_OUTPUT_REFUSAL = "refusal"
 
 # Type alias for OpenAI Message role literals
 MessageRole = Literal["unknown", "user", "assistant", "system", "critic", "discriminator", "developer", "tool"]
@@ -392,7 +396,7 @@ class InMemoryConversationStore(ConversationStore):
             # Process each content item in the message
             # A single Message may produce multiple ConversationItems
             # (e.g., a message with both text and a function call)
-            message_contents: list[TextContent | ResponseInputImage | ResponseInputFile] = []
+            message_contents: list[TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile] = []
             function_calls: list[ResponseFunctionToolCallItem] = []
             function_results: list[ResponseFunctionToolCallOutputItem] = []
 
@@ -529,6 +533,15 @@ class InMemoryConversationStore(ConversationStore):
             text = content.get("text")
             return Content.from_text(text=text) if isinstance(text, str) else None
 
+        if content_type == "refusal":
+            refusal = content.get("refusal")
+            if not isinstance(refusal, str):
+                return None
+            return Content.from_text(
+                text=refusal,
+                additional_properties={_MODEL_OUTPUT_KIND_KEY: _MODEL_OUTPUT_REFUSAL},
+            )
+
         if content_type == "input_image":
             detail = content.get("detail", "auto")
             image_properties = {
@@ -598,10 +611,14 @@ class InMemoryConversationStore(ConversationStore):
         return None
 
     @staticmethod
-    def _to_openai_content(content: Content) -> TextContent | ResponseInputImage | ResponseInputFile | None:
+    def _to_openai_content(
+        content: Content,
+    ) -> TextContent | ResponseOutputRefusal | ResponseInputImage | ResponseInputFile | None:
         """Convert one supported Agent Framework message part."""
         content_type = content.type
         if content_type == "text":
+            if content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL:
+                return ResponseOutputRefusal(type="refusal", refusal=content.text or "")
             return TextContent(type="text", text=content.text or "")
 
         additional_properties = content.additional_properties or {}

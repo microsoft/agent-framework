@@ -230,6 +230,7 @@ class ScopedContentProcessor:
         if cached_ps_resp is not None and isinstance(cached_ps_resp, ProtectionScopesResponse):
             return await self._process_with_cached_scopes(pc_request, cached_ps_resp, cache_key)
 
+        pc_request.process_inline = True
         task = asyncio.create_task(self._refresh_protection_scopes_background(ps_req, cache_key, pc_request))
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)

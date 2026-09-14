@@ -2,10 +2,12 @@
 
 """Unit tests for WorkflowFactory."""
 
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
+from agent_framework import Message
 
 from agent_framework_declarative._feature_usage import FeatureIndex
 from agent_framework_declarative._workflows._errors import DeclarativeWorkflowError
@@ -85,6 +87,157 @@ actions:
             })
 
         mark_feature_used.assert_called_once_with(FeatureIndex.DECLARATIVE_WORKFLOW)
+
+
+class TestWorkflowFactoryMessageInput:
+    """Tests for declarative workflows started with a single Message."""
+
+    async def test_entry_join_executor_initializes_workflow_inputs_message(self):
+        """Regression test for #7285: Entry JoinExecutor must accept a single Message input."""
+        from agent_framework_declarative._workflows._declarative_base import DECLARATIVE_STATE_KEY
+
+        factory = WorkflowFactory()
+        workflow = factory.create_workflow_from_yaml("""
+name: entry-message-inputs-test
+actions:
+  - kind: SendActivity
+    activity:
+      text: received
+""")
+
+        result = await workflow.run(Message(role="user", contents=["25"], message_id="message-25"))
+        outputs = result.get_outputs()
+        assert any("received" in str(output) for output in outputs)
+
+        state_data = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
+        assert isinstance(state_data, dict)
+        assert state_data["Inputs"]["input"] == "25"
+        assert state_data["System"]["LastMessage"] == {"Text": "25", "Id": "message-25"}
+        assert state_data["System"]["LastMessageText"] == "25"
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_message_input_resets_prior_run_state(self, stream: bool) -> None:
+        """A fresh Message must not inherit state from a reused workflow instance."""
+        from agent_framework_declarative._workflows._declarative_base import DECLARATIVE_STATE_KEY
+
+        workflow = WorkflowFactory().create_workflow_from_yaml("""
+name: fresh-message-state-test
+actions:
+  - kind: SendActivity
+    activity:
+      text: received
+""")
+        await workflow.run(Message(role="user", contents=["first"]))
+        prior = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
+        assert isinstance(prior, dict)
+        prior_conversation_id = prior["System"]["ConversationId"]
+        # Model values persisted by actions during the preceding run.
+        for namespace in ("Local", "System", "Outputs", "Agent", "Custom"):
+            prior[namespace]["tenant_secret"] = "first-conversation-only"
+        prior["Conversation"]["messages"] = [Message(role="assistant", contents=["private history"])]
+        prior["Conversation"]["history"] = list(prior["Conversation"]["messages"])
+        workflow._runner.state.set(DECLARATIVE_STATE_KEY, prior)
+        workflow._runner.state.commit()
+
+        message = Message(role="user", contents=["second"], message_id="second-message")
+        if stream:
+            events = [event async for event in workflow.run(message, stream=True)]
+            assert any(event.type == "output" for event in events)
+        else:
+            result = await workflow.run(message)
+            assert result.get_outputs()
+
+        current = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
+        assert isinstance(current, dict)
+        for namespace in ("Local", "System", "Outputs", "Agent", "Custom"):
+            assert "tenant_secret" not in current[namespace], namespace
+        assert current["Conversation"] == {"messages": [], "history": []}
+        assert current["System"]["ConversationId"] != prior_conversation_id
+        assert prior_conversation_id not in current["System"]["conversations"]
+        assert current["Inputs"] == {"input": "second"}
+        assert current["System"]["LastMessage"] == {"Text": "second", "Id": "second-message"}
+        assert current["System"]["LastMessageText"] == "second"
+        assert current["System"]["LastMessageId"] == "second-message"
+
+    @pytest.mark.parametrize("restore_with_responses", [False, True])
+    @_requires_powerfx
+    async def test_message_input_checkpoint_restores_own_state(self, restore_with_responses: bool) -> None:
+        """Restoring a paused run must recover its state after another conversation ran."""
+        from agent_framework import InMemoryCheckpointStorage
+
+        from agent_framework_declarative._workflows import ExternalInputResponse
+        from agent_framework_declarative._workflows._declarative_base import DECLARATIVE_STATE_KEY
+
+        workflow = WorkflowFactory().create_workflow_from_yaml("""
+name: message-checkpoint-state-test
+actions:
+  - kind: SetValue
+    path: Local.tenant_secret
+    value: =System.LastMessageText
+  - kind: Question
+    question:
+      text: Continue?
+    variable: Local.answer
+  - kind: SendActivity
+    activity:
+      text: =Local.tenant_secret
+""")
+        first_storage = InMemoryCheckpointStorage()
+        first = await workflow.run(Message(role="user", contents=["first-secret"]), checkpoint_storage=first_storage)
+        first_request_id = first.get_request_info_events()[0].request_id
+        checkpoints = await first_storage.list_checkpoints(workflow_name=workflow.name)
+        # Wall-clock timestamps can tie on Windows. Select the checkpoint
+        # that actually contains this run's pending question, not an earlier step.
+        checkpoint = next(item for item in checkpoints if first_request_id in item.pending_request_info_events)
+        assert first_request_id in checkpoint.pending_request_info_events
+        first_state = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
+        assert isinstance(first_state, dict)
+        first_conversation_id = first_state["System"]["ConversationId"]
+        await workflow.run(
+            responses={first_request_id: ExternalInputResponse(user_input="finish first")},
+            checkpoint_storage=first_storage,
+        )
+
+        second_storage = InMemoryCheckpointStorage()
+        second = await workflow.run(Message(role="user", contents=["second-secret"]), checkpoint_storage=second_storage)
+        second_request_id = second.get_request_info_events()[0].request_id
+        await workflow.run(
+            responses={second_request_id: ExternalInputResponse(user_input="finish second")},
+            checkpoint_storage=second_storage,
+        )
+
+        responses = {first_request_id: ExternalInputResponse(user_input="restored answer")}
+        if restore_with_responses:
+            restored = await workflow.run(
+                checkpoint_id=checkpoint.checkpoint_id, checkpoint_storage=first_storage, responses=responses
+            )
+        else:
+            await workflow.run(checkpoint_id=checkpoint.checkpoint_id, checkpoint_storage=first_storage)
+            restored = await workflow.run(responses=responses, checkpoint_storage=first_storage)
+
+        assert restored.get_outputs() == ["first-secret"]
+        restored_state = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
+        assert isinstance(restored_state, dict)
+        assert restored_state["Local"] == {"tenant_secret": "first-secret", "answer": "restored answer"}
+        assert restored_state["Inputs"] == {"input": "first-secret"}
+        assert restored_state["System"]["ConversationId"] == first_conversation_id
+
+    @pytest.mark.parametrize(
+        ("age", "category"),
+        [(8, "child"), (16, "teenager"), (25, "adult"), (70, "senior")],
+    )
+    @_requires_powerfx
+    async def test_devui_declarative_workflow_categorizes_message_input(self, age: int, category: str):
+        """Regression test for #7285: The DevUI sample must categorize chat message input by age."""
+        workflow_path = (
+            Path(__file__).parents[3] / "samples" / "02-agents" / "devui" / "workflow_declarative" / "workflow.yaml"
+        )
+        workflow = WorkflowFactory().create_workflow_from_yaml_path(workflow_path)
+
+        result = await workflow.run(Message(role="user", contents=[str(age)]))
+        outputs = result.get_outputs()
+
+        assert any(f"categorized as: {category}" in str(output) for output in outputs)
 
 
 @_requires_powerfx

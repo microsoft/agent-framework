@@ -19,6 +19,19 @@ public sealed class LocalCodeActProviderOptions
     public IEnumerable<AIFunction>? Tools { get; set; }
 
     /// <summary>
+    /// Gets or sets the approval mode for <c>execute_code</c>.
+    /// Defaults to <see cref="LocalCodeActApprovalMode.NeverRequire"/>.
+    /// </summary>
+    /// <remarks>
+    /// Under <see cref="LocalCodeActApprovalMode.NeverRequire"/>, approval still propagates from the
+    /// tools in <see cref="Tools"/>: if any of them is an <see cref="ApprovalRequiredAIFunction"/>,
+    /// <c>execute_code</c> requires approval as well. This is required because generated code can
+    /// invoke any registered tool via <c>call_tool(...)</c> once execution has started, at which
+    /// point per-tool approval can no longer be enforced.
+    /// </remarks>
+    public LocalCodeActApprovalMode ApprovalMode { get; set; } = LocalCodeActApprovalMode.NeverRequire;
+
+    /// <summary>
     /// Gets or sets the initial set of file mounts exposed to generated code.
     /// </summary>
     public IEnumerable<FileMount>? FileMounts { get; set; }
@@ -27,10 +40,9 @@ public sealed class LocalCodeActProviderOptions
     /// Gets or sets environment variables passed to the subprocess.
     /// </summary>
     /// <remarks>
-    /// When <see langword="null"/>, the subprocess inherits the parent process environment
-    /// (the default <see cref="System.Diagnostics.ProcessStartInfo"/> behavior). To run with
-    /// a restricted environment, supply a dictionary containing only the variables the
-    /// subprocess should see — pass an empty dictionary for a fully scrubbed environment.
+    /// The subprocess does not inherit the parent process environment. When this property is
+    /// <see langword="null"/> or empty, the subprocess runs with a scrubbed environment.
+    /// Otherwise, the subprocess receives only the variables in the supplied dictionary.
     /// On Windows, a small set of system variables (SYSTEMROOT, SYSTEMDRIVE, COMSPEC,
     /// PATHEXT, TEMP, TMP) is back-filled from the parent environment when not already
     /// present so Python can locate its standard library.

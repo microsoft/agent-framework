@@ -15,6 +15,7 @@ from agent_framework import (
     ContextProvider,
     Message,
     ResponseStream,
+    SecretString,
     normalize_messages,
 )
 from agent_framework._settings import load_settings
@@ -75,7 +76,7 @@ class CopilotStudioAgent(BaseAgent):
         agent_identifier: str | None = None,
         client_id: str | None = None,
         tenant_id: str | None = None,
-        token: str | None = None,
+        token: str | SecretString | None = None,
         cloud: PowerPlatformCloud | None = None,
         agent_type: AgentType | None = None,
         custom_power_platform_cloud: str | None = None,
@@ -206,7 +207,8 @@ class CopilotStudioAgent(BaseAgent):
                     scopes=scopes,
                 )
 
-            client = CopilotClient(settings=settings, token=token)
+            resolved_token = token.get_secret_value() if isinstance(token, SecretString) else token
+            client = CopilotClient(settings=settings, token=resolved_token)
 
         self.client = client
         self.cloud = cloud

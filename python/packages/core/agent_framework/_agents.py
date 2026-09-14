@@ -32,6 +32,7 @@ from ._middleware import (
     MiddlewareTypes,
     _as_middleware_list,  # pyright: ignore[reportPrivateUsage]
     _copy_middleware_sequence,  # pyright: ignore[reportPrivateUsage]
+    _select_run_level_tools,  # pyright: ignore[reportPrivateUsage]
     categorize_middleware,
 )
 from ._serialization import SerializationMixin
@@ -1359,8 +1360,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         opts = dict(options) if options else {}
         existing_additional_args: dict[str, Any] = opts.pop("additional_function_arguments", None) or {}
 
-        # Get tools from options or named parameter (named param takes precedence)
-        tools_ = tools if tools is not None else opts.pop("tools", None)
+        # Run-level tools: the named parameter takes precedence over an options entry
+        # (_select_run_level_tools is the framework's single statement of that rule,
+        # shared with the middleware layer's run-start resolution). The options entry
+        # is consumed either way, so a losing options["tools"] can never ride the
+        # remaining options into the request and silently override the resolved list.
+        tools_ = _select_run_level_tools(tools, opts)
+        opts.pop("tools", None)
 
         input_messages = normalize_messages(messages)
 
@@ -1449,11 +1455,20 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # Normalize tools
         normalized_tools = _normalize_tools(tools_)
 
+        # Extract additional function arguments
+        effective_function_invocation_kwargs = (
+            dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
+        )
+        additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
+
         # Resolve final tool list (configured tools + runtime provided tools + local MCP server tools)
         final_tools = list(base_tools)
         for tool in normalized_tools:
             if isinstance(tool, MCPTool):
                 if not tool.is_connected:
+                    # The handshake and discovery requests are issued before any tool call, so the run's
+                    # kwargs must reach header_provider here or those requests go out unauthenticated.
+                    tool._seed_connection_kwargs(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
                     await self._async_exit_stack.enter_async_context(tool)
                 _append_unique_tools(
                     final_tools,
@@ -1465,17 +1480,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         for mcp_server in self.mcp_tools:
             if not mcp_server.is_connected:
+                mcp_server._seed_connection_kwargs(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
                 await self._async_exit_stack.enter_async_context(mcp_server)
             _append_unique_tools(
                 final_tools,
                 mcp_server.functions,
                 duplicate_error_message=mcp_duplicate_message,
             )
-
-        effective_function_invocation_kwargs = (
-            dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
-        )
-        additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
 
         model = opts.pop("model", None)
 

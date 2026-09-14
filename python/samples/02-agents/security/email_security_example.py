@@ -409,8 +409,8 @@ async def run_scenarios(agent, config):
     print(f"\n📋 Agent Response:\n{'-' * 40}")
     print(response.text)
 
-    # Check audit log for any blocked attempts
-    audit_log = config.get_audit_log()
+    # Security state, including the audit log, is stored per session.
+    audit_log = config.get_audit_log(session)
     if audit_log:
         print("\n" + "=" * 70)
         print("SECURITY AUDIT LOG - Policy Violations")

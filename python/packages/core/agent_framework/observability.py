@@ -3562,17 +3562,48 @@ def workflow_tracer() -> Tracer:
     return get_tracer() if OBSERVABILITY_SETTINGS.ENABLED else trace.NoOpTracer()
 
 
+def _workflow_span_attributes(
+    name: str,
+    attributes: Mapping[str, str | int] | None = None,
+) -> dict[str, str | int] | None:
+    span_attributes: dict[str, str | int] = dict(attributes) if attributes is not None else {}
+    conversation_id = _TELEMETRY_CONVERSATION_ID.get()
+    if name == OtelAttr.WORKFLOW_RUN_SPAN and conversation_id is not None:
+        span_attributes.setdefault(OtelAttr.CONVERSATION_ID, conversation_id)
+    return span_attributes or None
+
+
 def create_workflow_span(
     name: str,
     attributes: Mapping[str, str | int] | None = None,
     kind: trace.SpanKind = trace.SpanKind.INTERNAL,
 ) -> _AgnosticContextManager[trace.Span]:
-    """Create a generic workflow span."""
-    span_attributes = dict(attributes) if attributes is not None else {}
-    conversation_id = _TELEMETRY_CONVERSATION_ID.get()
-    if name == OtelAttr.WORKFLOW_RUN_SPAN and conversation_id is not None:
-        span_attributes.setdefault(OtelAttr.CONVERSATION_ID, conversation_id)
-    return workflow_tracer().start_as_current_span(name, kind=kind, attributes=span_attributes or None)
+    """Create a generic workflow span attached as the current span.
+
+    Do not use this from an async generator that yields to callers: attaching
+    across a ``yield`` leaves OpenTelemetry's context token set when the
+    generator is later closed on GC from a different ``Context``. Streaming
+    workflow runs should use :func:`start_workflow_span` instead.
+    """
+    return workflow_tracer().start_as_current_span(
+        name, kind=kind, attributes=_workflow_span_attributes(name, attributes)
+    )
+
+
+def start_workflow_span(
+    name: str,
+    attributes: Mapping[str, str | int] | None = None,
+    kind: trace.SpanKind = trace.SpanKind.INTERNAL,
+) -> trace.Span:
+    """Start a workflow span without attaching it to the current context.
+
+    Streaming generators that yield to callers must start the run span this
+    way and activate it only around non-yielding work (see
+    :func:`_activate_span`). Attaching with :func:`create_workflow_span`
+    across a yield causes ``ValueError: Token was created in a different
+    Context`` when the generator is garbage-collected.
+    """
+    return workflow_tracer().start_span(name, kind=kind, attributes=_workflow_span_attributes(name, attributes))
 
 
 def create_processing_span(

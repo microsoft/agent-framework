@@ -518,6 +518,10 @@ class Executor(RequestInfoMixin, DictConvertible):
                 return self._handlers[message_type]
         raise RuntimeError(f"Executor {self.__class__.__name__} cannot handle message of type {type(message)}.")
 
+    async def _cancel_pending_request(self, request_id: str, ctx: WorkflowContext[Any, Any]) -> None:
+        """Release executor-owned state for a cancelled workflow request."""
+        del request_id, ctx
+
     async def on_checkpoint_save(self) -> dict[str, Any]:
         """Hook called when the workflow is being saved to a checkpoint.
 

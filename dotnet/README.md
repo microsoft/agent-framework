@@ -5,17 +5,21 @@
 ### Basic Agent - .NET
 
 ```c#
-using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using OpenAI;
 using OpenAI.Responses;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")!;
+// Use the Azure OpenAI v1 route with the OpenAI SDK (resource root + /openai/v1).
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")!; // e.g. https://YOUR.openai.azure.com/openai/v1/
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME")!;
 
-var agent = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential())
-    .GetResponsesClient(deploymentName)
-    .AsAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
+var agent = new OpenAIClient(
+        new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
+        new OpenAIClientOptions { Endpoint = new Uri(endpoint) })
+    .GetResponsesClient()
+    .AsAIAgent(model: deploymentName, name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
 
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```

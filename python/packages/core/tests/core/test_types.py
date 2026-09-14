@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import base64
 import json
-from collections.abc import AsyncIterable, Sequence
+import warnings
+from collections.abc import AsyncIterable, Awaitable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
@@ -111,6 +113,93 @@ def test_text_content_keyword():
     assert isinstance(content, Content)
     # Note: No longer using Pydantic validation, so type assignment should work
     content.type = "text"  # This should work fine now
+
+
+def test_marked_refusal_text_is_visible_and_serializable() -> None:
+    content = Content.from_text(
+        "I cannot help with that.",
+        additional_properties={"model_output_kind": "refusal"},
+        raw_representation={"type": "refusal"},
+    )
+    message = Message("assistant", [content])
+    chat_update = ChatResponseUpdate(contents=[content])
+    agent_update = AgentResponseUpdate(contents=[content])
+
+    assert content.type == "text"
+    assert str(content) == "I cannot help with that."
+    assert message.text == "I cannot help with that."
+    assert chat_update.text == "I cannot help with that."
+    assert agent_update.text == "I cannot help with that."
+    assert content.to_dict() == {
+        "type": "text",
+        "text": "I cannot help with that.",
+        "additional_properties": {"model_output_kind": "refusal"},
+    }
+    assert Content.from_dict(content.to_dict()) == Content.from_text(
+        "I cannot help with that.",
+        additional_properties={"model_output_kind": "refusal"},
+    )
+
+
+def test_marked_refusal_text_is_excluded_from_structured_output() -> None:
+    response = ChatResponse(
+        messages=[
+            Message(
+                "assistant",
+                [
+                    Content.from_text(
+                        '{"should_not": "parse"}',
+                        additional_properties={"model_output_kind": "refusal"},
+                    )
+                ],
+            )
+        ],
+        response_format={"type": "object"},
+    )
+
+    assert response.text == '{"should_not": "parse"}'
+    assert response.value is None
+
+
+@pytest.mark.parametrize("response_type", [ChatResponse, AgentResponse])
+def test_final_marked_refusal_does_not_fall_back_to_earlier_structured_output(response_type: type) -> None:
+    response = response_type(
+        messages=[
+            Message("assistant", [Content.from_text('{"result": "stale"}')]),
+            Message(
+                "assistant",
+                [
+                    Content.from_text(
+                        "I cannot provide a result.",
+                        additional_properties={"model_output_kind": "refusal"},
+                    )
+                ],
+            ),
+        ],
+        response_format={"type": "object"},
+    )
+
+    assert response.value is None
+
+
+def test_mixed_final_message_with_refusal_has_no_structured_output() -> None:
+    response = ChatResponse(
+        messages=[
+            Message(
+                "assistant",
+                [
+                    Content.from_text('{"result": "partial"}'),
+                    Content.from_text(
+                        "I cannot continue.",
+                        additional_properties={"model_output_kind": "refusal"},
+                    ),
+                ],
+            )
+        ],
+        response_format={"type": "object"},
+    )
+
+    assert response.value is None
 
 
 # region DataContent
@@ -594,6 +683,12 @@ def test_function_call_content_add_merging_and_errors():
     with raises(ContentError):
         _ = a + b
 
+    # incompatible occurrence ids
+    a = Content.from_function_call(call_id="1", name="f", arguments="abc", id="occurrence-a")
+    b = Content.from_function_call(call_id="1", name="f", arguments="def", id="occurrence-b")
+    with raises(AdditionItemMismatch, match="different ids"):
+        _ = a + b
+
     # name merging: when the first chunk has no name (e.g. a streaming delta where
     # the function name arrives later), the merged content must keep the name from
     # whichever side provides it, regardless of order.
@@ -738,6 +833,67 @@ def test_function_approval_serialization_roundtrip():
 
     # Skip the BaseModel validation test since we're no longer using Pydantic
     # The Content union will need to be handled differently when we fully migrate
+
+
+def test_function_call_occurrence_id_roundtrips_without_regeneration():
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="f",
+        arguments={"x": 1},
+        id="af-call-existing",
+    )
+
+    restored = Content.from_dict(function_call.to_dict())
+
+    assert restored.id == "af-call-existing"
+    assert restored.call_id == "provider-call"
+
+
+def test_local_function_approval_request_warns_for_legacy_occurrence_identity() -> None:
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="f",
+        id="af-call-occurrence",
+    )
+
+    with pytest.warns(FutureWarning, match="id differs from function_call.id.*legacy"):
+        request = Content.from_function_approval_request(id="provider-call", function_call=function_call)
+
+    assert request.id == "provider-call"
+    assert request.function_call is function_call
+
+
+def test_hosted_function_approval_request_allows_provider_request_identity_without_warning() -> None:
+    function_call = Content.from_function_call(
+        call_id="provider-call",
+        name="hosted",
+        id="af-call-occurrence",
+        additional_properties={"server_label": "provider"},
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        request = Content.from_function_approval_request(
+            id="provider-approval-request",
+            function_call=function_call,
+        )
+
+    assert request.id == "provider-approval-request"
+    assert caught == []
+
+
+def test_legacy_function_call_deserialization_does_not_generate_an_occurrence_id():
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        restored = Content.from_dict({
+            "type": "function_call",
+            "call_id": "legacy-call",
+            "name": "f",
+            "arguments": {},
+        })
+
+    assert restored.id is None
+    assert caught == []
 
 
 def test_function_approval_request_function_call_none_guard():
@@ -1978,6 +2134,27 @@ def test_text_reasoning_content_add_conflicting_ids_raises():
         _ = t1 + t2
 
 
+def test_text_reasoning_content_add_preserves_empty_text_with_signature():
+    """Empty thinking text plus a signature delta must keep text="" (not None).
+
+    Regression for microsoft/agent-framework#8168: collapsing "" to None makes a
+    real empty signed Anthropic thinking block look like an orphan signature.
+    """
+
+    empty_thinking = Content.from_text_reasoning(text="")
+    signature_only = Content.from_text_reasoning(text=None, protected_data="synthetic-signature")
+
+    result = empty_thinking + signature_only
+    assert result.text == ""
+    assert result.protected_data == "synthetic-signature"
+
+    both_none = Content.from_text_reasoning(text=None) + Content.from_text_reasoning(
+        text=None, protected_data="orphan-sig"
+    )
+    assert both_none.text is None
+    assert both_none.protected_data == "orphan-sig"
+
+
 def test_text_reasoning_content_add_neither_has_id():
     """Test that coalescing text_reasoning Content when neither has an id results in None id."""
 
@@ -2011,6 +2188,68 @@ def test_coalesce_text_reasoning_with_different_ids():
     assert contents[0].text == "Thinking A1 A2"
     assert contents[1].id == "rs_bbb"
     assert contents[1].text == "Thinking B1 B2"
+
+
+def test_agent_response_from_updates_preserves_refusal_marker() -> None:
+    marker = {"model_output_kind": "refusal"}
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(
+            contents=[Content.from_text("I cannot ", additional_properties=marker)],
+            role="assistant",
+        ),
+        AgentResponseUpdate(
+            contents=[Content.from_text("help.", additional_properties=marker)],
+            role="assistant",
+        ),
+    ])
+
+    assert len(response.messages[0].contents) == 1
+    assert response.messages[0].contents[0].type == "text"
+    assert response.messages[0].contents[0].text == "I cannot help."
+    assert response.messages[0].contents[0].additional_properties == marker
+    assert response.text == "I cannot help."
+
+
+@pytest.mark.parametrize(
+    ("updates", "expected"),
+    [
+        (
+            [
+                Content.from_text("Partial answer."),
+                Content.from_text(
+                    "I cannot continue.",
+                    additional_properties={"model_output_kind": "refusal"},
+                ),
+            ],
+            [
+                ("Partial answer.", {}),
+                ("I cannot continue.", {"model_output_kind": "refusal"}),
+            ],
+        ),
+        (
+            [
+                Content.from_text(
+                    "I cannot continue.",
+                    additional_properties={"model_output_kind": "refusal"},
+                ),
+                Content.from_text("Additional context."),
+            ],
+            [
+                ("I cannot continue.", {"model_output_kind": "refusal"}),
+                ("Additional context.", {}),
+            ],
+        ),
+    ],
+)
+def test_response_coalescing_preserves_model_output_kind_boundaries(
+    updates: list[Content],
+    expected: list[tuple[str, dict[str, str]]],
+) -> None:
+    response = AgentResponse.from_updates([
+        AgentResponseUpdate(contents=[content], role="assistant") for content in updates
+    ])
+
+    assert [(content.text, content.additional_properties) for content in response.messages[0].contents] == expected
 
 
 def test_comprehensive_to_dict_exclude_options():
@@ -2237,6 +2476,49 @@ def test_content_to_dict_exclude_fields() -> None:
     parsed = json.loads(json.dumps(d))
     assert "text" not in parsed
     assert parsed["type"] == "text"
+
+
+def test_function_result_exception_is_internal_by_default() -> None:
+    diagnostic = "test-token-value at /srv/private/tool.py"
+    content = Content.from_function_result(
+        call_id="call-1",
+        result="Error: Function failed.",
+        exception=diagnostic,
+    )
+
+    assert content.exception == diagnostic
+    assert content.to_dict()["exception"] == "FunctionInvocationError"
+    assert content.to_dict(exclude_none=False)["exception"] == "FunctionInvocationError"
+    response = AgentResponse(messages=[Message(role="tool", contents=[content])])
+    serialized = json.dumps(response.to_dict())
+    assert diagnostic not in serialized
+    assert "FunctionInvocationError" in serialized
+
+    restored = Content.from_dict(content.to_dict())
+    assert restored.exception == "FunctionInvocationError"
+    assert restored != Content.from_function_result(
+        call_id="call-1",
+        result="Error: Function failed.",
+        exception="different diagnostic",
+    )
+
+    empty_diagnostic = Content.from_function_result(call_id="call-2", exception="")
+    assert empty_diagnostic.to_dict()["exception"] == "FunctionInvocationError"
+
+
+def test_content_equality_compares_nested_raw_exception_diagnostics() -> None:
+    first = Content(
+        "function_result",
+        call_id="outer",
+        items=[Content.from_function_result(call_id="inner", exception="diagnostic-a")],
+    )
+    second = Content(
+        "function_result",
+        call_id="outer",
+        items=[Content.from_function_result(call_id="inner", exception="diagnostic-b")],
+    )
+
+    assert first != second
 
 
 def test_chat_response_roundtrip_preserves_compaction_annotation_dict() -> None:
@@ -2514,6 +2796,29 @@ def test_content_deepcopy_discards_raw_representation(caplog: pytest.LogCaptureF
     assert cloned.raw_representation is None
     assert cloned.additional_properties is not content.additional_properties
     assert caplog.messages == ["Discarding field 'raw_representation' while deep-copying Content."]
+
+
+def test_content_pickle_discards_nested_annotation_raw_representation() -> None:
+    """Pickle should omit provider objects stored on annotations."""
+    import pickle
+
+    raw = object()
+    annotation: Annotation = {"type": "citation", "url": "https://example.com", "raw_representation": raw}
+    content = Content.from_text("hello", annotations=[annotation])
+
+    restored = pickle.loads(pickle.dumps(content))
+
+    assert restored.annotations == [{"type": "citation", "url": "https://example.com"}]
+
+
+def test_content_shallow_copy_preserves_raw_representation() -> None:
+    """Shallow copies of Content retain provider runtime fields."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    cloned = copy.copy(Content.from_text("hello", raw_representation=raw))
+
+    assert cloned.raw_representation is raw
 
 
 def test_message_deepcopy_preserves_raw_representation():
@@ -4268,13 +4573,22 @@ class TestResponseStreamMapAndWithFinalizer:
 
         assert collected == ["async_update_0", "async_update_1"]
 
-    async def test_from_awaitable(self) -> None:
+    @pytest.mark.parametrize("source_kind", ["coroutine", "task", "future"])
+    async def test_from_awaitable(self, source_kind: str) -> None:
         """from_awaitable() wraps an awaitable ResponseStream."""
 
         async def get_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse]:
             return ResponseStream(_generate_updates(2), finalizer=_combine_updates)
 
-        outer = ResponseStream.from_awaitable(get_stream())
+        source: Awaitable[ResponseStream[ChatResponseUpdate, ChatResponse]]
+        if source_kind == "task":
+            source = asyncio.create_task(get_stream())
+        elif source_kind == "future":
+            source = asyncio.get_running_loop().create_future()
+            source.set_result(await get_stream())
+        else:
+            source = get_stream()
+        outer = ResponseStream.from_awaitable(source)
 
         collected: list[str] = []
         async for update in outer:
@@ -4353,13 +4667,22 @@ class TestResponseStreamExecutionOrder:
 class TestResponseStreamAwaitableSource:
     """Tests for ResponseStream with awaitable stream sources."""
 
-    async def test_awaitable_stream_source(self) -> None:
+    @pytest.mark.parametrize("source_kind", ["coroutine", "task", "future"])
+    async def test_awaitable_stream_source(self, source_kind: str) -> None:
         """ResponseStream can accept an awaitable that resolves to an async iterable."""
 
         async def get_stream() -> AsyncIterable[ChatResponseUpdate]:
             return _generate_updates(2)
 
-        stream = ResponseStream(get_stream(), finalizer=_combine_updates)
+        source: Awaitable[AsyncIterable[ChatResponseUpdate]]
+        if source_kind == "task":
+            source = asyncio.create_task(get_stream())
+        elif source_kind == "future":
+            source = asyncio.get_running_loop().create_future()
+            source.set_result(await get_stream())
+        else:
+            source = get_stream()
+        stream = ResponseStream(source, finalizer=_combine_updates)
 
         collected: list[str] = []
         async for update in stream:

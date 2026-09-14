@@ -25,6 +25,17 @@ The primary implementation is in `python/packages/core/agent_framework/_tools.py
 `python/packages/core/agent_framework/_sessions.py`, provider serializers, hosting packages, and UI transports are
 part of the same contract when they carry function-call loop content.
 
+## Maintenance policy
+
+This document is the stable cross-package contract for the function-calling loop, not a per-PR changelog. Every change
+in scope must be reviewed against it, but most such PRs should not edit it. Update only the smallest affected sections
+when a change intentionally alters normative behavior, the scenario inventory, an acknowledged coverage gap, or the
+authoritative scenario-to-test mapping.
+
+Do not add implementation narration, temporary debugging guidance, or tests that merely preserve an already documented
+contract. Temporary compatibility behavior belongs here only when it is itself part of the user-visible contract; its
+later removal requires another deliberate contract update.
+
 ## Change sensitivity
 
 This code is high risk. Small changes can produce duplicate side effects, orphaned calls or results, invalid
@@ -228,8 +239,29 @@ the tool-call group, and provider adapters serialize or reconstruct the provider
 
 ### Approval correlation, replay, and reused ids
 
-`call_id` is not globally unique forever. The normalizer therefore tracks open logical occurrences in transcript
-order instead of keeping one global result per id.
+`call_id` is the provider/service correlation identifier and is not globally unique forever. `Content.id` on a
+`function_call` is the Agent Framework identity for one locally actionable occurrence. New actionable calls receive
+that occurrence id once and preserve it through streaming aggregation, serialization, and replay; existing ids are
+never regenerated. Deserializing a legacy stored call without `Content.id` does not manufacture a new identity.
+
+New local approval requests use the function call occurrence id as their request id. Provider-issued hosted approval
+request ids remain unchanged and continue to follow the hosted service protocol. A response carrying the occurrence
+id can bind without embedding a function call because the trusted pending snapshot is authoritative. For an
+occurrence-aware local snapshot, a missing or mismatched occurrence identity fails closed without consuming the
+pending request; matching a nested provider `call_id` is not a compatibility alias.
+
+Legacy stored local pending snapshots whose function call lacks `Content.id` retain their exact request-id binding for
+one resume. Taking that compatibility path emits a migration warning and consumes the matching request once. The
+warning marks the staged path for removal after stored legacy approvals have drained. An empty provider `call_id` may
+fall back to the generated occurrence id only when the framework is about to correlate a local actionable call; this
+also warns so provider adapters can supply a real service id. Deserialization itself never warns or rewrites either id.
+
+Pending approval state is a trusted session-state boundary: hosts must authorize and tenant-scope the session store and
+must prevent untrusted callers from replacing snapshots. Consume-on-bind prevents replay within one authoritative
+session state, but it is not a durable exactly-once guarantee across crashes or concurrent workers without external
+transactional coordination.
+
+The normalizer tracks open logical occurrences in transcript order instead of keeping one global result per id.
 
 ```mermaid
 flowchart TD
@@ -337,10 +369,29 @@ that manually replay messages own the equivalent rule: do not resend an approval
   already executing in a worker thread cannot be interrupted and may complete its side effects — its result is
   discarded either way and never reaches the transcript, the model, or history. Middleware must not catch
   `MiddlewareFailure` — swallowing it converts a fail-closed abort back into a running, possibly unguarded loop.
+- `Content.exception` is host-internal diagnostic state. Default `Content.to_dict()` and nested response serialization replace it with a fixed non-sensitive failure marker,
+  while the original field remains directly available to trusted local code. Remote protocol serializers use the
+  marker only for status and use the channel-visible `result` or `items` for output text. `include_detailed_errors=False` keeps the channel-visible
+  result generic; enabling it explicitly may place diagnostic text in the result for that configured channel.
 - Parallel calls retain model order in the returned transcript.
+- `call_id` remains the provider/service correlation id; a locally actionable `function_call` also carries a stable
+  Agent Framework occurrence identity in `Content.id`.
 - Reused `call_id` values are correlated by logical occurrence, not one global value per id.
+- Existing `Content.id` values survive aggregation and replay and are never regenerated; legacy deserialization does
+  not invent one.
 - A completed function call/result pair is inert on later turns.
 - Informational-only and declaration-only calls are not executed as local tools.
+- For automatic local execution, provider arguments are JSON-parsed before function middleware. Schema-compatible
+  arguments retain the existing normalized mapping contract. A provisional validation failure is not terminal:
+  middleware receives the raw mapping and may repair it before calling `call_next()`. The innermost handler validates
+  changed or previously invalid arguments immediately before the tool body and writes the normalized mapping back to
+  `FunctionInvocationContext.arguments`; unchanged provisionally normalized arguments are reused without running
+  validators twice. Middleware that short-circuits without `call_next()` skips final validation and tool execution.
+- Argument-repair middleware must precede security or policy middleware so enforcement observes the effective,
+  normalized invocation. Built-in security middleware normalizes hidden-value expansions before policy inspection.
+  Changing arguments after security middleware has processed them fails closed with `MiddlewareFailure`.
+- Argument-validation failures after middleware retain the established `Argument parsing failed` result contract.
+  Exceptions raised by middleware or the tool body retain the separate `Function failed` contract.
 
 ### Reasoning-bound calls
 
@@ -361,14 +412,38 @@ that manually replay messages own the equivalent rule: do not resend an approval
 - A tool that requires approval does not execute before an approved response.
 - With an `AgentSession`, every surfaced local or hosted approval request is stored as an immutable snapshot in one
   active model batch. A new surfaced batch replaces an abandoned batch instead of accumulating session state.
-- Approval request IDs use the provider function `call_id`, whose conversation-level uniqueness is required for
-  function-call/result correlation. Duplicate request IDs within one batch are rejected as malformed.
-- An inbound response is honored only when its request id matches the pending server-held snapshot.
+- Initial local approval request IDs use the recorded `function_call.id` occurrence identity. A policy replacement
+  retains that occurrence identity on the function call but rotates a separate request-generation identity; only a
+  response bound to the current server-held generation can authorize execution. Provider-issued hosted approval
+  request IDs remain unchanged. Duplicate request IDs within one batch are rejected as malformed.
+- An inbound response is honored only when its occurrence identity and current request generation match the pending
+  server-held snapshot. A new local response may omit its embedded function call because the snapshot is authoritative;
+  a mismatched embedded occurrence identity or stale generation fails closed.
+- Legacy stored local snapshots without `function_call.id` retain exact request-id matching for one consume-on-bind
+  resume and emit a migration warning. Deserialization does not rewrite the snapshot or emit that warning.
 - Approval requests replayed in inbound message history do not create, replace, or resurrect approval authority.
 - The executable call id, tool name, arguments, and local or hosted tool metadata are sourced from the recorded
   request, never from the response payload.
 - A matched approval response consumes its pending entry once. Unmatched, duplicate, and replayed responses do not
   reach local execution.
+- If policy middleware detects that the exact resolved invocation changed after approval, the old response executes
+  nothing and yields a caller-visible, session-persisted replacement request for the same occurrence; execution
+  requires a second approval and happens exactly once.
+- If function middleware repairs an approval-bound call, the old response likewise executes nothing and yields a
+  caller-visible, session-persisted replacement request containing the repaired approval-visible arguments. The
+  replacement retains the call occurrence identity, rotates request-generation identity, and requires a second
+  approval before exactly-once execution. Security middleware transformations that preserve an approval-visible
+  placeholder do not disclose the resolved value or trigger a spurious replacement.
+- If session-bound middleware no longer holds the reviewed authority because it expired or was evicted, the matched
+  response executes nothing and produces a replacement approval request with the same occurrence identity and a fresh
+  request generation. The replacement is caller-visible, becomes the authoritative pending session snapshot, and
+  requires a second approval before the tool can execute; replaying the prior serialized grant cannot authorize it.
+  Rejection or cancellation releases only the matching occurrence in the owning session, including authenticated
+  AG-UI lifecycle decisions.
+- Unmatched occurrence-aware responses leave the pending request intact for a corrected retry and produce an
+  observable warning/log. A nested `call_id` is never accepted as an occurrence-identity alias.
+- Session-backed pending snapshots are trusted host state and require tenant-scoped, authorized storage. Consume-on-bind
+  does not claim durable exactly-once behavior across crashes or concurrent workers.
 - Tool lookup uses the recorded name against the current registry. A same-name implementation upgrade is allowed;
   removing the name prevents local execution.
 - Only the strict boolean `True` grants approval. Missing decisions and non-boolean values are rejection, not consent.
@@ -434,6 +509,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | String input | Flexible string input follows the same loop behavior. | `test_base_client_with_function_calling_string_input` |
 | Multiple sequential rounds | Each round retains one call/result pair. | `test_base_client_with_function_calling_resets` |
 | Streaming call | Call chunks, one result update, and final text are emitted in order. | `test_base_client_with_streaming_function_calling` |
+| Function-call occurrence identity | Actionable calls gain one stable `Content.id`; a safe local empty-`call_id` fallback uses that id with a migration warning, and streaming aggregation preserves provider-assigned occurrence ids across interleaved fragments. OpenAI Chat Completions scopes fragment correlation to each request and `(choice.index, tool.index)`. | `test_actionable_function_call_gets_stable_occurrence_identity`, `test_actionable_function_call_uses_occurrence_identity_for_empty_call_id`, `test_streaming_empty_call_id_keeps_occurrence_identity_through_approval`, `test_streaming_empty_call_id_delta_reuses_opening_call_identity`, `test_streaming_interleaved_indexed_call_fragments_coalesce_by_occurrence`, `packages/core/tests/core/test_types.py::test_function_call_occurrence_id_roundtrips_without_regeneration`, `packages/openai/tests/openai/test_openai_chat_completion_client.py::test_streaming_tool_call_identity_is_request_local_and_scoped_by_choice_index` |
 | Reasoning-bound call | Finalized output retains reasoning, function call, function result, and final text. | `test_streaming_function_calling_response_includes_reasoning_and_tool_results` |
 | Calls across response messages | Every actionable call is executed once. | `test_base_client_executes_function_calls_across_multiple_response_messages` |
 | Parallel calls | Results retain the corresponding call ids and execution count. | `test_max_function_calls_limits_parallel_invocations`, `test_streaming_multiple_function_calls_parallel_execution` |
@@ -455,11 +531,17 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Persisted approval replay | Resume executes with the prior call available. | `test_persisted_approval_messages_replay_correctly` |
 | Hosted approval pass-through | Hosted requests/responses are bound to the recorded provider request and are not processed as local calls. | `test_hosted_tool_approval_response`, `test_hosted_mcp_approval_response_passthrough`, `test_session_approval_binding_reconstructs_hosted_response`, `test_mixed_local_and_hosted_approval_flow` |
 | Approval-time user input | Every user-input request from one approved execution returns in order with assistant role and no extra model call; the execution consumes one call-budget unit. | `packages/core/tests/core/test_harness_tool_approval.py::test_approval_resume_returns_all_user_input_requests_without_another_model_call`, `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_user_input_counts_toward_function_call_budget` |
-| Mixed terminal result and follow-up input | Completed siblings remain tool-role while only follow-up input requests use assistant-role messages/updates. | `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_separates_terminal_results_from_follow_up_requests`, `packages/openai/tests/openai/test_openai_chat_completion_client.py::test_mixed_approval_resume_roles_serialize_function_result_as_tool` |
+| Mixed terminal result and follow-up input | Completed siblings remain tool-role while only follow-up input requests use assistant-role messages/updates. | `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_separates_terminal_results_from_follow_up_requests`, `packages/openai/tests/openai/test_openai_chat_completion_client.py::test_mixed_approval_resume_roles_serialize_function_result_as_tool`, `packages/core/tests/core/test_harness_tool_approval.py::test_dynamic_policy_approval_partitions_safe_sibling_result_roles` |
 | Approval-time middleware termination | Terminal result returns with no extra model call in either response mode. | `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_honors_middleware_termination` |
 | Approval re-entry after iteration budget | Pending approved calls resolve once even when prior model calls consumed `max_iterations`. | `packages/core/tests/core/test_harness_tool_approval.py::test_auto_approval_resolves_after_iteration_budget_is_exhausted` |
 | Approval resume with reasoning | Model-bound resume history retains reasoning before the call and terminal result in both modes. | `packages/core/tests/core/test_harness_tool_approval.py::test_approval_resume_replays_reasoning_with_function_call_group` |
+| Changed resolved policy invocation | The stale decision executes nothing; a same-occurrence replacement request is visible and persisted in both modes, and the second approval executes exactly once. | `packages/core/tests/core/test_harness_tool_approval.py::test_changed_hidden_snapshot_requires_visible_second_approval` |
+| Expired or evicted policy authority | The old response executes nothing, surfaces and persists a same-occurrence replacement with a fresh request generation in both modes, and executes exactly once only after the replacement is approved; restored model history remains balanced and stale prior-generation replay is inert. | `packages/core/tests/core/test_harness_tool_approval.py::test_policy_reapproval_is_visible_persisted_and_executes_once`, `packages/core/tests/test_security.py::TestPolicyEnforcementMiddleware::test_pending_policy_approval_ttl_is_deterministic_and_durable` |
+| Session-bound policy cleanup | FIFO/TTL lifecycle and authenticated rejection/cancellation cleanup use occurrence identity within only the owning session, including fixed provider scopes. | `packages/core/tests/test_security.py::TestPolicyEnforcementMiddleware::test_pending_policy_approvals_are_fifo_bounded_by_occurrence`, `test_pending_policy_approval_ttl_is_deterministic_and_durable`, `test_non_grant_cleanup_is_authenticated_session_and_occurrence_bound`, `test_fixed_scope_non_grant_cleanup_keeps_unrelated_occurrence` |
 | Session-bound substituted response | A response is rebound to the immutable recorded call and cannot replace its call id, tool name, or arguments. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_binding_rebinds_consumes_and_rejects_duplicates` |
+| Occurrence-aware local binding | New local requests use `function_call.id`; missing, mismatched, or stale occurrence ids do not execute or consume pending state, while the canonical occurrence id binds without an embedded call. | `test_occurrence_aware_approval_rejects_stale_reused_call_id_response`, `test_occurrence_aware_approval_mismatched_identity_does_not_consume_pending`, `test_occurrence_aware_approval_binds_without_embedded_function_call` |
+| Legacy stored approval | A serialized pending request without `function_call.id` retains exact request-id binding once and warns only when resumed. | `test_legacy_serialized_pending_approval_resumes_once_with_migration_warning`, `packages/core/tests/core/test_types.py::test_legacy_function_call_deserialization_does_not_generate_an_occurrence_id` |
+| Hosted approval identity | Provider-issued hosted approval request ids are unchanged by local occurrence correlation. | `test_hosted_approval_keeps_provider_issued_request_id` |
 | Truthy non-boolean decision | Strings, integers, null, and other non-booleans do not authorize execution. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_binding_treats_truthy_non_boolean_as_rejection`, `packages/core/tests/core/test_types.py::test_function_approval_response_deserialization_rejects_non_boolean_decisions`, `packages/ag-ui/tests/ag_ui/test_message_adapters.py::test_function_approval_requires_real_boolean`, `packages/ag-ui/tests/ag_ui/test_approval_result_event.py::test_resolve_approval_responses_treats_non_boolean_decision_as_rejection` |
 | Active batch replacement | A newly surfaced model batch replaces abandoned approval authority instead of growing session state. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_binding_replaces_abandoned_batch` |
 | Duplicate request id | Ambiguous request IDs within one active batch fail explicitly. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_batch_rejects_duplicate_request_ids` |
@@ -473,6 +555,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Reused id after completion | A later round with the same id creates a second valid pair. | `test_replace_approval_contents_with_results_allows_reused_call_id_after_completion` |
 | Replayed approval wrapper | A duplicated wrapper does not restore another function call. | `test_replace_approval_contents_with_results_deduplicates_replayed_approval_request` |
 | Historical resolved response plus new round | The old response is removed from normalized input and is not converted into a rejection result. | `test_replace_approval_contents_with_results_ignores_already_resolved_response` |
+| Replacement request with reused occurrence id | A request after a stale response starts a new unanswered round rather than inheriting the old decision. | `test_collect_unanswered_approval_requests_tracks_replacement_request` |
 | Multiple reused-id rounds | Approved and rejected rounds retain separate call/result occurrences. | `test_replace_approval_contents_with_results_correlates_reused_call_id_occurrences` |
 | Multi-content result with reused id | Every content produced by one execution stays with that approval occurrence and cannot bleed into the next reused-id round. | `test_replace_approval_contents_with_results_keeps_multi_content_group_with_reused_call_id` |
 | Follow-up request closes one occurrence | A user-input follow-up consumes only the preceding approval authority and leaves a later reused-id response pending. | `test_collect_approval_responses_consumes_matching_follow_up_request_occurrence` |
@@ -505,7 +588,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Hosted server boundary | Standing approval does not cross `server_label`. | `test_tool_approval_middleware_standing_rules_include_hosted_server_boundary` |
 | Argument-scoped rule | Exact arguments are required; empty arguments are not tool-wide. | `test_tool_approval_middleware_always_approve_tool_with_arguments_rule`, `test_tool_approval_middleware_empty_arguments_rule_is_not_tool_wide` |
 | Provider-injected approval tool | A tool added during `before_run` defers to in-run resolution, executes once, and emits one result. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_deferred_provider_tool_executes` |
-| AG-UI provider boundary | Completed local approval controls from AG-UI request and snapshot replay are absent from raw chat-client input while deferred and hosted approvals keep their respective in-run/provider paths. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_does_not_forward_resolved_local_approval_control_to_chat_client`, `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_deferred_provider_tool_executes`, `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_canonical_resume_preserves_hosted_approval_for_provider`, `packages/ag-ui/tests/ag_ui/test_run.py::test_filter_local_approval_responses_for_provider_removes_duplicate_completed_controls`, `packages/ag-ui/tests/ag_ui/test_run.py::test_filter_local_approval_responses_for_provider_pairs_reused_call_ids_by_occurrence`, `packages/ag-ui/tests/ag_ui/test_run.py::test_canonical_hosted_approval_resume_rejects_edited_arguments_without_mutating_pending` |
+| AG-UI provider boundary | Completed local approval controls from AG-UI request and snapshot replay are absent from raw chat-client input while deferred and hosted approvals keep their respective in-run/provider paths. Lifecycle-authenticated local approvals preserve current request-generation authority through occurrence rebinding; authenticated rejection/cancellation cleans only the matching fixed provider-scoped policy record, while malformed or unauthorized controls clean nothing. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_does_not_forward_resolved_local_approval_control_to_chat_client`, `test_endpoint_agent_approval_deferred_provider_tool_executes`, `test_endpoint_canonical_resume_preserves_hosted_approval_for_provider`, `test_endpoint_fides_non_grant_cleans_authenticated_fixed_scope_only`, `test_endpoint_fides_approval_uses_lifecycle_bound_request_generation`, `packages/ag-ui/tests/ag_ui/test_run.py::test_filter_local_approval_responses_for_provider_removes_duplicate_completed_controls`, `test_filter_local_approval_responses_for_provider_pairs_reused_call_ids_by_occurrence`, `test_canonical_hosted_approval_resume_rejects_edited_arguments_without_mutating_pending` |
 | AG-UI standard approval payload | Agent and workflow tool approvals emit canonical `tool_call` interrupts. `approved` plus full-replacement `editedArgs` executes once and replays idempotently, while legacy `accepted` plus direct partial edits remains supported. Hosted approvals remain decision-only. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_resume_entry_applies_standard_full_replacement_edited_args`, `test_endpoint_agent_approval_replayed_standard_edited_resume_is_idempotent`, `test_endpoint_agent_approval_resume_entry_applies_edited_arguments`, `test_workflow_endpoint_emits_canonical_tool_approval_interrupt`, `test_workflow_endpoint_accepts_canonical_tool_approval_resume`, `test_workflow_endpoint_applies_canonical_approval_edited_args`, `test_workflow_endpoint_accepts_legacy_partial_approval_edits`, `test_workflow_endpoint_hosted_approval_rejects_argument_edits` |
 | AG-UI cancellation | A cancelled interrupt executes zero times and completes normally, including an identical retry during retained cancellation state; resolved siblings in the same complete resume still execute once. Workflow cancellation clears both runner correlation and the owning agent executor's pending request so later approvals remain resumable. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_cancelled_resume_entry_completes_without_execution`, `test_endpoint_agent_approval_replayed_cancellation_completes_idempotently`, `test_endpoint_agent_approval_mixed_cancelled_and_resolved_resume_executes_resolved_tool`, `test_endpoint_workflow_request_info_cancelled_resume_completes_normally`, `test_workflow_endpoint_cancelled_agent_approval_does_not_block_next_approval` |
 | AG-UI shared workflow interrupt ownership | A direct shared `Workflow` request-info interrupt can only be resolved or cancelled by the Snapshot Scope and AG-UI thread that created it. Ownership follows the authoritative pending request occurrence, and explicitly threaded cold checkpoint resumes fail closed when ownership is unavailable. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_workflow_request_info_rejects_resume_from_different_thread`, `test_endpoint_workflow_request_info_rejects_resume_from_different_scope`, `test_endpoint_workflow_request_info_rejects_cancellation_from_different_thread`, `test_endpoint_workflow_request_info_remains_owned_after_client_disconnect`, `test_endpoint_workflow_request_info_rejects_unowned_pending_interrupt`, `test_endpoint_workflow_checkpoint_resume_rejects_threaded_resume_after_restart` |
@@ -519,7 +602,10 @@ that manually replay messages own the equivalent rule: do not resend an approval
 |---|---|---|
 | Rejected execution | Rejection is a normal terminal result, not an exception to the caller. | `test_unapproved_tool_execution_raises_exception` |
 | Approved tool exception | Generic and detailed error modes preserve one result and one execution. | `test_approved_function_call_with_error_without_detailed_errors`, `test_approved_function_call_with_error_with_detailed_errors` |
+| Tool exception diagnostics | Internal diagnostics remain available to trusted local code, serialization preserves only a fixed failure marker, and explicit detailed-error configuration affects only the channel-visible result. | `packages/core/tests/core/test_types.py::test_function_result_exception_is_internal_by_default`, `packages/core/tests/core/test_function_invocation_logic.py::test_function_invocation_config_include_detailed_errors_false`, `test_function_invocation_config_include_detailed_errors_true`, `test_streaming_function_invocation_config_include_detailed_errors_false`, `test_streaming_function_invocation_config_include_detailed_errors_true` |
 | Approved validation error | Validation failure returns one result without invoking the function body. | `test_approved_function_call_with_validation_error` |
+| Pre-validation middleware repair | Schema-compatible calls retain normalized middleware arguments without duplicate validation. Prepared-value reuse does not require validator outputs to be copyable, and unchanged NaNs remain stable. Identity-only opaque values may be reused for ordinary execution, but security authority rejects them before downstream middleware or the tool body because in-place mutation cannot be detected safely. When provisional validation fails, function middleware observes raw parsed arguments, may repair them before final validation, and the body receives normalized values; short-circuiting skips final validation and execution. Repair after security middleware fails closed using recursive type-aware, float-bit-exact comparison, including invalid and short-circuited mutations. Security inspects exact normalized values, and validation errors after hidden-value resolution do not disclose resolved values or mapping keys, including validator `TypeError` paths. | `test_function_middleware_keeps_normalized_arguments_for_valid_calls`, `test_prepared_arguments_support_noncopyable_validator_output`, `test_nan_prepared_and_approval_snapshots_are_stable`, `test_function_middleware_repairs_raw_arguments_before_validation`, `test_function_middleware_can_short_circuit_before_argument_validation`, `test_invalid_arguments_produced_by_middleware_keep_argument_error_contract`, `packages/core/tests/test_security.py::TestVariableArgumentPolicy::test_security_rejects_opaque_mutable_validator_output`, `test_argument_mutation_after_security_middleware_fails_closed`, `test_security_snapshot_accepts_unchanged_nan`, `test_argument_mutation_after_security_short_circuit_fails_closed`, `test_security_policy_observes_custom_validator_transform_once`, `test_hidden_argument_validation_error_does_not_disclose_resolved_value`, `test_hidden_mapping_key_is_not_disclosed_by_validation_error`, `test_hidden_value_is_not_disclosed_by_validator_type_error`, `test_hidden_argument_can_be_normalized_after_security_check` |
+| Approved middleware repair | Approval binds to the normalized middleware-entry representation, so ordinary Pydantic coercion still completes in one approval round. A changed approval-bound call executes zero times under the old grant, returns a persisted occurrence-bound replacement request in both response modes, and executes once only after the replacement is approved. Recursive type-aware, float-bit-exact comparison treats booleans and numbers, and positive and negative zero, as distinct while keeping unchanged NaNs stable. Opaque mutable normalized values fail closed before approval authority is established. The same replacement rule applies when middleware short-circuits instead of calling the tool. Security expansion preserves approval-visible placeholders. | `test_approved_coercing_arguments_execute_without_replacement`, `test_approved_argument_repair_requires_replacement_approval`, `test_approved_argument_repair_short_circuit_requires_replacement_approval`, `test_approval_snapshot_distinguishes_exact_values`, `test_approval_rejects_opaque_mutable_validator_output`, `packages/core/tests/test_security.py::TestVariableArgumentPolicy::test_hidden_argument_resolution_does_not_require_reapproval` |
 | Approved success | Successful approved execution returns one result. | `test_approved_function_call_successful_execution` |
 | Consecutive error cap | Error threshold stops repeated failures, submits collected results, and makes only the required final no-tool model call. | `test_function_invocation_config_max_consecutive_errors`, `test_streaming_function_invocation_config_max_consecutive_errors`, `test_approval_resume_error_limit_forces_final_no_tool_response` |
 | Unknown call handling | Configured false returns an error result; configured true raises. | `test_function_invocation_config_terminate_on_unknown_calls_false`, `test_function_invocation_config_terminate_on_unknown_calls_true`, streaming equivalents |
@@ -548,6 +634,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | OpenAI end-to-end hosted approval | Hosted request parses, response sends, and continuation completes. | `test_end_to_end_mcp_approval_flow` |
 | Stored function call/result | Service-side storage drops server-issued calls but keeps new outputs. | `test_prepare_options_with_conversation_id_strips_server_issued_items`, `test_prepare_messages_for_openai_full_conversation_with_reasoning` |
 | Stateless reasoning replay | Replay reconstructs reasoning, call, and result together; missing required reasoning fails before the request. | `test_tool_loop_store_false_replays_encrypted_reasoning_group`, `test_stateless_request_rejects_non_replayable_reasoning_bound_mcp_output`, `test_prepare_messages_for_openai_full_conversation_with_reasoning` |
+| Remote tool error serialization | Foundry Responses, Responses hosting, and AG-UI preserve channel-visible results without host-internal diagnostics. A2A and MCP hosting omit unsupported intermediate function results entirely, including their diagnostics. | `packages/foundry_hosting/tests/test_responses.py::TestNonStreaming::test_function_result_omits_internal_exception`, `TestStreaming::test_function_result_omits_internal_exception`, `packages/hosting-responses/tests/hosting_responses/test_parsing.py::TestResponsesRunHelpers::test_responses_from_run_omits_internal_function_exception`, `test_responses_from_streaming_run_omits_internal_function_exception`, `packages/ag-ui/tests/ag_ui/test_run_common.py::TestEmitToolResult::test_tool_result_does_not_emit_internal_exception`, `packages/hosting-a2a/tests/hosting_a2a/test_conversion.py::test_a2a_from_run_omits_unsupported_content`, `packages/hosting-mcp/tests/hosting_mcp/test_conversion.py::test_mcp_from_run_omits_content_not_supported_in_tool_results` |
 | Foundry encrypted reasoning opt-in | Foundry clients omit `reasoning.encrypted_content` by default and preserve an explicit caller opt-in. | `packages/foundry/tests/foundry/test_foundry_chat_client.py::test_get_response_does_not_request_encrypted_reasoning_by_default`, `test_get_response_preserves_explicit_encrypted_reasoning_opt_in`, `packages/foundry/tests/foundry/test_foundry_agent.py::test_foundry_agent_basic_call_does_not_request_unsupported_encrypted_reasoning`, `test_foundry_agent_preserves_caller_requested_encrypted_reasoning`, `packages/foundry_hosting/tests/test_responses_int.py::TestReasoningHostedMcpReplay::test_second_turn_replays_mcp_call_with_encrypted_reasoning` |
 | Opaque reasoning signature replay | Provider-specific opaque reasoning metadata is captured and restored on reconstructed calls. | `packages/gemini/tests/test_gemini_client.py::test_function_call_part_captures_thought_signature_as_reasoning_content`, `test_reconstructed_function_call_replays_thought_signature_from_reasoning_content` |
 | Chat Completions approval wrappers | Framework approval wrappers are not sent as chat messages. | `packages/openai/tests/openai/test_openai_chat_completion_client.py` approval serialization tests |

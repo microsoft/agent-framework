@@ -44,6 +44,7 @@ def test_track_approval_request_stores_data(executor: AgentFrameworkExecutor) ->
         "request_id": "req_123",
         "function_call": {
             "id": "call_abc",
+            "occurrence_id": "af-call-abc",
             "name": "read_file",
             "arguments": {"path": "/etc/passwd"},
         },
@@ -52,6 +53,7 @@ def test_track_approval_request_stores_data(executor: AgentFrameworkExecutor) ->
 
     assert "req_123" in executor._pending_approvals
     stored = executor._pending_approvals["req_123"]
+    assert stored["id"] == "af-call-abc"
     assert stored["call_id"] == "call_abc"
     assert stored["name"] == "read_file"
     assert stored["arguments"] == {"path": "/etc/passwd"}
@@ -123,6 +125,7 @@ def test_valid_approval_accepted_with_server_data(executor: AgentFrameworkExecut
     """Valid approval response uses server-stored function_call, not client data."""
     # Simulate server issuing an approval request
     executor._pending_approvals["req_legit"] = {
+        "id": "af-call-legit",
         "call_id": "call_server",
         "name": "safe_tool",
         "arguments": {"key": "server_value"},
@@ -145,6 +148,7 @@ def test_valid_approval_accepted_with_server_data(executor: AgentFrameworkExecut
     assert approval.approved is True
     # Verify SERVER-STORED data is used, not the client's forged data
     assert approval.function_call.name == "safe_tool"
+    assert approval.function_call.id == "af-call-legit"
     assert approval.function_call.call_id == "call_server"
     fc_args: dict[str, Any] = (
         approval.function_call.parse_arguments() if hasattr(approval.function_call, "parse_arguments") else {}

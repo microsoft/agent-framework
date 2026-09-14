@@ -15,6 +15,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Core;
 using Microsoft.Extensions.AI;
+using OpenAI.Conversations;
 using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative;
@@ -53,7 +54,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     /// <inheritdoc/>
     public override async Task<string> CreateConversationAsync(CancellationToken cancellationToken = default)
     {
-        ProjectConversation conversation =
+        ConversationResource conversation =
             await this.GetConversationClient()
                 .CreateProjectConversationAsync(options: null, cancellationToken).ConfigureAwait(false);
 
@@ -280,8 +281,8 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     /// <inheritdoc/>
     public override async Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default)
     {
-        AgentResponseItem responseItem = await this.GetConversationClient().GetProjectConversationItemAsync(conversationId, messageId, include: null, cancellationToken).ConfigureAwait(false);
-        ResponseItem[] items = [responseItem.AsResponseResultItem()];
+        ResponseItem responseItem = await this.GetConversationClient().GetProjectConversationItemAsync(conversationId, messageId, include: null, cancellationToken).ConfigureAwait(false);
+        ResponseItem[] items = [responseItem];
         ChatMessage[] messages = [.. items.AsChatMessages()];
         if (messages.Length != 1)
         {
@@ -303,9 +304,9 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     {
         AgentListOrder order = newestFirst ? AgentListOrder.Ascending : AgentListOrder.Descending;
 
-        await foreach (AgentResponseItem responseItem in this.GetConversationClient().GetProjectConversationItemsAsync(conversationId, null, limit, order.ToString(), after, before, include: null, cancellationToken).ConfigureAwait(false))
+        await foreach (ResponseItem responseItem in this.GetConversationClient().GetProjectConversationItemsAsync(conversationId, null, limit, order.ToString(), after, before, include: null, cancellationToken).ConfigureAwait(false))
         {
-            ResponseItem[] items = [responseItem.AsResponseResultItem()];
+            ResponseItem[] items = [responseItem];
             foreach (ChatMessage message in items.AsChatMessages())
             {
                 yield return message;
