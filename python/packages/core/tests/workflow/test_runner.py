@@ -1564,3 +1564,36 @@ async def test_cancelled_superstep_discards_pending_state_before_next_run() -> N
 
     committed = workflow._runner.state.export_state()  # pyright: ignore[reportPrivateUsage]
     assert "secret" not in committed
+
+
+@pytest.mark.asyncio
+async def test_failed_superstep_discards_even_if_executor_cleanup_raises() -> None:
+    """Executor cleanup that raises after set_state must not skip State.discard (#7859)."""
+    from agent_framework import WorkflowBuilder
+
+    @dataclass
+    class Msg:
+        fail: bool
+
+    class CleanupRaisesExecutor(Executor):
+        @handler
+        async def run(self, message: Msg, ctx: WorkflowContext) -> None:
+            if message.fail:
+                ctx.set_state("secret", "leaked-from-cleanup-raise")
+                try:
+                    raise RuntimeError("primary failure")
+                finally:
+                    raise RuntimeError("cleanup failure")  # noqa: B012
+            await ctx.yield_output("ok")  # type: ignore[arg-type]
+
+    workflow = WorkflowBuilder(start_executor=CleanupRaisesExecutor(id="cleanup")).build()
+
+    with pytest.raises(RuntimeError):
+        async for _ in workflow.run(Msg(fail=True), stream=True):
+            pass
+
+    async for _ in workflow.run(Msg(fail=False), stream=True):
+        pass
+
+    committed = workflow._runner.state.export_state()  # pyright: ignore[reportPrivateUsage]
+    assert "secret" not in committed

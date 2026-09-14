@@ -81,6 +81,9 @@ class RunnerImpl:
         self._iteration = 0
         self._max_iterations = max_iterations
         self._state = state
+        # When True, Workflow.run must reject successors even if the ResponseStream
+        # weakref is already gone (cleanup still in progress after a drop/cancel).
+        self._blocking_reuse_until_cleanup = False
 
         # Checkpointing related attributes
         self._previous_checkpoint_id: CheckpointID | None = None
@@ -131,12 +134,19 @@ class RunnerImpl:
             # Track commit so cancel/abort cleanup spans the whole superstep
             # (polling → await iteration → drain → commit), not only the poll loop (#7859).
             committed = False
+            # Defer failure events until after discard so dropping the ResponseStream
+            # cannot race a successor commit of stale pending writes (#7859).
+            deferred_failure_events: list[WorkflowEvent] = []
             try:
+                self._blocking_reuse_until_cleanup = True
                 while not iteration_task.done():
                     try:
                         # Wait briefly for any new event; timeout allows progress checks
                         event = await asyncio.wait_for(self._ctx.next_event(), timeout=0.05)
-                        yield event
+                        if event.type == "executor_failed":
+                            deferred_failure_events.append(event)
+                        else:
+                            yield event
                     except asyncio.TimeoutError:
                         # Periodically continue to let iteration advance
                         continue
@@ -149,10 +159,17 @@ class RunnerImpl:
                     # streaming consumer that stops after executor_failed cannot leave
                     # pending state for a later run to commit (#7859).
                     self._state.discard()
+                    for event in deferred_failure_events:
+                        yield event
+                    deferred_failure_events.clear()
                     if await self._ctx.has_events():
                         for event in await self._ctx.drain_events():
                             yield event
                     raise
+
+                for event in deferred_failure_events:
+                    yield event
+                deferred_failure_events.clear()
 
                 self._iteration += 1
 
@@ -178,13 +195,19 @@ class RunnerImpl:
             except BaseException:
                 # Cancel during poll/drain, or an iteration task that ends cancelled,
                 # must still abandon staged writes before the commit boundary (#7859).
+                # Await cleanup with broad suppression so a raising executor ``finally``
+                # cannot skip discard below.
                 if not iteration_task.done():
                     iteration_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
+                    with contextlib.suppress(BaseException):
                         await iteration_task
+                raise
+            finally:
+                # Always discard on abort — including when iteration-task await above
+                # raised from executor cleanup — so staged writes cannot leak (#7859).
                 if not committed:
                     self._state.discard()
-                raise
+                self._blocking_reuse_until_cleanup = False
 
         logger.info(f"Workflow completed after {self._iteration} supersteps")
 

@@ -1367,5 +1367,9 @@ class Workflow(DictConvertible):
         Returns:
             True if a run is active, False otherwise.
         """
+        # Runner cleanup can outlive a dropped ResponseStream (weakref cleared on GC).
+        # Keep the instance reserved until pending State is discarded (#7859).
+        if getattr(self._runner, "_blocking_reuse_until_cleanup", False):
+            return True
         existing_stream = self._active_run() if self._active_run is not None else None
         return existing_stream is not None
