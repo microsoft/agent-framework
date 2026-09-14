@@ -712,8 +712,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         context: ResponseContext,
         *,
         approval_storage: FunctionApprovalStore | None,
-    ) -> tuple[list[Message], list[Message]]:
-        """Load the request's input messages and prior history concurrently.
+    ) -> list[Message]:
+        """Load the request's input and prior history concurrently, assembled for the run.
 
         The caller's input items and the conversation history are independent
         storage round-trips with no data dependency, so they are fetched in
@@ -721,9 +721,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         history read is only issued when AgentServer is the history source; in
         stateless single-turn requests it short-circuits without a round-trip.
 
-        Returns a ``(input_messages, history_messages)`` tuple; the caller is
-        responsible for ordering them (history precedes input) when assembling
-        the run.
+        Returns the messages already ordered as model input (history precedes
+        input), so the message-ordering rule lives only here and callers do not
+        need to know the storage-result ordering. If either read fails, the
+        sibling task is cancelled and drained so no storage read is orphaned.
         """
 
         async def _load_input() -> list[Message]:
@@ -736,8 +737,19 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             history = await context.get_history()
             return await _output_items_to_messages(history, approval_storage=approval_storage)
 
-        input_messages, history_messages = await asyncio.gather(_load_input(), _load_history())
-        return input_messages, history_messages
+        input_task = asyncio.ensure_future(_load_input())
+        history_task = asyncio.ensure_future(_load_history())
+        try:
+            input_messages, history_messages = await asyncio.gather(input_task, history_task)
+        except BaseException:
+            # gather surfaces the first failure without cancelling the sibling, and a
+            # cancellation of this coroutine must not leave either read running. Cancel
+            # both and await them so no storage operation is orphaned after we unwind.
+            input_task.cancel()
+            history_task.cancel()
+            await asyncio.gather(input_task, history_task, return_exceptions=True)
+            raise
+        return [*history_messages, *input_messages]
 
     async def _handle_inner_agent(
         self,
@@ -760,7 +772,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 "The agent will restart from the original input."
             )
 
-        request_messages_task: asyncio.Task[tuple[list[Message], list[Message]]] | None = None
+        request_messages_task: asyncio.Task[list[Message]] | None = None
         try:
             request_context = get_request_context()
             approval_storage = self._function_approval_storage_provider.get_store(
@@ -787,10 +799,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     )
                 session = self._agent.create_session()
             session_save_id = context.conversation_id or context.response_id
-        except Exception as ex:
+        except BaseException as ex:
+            # Session preparation failed (or the request was cancelled / the stream closed —
+            # neither of which is an Exception). Cancel and drain the in-flight message-loading
+            # task so it is not orphaned, and log only ordinary failures.
             if request_messages_task is not None:
                 request_messages_task.cancel()
-            logger.error("Failed to prepare state storage: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
+                with suppress(BaseException):
+                    await request_messages_task
+            if isinstance(ex, Exception):
+                logger.error("Failed to prepare state storage: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
             raise
 
         request_failure: Exception | None = None
@@ -805,9 +823,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # prior turn, so AgentServer-history mode always starts the model call statelessly.
                 session.service_session_id = None
 
-            input_messages, history_messages = await request_messages_task
+            messages = await request_messages_task
             run_kwargs: dict[str, Any] = {
-                "messages": [*history_messages, *input_messages],
+                "messages": messages,
                 "session": session,
             }
             chat_options, are_options_set = _to_chat_options(request)

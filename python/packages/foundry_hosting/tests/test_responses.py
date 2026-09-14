@@ -6113,3 +6113,113 @@ class TestResilientBackgroundCheckpointing:
 
 
 # endregion
+
+
+# region Parallel pre-model reads (_load_request_messages)
+
+
+class TestParallelRequestReads:
+    """Covers the concurrent input/history read helper introduced to remove serial
+    latency from the request critical path (overlap, ordering, and no orphaned
+    storage reads when one side fails)."""
+
+    @staticmethod
+    def _identity_converters(monkeypatch: pytest.MonkeyPatch) -> None:
+        async def _passthrough(items: Any, *, approval_storage: Any = None) -> list[Any]:
+            del approval_storage
+            return list(items)
+
+        monkeypatch.setattr("agent_framework_foundry_hosting._responses._items_to_messages", _passthrough)
+        monkeypatch.setattr("agent_framework_foundry_hosting._responses._output_items_to_messages", _passthrough)
+
+    async def test_reads_overlap_and_preserve_order(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._identity_converters(monkeypatch)
+        server = _make_server(_make_agent())
+        server._uses_agent_server_history = True  # pyright: ignore[reportPrivateUsage]
+
+        history_msg = Message(role="assistant", contents=[Content.from_text("H")])
+        input_msg = Message(role="user", contents=[Content.from_text("I")])
+
+        input_started = asyncio.Event()
+        history_started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def get_input_items() -> list[Message]:
+            input_started.set()
+            await release.wait()
+            return [input_msg]
+
+        async def get_history() -> list[Message]:
+            history_started.set()
+            await release.wait()
+            return [history_msg]
+
+        context = MagicMock(spec=ResponseContext)
+        context.get_input_items = get_input_items
+        context.get_history = get_history
+
+        task = asyncio.ensure_future(server._load_request_messages(context, approval_storage=None))  # pyright: ignore[reportPrivateUsage]
+        try:
+            # Both reads must be in-flight before either is allowed to finish — proves they overlap.
+            await asyncio.wait_for(input_started.wait(), timeout=1)
+            await asyncio.wait_for(history_started.wait(), timeout=1)
+            release.set()
+            messages = await asyncio.wait_for(task, timeout=1)
+        finally:
+            release.set()
+
+        # History precedes input in the assembled model input, and the helper owns the ordering.
+        assert messages == [history_msg, input_msg]
+
+    async def test_history_read_skipped_without_agent_server_history(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._identity_converters(monkeypatch)
+        server = _make_server(_make_agent())
+        server._uses_agent_server_history = False  # pyright: ignore[reportPrivateUsage]
+
+        input_msg = Message(role="user", contents=[Content.from_text("I")])
+
+        async def get_input_items() -> list[Message]:
+            return [input_msg]
+
+        context = MagicMock(spec=ResponseContext)
+        context.get_input_items = get_input_items
+        context.get_history = AsyncMock()
+
+        messages = await server._load_request_messages(context, approval_storage=None)  # pyright: ignore[reportPrivateUsage]
+
+        assert messages == [input_msg]
+        context.get_history.assert_not_awaited()
+
+    async def test_failed_read_cancels_and_drains_sibling(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._identity_converters(monkeypatch)
+        server = _make_server(_make_agent())
+        server._uses_agent_server_history = True  # pyright: ignore[reportPrivateUsage]
+
+        sibling_cancelled = asyncio.Event()
+
+        async def get_input_items() -> list[Message]:
+            raise RuntimeError("input read boom")
+
+        async def get_history() -> list[Message]:
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                sibling_cancelled.set()
+                raise
+            return []
+
+        context = MagicMock(spec=ResponseContext)
+        context.get_input_items = get_input_items
+        context.get_history = get_history
+
+        with pytest.raises(RuntimeError, match="input read boom"):
+            await asyncio.wait_for(
+                server._load_request_messages(context, approval_storage=None),  # pyright: ignore[reportPrivateUsage]
+                timeout=2,
+            )
+
+        # The still-blocked history read must have been cancelled, not left orphaned.
+        await asyncio.wait_for(sibling_cancelled.wait(), timeout=1)
+
+
+# endregion
