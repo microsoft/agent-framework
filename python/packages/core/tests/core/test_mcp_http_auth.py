@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import httpx
 import pytest
 
-from agent_framework import MCPStreamableHTTPTool
+from agent_framework import FunctionInvocationContext, MCPStreamableHTTPTool
 from agent_framework.exceptions import ToolException, ToolExecutionException
 
 MCPHTTPServer: TypeAlias = tuple[httpx.AsyncClient, list[httpx.Request], dict[str, list[str]]]
@@ -73,7 +73,24 @@ async def mcp_http_server() -> AsyncIterator[MCPHTTPServer]:
                 writes[principal].append(marker)
             result = {"content": [{"type": "text", "text": principal}]}
         elif method == "prompts/list":
-            result = {"prompts": []}
+            result = (
+                {
+                    "prompts": [
+                        {
+                            "name": "principal-prompt",
+                            "arguments": [{"name": "topic", "required": True}],
+                        }
+                    ]
+                }
+                if request.headers.get("X-Test-Prompts") == "enabled"
+                else {"prompts": []}
+            )
+        elif method == "prompts/get":
+            topic = body["params"].get("arguments", {}).get("topic", "")
+            result = {
+                "description": principal,
+                "messages": [{"role": "user", "content": {"type": "text", "text": f"{principal}:{topic}"}}],
+            }
         if "id" not in body:
             return httpx.Response(202)
         return httpx.Response(200, headers=headers, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
@@ -322,6 +339,39 @@ async def test_dynamic_headers_reconnect_before_principal_change_and_bind_ambien
         assert all(request.headers["mcp-session-id"] == "session-token-b" for request in ambient_requests)
         assert writes["token-a"] == ["first"]
         assert writes["token-b"] == ["second"]
+    finally:
+        await tool.close()
+
+
+async def test_captured_prompt_reconciles_run_identity_at_invocation(mcp_http_server: MCPHTTPServer) -> None:
+    client, requests, _ = mcp_http_server
+    tool = MCPStreamableHTTPTool(
+        name="prompts",
+        url="https://mcp.example/mcp",
+        http_client=client,
+        load_tools=False,
+        static_headers={"X-Test-Prompts": "enabled"},
+        header_provider=lambda kwargs: {"Authorization": kwargs["credential"]},
+    )
+    tool._seed_connection_kwargs({"credential": "token-a"})
+    try:
+        await tool.connect()
+        captured_prompt = next(function for function in tool.functions if function.name == "principal-prompt")
+
+        await tool._prepare_for_run({"credential": "token-b"})
+        assert _requests_for_method(requests, "initialize")[-1].headers["Authorization"] == "token-b"
+
+        context = FunctionInvocationContext(
+            function=captured_prompt,
+            arguments={"topic": "identity"},
+            kwargs={"credential": "token-a"},
+        )
+        await captured_prompt.invoke(arguments={"topic": "identity"}, context=context)
+
+        prompt_request = _requests_for_method(requests, "prompts/get")[-1]
+        assert prompt_request.headers["Authorization"] == "token-a"
+        assert prompt_request.headers["mcp-session-id"] == "session-token-a"
+        assert json.loads(prompt_request.content)["params"]["arguments"] == {"topic": "identity"}
     finally:
         await tool.close()
 

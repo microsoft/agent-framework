@@ -17,7 +17,6 @@ from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ig
 from copy import copy
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from functools import partial
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypedDict, cast
 
@@ -597,6 +596,25 @@ def _make_mcp_tool_caller(
             ctx.metadata[_FUNCTION_RESULT_CARRIER_CONTEXT_KEY] = capture.to_carrier()
 
     return _call_tool_with_runtime_kwargs
+
+
+def _make_mcp_prompt_caller(
+    mcp_tool: MCPTool,
+    remote_prompt_name: str,
+) -> Callable[..., Coroutine[Any, Any, str]]:
+    """Build a generated prompt caller that keeps run context out of prompt arguments."""
+
+    async def _call_prompt_with_runtime_kwargs(
+        ctx: FunctionInvocationContext,
+        **kwargs: Any,
+    ) -> str:
+        return await mcp_tool._call_prompt_with_runtime_kwargs(  # pyright: ignore[reportPrivateUsage]
+            remote_prompt_name,
+            kwargs,
+            ctx.kwargs,
+        )
+
+    return _call_prompt_with_runtime_kwargs
 
 
 def _validate_mcp_meta_key(key: str) -> None:
@@ -2317,7 +2335,7 @@ class MCPTool:
                     )
                 )
                 func: FunctionTool = FunctionTool(
-                    func=partial(self.get_prompt, prompt.name),
+                    func=_make_mcp_prompt_caller(self, prompt.name),
                     name=local_name,
                     description=prompt.description or "",
                     approval_mode=approval_mode,
@@ -3176,6 +3194,15 @@ class MCPTool:
             return "session terminated" in ex.error.message.lower()
         return False
 
+    async def _call_prompt_with_runtime_kwargs(
+        self,
+        prompt_name: str,
+        prompt_arguments: Mapping[str, Any],
+        _runtime_kwargs: Mapping[str, Any],
+    ) -> str:
+        """Invoke a generated prompt without forwarding run context as prompt arguments."""
+        return await self.get_prompt(prompt_name, **prompt_arguments)
+
     async def get_prompt(self, prompt_name: str, **kwargs: Any) -> str:
         """Call a prompt with the given arguments.
 
@@ -3630,7 +3657,7 @@ class MCPStreamableHTTPTool(MCPTool):
                 immutable effective identity. Header names are compared case-insensitively and
                 values case-sensitively. Before an Agent exposes a connected tool's functions for
                 a run, it reconciles the run's effective headers and reconnects when they differ;
-                direct tool calls perform the same check before sending. Connection-lifetime
+                generated tool and prompt calls perform the same check before sending. Connection-lifetime
                 requests - including discovery, background pings, resource and prompt reloads,
                 and long-running task polling - always use the session-bound header set. A
                 caller-supplied session cannot be reconnected by this wrapper, so changing its
@@ -3967,6 +3994,30 @@ class MCPStreamableHTTPTool(MCPTool):
                 self._release_connection_kwargs()
             raise
         self._promote_pending_session_headers()
+
+    async def _call_prompt_with_runtime_kwargs(
+        self,
+        prompt_name: str,
+        prompt_arguments: Mapping[str, Any],
+        runtime_kwargs: Mapping[str, Any],
+    ) -> str:
+        if self._header_provider is None:
+            return await super()._call_prompt_with_runtime_kwargs(prompt_name, prompt_arguments, runtime_kwargs)
+
+        headers = self._effective_headers(runtime_kwargs)
+        async with self._call_headers_lock:
+            await self._ensure_session_identity(headers, runtime_kwargs)
+            token = _mcp_call_headers.set(headers)
+            self._active_call_headers = headers
+            try:
+                return await super()._call_prompt_with_runtime_kwargs(
+                    prompt_name,
+                    prompt_arguments,
+                    runtime_kwargs,
+                )
+            finally:
+                self._active_call_headers = None
+                _mcp_call_headers.reset(token)
 
     def _release_connection_kwargs(self) -> None:
         self._connection_kwargs = None
