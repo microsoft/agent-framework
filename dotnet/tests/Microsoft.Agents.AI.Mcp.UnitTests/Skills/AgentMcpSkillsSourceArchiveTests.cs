@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -74,6 +75,100 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         Assert.Equal("archived-skill", skill.Frontmatter.Name);
         Assert.Equal("A skill delivered as an archive.", skill.Frontmatter.Description);
         Assert.Contains("Body from the archive.", await skill.GetContentAsync());
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ArchiveWithMatchingDigest_DiscoversSkillAsync()
+    {
+        // Arrange
+        ConfigurableArchiveServer.ArchiveBytes = BuildZip(("SKILL.md", ArchivedSkillMd));
+        ConfigurableArchiveServer.Digest = ComputeDigest(ConfigurableArchiveServer.ArchiveBytes);
+        await using var server = new InMemoryMcpServer(builder => builder.WithResources<ConfigurableArchiveServer>());
+        await using var client = await server.CreateClientAsync();
+        var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = this._extractionRoot });
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Single(skills);
+    }
+
+    [Theory]
+    [InlineData("sha256:not-a-digest")]
+    [InlineData("sha512:0000000000000000000000000000000000000000000000000000000000000000")]
+    [InlineData("SHA256:0000000000000000000000000000000000000000000000000000000000000000")]
+    [InlineData("sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
+    public async Task GetSkillsAsync_ArchiveWithMalformedDigest_SkipsSkillAsync(string digest)
+    {
+        // Arrange
+        ConfigurableArchiveServer.ArchiveBytes = BuildZip(("SKILL.md", ArchivedSkillMd));
+        ConfigurableArchiveServer.Digest = digest;
+        await using var server = new InMemoryMcpServer(builder => builder.WithResources<ConfigurableArchiveServer>());
+        await using var client = await server.CreateClientAsync();
+        var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = this._extractionRoot });
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ArchiveWithMismatchedDigest_SkipsSkillAsync()
+    {
+        // Arrange
+        ConfigurableArchiveServer.ArchiveBytes = BuildZip(("SKILL.md", ArchivedSkillMd));
+        ConfigurableArchiveServer.Digest = $"sha256:{new string('0', 64)}";
+        await using var server = new InMemoryMcpServer(builder => builder.WithResources<ConfigurableArchiveServer>());
+        await using var client = await server.CreateClientAsync();
+        var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = this._extractionRoot });
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ArchiveChangedAfterDigestComputed_SkipsSkillAsync()
+    {
+        // Arrange
+        byte[] originalArchive = BuildZip(("SKILL.md", ArchivedSkillMd));
+        ConfigurableArchiveServer.ArchiveBytes = BuildZip(("SKILL.md", ArchivedSkillMd.Replace("Body from the archive.", "Changed body.", StringComparison.Ordinal)));
+        ConfigurableArchiveServer.Digest = ComputeDigest(originalArchive);
+        await using var server = new InMemoryMcpServer(builder => builder.WithResources<ConfigurableArchiveServer>());
+        await using var client = await server.CreateClientAsync();
+        var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = this._extractionRoot });
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
+    [Theory]
+    [InlineData("description: First description.\ndescription: Second description.")]
+    [InlineData("description: A skill.\nmetadata:\n  owner: first\nmetadata:\n  owner: second")]
+    [InlineData("description: A skill.\nmetadata:\n  owner: first\n  owner: second")]
+    public async Task GetSkillsAsync_ArchiveWithDuplicateFrontmatter_SkipsSkillAsync(string frontmatter)
+    {
+        // Arrange
+        string skillMd = $"---\nname: archived-skill\n{frontmatter}\n---\nBody.";
+        ConfigurableArchiveServer.ArchiveBytes = BuildZip(("SKILL.md", skillMd));
+        ConfigurableArchiveServer.Digest = null;
+        await using var server = new InMemoryMcpServer(builder => builder.WithResources<ConfigurableArchiveServer>());
+        await using var client = await server.CreateClientAsync();
+        var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = this._extractionRoot });
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
     }
 
     [Fact]
@@ -628,7 +723,25 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         return ms.ToArray();
     }
 
-    private static string ArchiveIndex(string skillName, string url) => $$"""
+    private static string ComputeDigest(byte[] bytes)
+    {
+        const string HexCharacters = "0123456789abcdef";
+        byte[] hash = SHA256.HashData(bytes);
+        var hex = new char[hash.Length * 2];
+        for (int i = 0; i < hash.Length; i++)
+        {
+            hex[i * 2] = HexCharacters[hash[i] >> 4];
+            hex[(i * 2) + 1] = HexCharacters[hash[i] & 0x0F];
+        }
+
+        return $"sha256:{new string(hex)}";
+    }
+
+    private static string ArchiveIndex(string skillName, string url, string? digest = null)
+    {
+        string digestProperty = digest is null ? string.Empty : $",\n              \"digest\": \"{digest}\"";
+
+        return $$"""
         {
           "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
           "skills": [
@@ -636,15 +749,34 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
               "name": "{{skillName}}",
               "type": "archive",
               "description": "A skill delivered as an archive.",
-              "url": "{{url}}"
+              "url": "{{url}}"{{digestProperty}}
             }
           ]
         }
         """;
+    }
 
     #region Resource classes (registered with the MCP server via WithResources<T>)
 
 #pragma warning disable CA1812
+
+    [McpServerResourceType]
+    private sealed class ConfigurableArchiveServer
+    {
+        public static byte[] ArchiveBytes { get; set; } = [];
+
+        public static string? Digest { get; set; }
+
+        [McpServerResource(UriTemplate = "skill://index.json", Name = "index", MimeType = "application/json")]
+        public static string Index() =>
+            ArchiveIndex("archived-skill", "skill://archives/archived-skill.zip", Digest);
+
+        [McpServerResource(UriTemplate = "skill://archives/archived-skill.zip", Name = "archive", MimeType = "application/zip")]
+        public static BlobResourceContents Archive() => BlobResourceContents.FromBytes(
+            ArchiveBytes,
+            "skill://archives/archived-skill.zip",
+            "application/zip");
+    }
 
     [McpServerResourceType]
     private sealed class ZipArchiveServer

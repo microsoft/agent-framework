@@ -89,7 +89,8 @@ internal sealed class McpSkillIndexEntry
     /// <summary>
     /// Gets or sets the SHA-256 digest of the artifact bytes (e.g. <c>sha256:abcd1234...</c>).
     /// Required by the base v0.2.0 schema, but OMITTED under the SEP-2640 MCP binding because
-    /// integrity is the transport's concern over an authenticated MCP connection.
+    /// integrity is the transport's concern over an authenticated MCP connection. When an archive
+    /// entry supplies it for compatibility, the loader verifies it before parsing the archive.
     /// </summary>
     [JsonPropertyName("digest")]
     public string? Digest { get; set; }

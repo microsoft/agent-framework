@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -30,6 +31,9 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
     /// The default maximum size, in bytes, of a downloaded archive resource.
     /// </summary>
     internal const long DefaultMaxArchiveSizeBytes = 1L * 1024 * 1024;
+
+    private const string Sha256DigestPrefix = "sha256:";
+    private const int Sha256HexLength = 64;
 
     private readonly McpClient _client;
     private readonly AgentMcpSkillsSourceOptions? _options;
@@ -223,6 +227,12 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
             return [];
         }
 
+        // Verify any advertised digest before parsing the archive bytes.
+        if (entry.Digest is not null && !this.VerifyDigest(entry, bytes))
+        {
+            return [];
+        }
+
         var format = AgentMcpSkillArchiveExtractor.DetectFormat(bytes, mimeType, entry.Url);
         if (format == ArchiveFormat.Unknown)
         {
@@ -307,6 +317,47 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
         }
 
         return (bytes, blobContent.MimeType);
+    }
+
+    private bool VerifyDigest(McpSkillIndexEntry entry, byte[] bytes)
+    {
+        string digest = entry.Digest!;
+        if (digest.Length != Sha256DigestPrefix.Length + Sha256HexLength ||
+            !digest.StartsWith(Sha256DigestPrefix, StringComparison.Ordinal))
+        {
+            LogInvalidArchiveDigest(this._logger, entry.Name!);
+            return false;
+        }
+
+        ReadOnlySpan<char> hex = digest.AsSpan(Sha256DigestPrefix.Length);
+        if (!IsLowercaseHex(hex))
+        {
+            LogInvalidArchiveDigest(this._logger, entry.Name!);
+            return false;
+        }
+
+        byte[] expectedDigest = Convert.FromHexString(hex);
+        byte[] actualDigest = SHA256.HashData(bytes);
+        if (!CryptographicOperations.FixedTimeEquals(actualDigest, expectedDigest))
+        {
+            LogArchiveDigestMismatch(this._logger, entry.Name!);
+            return false;
+        }
+
+        return true;
+
+        static bool IsLowercaseHex(ReadOnlySpan<char> value)
+        {
+            foreach (char character in value)
+            {
+                if (!((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
     }
 
     /// <summary>
@@ -420,6 +471,12 @@ internal sealed partial class ArchiveEntryLoader : IMcpSkillEntryLoader, IDispos
 
     [LoggerMessage(LogLevel.Warning, "Failed to decode archive resource for skill '{SkillName}'.")]
     private static partial void LogArchiveDecodeFailed(ILogger logger, string skillName, Exception exception);
+
+    [LoggerMessage(LogLevel.Warning, "Skipping skill '{SkillName}': archive digest must use the expected SHA-256 format")]
+    private static partial void LogInvalidArchiveDigest(ILogger logger, string skillName);
+
+    [LoggerMessage(LogLevel.Warning, "Skipping skill '{SkillName}': downloaded archive does not match its advertised digest")]
+    private static partial void LogArchiveDigestMismatch(ILogger logger, string skillName);
 
     [LoggerMessage(LogLevel.Warning, "Failed to extract archive for skill '{SkillName}'.")]
     private static partial void LogArchiveExtractFailed(ILogger logger, string skillName, Exception exception);

@@ -24,6 +24,7 @@ namespace Microsoft.Agents.AI;
 /// Symbolic links and reparse points below configured roots are not followed during skill discovery.
 /// Each file is validated for YAML frontmatter. Resource and script files are discovered by scanning the skill
 /// directory for files with matching extensions. Invalid resources are skipped with logged warnings.
+/// Duplicate singleton frontmatter fields and duplicate metadata keys cause that skill to be skipped.
 /// Resource and script paths are checked against path traversal and symlink escape attacks.
 /// Discovered files are revalidated against their trusted skill directory immediately before use.
 /// </remarks>
@@ -41,6 +42,9 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     // The \uFEFF? prefix allows an optional UTF-8 BOM that some editors prepend.
     private static readonly Regex s_frontmatterRegex = new(@"\A\uFEFF?^---\s*$(.+?)^---\s*$", RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
 
+    // Matches top-level YAML keys, including mapping keys such as "metadata:" with no inline value.
+    private static readonly Regex s_yamlTopLevelKeyRegex = new(@"^([\w-]+)\s*:", RegexOptions.Multiline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
+
     // Matches top-level YAML "key: value" lines. Group 1 = key (supports hyphens for keys like allowed-tools),
     // Group 2 = quoted value, Group 3 = unquoted value.
     // Accepts single or double quotes; the lazy quantifier trims trailing whitespace on unquoted values.
@@ -53,6 +57,16 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     // Matches indented YAML "key: value" lines within a metadata block.
     // Group 1 = key (supports hyphens), Group 2 = quoted value, Group 3 = unquoted value.
     private static readonly Regex s_yamlIndentedKeyValueRegex = new(@"^\s+([\w-]+)\s*:\s*(?:[""'](.+?)[""']|(.+?))\s*$", RegexOptions.Multiline | RegexOptions.Compiled, TimeSpan.FromSeconds(5));
+
+    private static readonly HashSet<string> s_singletonFrontmatterKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "name",
+        "description",
+        "license",
+        "compatibility",
+        "allowed-tools",
+        "metadata",
+    };
 
     private readonly IEnumerable<string> _skillPaths;
     private readonly HashSet<string> _allowedResourceExtensions;
@@ -235,6 +249,23 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         string? compatibility = null;
         string? allowedTools = null;
 
+        // Reject ambiguous repeated fields before parsing their values.
+        var seenSingletonKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match keyMatch in s_yamlTopLevelKeyRegex.Matches(yamlContent))
+        {
+            string key = keyMatch.Groups[1].Value;
+            if (!s_singletonFrontmatterKeys.Contains(key))
+            {
+                continue;
+            }
+
+            if (!seenSingletonKeys.Add(key))
+            {
+                LogDuplicateFrontmatterKey(this._logger, skillFilePath, key);
+                return false;
+            }
+        }
+
         foreach (Match kvMatch in s_yamlKeyValueRegex.Matches(yamlContent))
         {
             string key = kvMatch.Groups[1].Value;
@@ -270,9 +301,18 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         if (metadataMatch.Success)
         {
             metadata = [];
+            var seenMetadataKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (Match kvMatch in s_yamlIndentedKeyValueRegex.Matches(metadataMatch.Groups[1].Value))
             {
-                metadata[kvMatch.Groups[1].Value] = kvMatch.Groups[2].Success ? kvMatch.Groups[2].Value : kvMatch.Groups[3].Value;
+                string key = kvMatch.Groups[1].Value;
+                // Match AdditionalPropertiesDictionary semantics so case variants cannot overwrite.
+                if (!seenMetadataKeys.Add(key))
+                {
+                    LogDuplicateFrontmatterKey(this._logger, skillFilePath, $"metadata.{key}");
+                    return false;
+                }
+
+                metadata[key] = kvMatch.Groups[2].Success ? kvMatch.Groups[2].Value : kvMatch.Groups[3].Value;
             }
         }
 
@@ -718,6 +758,9 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
     [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}' does not contain valid YAML frontmatter delimited by '---'")]
     private static partial void LogInvalidFrontmatter(ILogger logger, string skillFilePath);
+
+    [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}' contains duplicate frontmatter key '{Key}'")]
+    private static partial void LogDuplicateFrontmatterKey(ILogger logger, string skillFilePath, string key);
 
     [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}' has an invalid '{FieldName}' value: {Reason}")]
     private static partial void LogInvalidFieldValue(ILogger logger, string skillFilePath, string fieldName, string reason);

@@ -1222,6 +1222,120 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Equal("Skill with BOM", skills[0].Frontmatter.Description);
     }
 
+    [Theory]
+    [InlineData("name: duplicate-skill")]
+    [InlineData("description: Another description.")]
+    [InlineData("license: Apache-2.0")]
+    [InlineData("compatibility: Other")]
+    [InlineData("allowed-tools: write")]
+    [InlineData("metadata:\n  owner: second")]
+    public async Task GetSkillsAsync_DuplicateSingletonField_ExcludesSkillAsync(string duplicateField)
+    {
+        // Arrange
+        string content = $"""
+            ---
+            name: duplicate-skill
+            description: A skill.
+            license: MIT
+            compatibility: Python
+            allowed-tools: read
+            metadata:
+              owner: first
+            {duplicateField}
+            ---
+            Body.
+            """;
+        _ = this.CreateSkillDirectoryWithRawContent("duplicate-skill", content);
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
+    [Theory]
+    [InlineData("Name: duplicate-skill")]
+    [InlineData("Description: Another description.")]
+    [InlineData("License: Apache-2.0")]
+    [InlineData("Compatibility: Other")]
+    [InlineData("Allowed-Tools: write")]
+    [InlineData("Metadata:\n  owner: second")]
+    public async Task GetSkillsAsync_CaseVariantDuplicateSingletonField_ExcludesSkillAsync(string duplicateField)
+    {
+        // Arrange
+        string content = $"""
+            ---
+            name: duplicate-skill
+            description: A skill.
+            license: MIT
+            compatibility: Python
+            allowed-tools: read
+            metadata:
+              owner: first
+            {duplicateField}
+            ---
+            Body.
+            """;
+        _ = this.CreateSkillDirectoryWithRawContent("duplicate-skill", content);
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_UnrecognizedTopLevelFields_DoNotTriggerDuplicateValidationAsync()
+    {
+        // Arrange
+        _ = this.CreateSkillDirectoryWithRawContent(
+            "custom-fields",
+            "---\nname: custom-fields\ndescription: A skill.\ncustom-field: first\ncustom-field: second\n---\nBody.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Single(skills);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_DuplicateMetadataKey_ExcludesSkillAsync()
+    {
+        // Arrange
+        _ = this.CreateSkillDirectoryWithRawContent(
+            "duplicate-metadata",
+            "---\nname: duplicate-metadata\ndescription: A skill.\nmetadata:\n  owner: first\n  owner: second\n---\nBody.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_CaseVariantDuplicateMetadataKey_ExcludesSkillAsync()
+    {
+        // Arrange
+        _ = this.CreateSkillDirectoryWithRawContent(
+            "case-distinct-metadata",
+            "---\nname: case-distinct-metadata\ndescription: A skill.\nmetadata:\n  owner: first\n  Owner: second\n---\nBody.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        Assert.Empty(skills);
+    }
+
     [Fact]
     public async Task GetSkillsAsync_LicenseField_ParsedCorrectlyAsync()
     {
