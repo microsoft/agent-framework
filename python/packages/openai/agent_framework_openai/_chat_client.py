@@ -76,6 +76,8 @@ from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
 from openai.types.responses import (
     FunctionShellToolParam,
     ResponseCustomToolCall,
+    ResponseFunctionShellToolCall,
+    ResponseFunctionShellToolCallOutput,
     ResponseToolSearchCall,
     response_create_params,
 )
@@ -85,6 +87,7 @@ from openai.types.responses.parsed_response import (
     ParsedResponse,
 )
 from openai.types.responses.response import Response as OpenAIResponse
+from openai.types.responses.response_input_item_param import LocalShellCall
 from openai.types.responses.response_stream_event import (
     ResponseStreamEvent as OpenAIResponseStreamEvent,
 )
@@ -96,7 +99,7 @@ from openai.types.responses.tool_param import (
     Mcp,
 )
 from openai.types.responses.web_search_tool_param import WebSearchToolParam
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from ._exceptions import OpenAIContentFilterException
 from ._feature_usage import FeatureIndex
@@ -1742,16 +1745,6 @@ class RawOpenAIChatClient(
                         serialized_reasoning_ids.add(content.id)
                     continue
                 case "function_result":
-                    if request_uses_service_side_storage:
-                        props = content.additional_properties or {}
-                        # Local-shell variant serializes as `local_shell_call` carrying a server-issued id;
-                        # plain function_call_output pairs by call_id and is safe under storage.
-                        if props.get(
-                            OPENAI_SHELL_OUTPUT_TYPE_KEY
-                        ) == OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL and props.get(
-                            OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
-                        ):
-                            continue
                     new_args: dict[str, Any] = {}
                     new_args.update(
                         self._prepare_content_for_openai(
@@ -1771,7 +1764,25 @@ class RawOpenAIChatClient(
                         replays_local_storage=replays_local_storage,
                     )
                     if function_call:
+                        if function_call.get("type") in {"shell_call", "local_shell_call"} and (
+                            "content" in args or "tool_calls" in args
+                        ):
+                            all_messages.append(args)
+                            args = {"type": "message", "role": message.role}
                         all_messages.append(function_call)
+                case "shell_tool_call" | "shell_tool_result":
+                    if request_uses_service_side_storage:
+                        continue
+                    if "content" in args or "tool_calls" in args:
+                        all_messages.append(args)
+                        args = {"type": "message", "role": message.role}
+                    all_messages.append(
+                        self._prepare_content_for_openai(
+                            message.role,
+                            content,
+                            replays_local_storage=replays_local_storage,
+                        )
+                    )
                 case "function_approval_request":
                     # Service-stored hosted requests are already present remotely, and local approvals
                     # are resolved in-process; neither should be serialized as an MCP input item.
@@ -1984,6 +1995,11 @@ class RawOpenAIChatClient(
                     return _attach_prompt_cache_breakpoint(file_obj, content)
                 return {}
             case "function_call":
+                shell_output_type = content.additional_properties.get(OPENAI_SHELL_OUTPUT_TYPE_KEY)
+                if shell_output_type == OPENAI_SHELL_OUTPUT_TYPE_SHELL_CALL:
+                    return self._prepare_shell_transcript_item_for_openai(content, expected_type="shell_call")
+                if shell_output_type == OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL:
+                    return self._prepare_shell_transcript_item_for_openai(content, expected_type="local_shell_call")
                 if not content.call_id:
                     logger.warning(f"FunctionCallContent missing call_id for function '{content.name}'")
                     return {}
@@ -2006,6 +2022,10 @@ class RawOpenAIChatClient(
                 if status := content.additional_properties.get("status"):
                     function_call_obj["status"] = status
                 return function_call_obj
+            case "shell_tool_call":
+                return self._prepare_shell_transcript_item_for_openai(content, expected_type="shell_call")
+            case "shell_tool_result":
+                return self._prepare_shell_transcript_item_for_openai(content, expected_type="shell_call_output")
             case "function_result":
                 shell_output_type = (
                     content.additional_properties.get(OPENAI_SHELL_OUTPUT_TYPE_KEY)
@@ -2387,6 +2407,35 @@ class RawOpenAIChatClient(
                 continue
             out.append(item)
         return out
+
+    @classmethod
+    def _prepare_shell_transcript_item_for_openai(
+        cls,
+        content: Content,
+        *,
+        expected_type: Literal["shell_call", "shell_call_output", "local_shell_call"],
+    ) -> dict[str, Any]:
+        """Restore a provider-issued shell transcript item for stateless replay."""
+        payload = cls._serialize_provider_payload(content.raw_representation)
+        if isinstance(payload, Mapping):
+            typed_payload = cast("Mapping[str, Any]", payload)
+            raw_call_id = typed_payload.get("call_id")
+            try:
+                if expected_type == "shell_call":
+                    ResponseFunctionShellToolCall.model_validate(typed_payload)
+                elif expected_type == "shell_call_output":
+                    ResponseFunctionShellToolCallOutput.model_validate(typed_payload)
+                else:
+                    TypeAdapter(LocalShellCall).validate_python(typed_payload)
+            except ValidationError:
+                pass
+            else:
+                if isinstance(raw_call_id, str) and raw_call_id and raw_call_id == content.call_id:
+                    return dict(typed_payload)
+        raise ChatClientInvalidRequestException(
+            f"Stateless replay cannot reconstruct {expected_type} for shell call {content.call_id!r}. "
+            "Use service-side continuation or preserve the original provider response item."
+        )
 
     @staticmethod
     def _serialize_provider_payload(value: Any) -> Any:

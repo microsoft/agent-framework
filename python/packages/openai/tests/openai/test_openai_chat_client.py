@@ -42,6 +42,7 @@ from agent_framework.exceptions import (
     SettingNotFoundError,
 )
 from openai import AsyncOpenAI, BadRequestError
+from openai.types.responses import ResponseFunctionShellToolCall, ResponseFunctionShellToolCallOutput
 from openai.types.responses.response_reasoning_item import Summary
 from openai.types.responses.response_reasoning_summary_text_delta_event import (
     ResponseReasoningSummaryTextDeltaEvent,
@@ -2420,7 +2421,7 @@ async def test_local_shell_tool_requires_approval_before_function_loop_execution
 
 @pytest.mark.asyncio
 async def test_mixed_shell_calls_only_invoke_explicit_local_shell_call() -> None:
-    """A hosted shell call remains informational alongside an executable local call."""
+    """Stateless replay preserves hosted shell transcript while executing only the local call."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     executed_commands: list[str] = []
 
@@ -2432,6 +2433,29 @@ async def test_mixed_shell_calls_only_invoke_explicit_local_shell_call() -> None
         func=local_exec,
         approval_mode="never_require",
     )
+    hosted_shell_call = ResponseFunctionShellToolCall.model_validate({
+        "id": "hosted-shell-item-1",
+        "type": "shell_call",
+        "call_id": "hosted-shell-call-1",
+        "action": {"commands": ["pwd"], "timeout_ms": 30000, "max_output_length": 4096},
+        "environment": {"type": "container_reference", "container_id": "container-1"},
+        "status": "completed",
+    })
+    hosted_shell_output = ResponseFunctionShellToolCallOutput.model_validate({
+        "id": "hosted-shell-output-1",
+        "type": "shell_call_output",
+        "call_id": "hosted-shell-call-1",
+        "output": [{"stdout": "/workspace", "stderr": "", "outcome": {"type": "exit", "exit_code": 0}}],
+        "status": "completed",
+    })
+    local_shell_call = ResponseFunctionShellToolCall.model_validate({
+        "id": "local-shell-item-1",
+        "type": "shell_call",
+        "call_id": "local-shell-call-1",
+        "action": {"commands": ["python --version"], "timeout_ms": 30000},
+        "environment": {"type": "local"},
+        "status": "completed",
+    })
 
     mock_response1 = MagicMock()
     mock_response1.output_parsed = None
@@ -2443,37 +2467,15 @@ async def test_mixed_shell_calls_only_invoke_explicit_local_shell_call() -> None
     mock_response1.status = "completed"
     mock_response1.finish_reason = "tool_calls"
     mock_response1.incomplete = None
-
-    mock_action = MagicMock()
-    mock_action.commands = ["pwd"]
-    mock_action.timeout_ms = 30000
-    mock_action.max_output_length = 4096
-
-    mock_shell_call = MagicMock()
-    mock_shell_call.type = "shell_call"
-    mock_shell_call.id = "sh_test_shell_call_1"
-    mock_shell_call.call_id = "shell-call-1"
-    mock_shell_call.action = mock_action
-    mock_hosted_environment = MagicMock()
-    mock_hosted_environment.type = "container_reference"
-    mock_shell_call.environment = mock_hosted_environment
-    mock_shell_call.status = "completed"
-
-    mock_local_action = MagicMock()
-    mock_local_action.commands = ["python --version"]
-    mock_local_action.timeout_ms = 30000
-
-    mock_local_environment = MagicMock()
-    mock_local_environment.type = "local"
-
-    mock_local_shell_call = MagicMock()
-    mock_local_shell_call.type = "shell_call"
-    mock_local_shell_call.id = "local-shell-item-1"
-    mock_local_shell_call.call_id = "local-shell-call-1"
-    mock_local_shell_call.action = mock_local_action
-    mock_local_shell_call.environment = mock_local_environment
-    mock_local_shell_call.status = "completed"
-    mock_response1.output = [mock_shell_call, mock_local_shell_call]
+    prefix_message = MagicMock()
+    prefix_message.type = "message"
+    prefix_content = MagicMock()
+    prefix_content.type = "output_text"
+    prefix_content.text = "Checking shell environments"
+    prefix_content.annotations = []
+    prefix_content.logprobs = None
+    prefix_message.content = [prefix_content]
+    mock_response1.output = [prefix_message, hosted_shell_call, hosted_shell_output, local_shell_call]
 
     mock_response2 = MagicMock()
     mock_response2.output_parsed = None
@@ -2499,16 +2501,100 @@ async def test_mixed_shell_calls_only_invoke_explicit_local_shell_call() -> None
     ) as mock_create:
         await client.get_response(
             messages=[Message(role="user", contents=["What Python version is available?"])],
-            options={"tools": [local_shell_tool]},
+            options={"tools": [local_shell_tool], "store": False},
         )
 
         assert executed_commands == ["python --version"]
         assert mock_create.call_count == 2
         second_call_input = mock_create.call_args_list[1].kwargs["input"]
-        local_shell_outputs = [item for item in second_call_input if item.get("type") == "shell_call_output"]
-        assert len(local_shell_outputs) == 1
-        assert local_shell_outputs[0]["call_id"] == "local-shell-call-1"
-        assert all(item.get("type") != "local_shell_call_output" for item in second_call_input)
+        assert [item.get("type") for item in second_call_input] == [
+            "message",
+            "message",
+            "shell_call",
+            "shell_call_output",
+            "shell_call",
+            "shell_call_output",
+        ]
+        assert second_call_input[1]["content"][0]["text"] == "Checking shell environments"
+        shell_items = [item for item in second_call_input if item.get("type") in {"shell_call", "shell_call_output"}]
+        assert shell_items == [
+            hosted_shell_call.model_dump(mode="json", exclude_none=True),
+            hosted_shell_output.model_dump(mode="json", exclude_none=True),
+            local_shell_call.model_dump(mode="json", exclude_none=True),
+            {
+                "type": "shell_call_output",
+                "call_id": "local-shell-call-1",
+                "output": [
+                    {
+                        "stdout": "Python 3.13.0",
+                        "stderr": "",
+                        "outcome": {"type": "exit", "exit_code": 0},
+                    }
+                ],
+            },
+        ]
+        assert all(item.get("type") != "function_call" for item in second_call_input)
+
+
+@pytest.mark.parametrize(
+    ("content", "expected_type"),
+    [
+        (Content.from_shell_tool_call(call_id="shell-call-1", commands=["pwd"]), "shell_call"),
+        (
+            Content.from_shell_tool_result(
+                call_id="shell-call-1",
+                outputs=[Content.from_shell_command_output(stdout="/workspace", stderr="", exit_code=0)],
+            ),
+            "shell_call_output",
+        ),
+        (
+            Content.from_shell_tool_call(
+                call_id="shell-call-1",
+                commands=["pwd"],
+                raw_representation={"type": "shell_call", "call_id": "shell-call-1"},
+            ),
+            "shell_call",
+        ),
+        (
+            Content.from_shell_tool_result(
+                call_id="shell-call-1",
+                outputs=[Content.from_shell_command_output(stdout="/workspace", stderr="", exit_code=0)],
+                raw_representation={"type": "shell_call_output", "call_id": "shell-call-1"},
+            ),
+            "shell_call_output",
+        ),
+        (
+            Content.from_shell_tool_call(
+                call_id="shell-call-1",
+                commands=["pwd"],
+                raw_representation=ResponseFunctionShellToolCall.model_validate({
+                    "id": "hosted-shell-item-1",
+                    "type": "shell_call",
+                    "call_id": "different-shell-call",
+                    "action": {"commands": ["pwd"]},
+                    "environment": {"type": "container_reference", "container_id": "container-1"},
+                    "status": "completed",
+                }),
+            ),
+            "shell_call",
+        ),
+    ],
+)
+def test_stateless_shell_transcript_without_provider_item_fails(
+    content: Content,
+    expected_type: str,
+) -> None:
+    """Stateless replay fails explicitly when provider shell shape is unavailable."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    with pytest.raises(
+        ChatClientInvalidRequestException,
+        match=rf"cannot reconstruct {expected_type}.*shell-call-1",
+    ):
+        client._prepare_messages_for_openai(
+            [Message(role="assistant", contents=[content])],
+            request_uses_service_side_storage=False,
+        )
 
 
 async def test_tool_loop_store_false_replays_encrypted_reasoning_group() -> None:
@@ -8507,9 +8593,8 @@ def test_stateless_history_preserves_pending_hosted_approval_request_until_respo
     assert resolved_items == []
 
 
-def test_prepare_messages_strips_local_shell_call_under_storage() -> None:
-    """Local-shell-call function_results carry a server-issued local_shell_call_item_id and must
-    be stripped under storage. Plain function_results (no shell ID) are kept either way (#3295)."""
+def test_prepare_messages_keeps_local_shell_output_under_storage() -> None:
+    """Locally generated shell output must reach the provider in every continuation mode."""
     from agent_framework_openai._chat_client import (
         OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY,
         OPENAI_SHELL_OUTPUT_TYPE_KEY,
@@ -8528,15 +8613,18 @@ def test_prepare_messages_strips_local_shell_call_under_storage() -> None:
     plain_result = Content.from_function_result(call_id="plain_1", result="plain")
     message = Message(role="tool", contents=[shell_result, plain_result])
 
-    storage_on = client._prepare_message_for_openai(message, request_uses_service_side_storage=True)
-    types_on = [item.get("type") for item in storage_on]
-    assert OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL not in types_on
-    assert "function_call_output" in types_on
-
-    storage_off = client._prepare_message_for_openai(message, request_uses_service_side_storage=False)
-    types_off = [item.get("type") for item in storage_off]
-    assert OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL in types_off
-    assert "function_call_output" in types_off
+    expected_shell_output = {
+        "id": "lsh_server_issued",
+        "type": OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL,
+        "output": '{"stdout": "ok", "exit_code": 0}',
+    }
+    for request_uses_service_side_storage in (True, False):
+        prepared = client._prepare_message_for_openai(
+            message,
+            request_uses_service_side_storage=request_uses_service_side_storage,
+        )
+        assert expected_shell_output in prepared
+        assert any(item.get("type") == "function_call_output" for item in prepared)
 
 
 def test_prepare_messages_strips_mcp_items_under_storage() -> None:
