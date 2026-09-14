@@ -38,6 +38,7 @@ from agent_framework import (
     add_usage_details,
 )
 from agent_framework._telemetry import mark_feature_used
+from agent_framework._workflows._typing_utils import is_instance_of, try_coerce_to_type
 from agent_framework.exceptions import AgentFrameworkException
 from anyio import CancelScope
 from azure.ai.agentserver.core import get_request_context
@@ -1496,15 +1497,22 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         raise ValueError("The input does not match an authorized pending functional workflow request.")
                     pending_request = pending[request_id]
                     if content.type == "function_result":
-                        responses[request_id] = content if pending_request.response_type is Content else content.result
+                        response = content if pending_request.response_type is Content else content.result
                     elif content.type == "function_approval_response" and pending_request.response_type is bool:
-                        responses[request_id] = content.approved
+                        response = content.approved
                     elif content.type == "function_approval_response" and pending_request.response_type is Content:
-                        responses[request_id] = content
+                        response = content
                     else:
                         raise ValueError(
                             "This pending functional workflow request requires a matching function result."
                         )
+                    response = try_coerce_to_type(response, pending_request.response_type)
+                    if not is_instance_of(response, pending_request.response_type):
+                        raise ValueError(
+                            f"Response type mismatch for request ID {request_id}: "
+                            f"expected {pending_request.response_type}, got {type(response)}"
+                        )
+                    responses[request_id] = response
             if not responses:
                 raise ValueError("Pending functional workflow requests require structured responses.")
             run_kwargs = {

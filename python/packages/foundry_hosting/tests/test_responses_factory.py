@@ -5,12 +5,15 @@
 import asyncio
 import copy
 import gc
+import json
 import weakref
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import aclosing, contextmanager
+from dataclasses import dataclass
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 from agent_framework import (
     Agent,
@@ -45,7 +48,8 @@ from azure.ai.agentserver.core import (
     reset_request_context,
     set_request_context,
 )
-from azure.ai.agentserver.responses import ResponseContext, ResponsesServerOptions
+from azure.ai.agentserver.responses import InMemoryResponseProvider, ResponseContext, ResponsesServerOptions
+from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.models import CreateResponse
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from typing_extensions import Never, Self
@@ -222,7 +226,11 @@ class _Counter(Executor):
         self.count = 0
 
     @handler
-    async def count_message(self, messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:
+    async def count_message(
+        self,
+        messages: list[Message],
+        ctx: WorkflowContext[Never, str],  # type: ignore[valid-type]
+    ) -> None:
         self.count += 1
         await ctx.yield_output(f"{self.count}:{'|'.join(message.text for message in messages)}")
 
@@ -433,11 +441,16 @@ async def _pending_bool(messages: list[Message], ctx: RunContext) -> str:
 
 class _Pending(Executor):
     @handler
-    async def ask(self, messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:
+    async def ask(self, messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
         await ctx.request_info(messages[0].text, response_type=str)
 
     @response_handler
-    async def answer(self, original_request: str, response: str, ctx: WorkflowContext[Never, str]) -> None:
+    async def answer(
+        self,
+        original_request: str,
+        response: str,
+        ctx: WorkflowContext[Never, str],  # type: ignore[valid-type]
+    ) -> None:
         await ctx.yield_output(f"{original_request}:{response}")
 
 
@@ -564,17 +577,6 @@ async def test_cancelled_factory_is_not_retried_and_releases_lock() -> None:
 
 
 @pytest.mark.parametrize("functional", [False, True])
-@pytest.mark.parametrize("same_wrapper", [False, True])
-async def test_reusing_workflow_wrapper_or_underlying_workflow_fails(functional: bool, same_wrapper: bool) -> None:
-    agent = _functional.build().as_agent() if functional else _graph()
-    underlying = agent._workflow if isinstance(agent, FunctionalWorkflowAgent) else agent.workflow
-    server = _Stores().server(lambda: agent if same_wrapper else underlying.as_agent())
-    assert _types(await _collect(server))[-1] == "response.completed"
-    assert "reused" in _failure(await _collect(server, _context(response="two")))
-    assert not server._scope_locks._entries
-
-
-@pytest.mark.parametrize("functional", [False, True])
 async def test_completed_workflows_are_not_retained_by_factory_resolver(functional: bool) -> None:
     refs: list[weakref.ReferenceType[Any]] = []
 
@@ -589,8 +591,6 @@ async def test_completed_workflows_are_not_retained_by_factory_resolver(function
     await asyncio.sleep(0)
     gc.collect()
     assert all(reference() is None for reference in refs)
-    assert server._agent_resolver is not None
-    assert not server._agent_resolver._seen
 
 
 @pytest.mark.parametrize("finish", ["complete", "close", "cancel-signal", "model-error"])
@@ -982,6 +982,246 @@ async def test_functional_pending_response_requires_authorized_matching_type_and
     assert _text(approved) == "hello:owner"
 
 
+@dataclass
+class _FunctionalAnswer:
+    text: str
+    score: float
+
+
+@pytest.mark.parametrize(
+    ("response_type", "value"),
+    [(bool, True), (bool, False), (str, "accepted"), (_FunctionalAnswer, {"text": "accepted", "score": 2})],
+    ids=["true", "false", "string", "structured"],
+)
+async def test_functional_response_coerces_normalized_results(
+    response_type: type, value: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    received: list[Any] = []
+
+    @workflow(name="typed-functional")
+    async def typed(messages: list[Message], ctx: RunContext) -> str:
+        answer = await ctx.request_info(messages[0].text, response_type=response_type, request_id="answer")
+        received.append(answer)
+        return repr(answer)
+
+    stores = _Stores()
+
+    def factory() -> FunctionalWorkflowAgent:
+        return typed.build().as_agent()
+
+    assert _types(await _collect(stores.server(factory)))[-1] == "response.completed"
+    # The wire converter stringifies outputs. Exercise core structured coercion on
+    # normalized framework content without introducing JSON parsing into the host.
+    monkeypatch.setattr(
+        "agent_framework_foundry_hosting._responses._items_to_messages",
+        AsyncMock(return_value=[Message("tool", [Content("function_result", call_id="answer", result=value)])]),
+    )
+    resumed = await _collect(stores.server(factory), _context(response="two"))
+    assert _types(resumed)[-1] == "response.completed", resumed
+    expected = _FunctionalAnswer("accepted", 2.0) if response_type is _FunctionalAnswer else value
+    assert received == [expected]
+    assert type(received[0]) is response_type
+    if isinstance(received[0], _FunctionalAnswer):
+        assert type(received[0].score) is float
+    assert _text(resumed) == repr(expected)
+
+
+@pytest.mark.parametrize("chain", [False, True])
+@pytest.mark.parametrize(
+    "invalid",
+    ["bool-string", "bool-number", "bool-null", "string-bool", "approval-string", "unknown", "duplicate"],
+)
+async def test_functional_invalid_batch_preserves_checkpoint_and_allows_retry(
+    chain: bool, invalid: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executions: list[str] = []
+    received: list[Any] = []
+
+    @workflow(name="typed-functional-batch")
+    async def typed(messages: list[Message], ctx: RunContext) -> str:
+        executions.append(messages[0].text)
+        answers = await asyncio.gather(
+            ctx.request_info("text?", response_type=str, request_id="text"),
+            ctx.request_info("approve?", response_type=bool, request_id="decision"),
+        )
+        received.extend(answers)
+        return f"{answers[0]}:{answers[1]}"
+
+    stores = _Stores()
+
+    def factory() -> FunctionalWorkflowAgent:
+        return typed.build().as_agent()
+
+    conversation = None if chain else "conversation"
+    source_id = conversation or "response-1"
+    assert (
+        _types(await _collect(stores.server(factory), _context(conversation=conversation)))[-1] == "response.completed"
+    )
+    storage = stores.checkpoints[("alice", source_id)]
+    checkpoint = await storage.get_latest(workflow_name="typed-functional-batch")
+    assert checkpoint is not None
+    assert set(checkpoint.pending_request_info_events) == {"text", "decision"}
+    checkpoint_before = json.dumps(checkpoint.to_dict(), default=lambda value: value.to_dict(), sort_keys=True)
+    sessions = stores.sessions["alice"]
+    session = await sessions.get(source_id)
+    assert session is not None
+    state_before = copy.deepcopy(session.state)
+    source_save = AsyncMock(wraps=storage.save)
+    session_save = AsyncMock(wraps=sessions.set)
+    monkeypatch.setattr(storage, "save", source_save)
+    monkeypatch.setattr(sessions, "set", session_save)
+    contents = [
+        Content.from_function_result("text", result="accepted"),
+        Content("function_result", call_id="decision", result=False),
+    ]
+    if invalid.startswith("bool-"):
+        contents[1] = Content(
+            "function_result",
+            call_id="decision",
+            result={"bool-string": "false", "bool-number": 1, "bool-null": None}[invalid],
+        )
+    elif invalid == "string-bool":
+        contents[0] = Content("function_result", call_id="text", result=False)
+    elif invalid == "approval-string":
+        contents[1] = Content("function_approval_response", id="decision", approved=cast(Any, "false"))
+    elif invalid == "unknown":
+        contents.append(Content.from_function_result("not-authorized", result="extra"))
+    else:
+        contents.append(Content.from_function_result("text", result="duplicate"))
+    converted = AsyncMock(return_value=[Message("tool", contents)])
+    monkeypatch.setattr("agent_framework_foundry_hosting._responses._items_to_messages", converted)
+
+    rejected = await _collect(
+        stores.server(factory),
+        _context(response="rejected", conversation=conversation),
+        previous="response-1" if chain else None,
+    )
+    error = _failure(rejected)
+    assert ("authorized pending" if invalid in ("unknown", "duplicate") else "Response type mismatch") in error
+    assert executions == ["hello"]
+    assert received == []
+    source_save.assert_not_awaited()
+    session_save.assert_not_awaited()
+    unchanged = await storage.get_latest(workflow_name="typed-functional-batch")
+    assert unchanged is not None
+    assert json.dumps(unchanged.to_dict(), default=lambda value: value.to_dict(), sort_keys=True) == checkpoint_before
+    unchanged_session = await sessions.get(source_id)
+    assert unchanged_session is not None
+    assert unchanged_session.state == state_before
+    if chain:
+        assert await sessions.get("rejected") is None
+        assert not await stores.checkpoints[("alice", "rejected")].list_checkpoint_ids(
+            workflow_name="typed-functional-batch"
+        )
+
+    converted.return_value = [
+        Message(
+            "tool",
+            [
+                Content.from_function_result("text", result="accepted"),
+                Content("function_approval_response", id="decision", approved=False),
+            ],
+        )
+    ]
+    resumed = await _collect(
+        stores.server(factory),
+        _context(response="retry", conversation=conversation),
+        previous="response-1" if chain else None,
+    )
+    assert _types(resumed)[-1] == "response.completed", resumed
+    assert _text(resumed) == "accepted:False"
+    assert received == ["accepted", False]
+    assert executions == ["hello", "hello"]
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["nonstream", "stream"])
+@pytest.mark.parametrize("decision", [False, True])
+async def test_functional_response_http_rejects_string_for_bool_then_accepts_approval(
+    stream: bool, decision: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stores = _Stores()
+    server = stores.server(lambda: _pending_bool.build().as_agent(), store=InMemoryResponseProvider())
+    transport = httpx.ASGITransport(app=server)
+
+    async def post(client: httpx.AsyncClient, items: Any) -> dict[str, Any]:
+        response = await client.post(
+            "/responses",
+            json={"model": "test-model", "input": items, "conversation": "conversation", "stream": stream},
+        )
+        assert response.status_code == 200, response.text
+        if not stream:
+            return response.json()
+        events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: {")]
+        terminal = [event for event in events if event["type"] in ("response.completed", "response.failed")]
+        assert len(terminal) == 1, events
+        return terminal[0]["response"]
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        first = await post(client, "private")
+        assert first["status"] == "completed", first
+        user = next(iter(stores.sessions))
+        storage = stores.checkpoints[(user, "conversation")]
+        checkpoint = await storage.get_latest(workflow_name="functional-pending-bool")
+        assert checkpoint is not None
+        request_id = next(iter(checkpoint.pending_request_info_events))
+        approval_id = next(iter(stores.approvals[user].requests))
+        session_save = AsyncMock(wraps=stores.sessions[user].set)
+        checkpoint_save = AsyncMock(wraps=storage.save)
+        monkeypatch.setattr(stores.sessions[user], "set", session_save)
+        monkeypatch.setattr(storage, "save", checkpoint_save)
+        rejected = await post(client, [{"type": "function_call_output", "call_id": request_id, "output": "false"}])
+        assert rejected["status"] == "failed", rejected
+        assert "Response type mismatch" in rejected["error"]["message"]
+        session_save.assert_not_awaited()
+        checkpoint_save.assert_not_awaited()
+        resumed = await post(
+            client, [{"type": "mcp_approval_response", "approval_request_id": approval_id, "approve": decision}]
+        )
+        assert resumed["status"] == "completed", resumed
+        assert [
+            part["text"]
+            for item in resumed["output"]
+            if item["type"] == "message"
+            for part in item["content"]
+            if part["type"] == "output_text"
+        ] == [f"private:{decision}"]
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["nonstream", "stream"])
+async def test_functional_response_http_accepts_string_result(stream: bool) -> None:
+    stores = _Stores()
+    server = stores.server(lambda: _pending_string.build().as_agent(), store=InMemoryResponseProvider())
+    transport = httpx.ASGITransport(app=server)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        first = await client.post("/responses", json={"input": "private", "conversation": "conversation"})
+        assert first.status_code == 200
+        assert first.json()["status"] == "completed"
+        user = next(iter(stores.sessions))
+        checkpoint = await stores.checkpoints[(user, "conversation")].get_latest(
+            workflow_name="functional-pending-string"
+        )
+        assert checkpoint is not None
+        request_id = next(iter(checkpoint.pending_request_info_events))
+        response = await client.post(
+            "/responses",
+            json={
+                "input": [{"type": "function_call_output", "call_id": request_id, "output": "accepted"}],
+                "conversation": "conversation",
+                "stream": stream,
+            },
+        )
+        assert response.status_code == 200, response.text
+        if stream:
+            events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: {")]
+            assert _types(events)[-1] == "response.completed", events
+            assert _text(events) == "private:accepted"
+            result = events[-1]["response"]
+        else:
+            result = response.json()
+        assert result["status"] == "completed", result
+        assert result["output"][0]["content"][0]["text"] == "private:accepted"
+
+
 async def test_graph_recovery_without_checkpoint_replays_original_input() -> None:
     stores = _Stores()
     context = _context("original")
@@ -1129,7 +1369,11 @@ async def test_checkpoint_preparation_failure_rejects_older_checkpoint_and_fresh
 
     class FailingCheckpoint(_Counter):
         @handler
-        async def count_message(self, messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:
+        async def count_message(
+            self,
+            messages: list[Message],
+            ctx: WorkflowContext[Never, str],  # type: ignore[valid-type]
+        ) -> None:
             calls.extend(message.text for message in messages)
             await super().count_message(messages, ctx)
 
@@ -1262,7 +1506,7 @@ class _RecoveryStart(Executor):
 
 class _RecoveryEnd(Executor):
     @handler
-    async def end(self, text: str, ctx: WorkflowContext[Never, str]) -> None:
+    async def end(self, text: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
         await ctx.yield_output(f"last:{text}")
 
 
@@ -1376,11 +1620,22 @@ async def test_graph_recovery_selects_latest_or_response_paired_checkpoint(
     context = _context("must-not-replay")
     context.is_recovery = True
     if snapshot_kind != "latest":
-        context.persisted_response = (
+        snapshot = (
             next(snapshot for snapshot in snapshots if snapshot.get("output"))
             if snapshot_kind == "partial"
             else snapshots[0]
         )
+        # Pair the response with the matching workflow state explicitly, independent of
+        # how far the background iterator advanced while the host consumed its output.
+        checkpoints = await storage.list_checkpoints(workflow_name="recovery")
+        paired_checkpoint = next(
+            checkpoint
+            for checkpoint in checkpoints
+            if checkpoint.iteration_count == (1 if snapshot_kind == "partial" else 0)
+        )
+        saved_response = ResponseEventStream(response=snapshot)
+        saved_response.internal_metadata["_last_checkpoint_id"] = paired_checkpoint.checkpoint_id
+        context.persisted_response = saved_response.checkpoint().response
     events = await _collect(stores.server(_recovery_graph, options=options), context)
     assert _types(events)[-1] == "response.completed", events
     assert "must-not-replay" not in _text(events)
@@ -1388,6 +1643,11 @@ async def test_graph_recovery_selects_latest_or_response_paired_checkpoint(
     if snapshot_kind != "latest":
         assert load.await_args is not None
         assert load.await_args.args[0] != latest.checkpoint_id
+        assert context.persisted_response is not None
+        paired_checkpoint_id = ResponseEventStream(response=context.persisted_response).internal_metadata[
+            "_last_checkpoint_id"
+        ]
+        load.assert_awaited_once_with(paired_checkpoint_id)
         assert "original" in _text(events)
         if snapshot_kind == "partial":
             assert _text(events) == "last:original"

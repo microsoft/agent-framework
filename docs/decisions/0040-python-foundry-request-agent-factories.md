@@ -61,6 +61,8 @@ distributed coordination or checkpoint replay as exactly-once execution.
 
 Workflow callers migrate from `Host(workflow_agent)` to `Host(agent_factory=create_agent)`.
 The factory must construct new mutable objects, not return the same instance or reuse stateful executors.
+This is the factory implementer's responsibility. The host calls the factory per request but does not inspect
+object identities, recursively check captured state, or require weak-reference support.
 Stable workflow names, executor IDs, and serialization registrations are necessary for continuation.
 
 Ordinary-agent instance callers keep their existing lifecycle. Factories do not automatically save

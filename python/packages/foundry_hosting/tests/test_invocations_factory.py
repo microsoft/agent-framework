@@ -3,6 +3,7 @@
 """Request factory lifetime and workflow persistence for the text-only host."""
 
 import asyncio
+import json
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any, cast
@@ -36,6 +37,7 @@ from agent_framework import (
     step,
     workflow,
 )
+from agent_framework._filesystem import _storage_key_segment
 from anyio import CancelScope, create_task_group
 from azure.ai.agentserver.core import (
     FoundryAgentRequestContext,
@@ -139,9 +141,9 @@ class _OwnedAgent:
 
 
 class _Stores:
-    def __init__(self) -> None:
+    def __init__(self, sessions: SessionStore | None = None) -> None:
         self.checkpoints: dict[str, InMemoryCheckpointStorage] = {}
-        self.sessions = SessionStore()
+        self.sessions = sessions if sessions is not None else SessionStore()
         self.checkpoint_provider = MagicMock()
         self.checkpoint_provider.get_store.side_effect = self._checkpoint_store
         self.session_provider = MagicMock()
@@ -167,7 +169,11 @@ class _Counter(Executor):
         self.count = 0
 
     @handler
-    async def count_message(self, messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:
+    async def count_message(
+        self,
+        messages: list[Message],
+        ctx: WorkflowContext[Never, str],  # type: ignore[valid-type]
+    ) -> None:
         self.count += 1
         # Include the outer provider history, not just executor checkpoint state.
         await ctx.yield_output(f"{self.count}:{'|'.join(message.text for message in messages)}")
@@ -196,11 +202,16 @@ async def _functional_pending(messages: Any, ctx: RunContext) -> str:
 
 class _Pending(Executor):
     @handler
-    async def ask(self, messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:
+    async def ask(self, messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
         await ctx.request_info("approve?", response_type=str)
 
     @response_handler
-    async def answer(self, original_request: str, response: str, ctx: WorkflowContext[Never, str]) -> None:
+    async def answer(
+        self,
+        original_request: str,
+        response: str,
+        ctx: WorkflowContext[Never, str],  # type: ignore[valid-type]
+    ) -> None:
         await ctx.yield_output(response)
 
 
@@ -247,11 +258,13 @@ async def test_factory_once_per_request_inside_context_preserves_text(stream: bo
 
         return create() if awaitable else agent
 
-    server = InvocationsHostServer(agent_factory=factory)
+    server = _Stores().server(factory)
     assert await _invoke(server, stream=stream) == "ab"
     assert await _invoke(server, "second", stream=stream) == "ab"
     assert len(agents) == 2
-    assert agents[0].session is agents[1].session
+    assert agents[0].session is not None
+    assert agents[1].session is not None
+    assert agents[0].session.session_id == agents[1].session.session_id
     assert agents[0].calls == ["hello" if stream else ["hello"]]
     assert events == (["enter", "run", "iterator closed", "exit"] if stream else ["enter", "run", "exit"]) * 2
     assert server._agent is None
@@ -281,7 +294,7 @@ async def test_async_factory_failure_and_invalid_result_release_lock(stream: boo
 @pytest.mark.parametrize("stream", [False, True])
 async def test_run_failure_closes_owner_and_iterator(stream: bool) -> None:
     events: list[str] = []
-    server = InvocationsHostServer(agent_factory=lambda: _OwnedAgent(events, fail=True))
+    server = _Stores().server(lambda: _OwnedAgent(events, fail=True))
     with pytest.raises(RuntimeError, match="run failed"):
         await _invoke(server, stream=stream)
     assert events == (["enter", "run", "iterator closed", "exit"] if stream else ["enter", "run", "exit"])
@@ -297,7 +310,7 @@ async def test_stream_factory_and_resources_belong_to_asgi_consumer_task() -> No
         creation_task = asyncio.current_task()
         return _OwnedAgent(events)
 
-    server = InvocationsHostServer(agent_factory=factory)
+    server = _Stores().server(factory)
     with _context():
         response = await server._handle_invoke(_request(stream=True))
         assert creation_task is None
@@ -319,7 +332,7 @@ async def test_stream_factory_and_resources_belong_to_asgi_consumer_task() -> No
 async def test_stream_disconnect_or_cancellation_closes_suspended_iterator(disconnect: bool) -> None:
     events: list[str] = []
     sent = asyncio.Event()
-    server = InvocationsHostServer(agent_factory=lambda: _OwnedAgent(events))
+    server = _Stores().server(lambda: _OwnedAgent(events))
     with _context():
         response = await server._handle_invoke(_request(stream=True))
         assert isinstance(response, StreamingResponse)
@@ -369,7 +382,7 @@ async def test_same_scope_serializes_stream_through_cleanup_and_cancelled_waiter
         created += 1
         return _OwnedAgent(events)
 
-    server = InvocationsHostServer(agent_factory=factory)
+    server = _Stores().server(factory)
     with _context():
         response = await server._handle_invoke(_request(stream=True))
         assert isinstance(response, StreamingResponse)
@@ -426,19 +439,6 @@ async def test_graph_scopes_isolate_users_sessions_and_unsafe_identifiers(stream
     for user, session in scopes:
         assert (await _invoke(server, "next", stream=stream, user=user, session=session)).startswith("2:")
     assert not server._sessions
-
-
-@pytest.mark.parametrize("same_wrapper", [False, True])
-@pytest.mark.parametrize("functional", [False, True])
-async def test_reused_workflow_or_wrapper_is_rejected(same_wrapper: bool, functional: bool) -> None:
-    stores = _Stores()
-    agent = _functional.build().as_agent() if functional else _graph()
-    underlying = agent.workflow if isinstance(agent, WorkflowAgent) else agent._workflow
-    server = stores.server(lambda: agent if same_wrapper else underlying.as_agent())
-    await _invoke(server)
-    with pytest.raises(RuntimeError, match="reused a workflow"):
-        await _invoke(server, session="other")
-    assert not server._scope_locks._entries
 
 
 @pytest.mark.parametrize("damage", ["checkpoint", "session", "name", "kind"])
@@ -563,7 +563,7 @@ async def test_anyio_resource_scopes_exit_in_consumer_task_and_correct_order(can
             await self.group.__aexit__(*args)
             await super().__aexit__(*args)
 
-    server = InvocationsHostServer(agent_factory=lambda: TaskGroupAgent(events))
+    server = _Stores().server(lambda: TaskGroupAgent(events))
     with _context():
         response = await server._handle_invoke(_request(stream=True))
         assert isinstance(response, StreamingResponse)
@@ -605,6 +605,330 @@ class _TranscriptClient(BaseChatClient):
             return ChatResponse(messages=[Message("assistant", ["recorded"])])
 
         return ResponseStream(updates(), finalizer=ChatResponse.from_updates) if stream else response()
+
+
+class _SnapshotSessions(SessionStore):
+    def __init__(self) -> None:
+        self.snapshots: dict[str, str] = {}
+
+    async def get(self, session_id: str) -> AgentSession | None:
+        snapshot = self.snapshots.get(session_id)
+        return AgentSession.from_dict(json.loads(snapshot)) if snapshot is not None else None
+
+    async def set(self, session_id: str, session: AgentSession) -> None:
+        await asyncio.sleep(0)
+        self.snapshots[session_id] = json.dumps(session.to_dict())
+
+
+class _PersistedAgent(Agent):
+    def __init__(self, client: BaseChatClient, events: list[str]) -> None:
+        super().__init__(client=client, name="ordinary")
+        self.events = events
+
+    async def __aenter__(self) -> Self:
+        self.events.append("enter")
+        return await super().__aenter__()
+
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+        await super().__aexit__(exc_type, exc_val, exc_tb)
+        self.events.append("exit")
+
+    def create_session(self, *, session_id: str | None = None) -> AgentSession:
+        self.events.append("create")
+        session = super().create_session(session_id=session_id)
+        session.state["initialized"] = True
+        return session
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_ordinary_factory_sessions_persist_without_host_retention(stream: bool) -> None:
+    snapshots = _SnapshotSessions()
+    stores = _Stores(snapshots)
+    transcripts: list[list[str]] = []
+    events: list[str] = []
+
+    def factory() -> Agent:
+        return _PersistedAgent(_TranscriptClient(transcripts), events)
+
+    first = stores.server(factory)
+    for index in range(40):
+        assert await _invoke(first, f"first-{index}", session=str(index), stream=stream) == "recorded"
+    assert not first._sessions
+    assert not first._scope_locks._entries
+    assert len(snapshots.snapshots) == 40
+    assert events.count("create") == 40
+    second = stores.server(factory)
+    assert await _invoke(second, "next", session="0", stream=stream) == "recorded"
+    assert transcripts[-1] == ["first-0", "recorded", "next"]
+    assert events.count("create") == 40
+    assert events.count("enter") == events.count("exit") == 41
+    assert not second._sessions
+    assert not second._scope_locks._entries
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_ordinary_factory_persistence_isolates_authorized_scopes(stream: bool) -> None:
+    snapshots = _SnapshotSessions()
+    stores = _Stores(snapshots)
+    transcripts: list[list[str]] = []
+    scopes = [
+        ("user", "../session"),
+        ("other", "../session"),
+        ("user", r"..\session"),
+        ("a:b", "c"),
+        ("b", "c:a"),
+        ("USER", "../session"),
+    ]
+    for index, (user, session) in enumerate(scopes):
+        server = stores.server(lambda: Agent(client=_TranscriptClient(transcripts), name="ordinary"))
+        server.config.is_hosted = True
+        await _invoke(server, str(index), stream=stream, user=user, session=session)
+        assert transcripts[-1] == [str(index)]
+    for index, (user, session) in enumerate(scopes):
+        server = stores.server(lambda: Agent(client=_TranscriptClient(transcripts), name="ordinary"))
+        server.config.is_hosted = True
+        await _invoke(server, "next", stream=stream, user=user, session=session)
+        assert transcripts[-1] == [str(index), "recorded", "next"]
+    assert len(snapshots.snapshots) == len(scopes)
+    assert all("/" not in key and "\\" not in key for key in snapshots.snapshots)
+    assert stores.session_provider.get_store.call_args.kwargs["platform_context"].user_id == "USER"
+    stores.checkpoint_provider.get_store.assert_not_called()
+
+
+async def test_ordinary_factory_namespace_does_not_replace_workflow_or_responses_sessions() -> None:
+    snapshots = _SnapshotSessions()
+    stores = _Stores(snapshots)
+    workflow_key = _storage_key_segment(json.dumps(("user", "session")), encoded_prefix="~invocations-")
+    # Responses uses conversation/response IDs, while Invocations encodes its user/session pair.
+    responses_session = AgentSession(session_id="session")
+    responses_session.state["responses"] = True
+    await snapshots.set("session", responses_session)
+    assert await _invoke(stores.server(_graph), "workflow-first") == "1:workflow-first"
+    original_records = dict(snapshots.snapshots)
+    transcripts: list[list[str]] = []
+    await _invoke(stores.server(lambda: Agent(client=_TranscriptClient(transcripts), name="ordinary")), "ordinary")
+    assert transcripts == [["ordinary"]]
+    assert len(snapshots.snapshots) == 3
+    assert {key: snapshots.snapshots[key] for key in original_records} == original_records
+    ordinary_key = next(key for key in snapshots.snapshots if key not in original_records)
+    assert ordinary_key != workflow_key
+    assert ordinary_key.startswith("ordinary-~invocations-")
+    assert await _invoke(stores.server(_graph), "workflow-next") == "2:workflow-first|1:workflow-first|workflow-next"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("operation", ["get", "set"])
+async def test_ordinary_factory_store_failure_releases_resources_and_scope(
+    stream: bool, operation: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshots = _SnapshotSessions()
+    stores = _Stores(snapshots)
+    transcripts: list[list[str]] = []
+    events: list[str] = []
+    original = getattr(snapshots, operation)
+    failing = AsyncMock(side_effect=RuntimeError(f"{operation} failed"))
+    monkeypatch.setattr(snapshots, operation, failing)
+    server = stores.server(lambda: _PersistedAgent(_TranscriptClient(transcripts), events))
+    with pytest.raises(RuntimeError, match=f"{operation} failed"):
+        await _invoke(server, stream=stream)
+    assert events[-1] == "exit"
+    assert transcripts == ([] if operation == "get" else [["hello"]])
+    assert not server._sessions
+    assert not server._scope_locks._entries
+    assert not snapshots.snapshots
+    monkeypatch.setattr(snapshots, operation, original)
+    assert await _invoke(server, "retry", stream=stream) == "recorded"
+    assert len(snapshots.snapshots) == 1
+
+
+class _InterruptedClient(BaseChatClient):
+    def __init__(self, started: asyncio.Event, events: list[str], *, fail: bool) -> None:
+        super().__init__()
+        self.started = started
+        self.events = events
+        self.fail = fail
+
+    def _inner_get_response(
+        self, *, messages: Sequence[Message], stream: bool, options: Mapping[str, Any], **kwargs: Any
+    ) -> Any:
+        async def interrupt() -> None:
+            self.started.set()
+            if self.fail:
+                raise RuntimeError("client failed")
+            await asyncio.Event().wait()
+
+        async def updates() -> AsyncGenerator[ChatResponseUpdate]:
+            try:
+                yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("partial")])
+                await interrupt()
+            finally:
+                self.events.append("client closed")
+
+        async def response() -> ChatResponse:
+            await interrupt()
+            return ChatResponse(messages=[])
+
+        return ResponseStream(updates(), finalizer=ChatResponse.from_updates) if stream else response()
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("failure", ["error", "asyncio", "anyio"])
+async def test_ordinary_factory_interruption_persists_session_before_resource_cleanup(
+    stream: bool, failure: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshots = _SnapshotSessions()
+    stores = _Stores(snapshots)
+    events: list[str] = []
+    started = asyncio.Event()
+    original_set = snapshots.set
+
+    async def save(session_id: str, session: AgentSession) -> None:
+        await original_set(session_id, session)
+        events.append("saved")
+
+    monkeypatch.setattr(snapshots, "set", save)
+    server = stores.server(
+        lambda: _PersistedAgent(_InterruptedClient(started, events, fail=failure == "error"), events)
+    )
+    scope = CancelScope()
+
+    async def consume() -> None:
+        with scope:
+            await _invoke(server, stream=stream)
+
+    task = asyncio.create_task(consume())
+    await started.wait()
+    if failure == "anyio":
+        scope.cancel()
+        await task
+    else:
+        if failure == "asyncio":
+            task.cancel()
+        with pytest.raises(RuntimeError if failure == "error" else asyncio.CancelledError):
+            await task
+    assert events[-2:] == ["saved", "exit"]
+    if stream:
+        assert events.index("client closed") < events.index("saved")
+    assert len(snapshots.snapshots) == 1
+    saved = await snapshots.get(next(iter(snapshots.snapshots)))
+    assert saved is not None
+    assert saved.state["initialized"] is True
+    assert not server._sessions
+    assert not server._scope_locks._entries
+
+
+@pytest.mark.parametrize("interruption", ["close", "disconnect", "cancel"])
+async def test_ordinary_factory_suspended_stream_persists_on_close(
+    interruption: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshots = _SnapshotSessions()
+    stores = _Stores(snapshots)
+    events: list[str] = []
+    original_set = snapshots.set
+
+    async def save(session_id: str, session: AgentSession) -> None:
+        await original_set(session_id, session)
+        events.append("saved")
+
+    monkeypatch.setattr(snapshots, "set", save)
+    server = stores.server(lambda: _PersistedAgent(_TranscriptClient([]), events))
+    with _context():
+        response = await server._handle_invoke(_request(stream=True))
+        assert isinstance(response, StreamingResponse)
+        assert not snapshots.snapshots
+        assert not events
+        if interruption == "close":
+            iterator = cast(AsyncGenerator[str], response.body_iterator)
+            assert await anext(iterator) == "recorded"
+            assert not snapshots.snapshots
+            await iterator.aclose()
+        else:
+            sent = asyncio.Event()
+
+            async def send(message: Any) -> None:
+                if message["type"] == "http.response.body" and message.get("body"):
+                    assert not snapshots.snapshots
+                    sent.set()
+                    if interruption == "disconnect":
+                        raise OSError("disconnected")
+                    await asyncio.Event().wait()
+
+            consumer = asyncio.create_task(response.stream_response(send))
+            await sent.wait()
+            if interruption == "cancel":
+                consumer.cancel()
+            with pytest.raises(OSError if interruption == "disconnect" else asyncio.CancelledError):
+                await consumer
+    assert events[-2:] == ["saved", "exit"]
+    assert len(snapshots.snapshots) == 1
+    assert not server._sessions
+    assert not server._scope_locks._entries
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_ordinary_factory_lock_covers_save_and_allows_independent_scopes(
+    stream: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshots = _SnapshotSessions()
+    stores = _Stores(snapshots)
+    transcripts: list[list[str]] = []
+    events: list[str] = []
+    saving = asyncio.Event()
+    release = asyncio.Event()
+    original_set = snapshots.set
+
+    async def save(session_id: str, session: AgentSession) -> None:
+        if get_request_context().session_id == "session" and not saving.is_set():
+            saving.set()
+            await release.wait()
+        await original_set(session_id, session)
+
+    monkeypatch.setattr(snapshots, "set", save)
+    server = stores.server(lambda: _PersistedAgent(_TranscriptClient(transcripts), events))
+    first = asyncio.create_task(_invoke(server, "first", stream=stream))
+    waiting: asyncio.Task[str] | None = None
+    try:
+        await asyncio.wait_for(saving.wait(), timeout=2)
+        waiting = asyncio.create_task(_invoke(server, "second", stream=stream))
+        await asyncio.sleep(0)
+        assert events.count("enter") == 1
+        assert events.count("exit") == 0
+        assert not first.done()
+        assert await asyncio.wait_for(_invoke(server, "independent", session="other"), timeout=2) == "recorded"
+        assert transcripts == [["first"], ["independent"]]
+        assert not waiting.done()
+        release.set()
+        assert await first == "recorded"
+        assert await waiting == "recorded"
+        assert transcripts[-1] == ["first", "recorded", "second"]
+        assert len(snapshots.snapshots) == 2
+        assert not server._sessions
+        assert not server._scope_locks._entries
+    finally:
+        release.set()
+        await first
+        if waiting is not None:
+            await waiting
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_ordinary_instance_keeps_legacy_memory_and_ignores_session_provider(stream: bool) -> None:
+    provider = MagicMock()
+    provider.get_store.side_effect = AssertionError("instance must not access persisted storage")
+    transcripts: list[list[str]] = []
+    agent = Agent(client=_TranscriptClient(transcripts), name="ordinary")
+    server = InvocationsHostServer(agent, agent_session_store_provider=provider)
+    await _invoke(server, "first", stream=stream)
+    original = server._sessions["session"]
+    await _invoke(server, "second", stream=stream)
+    assert server._sessions["session"] is original
+    assert transcripts[-1] == ["first", "recorded", "second"]
+    await _invoke(server, "independent", session="other", stream=stream)
+    assert len(server._sessions) == 2
+    replacement = InvocationsHostServer(agent, agent_session_store_provider=provider)
+    await _invoke(replacement, "fresh", stream=stream)
+    assert transcripts[-1] == ["fresh"]
+    provider.get_store.assert_not_called()
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -655,7 +979,7 @@ async def test_functional_interruption_with_checkpoint_rejects_new_message(strea
 @pytest.mark.parametrize("stream", [False, True])
 async def test_cancellation_during_run_closes_resources(stream: bool) -> None:
     events: list[str] = []
-    server = InvocationsHostServer(agent_factory=lambda: _OwnedAgent(events, wait=asyncio.Event()))
+    server = _Stores().server(lambda: _OwnedAgent(events, wait=asyncio.Event()))
     task = asyncio.create_task(_invoke(server, stream=stream))
     await asyncio.sleep(0)
     assert events == ["enter", "run"]
@@ -716,7 +1040,11 @@ async def test_checkpoint_preparation_failure_rejects_older_checkpoint_and_fresh
 
     class FailingCheckpoint(_Counter):
         @handler
-        async def count_message(self, messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:
+        async def count_message(
+            self,
+            messages: list[Message],
+            ctx: WorkflowContext[Never, str],  # type: ignore[valid-type]
+        ) -> None:
             calls.extend(message.text for message in messages)
             await super().count_message(messages, ctx)
 
