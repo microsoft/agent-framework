@@ -707,6 +707,38 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             for event in self._emit_failure(response_event_stream, tracker, ex):
                 yield event
 
+    async def _load_request_messages(
+        self,
+        context: ResponseContext,
+        *,
+        approval_storage: FunctionApprovalStore | None,
+    ) -> tuple[list[Message], list[Message]]:
+        """Load the request's input messages and prior history concurrently.
+
+        The caller's input items and the conversation history are independent
+        storage round-trips with no data dependency, so they are fetched in
+        parallel to remove serial latency from the request critical path. The
+        history read is only issued when AgentServer is the history source; in
+        stateless single-turn requests it short-circuits without a round-trip.
+
+        Returns a ``(input_messages, history_messages)`` tuple; the caller is
+        responsible for ordering them (history precedes input) when assembling
+        the run.
+        """
+
+        async def _load_input() -> list[Message]:
+            input_items = await context.get_input_items()
+            return await _items_to_messages(input_items, approval_storage=approval_storage)
+
+        async def _load_history() -> list[Message]:
+            if not self._uses_agent_server_history:
+                return []
+            history = await context.get_history()
+            return await _output_items_to_messages(history, approval_storage=approval_storage)
+
+        input_messages, history_messages = await asyncio.gather(_load_input(), _load_history())
+        return input_messages, history_messages
+
     async def _handle_inner_agent(
         self,
         request: CreateResponse,
@@ -728,6 +760,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 "The agent will restart from the original input."
             )
 
+        request_messages_task: asyncio.Task[tuple[list[Message], list[Message]]] | None = None
         try:
             request_context = get_request_context()
             approval_storage = self._function_approval_storage_provider.get_store(
@@ -735,6 +768,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
             session_storage = self._session_storage_provider.get_store(
                 config=self.config, platform_context=request_context
+            )
+
+            # Load the caller's input items and prior conversation history concurrently with the
+            # session load below. These are independent storage round-trips with no data dependency
+            # between them, so overlapping them removes serial latency from the request critical path.
+            request_messages_task = asyncio.ensure_future(
+                self._load_request_messages(context, approval_storage=approval_storage)
             )
 
             previous_response_id = request.get("previous_response_id")
@@ -748,6 +788,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 session = self._agent.create_session()
             session_save_id = context.conversation_id or context.response_id
         except Exception as ex:
+            if request_messages_task is not None:
+                request_messages_task.cancel()
             logger.error("Failed to prepare state storage: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
             raise
 
@@ -763,13 +805,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # prior turn, so AgentServer-history mode always starts the model call statelessly.
                 session.service_session_id = None
 
-            input_items = await context.get_input_items()
-            input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
-
-            history_messages: list[Message] = []
-            if self._uses_agent_server_history:
-                history = await context.get_history()
-                history_messages = await _output_items_to_messages(history, approval_storage=approval_storage)
+            input_messages, history_messages = await request_messages_task
             run_kwargs: dict[str, Any] = {
                 "messages": [*history_messages, *input_messages],
                 "session": session,
