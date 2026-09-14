@@ -77,7 +77,7 @@ def _aggregate_origin_session_ids(messages: Sequence[Message]) -> list[str]:
         attribution = message.additional_properties.get("_attribution")
         if not isinstance(attribution, Mapping):
             continue
-        origins = attribution.get("origin_session_ids")
+        origins = attribution.get("origin_session_ids")  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
         if not isinstance(origins, Sequence) or isinstance(origins, str):
             continue
         for origin in cast("Sequence[Any]", origins):
@@ -1190,13 +1190,13 @@ class ToolResultCompactionStrategy:
                 SUMMARY_OF_GROUP_IDS_KEY: [group_id],
             }
             insertion_index = starts.get(group_id, 0)
-            
+
             summary_additional_properties: dict[str, Any] = {
                 GROUP_ANNOTATION_KEY: summary_annotation,
             }
             if aggregated_origins:
                 summary_additional_properties["_attribution"] = {"origin_session_ids": aggregated_origins}
-            
+
             summary_message = Message(
                 role="assistant",
                 contents=[summary_text],
@@ -1885,7 +1885,7 @@ class CompactionProvider(ContextProvider):
         )
 
         projected = project_included_messages(all_messages)
-        
+
         # Rebuild provider message lists from the projected list, preserving source attribution
         # and including new synthetic messages created by compaction strategies
         rebuilt: dict[str, list[Message]] = {sid: [] for sid in context.context_messages}
@@ -1899,7 +1899,7 @@ class CompactionProvider(ContextProvider):
                 sid = last_sid
             rebuilt[sid].append(message)
             last_sid = sid
-        
+
         context.context_messages.clear()
         context.context_messages.update(rebuilt)
 

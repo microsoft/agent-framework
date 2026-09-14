@@ -241,26 +241,25 @@ class InlineCodeBridge:
         if self._mounts:
             feed_kwargs["mount"] = list(self._mounts)
 
-        with Monty() as pool:
-            with pool.checkout(**checkout_kwargs) as session:
-                progress = session.feed_start(_build_code(code), **feed_kwargs)
+        with Monty() as pool, pool.checkout(**checkout_kwargs) as session:
+            progress = session.feed_start(_build_code(code), **feed_kwargs)
 
-                while True:
-                    if isinstance(progress, MontyComplete):
-                        return {
-                            "output": _ensure_json_value(progress.output),
-                            "stdout": printer.output,
-                            "truncated": printer.truncated,
-                        }
-                    if isinstance(progress, FunctionSnapshot):
-                        progress = self._handle_function(progress)
-                        continue
-                    if isinstance(progress, FutureSnapshot):
-                        progress = await self._handle_future(progress)
-                        continue
-                    if isinstance(progress, NameLookupSnapshot):
-                        raise RuntimeError(f"Name lookup not supported: {progress.variable_name!r}")
-                    raise RuntimeError(f"Unsupported Monty progress type: {type(progress).__name__}")
+            while True:
+                if isinstance(progress, MontyComplete):
+                    return {
+                        "output": _ensure_json_value(progress.output),
+                        "stdout": printer.output,
+                        "truncated": printer.truncated,
+                    }
+                if isinstance(progress, FunctionSnapshot):
+                    progress = self._handle_function(progress)
+                    continue
+                if isinstance(progress, FutureSnapshot):
+                    progress = await self._handle_future(progress)
+                    continue
+                if isinstance(progress, NameLookupSnapshot):
+                    raise RuntimeError(f"Name lookup not supported: {progress.variable_name!r}")
+                raise RuntimeError(f"Unsupported Monty progress type: {type(progress).__name__}")
 
     def _handle_function(self, snapshot: Any) -> Any:
         if snapshot.is_os_function:
