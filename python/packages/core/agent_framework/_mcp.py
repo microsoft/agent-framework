@@ -3666,12 +3666,15 @@ class MCPStreamableHTTPTool(MCPTool):
                 A tool connected outside any run (eagerly via ``async with``, or standalone)
                 has no kwargs to reuse and the provider is called with an empty mapping, in
                 which case a ``KeyError`` from the provider is tolerated and the request is
-                sent without headers. Once a run has supplied kwargs, a ``KeyError`` is
-                raised instead, since a key missing there is a misconfiguration rather than
-                an unavoidable gap. A credential that must authenticate an eager handshake
-                must therefore come from somewhere the provider can read without a run, such
-                as a closure or ``ContextVar``. A lazy connection established by an agent run
-                can use that run's kwargs.
+                sent without headers. Once a run has seeded an initial connection, a ``KeyError``
+                during the handshake is raised instead, since a missing key there is a
+                misconfiguration rather than an unavoidable gap. For an already-connected tool,
+                run preparation defers identity reconciliation when the provider needs a
+                model-supplied argument that is unavailable until invocation; provider errors at
+                invocation still propagate. A credential that must authenticate an eager
+                handshake must therefore come from somewhere the provider can read without a run,
+                such as a closure or ``ContextVar``. A lazy connection established by an agent
+                run can use that run's kwargs.
                 The framework attaches these headers only to requests whose origin (scheme,
                 host, port) matches the configured ``url``, so they are not leaked to other
                 origins on cross-origin redirects; headers injected this way are also removed
@@ -3933,7 +3936,18 @@ class MCPStreamableHTTPTool(MCPTool):
             return
         if self._header_provider is None:
             return
-        headers = self._effective_headers(kwargs)
+        try:
+            headers = self._effective_headers(kwargs)
+        except KeyError:
+            # Some providers intentionally read model-supplied tool arguments that
+            # do not exist until invocation. Keep preparation non-breaking and let
+            # the strict invocation-time resolution reconcile the session later.
+            logger.debug(
+                "Deferring MCP header identity reconciliation for %r until invocation.",
+                self.name,
+                exc_info=True,
+            )
+            return
         async with self._call_headers_lock:
             await self._ensure_session_identity(headers, kwargs)
 

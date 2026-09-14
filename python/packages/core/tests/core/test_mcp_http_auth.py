@@ -1076,6 +1076,33 @@ async def test_seeded_connection_kwargs_authenticate_the_handshake(
         await tool.close()
 
 
+async def test_connected_run_defers_missing_per_call_header_until_invocation(
+    mcp_http_server: MCPHTTPServer,
+) -> None:
+    client, requests, _ = mcp_http_server
+    tool = _kwargs_dependent_tool(client)
+    tool._seed_connection_kwargs({"credential": "token-a"})
+    try:
+        await tool.connect()
+        existing_session = tool.session
+
+        await tool._prepare_for_run({"unrelated": "value"})
+
+        assert tool.is_connected
+        assert tool.session is existing_session
+
+        await tool.call_tool("record", credential="token-b")
+        assert [request.headers["Authorization"] for request in _requests_for_method(requests, "initialize")] == [
+            "token-a",
+            "token-b",
+        ]
+        call_request = _calls(requests)[-1]
+        assert call_request.headers["Authorization"] == "token-b"
+        assert call_request.headers["mcp-session-id"] == "session-token-b"
+    finally:
+        await tool.close()
+
+
 async def test_connection_rebinds_to_changed_call_headers_and_clears_kwargs_on_close(
     mcp_http_server: MCPHTTPServer,
 ) -> None:
