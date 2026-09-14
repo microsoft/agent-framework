@@ -33,6 +33,7 @@ from agent_framework import (
     Content,
     Message,
     Workflow,
+    WorkflowEvent,
     WorkflowRunState,
 )
 from agent_framework._workflows._typing_utils import (  # pyright: ignore[reportPrivateUsage]
@@ -1201,6 +1202,8 @@ async def run_workflow_stream(
     if checkpoint_storage is not None or checkpoint_id is not None:
         checkpoint_kwargs = {"checkpoint_storage": checkpoint_storage, "checkpoint_id": checkpoint_id}
 
+    # Core workflows emit failure events before re-raising; prefer one full exception traceback.
+    failure_event: WorkflowEvent | None = None
     try:
         telemetry_conversation_id = str(supplied_thread_id) if supplied_thread_id is not None else None
         telemetry_context = partial(_use_telemetry_conversation_id, telemetry_conversation_id)
@@ -1227,16 +1230,12 @@ async def run_workflow_stream(
                 run_started_emitted = True
 
             if event_type == "failed":
+                failure_event = event
                 # Close any open reasoning block / text message so RUN_ERROR stays the
                 # last event a client receives for this run.
                 for end_event in _drain_open_blocks():
                     yield end_event
                 details = getattr(event, "details", None)
-                logger.error(
-                    "Workflow execution failed: %s\n%s",
-                    _details_message(details),
-                    getattr(details, "traceback", None) or "",
-                )
                 yield RunErrorEvent(message=_PUBLIC_WORKFLOW_ERROR_MESSAGE, code=_details_code(details))
                 run_error_emitted = True
                 terminal_emitted = True
@@ -1292,13 +1291,8 @@ async def run_workflow_stream(
                     "status": status,
                 }
                 if event_type == "executor_failed":
+                    failure_event = event
                     details = getattr(event, "details", None)
-                    logger.error(
-                        "Workflow executor %s failed: %s\n%s",
-                        executor_id,
-                        _details_message(details),
-                        getattr(details, "traceback", None) or "",
-                    )
                     # Only project public fields; traceback and extra can contain backend data.
                     executor_payload["details"] = {
                         "message": _PUBLIC_WORKFLOW_ERROR_MESSAGE,
@@ -1389,6 +1383,7 @@ async def run_workflow_stream(
             yield CustomEvent(name=_event_name(event), value=_custom_event_value(event))
 
     except Exception as exc:
+        failure_event = None
         logger.exception("Workflow AG-UI stream failed: %s", exc)
         if not run_started_emitted:
             yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
@@ -1400,6 +1395,15 @@ async def run_workflow_stream(
             yield RunErrorEvent(message=_PUBLIC_WORKFLOW_ERROR_MESSAGE, code=type(exc).__name__)
             run_error_emitted = True
         terminal_emitted = True
+    finally:
+        if failure_event is not None:
+            details = getattr(failure_event, "details", None)
+            logger.error(
+                "Workflow execution failed (executor=%s): %s\n%s",
+                getattr(failure_event, "executor_id", None) or getattr(details, "executor_id", None),
+                _details_message(details),
+                getattr(details, "traceback", None) or "",
+            )
 
     for reasoning_evt in _close_reasoning_block(flow):
         yield reasoning_evt

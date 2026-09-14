@@ -15,8 +15,10 @@ Covers the full matrix of workflow-specific AG-UI patterns:
 """
 
 import json
+import logging
 from typing import Any, cast
 
+import pytest
 from ag_ui.core import EventType, StateSnapshotEvent
 from agent_framework import (
     AgentResponse,
@@ -443,8 +445,9 @@ async def test_workflow_emits_distinct_consecutive_outputs() -> None:
 # ──────────────────────────────────────────────────────────────────────
 
 
-async def test_workflow_error_emits_run_error_event() -> None:
+async def test_workflow_error_emits_run_error_event(caplog: pytest.LogCaptureFixture) -> None:
     """Real executor failures reach the wrapper as sanitized RUN_ERROR events."""
+    caplog.set_level(logging.ERROR, logger="agent_framework_ag_ui._workflow_run")
 
     @executor(id="failing")
     async def failing(message: Any, ctx: WorkflowContext[Any, str]) -> None:
@@ -460,6 +463,12 @@ async def test_workflow_error_emits_run_error_event() -> None:
     assert error.code == "RuntimeError"
     assert error.message
     assert "workflow exploded" not in error.message
+    records = [record for record in caplog.records if record.name == "agent_framework_ag_ui._workflow_run"]
+    assert len(records) == 1
+    assert records[0].exc_info is not None
+    assert isinstance(records[0].exc_info[1], RuntimeError)
+    assert records[0].exc_info[2] is not None
+    assert "workflow exploded" in records[0].getMessage()
 
 
 async def test_workflow_error_preserves_bookend_structure() -> None:

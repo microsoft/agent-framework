@@ -5,6 +5,7 @@
 import json
 import logging
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from dataclasses import dataclass, make_dataclass
 from enum import Enum
 from types import SimpleNamespace
@@ -1622,7 +1623,9 @@ async def test_workflow_run_emits_run_error_when_stream_raises(
     run_error = next(event for event in events if event.type == "RUN_ERROR")
     assert run_error.code == "RuntimeError"
     assert run_error.message == "Workflow execution failed."
-    assert any(record.exc_info and record.exc_info[1] is failure for record in caplog.records)
+    records = [record for record in caplog.records if record.name == "agent_framework_ag_ui._workflow_run"]
+    assert len(records) == 1
+    assert records[0].exc_info and records[0].exc_info[1] is failure
     wire = "\n".join(event.model_dump_json(by_alias=True, exclude_none=True) for event in events)
     assert private_detail not in wire
     assert "workflow stream exploded" not in wire
@@ -2599,7 +2602,8 @@ async def test_workflow_run_available_interrupts_logged():
     assert "RUN_ERROR" not in event_types
 
 
-async def test_workflow_run_failed_event(caplog: pytest.LogCaptureFixture) -> None:
+@pytest.mark.parametrize("close_on_error", [False, True])
+async def test_workflow_run_failed_event(close_on_error: bool, caplog: pytest.LogCaptureFixture) -> None:
     """Structured failures preserve their code and log details only server-side."""
     private_detail = "SYNTHETIC_FAILURE_MESSAGE"
     details = WorkflowErrorDetails(
@@ -2618,12 +2622,14 @@ async def test_workflow_run_failed_event(caplog: pytest.LogCaptureFixture) -> No
 
             return _stream()
 
-    events: list[Any] = [
-        event
-        async for event in run_workflow_stream(
-            {"messages": [{"role": "user", "content": "go"}]}, cast(Any, FailingWorkflow())
-        )
-    ]
+    events: list[Any] = []
+    async with aclosing(
+        run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, cast(Any, FailingWorkflow()))
+    ) as stream:
+        async for event in stream:
+            events.append(event)
+            if close_on_error and event.type == "RUN_ERROR":
+                break
 
     event_types = [event.type for event in events]
     assert event_types == ["RUN_STARTED", "RUN_ERROR"]
@@ -2637,6 +2643,7 @@ async def test_workflow_run_failed_event(caplog: pytest.LogCaptureFixture) -> No
     assert private_detail in caplog.text
     assert "SYNTHETIC_FAILURE_TRACEBACK" in caplog.text
     assert "SYNTHETIC_FAILURE_EXTRA" not in caplog.text
+    assert sum(record.name == "agent_framework_ag_ui._workflow_run" for record in caplog.records) == 1
 
 
 async def test_workflow_run_status_enum_state():
@@ -2691,7 +2698,8 @@ async def test_workflow_run_executor_invoked_drains_text():
     assert text_end_idx < step_start_idx
 
 
-async def test_workflow_run_executor_failed_event(caplog: pytest.LogCaptureFixture) -> None:
+@pytest.mark.parametrize("emit_failed", [False, True])
+async def test_workflow_run_executor_failed_event(emit_failed: bool, caplog: pytest.LogCaptureFixture) -> None:
     """Executor failure activity must not bypass public error sanitization."""
     details = WorkflowErrorDetails(
         message="SYNTHETIC_EXECUTOR_MESSAGE",
@@ -2707,7 +2715,8 @@ async def test_workflow_run_executor_failed_event(caplog: pytest.LogCaptureFixtu
             async def _stream() -> AsyncIterator[WorkflowEvent]:
                 yield WorkflowEvent("started")
                 yield WorkflowEvent.executor_failed("agent_1", details)
-                yield WorkflowEvent.failed(details)
+                if emit_failed:
+                    yield WorkflowEvent.failed(details)
 
             return _stream()
 
@@ -2726,9 +2735,13 @@ async def test_workflow_run_executor_failed_event(caplog: pytest.LogCaptureFixtu
         "message": "Workflow execution failed.",
         "error_type": "TestError",
     }
-    assert events[-1].type == "RUN_ERROR"
-    assert sum(event.type == "RUN_ERROR" for event in events) == 1
-    assert not any(event.type == "RUN_FINISHED" for event in events)
+    if emit_failed:
+        assert events[-1].type == "RUN_ERROR"
+        assert sum(event.type == "RUN_ERROR" for event in events) == 1
+        assert not any(event.type == "RUN_FINISHED" for event in events)
+    else:
+        assert events[-1].type == "RUN_FINISHED"
+        assert not any(event.type == "RUN_ERROR" for event in events)
     activity_wire = activity[0].model_dump_json(by_alias=True, exclude_none=True)
     assert "SYNTHETIC_EXECUTOR_MESSAGE" not in activity_wire
     assert "SYNTHETIC_EXECUTOR_TRACEBACK" not in activity_wire
@@ -2736,6 +2749,7 @@ async def test_workflow_run_executor_failed_event(caplog: pytest.LogCaptureFixtu
     assert details.message in caplog.text
     assert "SYNTHETIC_EXECUTOR_TRACEBACK" in caplog.text
     assert "SYNTHETIC_EXECUTOR_EXTRA" not in caplog.text
+    assert sum(record.name == "agent_framework_ag_ui._workflow_run" for record in caplog.records) == 1
     assert details.message == "SYNTHETIC_EXECUTOR_MESSAGE"
     assert details.extra == {"response": "SYNTHETIC_EXECUTOR_EXTRA"}
 
