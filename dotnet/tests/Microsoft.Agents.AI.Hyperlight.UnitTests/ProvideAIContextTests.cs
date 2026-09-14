@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hyperlight.Internal;
@@ -100,5 +101,108 @@ public sealed class ProvideAIContextTests
         var firstFunction = Assert.IsType<ExecuteCodeFunction>(firstContext!.Tools!.First());
         var secondFunction = Assert.IsType<ExecuteCodeFunction>(secondContext!.Tools!.First());
         Assert.NotEqual(firstFunction.ConfigFingerprint, secondFunction.ConfigFingerprint);
+    }
+
+    [Fact]
+    public async Task ProvideAIContextAsync_ToolAddRemoveAndClear_ChangeSnapshotFingerprintAsync()
+    {
+        // Arrange
+        using var provider = new HyperlightCodeActProvider(new HyperlightCodeActProviderOptions());
+        var firstTool = AIFunctionFactory.Create(() => "one", name: "first_tool");
+        var secondTool = AIFunctionFactory.Create(() => "two", name: "second_tool");
+        var fingerprints = new List<string>();
+
+        // Act
+        fingerprints.Add(await GetFingerprintAsync(provider));
+        provider.AddTools(firstTool);
+        fingerprints.Add(await GetFingerprintAsync(provider));
+        provider.RemoveTools(firstTool.Name);
+        fingerprints.Add(await GetFingerprintAsync(provider));
+        provider.AddTools(firstTool, secondTool);
+        fingerprints.Add(await GetFingerprintAsync(provider));
+        provider.ClearTools();
+        fingerprints.Add(await GetFingerprintAsync(provider));
+
+        // Assert
+        AssertFingerprintsChanged(fingerprints);
+    }
+
+    [Fact]
+    public async Task ProvideAIContextAsync_FileMountAddReplaceRemoveAndClear_ChangeSnapshotFingerprintAsync()
+    {
+        // Arrange
+        using var provider = new HyperlightCodeActProvider(new HyperlightCodeActProviderOptions());
+        var fingerprints = new List<string>();
+
+        // Act
+        fingerprints.Add(await GetFingerprintAsync(provider));
+        provider.AddFileMounts(new FileMount("/host/one", "/input/data"));
+        fingerprints.Add(await GetFingerprintAsync(provider));
+        provider.AddFileMounts(new FileMount("/host/two", "/input/data"));
+        fingerprints.Add(await GetFingerprintAsync(provider));
+        provider.RemoveFileMounts("/input/data");
+        fingerprints.Add(await GetFingerprintAsync(provider));
+        provider.AddFileMounts(new FileMount("/host/three", "/input/other"));
+        fingerprints.Add(await GetFingerprintAsync(provider));
+        provider.ClearFileMounts();
+        fingerprints.Add(await GetFingerprintAsync(provider));
+
+        // Assert
+        AssertFingerprintsChanged(fingerprints);
+    }
+
+    [Fact]
+    public async Task ProvideAIContextAsync_AllowedDomainAddReplaceRemoveAndClear_ChangeSnapshotFingerprintAsync()
+    {
+        // Arrange
+        using var provider = new HyperlightCodeActProvider(new HyperlightCodeActProviderOptions());
+        var fingerprints = new List<string>();
+
+        // Act
+        fingerprints.Add(await GetFingerprintAsync(provider));
+        provider.AddAllowedDomains(new AllowedDomain("https://example.com", ["GET"]));
+        fingerprints.Add(await GetFingerprintAsync(provider));
+        provider.AddAllowedDomains(new AllowedDomain("https://example.com", ["POST"]));
+        fingerprints.Add(await GetFingerprintAsync(provider));
+        provider.RemoveAllowedDomains("https://example.com");
+        fingerprints.Add(await GetFingerprintAsync(provider));
+        provider.AddAllowedDomains(new AllowedDomain("https://contoso.com"));
+        fingerprints.Add(await GetFingerprintAsync(provider));
+        provider.ClearAllowedDomains();
+        fingerprints.Add(await GetFingerprintAsync(provider));
+
+        // Assert
+        AssertFingerprintsChanged(fingerprints);
+    }
+
+    [Fact]
+    public async Task ProvideAIContextAsync_SandboxOptionMutation_ChangesSnapshotFingerprintAsync()
+    {
+        // Arrange
+        var options = new HyperlightCodeActProviderOptions { HeapSize = "10Mi", StackSize = "5Mi" };
+        using var provider = new HyperlightCodeActProvider(options);
+
+        // Act
+        var firstFingerprint = await GetFingerprintAsync(provider);
+        options.HeapSize = "20Mi";
+        options.StackSize = "10Mi";
+        var secondFingerprint = await GetFingerprintAsync(provider);
+
+        // Assert
+        Assert.NotEqual(firstFingerprint, secondFingerprint);
+    }
+
+    private static void AssertFingerprintsChanged(List<string> fingerprints)
+    {
+        for (var index = 1; index < fingerprints.Count; index++)
+        {
+            Assert.NotEqual(fingerprints[index - 1], fingerprints[index]);
+        }
+    }
+
+    private static async Task<string> GetFingerprintAsync(HyperlightCodeActProvider provider)
+    {
+        var context = await provider.InvokingAsync(NewInvokingContext());
+        return Assert.IsType<ExecuteCodeFunction>(context!.Tools!.First()).ConfigFingerprint;
     }
 }
