@@ -187,6 +187,13 @@ def test_literal_types() -> None:
     assert is_instance_of(["a"], list[Literal["a", "b"]])
     assert not is_instance_of(["c"], list[Literal["a", "b"]])
 
+    class Explosive:
+        def __eq__(self, other: object) -> bool:
+            raise RuntimeError("Equality should not be called when types differ")
+
+    # Strict type guard runs before equality, avoiding __eq__ on mismatched types
+    assert not is_instance_of(Explosive(), Literal["yes"])
+
 
 def test_list_types() -> None:
     """Test list types with various element types."""

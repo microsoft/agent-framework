@@ -182,7 +182,7 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
     # executors whose handlers declare Literal message annotations crash at
     # delivery time (Executor.can_handle/_find_handler call this directly).
     if origin is Literal:
-        return any(data == member and type(data) is type(member) for member in args)
+        return any(type(data) is type(member) and data == member for member in args)
 
     # Case 2: target_type is Optional[T] or Union[T1, T2, ...]
     # Optional[T] is really just as Union[T, None]
@@ -236,8 +236,6 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
 
 def _matches_annotation(data: Any, annotation: Any) -> bool:
     """Check an annotation that may not be runtime-checkable, treating unchecked ones as a match."""
-    if get_origin(annotation) is Literal:
-        return any(data == member and type(data) is type(member) for member in get_args(annotation))
     try:
         return is_instance_of(data, annotation)
     except TypeError:
