@@ -8,8 +8,9 @@ from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import Content
+from agent_framework import Content, SecretString
 from agent_framework._telemetry import get_user_agent
+from azure.core.credentials import AzureKeyCredential
 
 from agent_framework_foundry import (
     FoundryEmbeddingClient,
@@ -278,6 +279,24 @@ class TestFoundryEmbeddingClient:
         result = await client.get_embeddings(["hello"])
         assert len(result) == 1
         assert result[0].vector == [0.1, 0.2, 0.3]
+
+    def test_accepts_secret_string_api_key(self) -> None:
+        with (
+            patch("agent_framework_foundry._embedding_client.EmbeddingsClient") as text_client_type,
+            patch("agent_framework_foundry._embedding_client.ImageEmbeddingsClient") as image_client_type,
+        ):
+            FoundryEmbeddingClient(
+                model="test-model",
+                endpoint="https://test.inference.ai.azure.com",
+                api_key=SecretString("test-key"),
+            )
+
+        text_credential = text_client_type.call_args.kwargs["credential"]
+        image_credential = image_client_type.call_args.kwargs["credential"]
+        assert isinstance(text_credential, AzureKeyCredential)
+        assert text_credential is image_credential
+        assert type(text_credential.key) is str
+        assert text_credential.key == "test-key"
 
     async def test_otel_provider_name_default(self) -> None:
         """Default OTEL provider name is azure.ai.inference."""

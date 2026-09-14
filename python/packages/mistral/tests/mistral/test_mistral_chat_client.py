@@ -9,6 +9,7 @@ from typing import Any, cast
 import httpx
 import pytest
 from agent_framework import Agent, ChatResponse, Content, Message, tool
+from agent_framework._settings import SecretString
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidAuthException,
@@ -134,11 +135,16 @@ def test_mistral_chat_construction_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert client.model == "mistral-large-latest"
 
 
-def test_mistral_chat_construction_with_params() -> None:
-    client = MistralChatClient(model="mistral-large-latest", api_key="test-key")
+@pytest.mark.parametrize("api_key", ["test-key", SecretString("test-key")], ids=["str", "secret"])
+def test_mistral_chat_construction_with_params(api_key: str | SecretString) -> None:
+    client = MistralChatClient(model="mistral-large-latest", api_key=api_key)
     assert client.model == "mistral-large-latest"
     assert isinstance(client.client, Mistral)
     assert client.client.sdk_configuration.timeout_ms == 60_000
+    security = client.client.sdk_configuration.security
+    assert security is not None and not callable(security)
+    assert type(security.api_key) is str
+    assert security.api_key == "test-key"
 
 
 def test_mistral_chat_construction_with_server_url() -> None:

@@ -9,6 +9,7 @@ from typing import Any, cast
 import httpx
 import pytest
 from agent_framework import Embedding, GeneratedEmbeddings
+from agent_framework._settings import SecretString
 from agent_framework.exceptions import (
     IntegrationException,
     IntegrationInvalidAuthException,
@@ -73,12 +74,17 @@ def test_mistral_embedding_construction(monkeypatch: pytest.MonkeyPatch) -> None
     assert client.model == "mistral-embed"
 
 
-def test_mistral_embedding_construction_with_params() -> None:
+@pytest.mark.parametrize("api_key", ["test-key", SecretString("test-key")], ids=["str", "secret"])
+def test_mistral_embedding_construction_with_params(api_key: str | SecretString) -> None:
     """Test construction with explicit parameters."""
-    client = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
+    client = MistralEmbeddingClient(model="mistral-embed", api_key=api_key)
     assert client.model == "mistral-embed"
     assert isinstance(client.client, Mistral)
     assert client.client.sdk_configuration.timeout_ms == 60_000
+    security = client.client.sdk_configuration.security
+    assert security is not None and not callable(security)
+    assert type(security.api_key) is str
+    assert security.api_key == "test-key"
 
 
 def test_mistral_embedding_construction_with_server_url() -> None:

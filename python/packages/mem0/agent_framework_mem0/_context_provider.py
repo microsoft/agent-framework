@@ -15,7 +15,7 @@ from collections.abc import Awaitable
 from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, TypedDict
 
-from agent_framework import Message
+from agent_framework import Message, SecretString
 from agent_framework._sessions import AgentSession, ContextProvider, SessionContext
 from agent_framework._telemetry import mark_feature_used
 from mem0 import AsyncMemory, AsyncMemoryClient
@@ -68,7 +68,7 @@ class Mem0ContextProvider(ContextProvider):
         self,
         source_id: str = DEFAULT_SOURCE_ID,
         mem0_client: AsyncMemory | AsyncMemoryClient | None = None,
-        api_key: str | None = None,
+        api_key: str | SecretString | None = None,
         application_id: str | None = None,
         agent_id: str | None = None,
         user_id: str | None = None,
@@ -105,7 +105,8 @@ class Mem0ContextProvider(ContextProvider):
         super().__init__(source_id)
         should_close_client = False
         if mem0_client is None:
-            mem0_client = AsyncMemoryClient(api_key=api_key)
+            resolved_api_key = api_key.get_secret_value() if isinstance(api_key, SecretString) else api_key
+            mem0_client = AsyncMemoryClient(api_key=resolved_api_key)
             should_close_client = True
 
         self.api_key = api_key

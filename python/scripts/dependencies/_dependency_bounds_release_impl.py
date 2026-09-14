@@ -332,7 +332,7 @@ print({_PROBE_RESULT_PREFIX!r} + json.dumps({{"imports": modules, "versions": ve
         "--resolution",
         resolution,
         "--prerelease",
-        "if-necessary-or-explicit",
+        "if-necessary",
         "--quiet",
     ]
     for editable_spec in plan.editable_specs:
@@ -444,7 +444,7 @@ def _refresh_lockfile(
     deadline: float,
     dry_run: bool,
 ) -> dict[str, Any]:
-    command = ["uv", "lock", "--prerelease", "if-necessary-or-explicit"]
+    command = ["uv", "lock", "--prerelease", "if-necessary"]
     if dry_run:
         print(f"[cyan]DRY RUN[/cyan] {' '.join(command)}")
         return {"status": "dry-run", "duration_seconds": 0.0, "error": None}

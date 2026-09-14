@@ -1,12 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import json
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from typing import Any, cast
 
+from ..exceptions import WorkflowCheckpointException
 from ..observability import EdgeGroupDeliveryStatus, OtelAttr, create_edge_group_processing_span
 from ._edge import (
     Edge,
@@ -22,6 +24,32 @@ from ._runner_context import RunnerContext, WorkflowMessage
 from ._state import State
 
 logger = logging.getLogger(__name__)
+
+
+async def gather_cancelling_siblings_on_error(*coroutines: Coroutine[Any, Any, Any]) -> None:
+    """Run coroutines concurrently; on any failure, cancel and await every other one before raising.
+
+    Plain ``asyncio.gather()`` does not cancel its other tasks when one raises - by default they keep
+    running as orphaned background tasks even though the caller has already moved on with the raised
+    exception. For edge delivery this is a real race with checkpoint restoration: work that is still
+    in-flight when a sibling fails can mutate runner/context state - a ``FanInEdgeRunner``'s buffer, or
+    a ``RunnerContext``'s pending-message queue via a target executor's own ``ctx.send_message`` call -
+    *after* ``restore_checkpoint``/``restore_from_checkpoint`` has already reset that same state for the
+    resumed run, corrupting it with output from the failed, never-checkpointed superstep.
+
+    Shared by :class:`RunnerImpl._run_iteration` (across sources and across edge runners for a source)
+    and :class:`FanOutEdgeRunner.send_message` (across one message's fan-out targets) - every point in
+    the delivery path where sibling coroutines run concurrently and one can fail while another is still
+    executing.
+    """
+    tasks = [asyncio.ensure_future(coro) for coro in coroutines]
+    try:
+        await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
 
 class EdgeRunner(ABC):
@@ -56,6 +84,42 @@ class EdgeRunner(ABC):
                 False if the target executor cannot handle the message.
         """
         raise NotImplementedError
+
+    @property
+    def state_key(self) -> str:
+        """Return a topology-derived key identifying this runner across workflow instances.
+
+        ``EdgeGroup.id`` defaults to a random UUID, so it differs between two instances of the
+        same workflow definition and cannot key state that has to survive a rebuild. Checkpoint
+        compatibility is decided by graph topology, so the key is derived from topology too.
+        Builder validation rejects two edges that share a ``source -> target`` pair anywhere in
+        the workflow, so no two edge groups can produce the same key. That validation runs on the
+        ``WorkflowBuilder`` path; a ``Workflow`` constructed directly bypasses it, and two colliding
+        groups would then share one buffer snapshot. Executor ids are only
+        required to be non-empty, so the pairs are JSON-encoded rather than joined with
+        separators an id could itself contain.
+        """
+        edges = sorted([edge.source_id, edge.target_id] for edge in self._edge_group.edges)
+        return f"{self._edge_group.__class__.__name__}:{json.dumps(edges, separators=(',', ':'))}"
+
+    def snapshot_state(self) -> dict[str, Any] | None:
+        """Capture in-flight delivery state so a checkpoint can restore it.
+
+        Returns:
+            A serializable snapshot, or None when the runner holds no state to checkpoint.
+        """
+        return None
+
+    def restore_state(self, state: dict[str, Any] | None) -> None:
+        """Reset in-flight delivery state, then apply ``state`` when one was checkpointed.
+
+        Called on every runner during checkpoint restoration, including with ``None``, so that
+        state left over from an interrupted run does not survive into the restored run.
+
+        Args:
+            state: A snapshot previously produced by :meth:`snapshot_state`, or None to only reset.
+        """
+        return
 
     def _can_handle(self, executor_id: str, message: WorkflowMessage) -> bool:
         """Check if an executor can handle the given message data."""
@@ -278,13 +342,11 @@ class FanOutEdgeRunner(EdgeRunner):
 
         if deliverable_edges:
 
-            async def send_to_edge(edge: Edge) -> bool:
+            async def send_to_edge(edge: Edge) -> None:
                 await self._execute_on_target(edge.target_id, [edge.source_id], message, state, ctx)
-                return True
 
-            tasks = [send_to_edge(edge) for edge in deliverable_edges]
-            results = await asyncio.gather(*tasks)
-            return any(results)
+            await gather_cancelling_siblings_on_error(*(send_to_edge(edge) for edge in deliverable_edges))
+            return True
 
         # If we get here, it's a broadcast message with no deliverable edges
         return False
@@ -297,12 +359,55 @@ class FanOutEdgeRunner(EdgeRunner):
 class FanInEdgeRunner(EdgeRunner):
     """Runner for fan-in edge groups."""
 
+    _BUFFER_KEY = "buffer"
+
     def __init__(self, edge_group: FanInEdgeGroup, executors: dict[str, Executor]) -> None:
         super().__init__(edge_group, executors)
         self._edges = edge_group.edges
         # Buffer to hold messages before sending them to the target executor
         # Key is the source executor ID, value is a list of messages
         self._buffer: dict[str, list[WorkflowMessage]] = defaultdict(list)
+
+    def snapshot_state(self) -> dict[str, Any] | None:
+        """Capture the buffered messages that are still waiting for the remaining sources.
+
+        A fan-in only delivers once every source has produced a message, so a superstep
+        boundary can fall while the buffer holds a subset of them. Those messages have
+        already been drained from the runner context, so the checkpoint has to carry them.
+        """
+        buffered = {source_id: list(messages) for source_id, messages in self._buffer.items() if messages}
+        if not buffered:
+            return None
+        return {self._BUFFER_KEY: buffered}
+
+    def restore_state(self, state: dict[str, Any] | None) -> None:
+        """Reset the buffer, then refill it from the checkpointed snapshot when there is one.
+
+        The reset matters on its own: a run that failed mid-superstep can leave messages from
+        a subset of sources in the buffer, and the sources are re-executed after the restore.
+        Without the reset those messages would be delivered twice, and the second delivery
+        could fire the fan-in before the restored superstep produced all of its messages.
+        """
+        self._buffer.clear()
+        if state is None:
+            return
+
+        buffered: Any = state.get(self._BUFFER_KEY, {})
+        if not isinstance(buffered, dict):
+            raise WorkflowCheckpointException(
+                f"Fan-in buffer for edge group {self._edge_group.id} is not a dictionary. Unable to restore."
+            )
+
+        for source_id, messages in cast(dict[Any, Any], buffered).items():
+            if (
+                not isinstance(source_id, str)
+                or not isinstance(messages, list)
+                or not all(isinstance(message, WorkflowMessage) for message in cast(list[Any], messages))
+            ):
+                raise WorkflowCheckpointException(
+                    f"Fan-in buffer for edge group {self._edge_group.id} is malformed. Unable to restore."
+                )
+            self._buffer[source_id] = list(cast(list[WorkflowMessage], messages))
 
     async def send_message(
         self,

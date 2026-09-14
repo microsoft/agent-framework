@@ -9,6 +9,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from agent_framework import Message
 
 from agent_framework_declarative._workflows import (
     ActionComplete,
@@ -1521,6 +1522,19 @@ class TestDeclarativeActionExecutorBase:
         state = DeclarativeWorkflowState(mock_state)
         inputs = state.get("Workflow.Inputs")
         assert inputs == {"input": "string trigger"}
+
+    async def test_ensure_state_initialized_with_message_input(self, mock_context, mock_state):
+        """Test _ensure_state_initialized with a single Message input."""
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        executor = JoinExecutor({"kind": "Entry"})
+        message = Message(role="user", contents=["message trigger"], message_id="message-1")
+        await executor.handle_action(message, mock_context)
+
+        state = DeclarativeWorkflowState(mock_state)
+        assert state.get("Workflow.Inputs") == {"input": "message trigger"}
+        assert state.get("System.LastMessage") == {"Text": "message trigger", "Id": "message-1"}
+        assert state.get("System.LastMessageText") == "message trigger"
 
     async def test_ensure_state_initialized_with_custom_object(self, mock_context, mock_state):
         """Test _ensure_state_initialized with custom object converts to string."""

@@ -122,6 +122,38 @@ class TestHydrateEvents:
             EventType.RUN_FINISHED,
         ]
 
+    async def test_hydration_projects_private_mcp_host_payload(self) -> None:
+        """Stored canonical content stays safe while hydration restores the Host projection."""
+        from agent_framework_ag_ui._utils import (
+            _AGUI_MCP_TOOL_RESULT_KEY,
+            _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY,
+            _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY,
+        )
+
+        host_content = '{"structuredContent":{"widget":"host"}}'
+        snapshot = AGUIThreadSnapshot(
+            messages=[
+                {
+                    "id": "result",
+                    "role": "tool",
+                    "toolCallId": "mcp-call",
+                    "content": "Model summary",
+                    _AGUI_MCP_TOOL_RESULT_KEY: True,
+                    _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY: host_content,
+                    _AGUI_TOOL_RESULT_MODEL_CONTENT_KEY: [{"type": "text", "text": "Model summary"}],
+                }
+            ]
+        )
+        store = await make_store_with("user-1", "t1", snapshot)
+        session = await ThreadSnapshotSession.open(store=store, scope="user-1", thread_id="t1")
+
+        events = [event async for event in session.hydrate_events(run_id="r1")]
+        messages_snapshot = next(event for event in events if isinstance(event, MessagesSnapshotEvent))
+        hydrated = messages_snapshot.messages[0].model_dump(by_alias=True, exclude_none=True)
+
+        assert hydrated["content"] == host_content
+        assert _AGUI_TOOL_RESULT_HOST_PAYLOAD_KEY not in hydrated
+
 
 class TestRebindThreadId:
     """A late provider fallback becomes the key for subsequent writes."""

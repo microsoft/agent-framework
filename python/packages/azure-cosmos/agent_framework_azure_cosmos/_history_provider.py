@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from typing import Any, ClassVar, TypedDict
 
 from agent_framework import Message
-from agent_framework._sessions import HistoryProvider
+from agent_framework._sessions import HistoryProvider, filter_new_messages
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
 from azure.core.credentials import TokenCredential
@@ -53,7 +53,7 @@ class CosmosHistoryProvider(HistoryProvider):
         endpoint: str | None = None,
         database_name: str | None = None,
         container_name: str | None = None,
-        credential: str | AzureCredentialTypes | None = None,
+        credential: str | SecretString | AzureCredentialTypes | None = None,
         cosmos_client: CosmosClient | None = None,
         container_client: ContainerProxy | None = None,
         env_file_path: str | None = None,
@@ -114,13 +114,15 @@ class CosmosHistoryProvider(HistoryProvider):
             endpoint=endpoint,
             database_name=database_name,
             container_name=container_name,
-            key=credential if isinstance(credential, str) else None,
+            key=credential if isinstance(credential, (str, SecretString)) else None,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
         self.database_name = settings["database_name"]  # type: ignore[assignment]
         self.container_name = settings["container_name"]  # type: ignore[assignment]
         if self._cosmos_client is None:
+            if isinstance(credential, SecretString):
+                credential = credential.get_secret_value()
             self._cosmos_client = CosmosClient(
                 url=settings["endpoint"],  # type: ignore[arg-type]
                 credential=credential or settings["key"].get_secret_value(),  # type: ignore[arg-type,union-attr]
@@ -185,10 +187,15 @@ class CosmosHistoryProvider(HistoryProvider):
 
         await self._ensure_container_proxy()
         session_key = self._session_partition_key(session_id)
+        existing_messages = await self.get_messages(session_key, state=state, **kwargs)
+        new_messages = filter_new_messages(existing_messages, messages)
+
+        if not new_messages:
+            return
 
         base_sort_key = time.time_ns()
         operations: list[tuple[str, tuple[dict[str, Any]]]] = []
-        for index, message in enumerate(messages):
+        for index, message in enumerate(new_messages):
             document = {
                 "id": str(uuid.uuid4()),
                 "session_id": session_key,

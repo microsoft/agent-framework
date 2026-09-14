@@ -22,6 +22,7 @@ jobs:
           sparse-checkout: |
             .github/actions/github-app-token
             .github/scripts/check_team_membership.js
+            .github/scripts/set_missing_issue_type.js
           fetch-depth: 1
           persist-credentials: false
 
@@ -119,7 +120,7 @@ jobs:
 
             // Add the labels to the issue (only if there are labels to add)
             if (labels.length > 0) {
-              github.rest.issues.addLabels({
+              await github.rest.issues.addLabels({
                 issue_number: context.issue.number,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -128,3 +129,13 @@ jobs:
             }
         env:
           TEAM_NAME: ${{ secrets.DEVELOPER_TEAM }}
+
+      # Run after labeling so fallback API failures do not prevent labels.
+      # Use the app token so assigning a type can trigger the triage workflow.
+      - name: Set missing issue type
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          github-token: ${{ steps.github-auth.outputs.token }}
+          script: |
+            const setMissingIssueType = require('./.github/scripts/set_missing_issue_type.js');
+            await setMissingIssueType({ github, context, core });

@@ -11,6 +11,8 @@
     <PackageReference Include="Azure.AI.Projects" />
     <PackageReference Include="Azure.Core" />
     <PackageReference Include="System.ClientModel" />
+    <PackageReference Include="System.Text.Json" />
+    <PackageReference Include="System.Threading.Channels" />
   </ItemGroup>
 
   <ItemGroup>

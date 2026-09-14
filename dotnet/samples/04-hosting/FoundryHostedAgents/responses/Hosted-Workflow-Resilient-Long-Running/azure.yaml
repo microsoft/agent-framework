@@ -16,7 +16,8 @@ services:
             runtime: dotnet_10
         env:
             ASPNETCORE_URLS: http://+:8088
-            COUNTDOWN_DELAY_SECONDS: "1"
+            IDEMPOTENT_SERVICE_ENDPOINT: ${IDEMPOTENT_SERVICE_ENDPOINT}
+            IDEMPOTENT_OPERATION_SCOPE: ${IDEMPOTENT_OPERATION_SCOPE}
         container:
             resources:
                 cpu: "0.5"

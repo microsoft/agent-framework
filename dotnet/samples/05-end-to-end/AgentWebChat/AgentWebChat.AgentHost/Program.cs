@@ -29,8 +29,9 @@ builder.AddDevUI();
 builder.AddOpenAIChatCompletions();
 builder.AddOpenAIResponses();
 
-// IMPORTANT: In production, register an AgentIsolationKeyProvider to isolate sessions and tasks by authenticated caller.
-// Without this, contextId/taskId alone are the lookup keys — any caller who knows them can access another caller's data.
+// IMPORTANT: In production, register an AgentIsolationKeyProvider to isolate sessions, tasks, conversations,
+// and responses by authenticated caller. Without this, contextId/taskId/conversation_id/response_id alone are
+// the lookup keys — any caller who knows them can access another caller's data.
 // Example using claims-based identity:
 // builder.Services.UseClaimsBasedAgentIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
 
@@ -176,8 +177,9 @@ builder.Services.AddKeyedSingleton<AIAgent>("my-di-matchingname-agent", (sp, nam
 pirateAgentBuilder.AddA2AServer();
 knightsKnavesAgentBuilder.AddA2AServer();
 
-// IMPORTANT: In production, register an AgentIsolationKeyProvider to isolate sessions and tasks by authenticated caller.
-// Without this, contextId/taskId alone are the lookup keys — any caller who knows them can access another caller's data.
+// IMPORTANT: In production, register an AgentIsolationKeyProvider to isolate sessions, tasks, conversations,
+// and responses by authenticated caller. Without this, contextId/taskId/conversation_id/response_id alone are
+// the lookup keys — any caller who knows them can access another caller's data.
 // Example using claims-based identity:
 // builder.Services.UseClaimsBasedAgentIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
 

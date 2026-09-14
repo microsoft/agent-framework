@@ -9,7 +9,7 @@ The flow is typically:
 
     user input -> Agent A -> Agent B -> Agent C -> Agent A -> ... -> output
 
-Depending of wether request info is enabled, the flow may include user input (except when an agent hands off):
+Depending on whether request info is enabled, the flow may include user input (except when an agent hands off):
 
     user input -> [Agent A -> Request info] -> [Agent B -> Request info] -> [Agent C -> ... -> output
 
