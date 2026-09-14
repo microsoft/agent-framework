@@ -24,11 +24,11 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.13.0,<2",
-    "pydantic-monty>=0.0.1,<0.1",
+    "pydantic-monty>=0.0.23,<0.1",
 ]
 
 [tool.uv]
-prerelease = "if-necessary-or-explicit"
+prerelease = "if-necessary"
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",

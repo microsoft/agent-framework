@@ -43,6 +43,7 @@ from ._utils import (
 
 logger = logging.getLogger(__name__)
 _VALID_CONTENT_TYPES = frozenset(get_args(ContentType))
+_APPROVAL_DECISION_IS_BOOLEAN_KEY = "_ag_ui_approval_decision_is_boolean"
 
 
 def _append_synthetic_tool_results(
@@ -996,13 +997,17 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                     name=approval.get("name", ""),
                     arguments=approval.get("arguments", {}),
                 )
-                func_call.id = approval.get("id") or None
+                func_call.id = approval.get("function_call_id") or approval.get("id") or None
 
                 # Create the approval response
+                approved_value = approval.get("approved")
                 approval_response = Content.from_function_approval_response(
-                    approved=approval.get("approved") is True,
+                    approved=approved_value is True,
                     id=approval.get("id", ""),
                     function_call=func_call,
+                    additional_properties={
+                        _APPROVAL_DECISION_IS_BOOLEAN_KEY: isinstance(approved_value, bool),
+                    },
                 )
                 approval_contents.append(approval_response)
 

@@ -319,6 +319,8 @@ def _approval_interrupt_id(content: Any) -> str | None:
     request_id = getattr(content, "id", None)
     if _function_call_server_label(function_call) is not None:
         return request_id if isinstance(request_id, str) and request_id else None
+    if getattr(content, "additional_properties", {}).get("_replacement_approval_request") is True:
+        return request_id if isinstance(request_id, str) and request_id else None
     occurrence_id = getattr(function_call, "id", None)
     if isinstance(occurrence_id, str) and occurrence_id:
         return occurrence_id

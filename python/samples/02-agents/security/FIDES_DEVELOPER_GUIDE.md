@@ -290,8 +290,8 @@ The middleware now automatically handles variable indirection for UNTRUSTED cont
 Use it when you need all of the following together:
 
 1. Direct connection to a remote MCP URL from your app process
-2. Automatic labeling of tools from MCP annotations (`readOnlyHint`, `openWorldHint`, and related hints)
-3. Parsing server result labels from `_meta.ifc`
+2. Restriction-only labeling from untrusted MCP annotations (`readOnlyHint`, `openWorldHint`, and related hints)
+3. Parsing server result labels from `_meta.ifc` without allowing them to relax local policy by default
 4. Local policy enforcement and auto-hide middleware on every tool call
 
 **Why this matters:**
@@ -363,12 +363,22 @@ async def run_secure_github_mcp(github_pat: str, endpoint: str) -> None:
 
 #### What the proxy applies automatically
 
-- Tool metadata labels from MCP hints:
+- Restriction-only tool metadata from MCP hints:
   - `source_integrity`
   - `accepts_untrusted`
   - `max_allowed_confidentiality`
-- Sink-hardening: non-read-only tools are treated as write-capable and capped to `PUBLIC` confidentiality by default
-- Per-result label mapping from `_meta.ifc` into FIDES `security_label`
+- Sink-hardening: server annotations cannot remove the `PUBLIC` confidentiality cap or authorize untrusted input
+- Per-result label mapping from `_meta.ifc` into FIDES `security_label`; by default, remote labels are combined with
+  local policy and can only add restrictions
+
+Set `trust_server_ifc=True` only when the MCP server is an authenticated authority for result labels. In that mode,
+a complete valid `_meta.ifc` label is authoritative for that result, including permitted relaxation of the local
+fallback. Missing, partial, or malformed labels still use current local policy. This opt-in does not make
+ToolAnnotations authoritative: `readOnlyHint` and `openWorldHint` remain restriction-only hints.
+
+```python
+secure_mcp = SecureMCPToolProxy(url="https://trusted.example.com/mcp/", trust_server_ifc=True)
+```
 
 #### Operational checklist
 
@@ -377,6 +387,7 @@ async def run_secure_github_mcp(github_pat: str, endpoint: str) -> None:
 3. Use `context_providers=[SecureAgentConfig(...)]` instead of manual security wiring.
 4. Keep `auto_hide_untrusted=True` unless you have a very specific reason to expose untrusted content.
 5. If write-like actions are blocked, inspect `config.get_audit_log(session)` first.
+6. Leave `trust_server_ifc=False` unless the connected server is explicitly trusted to label result data.
 
 
 ### 7. Security Tools

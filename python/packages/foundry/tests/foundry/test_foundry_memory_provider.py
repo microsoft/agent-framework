@@ -82,7 +82,7 @@ def test_init_default_update_delay(mock_project_client: AsyncMock) -> None:
 
 
 def test_init_with_project_endpoint_and_credential(mock_project_client: AsyncMock, mock_credential: Mock) -> None:
-    with patch("agent_framework_foundry._memory_provider.AIProjectClient") as mock_ai_project_client:
+    with patch("azure.ai.projects.aio.AIProjectClient") as mock_ai_project_client:
         mock_ai_project_client.return_value = mock_project_client
         provider = FoundryMemoryProvider(
             project_endpoint="https://test.project.endpoint",

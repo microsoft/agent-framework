@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import warnings
 from collections.abc import Awaitable, Callable, MutableSequence
+from datetime import timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -656,6 +657,219 @@ async def test_dynamic_policy_approval_partitions_safe_sibling_result_roles(
 
     assert safe_calls == 1
     assert guarded_values == ["hidden payload"]
+
+
+@pytest.mark.parametrize("lifecycle_event", ["expiry", "eviction"])
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_policy_reapproval_is_visible_persisted_and_executes_once(
+    chat_client_base: MockBaseChatClient,
+    monkeypatch: pytest.MonkeyPatch,
+    lifecycle_event: str,
+    streaming: bool,
+) -> None:
+    """An obsolete policy grant must surface and persist a resumable replacement."""
+    now = 1_000.0
+    monkeypatch.setattr("agent_framework.security.time.time", lambda: now)
+    calls = 0
+
+    @tool(name="policy_guarded_tool")
+    def policy_guarded_tool() -> str:
+        nonlocal calls
+        calls += 1
+        return "approved result"
+
+    class MarkUntrusted(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+            await call_next()
+
+    policy = PolicyEnforcementFunctionMiddleware(
+        approval_on_violation=True,
+        max_pending_approvals=1,
+        pending_approval_ttl=timedelta(seconds=10) if lifecycle_event == "expiry" else None,
+    )
+    agent = Agent(
+        client=chat_client_base,
+        tools=[policy_guarded_tool],
+        middleware=[MarkUntrusted(), policy],
+        context_providers=[InMemoryHistoryProvider()],
+    )
+    session = AgentSession(session_id=f"policy-reapproval-{lifecycle_event}-{streaming}")
+    function_calls = [
+        Content.from_function_call(
+            call_id="policy-provider-call",
+            name="policy_guarded_tool",
+            arguments="{}",
+            id="policy-approval-occurrence",
+        )
+    ]
+    if lifecycle_event == "eviction":
+        function_calls.append(
+            Content.from_function_call(
+                call_id="other-provider-call",
+                name="policy_guarded_tool",
+                arguments="{}",
+                id="other-occurrence",
+            )
+        )
+    captured_model_calls: list[list[Message]] = []
+
+    def capture(messages: MutableSequence[Message]) -> None:
+        captured_model_calls.append([Message.from_dict(message.to_dict()) for message in messages])
+
+    if streaming:
+        original_stream = chat_client_base._get_streaming_response
+
+        def capture_stream(
+            *,
+            messages: MutableSequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> Any:
+            capture(messages)
+            return original_stream(messages=messages, options=options, **kwargs)
+
+        monkeypatch.setattr(chat_client_base, "_get_streaming_response", capture_stream)
+        chat_client_base.streaming_responses = [
+            [ChatResponseUpdate(role="assistant", contents=function_calls)],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("after stale replay")])],
+        ]
+        first_stream = agent.run("run policy tool", stream=True, session=session)
+        first_updates = [update async for update in first_stream]
+        first_response = await first_stream.get_final_response()
+        first_update_types = [content.type for update in first_updates for content in update.contents]
+        assert first_update_types.count("function_call") == len(function_calls)
+        assert first_update_types.count("function_approval_request") == len(function_calls)
+    else:
+        original_response = chat_client_base._get_non_streaming_response
+
+        async def capture_response(
+            *,
+            messages: MutableSequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ChatResponse:
+            capture(messages)
+            return await original_response(messages=messages, options=options, **kwargs)
+
+        monkeypatch.setattr(chat_client_base, "_get_non_streaming_response", capture_response)
+        chat_client_base.run_responses = [
+            ChatResponse(messages=Message(role="assistant", contents=function_calls)),
+            ChatResponse(messages=Message(role="assistant", contents=["done"])),
+            ChatResponse(messages=Message(role="assistant", contents=["after stale replay"])),
+        ]
+        first_response = await agent.run("run policy tool", session=session)
+
+    policy_pending = policy._scope_for_session(session).pending_approvals
+    first_requests = first_response.user_input_requests
+    remaining_request: Content | None = None
+    if lifecycle_event == "expiry":
+        original_request = first_requests[0]
+        now = 1_010.0
+    else:
+        assert len(first_requests) == 2
+        original_request = next(request for request in first_requests if request.id not in policy_pending)
+        remaining_request = next(request for request in first_requests if request is not original_request)
+    assert original_request.id is not None
+    occurrence_id = original_request.id
+    assert calls == 0
+    assert chat_client_base.call_count == 1
+
+    stale_approval = original_request.to_function_approval_response(True)
+    resume_contents = [stale_approval]
+    if remaining_request is not None:
+        resume_contents.append(remaining_request.to_function_approval_response(False))
+    resume_message = Message(role="user", contents=resume_contents)
+
+    if streaming:
+        stale_stream = agent.run(resume_message, stream=True, session=session)
+        stale_updates = [update async for update in stale_stream]
+        stale_response = await stale_stream.get_final_response()
+        stale_update_types = [content.type for update in stale_updates for content in update.contents]
+        assert stale_update_types.count("function_approval_request") == 1
+        assert stale_update_types.count("function_result") == int(lifecycle_event == "eviction")
+    else:
+        stale_response = await agent.run(resume_message, session=session)
+
+    assert chat_client_base.call_count == 1
+    replacement_requests = stale_response.user_input_requests
+    assert len(replacement_requests) == 1
+    replacement = replacement_requests[0]
+    assert replacement.id != occurrence_id
+    assert replacement.function_call is not None
+    assert original_request.function_call is not None
+    assert replacement.function_call.id == occurrence_id
+    assert replacement.function_call.call_id == original_request.function_call.call_id
+    pending_snapshots = session.state["tool_approval"]["pending_approval_requests"]
+    assert [snapshot["id"] for snapshot in pending_snapshots] == [replacement.id]
+    replacement_snapshot = json.loads(json.dumps(replacement.to_dict()))
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+
+    if streaming:
+        stale_generation_stream = agent.run(stale_approval, stream=True, session=session)
+        _ = [update async for update in stale_generation_stream]
+        await stale_generation_stream.get_final_response()
+    else:
+        await agent.run(stale_approval, session=session)
+
+    assert chat_client_base.call_count == 2
+    restored_pending = session.state["tool_approval"]["pending_approval_requests"]
+    assert restored_pending == [replacement_snapshot]
+
+    if streaming:
+        approved_stream = agent.run(
+            replacement.to_function_approval_response(True),
+            stream=True,
+            session=session,
+        )
+        approved_updates = [update async for update in approved_stream]
+        approved_response = await approved_stream.get_final_response()
+        assert [content.type for update in approved_updates for content in update.contents] == [
+            "function_result",
+            "text",
+        ]
+    else:
+        approved_response = await agent.run(replacement.to_function_approval_response(True), session=session)
+
+    assert calls == 1
+    assert chat_client_base.call_count == 3
+    assert [[content.type for content in message.contents] for message in approved_response.messages] == [
+        ["function_result"],
+        ["text"],
+    ]
+    model_contents = [content for message in captured_model_calls[-1] for content in message.contents]
+    model_types = [content.type for content in model_contents]
+    expected_occurrences = 2 if lifecycle_event == "eviction" else 1
+    assert model_types.count("function_call") == expected_occurrences
+    assert model_types.count("function_result") == expected_occurrences
+    assert "function_approval_request" not in model_types
+    assert "function_approval_response" not in model_types
+    model_calls = [content for content in model_contents if content.type == "function_call"]
+    model_results = [content for content in model_contents if content.type == "function_result"]
+    assert {content.call_id for content in model_calls} == {content.call_id for content in model_results}
+    approved_model_call = next(content for content in model_calls if content.id == occurrence_id)
+    approved_model_result = next(content for content in model_results if content.call_id == approved_model_call.call_id)
+    assert approved_model_call.call_id == approved_model_result.call_id
+
+    if streaming:
+        replay_stream = agent.run(stale_approval, stream=True, session=session)
+        _ = [update async for update in replay_stream]
+        await replay_stream.get_final_response()
+    else:
+        await agent.run(stale_approval, session=session)
+
+    assert chat_client_base.call_count == 4
+    assert "pending_approval_requests" not in session.state["tool_approval"]
+    replayed_types = [content.type for message in captured_model_calls[-1] for content in message.contents]
+    assert replayed_types.count("function_call") == expected_occurrences
+    assert replayed_types.count("function_result") == expected_occurrences
+    assert "function_approval_request" not in replayed_types
+    assert "function_approval_response" not in replayed_types
 
 
 @pytest.mark.parametrize("approved", [True, False], ids=["approved", "rejected"])

@@ -74,4 +74,6 @@ public sealed class OpenAIResponseRequestInfo
     /// <see langword="null"/>.
     /// </remarks>
     public ChatToolMode? ToolChoice { get; set; }
+
+    internal bool HasToolChoice { get; set; }
 }
