@@ -5907,6 +5907,36 @@ async def test_chat_client_records_duration_when_stream_finalizer_fails(
     assert attributes[OtelAttr.OPERATION] == OtelAttr.CHAT_COMPLETION_OPERATION
 
 
+async def test_chat_client_records_duration_when_stream_result_hook_fails(
+    mock_chat_client: Any, span_exporter: InMemorySpanExporter
+) -> None:
+    """A stream whose result hook raises records the duration metric with error.type."""
+
+    def _broken_result_hook(response: ChatResponse) -> ChatResponse:
+        raise RuntimeError("result hook failed")
+
+    client = mock_chat_client()
+    histogram = Mock()
+    client.duration_histogram = histogram
+    span_exporter.clear()
+
+    with pytest.raises(RuntimeError, match="result hook failed"):
+        stream = client.get_response(
+            messages=[Message(role="user", contents=["hi"])], stream=True, options={"model": "Test"}
+        )
+        stream.with_result_hook(_broken_result_hook)
+        async for _ in stream:
+            pass
+
+    histogram.record.assert_called_once()
+    duration, kwargs = histogram.record.call_args[0][0], histogram.record.call_args[1]
+    assert duration >= 0
+    attributes = kwargs["attributes"]
+    assert attributes[OtelAttr.ERROR_TYPE] == "RuntimeError"
+    assert attributes[OtelAttr.REQUEST_MODEL] == "Test"
+    assert attributes[OtelAttr.OPERATION] == OtelAttr.CHAT_COMPLETION_OPERATION
+
+
 async def test_embedding_client_records_duration_on_error(span_exporter: InMemorySpanExporter) -> None:
     """A failed embedding call records gen_ai.client.operation.duration with error.type."""
     from agent_framework import BaseEmbeddingClient, GeneratedEmbeddings

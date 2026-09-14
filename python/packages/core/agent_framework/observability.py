@@ -2076,65 +2076,73 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             async def _finalize_stream() -> None:
                 from ._types import ChatResponse
 
+                if result_stream._stream_error is not None:  # pyright: ignore[reportPrivateUsage]
+                    # Stream errored; skip get_final_response() to avoid firing
+                    # result hooks such as after_run context providers on error
+                    # paths. Capture the error on the span before returning.
+                    capture_exception(
+                        span=span,
+                        exception=result_stream._stream_error,  # type: ignore
+                        timestamp=time_ns(),
+                    )
+                    _capture_operation_error(
+                        attributes=attributes,
+                        exception=result_stream._stream_error,  # type: ignore
+                        operation_duration_histogram=getattr(self, "duration_histogram", None),
+                        duration=duration_state.get("duration", perf_counter() - start_time),
+                    )
+                    _close_span()
+                    return
+
                 try:
-                    if result_stream._stream_error is not None:  # pyright: ignore[reportPrivateUsage]
-                        # Stream errored; skip get_final_response() to avoid firing
-                        # result hooks such as after_run context providers on error
-                        # paths. Capture the error on the span before returning.
-                        capture_exception(
-                            span=span,
-                            exception=result_stream._stream_error,  # type: ignore
-                            timestamp=time_ns(),
-                        )
+                    try:
+                        response: ChatResponse[Any] = await result_stream.get_final_response()
+                    except Exception as exception:
+                        capture_exception(span=span, exception=exception, timestamp=time_ns())
                         _capture_operation_error(
                             attributes=attributes,
-                            exception=result_stream._stream_error,  # type: ignore
+                            exception=exception,
                             operation_duration_histogram=getattr(self, "duration_histogram", None),
                             duration=duration_state.get("duration", perf_counter() - start_time),
                         )
-                        return
-                    response: ChatResponse[Any] = await result_stream.get_final_response()
-                    duration = duration_state.get("duration")
-                    response_attributes = _get_response_attributes(attributes, response)
-                    self._backfill_request_model(span, response_attributes)
-                    _capture_response(
-                        span=span,
-                        attributes=response_attributes,
-                        token_usage_histogram=getattr(self, "token_usage_histogram", None),
-                        operation_duration_histogram=getattr(self, "duration_histogram", None),
-                        duration=duration,
-                    )
-                    _mark_inner_response_telemetry_captured(response)
-                    if (
-                        OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
-                        and isinstance(response, ChatResponse)
-                        and response.messages
-                        and span.is_recording()
-                    ):
-                        finish_reason = _get_response_finish_reason(response)
-                        # Activate the span: this cleanup hook runs after the final pull has
-                        # exited its _activate_span context, so it wouldn't otherwise be current.
-                        with _activate_span(span):
-                            _capture_message_events_v1_36(
-                                provider_name=provider_name,
+                        raise
+
+                    try:
+                        duration = duration_state.get("duration")
+                        response_attributes = _get_response_attributes(attributes, response)
+                        self._backfill_request_model(span, response_attributes)
+                        _capture_response(
+                            span=span,
+                            attributes=response_attributes,
+                            token_usage_histogram=getattr(self, "token_usage_histogram", None),
+                            operation_duration_histogram=getattr(self, "duration_histogram", None),
+                            duration=duration,
+                        )
+                        _mark_inner_response_telemetry_captured(response)
+                        if (
+                            OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
+                            and isinstance(response, ChatResponse)
+                            and response.messages
+                            and span.is_recording()
+                        ):
+                            finish_reason = _get_response_finish_reason(response)
+                            # Activate the span: this cleanup hook runs after the final pull has
+                            # exited its _activate_span context, so it wouldn't otherwise be current.
+                            with _activate_span(span):
+                                _capture_message_events_v1_36(
+                                    provider_name=provider_name,
+                                    messages=response.messages,
+                                    finish_reason=finish_reason,
+                                    output=True,
+                                )
+                            _capture_message_span_attributes_latest_experimental(
+                                span=span,
                                 messages=response.messages,
                                 finish_reason=finish_reason,
                                 output=True,
                             )
-                        _capture_message_span_attributes_latest_experimental(
-                            span=span,
-                            messages=response.messages,
-                            finish_reason=finish_reason,
-                            output=True,
-                        )
-                except Exception as exception:
-                    capture_exception(span=span, exception=exception, timestamp=time_ns())
-                    _capture_operation_error(
-                        attributes=attributes,
-                        exception=exception,
-                        operation_duration_histogram=getattr(self, "duration_histogram", None),
-                        duration=duration_state.get("duration", perf_counter() - start_time),
-                    )
+                    except Exception as telemetry_exception:
+                        logger.debug("Failed to capture telemetry for stream: %s", telemetry_exception)
                 finally:
                     _close_span()
 
