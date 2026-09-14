@@ -7544,6 +7544,25 @@ async def test_streaming_resume_with_tools_runs_the_tool_once() -> None:
     assert final.text == "Email sent."
 
 
+async def test_streaming_resume_drops_continuation_token_before_the_terminal_update() -> None:
+    """A consumer that stops at the terminal update must not leave the token in its options."""
+    retrieve = AsyncMock(
+        side_effect=lambda *args, **kwargs: _FakeAsyncEventStream([_completed_response_event("resp_bg", "message")])
+    )
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    # The tool loop hands its own options dict to _inner_get_response and reuses it.
+    options: dict[str, Any] = {"continuation_token": {"response_id": "resp_bg"}}
+    with patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve):
+        stream = _as_chat_response_stream(
+            client._inner_get_response(messages=[Message(role="user", contents=["hi"])], options=options, stream=True)
+        )
+        async for _ in stream:
+            break
+
+    assert "continuation_token" not in options
+
+
 async def test_prepare_options_excludes_continuation_token() -> None:
     """Test that _prepare_options does not pass continuation_token to OpenAI API."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")

@@ -743,7 +743,6 @@ class RawOpenAIChatClient(
                         # proxy ``.headers``. Degrade gracefully so the served-model surfacing is
                         # best-effort instead of crashing the whole call.
                         served_model = self._extract_served_model(getattr(raw_stream_response, "headers", None))
-                        background_response_finished = False
                         async with _open_event_stream(raw_stream_response) as stream_response:
                             async for chunk in stream_response:
                                 update = self._parse_chunk_from_openai(
@@ -754,16 +753,20 @@ class RawOpenAIChatClient(
                                 )
                                 if served_model is not None:
                                     update.model = served_model
-                                if chunk.type in ("response.completed", "response.incomplete", "response.failed"):
-                                    background_response_finished = True
+                                if chunk.type in (
+                                    "response.completed",
+                                    "response.incomplete",
+                                    "response.failed",
+                                ) and isinstance(options, dict):
+                                    # Same as the non-streaming path (issue #5394): once the resumed
+                                    # background response has finished, drop the continuation_token
+                                    # from the caller's options dict. FunctionInvocationLayer reuses
+                                    # that dict, so a leftover token makes the next tool-loop iteration
+                                    # retrieve this response again instead of POSTing the tool results,
+                                    # and the tools run again each time. Do it before yielding, so a
+                                    # consumer that stops at the terminal update doesn't keep it.
+                                    options.pop("continuation_token", None)
                                 yield update
-                        # Same as the non-streaming path (issue #5394): once the resumed background
-                        # response has finished, drop the continuation_token from the caller's options
-                        # dict. FunctionInvocationLayer reuses that dict, so a leftover token makes the
-                        # next tool-loop iteration retrieve this response again instead of POSTing the
-                        # tool results, and the tools run again each time.
-                        if background_response_finished and isinstance(options, dict):
-                            options.pop("continuation_token", None)
                     except Exception as ex:
                         self._handle_request_error(ex)
                 else:
