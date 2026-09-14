@@ -886,6 +886,13 @@ class TestMCPSkillsSourceArchive:
             (
                 (
                     "name: packaged-skill\ndescription: Valid description.\nmetadata:\n"
+                    "  owner: first\n  Owner: SECOND-VALUE-SHOULD-NOT-BE-LOGGED"
+                ),
+                "metadata.Owner",
+            ),
+            (
+                (
+                    "name: packaged-skill\ndescription: Valid description.\nmetadata:\n"
                     "  owner: first\nmetadata:\n  owner: SECOND-VALUE-SHOULD-NOT-BE-LOGGED"
                 ),
                 "metadata",

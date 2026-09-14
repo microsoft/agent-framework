@@ -3613,15 +3613,16 @@ class FileSkillsSource(SkillsSource):
             seen_metadata_keys: set[str] = set()
             for kv_match in YAML_INDENTED_KV_RE.finditer(metadata_match.group(1)):
                 mk = kv_match.group(1)
-                # Metadata keys remain case-sensitive but must still be unique.
-                if mk in seen_metadata_keys:
+                # Reject case variants that would collide in case-insensitive clients.
+                normalized_key = mk.lower()
+                if normalized_key in seen_metadata_keys:
                     logger.error(
                         "SKILL.md at '%s' contains duplicate frontmatter key 'metadata.%s'",
                         skill_file_path,
                         mk,
                     )
                     return None
-                seen_metadata_keys.add(mk)
+                seen_metadata_keys.add(normalized_key)
                 mv = kv_match.group(2) if kv_match.group(2) is not None else kv_match.group(3)
                 metadata[mk] = mv
 

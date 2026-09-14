@@ -570,15 +570,12 @@ class TestTryParseSkillDocument:
 
         assert FileSkillsSource._extract_frontmatter(content, "test.md") is None
 
-    def test_metadata_keys_remain_case_sensitive(self) -> None:
+    def test_case_variant_duplicate_metadata_field_is_rejected(self) -> None:
         content = (
             "---\nname: test-skill\ndescription: A test skill.\nmetadata:\n  owner: first\n  Owner: second\n---\nBody."
         )
 
-        frontmatter = FileSkillsSource._extract_frontmatter(content, "test.md")
-
-        assert frontmatter is not None
-        assert frontmatter.metadata == {"owner": "first", "Owner": "second"}
+        assert FileSkillsSource._extract_frontmatter(content, "test.md") is None
 
 
 # ---------------------------------------------------------------------------
