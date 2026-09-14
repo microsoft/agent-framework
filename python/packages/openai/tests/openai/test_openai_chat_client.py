@@ -2184,6 +2184,7 @@ def test_shell_output_payloads_do_not_expose_exception_diagnostics() -> None:
     assert empty_local_payload["exit_code"] == 1
     assert empty_shell_payload[0]["outcome"] == {"type": "exit", "exit_code": 1}
 
+
 def test_prepared_local_shell_tool_survives_make_tools() -> None:
     """Regression: the prepared shell tool must be a subscriptable dict.
 
