@@ -1470,6 +1470,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                     # The handshake and discovery requests are issued before any tool call, so the run's
                     # kwargs must reach header_provider here or those requests go out unauthenticated.
                     await self._async_exit_stack.enter_async_context(tool)
+                    await tool._prepare_for_run(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
                 _append_unique_tools(
                     final_tools,
                     tool.functions,
@@ -1482,6 +1483,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             await mcp_server._prepare_for_run(additional_function_arguments)  # pyright: ignore[reportPrivateUsage]
             if not mcp_server.is_connected:
                 await self._async_exit_stack.enter_async_context(mcp_server)
+                await mcp_server._prepare_for_run(  # pyright: ignore[reportPrivateUsage]
+                    additional_function_arguments
+                )
             _append_unique_tools(
                 final_tools,
                 mcp_server.functions,
