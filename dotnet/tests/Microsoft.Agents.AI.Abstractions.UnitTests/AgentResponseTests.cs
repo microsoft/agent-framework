@@ -323,4 +323,89 @@ public class AgentResponseTests
         Assert.NotNull(update.AdditionalProperties);
         Assert.Equal("value", update.AdditionalProperties!["key"]);
     }
+
+    [Fact]
+    public void ProtectedCopyConstructor_WithNullAgentResponse_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>("response", () => new DerivedAgentResponse(null!));
+    }
+
+    [Fact]
+    public void ProtectedCopyConstructor_WithAgentResponse_CopiesAllProperties()
+    {
+        // Arrange
+        AgentResponse original = new(new ChatMessage(ChatRole.Assistant, "hello"))
+        {
+            AdditionalProperties = new() { ["key"] = "value" },
+            CreatedAt = new DateTimeOffset(2022, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            FinishReason = ChatFinishReason.Stop,
+            ResponseId = "responseId",
+            Usage = new UsageDetails { TotalTokenCount = 42 },
+            ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
+        };
+
+        // Act
+        DerivedAgentResponse copy = new(original);
+
+        // Assert
+        Assert.Same(original.AdditionalProperties, copy.AdditionalProperties);
+        Assert.Equal(original.CreatedAt, copy.CreatedAt);
+        Assert.Equal(original.FinishReason, copy.FinishReason);
+        Assert.Same(original.Messages, copy.Messages);
+        Assert.Same(original, copy.RawRepresentation);
+        Assert.Equal(original.ResponseId, copy.ResponseId);
+        Assert.Same(original.Usage, copy.Usage);
+        Assert.Equivalent(original.ContinuationToken, copy.ContinuationToken);
+    }
+
+    [Fact]
+    public void ToAgentResponseUpdates_PropagatesMessageAuthorName()
+    {
+        // Arrange
+        AgentResponse response = new(new ChatMessage(ChatRole.Assistant, "Text") { AuthorName = "bot" });
+
+        // Act
+        AgentResponseUpdate[] updates = response.ToAgentResponseUpdates();
+
+        // Assert
+        Assert.Single(updates);
+        Assert.Equal("bot", updates[0].AuthorName);
+    }
+
+    [Fact]
+    public void ToAgentResponseUpdates_PropagatesMessageAdditionalProperties()
+    {
+        // Arrange
+        AdditionalPropertiesDictionary messageProps = new() { ["msgKey"] = "msgValue" };
+        AgentResponse response = new(new ChatMessage(ChatRole.Assistant, "Text") { AdditionalProperties = messageProps });
+
+        // Act
+        AgentResponseUpdate[] updates = response.ToAgentResponseUpdates();
+
+        // Assert
+        Assert.Single(updates);
+        Assert.Same(messageProps, updates[0].AdditionalProperties);
+    }
+
+    [Fact]
+    public void JsonSerialization_ExcludesTextAndRawRepresentation()
+    {
+        // Arrange
+        AgentResponse response = new(new ChatMessage(ChatRole.Assistant, "hello"))
+        {
+            RawRepresentation = new object(),
+        };
+
+        // Act
+        string json = JsonSerializer.Serialize(response, AgentAbstractionsJsonUtilities.DefaultOptions);
+
+        // Assert
+        using JsonDocument doc = JsonDocument.Parse(json);
+        JsonElement root = doc.RootElement;
+        Assert.True(root.TryGetProperty("messages", out _));
+        Assert.False(root.TryGetProperty("text", out _));
+        Assert.False(root.TryGetProperty("rawRepresentation", out _));
+    }
+
+    private sealed class DerivedAgentResponse(AgentResponse response) : AgentResponse(response);
 }
