@@ -50,6 +50,10 @@ class _FakeFunctionSnapshot:
         assert self._script is not None, "Snapshot must be attached to a script."
         return self._script.advance(("function_resume", self, payload))
 
+    def resume_auto(self) -> Any:
+        assert self._script is not None, "Snapshot must be attached to a script."
+        return self._script.advance(("function_resume_auto", self, None))
+
 
 @dataclass
 class _FakeFutureSnapshot:
@@ -116,28 +120,78 @@ def _get_script() -> _FakeScript:
     return script
 
 
-class _FakeMonty:
+class _FakeSession:
+    """Fake ``MontySession`` matching the pydantic-monty pool/checkout API."""
+
     def __init__(
         self,
-        code: str,
         *,
         script_name: str,
         type_check: bool,
         type_check_stubs: str | None,
+        limits: dict[str, Any] | None = None,
     ) -> None:
-        self.code = code
         self.script_name = script_name
         self.type_check = type_check
         self.type_check_stubs = type_check_stubs
+        self.limits = limits
+        self.code: str | None = None
         self._script = _get_script()
 
-    def start(self, *, print_callback: Any) -> Any:
+    def __enter__(self) -> _FakeSession:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        return None
+
+    def feed_start(
+        self,
+        code: str,
+        *,
+        print_callback: Any = None,
+        mount: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        self.code = code
+        self.mount = mount
         while True:
             item = self._script.next_item()
             if isinstance(item, _PrintAction):
-                print_callback("stdout", item.text)
+                if print_callback is not None:
+                    print_callback("stdout", item.text)
                 continue
             return item
+
+
+class _FakeMonty:
+    """Fake ``Monty`` pool: ``with Monty() as pool: with pool.checkout() as session``."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        self.pool_kwargs = kwargs
+        self.last_session: _FakeSession | None = None
+
+    def __enter__(self) -> _FakeMonty:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        return None
+
+    def checkout(
+        self,
+        *,
+        script_name: str = "main.py",
+        type_check: bool = False,
+        type_check_stubs: str | None = None,
+        limits: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> _FakeSession:
+        self.last_session = _FakeSession(
+            script_name=script_name,
+            type_check=type_check,
+            type_check_stubs=type_check_stubs,
+            limits=limits,
+        )
+        return self.last_session
 
 
 @pytest.fixture(autouse=True)

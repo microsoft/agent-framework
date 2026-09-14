@@ -94,6 +94,33 @@ total = await call_tool("add", a=2, b=3)
 print(total)
 ```
 
+## Tool Approval
+
+Generated code reaches registered tools through `call_tool(...)`, which invokes
+them directly. A per-tool approval interaction cannot be surfaced at that point,
+so approval is **bundled** onto `execute_code` instead:
+
+* If any registered tool is an `ApprovalRequiredAIFunction`, `execute_code`
+  itself requires approval before the code runs.
+* `LocalCodeActApprovalMode.AlwaysRequire` makes `execute_code` require approval
+  regardless of the registered tools.
+
+```csharp
+var deploy = new ApprovalRequiredAIFunction(
+    AIFunctionFactory.Create(RunDeployment, name: "deploy"));
+
+using var provider = new LocalCodeActProvider("/usr/bin/python3", new LocalCodeActProviderOptions
+{
+    Tools = new[] { deploy },
+    // ApprovalMode = LocalCodeActApprovalMode.AlwaysRequire, // optional, opt-in
+});
+```
+
+For `LocalCodeActProvider`, approval is recomputed on every run, so tools added
+via `AddTools` after construction are taken into account. `LocalExecuteCodeFunction`
+captures its tools at construction time and exposes the approval requirement
+through `GetService<ApprovalRequiredAIFunction>()`.
+
 ## Code Validation
 
 By default, the package validates Python code against allow-lists before
