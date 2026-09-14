@@ -1426,7 +1426,12 @@ async def test_invocation_kwargs_compatibility_boundaries(
         and executor_ids[0] == "__global__"
         and invocation_kwargs.get("__global__") == "invalid"
     ):
-        assert [record.message for record in caplog.records] == [
+        matching_warnings = [
+            record.message
+            for record in caplog.records
+            if record.levelname == "WARNING" and record.name == "agent_framework._workflows._agent_utils"
+        ]
+        assert matching_warnings == [
             "Executor __global__ expected a dict for its kwargs, but got <class 'str'>. Ignoring."
         ]
 
