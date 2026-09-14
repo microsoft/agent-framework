@@ -129,6 +129,7 @@ class _PromptCacheOptions(TypedDict, total=False):
 
 
 if TYPE_CHECKING:
+    from agent_framework._sessions import AgentSession
     from azure.core.credentials import TokenCredential
     from azure.core.credentials_async import AsyncTokenCredential
 
@@ -3833,6 +3834,22 @@ class OpenAIChatClient(
             tokenizer=tokenizer,
             additional_properties=additional_properties,
         )
+
+    @override
+    def _update_function_invocation_continuation_state(
+        self,
+        kwargs: dict[str, Any],
+        response: ChatResponse[Any],
+        *,
+        session: AgentSession | None,
+        options: dict[str, Any] | None = None,
+    ) -> None:
+        super()._update_function_invocation_continuation_state(kwargs, response, session=session, options=options)
+        # _inner_get_response drops the token from the options that reached the service call, which
+        # chat middleware may have replaced. Drop it from the function loop's own options as well once
+        # the background response has finished, or the next iteration retrieves it again.
+        if options is not None and response.continuation_token is None:
+            options.pop("continuation_token", None)
 
 
 def _apply_openai_chat_client_docstrings() -> None:
