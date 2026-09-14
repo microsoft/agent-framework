@@ -4,9 +4,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
-from collections.abc import AsyncGenerator, Callable
+from collections import Counter
+from collections.abc import AsyncGenerator, Callable, Mapping
 from typing import Any, cast
 
 from ag_ui.core import (
@@ -59,43 +61,70 @@ WorkflowRequestOwner = tuple[str | None, str | None]
 
 _REQUEST_OWNER_ATTRIBUTE = "_ag_ui_request_owner"
 _CHECKPOINT_REQUEST_OWNER_KEY = "ag_ui_workflow_request_owner"
-_APPROVAL_RESUME_STRINGS = frozenset({
-    "approved",
-    "rejected",
-    "accepted",
-    "denied",
-    "true",
-    "false",
-})
 
 
-def _snapshot_messages_from_resume_value(value: Any) -> list[dict[str, Any]]:
+def _hashable_message_content(content: Any) -> Any:
+    """Return a hashable, order-stable form of snapshot message content."""
+    if isinstance(content, (str, int, float, bool)) or content is None:
+        return content
+    try:
+        return json.dumps(content, sort_keys=True, default=str)
+    except TypeError:
+        return repr(content)
+
+
+def _pending_request_is_approval(pending_request: Any | None) -> bool:
+    """Whether a pending request_info event is an approval gate (not conversational HITL)."""
+    if pending_request is None:
+        return False
+    response_type: Any | None
+    try:
+        response_type = pending_request.response_type
+    except Exception:
+        response_type = getattr(pending_request, "_response_type", None)
+    if response_type is bool:
+        return True
+    type_name = getattr(response_type, "__name__", "") or str(response_type or "")
+    if "Approval" in type_name:
+        return True
+    data = getattr(pending_request, "data", None)
+    if isinstance(data, dict) and any(key in data for key in ("functionCall", "function_call")):
+        return True
+    return False
+
+
+def _snapshot_messages_from_resume_value(
+    value: Any,
+    *,
+    pending_request: Any | None = None,
+) -> list[dict[str, Any]]:
     """Convert a resolved workflow resume value into snapshot chat messages when user-visible.
 
-    Approval / structured tool payloads are skipped. Conversational HITL replies
-    (message lists or plain text) become replayable ``role: user`` turns for hydrate.
+    Approval / structured tool payloads are skipped based on the matched pending request's
+    type/data (not the response text). Only ``user`` turns are projected so resume cannot
+    forge assistant/system/tool history into the backend-owned snapshot.
     """
     if isinstance(value, bool) or value is None:
         return []
+    if _pending_request_is_approval(pending_request):
+        return []
     if isinstance(value, str):
         text = value.strip()
-        # Legacy request_info(str) resumes often send bare "approved"/"rejected"
-        # strings — those are not conversational HITL turns (#8160 / Copilot).
-        if not text or text.casefold() in _APPROVAL_RESUME_STRINGS:
+        if not text:
             return []
         return [{"role": "user", "content": text}]
     if isinstance(value, dict):
         # Function-approval style payloads are not chat turns.
         if any(key in value for key in ("approved", "accepted", "functionCall", "function_call")):
             return []
-        if value.get("role") in {"user", "assistant", "system", "tool"}:
+        if value.get("role") == "user":
             return agui_messages_to_snapshot_format([_resume_message_to_agui_dict(value)])
         return []
     if isinstance(value, list):
         message_like = [
             _resume_message_to_agui_dict(item)
             for item in value
-            if isinstance(item, dict) and item.get("role")
+            if isinstance(item, dict) and item.get("role") == "user"
         ]
         if message_like:
             return agui_messages_to_snapshot_format(message_like)
@@ -118,33 +147,57 @@ def _resume_message_to_agui_dict(message: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def _snapshot_messages_from_workflow_resume(resume_payload: Any) -> list[dict[str, Any]]:
+def _snapshot_messages_from_workflow_resume(
+    resume_payload: Any,
+    pending_events: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """Collect user-visible snapshot messages from a workflow resume payload."""
     messages: list[dict[str, Any]] = []
+    pending = pending_events or {}
     for interrupt in _normalize_resume_interrupts(resume_payload):
         if interrupt.get("status") not in {None, "resolved"}:
             continue
-        messages.extend(_snapshot_messages_from_resume_value(interrupt.get("value")))
+        interrupt_id = interrupt.get("id")
+        pending_request = pending.get(str(interrupt_id)) if interrupt_id is not None else None
+        messages.extend(
+            _snapshot_messages_from_resume_value(interrupt.get("value"), pending_request=pending_request)
+        )
     return messages
 
 
 def _message_identity(message: dict[str, Any]) -> tuple[Any, ...]:
     """Stable identity for deduping resume-synthesized turns against request messages."""
-    return (message.get("role"), message.get("id"), message.get("content"))
+    return (message.get("role"), message.get("id"), _hashable_message_content(message.get("content")))
+
+
+def _message_content_identity(message: dict[str, Any]) -> tuple[Any, ...]:
+    """Role+content identity used when message IDs differ across messages vs resume."""
+    return (message.get("role"), _hashable_message_content(message.get("content")))
 
 
 def _append_unique_snapshot_messages(
     existing: list[dict[str, Any]],
     incoming: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Append resume-derived turns that are not already present in the seed."""
-    seen = {_message_identity(message) for message in existing}
+    """Append resume-derived turns that are not already present in the seed.
+
+    Prefer id equality; when IDs differ (resume synthesizes a new id), fall back to a
+    count-aware role/content match so client-replayed turns are not persisted twice.
+    """
+    seen_ids = {message.get("id") for message in existing if message.get("id")}
+    remaining_content = Counter(_message_content_identity(message) for message in existing)
     merged = list(existing)
     for message in incoming:
-        identity = _message_identity(message)
-        if identity in seen:
+        message_id = message.get("id")
+        if message_id and message_id in seen_ids:
             continue
-        seen.add(identity)
+        content_key = _message_content_identity(message)
+        if remaining_content[content_key] > 0:
+            remaining_content[content_key] -= 1
+            continue
+        if message_id:
+            seen_ids.add(message_id)
+        remaining_content[content_key] += 1
         merged.append(message)
     return merged
 
@@ -564,7 +617,10 @@ class AgentFrameworkWorkflow:
             # Conversational HITL resumes put the user reply in interrupt.value with
             # messages:[]; fold that text into the snapshot so hydrate keeps it (#8160).
             # Skip when the client already included the same turn in `messages`.
-            hitl_messages = _snapshot_messages_from_workflow_resume(resume_payload)
+            hitl_messages = _snapshot_messages_from_workflow_resume(
+                resume_payload,
+                pending_events=live_pending_events,
+            )
             if hitl_messages:
                 builder_seed_messages = _append_unique_snapshot_messages(
                     builder_seed_messages,
