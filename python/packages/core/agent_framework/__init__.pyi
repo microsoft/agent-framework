@@ -279,7 +279,6 @@ from ._workflows._agent_executor import (
     AgentExecutorCheckpointState,
     AgentExecutorRequest,
     AgentExecutorResponse,
-    AgentSessionCheckpointState,
 )
 from ._workflows._agent_utils import resolve_agent_id
 from ._workflows._checkpoint import (
@@ -399,7 +398,6 @@ __all__ = [
     "AgentResponseUpdate",
     "AgentRunInputs",
     "AgentSession",
-    "AgentSessionCheckpointState",
     "AgentSessionDict",
     "AggregatingSkillsSource",
     "Annotation",

@@ -322,7 +322,6 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "AgentExecutorCheckpointState",
         "AgentExecutorRequest",
         "AgentExecutorResponse",
-        "AgentSessionCheckpointState",
     ),
     "._workflows._agent_utils": ("resolve_agent_id",),
     "._workflows._checkpoint": (
@@ -444,7 +443,6 @@ __all__ = [
     "AgentResponseUpdate",
     "AgentRunInputs",
     "AgentSession",
-    "AgentSessionCheckpointState",
     "AgentSessionDict",
     "AggregatingSkillsSource",
     "Annotation",

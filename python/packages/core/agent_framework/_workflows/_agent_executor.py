@@ -30,9 +30,6 @@ else:
 
 logger = logging.getLogger(__name__)
 
-# Alias kept for the public PR surface; the canonical shape lives on AgentSession.
-AgentSessionCheckpointState = AgentSessionDict
-
 
 class AgentExecutorCheckpointState(TypedDict, total=False):
     """Public schema for state saved and restored by :class:`AgentExecutor`.
@@ -135,6 +132,23 @@ def _validate_agent_executor_checkpoint_state(state: Mapping[str, Any]) -> None:
             raise WorkflowCheckpointException(
                 "AgentExecutor checkpoint field 'agent_session.session_id' must be a str, "
                 f"got {type(session_id).__name__}."
+            )
+        if "state" in session and session["state"] is not None and not isinstance(session["state"], dict):
+            raise WorkflowCheckpointException(
+                "AgentExecutor checkpoint field 'agent_session.state' must be a dict, "
+                f"got {type(session['state']).__name__}."
+            )
+        if "service_session_id" in session and session["service_session_id"] is not None:
+            service_session_id = session["service_session_id"]
+            if not isinstance(service_session_id, (str, Mapping)):
+                raise WorkflowCheckpointException(
+                    "AgentExecutor checkpoint field 'agent_session.service_session_id' must be "
+                    f"str, mapping, or None, got {type(service_session_id).__name__}."
+                )
+        if "type" in session and session["type"] is not None and not isinstance(session["type"], str):
+            raise WorkflowCheckpointException(
+                "AgentExecutor checkpoint field 'agent_session.type' must be a str, "
+                f"got {type(session['type']).__name__}."
             )
 
 
@@ -500,8 +514,10 @@ class AgentExecutor(Executor):
             try:
                 self._session = AgentSession.from_dict(session_payload)
             except Exception as exc:
-                logger.warning("Failed to restore agent session: %s", exc)
-                self._session = self._agent.create_session()
+                raise WorkflowCheckpointException(
+                    "AgentExecutor checkpoint field 'agent_session' could not be restored: "
+                    f"{exc}"
+                ) from exc
         else:
             self._session = self._agent.create_session()
 

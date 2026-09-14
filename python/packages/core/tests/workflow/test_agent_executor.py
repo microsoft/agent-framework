@@ -580,7 +580,7 @@ async def test_checkpoint_restore_works_without_context_mode_in_state() -> None:
 
 async def test_agent_executor_checkpoint_state_public_schema_keys() -> None:
     """Saved AgentExecutor checkpoint state exposes the public TypedDict keys."""
-    from agent_framework import AgentExecutorCheckpointState, AgentSessionCheckpointState, AgentSessionDict
+    from agent_framework import AgentExecutorCheckpointState, AgentSessionDict
 
     agent = _CountingAgent(id="schema_agent", name="SchemaAgent")
     executor = AgentExecutor(agent)
@@ -600,8 +600,8 @@ async def test_agent_executor_checkpoint_state_public_schema_keys() -> None:
     assert "session_id" in state["agent_session"]
     # Public types remain importable for static analysis / migrations.
     _: type[AgentExecutorCheckpointState] = AgentExecutorCheckpointState
-    __: type[AgentSessionCheckpointState] = AgentSessionCheckpointState
-    assert AgentSessionCheckpointState is AgentSessionDict
+    __: type[AgentSessionDict] = AgentSessionDict
+    assert isinstance(state["agent_session"], dict)
 
 
 async def test_agent_executor_checkpoint_restore_missing_optional_fields() -> None:
@@ -642,6 +642,9 @@ async def test_agent_executor_checkpoint_restore_rejects_malformed_fields() -> N
 
     with pytest.raises(WorkflowCheckpointException, match="agent_session.session_id"):
         await executor.on_checkpoint_restore({"agent_session": {"session_id": 1}})  # type: ignore[typeddict-item]
+
+    with pytest.raises(WorkflowCheckpointException, match="agent_session.state"):
+        await executor.on_checkpoint_restore({"agent_session": {"session_id": "s", "state": []}})  # type: ignore[typeddict-item]
 
     with pytest.raises(WorkflowCheckpointException, match="pending_agent_requests"):
         await executor.on_checkpoint_restore({"pending_agent_requests": []})  # type: ignore[typeddict-item]
