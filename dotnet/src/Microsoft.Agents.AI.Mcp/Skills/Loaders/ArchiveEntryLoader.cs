@@ -15,10 +15,9 @@ namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Loads <c>archive</c> index entries: each entry's <c>url</c> points to a single archive resource
-/// (<c>application/zip</c>, <c>application/x-tar</c>, or gzip-compressed TAR) whose content unpacks
-/// into the skill's namespace. Archives are downloaded, extracted to a local directory, and the
-/// resulting files are discovered via an internal <see cref="AgentFileSkillsSource"/> that this
-/// loader proxies to.
+/// in ZIP format whose content unpacks into the skill's namespace. Archives are downloaded,
+/// extracted to a local directory, and the resulting files are discovered via an internal
+/// <see cref="AgentFileSkillsSource"/> that this loader proxies to.
 /// </summary>
 /// <remarks>
 /// Because MCP-delivered skills are treated strictly as instructor-format text, scripts bundled
