@@ -8,6 +8,7 @@ import logging
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import BaseModel
@@ -4771,18 +4772,187 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 
 
+class TestSecureMCPToolProxyURLMode:
+    """Tests for origin-scoped headers in the proxy's URL mode."""
+
+    async def test_static_headers_do_not_serialize_tool_calls(self) -> None:
+        from unittest.mock import patch
+
+        from agent_framework._mcp import MCPTool
+        from agent_framework.security import SecureMCPToolProxy
+
+        both_started = asyncio.Event()
+        started = 0
+
+        async def overlapping_call(_tool: MCPTool, tool_name: str, **_kwargs: Any) -> str:
+            nonlocal started
+            started += 1
+            if started == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=1)
+            return tool_name
+
+        proxy = SecureMCPToolProxy(
+            url="https://mcp.example/mcp",
+            headers={"Authorization": "auth-value"},
+        )
+
+        with patch.object(MCPTool, "call_tool", overlapping_call):
+            results = await asyncio.gather(
+                proxy.mcp_tool.call_tool("first"),
+                proxy.mcp_tool.call_tool("second"),
+            )
+
+        assert results == ["first", "second"]
+
+    async def test_headers_are_sent_only_to_the_configured_origin(self) -> None:
+        from unittest.mock import patch
+
+        import httpx
+
+        from agent_framework._mcp import _MCPHeaderScopedClient
+        from agent_framework.security import SecureMCPToolProxy
+
+        configured_headers = {
+            "Authorization": "auth-value",
+            "X-API-Key": "api-value",
+            "Cookie": "session=value",
+            "Proxy-Authorization": "proxy-value",
+            "X-Custom-Credential": "custom-value",
+        }
+        observed: list[tuple[str, str, dict[str, str | None]]] = []
+        connection_methods: list[str] = []
+
+        async def handle(request: httpx.Request) -> httpx.Response:
+            observed.append((
+                request.url.host,
+                request.url.path,
+                {name: request.headers.get(name) for name in configured_headers},
+            ))
+            if request.url.path == "/redirect-start":
+                return httpx.Response(307, headers={"location": "/redirect-same-origin"})
+            if request.url.path == "/redirect-same-origin":
+                return httpx.Response(307, headers={"location": "https://other.example/redirect-final"})
+            if request.url.path == "/redirect-final":
+                return httpx.Response(200)
+            if request.url.path == "/loop-a":
+                return httpx.Response(307, headers={"location": "/loop-b"})
+            if request.url.path == "/loop-b":
+                return httpx.Response(307, headers={"location": "/loop-a"})
+            if request.url.path != "/mcp":
+                return httpx.Response(404)
+            if request.method == "GET":
+                return httpx.Response(405)
+            if request.method == "DELETE":
+                return httpx.Response(200)
+
+            body = json.loads(request.content)
+            method = body.get("method")
+            if isinstance(method, str):
+                connection_methods.append(method)
+            response_headers: dict[str, str] = {}
+            result: dict[str, Any] = {}
+            if method == "initialize":
+                response_headers["mcp-session-id"] = "secure-session"
+                result = {
+                    "protocolVersion": body["params"]["protocolVersion"],
+                    "capabilities": {"tools": {}, "prompts": {}},
+                    "serverInfo": {"name": "secure-test", "version": "1"},
+                }
+            elif method == "tools/list":
+                result = {"tools": []}
+            elif method == "prompts/list":
+                result = {"prompts": []}
+            if "id" not in body:
+                return httpx.Response(202)
+            return httpx.Response(
+                200,
+                headers=response_headers,
+                json={"jsonrpc": "2.0", "id": body["id"], "result": result},
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handle),
+            follow_redirects=True,
+            max_redirects=2,
+        ) as client:
+
+            def create_client(*_args: Any, **kwargs: Any) -> httpx.AsyncClient:
+                client.headers.update(kwargs.get("headers", {}))
+                client.follow_redirects = kwargs.get("follow_redirects", client.follow_redirects)
+                return client
+
+            with patch("httpx.AsyncClient", side_effect=create_client):
+                proxy = SecureMCPToolProxy(
+                    url="https://mcp.example/mcp",
+                    headers=configured_headers,
+                )
+                async with proxy:
+                    tool = proxy.mcp_tool
+                    transport_client = _MCPHeaderScopedClient(client, tool._header_request_owner)
+
+                    response = await transport_client.send(
+                        client.build_request("POST", "https://mcp.example/redirect-start"),
+                        follow_redirects=True,
+                    )
+                    assert response.status_code == 200
+
+                    with pytest.raises(httpx.TooManyRedirects):
+                        await transport_client.send(
+                            client.build_request("POST", "https://mcp.example/loop-a"),
+                            follow_redirects=True,
+                        )
+
+        connection_requests = [headers for host, path, headers in observed if host == "mcp.example" and path == "/mcp"]
+        assert connection_requests
+        assert all(headers == configured_headers for headers in connection_requests)
+        assert {"initialize", "tools/list"}.issubset(connection_methods)
+
+        redirect_requests = [entry for entry in observed if "redirect" in entry[1]]
+        assert redirect_requests == [
+            ("mcp.example", "/redirect-start", configured_headers),
+            ("mcp.example", "/redirect-same-origin", configured_headers),
+            ("other.example", "/redirect-final", dict.fromkeys(configured_headers)),
+        ]
+
+        loop_requests = [entry for entry in observed if entry[1].startswith("/loop-")]
+        assert loop_requests
+        assert all(host == "mcp.example" and headers == configured_headers for host, _, headers in loop_requests)
+
+    @pytest.mark.parametrize("url", ["not-a-url", "ftp://mcp.example/path", "https:///missing-host"])
+    def test_headers_require_an_absolute_http_origin(self, url: str) -> None:
+        from unittest.mock import patch
+
+        from agent_framework.security import SecureMCPToolProxy
+
+        with patch("httpx.AsyncClient") as create_client:
+            proxy = SecureMCPToolProxy(url=url, headers={"X-Custom-Credential": "custom-value"})
+
+            with pytest.raises(ValueError, match="absolute HTTP.*URL with a host"):
+                proxy.mcp_tool.get_mcp_client()
+
+            create_client.assert_not_called()
+
+
 class TestMCPAnnotationMapping:
     """Tests for hint-based mapping from MCP annotations to FIDES labels."""
 
     @pytest.mark.parametrize(
         ("read_only", "open_world", "default_integrity", "expected_integrity", "expected_max_conf", "expected_accepts"),
         [
-            (True, None, IntegrityLabel.UNTRUSTED, IntegrityLabel.UNTRUSTED, None, True),
-            (True, True, IntegrityLabel.TRUSTED, IntegrityLabel.UNTRUSTED, None, True),
-            (True, False, IntegrityLabel.UNTRUSTED, IntegrityLabel.TRUSTED, None, True),
+            (
+                True,
+                None,
+                IntegrityLabel.UNTRUSTED,
+                IntegrityLabel.UNTRUSTED,
+                ConfidentialityLabel.PUBLIC,
+                False,
+            ),
+            (True, True, IntegrityLabel.TRUSTED, IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PUBLIC, False),
+            (True, False, IntegrityLabel.UNTRUSTED, IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PUBLIC, False),
             (False, None, IntegrityLabel.UNTRUSTED, IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PUBLIC, False),
             (False, True, IntegrityLabel.TRUSTED, IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PUBLIC, False),
-            (False, False, IntegrityLabel.UNTRUSTED, IntegrityLabel.TRUSTED, ConfidentialityLabel.PUBLIC, False),
+            (False, False, IntegrityLabel.UNTRUSTED, IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PUBLIC, False),
             (None, None, IntegrityLabel.UNTRUSTED, IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PUBLIC, False),
             (None, None, IntegrityLabel.TRUSTED, IntegrityLabel.TRUSTED, ConfidentialityLabel.PUBLIC, False),
         ],
@@ -4820,6 +4990,39 @@ class TestMCPAnnotationMapping:
         assert accepts_untrusted is False
 
 
+def _make_connected_mcp_tool_for_ifc(
+    *,
+    annotations: Any,
+    server_meta: dict[str, Any],
+    confidentiality: ConfidentialityLabel = ConfidentialityLabel.PRIVATE,
+) -> tuple[Any, FunctionTool]:
+    from agent_framework._mcp import MCPTool
+
+    async def fake_call(**kwargs: Any) -> list[Content]:
+        return [Content.from_text("payload", additional_properties={"_meta": server_meta})]
+
+    function = FunctionTool(
+        func=fake_call,
+        name="remote_tool",
+        description="",
+        additional_properties={
+            "_mcp_remote_name": "remote_tool",
+            "confidentiality": confidentiality.value,
+        },
+    )
+    mcp_tool = MCPTool(name="helper")  # type: ignore[abstract]
+    mcp_tool.is_connected = True
+    mcp_tool.session = AsyncMock()
+    mcp_tool.session.list_tools = AsyncMock(  # type: ignore[method-assign]
+        return_value=SimpleNamespace(
+            tools=[SimpleNamespace(name="remote_tool", annotations=annotations)],
+            nextCursor=None,
+        )
+    )
+    mcp_tool.functions.append(function)
+    return mcp_tool, function
+
+
 # ---------------------------------------------------------------------------
 # IFC labels from MCP _meta payload
 # ---------------------------------------------------------------------------
@@ -4832,12 +5035,11 @@ class TestMCPIFCMetaLabels:
       * ``_label_from_mcp_meta`` parsing (well-formed, missing, malformed).
       * ``MCPTool._parse_tool_result_from_mcp`` propagating ``_meta`` onto
                 every Content via the ``_meta`` key.
-      * ``_stamp_mcp_content_labels`` enforcing server-wins-over-static with
-        a static fallback when the server omits/misformats ``_meta.ifc``.
+      * ``_stamp_mcp_content_labels`` combining server labels with local policy
+        and falling back when the server omits/misformats ``_meta.ifc``.
       * ``SecureMCPToolProxy`` wrapping each ``FunctionTool`` so an MCP tool
-        result carries per-item ``security_label`` derived from the server
-        when possible, regardless of whether the server is read-only or
-        a hypothetical write-tool (server label always wins).
+        result carries a per-item ``security_label`` that remote metadata can
+        restrict but cannot relax.
     """
 
     def test_label_from_meta_well_formed(self):
@@ -4916,47 +5118,111 @@ class TestMCPIFCMetaLabels:
         contents = helper._parse_tool_result_from_mcp(mcp_result)
         assert "_meta" not in contents[0].additional_properties
 
-    def test_stamp_contents_server_wins_over_static(self):
+    @pytest.mark.parametrize("trust_server_ifc", [False, True], ids=["restricted", "authoritative"])
+    def test_stamp_contents_complete_local_and_remote_label_matrix(self, trust_server_ifc: bool):
         from agent_framework.security import _stamp_mcp_content_labels
 
-        static = ContentLabel(integrity=IntegrityLabel.TRUSTED, confidentiality=ConfidentialityLabel.PUBLIC)
-        contents = [
-            Content.from_text(
-                "x",
-                additional_properties={"_meta": {"ifc": {"integrity": "untrusted", "confidentiality": "private"}}},
-            )
-        ]
-        _stamp_mcp_content_labels(contents, static)
-        # Server label wins.
-        assert contents[0].additional_properties["security_label"] == {
-            "integrity": "untrusted",
-            "confidentiality": "private",
+        integrity_labels = (
+            IntegrityLabel.TRUSTED,
+            IntegrityLabel.UNTRUSTED,
+        )
+        confidentiality_labels = (
+            ConfidentialityLabel.PUBLIC,
+            ConfidentialityLabel.PRIVATE,
+            ConfidentialityLabel.USER_IDENTITY,
+        )
+        confidentiality_rank = {
+            ConfidentialityLabel.PUBLIC: 0,
+            ConfidentialityLabel.PRIVATE: 1,
+            ConfidentialityLabel.USER_IDENTITY: 2,
         }
-        # Sentinel is consumed.
-        assert "_meta" not in contents[0].additional_properties
+        for local_integrity in integrity_labels:
+            for local_confidentiality in confidentiality_labels:
+                for remote_integrity in integrity_labels:
+                    for remote_confidentiality in confidentiality_labels:
+                        static = ContentLabel(
+                            integrity=local_integrity,
+                            confidentiality=local_confidentiality,
+                            metadata={"source": "local_mcp_policy"},
+                        )
+                        contents = [
+                            Content.from_text(
+                                "x",
+                                additional_properties={
+                                    "_meta": {
+                                        "ifc": {
+                                            "integrity": remote_integrity.value,
+                                            "confidentiality": remote_confidentiality.value,
+                                            "metadata": {"source": "forged_remote_policy"},
+                                        }
+                                    }
+                                },
+                            )
+                        ]
 
-    def test_stamp_contents_missing_meta_falls_back_to_static(self):
+                        _stamp_mcp_content_labels(contents, static, trust_server_ifc=trust_server_ifc)
+
+                        if trust_server_ifc:
+                            expected_integrity = remote_integrity
+                            expected_confidentiality = remote_confidentiality
+                            expected_metadata: dict[str, Any] | None = None
+                        else:
+                            expected_integrity = (
+                                IntegrityLabel.UNTRUSTED
+                                if IntegrityLabel.UNTRUSTED in (local_integrity, remote_integrity)
+                                else IntegrityLabel.TRUSTED
+                            )
+                            expected_confidentiality = max(
+                                (local_confidentiality, remote_confidentiality), key=confidentiality_rank.__getitem__
+                            )
+                            expected_metadata = {"source": "local_mcp_policy"}
+                        assert contents[0].additional_properties["security_label"] == {
+                            "integrity": expected_integrity.value,
+                            "confidentiality": expected_confidentiality.value,
+                            **({"metadata": expected_metadata} if expected_metadata is not None else {}),
+                        }
+                        assert "_meta" not in contents[0].additional_properties
+
+    @pytest.mark.parametrize(
+        "confidentiality",
+        [ConfidentialityLabel.PRIVATE, ConfidentialityLabel.USER_IDENTITY],
+    )
+    @pytest.mark.parametrize("trust_server_ifc", [False, True])
+    def test_stamp_contents_missing_meta_falls_back_to_local_policy(
+        self, confidentiality: ConfidentialityLabel, trust_server_ifc: bool
+    ):
         from agent_framework.security import _stamp_mcp_content_labels
 
-        static = ContentLabel(integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.PUBLIC)
+        static = ContentLabel(integrity=IntegrityLabel.UNTRUSTED, confidentiality=confidentiality)
         contents = [Content.from_text("x")]
-        _stamp_mcp_content_labels(contents, static)
+        _stamp_mcp_content_labels(contents, static, trust_server_ifc=trust_server_ifc)
         assert contents[0].additional_properties["security_label"] == {
             "integrity": "untrusted",
-            "confidentiality": "public",
+            "confidentiality": confidentiality.value,
         }
 
-    def test_stamp_contents_malformed_meta_falls_back_to_static(self):
+    @pytest.mark.parametrize(
+        "server_meta",
+        [
+            {"ifc": {"integrity": "bogus", "confidentiality": "public"}},
+            {"ifc": {"integrity": "trusted"}},
+        ],
+        ids=["malformed", "partial"],
+    )
+    @pytest.mark.parametrize("trust_server_ifc", [False, True])
+    def test_stamp_contents_invalid_meta_falls_back_to_local_policy(
+        self, server_meta: dict[str, Any], trust_server_ifc: bool
+    ):
         from agent_framework.security import _stamp_mcp_content_labels
 
         static = ContentLabel(integrity=IntegrityLabel.TRUSTED, confidentiality=ConfidentialityLabel.PUBLIC)
         contents = [
             Content.from_text(
                 "x",
-                additional_properties={"_meta": {"ifc": {"integrity": "bogus", "confidentiality": "public"}}},
+                additional_properties={"_meta": server_meta},
             )
         ]
-        _stamp_mcp_content_labels(contents, static)
+        _stamp_mcp_content_labels(contents, static, trust_server_ifc=trust_server_ifc)
         assert contents[0].additional_properties["security_label"] == {
             "integrity": "trusted",
             "confidentiality": "public",
@@ -4993,9 +5259,8 @@ class TestMCPIFCMetaLabels:
                 "confidentiality": "public",
             }
 
-    @pytest.mark.asyncio
-    async def test_wrap_mcp_function_server_label_wins(self):
-        """End-to-end: the wrapper installed by SecureMCPToolProxy stamps server label."""
+    async def test_wrap_mcp_function_remote_label_can_restrict_local_policy(self):
+        """End-to-end: remote metadata can make the locally derived label stricter."""
         from agent_framework.security import _wrap_mcp_function_for_ifc
 
         async def fake_call(**kwargs):
@@ -5024,9 +5289,8 @@ class TestMCPIFCMetaLabels:
             "integrity": "untrusted",
             "confidentiality": "private",
         }
-        # Static fallback would have been trusted+public; server-wins changed it.
+        # Static policy was trusted+public; remote metadata restricted both dimensions.
 
-    @pytest.mark.asyncio
     async def test_wrap_mcp_function_static_fallback(self):
         """When the server omits ``_meta``, the static label is used."""
         from agent_framework.security import _wrap_mcp_function_for_ifc
@@ -5052,20 +5316,18 @@ class TestMCPIFCMetaLabels:
             "confidentiality": "public",
         }
 
-    @pytest.mark.asyncio
-    async def test_wrap_mcp_function_write_tool_server_still_wins(self):
-        """Even for a tool marked as a write sink (max_allowed_confidentiality=public),
-        if a future MCP server emits ``_meta.ifc`` for a write result, the server
-        label is applied verbatim on the Content item. Sink invariants are enforced
-        elsewhere (by LabelTrackingFunctionMiddleware / PolicyEnforcementMiddleware
-        at composition time, not here)."""
+    @pytest.mark.parametrize("confidentiality", [ConfidentialityLabel.PRIVATE, ConfidentialityLabel.USER_IDENTITY])
+    async def test_wrap_mcp_function_remote_label_cannot_relax_local_policy(
+        self, confidentiality: ConfidentialityLabel
+    ):
+        """Remote MCP metadata cannot raise integrity or lower confidentiality."""
         from agent_framework.security import _wrap_mcp_function_for_ifc
 
         async def fake_call(**kwargs):
             return [
                 Content.from_text(
                     "wrote item",
-                    additional_properties={"_meta": {"ifc": {"integrity": "trusted", "confidentiality": "private"}}},
+                    additional_properties={"_meta": {"ifc": {"integrity": "trusted", "confidentiality": "public"}}},
                 )
             ]
 
@@ -5075,7 +5337,8 @@ class TestMCPIFCMetaLabels:
             description="",
             additional_properties={
                 "source_integrity": "untrusted",
-                "max_allowed_confidentiality": "public",  # marked as a sink
+                "confidentiality": confidentiality.value,
+                "max_allowed_confidentiality": "public",
                 "accepts_untrusted": False,
                 "_mcp_remote_name": "create_issue",
             },
@@ -5083,13 +5346,236 @@ class TestMCPIFCMetaLabels:
         _wrap_mcp_function_for_ifc(func_tool, IntegrityLabel.UNTRUSTED)
         assert func_tool.func is not None
         result = await func_tool.func()
-        # Server label wins verbatim.
         assert result[0].additional_properties["security_label"] == {
-            "integrity": "trusted",
-            "confidentiality": "private",
+            "integrity": "untrusted",
+            "confidentiality": confidentiality.value,
         }
 
-    @pytest.mark.asyncio
+    async def test_wrap_mcp_function_ignores_sink_confidentiality_for_public_output(self):
+        from agent_framework.security import _wrap_mcp_function_for_ifc
+
+        async def fake_call(**kwargs: Any) -> list[Content]:
+            return [
+                Content.from_text(
+                    "payload",
+                    additional_properties={"_meta": {"ifc": {"integrity": "trusted", "confidentiality": "public"}}},
+                )
+            ]
+
+        func_tool = FunctionTool(
+            func=fake_call,
+            name="remote_tool",
+            description="",
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "private",
+                "_mcp_remote_name": "remote_tool",
+            },
+        )
+        _wrap_mcp_function_for_ifc(func_tool, IntegrityLabel.UNTRUSTED)
+        assert func_tool.func is not None
+
+        result = await func_tool.func()
+
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "trusted",
+            "confidentiality": "public",
+        }
+
+    async def test_wrap_mcp_function_reads_refreshed_local_policy_at_invocation(self):
+        from agent_framework.security import SecureMCPToolProxy
+
+        trusted_annotations = SimpleNamespace(readOnlyHint=True, openWorldHint=False)
+        untrusted_annotations = SimpleNamespace(readOnlyHint=True, openWorldHint=True)
+        server_meta = {"ifc": {"integrity": "trusted", "confidentiality": "public"}}
+        mcp_tool, function = _make_connected_mcp_tool_for_ifc(
+            annotations=trusted_annotations,
+            server_meta=server_meta,
+            confidentiality=ConfidentialityLabel.PUBLIC,
+        )
+        mcp_tool.session.list_tools.side_effect = [
+            SimpleNamespace(
+                tools=[SimpleNamespace(name="remote_tool", annotations=trusted_annotations)], nextCursor=None
+            ),
+            SimpleNamespace(
+                tools=[SimpleNamespace(name="remote_tool", annotations=untrusted_annotations)], nextCursor=None
+            ),
+        ]
+        proxy = SecureMCPToolProxy(mcp_tool, default_integrity=IntegrityLabel.TRUSTED)
+
+        await proxy.refresh_labels()
+        props = function.additional_properties
+        assert props is not None
+        assert props["source_integrity"] == "trusted"
+        await proxy.refresh_labels()
+        assert props["source_integrity"] == "untrusted"
+        assert function.func is not None
+        result = await function.func()
+
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "untrusted",
+            "confidentiality": "public",
+        }
+
+    @pytest.mark.parametrize(
+        ("start_properties", "refreshed_properties", "first_label", "second_label"),
+        [
+            (
+                {
+                    "source_integrity": "trusted",
+                    "confidentiality": "public",
+                    "_mcp_trust_server_ifc": False,
+                },
+                {
+                    "source_integrity": "untrusted",
+                    "confidentiality": "private",
+                    "_mcp_trust_server_ifc": False,
+                },
+                {"integrity": "trusted", "confidentiality": "public"},
+                {"integrity": "untrusted", "confidentiality": "private"},
+            ),
+            (
+                {
+                    "source_integrity": "untrusted",
+                    "confidentiality": "private",
+                    "_mcp_trust_server_ifc": True,
+                },
+                {
+                    "source_integrity": "untrusted",
+                    "confidentiality": "private",
+                    "_mcp_trust_server_ifc": False,
+                },
+                {"integrity": "trusted", "confidentiality": "public"},
+                {"integrity": "untrusted", "confidentiality": "private"},
+            ),
+        ],
+        ids=["stricter-local-policy", "revoke-server-authority"],
+    )
+    async def test_wrap_mcp_function_snapshots_policy_for_in_flight_call(
+        self,
+        start_properties: dict[str, Any],
+        refreshed_properties: dict[str, Any],
+        first_label: dict[str, str],
+        second_label: dict[str, str],
+    ):
+        from agent_framework.security import _wrap_mcp_function_for_ifc
+
+        call_started = asyncio.Event()
+        release_call = asyncio.Event()
+
+        async def fake_call(**kwargs: Any) -> list[Content]:
+            call_started.set()
+            await release_call.wait()
+            return [
+                Content.from_text(
+                    "payload",
+                    additional_properties={"_meta": {"ifc": {"integrity": "trusted", "confidentiality": "public"}}},
+                )
+            ]
+
+        function = FunctionTool(
+            func=fake_call,
+            name="remote_tool",
+            description="",
+            additional_properties={"_mcp_remote_name": "remote_tool", **start_properties},
+        )
+        _wrap_mcp_function_for_ifc(function, IntegrityLabel.UNTRUSTED)
+        assert function.func is not None
+
+        first_call = asyncio.create_task(function.func())
+        await call_started.wait()
+        assert function.additional_properties is not None
+        function.additional_properties.update(refreshed_properties)
+        release_call.set()
+
+        first_result = await first_call
+        second_result = await function.func()
+
+        assert first_result[0].additional_properties["security_label"] == first_label
+        assert second_result[0].additional_properties["security_label"] == second_label
+
+    @pytest.mark.parametrize("trust_server_ifc", [False, True], ids=["default", "trusted"])
+    async def test_apply_mcp_security_labels_configures_result_authority(self, trust_server_ifc: bool):
+        from agent_framework.security import apply_mcp_security_labels
+
+        annotations = SimpleNamespace(readOnlyHint=True, openWorldHint=False)
+        server_meta = {
+            "ifc": {"integrity": "trusted", "confidentiality": "public"},
+            "_mcp_trust_server_ifc": True,
+        }
+        mcp_tool, function = _make_connected_mcp_tool_for_ifc(annotations=annotations, server_meta=server_meta)
+
+        if trust_server_ifc:
+            await apply_mcp_security_labels(mcp_tool, trust_server_ifc=True)
+        else:
+            await apply_mcp_security_labels(mcp_tool)
+
+        props = function.additional_properties
+        assert props is not None
+        assert props["source_integrity"] == "untrusted"
+        assert props["max_allowed_confidentiality"] == "public"
+        assert props["accepts_untrusted"] is False
+        assert props["_mcp_trust_server_ifc"] is trust_server_ifc
+        assert function.func is not None
+        result = await function.func()
+        expected_label = (
+            {"integrity": "trusted", "confidentiality": "public"}
+            if trust_server_ifc
+            else {"integrity": "untrusted", "confidentiality": "private"}
+        )
+        assert result[0].additional_properties["security_label"] == expected_label
+
+    async def test_apply_mcp_security_labels_reconfigures_existing_wrapper_authority(self):
+        from agent_framework.security import apply_mcp_security_labels
+
+        annotations = SimpleNamespace(readOnlyHint=True, openWorldHint=False)
+        server_meta = {"ifc": {"integrity": "trusted", "confidentiality": "public"}}
+        mcp_tool, function = _make_connected_mcp_tool_for_ifc(annotations=annotations, server_meta=server_meta)
+        await apply_mcp_security_labels(mcp_tool)
+        wrapped = function.func
+        props = function.additional_properties
+        assert props is not None
+        assert props["max_allowed_confidentiality"] == "public"
+
+        await apply_mcp_security_labels(mcp_tool, mark_write_tools_as_sinks=False, trust_server_ifc=True)
+
+        assert function.func is wrapped
+        assert "max_allowed_confidentiality" not in props
+        assert function.func is not None
+        result = await function.func()
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "trusted",
+            "confidentiality": "public",
+        }
+
+    @pytest.mark.parametrize("trust_server_ifc", [False, True], ids=["default", "trusted"])
+    async def test_secure_mcp_proxy_configures_result_authority(self, trust_server_ifc: bool):
+        from agent_framework.security import SecureMCPToolProxy
+
+        annotations = SimpleNamespace(readOnlyHint=True, openWorldHint=False)
+        server_meta = {"ifc": {"integrity": "trusted", "confidentiality": "public"}}
+        mcp_tool, function = _make_connected_mcp_tool_for_ifc(annotations=annotations, server_meta=server_meta)
+        proxy = (
+            SecureMCPToolProxy(mcp_tool, trust_server_ifc=True) if trust_server_ifc else SecureMCPToolProxy(mcp_tool)
+        )
+
+        await proxy.refresh_labels()
+
+        props = function.additional_properties
+        assert props is not None
+        assert props["source_integrity"] == "untrusted"
+        assert props["max_allowed_confidentiality"] == "public"
+        assert props["accepts_untrusted"] is False
+        assert props["_mcp_trust_server_ifc"] is trust_server_ifc
+        assert function.func is not None
+        result = await function.func()
+        expected_label = (
+            {"integrity": "trusted", "confidentiality": "public"}
+            if trust_server_ifc
+            else {"integrity": "untrusted", "confidentiality": "private"}
+        )
+        assert result[0].additional_properties["security_label"] == expected_label
+
     async def test_wrap_mcp_function_str_result_passes_through(self):
         """``str`` results (no per-item containers) are not modified by the wrapper."""
         from agent_framework.security import _wrap_mcp_function_for_ifc
@@ -5112,7 +5598,6 @@ class TestMCPIFCMetaLabels:
         result = await func_tool.func()
         assert result == "plain string result"
 
-    @pytest.mark.asyncio
     async def test_wrap_mcp_function_is_idempotent(self):
         """Re-running ``_wrap_mcp_function_for_ifc`` (e.g. reconnect) does not double-wrap."""
         from agent_framework.security import _wrap_mcp_function_for_ifc

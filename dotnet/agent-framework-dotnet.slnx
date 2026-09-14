@@ -388,9 +388,11 @@
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Steering/HostedSteering.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/FoundryHostedSession/FoundryHostedSession.csproj" />
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/Hosted-Toolbox-AuthPaths-Client/Hosted-Toolbox-AuthPaths-Client.csproj" />
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SessionFilesClient/SessionFilesClient.csproj" />
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SimpleAgent/SimpleAgent.csproj" />
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/UserIsolationAgent/UserIsolationAgent.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Using-E2E-Resilience/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-E2E-Resilience/Using-E2E-Resilience.csproj" />
