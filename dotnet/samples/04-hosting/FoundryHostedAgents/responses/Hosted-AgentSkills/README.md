@@ -165,9 +165,9 @@ Do not substitute `Azure AI Developer`; Microsoft documents that role as insuffi
 hosted agents. Recreate the role assignment when the agent is deleted and created again, because
 the new agent receives a new identity.
 
-The Skills API is a preview surface. `Program.cs` adds the required
-`Foundry-Features: Skills=V1Preview` header and downloads skills into the writable temporary
-directory. The source-deploy application directory (`/app`) is read-only.
+The Skills API is a preview surface. `Azure.AI.Projects` applies its required feature opt-in
+internally. `Program.cs` downloads skills into the writable temporary directory. The source-deploy
+application directory (`/app`) is read-only.
 
 ### Step 4: clean up
 

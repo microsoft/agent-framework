@@ -70,29 +70,101 @@ public sealed class LocalExecuteCodeFunctionIntegrationTests
     [InlineData("import os\n_o = os\n_o.system('id')")]
     [InlineData("import os as x\na = x\nb = a\nb.popen('id')")]
     [InlineData("import os.path\nos.system('id')")]
+    [InlineData("import os\nos.path.os.system('id')")]
+    [InlineData("import os\nos.path.os.popen('id')")]
+    [InlineData("import os.path as p\np.os.system('id')")]
+    [InlineData("from os import path as p\np.os.popen('id')")]
+    [InlineData("import pathlib\npathlib.os.system('id')")]
+    [InlineData("import random\nrandom._os.system('id')")]
+    [InlineData("from pathlib import os as o\no.system('id')")]
+    [InlineData("from random import _os as o\no.system('id')")]
+    [InlineData("import os\nq = os.path\nq.os.system('id')")]
+    [InlineData("import os\nq = os.path.os\nq.system('id')")]
+    [InlineData("import os\nq: object = os.path\nq.os.system('id')")]
+    [InlineData("import os\nq, _ = (os.path, 1)\nq.os.system('id')")]
+    [InlineData("import os\n[q, _] = [os.path, 1]\nq.os.system('id')")]
+    [InlineData("import os\nq = [os.path][0]\nq.os.system('id')")]
+    [InlineData("import os\nq = (os.path,)[0]\nq.os.system('id')")]
+    [InlineData("import os\nq = {'path': os.path}['path']\nq.os.system('id')")]
+    [InlineData("import os\nq = ([os] + [])[0]\nq.system('id')")]
+    [InlineData("import os\nq = [value for value in [os]][0]\nq.system('id')")]
+    [InlineData("import os\n_, *values = (1, 2, os)\nvalues[1].system('id')")]
+    [InlineData("import os\nvalues = []\nvalues += [os]\nvalues[0].system('id')")]
+    [InlineData("import os\nos.path.__dict__['os'].system('id')")]
+    [InlineData("import os\nos.path.os.__dict__['system']('id')")]
+    [InlineData("import os\ngetattr(os.path, 'os').system('id')")]
+    [InlineData("import os\nos.environ['KEY'] = 'value'")]
+    [InlineData("import os\nos.environ.update({'KEY': 'value'})")]
+    [InlineData("import os\nprint(os.path.exists('file'))")]
+    [InlineData("import os\ndef get_path():\n    return os.path\nget_path().os.system('id')")]
+    [InlineData("import os\ndef identity(value):\n    return value\nidentity(os.path).os.system('id')")]
+    [InlineData("import typing\ntyping.sys.modules['os'].system('id')")]
+    [InlineData("import asyncio\nawait asyncio.create_subprocess_exec('id')")]
+    [InlineData("import asyncio\nawait asyncio.open_connection('localhost', 80)")]
+    [InlineData("from typing import sys as s\ns.modules['os'].system('id')")]
+    [InlineData("from typing import __dict__ as namespace\nnamespace['__builtins__']['__import__']('os').system('id')")]
+    [InlineData("__builtins__['__import__']('os').system('id')")]
+    [InlineData("load = __import__\nload('os').system('id')")]
+    [InlineData("namespace = globals\nnamespace()['__builtins__']['__import__']('os').system('id')")]
+    [InlineData("from asyncio import create_subprocess_exec as start\nawait start('id')")]
+    [InlineData("from asyncio import open_connection as connect\nawait connect('localhost', 80)")]
+    [InlineData("import os\nmatch (os.environ,):\n    case (env,):\n        env['KEY'] = 'value'")]
+    [InlineData("import os\ndef print(value):\n    return value\nq = print(os)\nq.system('id')")]
+    [InlineData("import os\ndef list(value):\n    return value\nenv = list(os.environ)\nenv['KEY'] = 'value'")]
+    [InlineData("import os\ndef use(print):\n    q = print(os)\n    q.system('id')\nuse(lambda value: value)")]
+    [InlineData("import os\nos.environ.keys()._mapping['KEY'] = 'value'")]
+    [InlineData("import os\nos.environ.items()._mapping['KEY'] = 'value'")]
+    [InlineData("import os\nos.environ.values()._mapping['KEY'] = 'value'")]
     [InlineData("import os\na, _ = (os, 1)\na.system('id')")]
     [InlineData("import os\n[a, _] = [os, 1]\na.system('id')")]
     [InlineData("import os\nx: object = os\nx.system('id')")]
-    public async Task ExecuteCode_ValidationBlocksDisallowedOsAccessAsync(string code)
+    public async Task ExecuteCode_ValidationBlocksDisallowedOsAccessBeforeRunnerStartsAsync(string code)
     {
         SkipIfNoPython();
 
-        var function = new LocalExecuteCodeFunction(s_python!);
-
-        var args = new AIFunctionArguments
+        // Arrange
+        var tempDir = Directory.CreateTempSubdirectory("localcodeact-runner-marker-").FullName;
+        try
         {
-            ["code"] = code,
-        };
+            var markerPath = Path.Combine(tempDir, "runner-started");
+            var runnerPath = Path.Combine(tempDir, "marker_runner.py");
+            File.WriteAllText(
+                runnerPath,
+                $"from pathlib import Path\nPath({JsonSerializer.Serialize(markerPath)}).touch()\n");
 
-        var ex = await Assert.ThrowsAsync<CodeValidationException>(async () =>
-            await function.InvokeAsync(args, CancellationToken.None));
-        Assert.Contains("os.", ex.Message, StringComparison.Ordinal);
+            var function = new LocalExecuteCodeFunction(
+                s_python!,
+                new LocalCodeActProviderOptions { RunnerScriptPath = runnerPath });
+            var args = new AIFunctionArguments
+            {
+                ["code"] = code,
+            };
+
+            // Act
+            var exception = await Record.ExceptionAsync(
+                async () => await function.InvokeAsync(args, CancellationToken.None));
+
+            // Assert
+            Assert.False(File.Exists(markerPath), "The runner started before validation completed.");
+            var validationException = Assert.IsType<CodeValidationException>(exception);
+            Assert.Contains("not allowed", validationException.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
     }
 
     [Theory]
     [InlineData("import os\nprint(os.environ.get('PATH') is not None)")]
+    [InlineData("import os\nprint(os.environ['PATH'] if 'PATH' in os.environ else '')")]
+    [InlineData("import os\nenv = os.environ\nprint(list(env))")]
     [InlineData("import os as x\nprint(x.path.join('a', 'b'))")]
     [InlineData("import os.path as p\nprint(p.join('a', 'b'))")]
+    [InlineData("from os import path as p\nprint(p.basename('a/b'))")]
+    [InlineData("import os\np = os.path\nprint(p.normpath('a/../b'))")]
+    [InlineData("import os\np, env = (os.path, os.environ)\nprint(p.join('a', 'b'))\nprint(env.get('PATH'))")]
+    [InlineData("import os\njoin = os.path.join\nprint(join('a', 'b'))")]
     public async Task ExecuteCode_AllowsPermittedOsAccessAsync(string code)
     {
         SkipIfNoPython();
