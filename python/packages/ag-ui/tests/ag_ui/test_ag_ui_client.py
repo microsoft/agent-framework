@@ -5,7 +5,7 @@
 import asyncio
 import json
 from collections.abc import AsyncGenerator, Awaitable, Mapping, MutableSequence
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from typing import Any, cast
 
 import httpx
@@ -114,7 +114,7 @@ class TestAGUIChatClient:
                 http_client = client.http_service.http_client
                 for index, thread_id in enumerate(("thread_a", second_thread_id)):
                     messages = [Message(role="user", contents=["Hello"])]
-                    expected_error = (
+                    expected_error: AbstractContextManager[object] = (
                         pytest.raises(httpx.HTTPStatusError, match="503")
                         if index == 0 and first_status == 503
                         else nullcontext()
@@ -220,8 +220,11 @@ class TestAGUIChatClient:
         """Owned HTTP clients close on both normal and exceptional context exits."""
         client = StubAGUIChatClient(endpoint="https://agui.example.test/", timeout=17.0)
         http_client = client.http_service.http_client
+        expected_error: AbstractContextManager[object] = (
+            pytest.raises(RuntimeError, match="context failed") if raise_in_context else nullcontext()
+        )
         try:
-            with pytest.raises(RuntimeError, match="context failed") if raise_in_context else nullcontext():
+            with expected_error:
                 async with client:
                     assert not http_client.is_closed
                     assert http_client.timeout == httpx.Timeout(17.0)
@@ -261,14 +264,17 @@ class TestAGUIChatClient:
             timeout=17.0,
         ) as http_client:
             client = StubAGUIChatClient(endpoint="https://agui.example.test/", http_client=http_client)
-            with pytest.raises(RuntimeError, match="context failed") if raise_in_context else nullcontext():
+            expected_error: AbstractContextManager[object] = (
+                pytest.raises(RuntimeError, match="context failed") if raise_in_context else nullcontext()
+            )
+            with expected_error:
                 async with client:
                     assert client.http_service.http_client is http_client
-                    response = await client.get_response(
+                    chat_response = await client.get_response(
                         [Message(role="user", contents=["Hello"])],
                         options={"metadata": {"thread_id": "thread_1"}},
                     )
-                    assert response.text == "ok"
+                    assert chat_response.text == "ok"
                     if raise_in_context:
                         raise RuntimeError("context failed")
 
@@ -278,8 +284,8 @@ class TestAGUIChatClient:
             assert http_client.cookies["configured"] == "caller-owned"
             assert http_client.cookies["response"] == "session-only"
             assert http_client.timeout == httpx.Timeout(17.0)
-            response = await http_client.get("https://agui.example.test/health")
-            assert response.status_code == 200
+            http_response = await http_client.get("https://agui.example.test/health")
+            assert http_response.status_code == 200
 
         assert [request.method for request in requests] == ["POST", "GET"]
         assert all(request.headers["authorization"] == "Bearer test-token" for request in requests)
