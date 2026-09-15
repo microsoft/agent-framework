@@ -313,6 +313,153 @@ async def test_ambiguous_policy_reload_preserves_previous_discovery(
 
 
 @pytest.mark.parametrize(
+    "allowed_tools,approval_mode,expected_approval",
+    [
+        (["docs_search"], None, "never_require"),
+        (None, {"always_require_approval": ["docs_search"]}, "always_require"),
+        (None, {"never_require_approval": ["docs_search"]}, "never_require"),
+    ],
+    ids=["allowed", "always_require", "never_require"],
+)
+@pytest.mark.parametrize("remote_names", [("search", "docs_search"), ("docs_search", "search")])
+async def test_tool_refresh_accepts_unambiguous_rename(
+    allowed_tools: list[str] | None,
+    approval_mode: MCPSpecificApproval | None,
+    expected_approval: str,
+    remote_names: tuple[str, str],
+) -> None:
+    tool = MCPTool(  # type: ignore[abstract]
+        name="docs", tool_name_prefix="docs", allowed_tools=allowed_tools, approval_mode=approval_mode
+    )
+    tool.session = AsyncMock()
+    tool.session.list_tools = AsyncMock(
+        side_effect=[
+            types.ListToolsResult(tools=[types.Tool(name=name, inputSchema={"type": "object"})])
+            for name in remote_names
+        ]
+    )
+    await tool.load_tools()
+    await tool.message_handler(types.ServerNotification(types.ToolListChangedNotification()))
+    await asyncio.gather(*tool._pending_reload_tasks)
+
+    assert [function.name for function in tool.functions] == [f"docs_{remote_names[1]}"]
+    assert tool.functions[0].approval_mode == expected_approval
+    tool.session.call_tool = AsyncMock(
+        return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
+    )
+    await tool.functions[0].invoke(arguments={})
+    assert tool.session.call_tool.call_args.args[0] == remote_names[1]
+
+
+@pytest.mark.parametrize("empty_snapshot", [False, True])
+async def test_tool_refresh_replaces_snapshot_and_preserves_other_functions(empty_snapshot: bool) -> None:
+    tool = MCPTool(name="docs", tool_name_prefix="docs")  # type: ignore[abstract]
+    tool.session = AsyncMock()
+    keep = types.Tool(
+        name="keep",
+        inputSchema={"type": "object", "properties": {"query": {"type": "string"}}},
+        _meta={"version": 1},
+    )
+    removed = types.Tool(
+        name="removed",
+        inputSchema={"type": "object", "properties": {}},
+        _meta={"version": 1},
+        execution=types.ToolExecution(taskSupport="required"),
+    )
+    tool.session.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[keep, removed]))
+    await tool.load_tools()
+    kept_function = tool._functions[0]
+    parser = Mock(return_value="custom result")
+    kept_function.result_parser = parser
+    tool.session.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[types.Prompt(name="summary")]))
+    await tool.load_prompts()
+    prompt_function = tool._functions[-1]
+    custom_function = FunctionTool(name="custom", func=lambda: "custom")
+    tool._functions.append(custom_function)
+    original_list = tool._functions
+    original_functions = list(original_list)
+    original_meta = dict(tool._tool_call_meta_by_name)
+    keep.meta = {"version": 2}
+
+    async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
+        assert tool._functions == original_functions
+        assert tool._tool_call_meta_by_name == original_meta
+        if params is None:
+            return types.ListToolsResult(tools=[], nextCursor="second")
+        assert params.cursor == "second"
+        return types.ListToolsResult(tools=[] if empty_snapshot else [keep])
+
+    tool.session.list_tools = AsyncMock(side_effect=list_tools)
+    await tool.load_tools()
+
+    assert tool._functions is original_list
+    assert {function.name for function in tool._functions} == (
+        {"docs_summary", "custom"} if empty_snapshot else {"docs_keep", "docs_summary", "custom"}
+    )
+    assert next(function for function in tool._functions if function.name == "docs_summary") is prompt_function
+    assert next(function for function in tool._functions if function.name == "custom") is custom_function
+    if not empty_snapshot:
+        assert next(function for function in tool._functions if function.name == "docs_keep") is kept_function
+        assert kept_function.result_parser is parser
+    assert tool._tool_call_meta_by_name == ({} if empty_snapshot else {"keep": {"version": 2}})
+    assert tool._tool_param_names_by_name == ({} if empty_snapshot else {"keep": {"query"}})
+    assert tool._tool_task_support_by_name == {}
+
+
+async def test_tool_refresh_preserves_prompt_when_server_advertises_same_raw_name() -> None:
+    tool = MCPTool(name="docs")  # type: ignore[abstract]
+    tool.session = AsyncMock()
+    tool.session.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[types.Prompt(name="summary")]))
+    await tool.load_prompts()
+    prompt_function = tool._functions[0]
+    tool.session.list_tools = AsyncMock(
+        side_effect=[
+            types.ListToolsResult(tools=[types.Tool(name="summary", inputSchema={"type": "object"})]),
+            types.ListToolsResult(tools=[]),
+        ]
+    )
+    await tool.load_tools()
+    await tool.load_tools()
+
+    assert tool._functions == [prompt_function]
+
+
+@pytest.mark.parametrize("replacement_name", [None, "search-docs"])
+async def test_tool_refresh_forgets_removed_progressive_tools(replacement_name: str | None) -> None:
+    tool = await _load_progressive_test_server(
+        tool_name_prefix="docs",
+        tools=[types.Tool(name=name, inputSchema={"type": "object"}) for name in ("search/docs", "keep")],
+    )
+    loader = tool.functions[1]
+    context = FunctionInvocationContext(function=loader, arguments={}, tools=list(tool.functions))
+    await loader.invoke(arguments={"tool": ["docs_search-docs", "keep"]}, context=context)
+    assert tool._progressive_loaded_tool_names == {"docs_search-docs", "docs_keep"}
+    kept_function = next(function for function in tool._functions if function.name == "docs_keep")
+    assert tool.session is not None
+    tool.session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(name=name, inputSchema={"type": "object"})
+                for name in (["keep", replacement_name] if replacement_name else ["keep"])
+            ]
+        )
+    )
+    await tool.load_tools()
+
+    assert tool._progressive_loaded_tool_names == {"docs_keep"}
+    assert tool.functions[-1] is kept_function
+    assert [function.name for function in tool.functions] == [
+        "docs_list_mcp_tools",
+        "docs_load_tool",
+        "docs_unload_tool",
+        "docs_keep",
+    ]
+    assert [function.name for function in tool._functions] == (
+        ["docs_keep", "docs_search-docs"] if replacement_name else ["docs_keep"]
+    )
+
+
+@pytest.mark.parametrize(
     "allowed_tools,expected_names",
     [
         (None, ["docs_search", "docs_docs_search"]),

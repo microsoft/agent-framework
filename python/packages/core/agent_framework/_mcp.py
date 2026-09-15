@@ -101,6 +101,7 @@ class MCPSpecificApproval(TypedDict, total=False):
 
 
 _MCP_REMOTE_NAME_KEY = "_mcp_remote_name"
+_MCP_IS_TOOL_KEY = "_mcp_is_tool"
 _MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
 _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY = "_mcp_tool_result_host_payload"
 _MCP_PROGRESSIVE_LIST_TOOL_NAME = "list_mcp_tools"
@@ -2429,10 +2430,15 @@ class MCPTool:
             logger.debug("Skipping MCP tool loading because the server did not advertise tools support.")
             return
 
-        # Track existing function names to prevent duplicates
+        # Previous tools are reusable; seed duplicate detection only with retained non-tool functions.
+        existing_tools: dict[str, FunctionTool] = {}
         existing_remote_by_local: dict[str, str] = {}
         new_functions: list[FunctionTool] = []
+        reused_tool_names: set[str] = set()
         for func in self._functions:
+            if (func.additional_properties or {}).get(_MCP_IS_TOOL_KEY):
+                existing_tools[func.name] = func
+                continue
             remote_name = (func.additional_properties or {}).get(_MCP_REMOTE_NAME_KEY)
             if isinstance(remote_name, str):
                 existing_remote_by_local[func.name] = remote_name
@@ -2514,6 +2520,14 @@ class MCPTool:
 
                 existing_remote_by_local[local_name] = tool.name
 
+                existing_tool = existing_tools.get(local_name)
+                if (
+                    existing_tool is not None
+                    and (existing_tool.additional_properties or {}).get(_MCP_REMOTE_NAME_KEY) == tool.name
+                ):
+                    reused_tool_names.add(local_name)
+                    continue
+
                 approval_mode = self._determine_approval_mode(
                     *_mcp_config_candidate_names(
                         local_name=local_name,
@@ -2532,6 +2546,7 @@ class MCPTool:
                     additional_properties={
                         _MCP_REMOTE_NAME_KEY: tool.name,
                         _MCP_NORMALIZED_NAME_KEY: normalized_name,
+                        _MCP_IS_TOOL_KEY: True,
                     },
                 )
                 new_functions.append(func)
@@ -2541,11 +2556,18 @@ class MCPTool:
                 break
             params = types.PaginatedRequestParams(cursor=tool_list.nextCursor)
 
-        self._validate_config_names([*self._functions, *new_functions])
-        self._functions.extend(new_functions)
+        current_functions = [
+            func
+            for func in self._functions
+            if not (func.additional_properties or {}).get(_MCP_IS_TOOL_KEY) or func.name in reused_tool_names
+        ]
+        current_functions.extend(new_functions)
+        self._validate_config_names(current_functions)
+        self._functions[:] = current_functions
         self._tool_call_meta_by_name = tool_call_meta_by_name
         self._tool_task_support_by_name = tool_task_support_by_name
         self._tool_param_names_by_name = tool_param_names_by_name
+        self._progressive_loaded_tool_names.difference_update(existing_tools.keys() - reused_tool_names)
 
     async def _cancel_pending_reload_tasks(self) -> None:
         """Cancel session-bound discovery reloads and wait for them to finish."""
