@@ -3451,6 +3451,18 @@ def _approve(_params: object) -> bool:
     return True
 
 
+async def _invoke_sampling_callback(
+    tool: MCPTool,
+    params: Any,
+) -> types.CreateMessageResult | types.CreateMessageResultWithTools | types.ErrorData:
+    """Invoke the intentionally deprecated sampling callback in compatibility tests."""
+    callback = getattr(tool, "sampling_callback")  # noqa: B009
+    return cast(
+        "types.CreateMessageResult | types.CreateMessageResultWithTools | types.ErrorData",
+        await callback(Mock(), params),
+    )
+
+
 def _make_sampling_response(text: str = "response", model: str = "test-model") -> Mock:
     mock_response = Mock()
     mock_response.messages = [Message(role="assistant", contents=[Content.from_text(text)])]
@@ -3466,11 +3478,76 @@ async def test_mcp_tool_sampling_callback_no_client():
     params = Mock()
     params.messages = []
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.ErrorData)
     assert result.code == types.INTERNAL_ERROR
     assert "No chat client available" in result.message
+
+
+async def test_mcp_tool_sampling_defaults_stay_silent_until_callback_is_used():
+    """Default setup stays silent until a server sends a sampling request."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        tool = MCPStdioTool(name="test_tool", command="python")
+
+    callback = getattr(MCPTool, "sampling_callback")  # noqa: B009
+    assert "2027-07-28" in getattr(callback, "__deprecated__", "")
+
+    params = Mock()
+    params.messages = []
+
+    with pytest.warns(DeprecationWarning, match="MCP sampling.*2027-07-28"):
+        result = await _invoke_sampling_callback(tool, params)
+
+    assert isinstance(result, types.ErrorData)
+
+
+async def test_mcp_tool_sampling_configuration_warns_once():
+    """Each sampling option warns at setup, without warning again on callback use."""
+    with pytest.warns(DeprecationWarning, match="MCP sampling.*2027-07-28") as warning_info:
+        tool = MCPStdioTool(
+            name="test_tool",
+            command="python",
+            client=AsyncMock(),
+            sampling_approval_callback=_approve,
+            sampling_max_tokens=None,
+            sampling_max_requests=None,
+        )
+
+    assert len(warning_info) == 1
+
+    params = Mock()
+    params.messages = []
+    params.maxTokens = 128
+    params.systemPrompt = None
+    params.tools = None
+    params.temperature = None
+    params.stopSequences = None
+    params.toolChoice = None
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        await _invoke_sampling_callback(tool, params)
+
+    assert not caught
+
+
+@pytest.mark.parametrize(
+    "sampling_option",
+    [
+        {"client": AsyncMock()},
+        {"sampling_approval_callback": _approve},
+        {"sampling_max_tokens": None},
+        {"sampling_max_requests": None},
+    ],
+)
+def test_mcp_tool_each_sampling_option_warns(sampling_option: dict[str, Any]):
+    """Each non-default sampling option enables the setup warning."""
+    with pytest.warns(DeprecationWarning, match="MCP sampling.*2027-07-28") as warning_info:
+        MCPStdioTool(name="test_tool", command="python", **sampling_option)
+
+    assert len(warning_info) == 1
 
 
 async def test_mcp_tool_sampling_callback_denies_by_default():
@@ -3483,7 +3560,7 @@ async def test_mcp_tool_sampling_callback_denies_by_default():
     params.messages = []
     params.maxTokens = 128
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.ErrorData)
     assert result.code == types.INVALID_REQUEST
@@ -3502,7 +3579,7 @@ async def test_mcp_tool_sampling_callback_denied_by_callback():
     params.messages = []
     params.maxTokens = 128
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.ErrorData)
     assert result.code == types.INVALID_REQUEST
@@ -3524,7 +3601,7 @@ async def test_mcp_tool_sampling_callback_callback_exception_denies():
     params.messages = []
     params.maxTokens = 128
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.ErrorData)
     assert result.code == types.INVALID_REQUEST
@@ -3551,7 +3628,7 @@ async def test_mcp_tool_sampling_callback_async_approval():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     assert isinstance(result.content, types.TextContent)
@@ -3580,7 +3657,7 @@ async def test_mcp_tool_sampling_callback_clamps_max_tokens():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     options = mock_chat_client.get_response.call_args.kwargs.get("options") or {}
@@ -3608,7 +3685,7 @@ async def test_mcp_tool_sampling_callback_does_not_clamp_under_cap():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     options = mock_chat_client.get_response.call_args.kwargs.get("options") or {}
@@ -3638,9 +3715,9 @@ async def test_mcp_tool_sampling_callback_rate_limited():
         params.toolChoice = None
         return params
 
-    first = await tool.sampling_callback(Mock(), make_params())
-    second = await tool.sampling_callback(Mock(), make_params())
-    third = await tool.sampling_callback(Mock(), make_params())
+    first = await _invoke_sampling_callback(tool, make_params())
+    second = await _invoke_sampling_callback(tool, make_params())
+    third = await _invoke_sampling_callback(tool, make_params())
 
     assert isinstance(first, types.CreateMessageResult)
     assert isinstance(second, types.CreateMessageResult)
@@ -3651,7 +3728,7 @@ async def test_mcp_tool_sampling_callback_rate_limited():
 
     # The counter resets on a session reset.
     tool._reset_session_state()
-    fourth = await tool.sampling_callback(Mock(), make_params())
+    fourth = await _invoke_sampling_callback(tool, make_params())
     assert isinstance(fourth, types.CreateMessageResult)
 
 
@@ -3679,7 +3756,7 @@ async def test_mcp_tool_sampling_callback_chat_client_exception():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.ErrorData)
     assert result.code == types.INTERNAL_ERROR
@@ -3725,7 +3802,7 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.ErrorData)
     assert result.code == types.INTERNAL_ERROR
@@ -3750,7 +3827,7 @@ async def test_mcp_tool_sampling_callback_no_response_and_successful_message_cre
     params.toolChoice = None
 
     tool.client.get_response.return_value = None
-    no_response = await tool.sampling_callback(Mock(), params)
+    no_response = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(no_response, types.ErrorData)
     assert no_response.message == "Failed to get chat message content."
@@ -3760,7 +3837,7 @@ async def test_mcp_tool_sampling_callback_no_response_and_successful_message_cre
         model="test-model",
     )
 
-    success = await tool.sampling_callback(Mock(), params)
+    success = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(success, types.CreateMessageResult)
     assert success.role == "assistant"
@@ -3813,7 +3890,7 @@ async def test_mcp_tool_sampling_callback_returns_tool_use_results():
     ]
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResultWithTools)
     assert result.role == "assistant"
@@ -3864,7 +3941,7 @@ async def test_mcp_tool_sampling_callback_forwards_system_prompt():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     call_kwargs = mock_chat_client.get_response.call_args
@@ -3905,7 +3982,7 @@ async def test_mcp_tool_sampling_callback_forwards_tools():
     params.tools = [mcp_tool]
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     call_kwargs = mock_chat_client.get_response.call_args
@@ -3945,7 +4022,7 @@ async def test_mcp_tool_sampling_callback_forwards_tool_choice():
     params.tools = None
     params.toolChoice = types.ToolChoice(mode="required")
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     call_kwargs = mock_chat_client.get_response.call_args
@@ -3980,7 +4057,7 @@ async def test_mcp_tool_sampling_callback_forwards_empty_system_prompt():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     call_kwargs = mock_chat_client.get_response.call_args
@@ -4015,7 +4092,7 @@ async def test_mcp_tool_sampling_callback_forwards_empty_tools_list():
     params.tools = []
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     call_kwargs = mock_chat_client.get_response.call_args
@@ -4050,7 +4127,7 @@ async def test_mcp_tool_sampling_callback_forwards_generation_params_in_options(
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     call_kwargs = mock_chat_client.get_response.call_args
@@ -4091,7 +4168,7 @@ async def test_mcp_tool_sampling_callback_omits_temperature_when_none():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     call_kwargs = mock_chat_client.get_response.call_args
@@ -4128,7 +4205,7 @@ async def test_mcp_tool_sampling_callback_always_passes_max_tokens():
     params.tools = None
     params.toolChoice = None
 
-    result = await tool.sampling_callback(Mock(), params)
+    result = await _invoke_sampling_callback(tool, params)
 
     assert isinstance(result, types.CreateMessageResult)
     call_kwargs = mock_chat_client.get_response.call_args

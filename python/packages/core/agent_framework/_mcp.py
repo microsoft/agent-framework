@@ -21,6 +21,11 @@ from http.cookiejar import CookieJar, DefaultCookiePolicy
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypedDict, cast
 
+if sys.version_info >= (3, 13):
+    from warnings import deprecated  # pragma: no cover
+else:
+    from typing_extensions import deprecated  # pragma: no cover
+
 from opentelemetry import propagate
 from opentelemetry import trace as otel_trace
 from pydantic_core import to_jsonable_python
@@ -95,7 +100,6 @@ class MCPSpecificApproval(TypedDict, total=False):
 
     always_require_approval: Collection[str] | None
     never_require_approval: Collection[str] | None
-
 
 
 MCPToolResultContentMode = Literal[
@@ -478,6 +482,10 @@ class _MCPHeaderScopedClient:
 #   session connection (the counter resets on reconnect).
 _DEFAULT_SAMPLING_MAX_TOKENS = 4096
 _DEFAULT_SAMPLING_MAX_REQUESTS = 25
+_MCP_SAMPLING_DEPRECATION_MESSAGE = (
+    "MCP sampling is deprecated as of MCP specification version 2026-07-28 and will be removed no later than "
+    "2027-07-28. MCP servers should call LLM provider APIs directly."
+)
 
 # A user-supplied gate invoked before each server-initiated sampling request is
 # forwarded to the chat client. It receives the raw ``CreateMessageRequestParams``
@@ -986,8 +994,7 @@ class MCPTool:
         }
         if tool_result_content not in allowed_modes:
             raise ValueError(
-                f"tool_result_content must be one of {sorted(allowed_modes)}, "
-                f"got {tool_result_content!r}."
+                f"tool_result_content must be one of {sorted(allowed_modes)}, got {tool_result_content!r}."
             )
         self.name = name
         self.description = description or ""
@@ -1020,6 +1027,14 @@ class MCPTool:
         self.sampling_approval_callback = sampling_approval_callback
         self.sampling_max_tokens = sampling_max_tokens
         self.sampling_max_requests = sampling_max_requests
+        self._sampling_deprecation_warned = False
+        if (
+            client is not None
+            or sampling_approval_callback is not None
+            or sampling_max_tokens != _DEFAULT_SAMPLING_MAX_TOKENS
+            or sampling_max_requests != _DEFAULT_SAMPLING_MAX_REQUESTS
+        ):
+            self._warn_sampling_deprecated(stacklevel=4)
         self._sampling_request_count = 0
         self._functions: list[FunctionTool] = []
         self.use_progressive_disclosure = use_progressive_disclosure
@@ -1940,7 +1955,7 @@ class MCPTool:
                         ),
                         message_handler=self.message_handler,
                         logging_callback=self.logging_callback,
-                        sampling_callback=self.sampling_callback,
+                        sampling_callback=self.sampling_callback,  # pyright: ignore[reportDeprecated]
                         sampling_capabilities=sampling_capabilities,
                     )
                 )
@@ -2080,12 +2095,28 @@ class MCPTool:
             return cap
         return requested
 
+    def _warn_sampling_deprecated(self, *, stacklevel: int) -> None:
+        """Emit the MCP sampling deprecation warning once for this tool."""
+        if self._sampling_deprecation_warned:
+            return
+        warnings.warn(
+            _MCP_SAMPLING_DEPRECATION_MESSAGE,
+            DeprecationWarning,
+            stacklevel=stacklevel,
+        )
+        self._sampling_deprecation_warned = True
+
+    @deprecated(_MCP_SAMPLING_DEPRECATION_MESSAGE, category=None)
     async def sampling_callback(
         self,
         context: RequestContext[ClientSession, Any],
         params: types.CreateMessageRequestParams,
     ) -> types.CreateMessageResult | types.CreateMessageResultWithTools | types.ErrorData:
         """Callback function for sampling.
+
+        .. deprecated:: 2026-07-28
+            MCP sampling will be removed no later than 2027-07-28. MCP servers should
+            call LLM provider APIs directly.
 
         This function is called when the MCP server sends a ``sampling/createMessage``
         request. It enforces safety guardrails and, if the request is approved, uses the
@@ -2115,6 +2146,8 @@ class MCPTool:
             request is denied, rate limited, or generation fails.
         """
         from mcp import types
+
+        self._warn_sampling_deprecated(stacklevel=3)
 
         if not self.client:
             return types.ErrorData(
