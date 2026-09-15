@@ -211,28 +211,45 @@ def test_serialize_with_org_id(openai_unit_test_env: dict[str, str]) -> None:
     assert "User-Agent" not in dumped_settings.get("default_headers", {})
 
 
+@pytest.mark.parametrize(
+    ("inner_code", "expected_code"),
+    [
+        ("ResponsibleAIPolicyViolation", "ResponsibleAIPolicyViolation"),
+        ("ContentFiltered", "ContentFiltered"),
+        ("FutureContentFilterCode", "Unknown"),
+    ],
+)
+@pytest.mark.parametrize("stream", [False, True])
 async def test_content_filter_exception_handling(
     openai_unit_test_env: dict[str, str],
+    inner_code: str,
+    expected_code: str,
+    stream: bool,
 ) -> None:
     """Test that content filter errors are properly handled."""
     client = OpenAIChatCompletionClient()
     messages = [Message(role="user", contents=["test message"])]
 
     # Create a mock BadRequestError with content_filter code
-    mock_response = MagicMock()
     mock_error = BadRequestError(
         message="Content filter error",
-        response=mock_response,
-        body={"error": {"code": "content_filter"}},
+        response=MagicMock(status_code=400),
+        body={"code": "content_filter", "innererror": {"code": inner_code}},
     )
-    mock_error.code = "content_filter"
 
     # Mock the client to raise the content filter error
     with (
         patch.object(client.client.chat.completions, "create", side_effect=mock_error),
-        pytest.raises(OpenAIContentFilterException),
+        pytest.raises(OpenAIContentFilterException) as exc_info,
     ):
-        await client._inner_get_response(messages=messages, options={})  # type: ignore
+        if stream:
+            async for _ in client.get_response(messages=messages, stream=True):
+                pass
+        else:
+            await client.get_response(messages=messages)
+
+    assert exc_info.value.content_filter_code.value == expected_code
+    assert exc_info.value.__cause__ is mock_error
 
 
 def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None:
