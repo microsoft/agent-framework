@@ -1,11 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.AI.Hosting;
+namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Provides an abstract base class for agent session stores that delegate operations to an inner store
@@ -18,11 +20,12 @@ namespace Microsoft.Agents.AI.Hosting;
 /// underlying store.
 /// </para>
 /// <para>
-/// The default implementation provides transparent pass-through behavior, forwarding all operations to the inner store.
-/// Derived classes can override specific methods to add custom behavior while maintaining compatibility with the store
-/// interface.
+/// The default implementation forwards lookup and save operations to the inner store. The inherited
+/// lookup-or-create method calls the outer store's lookup override before creating a session when needed.
+/// Service queries check this instance before querying the inner store.
 /// </para>
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public abstract class DelegatingAgentSessionStore : AgentSessionStore
 {
     /// <summary>
@@ -32,8 +35,7 @@ public abstract class DelegatingAgentSessionStore : AgentSessionStore
     /// <param name="innerStore">The underlying session store instance that will handle the core operations.</param>
     /// <exception cref="ArgumentNullException"><paramref name="innerStore"/> is <see langword="null"/>.</exception>
     /// <remarks>
-    /// The inner session store serves as the foundation of the delegation chain. All operations not overridden by
-    /// derived classes will be forwarded to this store.
+    /// Lookup and save operations are forwarded to this store unless overridden by a derived class.
     /// </remarks>
     protected DelegatingAgentSessionStore(AgentSessionStore innerStore)
     {
@@ -53,33 +55,25 @@ public abstract class DelegatingAgentSessionStore : AgentSessionStore
     protected AgentSessionStore InnerStore { get; }
 
     /// <inheritdoc/>
-    public override ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string sessionStoreId, CancellationToken cancellationToken = default)
-        => this.InnerStore.GetSessionAsync(agent, sessionStoreId, cancellationToken);
-
-    /// <inheritdoc/>
-    public override ValueTask SaveSessionAsync(AIAgent agent, string sessionStoreId, AgentSession session, CancellationToken cancellationToken = default)
-        => this.InnerStore.SaveSessionAsync(agent, sessionStoreId, session, cancellationToken);
-
-    /// <inheritdoc/>
-    public override ValueTask DeleteSessionAsync(AIAgent agent, string sessionStoreId, CancellationToken cancellationToken = default)
-        => this.InnerStore.DeleteSessionAsync(agent, sessionStoreId, cancellationToken);
-
-    /// <inheritdoc/>
     /// <remarks>
-    /// This implementation first checks if this instance satisfies the service request.
-    /// If not, it chains the request to the inner store, allowing services to be retrieved
-    /// from any store in the delegation chain.
+    /// Returns this instance for a compatible unkeyed request. Otherwise, forwards the request to
+    /// <see cref="InnerStore"/>, allowing services to be discovered through multiple decorators.
     /// </remarks>
     public override object? GetService(Type serviceType, object? serviceKey = null)
-    {
-        // First, check if this instance satisfies the request
-        object? service = base.GetService(serviceType, serviceKey);
-        if (service is not null)
-        {
-            return service;
-        }
+        => base.GetService(serviceType, serviceKey) ?? this.InnerStore.GetService(serviceType, serviceKey);
 
-        // Chain to the inner store
-        return this.InnerStore.GetService(serviceType, serviceKey);
-    }
+    /// <inheritdoc/>
+    public override ValueTask<AgentSession?> GetSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        CancellationToken cancellationToken = default)
+        => this.InnerStore.GetSessionAsync(agent, key, cancellationToken);
+
+    /// <inheritdoc/>
+    public override ValueTask SaveSessionAsync(
+        AIAgent agent,
+        AgentSessionStoreKey key,
+        AgentSession session,
+        CancellationToken cancellationToken = default)
+        => this.InnerStore.SaveSessionAsync(agent, key, session, cancellationToken);
 }

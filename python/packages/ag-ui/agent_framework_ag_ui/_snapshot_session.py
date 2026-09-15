@@ -134,11 +134,17 @@ class ThreadSnapshotSession:
     def resume_seeded_messages(self, incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Prepend copies of stored thread history to a resume request's messages.
 
-        Resume requests carry only the synthesized interrupt response; seeding
+        Resume requests often carry only the synthesized interrupt response; seeding
         with stored history keeps the persisted thread from being truncated.
+
+        For non-empty client-replayed transcripts that already overlap stored
+        history, callers should use ``_reconstruct_messages_from_thread_snapshot``
+        instead so messages are not double-persisted (#8140).
         """
         if self._stored is None:
             return incoming
+        if not incoming:
+            return [copy.deepcopy(message) for message in self._stored.messages]
         return [copy.deepcopy(message) for message in self._stored.messages] + incoming
 
     async def save(
