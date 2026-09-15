@@ -392,6 +392,11 @@ that manually replay messages own the equivalent rule: do not resend an approval
   Changing arguments after security middleware has processed them fails closed with `MiddlewareFailure`.
 - Argument-validation failures after middleware retain the established `Argument parsing failed` result contract.
   Exceptions raised by middleware or the tool body retain the separate `Function failed` contract.
+- Provider-hosted shell calls remain informational transcript content. Only a well-formed explicit `local_shell_call`
+  or a shell call marked with a local environment, paired with a configured local executor, can enter the local
+  function loop and its approval boundary. Stateless replay preserves provider shell call/output items in their
+  original shape and fails explicitly when that provider representation is unavailable or inconsistent. Locally
+  generated shell outputs are sent in both service-side and stateless continuation modes.
 
 ### Reasoning-bound calls
 
@@ -514,6 +519,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Calls across response messages | Every actionable call is executed once. | `test_base_client_executes_function_calls_across_multiple_response_messages` |
 | Parallel calls | Results retain the corresponding call ids and execution count. | `test_max_function_calls_limits_parallel_invocations`, `test_streaming_multiple_function_calls_parallel_execution` |
 | Informational-only call | The call is returned but not executed or approved. | `test_informational_only_function_call_is_not_invoked`, `test_informational_only_function_call_does_not_request_approval`, `test_streaming_informational_only_function_call_is_not_invoked` |
+| OpenAI hosted/local shell boundary | Hosted shell calls remain informational in streaming and non-streaming responses even when a local executor is configured; only valid explicit local-shell items or shell calls marked with a local environment can execute, local execution preserves its configured approval mode, stateless loops preserve the complete provider shell transcript or fail explicitly, and locally generated shell outputs are sent in every continuation mode. | `packages/openai/tests/openai/test_openai_chat_client.py::test_response_content_creation_with_shell_call_remains_hosted_with_local_tool`, `test_parse_chunk_from_openai_shell_call_done_remains_hosted`, `test_parse_chunk_from_openai_local_environment_shell_call_done_emits_command`, `test_mixed_shell_calls_only_invoke_explicit_local_shell_call`, `test_stateless_shell_transcript_without_provider_item_fails`, `test_prepare_messages_keeps_local_shell_output_under_storage`, `test_malformed_local_environment_shell_call_is_not_executable`, `test_response_content_creation_with_local_shell_call_maps_to_function_call`, `test_malformed_local_shell_call_is_not_executable`, `test_response_function_call_named_local_shell_is_informational`, `test_parse_chunk_function_call_named_local_shell_is_informational`, `test_local_shell_tool_requires_approval_before_function_loop_execution` |
 | Declaration-only call | The call is surfaced as user input and is not executed; streaming arguments appear once while finalized request metadata remains available. | `test_declaration_only_tool`, `test_streaming_declaration_only_tool_preserves_metadata_without_duplicate_arguments` |
 | Function invocation disabled | The client bypasses the invocation loop without losing invocation kwargs. | `test_function_invocation_config_enabled_false`, `test_function_invocation_config_enabled_false_preserves_invocation_kwargs`, `test_streaming_function_invocation_config_enabled_false` |
 | Runtime tool changes | Added tools become available on the next iteration and retain approval behavior. | `test_add_tools_available_next_iteration`, `test_add_tools_with_approval_required_tool` |

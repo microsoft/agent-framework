@@ -6,6 +6,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from agent_framework import WorkflowInvocationKwargs
 
 try:
     import powerfx  # noqa: F401
@@ -1746,6 +1747,178 @@ class TestPowerFxConditionalImport:
 class TestExecutorKwargsForwarding:
     """Workflow run kwargs should be forwarded through executor agent invocations."""
 
+    @pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+    @pytest.mark.parametrize(
+        ("executor_ids", "invocation_kwargs", "expected"),
+        [
+            (
+                ("agent1", "sibling"),
+                {
+                    "__global__": {"shared": "G", "overridden": "global"},
+                    "agent1": {"specific": "A", "overridden": "specific"},
+                },
+                (
+                    {"shared": "G", "specific": "A", "overridden": "specific"},
+                    {"shared": "G", "overridden": "global"},
+                ),
+            ),
+            (
+                ("__global__", "sibling"),
+                WorkflowInvocationKwargs(
+                    global_kwargs={"shared": "G", "overridden": "global"},
+                    executor_kwargs={"__global__": {"specific": "A", "overridden": "specific"}},
+                ),
+                (
+                    {"shared": "G", "specific": "A", "overridden": "specific"},
+                    {"shared": "G", "overridden": "global"},
+                ),
+            ),
+        ],
+        ids=["legacy-mixed", "global-executor-collision"],
+    )
+    async def test_workflow_run_resolves_executor_kwargs(
+        self,
+        kwargs_channel: str,
+        executor_ids: tuple[str, str],
+        invocation_kwargs: dict[str, Any] | WorkflowInvocationKwargs,
+        expected: tuple[dict[str, Any], dict[str, Any]],
+    ) -> None:
+        """The public declarative path resolves legacy mixed and collision-free state."""
+        agents: dict[str, Any] = {}
+        actions: list[dict[str, Any]] = []
+        for index, executor_id in enumerate(executor_ids):
+            agent_name = f"agent_{index}"
+            response = MagicMock(text="response", messages=[], tool_calls=[])
+            agent = MagicMock(name=agent_name)
+            agent.run = AsyncMock(return_value=response)
+            agents[agent_name] = agent
+            actions.append({"kind": "InvokeAzureAgent", "id": executor_id, "agent": agent_name, "input": "hello"})
+
+        workflow = DeclarativeWorkflowBuilder(
+            {"name": "kwargs_workflow", "actions": actions},
+            agents=agents,
+        ).build()
+        if kwargs_channel == "function_invocation_kwargs":
+            await workflow.run(ActionTrigger(), function_invocation_kwargs=invocation_kwargs)
+        else:
+            await workflow.run(ActionTrigger(), client_kwargs=invocation_kwargs)
+
+        for agent, expected_kwargs in zip(agents.values(), expected, strict=True):
+            call_kwargs = agent.run.call_args.kwargs
+            assert call_kwargs[kwargs_channel] == expected_kwargs
+            assert call_kwargs["options"]["additional_function_arguments"] == {kwargs_channel: expected_kwargs}
+            assert "_raw_function_invocation_kwargs" not in call_kwargs
+            assert "_raw_client_kwargs" not in call_kwargs
+
+    @pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+    @pytest.mark.parametrize("legacy_checkpoint", [False, True], ids=["new-state", "legacy-state"])
+    async def test_workflow_run_kwargs_survive_file_checkpoint_restore(
+        self,
+        tmp_path: Any,
+        kwargs_channel: str,
+        legacy_checkpoint: bool,
+    ) -> None:
+        """New checkpoints resolve kwargs while legacy checkpoints keep historical forwarding."""
+        from agent_framework import FileCheckpointStorage
+        from agent_framework._workflows._const import (
+            RESOLVED_WORKFLOW_RUN_KWARGS_KEY,
+            WORKFLOW_RUN_KWARGS_KEY,
+        )
+
+        from agent_framework_declarative._workflows._executors_external_input import ExternalInputResponse
+
+        storage = FileCheckpointStorage(
+            tmp_path,
+            allowed_checkpoint_types=[
+                "agent_framework_declarative._workflows._declarative_base:ActionComplete",
+                "agent_framework_declarative._workflows._declarative_base:ActionTrigger",
+                "agent_framework_declarative._workflows._executors_external_input:ExternalInputRequest",
+                "agent_framework_declarative._workflows._executors_external_input:ExternalInputResponse",
+            ],
+        )
+        executor_id = "sibling" if legacy_checkpoint else "__global__"
+
+        def build_workflow() -> tuple[Any, Any]:
+            response = MagicMock(text="response", messages=[], tool_calls=[])
+            agent = MagicMock(name="checkpoint_agent")
+            agent.run = AsyncMock(return_value=response)
+            workflow = DeclarativeWorkflowBuilder(
+                {
+                    "name": "declarative_kwargs_checkpoint",
+                    "actions": [
+                        {
+                            "kind": "RequestExternalInput",
+                            "id": "pause",
+                            "prompt": "Continue?",
+                            "variable": "Local.answer",
+                        },
+                        {
+                            "kind": "InvokeAzureAgent",
+                            "id": executor_id,
+                            "agent": "checkpoint_agent",
+                            "input": "hello",
+                        },
+                    ],
+                },
+                agents={"checkpoint_agent": agent},
+                checkpoint_storage=storage,
+            ).build()
+            return workflow, agent
+
+        if legacy_checkpoint:
+            invocation_kwargs: dict[str, Any] | WorkflowInvocationKwargs = {
+                "__global__": {"shared": "G"},
+                "sibling": {"specific": "S"},
+            }
+        else:
+            invocation_kwargs = WorkflowInvocationKwargs(
+                global_kwargs={"shared": "G"},
+                executor_kwargs={"__global__": {"specific": "S"}},
+            )
+
+        workflow, _ = build_workflow()
+        if kwargs_channel == "function_invocation_kwargs":
+            paused = await workflow.run(ActionTrigger(), function_invocation_kwargs=invocation_kwargs)
+        else:
+            paused = await workflow.run(ActionTrigger(), client_kwargs=invocation_kwargs)
+        [request] = paused.get_request_info_events()
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+        checkpoint = max(
+            (item for item in checkpoints if item.pending_request_info_events),
+            key=lambda item: item.timestamp,
+        )
+        if legacy_checkpoint:
+            checkpoint.state.pop(RESOLVED_WORKFLOW_RUN_KWARGS_KEY, None)
+            await storage.save(checkpoint)
+        else:
+            assert checkpoint.state[RESOLVED_WORKFLOW_RUN_KWARGS_KEY][kwargs_channel]
+            assert isinstance(checkpoint.state[WORKFLOW_RUN_KWARGS_KEY][kwargs_channel], dict)
+
+        resumed_workflow, resumed_agent = build_workflow()
+        resumed = await resumed_workflow.run(checkpoint_id=checkpoint.checkpoint_id)
+        [resumed_request] = resumed.get_request_info_events()
+        assert resumed_request.request_id == request.request_id
+        await resumed_workflow.run(
+            responses={resumed_request.request_id: ExternalInputResponse(user_input="yes")},
+        )
+
+        call_kwargs = resumed_agent.run.call_args.kwargs
+        if legacy_checkpoint:
+            raw_key = (
+                "_raw_function_invocation_kwargs"
+                if kwargs_channel == "function_invocation_kwargs"
+                else "_raw_client_kwargs"
+            )
+            expected_run_kwargs = {kwargs_channel: invocation_kwargs, raw_key: invocation_kwargs}
+            assert call_kwargs[kwargs_channel] == invocation_kwargs
+            assert call_kwargs[raw_key] == invocation_kwargs
+        else:
+            expected_run_kwargs = {kwargs_channel: {"shared": "G", "specific": "S"}}
+            assert call_kwargs[kwargs_channel] == {"shared": "G", "specific": "S"}
+            assert "_raw_function_invocation_kwargs" not in call_kwargs
+            assert "_raw_client_kwargs" not in call_kwargs
+        assert call_kwargs["options"]["additional_function_arguments"] == expected_run_kwargs
+
     @pytest.mark.asyncio
     async def test_invoke_agent_forwards_kwargs(self):
         """InvokeAzureAgentExecutor should forward run_kwargs to agent.run()."""
@@ -1791,6 +1964,7 @@ class TestExecutorKwargsForwarding:
         mock_ctx.yield_output = AsyncMock()
 
         executor = InvokeAzureAgentExecutor.__new__(InvokeAzureAgentExecutor)
+        executor.id = "test_agent"
         executor._agents = {"test_agent": mock_agent}
 
         await executor._invoke_agent_and_store_results(
@@ -1861,6 +2035,7 @@ class TestExecutorKwargsForwarding:
         mock_ctx.yield_output = AsyncMock()
 
         executor = InvokeAzureAgentExecutor.__new__(InvokeAzureAgentExecutor)
+        executor.id = "test_agent"
         executor._agents = {"test_agent": mock_agent}
 
         await executor._invoke_agent_and_store_results(
