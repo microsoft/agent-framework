@@ -38,6 +38,7 @@ from agent_framework._feature_stage import _WARNED_FEATURES, ExperimentalFeature
 from agent_framework._mcp import (
     _MCP_HEADER_OWNER_EXTENSION,
     _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY,
+    MCPSpecificApproval,
     MCPTool,
     _build_prefixed_mcp_name,
     _describe_error,
@@ -171,13 +172,14 @@ def test_mcp_transport_subclasses_accept_tool_name_prefix() -> None:
     )
 
 
-async def test_load_tools_with_tool_name_prefix_preserves_matching_configuration():
+@pytest.mark.parametrize("configured_name", ["search_docs", "docs_search_docs"])
+async def test_load_tools_with_tool_name_prefix_preserves_matching_configuration(configured_name: str):
     """Prefixed MCP tool names should still honor unprefixed allow/approval configuration."""
     tool = MCPTool(  # type: ignore[abstract]
         name="docs",
         tool_name_prefix="docs",
-        allowed_tools=["search_docs"],
-        approval_mode={"always_require_approval": ["search_docs"]},
+        allowed_tools=[configured_name],
+        approval_mode={"always_require_approval": [configured_name]},
     )
 
     mock_session = AsyncMock()
@@ -200,6 +202,194 @@ async def test_load_tools_with_tool_name_prefix_preserves_matching_configuration
     assert [function.name for function in tool._functions] == ["docs_search_docs"]
     assert [function.name for function in tool.functions] == ["docs_search_docs"]
     assert tool.functions[0].approval_mode == "always_require"
+
+
+@pytest.mark.parametrize(
+    "allowed_tools,approval_mode",
+    [
+        (["docs_search"], None),
+        (None, {"always_require_approval": ["docs_search"]}),
+        (None, {"never_require_approval": ["docs_search"]}),
+    ],
+    ids=["allowed", "always_require", "never_require"],
+)
+@pytest.mark.parametrize("remote_names", [("search", "docs_search"), ("docs_search", "search")])
+@pytest.mark.parametrize("paginated", [False, True])
+@pytest.mark.parametrize("progressive", [False, True])
+async def test_load_tools_rejects_ambiguous_policy_names(
+    allowed_tools: list[str] | None,
+    approval_mode: MCPSpecificApproval | None,
+    remote_names: tuple[str, str],
+    paginated: bool,
+    progressive: bool,
+) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ExperimentalWarning)
+        tool = MCPTool(  # type: ignore[abstract]
+            name="docs",
+            tool_name_prefix="docs",
+            allowed_tools=allowed_tools,
+            approval_mode=approval_mode,
+            use_progressive_disclosure=progressive,
+        )
+    advertised_tools = [
+        types.Tool(name=name, inputSchema={"type": "object", "properties": {}}) for name in remote_names
+    ]
+
+    async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
+        assert tool._functions == []
+        if paginated:
+            if params is None:
+                return types.ListToolsResult(tools=advertised_tools[:1], nextCursor="second")
+            assert params.cursor == "second"
+            return types.ListToolsResult(tools=advertised_tools[1:])
+        return types.ListToolsResult(tools=advertised_tools)
+
+    tool.session = AsyncMock()
+    tool.session.list_tools = AsyncMock(side_effect=list_tools)
+
+    with pytest.raises(ToolExecutionException, match="configuration name 'docs_search' is ambiguous"):
+        await tool.load_tools()
+
+    assert tool._functions == []
+    assert tool._tool_param_names_by_name == {}
+    assert [function.name for function in tool.functions] == (
+        ["docs_list_mcp_tools", "docs_load_tool", "docs_unload_tool"] if progressive else []
+    )
+
+
+@pytest.mark.parametrize(
+    "allowed_tools,approval_mode",
+    [
+        (["docs_search"], None),
+        (None, {"always_require_approval": ["docs_search"]}),
+        (None, {"never_require_approval": ["docs_search"]}),
+    ],
+    ids=["allowed", "always_require", "never_require"],
+)
+@pytest.mark.parametrize("remote_names", [("search", "docs_search"), ("docs_search", "search")])
+async def test_ambiguous_policy_reload_preserves_previous_discovery(
+    allowed_tools: list[str] | None,
+    approval_mode: MCPSpecificApproval | None,
+    remote_names: tuple[str, str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tool = MCPTool(  # type: ignore[abstract]
+        name="docs", tool_name_prefix="docs", allowed_tools=allowed_tools, approval_mode=approval_mode
+    )
+    tool.session = AsyncMock()
+    original = types.Tool(
+        name=remote_names[0],
+        inputSchema={"type": "object", "properties": {"query": {"type": "string"}}},
+        _meta={"original": True},
+    )
+    tool.session.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[original]))
+    await tool.load_tools()
+    original_functions = list(tool._functions)
+    original_meta = dict(tool._tool_call_meta_by_name)
+    original_params = dict(tool._tool_param_names_by_name)
+    original_tasks = dict(tool._tool_task_support_by_name)
+
+    async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
+        assert tool._functions == original_functions
+        if params is None:
+            return types.ListToolsResult(
+                tools=[original, types.Tool(name="extra", inputSchema={"type": "object"})],
+                nextCursor="second",
+            )
+        return types.ListToolsResult(tools=[types.Tool(name=remote_names[1], inputSchema={"type": "object"})])
+
+    tool.session.list_tools = AsyncMock(side_effect=list_tools)
+    with caplog.at_level(logging.WARNING, logger=logger.name):
+        await tool.message_handler(types.ServerNotification(types.ToolListChangedNotification()))
+        await asyncio.gather(*tool._pending_reload_tasks)
+
+    assert "configuration name 'docs_search' is ambiguous" in caplog.text
+    assert tool._functions == original_functions
+    assert tool.functions == original_functions
+    assert tool._tool_call_meta_by_name == original_meta
+    assert tool._tool_param_names_by_name == original_params
+    assert tool._tool_task_support_by_name == original_tasks
+
+
+@pytest.mark.parametrize(
+    "allowed_tools,expected_names",
+    [
+        (None, ["docs_search", "docs_docs_search"]),
+        ([], []),
+        (["search"], ["docs_search"]),
+        (["docs_docs_search"], ["docs_docs_search"]),
+    ],
+)
+async def test_overlapping_names_accept_unambiguous_policy(
+    allowed_tools: list[str] | None, expected_names: list[str]
+) -> None:
+    tool = MCPTool(  # type: ignore[abstract]
+        name="docs",
+        tool_name_prefix="docs",
+        allowed_tools=allowed_tools,
+        approval_mode={
+            "always_require_approval": ["search"],
+            "never_require_approval": ["search", "docs_docs_search"],
+        },
+    )
+    tool.session = AsyncMock()
+    tool.session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(name=name, inputSchema={"type": "object", "properties": {}})
+                for name in ("search", "docs_search")
+            ]
+        )
+    )
+    await tool.load_tools()
+
+    assert [function.name for function in tool.functions] == expected_names
+    assert [function.approval_mode for function in tool._functions] == ["always_require", "never_require"]
+
+    tool.allowed_tools = ["docs_search"]
+    with pytest.raises(ToolExecutionException, match="configuration name 'docs_search' is ambiguous"):
+        _ = tool.functions
+
+
+@pytest.mark.parametrize("load_order", ["prompts", "tools_then_prompts", "prompts_then_tools"])
+async def test_prompts_reject_ambiguous_policy_names(load_order: str) -> None:
+    tool = MCPTool(  # type: ignore[abstract]
+        name="docs",
+        tool_name_prefix="docs",
+        allowed_tools=["docs_search"],
+    )
+    tool.session = AsyncMock()
+    tool.session.list_prompts = AsyncMock(
+        side_effect=[
+            types.ListPromptsResult(prompts=[types.Prompt(name="search")], nextCursor="second"),
+            types.ListPromptsResult(prompts=[types.Prompt(name="docs_search")]),
+        ]
+    )
+    if load_order == "prompts":
+        with pytest.raises(ToolExecutionException, match="configuration name 'docs_search' is ambiguous"):
+            await tool.load_prompts()
+        assert tool._functions == []
+        return
+
+    tool.session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            tools=[types.Tool(name="search", inputSchema={"type": "object", "properties": {}})]
+        )
+    )
+    tool.session.list_prompts = AsyncMock(
+        return_value=types.ListPromptsResult(prompts=[types.Prompt(name="docs_search")])
+    )
+    first_load, second_load = (
+        (tool.load_tools, tool.load_prompts)
+        if load_order == "tools_then_prompts"
+        else (tool.load_prompts, tool.load_tools)
+    )
+    await first_load()
+    original_functions = list(tool._functions)
+    with pytest.raises(ToolExecutionException, match="configuration name 'docs_search' is ambiguous"):
+        await second_load()
+    assert tool._functions == original_functions
 
 
 async def test_allowed_tools_does_not_authorize_normalized_remote_name_collision() -> None:

@@ -86,6 +86,9 @@ class MCPSpecificApproval(TypedDict, total=False):
     """Represents the specific approval mode for an MCP tool.
 
     When using this mode, the user must specify which tools always or never require approval.
+    Names match raw remote names or unambiguous prefixed names when the raw name already
+    matches its normalized form. Normalized-only aliases do not match. Discovery raises
+    ``ToolExecutionException`` if a configured name matches multiple raw remote names.
 
     Attributes:
         always_require_approval: A sequence of tool names that always require approval.
@@ -884,6 +887,7 @@ class MCPTool:
                 A non-empty collection exposes only the raw remote tools whose names appear in it. For
                 compatibility, the prefixed local function name is also accepted when the raw remote name already
                 matches its normalized form; normalized aliases do not authorize a different raw remote tool.
+                A configured name matching multiple raw remote names raises ``ToolExecutionException``.
                 An empty collection (``[]``) exposes no tools — if you simply want to
                 disable tool execution, prefer ``load_tools=False`` instead. ``[]`` is
                 useful as a runtime guard or when you want to load tool metadata for
@@ -1310,6 +1314,7 @@ class MCPTool:
 
     def _filtered_functions(self) -> list[FunctionTool]:
         """Return loaded MCP functions after applying ``allowed_tools``."""
+        self._validate_config_names(self._functions)
         if self.allowed_tools is None:
             return self._functions
         allowed_names = set(self.allowed_tools)
@@ -1318,6 +1323,38 @@ class MCPTool:
             if self._function_matches_names(func, allowed_names):
                 filtered_functions.append(func)
         return filtered_functions
+
+    def _validate_config_names(self, functions: Sequence[FunctionTool]) -> None:
+        """Reject configured names that identify more than one raw remote name."""
+        configured_names = set(self.allowed_tools or ())
+        if isinstance(self.approval_mode, dict):
+            configured_names.update(self.approval_mode.get("always_require_approval") or ())
+            configured_names.update(self.approval_mode.get("never_require_approval") or ())
+        if not configured_names:
+            return
+
+        remote_by_config_name: dict[str, str] = {}
+        for func in functions:
+            additional_properties = func.additional_properties or {}
+            normalized_name = additional_properties.get(_MCP_NORMALIZED_NAME_KEY)
+            remote_name = additional_properties.get(_MCP_REMOTE_NAME_KEY)
+            if not isinstance(normalized_name, str) or not isinstance(remote_name, str):
+                continue
+            for name in _mcp_config_candidate_names(
+                local_name=func.name,
+                normalized_name=normalized_name,
+                remote_name=remote_name,
+            ):
+                if name not in configured_names:
+                    continue
+                existing_remote = remote_by_config_name.get(name)
+                if existing_remote is not None and existing_remote != remote_name:
+                    raise ToolExecutionException(
+                        f"MCP configuration name {name!r} is ambiguous: it matches raw remote names "
+                        f"{existing_remote!r} and {remote_name!r}. "
+                        "Use an unambiguous name or a different tool_name_prefix."
+                    )
+                remote_by_config_name[name] = remote_name
 
     def _function_matches_names(self, func: FunctionTool, names: set[str]) -> bool:
         """Return whether a generated MCP function matches a configured name set."""
@@ -2278,7 +2315,8 @@ class MCPTool:
         them into FunctionTool instances. Handles pagination automatically.
 
         Raises:
-            ToolExecutionException: If the MCP server is not connected.
+            ToolExecutionException: If the MCP server is not connected or a configured
+                allow/approval name matches multiple raw remote names.
         """
         async with self._function_load_lock:
             await self._load_prompts_locked()
@@ -2293,6 +2331,7 @@ class MCPTool:
 
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
+        new_functions: list[FunctionTool] = []
 
         params: types.PaginatedRequestParams | None = None
         while True:
@@ -2356,13 +2395,16 @@ class MCPTool:
                         _MCP_NORMALIZED_NAME_KEY: normalized_name,
                     },
                 )
-                self._functions.append(func)
+                new_functions.append(func)
                 existing_names.add(local_name)
 
             # Check if there are more pages
             if not prompt_list.nextCursor:
                 break
             params = types.PaginatedRequestParams(cursor=prompt_list.nextCursor)
+
+        self._validate_config_names([*self._functions, *new_functions])
+        self._functions.extend(new_functions)
 
     async def load_tools(self) -> None:
         """Load tools from the MCP server.
@@ -2371,7 +2413,9 @@ class MCPTool:
         them into FunctionTool instances. Handles pagination automatically.
 
         Raises:
-            ToolExecutionException: If the MCP server is not connected.
+            ToolExecutionException: If the MCP server is not connected, multiple tools
+                map to the same local name, or a configured allow/approval name matches
+                multiple raw remote names.
         """
         async with self._function_load_lock:
             await self._load_tools_locked()
@@ -2386,6 +2430,7 @@ class MCPTool:
 
         # Track existing function names to prevent duplicates
         existing_remote_by_local: dict[str, str] = {}
+        new_functions: list[FunctionTool] = []
         for func in self._functions:
             remote_name = (func.additional_properties or {}).get(_MCP_REMOTE_NAME_KEY)
             if isinstance(remote_name, str):
@@ -2488,13 +2533,15 @@ class MCPTool:
                         _MCP_NORMALIZED_NAME_KEY: normalized_name,
                     },
                 )
-                self._functions.append(func)
+                new_functions.append(func)
 
             # Check if there are more pages
             if not tool_list.nextCursor:
                 break
             params = types.PaginatedRequestParams(cursor=tool_list.nextCursor)
 
+        self._validate_config_names([*self._functions, *new_functions])
+        self._functions.extend(new_functions)
         self._tool_call_meta_by_name = tool_call_meta_by_name
         self._tool_task_support_by_name = tool_task_support_by_name
         self._tool_param_names_by_name = tool_param_names_by_name
@@ -3413,6 +3460,8 @@ class MCPStdioTool(MCPTool):
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
                 A non-empty collection exposes only the tools whose names appear in it.
+                Names match raw remote names or unambiguous prefixed names when normalization
+                leaves the raw name unchanged. Ambiguous allow/approval names raise ``ToolExecutionException``.
                 An empty collection (``[]``) exposes no tools — if you simply want to
                 disable tool execution, prefer ``load_tools=False`` instead. ``[]`` is
                 useful as a runtime guard or when you want to load tool metadata for
@@ -3617,6 +3666,8 @@ class MCPStreamableHTTPTool(MCPTool):
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
                 A non-empty collection exposes only the tools whose names appear in it.
+                Names match raw remote names or unambiguous prefixed names when normalization
+                leaves the raw name unchanged. Ambiguous allow/approval names raise ``ToolExecutionException``.
                 An empty collection (``[]``) exposes no tools — if you simply want to
                 disable tool execution, prefer ``load_tools=False`` instead. ``[]`` is
                 useful as a runtime guard or when you want to load tool metadata for
@@ -4201,6 +4252,8 @@ class MCPWebsocketTool(MCPTool):
             allowed_tools: Optional allow-list of MCP tool names to expose as functions.
                 ``None`` (the default) exposes every tool advertised by the MCP server.
                 A non-empty collection exposes only the tools whose names appear in it.
+                Names match raw remote names or unambiguous prefixed names when normalization
+                leaves the raw name unchanged. Ambiguous allow/approval names raise ``ToolExecutionException``.
                 An empty collection (``[]``) exposes no tools — if you simply want to
                 disable tool execution, prefer ``load_tools=False`` instead. ``[]`` is
                 useful as a runtime guard or when you want to load tool metadata for
