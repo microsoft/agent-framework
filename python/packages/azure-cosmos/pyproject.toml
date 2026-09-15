@@ -1,6 +1,6 @@
 [project]
 name = "agent-framework-azure-cosmos"
-description = "Azure Cosmos DB history provider integration for Microsoft Agent Framework."
+description = "Azure Cosmos DB for NoSQL integrations for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.15.0,<2",
-    "azure-cosmos>=4.3.0,<5",
+    "azure-cosmos>=4.7.0,<5",
     "six>=1.17.0,<2",
 ]
 
@@ -45,10 +45,12 @@ addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
+    "ignore::agent_framework._feature_stage.ExperimentalWarning",
     "ignore:Support for class-based `config` is deprecated:DeprecationWarning:pydantic.*"
 ]
 timeout = 120
 markers = [
+    "flaky: marks tests that depend on external services",
     "integration: marks tests as integration tests that require external services",
 ]
 
