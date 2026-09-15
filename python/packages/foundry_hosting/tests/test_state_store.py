@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -70,6 +72,13 @@ def _config(*, is_hosted: bool) -> AgentConfig:
 
 def _platform_context(call_id: str = "call-1", user_id: str = "user-1") -> FoundryAgentRequestContext:
     return FoundryAgentRequestContext(call_id=call_id, user_id=user_id)
+
+
+def test_local_agentserver_state_root_is_test_scoped(tmp_path: Path) -> None:
+    """Independent tests must not share the local fallback state directory."""
+    state_root = Path(os.environ["AGENTSERVER_STATE_ROOT"])
+
+    assert state_root.is_relative_to(tmp_path)
 
 
 def test_storage_providers_use_public_abstraction() -> None:
