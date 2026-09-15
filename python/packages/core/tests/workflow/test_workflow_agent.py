@@ -939,9 +939,7 @@ class TestWorkflowAgent:
         """Test that an explicitly empty additional_properties dict is not converted to None."""
 
         @executor
-        async def empty_props_executor(
-            messages: list[Message], ctx: WorkflowContext[Any, AgentResponseUpdate]
-        ) -> None:
+        async def empty_props_executor(messages: list[Message], ctx: WorkflowContext[Any, AgentResponseUpdate]) -> None:
             await ctx.yield_output(
                 AgentResponseUpdate(
                     contents=[Content.from_text(text="payload")],

@@ -17,6 +17,7 @@ from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ig
 from copy import copy
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypedDict, cast
 
@@ -3582,7 +3583,7 @@ class MCPStreamableHTTPTool(MCPTool):
             The arguments are used to create a streamable HTTP client using the
             new ``mcp.client.streamable_http.streamable_http_client`` API.
             If an asyncClient is provided via ``http_client``, it will be used as the underlying transport client.
-            Otherwise, the ``streamable_http_client`` API will create and manage a default client.
+            Otherwise, the tool creates and manages a default client without response-cookie persistence.
 
         Args:
             name: The name of the tool.
@@ -3639,8 +3640,13 @@ class MCPStreamableHTTPTool(MCPTool):
                 (``min(requested, cap)``); ``None`` disables it.
             sampling_max_requests: Per-session cap on the number of sampling requests; further
                 requests are rejected. Resets on reconnect. ``None`` disables it.
-            http_client: Optional asyncClient to use. If not provided, the
-                ``streamable_http_client`` API will create and manage a default client.
+            http_client: Optional asyncClient to use. If not provided, the tool creates and manages
+                a client that does not persist response cookies, with or without a ``header_provider``.
+                Explicit ``Cookie`` headers from ``static_headers`` or a ``header_provider`` are supported.
+                Supplied clients retain their cookie behavior and remain caller-owned. Applications
+                requiring cookie-based sessions must supply a client scoped to one authenticated
+                principal and manage its lifetime. Cookie rejection does not partition MCP protocol
+                sessions or other server-side state between principals.
                 Use ``static_headers`` for fixed headers. To configure timeouts or other
                 HTTP client settings, create and pass your own ``asyncClient`` instance.
                 Security: when you attach sensitive headers (e.g. authentication tokens)
@@ -3806,17 +3812,20 @@ class MCPStreamableHTTPTool(MCPTool):
 
         self._promote_pending_session_headers()
 
+        target_origin = (
+            _url_origin(URL(self.url)) if self._static_headers or self._header_provider is not None else None
+        )
         http_client = self._httpx_client
-        if self._static_headers or self._header_provider is not None:
-            target_origin = _url_origin(URL(self.url))
-            if http_client is None:
-                http_client = AsyncClient(
-                    follow_redirects=True,
-                    timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
-                )
-                self._httpx_client = http_client
-                self._exit_stack.push_async_callback(self._close_owned_http_client, http_client)
+        if http_client is None:
+            http_client = AsyncClient(
+                follow_redirects=True,
+                timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
+                cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+            )
+            self._httpx_client = http_client
+            self._exit_stack.push_async_callback(self._close_owned_http_client, http_client)
 
+        if target_origin is not None:
             if not hasattr(self, "_inject_headers_hook"):
 
                 async def _inject_headers(request: Request) -> None:  # ruff:ignore[unused-async]
@@ -3888,9 +3897,7 @@ class MCPStreamableHTTPTool(MCPTool):
                 # while successful sessions keep the hook through transport shutdown.
                 self._exit_stack.callback(self._remove_header_hook)
 
-        transport_http_client = (
-            _MCPHeaderScopedClient(http_client, self._header_request_owner) if http_client is not None else None
-        )
+        transport_http_client = _MCPHeaderScopedClient(http_client, self._header_request_owner)
 
         return streamable_http_client(
             url=self.url,

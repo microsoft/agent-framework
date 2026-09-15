@@ -481,9 +481,7 @@ async def test_workflow_run_approval_pause_closes_open_real_tool_call() -> None:
     """
 
     @executor(id="approval_with_streamed_tool")
-    async def approval_with_streamed_tool(
-        message: Any, ctx: WorkflowContext[Any, AgentResponseUpdate]
-    ) -> None:
+    async def approval_with_streamed_tool(message: Any, ctx: WorkflowContext[Any, AgentResponseUpdate]) -> None:
         del message
         function_call = Content.from_function_call(
             call_id="weather-call",

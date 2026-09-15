@@ -4672,24 +4672,32 @@ def test_mcp_stdio_tool_get_mcp_client_with_env_and_kwargs():
         )
 
 
-def test_mcp_streamable_http_tool_get_mcp_client_all_params():
+async def test_mcp_streamable_http_tool_get_mcp_client_all_params():
     """Test MCPStreamableHTTPTool.get_mcp_client() with all parameters."""
+    from agent_framework._mcp import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TIMEOUT
+
     tool = MCPStreamableHTTPTool(
         name="test",
         url="http://example.com",
         terminate_on_close=True,
     )
 
-    with patch("mcp.client.streamable_http.streamable_http_client") as mock_http_client:
-        tool.get_mcp_client()
-
-        # Verify streamable_http_client was called with None for http_client
-        # (since we didn't provide one, the API will create its own)
-        mock_http_client.assert_called_once_with(
-            url="http://example.com",
-            http_client=None,
-            terminate_on_close=True,
-        )
+    try:
+        with patch("mcp.client.streamable_http.streamable_http_client") as mock_http_client:
+            tool.get_mcp_client()
+            http_client = tool._httpx_client
+            assert http_client is not None
+            assert http_client.follow_redirects is True
+            assert http_client.timeout.connect == MCP_DEFAULT_TIMEOUT
+            assert http_client.timeout.read == MCP_DEFAULT_SSE_READ_TIMEOUT
+            assert not http_client.event_hooks["request"]
+            assert mock_http_client.call_args.kwargs["http_client"]._client is http_client
+            assert mock_http_client.call_args.kwargs["url"] == "http://example.com"
+            assert mock_http_client.call_args.kwargs["terminate_on_close"] is True
+            mock_http_client.assert_called_once()
+    finally:
+        await tool.close()
+    assert http_client.is_closed
 
 
 def test_mcp_websocket_tool_get_mcp_client_with_kwargs():
@@ -4853,7 +4861,7 @@ async def test_load_prompts_prevents_multiple_calls():
 
 
 async def test_mcp_streamable_http_tool_httpx_client_cleanup():
-    """Test that MCPStreamableHTTPTool delegates to caller-provided httpx clients."""
+    """Owned clients are closed, while caller-provided clients remain caller-owned."""
     from unittest.mock import AsyncMock, Mock, patch
 
     from agent_framework import MCPStreamableHTTPTool
@@ -4876,7 +4884,6 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
         mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        # Test 1: Tool without provided client (passes None to streamable_http_client)
         tool1 = MCPStreamableHTTPTool(
             name="test",
             url="http://localhost:8081/mcp",
@@ -4884,11 +4891,13 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
             load_prompts=False,
             terminate_on_close=False,
         )
-        await tool1.connect()
-        # When no client is provided, _httpx_client should be None
-        assert tool1._httpx_client is None, "httpx client should be None when not provided"
+        async with tool1:
+            owned_client = tool1._httpx_client
+            assert owned_client is not None
+            assert not owned_client.is_closed
+        assert owned_client.is_closed
+        assert tool1._httpx_client is None
 
-        # Test 2: Tool with user-provided client
         user_client = Mock()
         tool2 = MCPStreamableHTTPTool(
             name="test",
@@ -4898,15 +4907,10 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
             terminate_on_close=False,
             http_client=user_client,
         )
-        await tool2.connect()
-
-        # Verify the user-provided client was stored
-        assert tool2._httpx_client is user_client, "User-provided client should be stored"
-
-        # Verify the transport wrapper delegates to the user's client.
-        # Get the last call (should be from tool2.connect())
-        call_args = mock_client.call_args
-        assert call_args.kwargs["http_client"]._client is user_client
+        async with tool2:
+            assert tool2._httpx_client is user_client
+            assert mock_client.call_args.kwargs["http_client"]._client is user_client
+        user_client.aclose.assert_not_called()
 
 
 async def test_load_tools_with_pagination():
@@ -7219,39 +7223,56 @@ async def test_mcp_streamable_http_tool_keeps_bound_headers_on_same_origin_redir
             await tool._httpx_client.aclose()  # type: ignore[union-attr]
 
 
-async def test_mcp_streamable_http_tool_header_provider_with_user_httpx_client():
-    """Test that header_provider works when the user provides their own httpx client."""
+@pytest.mark.parametrize("use_header_provider", [False, True])
+async def test_mcp_streamable_http_tool_header_provider_with_user_httpx_client(use_header_provider: bool):
+    """Supplied clients preserve configuration, cookie persistence, and ownership."""
     import httpx
 
     from agent_framework._mcp import _mcp_call_headers
 
-    user_client = httpx.AsyncClient(headers={"X-Base": "static"})
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.headers["X-Base"] == "static"
+        assert request.headers["Authorization"].startswith("Basic ")
+        assert request.headers["Cookie"] == "caller_session=kept"
+        return httpx.Response(200, headers={"Set-Cookie": "response_session=retained; Path=/"})
 
-    tool = MCPStreamableHTTPTool(
-        name="test",
-        url="http://example.com/mcp",
-        http_client=user_client,
-        header_provider=lambda kw: {"X-Dynamic": kw.get("dynamic", "")},
-    )
-
-    with patch("agent_framework._mcp.streamable_http_client"):
-        tool.get_mcp_client()
-
-        # The user's client should still be used
-        assert tool._httpx_client is user_client
-        hooks = user_client.event_hooks.get("request", [])
-        assert len(hooks) == 1
-
-        # Verify the hook injects headers
-        token = _mcp_call_headers.set({"X-Dynamic": "per-request"})
+    auth = httpx.BasicAuth("caller", "test-password")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handle),
+        headers={"X-Base": "static"},
+        cookies={"caller_session": "kept"},
+        auth=auth,
+        timeout=17.0,
+    ) as user_client:
+        tool = MCPStreamableHTTPTool(
+            name="test",
+            url="http://example.com/mcp",
+            http_client=user_client,
+            header_provider=(lambda kw: {"X-Dynamic": kw.get("dynamic", "")}) if use_header_provider else None,
+        )
         try:
-            request = _request_for_mcp_tool(tool)
-            await hooks[0](request)
-            assert request.headers.get("X-Dynamic") == "per-request"
+            with patch("agent_framework._mcp.streamable_http_client"):
+                tool.get_mcp_client()
+                assert tool._httpx_client is user_client
+                hooks = user_client.event_hooks["request"]
+                assert len(hooks) == int(use_header_provider)
+                if use_header_provider:
+                    token = _mcp_call_headers.set({"X-Dynamic": "per-request"})
+                    try:
+                        request = _request_for_mcp_tool(tool)
+                        await hooks[0](request)
+                        assert request.headers.get("X-Dynamic") == "per-request"
+                    finally:
+                        _mcp_call_headers.reset(token)
         finally:
-            _mcp_call_headers.reset(token)
-
-    await user_client.aclose()
+            await tool.close()
+        assert not user_client.is_closed
+        assert user_client.auth is auth
+        assert user_client.timeout == httpx.Timeout(17.0)
+        assert not user_client.event_hooks["request"]
+        await user_client.get("http://example.com/unrelated")
+        assert user_client.cookies["caller_session"] == "kept"
+        assert user_client.cookies["response_session"] == "retained"
 
 
 async def test_mcp_streamable_http_tool_header_provider_isolated_on_shared_httpx_client():
