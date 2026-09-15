@@ -111,6 +111,24 @@ class MockExecutorRequestApproval(Executor):
             await ctx.send_message(NumberMessage(data=data))
 
 
+def test_coerce_request_info_response_converts_content() -> None:
+    """Request responses should use the shared Content conversion path."""
+    from agent_framework._workflows._workflow import _coerce_request_info_response
+
+    response = _coerce_request_info_response("hello", Content, "content")
+
+    assert isinstance(response, Content)
+    assert response.text == "hello"
+
+
+def test_coerce_request_info_response_rejects_mismatched_type() -> None:
+    """Request responses that cannot be validated should report their request ID."""
+    from agent_framework._workflows._workflow import _coerce_request_info_response
+
+    with pytest.raises(ValueError, match="Response type mismatch for request ID typed"):
+        _coerce_request_info_response("not-an-int", int, "typed")
+
+
 async def test_fresh_message_while_pending_advances_state_without_abandoning_requests(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

@@ -763,28 +763,28 @@ def _emit_tool_result_common(
     snapshot_result: Any = _UNSET,  # noqa: ANN401
     model_items: list[dict[str, Any]] | None = None,
 ) -> list[BaseEvent]:
-    """Shared helper for emitting ToolCallEnd + ToolCallResult events and performing FlowState cleanup.
+    """Shared helper for emitting ToolCallResult (and ToolCallEnd when still open).
 
     Both ``_emit_tool_result`` (standard function results) and ``_emit_mcp_tool_result``
     (MCP server tool results) delegate to this function.
 
-    Args:
-        call_id: Tool call identifier.
-        raw_result: The stringified tool result content sent back to the LLM.
-        flow: Current ``FlowState``.
-        predictive_handler: Optional predictive state handler driven by
-            ``predict_state_config``.
-        state_update: Optional deterministic state snapshot produced by a tool
-            returning :func:`agent_framework_ag_ui.state_update`. When present,
-            it is merged into ``flow.current_state`` and a ``StateSnapshotEvent``
-            is emitted after the ``ToolCallResult`` event. When both
-            ``predictive_handler`` and ``state_update`` are active, predictive
-            updates are applied first, then the deterministic merge, and a
-            single coalesced ``StateSnapshotEvent`` is emitted.
+    ``TOOL_CALL_END`` is emitted only when ``call_id`` was opened in this run and
+    has not already been ended (including synthetic protocol closure before an
+    approval interrupt). On resume, a fresh ``FlowState`` never STARTs that id,
+    so only ``TOOL_CALL_RESULT`` is emitted — matching Agent approval resume.
     """
     events: list[BaseEvent] = []
 
-    events.append(ToolCallEndEvent(tool_call_id=call_id))
+    # Only end tool calls that were opened in this run and are still open.
+    # Synthetic protocol closure before an approval interrupt (Workflow
+    # ``_drain_open_tool_calls``, Agent ``_emit_approval_request``) already
+    # emitted TOOL_CALL_END; a later real function_result — including on a
+    # resumed run with a fresh FlowState that never STARTed this id — must not
+    # emit an unmatched or duplicate END. Match Agent approval resume, which
+    # surfaces TOOL_CALL_RESULT only via ``_make_approval_tool_result_events``.
+    tool_is_open = call_id in flow.tool_calls_by_id and call_id not in flow.tool_calls_ended
+    if tool_is_open:
+        events.append(ToolCallEndEvent(tool_call_id=call_id))
     flow.tool_calls_ended.add(call_id)
 
     result_content = _stringify_tool_result(raw_result)

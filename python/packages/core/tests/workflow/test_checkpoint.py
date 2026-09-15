@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import json
 import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -1256,6 +1259,62 @@ async def test_file_checkpoint_storage_delete():
         # Try to delete again
         result = await storage.delete(checkpoint.checkpoint_id)
         assert result is False
+
+
+async def test_file_checkpoint_storage_concurrent_delete():
+    """Serialize deletes when overlapping unlink calls could both report success."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        other_storage = FileCheckpointStorage(temp_dir)
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="test-workflow",
+            graph_signature_hash="test-hash",
+            checkpoint_id="same",
+        )
+        await storage.save(checkpoint)
+
+        file_path = (Path(temp_dir) / "same.json").resolve()
+        original_to_thread = asyncio.to_thread
+        original_unlink = Path.unlink
+        worker_barrier = threading.Barrier(2)
+        unlink_barrier = threading.Barrier(2)
+        unlink_guard = threading.Lock()
+        overlapping_delete_completed = False
+
+        async def synchronized_to_thread(function: Any, /, *args: Any, **kwargs: Any) -> Any:
+            def synchronized_call() -> Any:
+                worker_barrier.wait(timeout=5)
+                return function(*args, **kwargs)
+
+            return await original_to_thread(synchronized_call)
+
+        def macos_style_unlink(path: Path, missing_ok: bool = False) -> None:
+            nonlocal overlapping_delete_completed
+            if path.resolve() != file_path:
+                original_unlink(path, missing_ok=missing_ok)
+                return
+
+            try:
+                unlink_barrier.wait(timeout=0.5)
+            except threading.BrokenBarrierError:
+                original_unlink(path, missing_ok=missing_ok)
+                return
+
+            with unlink_guard:
+                if not overlapping_delete_completed:
+                    original_unlink(path, missing_ok=missing_ok)
+                    overlapping_delete_completed = True
+
+        with (
+            patch.object(asyncio, "to_thread", synchronized_to_thread),
+            patch.object(Path, "unlink", macos_style_unlink),
+        ):
+            results = await asyncio.gather(
+                storage.delete(checkpoint.checkpoint_id),
+                other_storage.delete(checkpoint.checkpoint_id),
+            )
+
+        assert sorted(results) == [False, True]
 
 
 async def test_file_checkpoint_storage_directory_creation():

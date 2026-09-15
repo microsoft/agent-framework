@@ -1157,20 +1157,47 @@ async def run_workflow_stream(
         flow.accumulated_text = ""
         return [TextMessageEndEvent(message_id=current_message_id)]
 
+    def _drain_open_tool_calls() -> list[ToolCallEndEvent]:
+        """Close any still-open real tool calls tracked in flow state.
+
+        AG-UI clients reject ``RUN_FINISHED`` (and a subsequent ``request_info``
+        tool call) while a prior ``TOOL_CALL_START`` remains open. Participant
+        agents that stream a ``function_call`` before pausing for approval leave
+        that real tool id open; end it here so the interrupt path matches the
+        native Agent ``_emit_approval_request`` behavior.
+
+        Marking the id in ``flow.tool_calls_ended`` also lets a later real
+        ``function_result`` in this run skip a duplicate ``TOOL_CALL_END``. On
+        resume, a fresh ``FlowState`` never STARTs that id, so
+        ``_emit_tool_result_common`` likewise suppresses an unmatched END and
+        emits ``TOOL_CALL_RESULT`` only — same as Agent approval resume.
+        """
+        events: list[ToolCallEndEvent] = []
+        for tool_call in flow.get_pending_without_end():
+            tool_call_id = tool_call.get("id")
+            if not tool_call_id:
+                continue
+            events.append(ToolCallEndEvent(tool_call_id=tool_call_id))
+            flow.tool_calls_ended.add(tool_call_id)
+        return events
+
     def _drain_open_blocks() -> list[BaseEvent]:
-        """Close any open reasoning block and assistant text message.
+        """Close any open reasoning block, assistant text message, and tool calls.
 
         Emitted before content that must not sit inside an open block: a terminal event
         (RUN_FINISHED / RUN_ERROR, which must be the final events in the stream) or a
         request_info tool call (non-reasoning message content). Otherwise the block's
         REASONING_* / TEXT_MESSAGE_* end events would be flushed only by the post-loop
-        cleanup -- after the terminal event, or after the tool call. Both inner helpers
-        are no-ops when their block is not open, so this is always safe to call (a later
-        cleanup pass then simply does nothing).
+        cleanup -- after the terminal event, or after the tool call. Open tool calls
+        must also end before those boundaries so clients do not reject the stream
+        with active tool-call errors. The inner helpers are no-ops when nothing is
+        open, so this is always safe to call (a later cleanup pass then simply does
+        nothing).
         """
         events: list[BaseEvent] = []
         events.extend(_close_reasoning_block(flow))
         events.extend(_drain_open_message())
+        events.extend(_drain_open_tool_calls())
         return events
 
     fwd_kwargs: dict[str, Any] = {}
@@ -1409,6 +1436,9 @@ async def run_workflow_stream(
         yield reasoning_evt
 
     for end_event in _drain_open_message():
+        yield end_event
+
+    for end_event in _drain_open_tool_calls():
         yield end_event
 
     if not run_started_emitted:

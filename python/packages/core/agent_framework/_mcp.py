@@ -17,7 +17,7 @@ from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ig
 from copy import copy
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from functools import partial
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypedDict, cast
 
@@ -97,6 +97,29 @@ class MCPSpecificApproval(TypedDict, total=False):
     never_require_approval: Collection[str] | None
 
 
+
+MCPToolResultContentMode = Literal[
+    "structured_first",
+    "content_first",
+    "content_only",
+    "structured_only",
+    "both",
+]
+"""How model-visible text is selected when a tool result has both ``content`` and ``structuredContent``.
+
+MCP servers disagree on whether the two fields are duplicates or complementary (#7866).
+Callers pick an explicit policy:
+
+- ``structured_first`` (default): use ``structuredContent`` when present, else ``content``
+- ``content_first``: use ``content`` when non-empty, else ``structuredContent``
+- ``content_only``: ignore ``structuredContent`` for the model-visible result
+- ``structured_only``: ignore ``content`` for the model-visible result
+- ``both``: append serialized ``structuredContent`` after ``content`` blocks
+
+The full MCP payload is still retained on the Host channel regardless of mode.
+Custom ``parse_tool_results`` overrides this policy entirely.
+"""
+
 _MCP_REMOTE_NAME_KEY = "_mcp_remote_name"
 _MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
 _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY = "_mcp_tool_result_host_payload"
@@ -136,6 +159,7 @@ _MCP_FRAMEWORK_DENYLIST: frozenset[str] = frozenset({
 _mcp_call_headers: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar("_mcp_call_headers")
 _MCP_HEADER_OWNER_EXTENSION = "agent_framework.mcp_header_owner"
 _MCP_INJECTED_HEADER_KEYS_EXTENSION = "agent_framework.mcp_injected_header_keys"
+_MCPHeaderIdentity: TypeAlias = tuple[tuple[str, str], ...]
 MCP_DEFAULT_TIMEOUT = 30
 MCP_DEFAULT_SSE_READ_TIMEOUT = 60 * 5
 _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES = 1024 * 1024
@@ -598,6 +622,25 @@ def _make_mcp_tool_caller(
     return _call_tool_with_runtime_kwargs
 
 
+def _make_mcp_prompt_caller(
+    mcp_tool: MCPTool,
+    remote_prompt_name: str,
+) -> Callable[..., Coroutine[Any, Any, str]]:
+    """Build a generated prompt caller that keeps run context out of prompt arguments."""
+
+    async def _call_prompt_with_runtime_kwargs(
+        ctx: FunctionInvocationContext,
+        **kwargs: Any,
+    ) -> str:
+        return await mcp_tool._call_prompt_with_runtime_kwargs(  # pyright: ignore[reportPrivateUsage]
+            remote_prompt_name,
+            kwargs,
+            ctx.kwargs,
+        )
+
+    return _call_prompt_with_runtime_kwargs
+
+
 def _validate_mcp_meta_key(key: str) -> None:
     """Validate an MCP ``_meta`` key against the 2025-06-18 key-name format."""
     if not _MCP_META_KEY_PATTERN.fullmatch(key):
@@ -649,6 +692,14 @@ def _url_origin(url: Any) -> tuple[str, str, int]:
     if port is None:
         port = 443 if url.scheme == "https" else 80
     return (url.scheme, url.host, port)
+
+
+def _mcp_header_identity(headers: Mapping[str, str]) -> _MCPHeaderIdentity:
+    """Return the effective header set with case-insensitive names."""
+    normalized: dict[str, str] = {}
+    for name, value in headers.items():
+        normalized[name.lower()] = value
+    return tuple(sorted(normalized.items()))
 
 
 # Internal polling bounds for MCP long-running tasks. Not user-tunable today;
@@ -841,6 +892,7 @@ class MCPTool:
         always_load: Collection[str] | None = None,
         *,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
+        tool_result_content: MCPToolResultContentMode = "structured_first",
     ) -> None:
         """Initialize the MCP Tool base.
 
@@ -910,6 +962,9 @@ class MCPTool:
             max_host_payload_size_bytes: Maximum encoded size of the complete MCP result retained
                 for Host transports. Oversized payloads are omitted from the Host channel while
                 the parsed model result is preserved. Set to ``None`` to disable the limit.
+            tool_result_content: How to choose model-visible text when both ``content`` and
+                ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
+                Ignored when ``parse_tool_results`` is set. Default ``structured_first``.
         """
         if use_progressive_disclosure and not load_tools:
             raise ValueError("use_progressive_disclosure=True requires load_tools=True.")
@@ -922,6 +977,18 @@ class MCPTool:
             )
         if max_host_payload_size_bytes is not None and max_host_payload_size_bytes <= 0:
             raise ValueError("max_host_payload_size_bytes must be positive or None.")
+        allowed_modes = {
+            "structured_first",
+            "content_first",
+            "content_only",
+            "structured_only",
+            "both",
+        }
+        if tool_result_content not in allowed_modes:
+            raise ValueError(
+                f"tool_result_content must be one of {sorted(allowed_modes)}, "
+                f"got {tool_result_content!r}."
+            )
         self.name = name
         self.description = description or ""
         self.approval_mode = approval_mode
@@ -930,6 +997,7 @@ class MCPTool:
         self.additional_properties = additional_properties
         self.load_tools_flag = load_tools
         self.parse_tool_results = parse_tool_results
+        self.tool_result_content = tool_result_content
         self.load_prompts_flag = load_prompts
         self.parse_prompt_results = parse_prompt_results
         self.max_host_payload_size_bytes = max_host_payload_size_bytes
@@ -942,7 +1010,7 @@ class MCPTool:
         self._lifecycle_request_lock = asyncio.Lock()
         self._function_load_lock = asyncio.Lock()
         self._lifecycle_queue: (
-            asyncio.Queue[tuple[str, bool, bool, asyncio.Future[None], asyncio.Future[bool]]] | None
+            asyncio.Queue[tuple[str, bool, bool, bool, asyncio.Future[None], asyncio.Future[bool]]] | None
         ) = None
         self._lifecycle_owner_task: asyncio.Task[None] | None = None
         self.session = session
@@ -1112,8 +1180,30 @@ class MCPTool:
                 case _:
                     result.append(Content.from_text(str(item), **additional_kwargs))
 
+        structured_block: Content | None = None
         if mcp_type.structuredContent is not None:
-            result.append(Content.from_text(json.dumps(mcp_type.structuredContent, default=str), **additional_kwargs))
+            structured_block = Content.from_text(
+                json.dumps(mcp_type.structuredContent, default=str), **additional_kwargs
+            )
+
+        # Select model-visible content per explicit policy (#7866). Host payload still
+        # retains the full MCP result regardless of this choice.
+        mode = self.tool_result_content
+        if mode == "both":
+            if structured_block is not None:
+                result.append(structured_block)
+        elif mode == "content_only":
+            pass
+        elif mode == "structured_only":
+            result = [structured_block] if structured_block is not None else []
+        elif mode == "content_first":
+            if not result and structured_block is not None:
+                result.append(structured_block)
+        elif mode == "structured_first":
+            if structured_block is not None:
+                result = [structured_block]
+        else:  # pragma: no cover - validated in __init__
+            raise ValueError(f"Unknown tool_result_content mode: {mode!r}")
 
         if not result:
             result.append(Content.from_text("null", **additional_kwargs))
@@ -1564,7 +1654,7 @@ class MCPTool:
         stop_error: BaseException | None = None
         try:
             while True:
-                action, reset, load_configured, future, acknowledged = await queue.get()
+                action, reset, load_configured, reset_discovery, future, acknowledged = await queue.get()
                 if action == "connect" and future.cancelled():
                     if not self.is_connected and queue.empty():
                         return
@@ -1574,7 +1664,11 @@ class MCPTool:
                     if action == "connect":
                         previous_session = self.session
                         previously_connected = self.is_connected
-                        await self._connect_on_owner(reset=reset, load_configured=load_configured)
+                        await self._connect_on_owner(
+                            reset=reset,
+                            load_configured=load_configured,
+                            reset_discovery=reset_discovery,
+                        )
                         new_connection = not previously_connected or self.session is not previous_session
                         accepted = False
                         try:
@@ -1586,6 +1680,8 @@ class MCPTool:
                         finally:
                             if not accepted and new_connection:
                                 await self._close_on_owner()
+                                if reset_discovery:
+                                    self._reset_session_discovery_state()
                         if not accepted and new_connection and queue.empty():
                             return
                     elif action == "close":
@@ -1616,7 +1712,7 @@ class MCPTool:
         finally:
             while True:
                 try:
-                    _, _, _, future, _ = queue.get_nowait()
+                    _, _, _, _, future, _ = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
                 if not future.done():
@@ -1635,12 +1731,17 @@ class MCPTool:
         *,
         reset: bool = False,
         load_configured: bool = True,
+        reset_discovery: bool = False,
     ) -> None:
         await self._ensure_lifecycle_owner()
 
         if self._is_lifecycle_owner_task():
             if action == "connect":
-                await self._connect_on_owner(reset=reset, load_configured=load_configured)
+                await self._connect_on_owner(
+                    reset=reset,
+                    load_configured=load_configured,
+                    reset_discovery=reset_discovery,
+                )
             elif action == "close":
                 await self._close_on_owner()
             else:
@@ -1653,7 +1754,7 @@ class MCPTool:
 
         future = asyncio.get_running_loop().create_future()
         acknowledged: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
-        await queue.put((action, reset, load_configured, future, acknowledged))
+        await queue.put((action, reset, load_configured, reset_discovery, future, acknowledged))
         accepted = False
         try:
             await future
@@ -1712,6 +1813,18 @@ class MCPTool:
         self._release_connection_kwargs()
         return _should_propagate_cancelled_error(ex), cleanup_error
 
+    def _reset_session_discovery_state(self) -> None:
+        """Remove functions and metadata derived from the current MCP session."""
+        self._functions[:] = [
+            function
+            for function in self._functions
+            if not isinstance((function.additional_properties or {}).get(_MCP_REMOTE_NAME_KEY), str)
+        ]
+        self._tool_call_meta_by_name.clear()
+        self._tool_task_support_by_name.clear()
+        self._tool_param_names_by_name.clear()
+        self._progressive_loaded_tool_names.clear()
+
     def _reset_session_state(self) -> None:
         self._server_capabilities = None
         self._tools_loaded = False
@@ -1750,7 +1863,13 @@ class MCPTool:
         async with self._lifecycle_request_lock:
             await self._run_on_lifecycle_owner("connect", reset=reset)
 
-    async def _connect_on_owner(self, *, reset: bool = False, load_configured: bool = True) -> None:
+    async def _connect_on_owner(
+        self,
+        *,
+        reset: bool = False,
+        load_configured: bool = True,
+        reset_discovery: bool = False,
+    ) -> None:
         """Connect to the MCP server.
 
         Establishes a connection to the MCP server, initializes the session,
@@ -1759,16 +1878,21 @@ class MCPTool:
         Keyword Args:
             reset: If True, forces a reconnection even if already connected.
             load_configured: If True, loads tools and prompts according to the constructor flags.
+            reset_discovery: If True, removes state derived from the previous session after its transport closes.
 
         Raises:
             ToolException: If connection or session initialization fails.
         """
         if reset:
+            if reset_discovery:
+                await self._cancel_pending_reload_tasks()
             await self._safe_close_exit_stack()
             if self._owns_session:
                 self.session = None
             self.is_connected = False
             self._reset_session_state()
+            if reset_discovery:
+                self._reset_session_discovery_state()
             self._exit_stack = AsyncExitStack()
         if not self.session:
             try:
@@ -1900,6 +2024,10 @@ class MCPTool:
                 self._tool_task_support_by_name = task_support_before_discovery
                 self._tool_param_names_by_name = param_names_before_discovery
             raise
+
+    async def _prepare_for_run(self, kwargs: Mapping[str, Any]) -> None:
+        """Prepare connection-scoped state before exposing functions to a run."""
+        self._seed_connection_kwargs(kwargs)
 
     def _seed_connection_kwargs(self, kwargs: Mapping[str, Any]) -> None:
         """Offer run-scoped kwargs to connection-lifetime header resolution."""
@@ -2195,6 +2323,17 @@ class MCPTool:
             return None
         return self.approval_mode  # type: ignore[return-value]
 
+    async def _load_configured_discovery_locked(self) -> None:
+        """Load configured session discovery while the caller holds the discovery lock."""
+        if self.load_tools_flag:
+            if self._supports_tools:
+                await self._load_tools_locked()
+            self._tools_loaded = True
+        if self.load_prompts_flag:
+            if self._supports_prompts:
+                await self._load_prompts_locked()
+            self._prompts_loaded = True
+
     async def load_prompts(self) -> None:
         """Load prompts from the MCP server.
 
@@ -2270,7 +2409,7 @@ class MCPTool:
                     )
                 )
                 func: FunctionTool = FunctionTool(
-                    func=partial(self.get_prompt, prompt.name),
+                    func=_make_mcp_prompt_caller(self, prompt.name),
                     name=local_name,
                     description=prompt.description or "",
                     approval_mode=approval_mode,
@@ -2423,14 +2562,17 @@ class MCPTool:
         self._tool_task_support_by_name = tool_task_support_by_name
         self._tool_param_names_by_name = tool_param_names_by_name
 
-    async def _close_on_owner(self) -> None:
-        # Cancel any pending reload tasks before tearing down the session.
+    async def _cancel_pending_reload_tasks(self) -> None:
+        """Cancel session-bound discovery reloads and wait for them to finish."""
         tasks = list(self._pending_reload_tasks)
         for task in tasks:
             task.cancel()
         self._pending_reload_tasks.clear()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _close_on_owner(self) -> None:
+        await self._cancel_pending_reload_tasks()
 
         await self._safe_close_exit_stack()
         self._exit_stack = AsyncExitStack()
@@ -3126,6 +3268,15 @@ class MCPTool:
             return "session terminated" in ex.error.message.lower()
         return False
 
+    async def _call_prompt_with_runtime_kwargs(
+        self,
+        prompt_name: str,
+        prompt_arguments: Mapping[str, Any],
+        _runtime_kwargs: Mapping[str, Any],
+    ) -> str:
+        """Invoke a generated prompt without forwarding run context as prompt arguments."""
+        return await self.get_prompt(prompt_name, **prompt_arguments)
+
     async def get_prompt(self, prompt_name: str, **kwargs: Any) -> str:
         """Call a prompt with the given arguments.
 
@@ -3283,6 +3434,7 @@ class MCPStdioTool(MCPTool):
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
+        tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP stdio tool.
@@ -3375,6 +3527,8 @@ class MCPStdioTool(MCPTool):
                 process you do not control.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
+            tool_result_content: How to choose model-visible text when both ``content`` and
+                ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
             kwargs: Any extra arguments to pass to the stdio client.
         """
         super().__init__(
@@ -3399,6 +3553,7 @@ class MCPStdioTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
+            tool_result_content=tool_result_content,
         )
         self.command = command
         self.args = args or []
@@ -3486,6 +3641,7 @@ class MCPStreamableHTTPTool(MCPTool):
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
+        tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP streamable HTTP tool.
@@ -3494,7 +3650,7 @@ class MCPStreamableHTTPTool(MCPTool):
             The arguments are used to create a streamable HTTP client using the
             new ``mcp.client.streamable_http.streamable_http_client`` API.
             If an asyncClient is provided via ``http_client``, it will be used as the underlying transport client.
-            Otherwise, the ``streamable_http_client`` API will create and manage a default client.
+            Otherwise, the tool creates and manages a default client without response-cookie persistence.
 
         Args:
             name: The name of the tool.
@@ -3551,8 +3707,13 @@ class MCPStreamableHTTPTool(MCPTool):
                 (``min(requested, cap)``); ``None`` disables it.
             sampling_max_requests: Per-session cap on the number of sampling requests; further
                 requests are rejected. Resets on reconnect. ``None`` disables it.
-            http_client: Optional asyncClient to use. If not provided, the
-                ``streamable_http_client`` API will create and manage a default client.
+            http_client: Optional asyncClient to use. If not provided, the tool creates and manages
+                a client that does not persist response cookies, with or without a ``header_provider``.
+                Explicit ``Cookie`` headers from ``static_headers`` or a ``header_provider`` are supported.
+                Supplied clients retain their cookie behavior and remain caller-owned. Applications
+                requiring cookie-based sessions must supply a client scoped to one authenticated
+                principal and manage its lifetime. Cookie rejection does not partition MCP protocol
+                sessions or other server-side state between principals.
                 Use ``static_headers`` for fixed headers. To configure timeouts or other
                 HTTP client settings, create and pass your own ``asyncClient`` instance.
                 Security: when you attach sensitive headers (e.g. authentication tokens)
@@ -3576,18 +3737,28 @@ class MCPStreamableHTTPTool(MCPTool):
                 of HTTP headers to inject into every outbound request to the MCP server.
                 Use this to forward per-request context (e.g. authentication tokens set in
                 agent middleware) without creating a separate ``httpx.AsyncClient``.
-                Only tool calls carry a run's kwargs. Connection-lifetime requests - the
-                ``initialize`` handshake, tool and prompt discovery, and background pings -
-                belong to no call, so they reuse the kwargs of the run that established the
-                connection until the tool is closed; a later run's kwargs do not reach them.
+                The complete header set used to initialize a connection becomes that session's
+                immutable effective identity. Header names are compared case-insensitively and
+                values case-sensitively. Before an Agent exposes a connected tool's functions for
+                a run, it reconciles the run's effective headers and reconnects when they differ;
+                generated tool and prompt calls perform the same check before sending. Connection-lifetime
+                requests - including discovery, background pings, resource and prompt reloads,
+                and long-running task polling - always use the session-bound header set. A
+                caller-supplied session's established identity is unknown and cannot be
+                reconnected by this wrapper, so dynamic header resolution raises
+                ``ToolExecutionException`` and requires a separate framework-managed tool instance.
                 A tool connected outside any run (eagerly via ``async with``, or standalone)
                 has no kwargs to reuse and the provider is called with an empty mapping, in
                 which case a ``KeyError`` from the provider is tolerated and the request is
-                sent without headers. Once a run has supplied kwargs, a ``KeyError`` is
-                raised instead, since a key missing there is a misconfiguration rather than
-                an unavoidable gap. A credential that must authenticate the handshake should
-                therefore come from somewhere the provider can read without a run - a closure
-                or a ``ContextVar`` - rather than from run kwargs alone.
+                sent without headers. Once a run has seeded an initial connection, a ``KeyError``
+                during the handshake is raised instead, since a missing key there is a
+                misconfiguration rather than an unavoidable gap. For an already-connected tool,
+                run preparation defers identity reconciliation when the provider needs a
+                model-supplied argument that is unavailable until invocation; provider errors at
+                invocation still propagate. A credential that must authenticate an eager
+                handshake must therefore come from somewhere the provider can read without a run,
+                such as a closure or ``ContextVar``. A lazy connection established by an agent
+                run can use that run's kwargs.
                 The framework attaches these headers only to requests whose origin (scheme,
                 host, port) matches the configured ``url``, so they are not leaked to other
                 origins on cross-origin redirects; headers injected this way are also removed
@@ -3629,6 +3800,8 @@ class MCPStreamableHTTPTool(MCPTool):
                 ``http_client``.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
+            tool_result_content: How to choose model-visible text when both ``content`` and
+                ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
             kwargs: Additional keyword arguments (accepted for backward compatibility but not used).
         """
         super().__init__(
@@ -3653,6 +3826,7 @@ class MCPStreamableHTTPTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
+            tool_result_content=tool_result_content,
         )
         self.url = url
         self.terminate_on_close = terminate_on_close
@@ -3669,6 +3843,13 @@ class MCPStreamableHTTPTool(MCPTool):
         # None means no run seeded this connection, which an empty mapping cannot express:
         # a run that supplies no kwargs still expects a missing provider key to be an error.
         self._connection_kwargs: dict[str, Any] | None = None
+        # Every connected transport is bound to one effective header set. A different
+        # set is staged until the current transport has closed, then promoted before
+        # the replacement transport initializes.
+        self._session_headers: dict[str, str] | None = None
+        self._session_header_identity: _MCPHeaderIdentity | None = None
+        self._pending_session_headers: dict[str, str] | None = None
+        self._pending_connection_kwargs: dict[str, Any] | None = None
         self._call_headers_lock = asyncio.Lock()
         self._header_request_owner = object()
         self._header_hook_client: AsyncClient | None = None
@@ -3699,17 +3880,22 @@ class MCPStreamableHTTPTool(MCPTool):
         """
         from httpx import URL, AsyncClient, Timeout
 
-        http_client = self._httpx_client
-        if self._static_headers or self._header_provider is not None:
-            target_origin = _url_origin(URL(self.url))
-            if http_client is None:
-                http_client = AsyncClient(
-                    follow_redirects=True,
-                    timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
-                )
-                self._httpx_client = http_client
-                self._exit_stack.push_async_callback(self._close_owned_http_client, http_client)
+        self._promote_pending_session_headers()
 
+        target_origin = (
+            _url_origin(URL(self.url)) if self._static_headers or self._header_provider is not None else None
+        )
+        http_client = self._httpx_client
+        if http_client is None:
+            http_client = AsyncClient(
+                follow_redirects=True,
+                timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
+                cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+            )
+            self._httpx_client = http_client
+            self._exit_stack.push_async_callback(self._close_owned_http_client, http_client)
+
+        if target_origin is not None:
             if not hasattr(self, "_inject_headers_hook"):
 
                 async def _inject_headers(request: Request) -> None:  # ruff:ignore[unused-async]
@@ -3740,24 +3926,30 @@ class MCPStreamableHTTPTool(MCPTool):
                         # connection, so static providers and run-supplied credentials both
                         # authenticate these requests. Provider failures propagate, matching the
                         # call_tool path, except the one case below that no caller can avoid.
-                        try:
-                            dynamic_headers = self._header_provider(self._connection_kwargs or {})
-                        except KeyError:
-                            # Unavoidable only when no run seeded this connection: the provider
-                            # wants per-call values a connection-lifetime request cannot have. Once
-                            # a run has seeded kwargs a missing key is a misconfiguration, and
-                            # silently dropping it would send the handshake unauthenticated.
-                            if self._connection_kwargs is not None:
-                                raise
-                            logger.debug(
-                                "header_provider raised KeyError for MCP server %r on an ambient "
-                                "request (no connection kwargs available); proceeding without headers.",
-                                self.name,
-                                exc_info=True,
-                            )
-                            dynamic_headers = {}
+                        if self._session_headers is not None:
+                            headers = self._session_headers.copy()
+                            dynamic_headers = None
+                        else:
+                            try:
+                                dynamic_headers = self._header_provider(self._connection_kwargs or {})
+                            except KeyError:
+                                # Unavoidable only when no run seeded this connection: the provider
+                                # wants per-call values a connection-lifetime request cannot have. Once
+                                # a run has seeded kwargs a missing key is a misconfiguration, and
+                                # silently dropping it would send the handshake unauthenticated.
+                                if self._connection_kwargs is not None:
+                                    raise
+                                logger.debug(
+                                    "header_provider raised KeyError for MCP server %r on an ambient "
+                                    "request (no connection kwargs available); proceeding without headers.",
+                                    self.name,
+                                    exc_info=True,
+                                )
+                                dynamic_headers = {}
                     if dynamic_headers is not None:
                         headers.update(dynamic_headers)
+                    if self._session_headers is None:
+                        self._bind_session_headers(headers)
                     for key in request.extensions.pop(_MCP_INJECTED_HEADER_KEYS_EXTENSION, ()):
                         request.headers.pop(key, None)
                     for key, value in headers.items():
@@ -3775,9 +3967,7 @@ class MCPStreamableHTTPTool(MCPTool):
                 # while successful sessions keep the hook through transport shutdown.
                 self._exit_stack.callback(self._remove_header_hook)
 
-        transport_http_client = (
-            _MCPHeaderScopedClient(http_client, self._header_request_owner) if http_client is not None else None
-        )
+        transport_http_client = _MCPHeaderScopedClient(http_client, self._header_request_owner)
 
         return streamable_http_client(
             url=self.url,
@@ -3822,8 +4012,145 @@ class MCPStreamableHTTPTool(MCPTool):
             return
         self._connection_kwargs = dict(kwargs)
 
+    def _effective_headers(self, kwargs: Mapping[str, Any]) -> dict[str, str]:
+        headers = self._static_headers.copy()
+        if self._header_provider is not None:
+            headers.update(self._header_provider(dict(kwargs)))
+        return headers
+
+    async def _prepare_for_run(self, kwargs: Mapping[str, Any]) -> None:
+        if not self.is_connected:
+            await super()._prepare_for_run(kwargs)
+            return
+        if self._header_provider is None:
+            return
+        try:
+            headers = self._effective_headers(kwargs)
+        except KeyError:
+            # Some providers intentionally read model-supplied tool arguments that
+            # do not exist until invocation. Keep preparation non-breaking and let
+            # the strict invocation-time resolution reconcile the session later.
+            logger.debug(
+                "Deferring MCP header identity reconciliation for %r until invocation.",
+                self.name,
+                exc_info=True,
+            )
+            return
+        async with self._call_headers_lock:
+            await self._ensure_session_identity(headers, kwargs)
+
+    def _bind_session_headers(self, headers: Mapping[str, str]) -> None:
+        self._session_headers = dict(headers)
+        self._session_header_identity = _mcp_header_identity(headers)
+
+    def _stage_session_headers(self, headers: Mapping[str, str], kwargs: Mapping[str, Any]) -> None:
+        self._pending_session_headers = dict(headers)
+        self._pending_connection_kwargs = dict(kwargs)
+
+    def _promote_pending_session_headers(self) -> None:
+        if self._pending_session_headers is None:
+            return
+        headers = self._pending_session_headers
+        connection_kwargs = self._pending_connection_kwargs
+        self._discard_pending_session_headers()
+        self._connection_kwargs = connection_kwargs
+        self._bind_session_headers(headers)
+
+    def _discard_pending_session_headers(self) -> None:
+        self._pending_session_headers = None
+        self._pending_connection_kwargs = None
+
+    async def _reconnect_for_identity_change(self) -> None:
+        async with self._function_load_lock:
+            if self._is_lifecycle_owner_task():
+                await self._connect_on_owner(reset=True, load_configured=False, reset_discovery=True)
+            else:
+                async with self._lifecycle_request_lock:
+                    await self._run_on_lifecycle_owner(
+                        "connect",
+                        reset=True,
+                        load_configured=False,
+                        reset_discovery=True,
+                    )
+
+            try:
+                await self._load_configured_discovery_locked()
+            except (Exception, asyncio.CancelledError):
+                self._reset_session_discovery_state()
+                if self._is_lifecycle_owner_task():
+                    await self._close_on_owner()
+                else:
+                    await self.close()
+                raise
+
+    async def _ensure_session_identity(
+        self,
+        headers: Mapping[str, str],
+        kwargs: Mapping[str, Any],
+    ) -> None:
+        identity = _mcp_header_identity(headers)
+        if not self._owns_session:
+            if self._session_header_identity is None:
+                raise ToolExecutionException(
+                    "MCP header identity is unknown for a caller-supplied session; "
+                    "use a separate framework-managed tool instance."
+                )
+            if identity != self._session_header_identity:
+                raise ToolExecutionException(
+                    "MCP header identity cannot change for a caller-supplied session; use a separate tool instance."
+                )
+            return
+
+        if not self.is_connected:
+            return
+        if self._session_header_identity is None:
+            self._bind_session_headers(headers)
+            return
+        if identity == self._session_header_identity:
+            return
+
+        self._stage_session_headers(headers, kwargs)
+        try:
+            await self._reconnect_for_identity_change()
+        except (Exception, asyncio.CancelledError):
+            if self.is_connected:
+                self._discard_pending_session_headers()
+            else:
+                self._release_connection_kwargs()
+            raise
+        self._promote_pending_session_headers()
+
+    async def _call_prompt_with_runtime_kwargs(
+        self,
+        prompt_name: str,
+        prompt_arguments: Mapping[str, Any],
+        runtime_kwargs: Mapping[str, Any],
+    ) -> str:
+        if self._header_provider is None:
+            return await super()._call_prompt_with_runtime_kwargs(prompt_name, prompt_arguments, runtime_kwargs)
+
+        headers = self._effective_headers(runtime_kwargs)
+        async with self._call_headers_lock:
+            await self._ensure_session_identity(headers, runtime_kwargs)
+            token = _mcp_call_headers.set(headers)
+            self._active_call_headers = headers
+            try:
+                return await super()._call_prompt_with_runtime_kwargs(
+                    prompt_name,
+                    prompt_arguments,
+                    runtime_kwargs,
+                )
+            finally:
+                self._active_call_headers = None
+                _mcp_call_headers.reset(token)
+
     def _release_connection_kwargs(self) -> None:
         self._connection_kwargs = None
+        self._pending_session_headers = None
+        self._pending_connection_kwargs = None
+        if self._owns_session:
+            self._session_headers = None
+            self._session_header_identity = None
 
     async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call a tool, injecting headers from the header_provider if configured.
@@ -3831,7 +4158,10 @@ class MCPStreamableHTTPTool(MCPTool):
         When a ``header_provider`` was supplied at construction time, the runtime
         *kwargs* (originating from ``FunctionInvocationContext.kwargs``) are passed
         to the provider.  The returned headers are attached to every HTTP request
-        made during this tool call via a request hook on the underlying HTTP client.
+        made during this tool call via a request hook on the underlying HTTP client. Fixed
+        and dynamic headers form the effective identity. If they differ from a framework-created
+        session's identity, the tool reconnects before sending the call; caller-supplied sessions
+        reject the change.
 
         The provider does not consume the kwargs: the same mapping continues to
         :meth:`MCPTool.call_tool` and its outbound argument filter.
@@ -3846,8 +4176,9 @@ class MCPStreamableHTTPTool(MCPTool):
             A list of Content items representing the tool output.
         """
         if self._header_provider is not None:
-            headers = self._header_provider(kwargs)
+            headers = self._effective_headers(kwargs)
             async with self._call_headers_lock:
+                await self._ensure_session_identity(headers, kwargs)
                 token = _mcp_call_headers.set(headers)
                 self._active_call_headers = headers
                 try:
@@ -3904,6 +4235,7 @@ class MCPWebsocketTool(MCPTool):
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
+        tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP WebSocket tool.
@@ -3994,6 +4326,8 @@ class MCPWebsocketTool(MCPTool):
                 ``function_invocation_kwargs`` for servers you do not control.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
+            tool_result_content: How to choose model-visible text when both ``content`` and
+                ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
             kwargs: Any extra arguments to pass to the WebSocket client.
         """
         super().__init__(
@@ -4018,6 +4352,7 @@ class MCPWebsocketTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
+            tool_result_content=tool_result_content,
         )
         self.url = url
         self._client_kwargs = kwargs
