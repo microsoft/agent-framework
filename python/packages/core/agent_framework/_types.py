@@ -2009,20 +2009,27 @@ def prepend_instructions_to_messages(
     if isinstance(instructions, str):
         instructions = [instructions]
 
-    # Skip instructions that are already present as leading messages with the
+    # Skip instructions that are already present as the leading messages with the
     # same role and text.  This prevents duplicate system messages when
     # instructions are injected by multiple layers (e.g. Agent + chat client).
-    deduplicated: list[str] = []
+    # Only a *prefix* of instructions can be deduplicated: once an instruction
+    # does not match, any remaining instructions must keep their relative order.
+    # Prepending the non-matching remainder in front of the matched messages
+    # would invert the instruction order (e.g. ["First", "Second"] with a
+    # leading "First" message becoming ["Second", "First", ...]), so the
+    # remainder is inserted right after the matched prefix instead.
+    matched_count = 0
     for idx, instr in enumerate(instructions):
         if idx < len(messages) and messages[idx].role == role and messages[idx].text == instr:
-            continue
-        deduplicated.append(instr)
+            matched_count += 1
+        else:
+            break
 
-    if not deduplicated:
+    if matched_count == len(instructions):
         return messages
 
-    instruction_messages = [Message(role, [instr]) for instr in deduplicated]
-    return [*instruction_messages, *messages]
+    instruction_messages = [Message(role, [instr]) for instr in instructions[matched_count:]]
+    return [*messages[:matched_count], *instruction_messages, *messages[matched_count:]]
 
 
 # region ChatResponse
@@ -2066,12 +2073,8 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
                 logger.warning(f"Skipping unknown content type or invalid content: {exc}")
                 continue
         match content_type:
-            # mypy doesn't narrow type based on match/case, but we know these are FunctionCallContents
-            case "function_call" if message.contents and message.contents[-1].type == "function_call":
-                try:
-                    message.contents[-1] += content
-                except (AdditionItemMismatch, ContentError):
-                    message.contents.append(content)
+            case "function_call":
+                _merge_function_call_content(message, content)
             case "usage":
                 if response.usage_details is None:
                     response.usage_details = UsageDetails()
@@ -2107,6 +2110,47 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
     ):
         response.finish_reason = update.finish_reason
     response.continuation_token = update.continuation_token
+
+
+def _merge_function_call_content(message: Message, content: Content) -> None:
+    """Merge a streamed function_call chunk into the in-progress call it belongs to.
+
+    Providers can stream multiple tool calls in parallel, so the next function_call
+    chunk is not necessarily a continuation of the most recently appended one; a chunk
+    with a call_id is matched against existing contents by that id first. Chunks with
+    no call_id (continuation deltas some providers only stamp on the first chunk) fall
+    back to merging with the trailing function_call item, preserving prior behavior.
+    """
+    call_id = getattr(content, "call_id", None)
+    content_id = getattr(content, "id", None)
+    if call_id:
+        for index in range(len(message.contents) - 1, -1, -1):
+            existing = message.contents[index]
+            if existing.type != "function_call" or getattr(existing, "call_id", None) != call_id:
+                continue
+            if existing.id is not None and content_id is None:
+                # existing already has a stable occurrence id from its client (e.g. the
+                # Chat Completions client stamps one on every chunk); an untagged chunk
+                # that merely happens to share its call_id isn't proof it's a continuation
+                # of that specific occurrence - a provider could reuse a call_id for a
+                # later, unrelated call. Keep scanning rather than merge on a hunch.
+                continue
+            try:
+                message.contents[index] = existing + content
+            except (AdditionItemMismatch, ContentError):
+                break
+            return
+        # A tagged chunk that matches no in-progress call is a new call, not a
+        # continuation - an untagged trailing item would silently absorb it otherwise.
+        message.contents.append(content)
+        return
+    if message.contents and message.contents[-1].type == "function_call":
+        try:
+            message.contents[-1] += content
+            return
+        except (AdditionItemMismatch, ContentError):
+            pass
+    message.contents.append(content)
 
 
 def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "text_reasoning"]) -> None:
