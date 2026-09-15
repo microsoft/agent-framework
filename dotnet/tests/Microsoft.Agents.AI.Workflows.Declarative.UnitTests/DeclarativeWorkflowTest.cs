@@ -80,6 +80,52 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     }
 
     [Fact]
+    public async Task HostedWorkflowAgentIsolatesDeclarativeStateBySessionAsync()
+    {
+        // Arrange
+        RecordingAgentProvider provider = new();
+        AIAgent agent = CreateStateEchoWorkflow(provider).AsAIAgent(id: "host", name: "host");
+        AgentSession aliceSession = await agent.CreateSessionAsync();
+        AgentSession mallorySession = await agent.CreateSessionAsync();
+
+        // Act
+        AgentResponse aliceSeedResponse = await agent.RunAsync("EMBER-QUARTZ-7319", aliceSession);
+        AgentResponse aliceResumeResponse = await agent.RunAsync("inspect-alice", aliceSession);
+        AgentResponse malloryInspectResponse = await agent.RunAsync("inspect-mallory", mallorySession);
+        _ = await agent.RunAsync("ONYX-CEDAR-4826", mallorySession);
+        AgentResponse aliceFinalResponse = await agent.RunAsync("inspect-alice-again", aliceSession);
+
+        // Assert
+        Assert.NotSame(aliceSession, mallorySession);
+        Assert.Contains("Marker: \"\"", aliceSeedResponse.Text, StringComparison.Ordinal);
+        Assert.Contains("EMBER-QUARTZ-7319", aliceResumeResponse.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("EMBER-QUARTZ-7319", malloryInspectResponse.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("ONYX-CEDAR-4826", aliceFinalResponse.Text, StringComparison.Ordinal);
+        Assert.Contains("inspect-alice", aliceFinalResponse.Text, StringComparison.Ordinal);
+
+        Assert.True(provider.MessageConversations.Count >= 3);
+        Assert.Equal(provider.MessageConversations[0], provider.MessageConversations[1]);
+        Assert.NotEqual(provider.MessageConversations[0], provider.MessageConversations[2]);
+    }
+
+    [Fact]
+    public async Task HostedWorkflowAgentIsolatesDeclarativeStateForImplicitSessionsAsync()
+    {
+        // Arrange
+        RecordingAgentProvider provider = new();
+        AIAgent agent = CreateStateEchoWorkflow(provider).AsAIAgent(id: "host", name: "host");
+
+        // Act
+        _ = await agent.RunAsync("EMBER-QUARTZ-7319");
+        AgentResponse secondImplicitResponse = await agent.RunAsync("inspect-implicit");
+
+        // Assert
+        Assert.DoesNotContain("EMBER-QUARTZ-7319", secondImplicitResponse.Text, StringComparison.Ordinal);
+        Assert.True(provider.MessageConversations.Count >= 2);
+        Assert.NotEqual(provider.MessageConversations[0], provider.MessageConversations[1]);
+    }
+
+    [Fact]
     public async Task GotoActionAsync()
     {
         await this.RunWorkflowAsync("Goto.yaml");
@@ -384,6 +430,81 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
                 HttpRequestHandler = CreateMockHttpRequestHandler().Object,
             };
         return DeclarativeWorkflowBuilder.Build<TInput>(yamlReader, workflowContext);
+    }
+
+    private static Workflow CreateStateEchoWorkflow(ResponseAgentProvider provider)
+    {
+        using StringReader yamlReader = new(
+            """
+                kind: Workflow
+                trigger:
+
+                  kind: OnConversationStart
+                  id: state_echo_workflow
+                  actions:
+
+                    - kind: SendActivity
+                      id: show_marker
+                      activity: |-
+                        Marker: "{Local.Marker}"
+
+                    - kind: SetVariable
+                      id: set_marker
+                      variable: Local.Marker
+                      value: =System.LastMessageText
+                """);
+        DeclarativeWorkflowOptions options = new(provider);
+
+        return DeclarativeWorkflowBuilder.Build<string>(yamlReader, options);
+    }
+
+    private sealed class RecordingAgentProvider : ResponseAgentProvider
+    {
+        public List<string> MessageConversations { get; } = [];
+
+        private int _conversationCount;
+
+        public override Task<string> CreateConversationAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult($"conversation-{Interlocked.Increment(ref this._conversationCount):D2}");
+
+        public override Task<ChatMessage> CreateMessageAsync(
+            string conversationId,
+            ChatMessage conversationMessage,
+            CancellationToken cancellationToken = default)
+        {
+            this.MessageConversations.Add(conversationId);
+            return Task.FromResult(conversationMessage);
+        }
+
+        public override Task<ChatMessage> GetMessageAsync(
+            string conversationId,
+            string messageId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new ChatMessage(ChatRole.Assistant, string.Empty) { MessageId = messageId });
+
+        public override async IAsyncEnumerable<AgentResponseUpdate> InvokeAgentAsync(
+            string agentId,
+            string? agentVersion,
+            string? conversationId,
+            IEnumerable<ChatMessage>? messages,
+            IDictionary<string, object?>? inputArguments,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+
+        public override async IAsyncEnumerable<ChatMessage> GetMessagesAsync(
+            string conversationId,
+            int? limit = null,
+            string? after = null,
+            string? before = null,
+            bool newestFirst = false,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
     }
 
     private static Mock<ResponseAgentProvider> CreateMockProvider(string input)

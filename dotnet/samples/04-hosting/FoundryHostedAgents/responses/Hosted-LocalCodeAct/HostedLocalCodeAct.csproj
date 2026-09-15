@@ -27,7 +27,7 @@
     <RootNamespace>HostedLocalCodeAct</RootNamespace>
     <AssemblyName>HostedLocalCodeAct</AssemblyName>
     <UserSecretsId>dd574e14-75e7-41f0-8ee6-b7c62d6952cb</UserSecretsId>
-    <AgentFrameworkVersion>1.17.0-preview.260804.1</AgentFrameworkVersion>
+    <AgentFrameworkVersion>1.20.0-preview.260831.1</AgentFrameworkVersion>
   </PropertyGroup>
 
   <ItemGroup>

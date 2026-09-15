@@ -57,6 +57,14 @@ class _OutputMaterializationError(RuntimeError):
     """Raised when sandbox output cannot be safely materialized."""
 
 
+class _OutputCleanupError(RuntimeError):
+    """Raised when sandbox output cannot be safely cleaned within configured bounds."""
+
+
+def _output_cleanup_error_content(error: _OutputCleanupError) -> Content:
+    return Content.from_error(message="Execution error", error_details=str(error))
+
+
 @dataclass(frozen=True, slots=True)
 class _ValidatedOutputFile:
     relative_path: str
@@ -148,7 +156,7 @@ class _SandboxWorker:
     copy (preserving message and exception type) is re-raised on the caller.
     """
 
-    __slots__ = ("_executor", "_initialized", "_sandbox", "_snapshot")
+    __slots__ = ("_executor", "_initialized", "_reusable", "_sandbox", "_snapshot")
 
     def __init__(self, *, name: str = "hl-sandbox") -> None:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=name)
@@ -156,6 +164,7 @@ class _SandboxWorker:
         self._sandbox: Any = None
         self._snapshot: Any = None
         self._initialized = False
+        self._reusable = True
 
     def _run_on_worker(self, fn: Callable[[], _T]) -> _T:
         """Run ``fn`` on the worker thread; sanitize any exception's traceback there.
@@ -232,29 +241,62 @@ class _SandboxWorker:
         Returns a plain ``list[Content]`` whose elements never carry strong
         references to the underlying sandbox or snapshot.
         """
+        cleanup_max_entries = _output_traversal_entry_limit(max_output_files)
 
         def _on_worker() -> list[Content]:
+            if not self._reusable:
+                return [_output_cleanup_error_content(_OutputCleanupError("Could not clear sandbox output safely."))]
+
             sandbox = self._sandbox
             snapshot = self._snapshot
             sandbox.restore(snapshot)
-            _clear_directory(output_dir)
-            result = sandbox.run(code=code)
             try:
-                return build_contents(
-                    result=result,
-                    output_dir=output_dir,
-                    code=code,
-                    max_output_files=max_output_files,
-                    max_output_file_bytes=max_output_file_bytes,
-                    max_output_total_bytes=max_output_total_bytes,
+                _clear_directory(
+                    output_dir,
+                    max_entries=cleanup_max_entries,
+                    max_depth=OUTPUT_TRAVERSAL_MAX_DEPTH,
                 )
+            except _OutputCleanupError as exc:
+                self._reusable = False
+                return [_output_cleanup_error_content(exc)]
+
+            contents: list[Content] | None = None
+            try:
+                result = sandbox.run(code=code)
+                try:
+                    contents = build_contents(
+                        result=result,
+                        output_dir=output_dir,
+                        max_output_files=max_output_files,
+                        max_output_file_bytes=max_output_file_bytes,
+                        max_output_total_bytes=max_output_total_bytes,
+                    )
+                    if output_dir is not None and not any(item.type == "data" for item in contents):
+                        # Isolate any file that becomes visible after the finite discovery window
+                        # from later invocations by retiring this output generation.
+                        self._reusable = False
+                    return contents
+                finally:
+                    # ``result`` may carry a back-reference to the sandbox. Force its
+                    # final dec_ref on this thread so Drop runs here, not on whatever
+                    # thread later GCs the ``Content`` list.
+                    del result
             finally:
-                # ``result`` may carry a back-reference to the sandbox. Force its
-                # final dec_ref on this thread so Drop runs here, not on whatever
-                # thread later GCs the ``Content`` list.
-                del result
+                try:
+                    _clear_directory(
+                        output_dir,
+                        max_entries=cleanup_max_entries,
+                        max_depth=OUTPUT_TRAVERSAL_MAX_DEPTH,
+                    )
+                except _OutputCleanupError as exc:
+                    self._reusable = False
+                    if contents is not None and not any(item.type == "error" for item in contents):
+                        contents.append(_output_cleanup_error_content(exc))
 
         return self._run_on_worker(_on_worker)
+
+    def is_reusable(self) -> bool:
+        return self._reusable
 
     def is_alive(self) -> bool:
         """Return ``True`` while the worker thread can still accept new submissions.
@@ -321,15 +363,20 @@ class _SandboxEntry:
     input_dir: TemporaryDirectory[str] | None
     output_dir: TemporaryDirectory[str] | None
 
+    def cleanup_temp_dirs(self) -> None:
+        """Clean up temporary directories after the sandbox worker has stopped."""
+        temp_dirs = (self.input_dir, self.output_dir)
+        self.input_dir = None
+        self.output_dir = None
+        for tmp_dir in temp_dirs:
+            if tmp_dir is not None:
+                with suppress(Exception):
+                    _remove_temporary_directory(tmp_dir)
+
     def dispose(self) -> None:
         """Release the sandbox+snapshot on the worker thread and clean up temp dirs."""
         self.worker.dispose()
-        for tmp_dir in (self.input_dir, self.output_dir):
-            if tmp_dir is not None:
-                with suppress(Exception):
-                    tmp_dir.cleanup()
-        self.input_dir = None
-        self.output_dir = None
+        self.cleanup_temp_dirs()
 
 
 def _load_sandbox_class() -> type[Any]:
@@ -1137,7 +1184,6 @@ def _build_execution_contents(
     *,
     result: Any,
     output_dir: TemporaryDirectory[str] | None,
-    code: str,
     max_output_files: int,
     max_output_file_bytes: int,
     max_output_total_bytes: int,
@@ -1154,7 +1200,7 @@ def _build_execution_contents(
     try:
         output_files = _parse_output_files(
             output_dir=output_dir,
-            expect_output_files="/output" in code,
+            expect_output_files=output_dir is not None,
             max_output_files=max_output_files,
             max_output_file_bytes=max_output_file_bytes,
             max_output_total_bytes=max_output_total_bytes,
@@ -1224,33 +1270,110 @@ def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
     return _callback
 
 
-def _clear_directory(output_dir: TemporaryDirectory[str] | None) -> None:
-    """Remove all contents of the output directory without deleting the directory itself."""
+def _clear_directory(
+    output_dir: TemporaryDirectory[str] | None,
+    *,
+    max_entries: int = OUTPUT_TRAVERSAL_MAX_ENTRIES,
+    max_depth: int = OUTPUT_TRAVERSAL_MAX_DEPTH,
+) -> None:
+    """Remove output entries without following links or exceeding traversal bounds."""
     if output_dir is None:
         return
+
     root = Path(output_dir.name)
-    for child in root.iterdir():
+    entries_visited = 0
+
+    def _remove_contents(path: Path, depth: int) -> None:
+        nonlocal entries_visited
         try:
+            with os.scandir(path) as entries:
+                for entry in entries:
+                    entries_visited += 1
+                    if entries_visited > max_entries:
+                        raise _OutputCleanupError(f"Sandbox output exceeded the cleanup entry limit of {max_entries}.")
+
+                    child = Path(entry.path)
+                    child_stat = child.lstat()
+                    if _is_link_or_reparse_point(child, child_stat):
+                        if stat.S_ISDIR(child_stat.st_mode):
+                            child.rmdir()
+                        else:
+                            try:
+                                child.unlink()
+                            except OSError:
+                                child.rmdir()
+                        continue
+
+                    if not stat.S_ISDIR(child_stat.st_mode):
+                        child.unlink()
+                        continue
+
+                    child_depth = depth + 1
+                    if child_depth > max_depth:
+                        raise _OutputCleanupError(
+                            f"Sandbox output exceeded the cleanup nesting depth limit of {max_depth}."
+                        )
+                    _remove_contents(child, child_depth)
+                    child.rmdir()
+        except _OutputCleanupError:
+            raise
+        except OSError as exc:
+            raise _OutputCleanupError("Could not clear sandbox output safely.") from exc
+
+    _remove_contents(root, 0)
+
+
+def _remove_temporary_directory(tmp_dir: TemporaryDirectory[str]) -> None:
+    """Remove a stopped sandbox's temporary tree without recursive traversal."""
+    root = Path(tmp_dir.name)
+    scan_stack: list[tuple[Path, Any]] = []
+
+    try:
+        try:
+            scan_stack.append((root, os.scandir(root)))
+        except FileNotFoundError:
+            tmp_dir.cleanup()
+            return
+
+        while scan_stack:
+            current, entries = scan_stack[-1]
+            try:
+                entry = next(entries)
+            except StopIteration:
+                entries.close()
+                scan_stack.pop()
+                current.rmdir()
+                continue
+
+            child = Path(entry.path)
             child_stat = child.lstat()
             if _is_link_or_reparse_point(child, child_stat):
                 if stat.S_ISDIR(child_stat.st_mode):
                     child.rmdir()
-                    continue
-                try:
-                    child.unlink()
-                except OSError:
-                    child.rmdir()
-            elif stat.S_ISREG(child_stat.st_mode):
-                child.unlink()
-            elif stat.S_ISDIR(child_stat.st_mode):
-                shutil.rmtree(child, ignore_errors=True)
-        except OSError:
-            pass
+                else:
+                    try:
+                        child.unlink()
+                    except OSError:
+                        child.rmdir()
+                continue
+
+            if stat.S_ISDIR(child_stat.st_mode):
+                scan_stack.append((child, os.scandir(child)))
+                continue
+
+            child.unlink()
+    finally:
+        for _, entries in scan_stack:
+            with suppress(OSError):
+                entries.close()
+
+    tmp_dir.cleanup()
 
 
 class _SandboxRegistry(SandboxRuntime):
     def __init__(self) -> None:
         self._entries: dict[tuple[Any, ...], _SandboxEntry] = {}
+        self._cleanup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hl-cleanup")
         self._entries_lock = threading.RLock()
 
     def execute(self, *, config: _RunConfig, code: str) -> list[Content]:
@@ -1261,16 +1384,30 @@ class _SandboxRegistry(SandboxRuntime):
         both serializes concurrent callers and satisfies the PyO3 ``unsendable`` invariant
         that the sandbox can only be touched from the thread that created it. The unsendable
         objects never escape the worker; this method returns only sendable plain Python data.
+        Entries whose output cannot be cleaned safely are evicted before another invocation.
         """
+        cache_key = config.cache_key()
         entry = self._get_or_create_entry(config)
-        return entry.worker.execute(
-            code=code,
-            output_dir=entry.output_dir,
-            build_contents=_build_execution_contents,
-            max_output_files=config.max_output_files,
-            max_output_file_bytes=config.max_output_file_bytes,
-            max_output_total_bytes=config.max_output_total_bytes,
-        )
+        try:
+            return entry.worker.execute(
+                code=code,
+                output_dir=entry.output_dir,
+                build_contents=_build_execution_contents,
+                max_output_files=config.max_output_files,
+                max_output_file_bytes=config.max_output_file_bytes,
+                max_output_total_bytes=config.max_output_total_bytes,
+            )
+        finally:
+            if not entry.worker.is_reusable():
+                self._discard_entry(cache_key=cache_key, entry=entry)
+
+    def _discard_entry(self, *, cache_key: tuple[Any, ...], entry: _SandboxEntry) -> None:
+        with self._entries_lock:
+            if self._entries.get(cache_key) is not entry:
+                return
+            del self._entries[cache_key]
+            entry.worker.dispose()
+            self._cleanup_executor.submit(entry.cleanup_temp_dirs)
 
     def _get_or_create_entry(self, config: _RunConfig) -> _SandboxEntry:
         cache_key = config.cache_key()
@@ -1294,6 +1431,7 @@ class _SandboxRegistry(SandboxRuntime):
             for entry in entries:
                 entry.dispose()
         finally:
+            self._cleanup_executor.shutdown(wait=True, cancel_futures=False)
             # Drop our local strong references; entries' own refs to sandbox/snapshot
             # were already moved into the per-worker disposal closure inside dispose().
             del entries
