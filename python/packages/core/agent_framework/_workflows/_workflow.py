@@ -13,7 +13,7 @@ import warnings
 import weakref
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from .._sessions import ContextProvider
 from .._tools import ToolTypes, normalize_tools
@@ -27,6 +27,7 @@ from ._const import (
     INTERNAL_SOURCE_ID,
     RAW_CLIENT_KWARGS_KEY,
     RAW_FUNCTION_INVOCATION_KWARGS_KEY,
+    RESOLVED_WORKFLOW_RUN_KWARGS_KEY,
     WORKFLOW_RUN_KWARGS_KEY,
 )
 from ._edge import (
@@ -55,6 +56,18 @@ logger = logging.getLogger(__name__)
 
 
 _MISSING: Any = object()
+
+
+def _coerce_request_info_response(value: Any, response_type: type, request_id: str) -> Any:
+    """Convert and validate a response supplied for a pending request."""
+    if response_type is Content and isinstance(value, str):
+        value = Content.from_text(text=value)
+    value = try_coerce_to_type(value, response_type)
+    if not is_instance_of(value, response_type):
+        raise ValueError(
+            f"Response type mismatch for request ID {request_id}: expected {response_type}, got {type(value)}"
+        )
+    return value
 
 
 def _coalesce_renamed_kwarg(old_name: str, old_value: Any, new_name: str, new_value: Any) -> Any:
@@ -576,25 +589,30 @@ class Workflow(DictConvertible):
                 #   explicitly provides new kwargs.
                 if function_invocation_kwargs is not None or client_kwargs is not None:
                     combined_kwargs: dict[str, Any] = {}
+                    resolved_combined_kwargs: dict[str, Any] = {}
                     if function_invocation_kwargs is not None:
-                        combined_kwargs["function_invocation_kwargs"] = self._resolve_invocation_kwargs(
+                        resolved = self._resolve_invocation_kwargs(
                             function_invocation_kwargs, "function_invocation_kwargs"
                         )
+                        resolved_combined_kwargs["function_invocation_kwargs"] = resolved
+                        combined_kwargs["function_invocation_kwargs"] = self._to_legacy_invocation_kwargs(resolved)
                         if isinstance(function_invocation_kwargs, WorkflowInvocationKwargs) or any(
                             isinstance(value, Mapping) for value in function_invocation_kwargs.values()
                         ):
                             combined_kwargs[RAW_FUNCTION_INVOCATION_KWARGS_KEY] = function_invocation_kwargs
                     if client_kwargs is not None:
-                        combined_kwargs["client_kwargs"] = self._resolve_invocation_kwargs(
-                            client_kwargs, "client_kwargs"
-                        )
+                        resolved = self._resolve_invocation_kwargs(client_kwargs, "client_kwargs")
+                        resolved_combined_kwargs["client_kwargs"] = resolved
+                        combined_kwargs["client_kwargs"] = self._to_legacy_invocation_kwargs(resolved)
                         if isinstance(client_kwargs, WorkflowInvocationKwargs) or any(
                             isinstance(value, Mapping) for value in client_kwargs.values()
                         ):
                             combined_kwargs[RAW_CLIENT_KWARGS_KEY] = client_kwargs
                     self._runner.state.set(WORKFLOW_RUN_KWARGS_KEY, combined_kwargs)
+                    self._runner.state.set(RESOLVED_WORKFLOW_RUN_KWARGS_KEY, resolved_combined_kwargs)
                 elif not is_continuation:
                     self._runner.state.set(WORKFLOW_RUN_KWARGS_KEY, {})
+                    self._runner.state.set(RESOLVED_WORKFLOW_RUN_KWARGS_KEY, {})
                 self._runner.state.commit()  # Commit immediately so kwargs are available
 
                 # Explicitly set streaming mode per run
@@ -1075,15 +1093,7 @@ class Workflow(DictConvertible):
             if request_id not in pending_requests:
                 raise ValueError(f"Response provided for unknown request ID: {request_id}")
             pending_request = pending_requests[request_id]
-            if pending_request.response_type is Content and isinstance(response, str):
-                response = Content.from_text(text=response)
-            # Try to coerce raw values (e.g., dicts from JSON) to the expected type
-            response = try_coerce_to_type(response, pending_request.response_type)
-            if not is_instance_of(response, pending_request.response_type):
-                raise ValueError(
-                    f"Response type mismatch for request ID {request_id}: "
-                    f"expected {pending_request.response_type}, got {type(response)}"
-                )
+            response = _coerce_request_info_response(response, pending_request.response_type, request_id)
             coerced_responses[request_id] = response
 
         # Cancelling siblings on error, like every other concurrent write into runner state. Each
@@ -1125,13 +1135,13 @@ class Workflow(DictConvertible):
         kwargs: WorkflowInvocationKwargs | Mapping[str, Any],
         param_name: str,
     ) -> dict[str, Any]:
-        """Resolve invocation kwargs into a normalized per-executor or global format.
+        """Resolve invocation kwargs into collision-free global and executor namespaces.
 
         Detects whether the provided kwargs dict uses per-executor targeting by checking
-        if any top-level key matches a known executor ID in the workflow. If at least one
-        key matches, all entries are treated as per-executor. Otherwise the dict is treated
-        as global kwargs that apply to every executor. The ``"__global__"`` key can be used
-        explicitly to combine global kwargs with per-executor overrides.
+        if any top-level key matches a known executor ID in the workflow. A legacy
+        ``"__global__"`` slot is separated from matched executor entries unless that name
+        is itself a real executor ID. If no executor ID matches, the complete dict is
+        treated as global application kwargs.
 
         Args:
             kwargs: The raw invocation kwargs from the caller.
@@ -1141,29 +1151,51 @@ class Workflow(DictConvertible):
             A dict containing normalized global or per-executor mappings.
         """
         if isinstance(kwargs, WorkflowInvocationKwargs):
-            resolved = {GLOBAL_KWARGS_KEY: dict(kwargs.global_kwargs)}
-            resolved.update({
-                executor_id: dict(executor_kwargs) for executor_id, executor_kwargs in kwargs.executor_kwargs.items()
-            })
             logger.info("Explicit global %s provided with executor-specific overrides.", param_name)
-            return resolved
+            return {
+                "global_kwargs": dict(kwargs.global_kwargs),
+                "executor_kwargs": {
+                    executor_id: dict(executor_kwargs)
+                    for executor_id, executor_kwargs in kwargs.executor_kwargs.items()
+                },
+            }
 
         executor_ids = set(self.executors.keys())
         matched_ids = kwargs.keys() & executor_ids
         if matched_ids:
+            executor_kwargs = dict(kwargs)
+            if GLOBAL_KWARGS_KEY not in executor_ids and GLOBAL_KWARGS_KEY in executor_kwargs:
+                global_kwargs = executor_kwargs.pop(GLOBAL_KWARGS_KEY)
+                logger.info(
+                    "Detected legacy mixed %s with global values and executor ID(s) %s.",
+                    param_name,
+                    matched_ids,
+                )
+                return {"global_kwargs": global_kwargs, "executor_kwargs": executor_kwargs}
             logger.info(
                 "Detected per-executor %s: executor ID(s) %s found in keys. "
                 "All entries will be treated as per-executor.",
                 param_name,
                 matched_ids,
             )
-            return dict(kwargs)
+            return {"executor_kwargs": executor_kwargs}
 
         logger.info(
             "No executor IDs found in %s keys; treating as global kwargs for all executors.",
             param_name,
         )
-        return {GLOBAL_KWARGS_KEY: dict(kwargs)}
+        return {"global_kwargs": dict(kwargs), "executor_kwargs": {}}
+
+    @staticmethod
+    def _to_legacy_invocation_kwargs(resolved: dict[str, Any]) -> dict[str, Any]:
+        """Encode collision-free state in the existing best-effort legacy format."""
+        legacy: dict[str, Any] = {}
+        if "global_kwargs" in resolved:
+            legacy[GLOBAL_KWARGS_KEY] = resolved["global_kwargs"]
+        executor_kwargs = resolved.get("executor_kwargs")
+        if isinstance(executor_kwargs, dict):
+            legacy.update(cast(dict[str, Any], executor_kwargs))
+        return legacy
 
     # Graph signature helpers
 

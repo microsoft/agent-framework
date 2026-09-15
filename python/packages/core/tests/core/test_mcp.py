@@ -546,7 +546,7 @@ def test_parse_tool_result_from_mcp_structured_content_only():
 
 
 def test_parse_tool_result_from_mcp_structured_content_with_text():
-    """Test that structuredContent is appended alongside regular content items."""
+    """Default structured_first prefers structuredContent when both are present (#7866)."""
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="Summary")],
         structuredContent={"data": [1, 2, 3]},
@@ -554,13 +554,43 @@ def test_parse_tool_result_from_mcp_structured_content_with_text():
     result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
 
     assert isinstance(result, list)
-    assert len(result) == 2
+    assert len(result) == 1
     assert result[0].type == "text"
-    assert result[0].text == "Summary"
-    assert result[1].type == "text"
-    assert result[1].text is not None
-    parsed = json.loads(result[1].text)
-    assert parsed == {"data": [1, 2, 3]}
+    assert result[0].text is not None
+    assert json.loads(result[0].text) == {"data": [1, 2, 3]}
+
+
+def test_parse_tool_result_content_modes_for_complementary_and_duplicate_payloads():
+    """tool_result_content covers structured-only, content-only, either-first, and both."""
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Summary")],
+        structuredContent={"data": [1, 2, 3]},
+    )
+
+    content_first = MCPTool(name="helper", tool_result_content="content_first")  # type: ignore[abstract]
+    assert [c.text for c in content_first._parse_tool_result_from_mcp(mcp_result)] == ["Summary"]
+
+    content_only = MCPTool(name="helper", tool_result_content="content_only")  # type: ignore[abstract]
+    assert [c.text for c in content_only._parse_tool_result_from_mcp(mcp_result)] == ["Summary"]
+
+    structured_only = MCPTool(name="helper", tool_result_content="structured_only")  # type: ignore[abstract]
+    structured_only_text = structured_only._parse_tool_result_from_mcp(mcp_result)[0].text
+    assert structured_only_text is not None
+    assert json.loads(structured_only_text) == {"data": [1, 2, 3]}
+
+    both = MCPTool(name="helper", tool_result_content="both")  # type: ignore[abstract]
+    both_result = both._parse_tool_result_from_mcp(mcp_result)
+    assert both_result[0].text == "Summary"
+    assert both_result[1].text is not None
+    assert json.loads(both_result[1].text) == {"data": [1, 2, 3]}
+
+    structured_only_empty = types.CallToolResult(content=[], structuredContent={"x": 1})
+    empty_structured_text = content_first._parse_tool_result_from_mcp(structured_only_empty)[0].text
+    assert empty_structured_text is not None
+    assert json.loads(empty_structured_text) == {"x": 1}
+
+    empty = types.CallToolResult(content=[], structuredContent=None)
+    assert content_only._parse_tool_result_from_mcp(empty)[0].text == "null"
 
 
 async def test_generated_mcp_tool_preserves_complete_host_payload_once() -> None:
@@ -584,7 +614,7 @@ async def test_generated_mcp_tool_preserves_complete_host_payload_once() -> None
         "isError": False,
     }
 
-    assert [item.additional_properties["_meta"] for item in function_result.items] == [{"widget": "image"}] * 2
+    assert [item.additional_properties["_meta"] for item in function_result.items] == [{"widget": "image"}]
     assert function_result.additional_properties[_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY] == expected_host_payload
     assert all(_MCP_TOOL_RESULT_HOST_PAYLOAD_KEY not in item.additional_properties for item in function_result.items)
     restored = Content.from_dict(function_result.to_dict())
@@ -1198,7 +1228,7 @@ async def test_secure_mcp_builtin_parser_restricts_all_result_shapes(result_shap
     )
 
     assert function_result.items is not None
-    assert len(function_result.items) == (2 if result_shape == "both" else 1)
+    assert len(function_result.items) == 1
     for hidden_item in function_result.items:
         assert hidden_item.additional_properties["_variable_reference"] is True
         assert hidden_item.additional_properties["security_label"]["integrity"] == "untrusted"
@@ -4672,24 +4702,32 @@ def test_mcp_stdio_tool_get_mcp_client_with_env_and_kwargs():
         )
 
 
-def test_mcp_streamable_http_tool_get_mcp_client_all_params():
+async def test_mcp_streamable_http_tool_get_mcp_client_all_params():
     """Test MCPStreamableHTTPTool.get_mcp_client() with all parameters."""
+    from agent_framework._mcp import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TIMEOUT
+
     tool = MCPStreamableHTTPTool(
         name="test",
         url="http://example.com",
         terminate_on_close=True,
     )
 
-    with patch("mcp.client.streamable_http.streamable_http_client") as mock_http_client:
-        tool.get_mcp_client()
-
-        # Verify streamable_http_client was called with None for http_client
-        # (since we didn't provide one, the API will create its own)
-        mock_http_client.assert_called_once_with(
-            url="http://example.com",
-            http_client=None,
-            terminate_on_close=True,
-        )
+    try:
+        with patch("mcp.client.streamable_http.streamable_http_client") as mock_http_client:
+            tool.get_mcp_client()
+            http_client = tool._httpx_client
+            assert http_client is not None
+            assert http_client.follow_redirects is True
+            assert http_client.timeout.connect == MCP_DEFAULT_TIMEOUT
+            assert http_client.timeout.read == MCP_DEFAULT_SSE_READ_TIMEOUT
+            assert not http_client.event_hooks["request"]
+            assert mock_http_client.call_args.kwargs["http_client"]._client is http_client
+            assert mock_http_client.call_args.kwargs["url"] == "http://example.com"
+            assert mock_http_client.call_args.kwargs["terminate_on_close"] is True
+            mock_http_client.assert_called_once()
+    finally:
+        await tool.close()
+    assert http_client.is_closed
 
 
 def test_mcp_websocket_tool_get_mcp_client_with_kwargs():
@@ -4853,7 +4891,7 @@ async def test_load_prompts_prevents_multiple_calls():
 
 
 async def test_mcp_streamable_http_tool_httpx_client_cleanup():
-    """Test that MCPStreamableHTTPTool delegates to caller-provided httpx clients."""
+    """Owned clients are closed, while caller-provided clients remain caller-owned."""
     from unittest.mock import AsyncMock, Mock, patch
 
     from agent_framework import MCPStreamableHTTPTool
@@ -4876,7 +4914,6 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
         mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        # Test 1: Tool without provided client (passes None to streamable_http_client)
         tool1 = MCPStreamableHTTPTool(
             name="test",
             url="http://localhost:8081/mcp",
@@ -4884,11 +4921,13 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
             load_prompts=False,
             terminate_on_close=False,
         )
-        await tool1.connect()
-        # When no client is provided, _httpx_client should be None
-        assert tool1._httpx_client is None, "httpx client should be None when not provided"
+        async with tool1:
+            owned_client = tool1._httpx_client
+            assert owned_client is not None
+            assert not owned_client.is_closed
+        assert owned_client.is_closed
+        assert tool1._httpx_client is None
 
-        # Test 2: Tool with user-provided client
         user_client = Mock()
         tool2 = MCPStreamableHTTPTool(
             name="test",
@@ -4898,15 +4937,10 @@ async def test_mcp_streamable_http_tool_httpx_client_cleanup():
             terminate_on_close=False,
             http_client=user_client,
         )
-        await tool2.connect()
-
-        # Verify the user-provided client was stored
-        assert tool2._httpx_client is user_client, "User-provided client should be stored"
-
-        # Verify the transport wrapper delegates to the user's client.
-        # Get the last call (should be from tool2.connect())
-        call_args = mock_client.call_args
-        assert call_args.kwargs["http_client"]._client is user_client
+        async with tool2:
+            assert tool2._httpx_client is user_client
+            assert mock_client.call_args.kwargs["http_client"]._client is user_client
+        user_client.aclose.assert_not_called()
 
 
 async def test_load_tools_with_pagination():
@@ -7171,8 +7205,8 @@ async def test_mcp_streamable_http_tool_header_provider_skips_cross_origin_redir
             await tool._httpx_client.aclose()  # type: ignore[union-attr]
 
 
-async def test_mcp_streamable_http_tool_replaces_headers_on_same_origin_redirect():
-    """A redirected request must retain only the provider's latest header set."""
+async def test_mcp_streamable_http_tool_keeps_bound_headers_on_same_origin_redirect():
+    """A redirected request must retain the header set bound to its session."""
     import httpx
 
     provider_headers = {"X-Previous": "old"}
@@ -7202,8 +7236,8 @@ async def test_mcp_streamable_http_tool_replaces_headers_on_same_origin_redirect
                 extensions=initial.extensions,
             )
             await hooks[0](same_origin_redirect)
-            assert "X-Previous" not in same_origin_redirect.headers
-            assert same_origin_redirect.headers.get("X-Current") == "new"
+            assert same_origin_redirect.headers.get("X-Previous") == "old"
+            assert "X-Current" not in same_origin_redirect.headers
 
             cross_origin_redirect = httpx.Request(
                 "POST",
@@ -7219,39 +7253,56 @@ async def test_mcp_streamable_http_tool_replaces_headers_on_same_origin_redirect
             await tool._httpx_client.aclose()  # type: ignore[union-attr]
 
 
-async def test_mcp_streamable_http_tool_header_provider_with_user_httpx_client():
-    """Test that header_provider works when the user provides their own httpx client."""
+@pytest.mark.parametrize("use_header_provider", [False, True])
+async def test_mcp_streamable_http_tool_header_provider_with_user_httpx_client(use_header_provider: bool):
+    """Supplied clients preserve configuration, cookie persistence, and ownership."""
     import httpx
 
     from agent_framework._mcp import _mcp_call_headers
 
-    user_client = httpx.AsyncClient(headers={"X-Base": "static"})
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.headers["X-Base"] == "static"
+        assert request.headers["Authorization"].startswith("Basic ")
+        assert request.headers["Cookie"] == "caller_session=kept"
+        return httpx.Response(200, headers={"Set-Cookie": "response_session=retained; Path=/"})
 
-    tool = MCPStreamableHTTPTool(
-        name="test",
-        url="http://example.com/mcp",
-        http_client=user_client,
-        header_provider=lambda kw: {"X-Dynamic": kw.get("dynamic", "")},
-    )
-
-    with patch("agent_framework._mcp.streamable_http_client"):
-        tool.get_mcp_client()
-
-        # The user's client should still be used
-        assert tool._httpx_client is user_client
-        hooks = user_client.event_hooks.get("request", [])
-        assert len(hooks) == 1
-
-        # Verify the hook injects headers
-        token = _mcp_call_headers.set({"X-Dynamic": "per-request"})
+    auth = httpx.BasicAuth("caller", "test-password")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handle),
+        headers={"X-Base": "static"},
+        cookies={"caller_session": "kept"},
+        auth=auth,
+        timeout=17.0,
+    ) as user_client:
+        tool = MCPStreamableHTTPTool(
+            name="test",
+            url="http://example.com/mcp",
+            http_client=user_client,
+            header_provider=(lambda kw: {"X-Dynamic": kw.get("dynamic", "")}) if use_header_provider else None,
+        )
         try:
-            request = _request_for_mcp_tool(tool)
-            await hooks[0](request)
-            assert request.headers.get("X-Dynamic") == "per-request"
+            with patch("agent_framework._mcp.streamable_http_client"):
+                tool.get_mcp_client()
+                assert tool._httpx_client is user_client
+                hooks = user_client.event_hooks["request"]
+                assert len(hooks) == int(use_header_provider)
+                if use_header_provider:
+                    token = _mcp_call_headers.set({"X-Dynamic": "per-request"})
+                    try:
+                        request = _request_for_mcp_tool(tool)
+                        await hooks[0](request)
+                        assert request.headers.get("X-Dynamic") == "per-request"
+                    finally:
+                        _mcp_call_headers.reset(token)
         finally:
-            _mcp_call_headers.reset(token)
-
-    await user_client.aclose()
+            await tool.close()
+        assert not user_client.is_closed
+        assert user_client.auth is auth
+        assert user_client.timeout == httpx.Timeout(17.0)
+        assert not user_client.event_hooks["request"]
+        await user_client.get("http://example.com/unrelated")
+        assert user_client.cookies["caller_session"] == "kept"
+        assert user_client.cookies["response_session"] == "retained"
 
 
 async def test_mcp_streamable_http_tool_header_provider_isolated_on_shared_httpx_client():
@@ -7939,7 +7990,7 @@ async def test_mcp_streamable_http_tool_header_provider_serializes_concurrent_ca
         return types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
 
     class _TestServer(MCPStreamableHTTPTool):
-        async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+        async def connect(self, *, reset: bool = False) -> None:
             self.session = Mock(spec=ClientSession)
             self.session.list_tools = AsyncMock(
                 return_value=types.ListToolsResult(
@@ -7955,6 +8006,9 @@ async def test_mcp_streamable_http_tool_header_provider_serializes_concurrent_ca
             self.session.call_tool = AsyncMock(side_effect=blocking_call_tool)
             self.session.send_ping = AsyncMock()
             self.is_connected = True
+
+        async def _reconnect_for_identity_change(self) -> None:
+            await self.connect(reset=True)
 
         def get_mcp_client(self):  # pyrefly: ignore[bad-override]
             return None
@@ -8268,7 +8322,7 @@ async def test_secure_mcp_task_results_cannot_relax_local_label(result_path: str
     )
 
     assert function_result.items is not None
-    assert len(function_result.items) == 2
+    assert len(function_result.items) == 1
     for item in function_result.items:
         assert item.additional_properties["_variable_reference"] is True
         assert item.additional_properties["security_label"]["integrity"] == "untrusted"
@@ -9552,7 +9606,7 @@ async def test_header_provider_reading_contextvar_keeps_credential_out_of_argume
     seen_headers: list[dict[str, str]] = []
 
     class TestServer(MCPStreamableHTTPTool):
-        async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+        async def connect(self, *, reset: bool = False) -> None:
             self.session = Mock(spec=ClientSession)
             self.session.list_tools = AsyncMock(
                 return_value=types.ListToolsResult(
@@ -9574,6 +9628,9 @@ async def test_header_provider_reading_contextvar_keeps_credential_out_of_argume
             )
             self.session.send_ping = AsyncMock()
             self.is_connected = True
+
+        async def _reconnect_for_identity_change(self) -> None:
+            await self.connect(reset=True)
 
         def get_mcp_client(self):  # pyrefly: ignore[bad-override]
             return None
