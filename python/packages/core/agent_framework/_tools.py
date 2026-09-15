@@ -1665,8 +1665,12 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
       before abandoning the tool loop for this request.
     - ``terminate_on_unknown_calls``: Whether to raise an error when the model
       requests a function that is not in the tool map.
-    - ``additional_tools``: Extra tools available during execution but not
-      advertised to the model in the tool list.
+    - ``additional_tools``: Extra Host-owned tools that are not advertised to
+      the model in the tool list. A name present here remains Host-owned even
+      when a visible tool has the same name, so it is never executed locally.
+      Approval is fail-closed for such collisions: ``approval_mode="always_require"``
+      on either the visible or additional definition requires approval before
+      the call is surfaced to the Host.
     - ``include_detailed_errors``: Whether to include exception details in the
       function result returned to the model. Exception text may contain sensitive
       information regardless of its source, so enable this only for a trusted channel.
@@ -2276,17 +2280,23 @@ async def _try_execute_function_call_groups(
         return [], False, 0
 
     tool_map = _get_tool_map(tools)
+    additional_tools = tuple(config.get("additional_tools") or ())
     # The live tools list (when tools is the run-local list) is exposed on the
     # FunctionInvocationContext so tools can add/remove tools during the run.
     live_tools: list[ToolTypes] | None = cast("list[ToolTypes]", tools) if isinstance(tools, list) else None
-    approval_tool_names = {tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"}
+    # additional_tools are Host-owned by name, including when a visible tool has
+    # the same name. Approval policy is deliberately fail-closed across that
+    # collision: either definition can require the first approval pause.
+    approval_tool_names = {
+        tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"
+    } | {tool.name for tool in additional_tools if tool.approval_mode == "always_require"}
     logger.debug(
         "_try_execute_function_calls: tool_map keys=%s, approval_tools=%s",
         list(tool_map.keys()),
         approval_tool_names,
     )
     declaration_only_tool_names = {tool_name for tool_name, tool in tool_map.items() if tool.declaration_only}
-    additional_tool_names = {tool.name for tool in config.get("additional_tools") or []}
+    additional_tool_names = {tool.name for tool in additional_tools}
     # Classify the entire batch first so classification travels with each call, not with its position in
     # the batch. Scan every call before acting on any of it. Precedence (highest first): unknown-call
     # termination > approval pause > declaration-only user-input. unknown-call termination is a fail-closed

@@ -3052,7 +3052,9 @@ async def test_approval_mode_precedes_host_classification_and_partial_batch_stay
         ]
 
     async def run(contents: list[Content], session: AgentSession) -> ChatResponse:
-        visible_tools = [gated_host, sibling_host] if host_kind == "declaration" else [gated_host]
+        # Keep additional tools genuinely additional-only. Including gated_host in
+        # the visible list would mask a failure to derive approval policy from config.
+        visible_tools = [gated_host, sibling_host] if host_kind == "declaration" else []
         if not streaming:
             return await chat_client_base.get_response(
                 [Message(role="user", contents=contents)],
@@ -3089,6 +3091,7 @@ async def test_approval_mode_precedes_host_classification_and_partial_batch_stay
     assert [content.name for content in initial_host_requests] == ["sibling_host"]
     assert gated_call.user_input_request is None
 
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
     approval_response = approval_requests[0].to_function_approval_response(approved=True)
     partial_response = await run([approval_response], session)
     assert partial_response.messages == []
@@ -3109,9 +3112,7 @@ async def test_approval_mode_precedes_host_classification_and_partial_batch_stay
         for content in message.contents
         if content.type == "function_call" and content.user_input_request
     ]
-    assert [(content.name, content.id) for content in resumed_host_requests] == [
-        ("gated_host", "gated-occurrence")
-    ]
+    assert [(content.name, content.id) for content in resumed_host_requests] == [("gated_host", "gated-occurrence")]
     assert gated_host_calls == sibling_host_calls == 0
     assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert not any(
@@ -3122,6 +3123,168 @@ async def test_approval_mode_precedes_host_classification_and_partial_batch_stay
     final_tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
     assert isinstance(final_tool_state, dict)
     assert _PENDING_PAUSE_BATCH_KEY not in final_tool_state
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_additional_only_always_require_rejection_never_executes_after_session_roundtrip(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """An additional-only tool requires approval, and rejection never becomes a Host execution pause."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import (
+        _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
+        _PENDING_PAUSE_BATCH_KEY,
+        _TOOL_APPROVAL_STATE_KEY,
+    )
+
+    invocation_count = 0
+
+    def execute_host_tool() -> str:
+        nonlocal invocation_count
+        invocation_count += 1
+        return "unexpected"
+
+    host_tool = FunctionTool(
+        name="additional_guarded",
+        func=execute_host_tool,
+        approval_mode="always_require",
+    )
+    call = Content.from_function_call(
+        call_id="additional-call",
+        name="additional_guarded",
+        arguments={},
+        id="additional-occurrence",
+    )
+    chat_client_base.function_invocation_configuration["additional_tools"] = [host_tool]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[call], finish_reason="tool_calls")],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("rejected")], finish_reason="stop")],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[call]), finish_reason="tool_calls"),
+            ChatResponse(messages=Message(role="assistant", contents=["rejected"]), finish_reason="stop"),
+        ]
+
+    async def run(contents: list[Content], session: AgentSession) -> ChatResponse:
+        if not streaming:
+            return await chat_client_base.get_response(
+                [Message(role="user", contents=contents)],
+                options={"tool_choice": "auto"},
+                client_kwargs={"session": session},
+            )
+        result = chat_client_base.get_response(
+            [Message(role="user", contents=contents)],
+            stream=True,
+            options={"tool_choice": "auto"},
+            client_kwargs={"session": session},
+        )
+        updates = [update async for update in result]
+        response = await result.get_final_response()
+        return response if response.messages else ChatResponse.from_updates(updates)
+
+    session = AgentSession()
+    first_response = await run([Content.from_text("go")], session)
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    assert approval_request.function_call is not None
+    assert approval_request.function_call.name == "additional_guarded"
+    assert not any(
+        content.type == "function_call" and content.user_input_request
+        for message in first_response.messages
+        for content in message.contents
+    )
+
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    rejected_response = await run(
+        [approval_request.to_function_approval_response(approved=False)],
+        session,
+    )
+
+    assert rejected_response.text == "rejected"
+    assert invocation_count == 0
+    assert chat_client_base.call_count == 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert not any(
+        content.type == "function_call" and content.user_input_request
+        for message in rejected_response.messages
+        for content in message.contents
+    )
+    tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
+    assert isinstance(tool_state, dict)
+    assert _PENDING_PAUSE_BATCH_KEY not in tool_state
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+
+
+@pytest.mark.parametrize(
+    ("visible_mode", "additional_mode", "requires_approval"),
+    [
+        ("always_require", "never_require", True),
+        ("never_require", "always_require", True),
+        ("never_require", "never_require", False),
+    ],
+)
+async def test_additional_tool_name_collision_is_host_owned_and_approval_is_fail_closed(
+    visible_mode: Literal["always_require", "never_require"],
+    additional_mode: Literal["always_require", "never_require"],
+    requires_approval: bool,
+) -> None:
+    """Additional ownership wins by name, while either definition may require approval."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import FunctionInvocationConfiguration, _try_execute_function_call_groups
+
+    visible_calls = 0
+    additional_calls = 0
+
+    def execute_visible() -> str:
+        nonlocal visible_calls
+        visible_calls += 1
+        return "visible"
+
+    def execute_additional() -> str:
+        nonlocal additional_calls
+        additional_calls += 1
+        return "additional"
+
+    visible_tool = FunctionTool(name="collision", func=execute_visible, approval_mode=visible_mode)
+    additional_tool = FunctionTool(name="collision", func=execute_additional, approval_mode=additional_mode)
+    function_call = Content.from_function_call(
+        call_id="collision-call",
+        name="collision",
+        arguments={},
+        id="collision-occurrence",
+    )
+    config: FunctionInvocationConfiguration = {"additional_tools": [additional_tool]}
+
+    result_groups, should_terminate, executed_call_count = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[function_call],
+        tools=[visible_tool],
+        config=config,
+    )
+
+    first_result = result_groups[0][0]
+    if requires_approval:
+        assert first_result.type == "function_approval_request"
+        approved = first_result.to_function_approval_response(approved=True)
+        result_groups, should_terminate, executed_call_count = await _try_execute_function_call_groups(
+            custom_args={},
+            function_calls=[approved],
+            tools=[visible_tool],
+            config=config,
+        )
+        first_result = result_groups[0][0]
+
+    assert first_result.type == "function_call"
+    assert first_result.user_input_request is True
+    assert should_terminate is False
+    assert executed_call_count == 0
+    assert visible_calls == additional_calls == 0
 
 
 @pytest.mark.parametrize("streaming", [False, True])
