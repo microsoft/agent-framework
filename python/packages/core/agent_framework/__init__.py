@@ -195,6 +195,7 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
     ),
     "._sessions": (
         "AgentSession",
+        "AgentSessionDict",
         "ContextProvider",
         "FileHistoryProvider",
         "FileSessionStore",
@@ -316,7 +317,12 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "vectorstoremodel",
     ),
     "._workflows._agent": ("WorkflowAgent",),
-    "._workflows._agent_executor": ("AgentExecutor", "AgentExecutorRequest", "AgentExecutorResponse"),
+    "._workflows._agent_executor": (
+        "AgentExecutor",
+        "AgentExecutorCheckpointState",
+        "AgentExecutorRequest",
+        "AgentExecutorResponse",
+    ),
     "._workflows._agent_utils": ("resolve_agent_id",),
     "._workflows._checkpoint": (
         "CheckpointID",
@@ -423,6 +429,7 @@ __all__ = [
     "AgentContext",
     "AgentEvalConverter",
     "AgentExecutor",
+    "AgentExecutorCheckpointState",
     "AgentExecutorRequest",
     "AgentExecutorResponse",
     "AgentFileStore",
@@ -436,6 +443,7 @@ __all__ = [
     "AgentResponseUpdate",
     "AgentRunInputs",
     "AgentSession",
+    "AgentSessionDict",
     "AggregatingSkillsSource",
     "Annotation",
     "BackgroundAgentsProvider",

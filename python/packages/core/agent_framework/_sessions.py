@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, cast
 
 import msgspec
+from typing_extensions import NotRequired, TypedDict
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._filesystem import (
@@ -1704,6 +1705,24 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         )
 
 
+class AgentSessionDict(TypedDict):
+    """Serialized :class:`AgentSession` payload shape produced by :meth:`AgentSession.to_dict`.
+
+    ``AgentSession.to_dict`` returns a plain ``dict[str, Any]`` that conforms to this
+    schema. Callers that need a TypedDict view can ``cast`` the result.
+
+    ``service_session_id`` may be a plain string or a structured
+    :data:`ServiceSessionId` mapping, matching :attr:`AgentSession.service_session_id`.
+    ``state`` holds session-local data and may be incomplete when the session uses
+    service-side storage.
+    """
+
+    type: NotRequired[str]
+    session_id: str
+    service_session_id: NotRequired[str | ServiceSessionId | None]
+    state: NotRequired[dict[str, Any]]
+
+
 class AgentSession:
     """A conversation session with an agent.
 
@@ -1746,6 +1765,11 @@ class AgentSession:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize session to a plain dict for storage/transfer.
+
+        The returned mapping matches :class:`AgentSessionDict`. The annotated
+        return type stays ``dict[str, Any]`` so subclasses and callers that
+        extend or pass the payload as a mutable ``dict`` remain type-correct
+        (TypedDict is not assignable to ``dict`` under pyright).
 
         Registered custom values use their configured codecs. Unregistered
         values defining ``to_dict`` retain the established dictionary behavior.
