@@ -501,24 +501,6 @@ async def test_run_streaming_with_message_response(a2a_agent: A2AAgent, mock_a2a
     assert mock_a2a_client.call_count == 1
 
 
-async def test_context_manager_cleanup() -> None:
-    """Test context manager cleanup of http client."""
-
-    # Create mock http client that tracks aclose calls
-    mock_http_client = AsyncMock()
-    mock_a2a_client = MagicMock()
-
-    agent = A2AAgent(client=cast(Any, mock_a2a_client))
-    agent._http_client = mock_http_client
-
-    # Test context manager cleanup
-    async with agent:
-        pass
-
-    # Verify aclose was called
-    mock_http_client.aclose.assert_called_once()
-
-
 async def test_context_manager_no_cleanup_when_no_http_client() -> None:
     """Test context manager when _http_client is None."""
 
@@ -531,7 +513,8 @@ async def test_context_manager_no_cleanup_when_no_http_client() -> None:
         pass
 
 
-async def test_context_manager_does_not_close_caller_supplied_http_client() -> None:
+@mark.parametrize("supply_a2a_client", [False, True])
+async def test_context_manager_does_not_close_caller_supplied_http_client(supply_a2a_client: bool) -> None:
     """A caller-supplied HTTP client must stay open and retain its cookie behavior after __aexit__."""
 
     def handle_request(request: httpx.Request) -> httpx.Response:
@@ -541,7 +524,11 @@ async def test_context_manager_does_not_close_caller_supplied_http_client() -> N
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(handle_request), cookies={"caller_cookie": "kept"}
     ) as http_client:
-        async with A2AAgent(url="https://a2a.example.test/", http_client=http_client):
+        async with A2AAgent(
+            url="https://a2a.example.test/",
+            client=MagicMock() if supply_a2a_client else None,
+            http_client=http_client,
+        ):
             pass
 
         assert not http_client.is_closed

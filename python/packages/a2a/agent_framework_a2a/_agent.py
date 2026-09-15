@@ -246,7 +246,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             url: The URL for the A2A server.
             client: The A2A client for the agent.
             http_client: Optional httpx.AsyncClient to use. Agent-created clients do not persist
-                response cookies; supplied clients retain their configured cookie behavior.
+                response cookies; supplied clients retain their configured cookie behavior and
+                remain caller-owned, including when ``client`` is also supplied.
             auth_interceptor: Optional authentication interceptor for secured endpoints.
             timeout: Request timeout configuration. Can be a float (applied to all timeout components),
                 httpx.Timeout object (for full control), or None (uses 10.0s connect, 60.0s read,
@@ -265,15 +266,13 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
         super().__init__(id=id, name=name, description=description, **kwargs)
         self._http_client: httpx.AsyncClient | None = http_client
-        # By default, leave a caller-supplied HTTP client open; specific paths may override this below.
-        # every construction path must set this before __aexit__ can run
+        # Only HTTP clients created by this agent are closed on exit.
         self._close_http_client = False
         self._timeout_config = self._create_timeout_config(timeout)
         bindings = supported_protocol_bindings if supported_protocol_bindings is not None else ["JSONRPC"]
         if client is not None:
             self.client = client
             self._non_streaming_client: Client | None = None
-            self._close_http_client = True
             return
         if agent_card is None:
             if url is None:

@@ -24,12 +24,16 @@ response = await a2a_agent.run("Hello!")
 
 **Breaking change:** HTTP clients created by `A2AAgent` no longer persist response cookies. This prevents
 one run's cookies from being reused by another run through the same agent.
-Connection pooling and the client's existing lifetime are unchanged.
+Connection pooling and cleanup of internally created clients are unchanged.
 
 If the remote service requires cookies for authentication, sessions, or load-balancer affinity, explicitly supply an
 `httpx.AsyncClient` using `http_client=`. Its cookie behavior is preserved.
 Scope that client to the intended authenticated user or security context and
 manage its lifetime; do not share a user-specific cookie jar across users.
+
+Supplied HTTP clients remain caller-owned even when `client=` is also provided.
+Applications that previously relied on the agent closing a supplied HTTP client
+in that combination must now close it explicitly.
 
 ### A2AExecutor (Hosting)
 
