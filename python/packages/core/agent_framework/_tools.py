@@ -2202,7 +2202,11 @@ async def _execute_single_function_call(
         return [result], False, was_executed
     except MiddlewareTermination as exc:
         if isinstance(exc.result, Content):
-            return [exc.result], True, True
+            is_replacement_approval = (
+                exc.result.type == "function_approval_request"
+                and exc.result.additional_properties.get("_replacement_approval_request") is True
+            )
+            return [exc.result], True, not is_replacement_approval
         source_function_call = _underlying_function_call(function_call)
         return (
             [
