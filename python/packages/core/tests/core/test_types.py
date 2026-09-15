@@ -1913,6 +1913,114 @@ def test_function_call_incompatible_ids_are_not_merged():
     assert len(fcs) == 2
 
 
+def test_function_call_interleaved_parallel_streaming_merges_by_call_id():
+    """Argument deltas for two parallel tool calls can interleave; each must land on its own call.
+
+    This mirrors how the OpenAI Responses API streams parallel tool calls: every
+    ``response.function_call_arguments.delta`` event is tagged with the call's real
+    call_id (tracked per output_index), but deltas for different calls are not
+    guaranteed to arrive grouped together. Before this fix, only the trailing
+    content item was ever considered a merge target, so an out-of-turn delta for an
+    earlier call_id was appended as a stray duplicate instead of being folded into
+    its call, leaving both calls with incomplete, unparsable arguments.
+    """
+    updates = [
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_1", name="get_weather", arguments="")]),
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_2", name="get_time", arguments="")]),
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"location":')]
+        ),
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(call_id="call_2", name="get_time", arguments='{"timezone":')]
+        ),
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(call_id="call_1", name="get_weather", arguments='"NYC"}')]
+        ),
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(call_id="call_2", name="get_time", arguments='"EST"}')]
+        ),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    assert len(resp.messages) == 1
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 2
+
+    by_call_id = {c.call_id: c for c in fcs}
+    assert by_call_id["call_1"].arguments == '{"location":"NYC"}'
+    assert by_call_id["call_2"].arguments == '{"timezone":"EST"}'
+
+
+def test_function_call_merge_falls_back_to_trailing_item_without_call_id():
+    """Continuation deltas some providers never re-stamp with a call_id still merge.
+
+    Not every provider repeats the call_id on every streamed chunk (e.g. the OpenAI
+    Chat Completions API only sends it on the first delta for a tool call), so the
+    fallback of merging into the trailing function_call item must still hold for the
+    single-call-in-flight case.
+    """
+    updates = [
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_1", name="f", arguments="{")]),
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="", name="", arguments="}")]),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 1
+    assert fcs[0].call_id == "call_1"
+    assert fcs[0].arguments == "{}"
+
+
+def test_function_call_reused_call_id_does_not_absorb_untagged_chunk():
+    """A reused call_id must not let an untagged chunk merge into an already-identified call.
+
+    The Chat Completions client stamps a stable occurrence ``id`` on every function-call
+    chunk it emits, precisely so a provider reusing a ``call_id`` (or a client that only
+    tags the first chunk) can't be confused with an unrelated call. If a later, untagged
+    chunk happens to carry the same ``call_id`` as a call that already has an occurrence
+    id, it must not be assumed to be that call's continuation - it should be treated as
+    a new, separate call instead of corrupting the finished one's arguments.
+    """
+    updates = [
+        ChatResponseUpdate(
+            contents=[Content.from_function_call(id="af-call-1", call_id="call_1", name="get_weather", arguments="{}")]
+        ),
+        # No `id` and a reused call_id: an unrelated call, not a continuation.
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_1", name="get_time", arguments="{}")]),
+    ]
+
+    resp = ChatResponse.from_updates(updates)
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 2
+    assert fcs[0].name == "get_weather"
+    assert fcs[0].arguments == "{}"
+    assert fcs[1].name == "get_time"
+    assert fcs[1].arguments == "{}"
+
+
+def test_function_call_tagged_chunk_does_not_absorb_into_untagged_trailing_call():
+    """A tagged chunk with no matching in-progress call must not merge into an untagged one.
+
+    Content.__add__ only rejects a merge when *both* sides carry a call_id and they
+    differ, so an untagged trailing item (call_id falsy) would otherwise silently
+    accept a chunk tagged with a brand-new call_id, adopting that id and
+    concatenating unrelated arguments. The trailing-item fallback must be reserved
+    for chunks that carry no call_id at all.
+    """
+    untagged = Content("function_call", call_id=None, name="a", arguments="partial-a")
+    resp = ChatResponse.from_updates([
+        ChatResponseUpdate(contents=[untagged]),
+        ChatResponseUpdate(contents=[Content.from_function_call(call_id="call_new", name="b", arguments="{}")]),
+    ])
+
+    fcs = [c for c in resp.messages[0].contents if c.type == "function_call"]
+    assert len(fcs) == 2
+    assert fcs[0].call_id is None
+    assert fcs[0].arguments == "partial-a"
+    assert fcs[1].call_id == "call_new"
+    assert fcs[1].arguments == "{}"
+
+
 # region Role & FinishReason basics
 
 
