@@ -403,7 +403,7 @@ def _base64_to_unpickle(encoded: str, *, allowed_types: frozenset[str] | None = 
             format is incompatible, or a disallowed type is encountered.
     """
     try:
-        pickled = base64.b64decode(encoded.encode("ascii"))
+        pickled = base64.b64decode(encoded.encode("ascii"), validate=True)
         if allowed_types is not None:
             return _RestrictedUnpickler(pickled, allowed_types).load()
         return pickle.loads(pickled)  # nosec  # ruff:ignore[suspicious-pickle-usage]

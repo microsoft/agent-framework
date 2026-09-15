@@ -36,7 +36,14 @@ from ._feature_stage import ExperimentalFeature, experimental
 from ._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
 from ._serialization import SerializationMixin
 from ._sessions import AgentSession, ContextProvider
-from ._tools import _APPROVAL_REQUEST_ID_KEY, FunctionTool, tool  # pyright: ignore[reportPrivateUsage]
+from ._tools import (
+    _APPROVAL_REQUEST_ID_KEY,  # pyright: ignore[reportPrivateUsage]
+    _AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+    _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+    FunctionTool,
+    _argument_authority_token,  # pyright: ignore[reportPrivateUsage]
+    tool,
+)
 from ._types import Content, Message
 
 if TYPE_CHECKING:
@@ -1549,6 +1556,19 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
 
             # Expand hidden references before execution and retain their stored labels.
             resolved_labels = self._expand_variable_references_in_context(context)
+            context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY] = _argument_authority_token(
+                context.arguments,
+                boundary="security policy",
+            )
+            if context.metadata.get(_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY) is True:
+                context.function._prepare_context_arguments(  # pyright: ignore[reportPrivateUsage]
+                    context,
+                    context.arguments,
+                )
+                context.metadata[_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY] = _argument_authority_token(
+                    context.arguments,
+                    boundary="security policy",
+                )
             argument_labels = [*input_labels, *resolved_labels]
             argument_label = combine_labels(*argument_labels) if argument_labels else ContentLabel()
 
@@ -3968,8 +3988,8 @@ class SecureMCPToolProxy:
         url: URL of a remote MCP server.  When provided, the proxy creates
             an ``MCPStreamableHTTPTool`` internally.  Mutually exclusive with
             *mcp_tool*.
-        headers: HTTP headers (e.g. auth tokens) sent with every request
-            when using *url* mode.
+        headers: HTTP headers (e.g. auth tokens) sent with requests to the
+            configured origin when using *url* mode.
         name: Tool name used when creating the internal
             ``MCPStreamableHTTPTool`` (defaults to ``"mcp"``).
         description: Tool description for the internal tool.
@@ -4007,8 +4027,8 @@ class SecureMCPToolProxy:
         Keyword Args:
             url: URL of a remote MCP server. When provided, the proxy creates an
                 ``MCPStreamableHTTPTool`` internally. Mutually exclusive with ``mcp_tool``.
-            headers: HTTP headers (e.g. auth tokens) sent with every request when using
-                ``url`` mode.
+            headers: HTTP headers (e.g. auth tokens) sent with requests to the configured
+                origin when using ``url`` mode.
             name: Tool name used when creating the internal ``MCPStreamableHTTPTool``
                 (defaults to ``"mcp"``).
             description: Tool description for the internal tool.
@@ -4031,30 +4051,14 @@ class SecureMCPToolProxy:
             raise ValueError("Provide either 'mcp_tool' (an MCPTool instance) or 'url' (a remote MCP server URL).")
 
         if url is not None:
-            from httpx import AsyncClient, Timeout
-
-            from ._mcp import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TIMEOUT, MCPStreamableHTTPTool
+            from ._mcp import MCPStreamableHTTPTool
 
             static_headers = dict(headers or {})
-            # Pass headers via an AsyncClient so they are included on ALL requests
-            # (including session.initialize()), not just tool calls. Using
-            # header_provider alone only sets headers via a ContextVar that is
-            # populated during call_tool() and would be empty during initialization,
-            # causing 401s that silently manifest as anyio cancel-scope errors.
-            http_client = (
-                AsyncClient(
-                    headers=static_headers,
-                    follow_redirects=True,
-                    timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
-                )
-                if static_headers
-                else None
-            )
             mcp_tool = MCPStreamableHTTPTool(
                 name=name or "mcp",
                 url=url,
-                http_client=http_client,
                 description=description,
+                static_headers=static_headers,
             )
 
         # The validation above guarantees a tool is set (passed directly or built
