@@ -124,18 +124,27 @@ internal sealed class InvokeFunctionToolExecutor(
         CancellationToken cancellationToken)
     {
         bool autoSend = this.GetAutoSendValue();
+        bool requireApproval = this.GetRequireApproval();
         string? conversationId = this.GetConversationId();
+        HashSet<string> rejectedApprovalResultCallIds = response.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<FunctionResultContent>()
+            .Where(r => this._approvalSnapshots.ContainsKey(r.CallId))
+            .Select(r => r.CallId)
+            .ToHashSet(StringComparer.Ordinal);
 
         // Match the inbound result by its per-invocation call id.
         FunctionResultContent? matchingResult = response.Messages
             .SelectMany(m => m.Contents)
             .OfType<FunctionResultContent>()
-            .FirstOrDefault(r => this.IsKnownPendingId(r.CallId));
+            .FirstOrDefault(r => this._pendingNonApprovalCallIds.ContainsKey(r.CallId));
 
-        // Legacy non-approval backstop: when no pendings are tracked, accept a result
-        // whose CallId equals this.Id. The runtime has already routed the response to
-        // this executor's port and the framework does not invoke a function here.
+        // Legacy non-approval backstop: when no pendings are tracked and approval is
+        // not required, accept a result whose CallId equals this.Id. The runtime has
+        // already routed the response to this executor's port and the framework does
+        // not invoke a function here.
         if (matchingResult is null
+            && !requireApproval
             && this._pendingNonApprovalCallIds.IsEmpty
             && this._approvalSnapshots.IsEmpty)
         {
@@ -183,6 +192,10 @@ internal sealed class InvokeFunctionToolExecutor(
                     await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
                 }
             }
+            else if (!this._approvalSnapshots.IsEmpty)
+            {
+                await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
+            }
         }
 
         if (matchingResult is not null)
@@ -205,7 +218,10 @@ internal sealed class InvokeFunctionToolExecutor(
         // Store messages if output path is configured
         if (this.Model.Output?.Messages is not null)
         {
-            await this.AssignAsync(this.Model.Output.Messages?.Path, response.Messages.ToFormula(), context).ConfigureAwait(false);
+            await this.AssignAsync(
+                this.Model.Output.Messages?.Path,
+                this.GetSideEffectMessages(response.Messages, rejectedApprovalResultCallIds).ToFormula(),
+                context).ConfigureAwait(false);
         }
 
         // Add messages to conversation if conversationId is provided
@@ -214,7 +230,7 @@ internal sealed class InvokeFunctionToolExecutor(
         // actual AI-generated tool calls and would be rejected by the API.
         if (conversationId is not null)
         {
-            foreach (ChatMessage message in TransformConversationMessages(response.Messages))
+            foreach (ChatMessage message in TransformConversationMessages(this.GetSideEffectMessages(response.Messages, rejectedApprovalResultCallIds)))
             {
                 await agentProvider.CreateMessageAsync(conversationId, message, cancellationToken).ConfigureAwait(false);
             }
@@ -224,8 +240,15 @@ internal sealed class InvokeFunctionToolExecutor(
         await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
     }
 
-    private bool IsKnownPendingId(string callId) =>
-        this._pendingNonApprovalCallIds.ContainsKey(callId) || this._approvalSnapshots.ContainsKey(callId);
+    private IEnumerable<ChatMessage> GetSideEffectMessages(IEnumerable<ChatMessage> messages, HashSet<string> rejectedApprovalResultCallIds)
+    {
+        if (rejectedApprovalResultCallIds.Count == 0)
+        {
+            return messages;
+        }
+
+        return FilterRejectedApprovalResults(messages, rejectedApprovalResultCallIds);
+    }
 
     /// <inheritdoc/>
     public override ValueTask ResetAsync()
@@ -337,6 +360,32 @@ internal sealed class InvokeFunctionToolExecutor(
             {
                 // Pass through messages without function content
                 yield return message;
+            }
+        }
+    }
+
+    private static IEnumerable<ChatMessage> FilterRejectedApprovalResults(IEnumerable<ChatMessage> messages, HashSet<string> rejectedApprovalResultCallIds)
+    {
+        foreach (ChatMessage message in messages)
+        {
+            List<AIContent> contents =
+                [.. message.Contents.Where(c => c is not FunctionResultContent functionResult || !rejectedApprovalResultCallIds.Contains(functionResult.CallId))];
+            if (contents.Count == message.Contents.Count)
+            {
+                yield return message;
+            }
+            else if (contents.Count > 0)
+            {
+                yield return new ChatMessage
+                {
+                    Role = message.Role,
+                    AuthorName = message.AuthorName,
+                    Contents = contents,
+                    MessageId = message.MessageId,
+                    CreatedAt = message.CreatedAt,
+                    RawRepresentation = message.RawRepresentation,
+                    AdditionalProperties = message.AdditionalProperties,
+                };
             }
         }
     }
