@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import base64
 import json
 import warnings
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
@@ -2477,6 +2478,49 @@ def test_content_to_dict_exclude_fields() -> None:
     assert parsed["type"] == "text"
 
 
+def test_function_result_exception_is_internal_by_default() -> None:
+    diagnostic = "test-token-value at /srv/private/tool.py"
+    content = Content.from_function_result(
+        call_id="call-1",
+        result="Error: Function failed.",
+        exception=diagnostic,
+    )
+
+    assert content.exception == diagnostic
+    assert content.to_dict()["exception"] == "FunctionInvocationError"
+    assert content.to_dict(exclude_none=False)["exception"] == "FunctionInvocationError"
+    response = AgentResponse(messages=[Message(role="tool", contents=[content])])
+    serialized = json.dumps(response.to_dict())
+    assert diagnostic not in serialized
+    assert "FunctionInvocationError" in serialized
+
+    restored = Content.from_dict(content.to_dict())
+    assert restored.exception == "FunctionInvocationError"
+    assert restored != Content.from_function_result(
+        call_id="call-1",
+        result="Error: Function failed.",
+        exception="different diagnostic",
+    )
+
+    empty_diagnostic = Content.from_function_result(call_id="call-2", exception="")
+    assert empty_diagnostic.to_dict()["exception"] == "FunctionInvocationError"
+
+
+def test_content_equality_compares_nested_raw_exception_diagnostics() -> None:
+    first = Content(
+        "function_result",
+        call_id="outer",
+        items=[Content.from_function_result(call_id="inner", exception="diagnostic-a")],
+    )
+    second = Content(
+        "function_result",
+        call_id="outer",
+        items=[Content.from_function_result(call_id="inner", exception="diagnostic-b")],
+    )
+
+    assert first != second
+
+
 def test_chat_response_roundtrip_preserves_compaction_annotation_dict() -> None:
     response = ChatResponse(
         messages=[
@@ -4529,13 +4573,22 @@ class TestResponseStreamMapAndWithFinalizer:
 
         assert collected == ["async_update_0", "async_update_1"]
 
-    async def test_from_awaitable(self) -> None:
+    @pytest.mark.parametrize("source_kind", ["coroutine", "task", "future"])
+    async def test_from_awaitable(self, source_kind: str) -> None:
         """from_awaitable() wraps an awaitable ResponseStream."""
 
         async def get_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse]:
             return ResponseStream(_generate_updates(2), finalizer=_combine_updates)
 
-        outer = ResponseStream.from_awaitable(get_stream())
+        source: Awaitable[ResponseStream[ChatResponseUpdate, ChatResponse]]
+        if source_kind == "task":
+            source = asyncio.create_task(get_stream())
+        elif source_kind == "future":
+            source = asyncio.get_running_loop().create_future()
+            source.set_result(await get_stream())
+        else:
+            source = get_stream()
+        outer = ResponseStream.from_awaitable(source)
 
         collected: list[str] = []
         async for update in outer:
@@ -4614,13 +4667,22 @@ class TestResponseStreamExecutionOrder:
 class TestResponseStreamAwaitableSource:
     """Tests for ResponseStream with awaitable stream sources."""
 
-    async def test_awaitable_stream_source(self) -> None:
+    @pytest.mark.parametrize("source_kind", ["coroutine", "task", "future"])
+    async def test_awaitable_stream_source(self, source_kind: str) -> None:
         """ResponseStream can accept an awaitable that resolves to an async iterable."""
 
         async def get_stream() -> AsyncIterable[ChatResponseUpdate]:
             return _generate_updates(2)
 
-        stream = ResponseStream(get_stream(), finalizer=_combine_updates)
+        source: Awaitable[AsyncIterable[ChatResponseUpdate]]
+        if source_kind == "task":
+            source = asyncio.create_task(get_stream())
+        elif source_kind == "future":
+            source = asyncio.get_running_loop().create_future()
+            source.set_result(await get_stream())
+        else:
+            source = get_stream()
+        stream = ResponseStream(source, finalizer=_combine_updates)
 
         collected: list[str] = []
         async for update in stream:
