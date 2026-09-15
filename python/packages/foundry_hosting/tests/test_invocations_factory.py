@@ -951,6 +951,95 @@ async def test_real_agent_executor_transcript_is_isolated_and_restored(stream: b
 
 
 @pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("cancel", [False, True])
+@pytest.mark.parametrize("recreate_host", [False, True])
+@pytest.mark.parametrize("functional", [False, True])
+async def test_interruption_with_checkpoint_rejects_new_message(
+    stream: bool, cancel: bool, recreate_host: bool, functional: bool
+) -> None:
+    stores = _Stores()
+    calls: list[str] = []
+    started = asyncio.Event()
+    interrupt = True
+    workflow_name = "interrupted-workflow"
+
+    async def finish_message(message: str) -> str:
+        calls.append(f"finish:{message}")
+        if interrupt:
+            started.set()
+            if cancel:
+                await asyncio.Event().wait()
+            raise RuntimeError("failed after checkpoint")
+        return message
+
+    class Start(Executor):
+        @handler
+        async def start(self, messages: list[Message], ctx: WorkflowContext[str]) -> None:
+            calls.append(f"start:{messages[0].text}")
+            await ctx.send_message(messages[0].text)
+
+    class Finish(Executor):
+        @handler
+        async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
+            await ctx.yield_output(await finish_message(message))
+
+    @step
+    async def saved_step(message: str) -> str:
+        calls.append(f"start:{message}")
+        return message
+
+    @workflow(name=workflow_name)
+    async def interrupted(messages: str | list[str]) -> str:
+        message = messages if isinstance(messages, str) else messages[0]
+        return await finish_message(await saved_step(message))
+
+    def factory() -> WorkflowAgent | FunctionalWorkflowAgent:
+        if functional:
+            return interrupted.build().as_agent()
+        start = Start(id="start")
+        finish = Finish(id="finish")
+        return WorkflowBuilder(name=workflow_name, start_executor=start).add_edge(start, finish).build().as_agent()
+
+    server = stores.server(factory)
+    if cancel:
+        task = asyncio.create_task(_invoke(server, "original", stream=stream))
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+    else:
+        with pytest.raises(RuntimeError, match="failed after checkpoint"):
+            await _invoke(server, "original", stream=stream)
+    interrupt = False
+
+    storage_id, storage = next(iter(stores.checkpoints.items()))
+    checkpoint = await storage.get_latest(workflow_name=workflow_name)
+    assert checkpoint is not None
+    if not functional:
+        assert checkpoint.iteration_count == 1
+        assert checkpoint.messages
+    session = await stores.sessions.get(storage_id)
+    assert session is not None
+    assert session.state["_foundry_invocations_workflow"]["completed"] is False
+    saved_session = session.to_dict()
+    checkpoint_ids = await storage.list_checkpoint_ids(workflow_name=workflow_name)
+
+    next_server = stores.server(factory) if recreate_host else server
+    kind = "functional" if functional else "graph"
+    with pytest.raises(RuntimeError, match=f"pending or interrupted {kind}"):
+        await _invoke(next_server, "must-not-run", stream=stream)
+    assert calls == ["start:original", "finish:original"]
+    assert await storage.list_checkpoint_ids(workflow_name=workflow_name) == checkpoint_ids
+    session = await stores.sessions.get(storage_id)
+    assert session is not None
+    assert session.to_dict() == saved_session
+    assert not server._scope_locks._entries
+    assert not next_server._scope_locks._entries
+
+
+@pytest.mark.parametrize("stream", [False, True])
 async def test_functional_interruption_with_checkpoint_rejects_new_message(stream: bool) -> None:
     stores = _Stores()
     calls = 0

@@ -47,8 +47,10 @@ graph workflow restoration.
 
 Functional resilient Responses recovery is explicitly unsupported: checkpoints omit buffered output
 from completed steps, so a hosting adapter cannot restore that output without rerunning application
-work. Invocations retains its text-only exchange and rejects pending or interrupted functional
-continuations; a new message after clean completion is supported.
+work. Invocations retains its text-only exchange and rejects pending or interrupted continuations
+for both graph and functional workflows, before executing checkpointed work or a new message.
+A new message after clean completion is supported. The persisted completion record tracks host
+execution, not acknowledgment of HTTP delivery.
 
 The host manages an agent's exposed async context manager. It does not recursively discover resources
 inside executors or closures. Applications must construct fresh mutable runtime objects and give

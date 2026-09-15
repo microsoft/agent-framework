@@ -214,15 +214,19 @@ do not use this persistence provider. Changing that legacy retention behavior is
 ### Invocations workflows
 
 `InvocationsHostServer(agent_factory=...)` persists workflow checkpoints for the platform user and invocation session.
-A subsequent request with the same authorized session can restore its graph workflow in a new agent instance, including
-after recreating the host. Ordinary-agent instance callers retain their existing in-memory session behavior.
+After a completed invocation, a subsequent request with the same authorized session can restore its graph workflow
+in a new agent instance, including after recreating the host. Ordinary-agent instance callers retain their existing
+in-memory session behavior.
 
 The wire format remains unchanged: requests use `message` and `stream`, and responses contain text or streamed text.
 This helper does not add a structured exchange for external workflow approvals or pending requests. A plain text
 message is not an approval response. Use Responses when callers need that structured exchange.
 
-Functional workflows accept a new message after a completed invocation, but pending or interrupted functional
-continuation is rejected. They do not acquire graph-workflow recovery semantics by being passed through a factory.
+Both graph and functional workflows reject continuation when the previous invocation is pending or interrupted.
+A saved checkpoint alone does not authorize resuming incomplete work: the host requires its persisted completion
+record before restoring a graph checkpoint or accepting a new message. Rejection preserves the existing stored state.
+After clean completion, graph workflows restore their state and functional workflows start the new message without
+replaying the previous input. The completion record describes host execution, not acknowledgment of HTTP delivery.
 
 Requests updating the same factory scope are serialized within one host; independent scopes can execute concurrently.
 This is not a distributed lock across multiple host processes. Invocations does not automatically recover an

@@ -95,8 +95,8 @@ class InvocationsHostServer(InvocationAgentServerHost):
         Responses contain plain text; "stream": true streams text as text/event-stream.
         Workflow factories must use stable workflow names and executor IDs across requests.
         The text-only exchange cannot answer pending workflow requests or approvals.
-        Functional workflows support fresh messages after clean completion, but not
-        pending or interrupted continuation. Such continuation fails explicitly.
+        Both graph and functional workflows support fresh messages after clean completion,
+        but not pending or interrupted continuation. Such continuation fails explicitly.
         Ordinary factory sessions are persisted after each run, including interrupted runs,
         rather than retained in this host. Ordinary agent instances retain sessions in memory.
         Factories own cleanup of nested resources not exposed by an async context manager.
@@ -201,11 +201,11 @@ class InvocationsHostServer(InvocationAgentServerHost):
             raise RuntimeError("The existing Invocations workflow checkpoint is missing its required agent session.")
         if marker is not None and marker.get("checkpoint_failed"):
             raise RuntimeError("The previous Invocations workflow run has incomplete checkpoint persistence.")
-        if isinstance(agent, FunctionalWorkflowAgent) and marker is not None and marker.get("completed") is not True:
-            raise RuntimeError("Invocations cannot continue a pending or interrupted functional workflow.")
+        if isinstance(agent, WorkflowAgent) and checkpoint is not None and checkpoint.pending_request_info_events:
+            raise RuntimeError(_PENDING_REQUEST_ERROR)
+        if marker is not None and marker.get("completed") is not True:
+            raise RuntimeError(f"Invocations cannot continue a pending or interrupted {kind} workflow.")
         if isinstance(agent, WorkflowAgent) and checkpoint is not None:
-            if checkpoint.pending_request_info_events:
-                raise RuntimeError(_PENDING_REQUEST_ERROR)
             await agent.workflow.run(checkpoint_id=checkpoint.checkpoint_id, checkpoint_storage=storage)
             if storage.save_error is not None:
                 raise storage.save_error
