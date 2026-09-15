@@ -1,6 +1,6 @@
 # /// script
 # dependencies = [
-#   "agent-framework-core>=1.17.0,<2",
+#   "agent-framework-core>=1.18.0,<2",
 #   "agent-framework-mongodb>=1.0.0a260909,<2",
 # ]
 # ///
