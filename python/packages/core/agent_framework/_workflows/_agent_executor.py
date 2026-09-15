@@ -78,7 +78,8 @@ def _validate_agent_executor_checkpoint_state(state: Mapping[str, Any]) -> None:
             raise WorkflowCheckpointException(
                 f"AgentExecutor checkpoint field '{key}' must be a list, got {type(value).__name__}."
             )
-        for index, item in enumerate(value):
+        messages = cast(list[Any], value)
+        for index, item in enumerate(messages):
             if not isinstance(item, Message):
                 raise WorkflowCheckpointException(
                     f"AgentExecutor checkpoint field '{key}'[{index}] must be Message, "
@@ -86,12 +87,13 @@ def _validate_agent_executor_checkpoint_state(state: Mapping[str, Any]) -> None:
                 )
 
     if "pending_responses_to_agent" in state and state["pending_responses_to_agent"] is not None:
-        responses = state["pending_responses_to_agent"]
-        if not isinstance(responses, list):
+        responses_raw = state["pending_responses_to_agent"]
+        if not isinstance(responses_raw, list):
             raise WorkflowCheckpointException(
                 "AgentExecutor checkpoint field 'pending_responses_to_agent' must be a list, "
-                f"got {type(responses).__name__}."
+                f"got {type(responses_raw).__name__}."
             )
+        responses = cast(list[Any], responses_raw)
         for index, item in enumerate(responses):
             if not isinstance(item, Content):
                 raise WorkflowCheckpointException(
@@ -101,12 +103,13 @@ def _validate_agent_executor_checkpoint_state(state: Mapping[str, Any]) -> None:
                 )
 
     if "pending_agent_requests" in state and state["pending_agent_requests"] is not None:
-        pending = state["pending_agent_requests"]
-        if not isinstance(pending, dict):
+        pending_raw = state["pending_agent_requests"]
+        if not isinstance(pending_raw, dict):
             raise WorkflowCheckpointException(
                 "AgentExecutor checkpoint field 'pending_agent_requests' must be a dict, "
-                f"got {type(pending).__name__}."
+                f"got {type(pending_raw).__name__}."
             )
+        pending = cast(dict[Any, Any], pending_raw)
         for request_id, content in pending.items():
             if not isinstance(request_id, str):
                 raise WorkflowCheckpointException(
@@ -121,12 +124,13 @@ def _validate_agent_executor_checkpoint_state(state: Mapping[str, Any]) -> None:
                 )
 
     if "agent_session" in state and state["agent_session"] is not None:
-        session = state["agent_session"]
-        if not isinstance(session, dict):
+        session_raw = state["agent_session"]
+        if not isinstance(session_raw, dict):
             raise WorkflowCheckpointException(
                 "AgentExecutor checkpoint field 'agent_session' must be a dict, "
-                f"got {type(session).__name__}."
+                f"got {type(session_raw).__name__}."
             )
+        session = cast(dict[str, Any], session_raw)
         session_id = session.get("session_id")
         if not isinstance(session_id, str):
             raise WorkflowCheckpointException(
@@ -469,28 +473,28 @@ class AgentExecutor(Executor):
             await self._resume_with_pending_responses(ctx)
 
     @override
-    async def on_checkpoint_save(self) -> AgentExecutorCheckpointState:
+    async def on_checkpoint_save(self) -> dict[str, Any]:
         """Capture current executor state for checkpointing.
 
         NOTE: if the session uses service-side storage, the full session state
         may not be serialized locally.
 
         Returns:
-            :class:`AgentExecutorCheckpointState` with cache, conversation, session,
-            and pending request/response fields.
+            A JSON-serializable ``dict`` matching :class:`AgentExecutorCheckpointState`
+            (cache, conversation, session, and pending request/response fields).
+            The return type remains ``dict[str, Any]`` so subclasses may extend the
+            payload and so the override stays compatible with :class:`Executor`.
         """
-        serialized_session = self._session.to_dict()
-
-        return AgentExecutorCheckpointState(
-            cache=self._cache,
-            full_conversation=self._full_conversation,
-            agent_session=serialized_session,
-            pending_agent_requests=self._pending_agent_requests,
-            pending_responses_to_agent=self._pending_responses_to_agent,
-        )
+        return {
+            "cache": self._cache,
+            "full_conversation": self._full_conversation,
+            "agent_session": self._session.to_dict(),
+            "pending_agent_requests": self._pending_agent_requests,
+            "pending_responses_to_agent": self._pending_responses_to_agent,
+        }
 
     @override
-    async def on_checkpoint_restore(self, state: AgentExecutorCheckpointState) -> None:
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
         """Restore executor state from checkpoint.
 
         Args:
