@@ -1092,18 +1092,33 @@ async def test_mixed_batch_preserves_effective_middleware_order_session_and_invo
 
 
 @pytest.mark.parametrize(
-    ("max_calls", "expected_actions", "expected_surfaces"),
-    [(1, ["search"], 0), (3, ["search", "search"], 1)],
+    ("max_calls", "expected_actions", "expected_surfaces", "expected_tool_choices", "expected_execution_trace"),
+    [
+        (1, ["search"], 0, ["auto"], ["search", "generate_a2ui"]),
+        (3, ["search", "search"], 1, ["auto", "auto"], ["search", "generate_a2ui"] * 2),
+    ],
 )
 async def test_core_a2ui_shares_call_budget_with_surface_generation(
-    streaming_chat_client_stub, max_calls: int, expected_actions: list[str], expected_surfaces: int
+    streaming_chat_client_stub,
+    max_calls: int,
+    expected_actions: list[str],
+    expected_surfaces: int,
+    expected_tool_choices: list[str | None],
+    expected_execution_trace: list[str],
 ) -> None:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Awaitable, Callable
 
-    from agent_framework import Agent, FunctionTool
+    from agent_framework import Agent, FunctionInvocationContext, FunctionMiddleware, FunctionTool
 
     executed: list[str] = []
+    execution_trace: list[str] = []
+    tool_choices: list[str | None] = []
     round_number = 0
+
+    class RecordExecution(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            execution_trace.append(context.function.name)
+            await call_next()
 
     def search() -> str:
         executed.append("search")
@@ -1113,7 +1128,9 @@ async def test_core_a2ui_shares_call_budget_with_surface_generation(
         messages: list[Message], options: dict[str, Any], **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
         nonlocal round_number
-        if options.get("tool_choice") == "none":
+        tool_choice = options.get("tool_choice")
+        tool_choices.append(tool_choice)
+        if tool_choice == "none":
             yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("Done.")])
             return
         round_number += 1
@@ -1131,9 +1148,12 @@ async def test_core_a2ui_shares_call_budget_with_surface_generation(
     agent = Agent(client=client, tools=[FunctionTool(name="search", description="Search", func=search)])
     assert isinstance(client, FunctionInvocationLayer)
     client.function_invocation_configuration["max_function_calls"] = max_calls
+    client.function_middleware.append(RecordExecution())
     kinds = await _drive(enable_a2ui(agent, _RenderSub()))
 
     assert executed == expected_actions
+    assert tool_choices == expected_tool_choices
+    assert execution_trace == expected_execution_trace
     assert len([kind for kind in kinds if kind[0] == "result" and kind[1].startswith("generate-")]) == expected_surfaces
     assert len([kind for kind in kinds if kind[0] == "result" and kind[1].startswith("search-")]) == len(
         expected_actions
