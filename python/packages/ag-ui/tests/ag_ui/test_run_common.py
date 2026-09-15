@@ -286,8 +286,8 @@ class TestEmitToolResult:
         events = _emit_tool_result(content, flow)
 
         event_types = [e.type for e in events]
-        assert event_types.count("TOOL_CALL_END") == 0
-        assert "TOOL_CALL_RESULT" in event_types
+        assert event_types.count(EventType.TOOL_CALL_END) == 0
+        assert EventType.TOOL_CALL_RESULT in event_types
 
     def test_tool_result_does_not_emit_internal_exception(self):
         """AG-UI events and snapshots contain only the channel-visible result."""

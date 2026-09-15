@@ -478,7 +478,9 @@ async def test_workflow_run_approval_pause_closes_open_real_tool_call() -> None:
     """
 
     @executor(id="approval_with_streamed_tool")
-    async def approval_with_streamed_tool(message: Any, ctx: WorkflowContext) -> None:
+    async def approval_with_streamed_tool(
+        message: Any, ctx: WorkflowContext[Any, AgentResponseUpdate]
+    ) -> None:
         del message
         function_call = Content.from_function_call(
             call_id="weather-call",
@@ -549,7 +551,7 @@ async def test_workflow_run_approval_resume_skips_unmatched_tool_call_end() -> N
             super().__init__(id="approval_with_streamed_tool")
 
         @handler
-        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+        async def start(self, message: Any, ctx: WorkflowContext[Any, AgentResponseUpdate]) -> None:
             del message
             function_call = Content.from_function_call(
                 call_id="weather-call",
@@ -561,7 +563,9 @@ async def test_workflow_run_approval_resume_skips_unmatched_tool_call_end() -> N
             await ctx.request_info(approval_request, Content, request_id="approval-1")
 
         @response_handler
-        async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+        async def handle_approval(
+            self, original_request: Content, response: Content, ctx: WorkflowContext[Any, AgentResponseUpdate | str]
+        ) -> None:
             del original_request
             call_id = "weather-call"
             if bool(response.approved):
@@ -571,9 +575,9 @@ async def test_workflow_run_approval_resume_skips_unmatched_tool_call_end() -> N
                         role="tool",
                     )
                 )
-                await ctx.yield_output("Weather tool approved.")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+                await ctx.yield_output("Weather tool approved.")
             else:
-                await ctx.yield_output("Weather tool rejected.")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+                await ctx.yield_output("Weather tool rejected.")
 
     workflow = WorkflowBuilder(start_executor=ApprovalWithStreamedTool()).build()
     first_events = [
