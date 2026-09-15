@@ -5018,6 +5018,48 @@ def test_prepend_instructions_custom_role():
     assert result[0].role == "developer"
 
 
+def test_prepend_instructions_partial_dedup_preserves_order():
+    """Test that partially deduplicated instructions keep their relative order.
+
+    When only a prefix of the instructions is already present as leading
+    messages, the remaining instructions must still appear in their original
+    order after the matched prefix, not inverted in front of it.
+    """
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [
+        Message("system", ["First instruction"]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, ["First instruction", "Second instruction"])
+
+    assert [message.text for message in result] == [
+        "First instruction",
+        "Second instruction",
+        "Hello",
+    ]
+    assert result[0] is messages[0]
+    assert result[2] is messages[1]
+
+
+def test_prepend_instructions_partial_dedup_no_match_keeps_prefix_behavior():
+    """Test that a non-matching leading message still yields a plain prepend."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [
+        Message("system", ["Different instruction"]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, ["First instruction", "Second instruction"])
+
+    assert [message.text for message in result] == [
+        "First instruction",
+        "Second instruction",
+        "Different instruction",
+        "Hello",
+    ]
+
+
 # endregion
 
 
