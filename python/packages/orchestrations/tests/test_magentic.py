@@ -447,6 +447,7 @@ async def test_magentic_checkpoint_resume_round_trip():
         manager=manager1,
     ).build()
 
+    assert wf.name == "Magentic"
     task_text = "checkpoint task"
     req_event: WorkflowEvent | None = None
     async for ev in wf.run(task_text, stream=True):

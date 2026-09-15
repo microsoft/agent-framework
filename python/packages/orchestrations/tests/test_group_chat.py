@@ -678,6 +678,7 @@ class TestCheckpointing:
             checkpoint_storage=storage,
             selection_func=selector,
         ).build()
+        assert workflow.name == "GroupChat"
 
         updates: list[AgentResponseUpdate] = []
         async for event in workflow.run("test task", stream=True):
