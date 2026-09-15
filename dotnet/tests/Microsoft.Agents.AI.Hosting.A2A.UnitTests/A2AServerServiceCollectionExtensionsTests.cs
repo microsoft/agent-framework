@@ -196,7 +196,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         var services = new ServiceCollection();
         services.AddKeyedSingleton(AgentName, (_, _) => CreateAgentMock(AgentName).Object);
 
-        var mockSessionStore = new Mock<AgentSessionStore>();
+        var mockSessionStore = new Mock<AgentSessionStore> { CallBase = true };
         services.AddKeyedSingleton(AgentName, mockSessionStore.Object);
 
         // Act
@@ -206,6 +206,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         await using var provider = services.BuildServiceProvider();
         var server = provider.GetKeyedService<A2AServer>(AgentName);
         Assert.NotNull(server);
+        mockSessionStore.Verify(s => s.GetService(typeof(IsolationKeyScopedAgentSessionStore), null), Times.Once);
     }
 
     /// <summary>
@@ -423,17 +424,17 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         var services = new ServiceCollection();
         services.AddKeyedSingleton(AgentName, (_, _) => CreateAgentMock(AgentName).Object);
 
-        var mockSessionStore = new Mock<AgentSessionStore>();
+        var mockSessionStore = new Mock<AgentSessionStore> { CallBase = true };
         mockSessionStore
             .Setup(x => x.GetSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.IsAny<string>(),
+                It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TestAgentSession());
         mockSessionStore
             .Setup(x => x.SaveSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.IsAny<string>(),
+                It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<AgentSession>(),
                 It.IsAny<CancellationToken>()))
             .Returns(ValueTask.CompletedTask);
@@ -452,7 +453,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         mockSessionStore.Verify(
             x => x.GetSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.IsAny<string>(),
+                It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<CancellationToken>()),
             Times.Once);
         Assert.Equal(SendMessageResponseCase.Message, response.PayloadCase);

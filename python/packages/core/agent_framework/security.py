@@ -4077,7 +4077,10 @@ async def apply_mcp_security_labels(
         annotation_overrides: Optional per-tool-name overrides.  Keys are
             *remote* MCP tool names (as the server exposes them).  Values are
             ``(IntegrityLabel, ConfidentialityLabel | None)`` tuples that
-            replace the annotation-derived labels entirely.
+            replace the annotation-derived labels entirely. Overrides apply
+            only to the supplied ``mcp_tool``; the mapping itself is not bound
+            to a server identity. Reuse it for another connection only after
+            independently authorizing that policy for the other server's tools.
         mark_write_tools_as_sinks: When ``True`` (default), apply the
             annotation-derived ``max_allowed_confidentiality=PUBLIC`` cap.
         trust_server_ifc: Whether complete, valid server ``_meta.ifc`` labels
@@ -4348,7 +4351,9 @@ class SecureMCPToolProxy:
         description: Tool description for the internal tool.
         default_integrity: Default integrity for tools without annotations.
         annotation_overrides: Per-tool-name label overrides (keyed by remote
-            MCP tool name).
+            MCP tool name), applied only to this proxy's MCP connection.
+            The mapping is not bound to a server identity; reuse it for another
+            connection only after independently authorizing that policy there.
         mark_write_tools_as_sinks: Whether to apply the annotation-derived
             PUBLIC confidentiality cap.
         trust_server_ifc: Whether complete, valid server ``_meta.ifc`` labels
@@ -4387,7 +4392,10 @@ class SecureMCPToolProxy:
             description: Tool description for the internal tool.
             default_integrity: Default integrity for tools without annotations.
                 Defaults to ``IntegrityLabel.UNTRUSTED``.
-            annotation_overrides: Per-tool-name label overrides keyed by remote MCP tool name.
+            annotation_overrides: Per-tool-name label overrides keyed by remote MCP tool name,
+                applied only to this proxy's MCP connection. The mapping is not bound to a
+                server identity; reuse it for another connection only after independently
+                authorizing that policy there.
             mark_write_tools_as_sinks: Whether to apply the annotation-derived
                 PUBLIC confidentiality cap. Defaults to ``True``.
             trust_server_ifc: Whether complete, valid server ``_meta.ifc``

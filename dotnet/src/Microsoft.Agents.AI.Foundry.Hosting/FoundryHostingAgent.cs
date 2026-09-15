@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -20,6 +21,37 @@ internal sealed class FoundryHostingAgent : DelegatingAIAgent
     }
 
     internal string SessionStorageIdentity { get; }
+
+    /// <summary>
+    /// Gets the session storage identity carried by a hosting wrapper, or derives one for direct use.
+    /// </summary>
+    /// <param name="agent">The agent whose storage identity is required.</param>
+    /// <param name="allowInstanceId">
+    /// Whether an unnamed direct agent may use its process-local <see cref="AIAgent.Id"/>.
+    /// </param>
+    /// <returns>The resolved session storage identity.</returns>
+    internal static string GetSessionStorageIdentity(AIAgent agent, bool allowInstanceId = false)
+    {
+        _ = Throw.IfNull(agent);
+
+        if (agent.GetService<FoundryHostingAgent>() is { } hostingAgent)
+        {
+            return hostingAgent.SessionStorageIdentity;
+        }
+
+        if (!string.IsNullOrWhiteSpace(agent.Name))
+        {
+            return $"name:{agent.Name}";
+        }
+
+        if (allowInstanceId)
+        {
+            return $"id:{agent.Id}";
+        }
+
+        throw new InvalidOperationException(
+            $"Persistent session storage requires a stable {nameof(AIAgent.Name)} or Foundry hosting registration.");
+    }
 
     /// <summary>
     /// Resolves the stable identity used to partition session storage for the resolved agent.
