@@ -62,8 +62,8 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
     /// </summary>
     private sealed class FunctionMiddlewarePreservingChatClient(IChatClient innerClient, FunctionInvocationDelegatingAgent middleware) : DelegatingChatClient(innerClient)
     {
+        private static readonly AsyncLocal<MiddlewareScope?> s_currentScope = new();
         private readonly FunctionInvocationDelegatingAgent _middleware = middleware;
-        private FunctionInvocationDelegatingAgent[] _middlewareChain = [middleware];
 
         internal IChatClient Build(Func<IChatClient, IChatClient>? originalFactory)
         {
@@ -74,43 +74,55 @@ internal sealed class FunctionInvocationDelegatingAgent : DelegatingAIAgent
                 builder.Use(originalFactory);
             }
 
-            var pipeline = builder.Build();
-            var chain = new List<FunctionInvocationDelegatingAgent>();
-            for (var client = pipeline.GetService<FunctionMiddlewarePreservingChatClient>();
-                 client is not null && !ReferenceEquals(client, this);
-                 client = client.InnerClient.GetService<FunctionMiddlewarePreservingChatClient>())
-            {
-                chain.Add(client._middleware);
-            }
-
-            chain.Add(this._middleware);
-            // Initialize only this request's decorator, never the shared client or caller's options.
-            this._middlewareChain = [.. chain];
-            return pipeline;
+            return builder.Build();
         }
 
         public override async Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
-            => await this.InnerClient.GetResponseAsync(messages, this.ConfigureOptions(options), cancellationToken).ConfigureAwait(false);
+        {
+            var scope = this.CreateScope(s_currentScope.Value);
+            s_currentScope.Value = scope;
+            return await this.InnerClient.GetResponseAsync(messages, ConfigureOptions(options, scope), cancellationToken).ConfigureAwait(false);
+        }
 
         public override async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
             IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            await foreach (var update in this.InnerClient.GetStreamingResponseAsync(messages, this.ConfigureOptions(options), cancellationToken).ConfigureAwait(false))
+            var scope = this.CreateScope(s_currentScope.Value);
+            s_currentScope.Value = scope;
+            await foreach (var update in this.InnerClient.GetStreamingResponseAsync(messages, ConfigureOptions(options, scope), cancellationToken).ConfigureAwait(false))
             {
                 yield return update;
+
+                // Resume this request's scope after the consumer's execution context.
+                s_currentScope.Value = scope;
             }
         }
 
-        private ChatOptions ConfigureOptions(ChatOptions? options)
+        private MiddlewareScope CreateScope(MiddlewareScope? previous)
+        {
+            var runContext = CurrentRunContext;
+            // A nested agent run must not inherit the calling agent's callbacks.
+            return new(runContext, previous is not null && ReferenceEquals(previous.RunContext, runContext)
+                ? [.. previous.Middleware, this._middleware]
+                : [this._middleware]);
+        }
+
+        private static ChatOptions ConfigureOptions(ChatOptions? options, MiddlewareScope scope)
         {
             options = options?.Clone() ?? new();
             if (options.Tools is { } tools)
             {
-                options.Tools = new MiddlewareEnabledTools(tools, this._middlewareChain);
+                options.Tools = new MiddlewareEnabledTools(tools, scope.Middleware);
             }
 
             return options;
+        }
+
+        private sealed class MiddlewareScope(AgentRunContext? runContext, FunctionInvocationDelegatingAgent[] middleware)
+        {
+            internal AgentRunContext? RunContext { get; } = runContext;
+            internal FunctionInvocationDelegatingAgent[] Middleware { get; } = middleware;
         }
     }
 
