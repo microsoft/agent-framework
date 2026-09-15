@@ -16,6 +16,7 @@ from agent_framework import (
     Content,
     Message,
     WorkflowEvent,
+    WorkflowInvocationKwargs,
     WorkflowRunState,
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
@@ -322,6 +323,31 @@ async def test_agent_manager_receives_workflow_run_kwargs() -> None:
     for call in manager.seen_kwargs:
         assert call.get("function_invocation_kwargs") == {"user_id": "user-123"}
         assert call.get("client_kwargs") == {"trace_id": "trace-abc"}
+
+
+async def test_agent_manager_receives_resolved_global_and_specific_run_kwargs() -> None:
+    """The #8312 GroupChat path consumes collision-free state through the shared resolver."""
+    manager = KwargsRecordingManagerAgent()
+    worker = StubAgent("agent", "worker response")
+    workflow = GroupChatBuilder(participants=[worker], orchestrator_agent=manager).build()
+    invocation_kwargs = WorkflowInvocationKwargs(
+        global_kwargs={"shared": "G", "overridden": "global"},
+        executor_kwargs={"manager_agent": {"specific": "M", "overridden": "specific"}},
+    )
+
+    async for _ in workflow.run(
+        "coordinate task",
+        stream=True,
+        function_invocation_kwargs=invocation_kwargs,
+        client_kwargs=invocation_kwargs,
+    ):
+        pass
+
+    expected = {"shared": "G", "specific": "M", "overridden": "specific"}
+    assert manager.seen_kwargs
+    for call in manager.seen_kwargs:
+        assert call.get("function_invocation_kwargs") == expected
+        assert call.get("client_kwargs") == expected
 
 
 async def test_agent_manager_receives_no_run_kwargs_when_none_supplied() -> None:

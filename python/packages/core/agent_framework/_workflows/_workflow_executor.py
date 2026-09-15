@@ -634,5 +634,8 @@ class WorkflowExecutor(Executor):
 
         # Forward the response to the sub-workflow, which resumes and validates it against its own
         # pending requests, then process whatever the sub-workflow produces.
-        result = await self.workflow.run(responses={request_id: response})
+        result = await self.workflow.run(
+            responses={request_id: response},
+            tools=ctx.get_runtime_tools(),
+        )
         await self._process_workflow_result(result, ctx)

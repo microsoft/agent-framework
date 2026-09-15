@@ -279,7 +279,10 @@ class AGUIChatClient(
 
         Args:
             endpoint: The AG-UI server endpoint URL (e.g., "http://localhost:8888/")
-            http_client: Optional httpx.AsyncClient instance. If None, one will be created.
+            http_client: Optional httpx.AsyncClient instance. If None, creates a client that does not
+                persist response cookies. Supplied clients retain their cookie behavior and remain
+                caller-owned; scope cookie-based authentication to a single authenticated principal
+                rather than sharing it across users.
             timeout: Request timeout in seconds (default: 60.0)
             additional_properties: Additional properties to store
             middleware: Optional middleware to apply to the client.
@@ -297,7 +300,7 @@ class AGUIChatClient(
         )
 
     async def close(self) -> None:
-        """Close the HTTP client."""
+        """Close the internally created HTTP client, leaving supplied clients open."""
         await self._http_service.close()
 
     async def __aenter__(self) -> Self:

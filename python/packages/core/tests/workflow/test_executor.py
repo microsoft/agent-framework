@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from dataclasses import dataclass
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeVar
 
 import pytest
 from typing_extensions import Never
@@ -136,6 +136,39 @@ def test_executor_handlers_with_output_types():
     assert int_handler._handler_spec["name"] == "handle_integer"  # type: ignore
     assert int_handler._handler_spec["message_type"] is int  # type: ignore
     assert int_handler._handler_spec["output_types"] == [int]  # type: ignore
+
+
+def test_executor_literal_message_annotation():
+    """Test that a handler with a Literal message annotation routes by allowed values.
+
+    Literal annotations pass handler registration and workflow-build validation,
+    so delivery-time type matching (can_handle/_find_handler) must not raise
+    ``TypeError: typing.Literal cannot be used with isinstance()``.
+    """
+
+    class LiteralExecutor(Executor):
+        @handler
+        async def handle_choice(self, message: Literal["yes", "no"], ctx: WorkflowContext) -> None:  # type: ignore
+            pass
+
+    exec_instance = LiteralExecutor(id="literal")
+    assert exec_instance.can_handle(WorkflowMessage(data="yes", source_id="mock")) is True
+    assert exec_instance.can_handle(WorkflowMessage(data="no", source_id="mock")) is True
+    assert exec_instance.can_handle(WorkflowMessage(data="maybe", source_id="mock")) is False
+
+
+async def test_workflow_with_literal_message_annotation():
+    """Test that a workflow whose start handler uses a Literal annotation runs end to end."""
+
+    class LiteralStartExecutor(Executor):
+        @handler
+        async def handle_choice(self, message: Literal["yes", "no"], ctx: WorkflowContext[Never, str]) -> None:  # type: ignore
+            await ctx.yield_output(f"got:{message}")
+
+    start = LiteralStartExecutor(id="literal_start")
+    workflow = WorkflowBuilder(start_executor=start).build()
+    result = await workflow.run("yes")
+    assert result.get_outputs() == ["got:yes"]
 
 
 async def test_executor_invoked_event_contains_input_data():

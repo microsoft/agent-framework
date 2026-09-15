@@ -97,6 +97,23 @@ scroll pages without retaining the skipped prefix.
   Numeric range and mixed numeric membership operands are limited to
   `+/- (2**53-1)`; integer equality supports the full signed 64-bit range.
 
+## Running integration tests locally
+
+Start a disposable server using the Qdrant version pinned in CI, then run the
+integration suite from the `python/` directory:
+
+```bash
+docker run -d --rm --name af-qdrant-test -p 127.0.0.1:16333:6333 qdrant/qdrant:v1.16.2
+curl --fail --retry 20 --retry-delay 1 --retry-connrefused http://127.0.0.1:16333/readyz
+QDRANT_TEST_URL=http://127.0.0.1:16333 uv run --frozen --directory packages/qdrant poe test-integration -p no:pytest-retry
+docker stop af-qdrant-test
+```
+
+Disabling the retry plugin makes failures visible on the first attempt. To run
+only the concurrent-creation cases, append
+`-k concurrent_collection_creation_validates_winning_schema` to the test command.
+The fixtures create uniquely named collections and delete them after each test.
+
 ## Documentation
 
 - [Microsoft Agent Framework](https://learn.microsoft.com/agent-framework/)
