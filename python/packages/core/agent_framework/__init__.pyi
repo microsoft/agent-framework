@@ -334,6 +334,7 @@ from ._workflows._workflow_context import WorkflowContext
 from ._workflows._workflow_executor import SubWorkflowRequestMessage, SubWorkflowResponseMessage, WorkflowExecutor
 from .exceptions import (
     AgentFrameworkException,
+    FunctionCallInvalidatedException,
     MiddlewareException,
     UserInputRequiredException,
     WorkflowCheckpointException,
@@ -468,6 +469,7 @@ __all__ = [
     "FinalT",
     "FinishReason",
     "FinishReasonLiteral",
+    "FunctionCallInvalidatedException",
     "FunctionExecutor",
     "FunctionInvocationConfiguration",
     "FunctionInvocationContext",

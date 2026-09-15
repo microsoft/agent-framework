@@ -32,6 +32,7 @@ from ._telemetry import (
 )
 from .exceptions import (
     AgentFrameworkException,
+    FunctionCallInvalidatedException,
     MiddlewareException,
     UserInputRequiredException,
     WorkflowCheckpointException,
@@ -513,6 +514,7 @@ __all__ = [
     "FinalT",
     "FinishReason",
     "FinishReasonLiteral",
+    "FunctionCallInvalidatedException",
     "FunctionExecutor",
     "FunctionInvocationConfiguration",
     "FunctionInvocationContext",

@@ -82,6 +82,12 @@ class ChatClientException(AgentFrameworkException):
     pass
 
 
+class FunctionCallInvalidatedException(ChatClientException):
+    """A provider invalidated local function calls already present in response content."""
+
+    pass
+
+
 class ChatClientInvalidAuthException(ChatClientException):
     """An authentication error occurred in a chat client."""
 
