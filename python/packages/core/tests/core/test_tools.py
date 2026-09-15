@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 import asyncio
+import contextvars
 import threading
 from typing import Annotated, Any, Literal, get_args, get_origin
 from unittest.mock import Mock
@@ -20,6 +21,7 @@ from agent_framework._tools import (
     _auto_invoke_function,
     _parse_annotation,
     _parse_inputs,
+    _try_execute_function_call_groups,
     normalize_function_invocation_configuration,
 )
 from agent_framework.observability import OtelAttr
@@ -1640,5 +1642,127 @@ def test_skip_parsing_is_singleton() -> None:
     assert _SkipParsingSentinel() is SKIP_PARSING
     assert repr(SKIP_PARSING) == "SKIP_PARSING"
 
+
+# endregion
+
+
+async def test_try_execute_function_call_groups_sequential_config():
+    """When allow_concurrent_invocation is False, ALL tools run one-by-one."""
+    execution_order: list[str] = []
+
+    @tool()
+    async def tool_a():
+        execution_order.append("a_start")
+        await asyncio.sleep(0.03)
+        execution_order.append("a_end")
+        return "a"
+
+    @tool()
+    async def tool_b():
+        execution_order.append("b_start")
+        await asyncio.sleep(0.01)
+        execution_order.append("b_end")
+        return "b"
+
+    call_a = Content.from_function_call(call_id="1", name="tool_a", arguments="{}")
+    call_b = Content.from_function_call(call_id="2", name="tool_b", arguments="{}")
+    config = normalize_function_invocation_configuration({"allow_concurrent_invocation": False})
+    results, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[call_a, call_b],
+        tools=[tool_a, tool_b],
+        config=config,
+    )
+    assert not should_terminate
+    assert execution_order == ["a_start", "a_end", "b_start", "b_end"]
+
+
+async def test_sequential_execution_isolates_contextvars() -> None:
+    """ContextVar mutations in one tool should not leak to subsequent tools in sequential mode.
+
+    Regression test requested by reviewer: ensures that `asyncio.create_task` is used
+    in the sequential execution path to isolate ContextVar mutations between tool calls.
+    """
+    test_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("test_var", default=None)
+
+    @tool()
+    async def tool_a() -> str:
+        test_var.set("polluted_by_a")
+        return "a"
+
+    @tool()
+    async def tool_b() -> str:
+        return test_var.get() or "None"
+
+    call_a = Content.from_function_call(call_id="1", name="tool_a", arguments="{}")
+    call_b = Content.from_function_call(call_id="2", name="tool_b", arguments="{}")
+
+    config = normalize_function_invocation_configuration({"allow_concurrent_invocation": False})
+    results, should_terminate = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[call_a, call_b],
+        tools=[tool_a, tool_b],
+        config=config,
+    )
+
+    assert not should_terminate
+    assert results[1][0].result == "None"
+
+async def test_resolve_approval_responses_hold_later_approval_calls_in_sequential_mode() -> None:
+    """ If a batch has [write(0), read(1), notify(2)] and `write` is pending approval
+    while `notify` is approved, `notify` must not execute until `write` is resolved.
+    """
+
+    from agent_framework._sessions import AgentSession
+    from agent_framework._types import Message
+    from agent_framework._tools import (
+        _resolve_approval_responses,
+        _FunctionExecutionBatch,
+        _TOOL_APPROVAL_STATE_KEY,
+        _PENDING_APPROVAL_REQUESTS_KEY,
+    )   
+
+    session = AgentSession()
+    write_call = Content.from_function_call(call_id="1", name="write_file", arguments="{}")
+    write_call.id = "1"
+    write_approval = Content.from_function_approval_request(id="1", function_call=write_call)
+    write_approval.additional_properties = {"original_index": 0, "batch_id": "batch_1"}
+
+    notify_call = Content.from_function_call(call_id="3", name="notify_user", arguments="{}")
+    notify_call.id = "3"
+    notify_approval = Content.from_function_approval_request(id="3", function_call=notify_call)
+    notify_approval.additional_properties = {"original_index": 2, "batch_id": "batch_1"}
+
+    session.state[_TOOL_APPROVAL_STATE_KEY] = {
+        _PENDING_APPROVAL_REQUESTS_KEY: [write_approval.to_dict(), notify_approval.to_dict()]
+    }
+
+    notify_response = Content.from_function_approval_response(
+        approved=True,
+        id="3",
+        function_call=notify_call
+    )
+    notify_response.additional_properties = {"original_index": 2, "batch_id": "batch_1"}
+
+    prepared_messages = [Message(role="user", contents=[notify_response])]
+
+
+    executed_calls: list[Content] = []
+    async def mock_execute(*, function_calls, options):
+        executed_calls.extend(function_calls)
+        return _FunctionExecutionBatch(result_groups=[])
+
+    result = await _resolve_approval_responses(
+        prepared_messages=prepared_messages,
+        options={},
+        errors_in_a_row=0,
+        max_errors=3,
+        execute_function_calls=mock_execute,
+        invocation_session=session,
+        allow_concurrent_invocation=False
+    )
+
+    assert len(executed_calls) == 0, "notify_user executed before write_file was approved"
+    assert result.action == "return", "should return to wait for earlier approvals"
 
 # endregion
