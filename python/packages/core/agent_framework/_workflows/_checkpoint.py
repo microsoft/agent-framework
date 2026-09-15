@@ -16,7 +16,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, TypeAlias
 
 from ..exceptions import WorkflowCheckpointException
 
@@ -521,6 +521,11 @@ class FileCheckpointStorage:
         )
     """
 
+    _DELETE_LOCK_STRIPE_COUNT: ClassVar[int] = 64
+    _DELETE_LOCKS: ClassVar[tuple[threading.Lock, ...]] = tuple(
+        threading.Lock() for _ in range(_DELETE_LOCK_STRIPE_COUNT)
+    )
+
     def __init__(
         self,
         storage_path: str | Path,
@@ -560,6 +565,11 @@ class FileCheckpointStorage:
         if not file_path.is_relative_to(self.storage_path.resolve()):
             raise WorkflowCheckpointException(f"Invalid checkpoint ID: {checkpoint_id}")
         return file_path
+
+    @classmethod
+    def _delete_lock(cls, file_path: Path) -> threading.Lock:
+        """Return the process-local deletion lock for a checkpoint file."""
+        return cls._DELETE_LOCKS[hash(file_path) % cls._DELETE_LOCK_STRIPE_COUNT]
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         """Save a checkpoint and return its ID.
@@ -814,13 +824,16 @@ class FileCheckpointStorage:
             True if the checkpoint was successfully deleted, False if no checkpoint with the given ID exists.
         """
         file_path = self._validate_file_path(checkpoint_id)
+        file_lock = self._delete_lock(file_path)
 
         def _delete() -> bool:
-            if file_path.exists():
-                file_path.unlink()
-                logger.info(f"Deleted checkpoint {checkpoint_id} from {file_path}")
-                return True
-            return False
+            with file_lock:
+                try:
+                    file_path.unlink()
+                except FileNotFoundError:
+                    return False
+            logger.info(f"Deleted checkpoint {checkpoint_id} from {file_path}")
+            return True
 
         return await asyncio.to_thread(_delete)
 

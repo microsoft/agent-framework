@@ -18,6 +18,7 @@ import pytest
 from agent_framework import (
     AgentResponseUpdate,
     CheckpointStorage,
+    Content,
     ExperimentalFeature,
     FunctionalWorkflow,
     FunctionalWorkflowAgent,
@@ -331,6 +332,44 @@ class TestHITL:
         outputs = result2.get_outputs()
         assert outputs == ["Final: Looks great!"]
         assert result2.get_final_state() == WorkflowRunState.IDLE
+
+    async def test_request_info_resume_rejects_response_type_mismatch(self):
+        @built_workflow
+        async def typed_wf(data: str, ctx: RunContext) -> str:
+            answer = await ctx.request_info("number", response_type=int, request_id="typed")
+            return f"{answer}:{type(answer).__name__}"
+
+        await typed_wf.run("input")
+
+        with pytest.raises(ValueError, match="Response type mismatch for request ID typed"):
+            await typed_wf.run(responses={"typed": "not-an-int"})
+
+    async def test_request_info_resume_coerces_json_like_response(self):
+        @dataclass
+        class Decision:
+            approved: bool
+
+        @built_workflow
+        async def typed_wf(data: str, ctx: RunContext) -> str:
+            decision = await ctx.request_info("decision", response_type=Decision, request_id="decision")
+            return f"{decision.approved}:{type(decision).__name__}"
+
+        await typed_wf.run("input")
+        result = await typed_wf.run(responses={"decision": {"approved": True}})
+
+        assert result.get_outputs() == ["True:Decision"]
+
+    async def test_request_info_resume_converts_text_to_content(self):
+        @built_workflow
+        async def content_wf(data: str, ctx: RunContext) -> str:
+            answer = await ctx.request_info("message", response_type=Content, request_id="content")
+            assert isinstance(answer, Content)
+            return f"{answer.type}:{answer.text}"
+
+        await content_wf.run("input")
+        result = await content_wf.run(responses={"content": "hello"})
+
+        assert result.get_outputs() == ["text:hello"]
 
     async def test_fresh_message_while_pending_requests_warns(self, caplog: pytest.LogCaptureFixture) -> None:
         """A fresh message while request_info events are pending is allowed but logs a warning."""
@@ -1469,6 +1508,68 @@ def caplog_context(target_logger: logging.Logger) -> Iterator[list[str]]:
 
 class TestHITLInStepWithCaching:
     """Regression tests: request_info inside @step combined with caching and bypass."""
+
+    def test_replay_state_helpers_restore_and_clear_the_full_bundle(self):
+        """Replay helpers keep message, caches, state, and pending IDs together."""
+
+        @built_workflow
+        async def wf(data: str) -> str:
+            return data
+
+        source_ctx = _RunContext("wf")
+        source_ctx._step_cache = {("seed_state", 0): "seeded"}
+        source_ctx._step_cache_auto_request_info_counts = {("seed_state", 0): 1}
+        source_ctx._state = {"marker": "ok"}
+        source_ctx._pending_requests = {
+            "r1": WorkflowEvent.request_info(
+                request_id="r1",
+                source_executor_id="wf",
+                request_data="question",
+                response_type=str,
+            )
+        }
+
+        wf._capture_replay_state(source_ctx, "input")
+
+        restored_ctx = _RunContext("wf")
+        assert wf._restore_replay_state(restored_ctx) == "input"
+        assert restored_ctx._step_cache == source_ctx._step_cache
+        assert restored_ctx._step_cache_auto_request_info_counts == source_ctx._step_cache_auto_request_info_counts
+        assert restored_ctx._state == source_ctx._state
+        assert wf._last_pending_request_ids == {"r1"}
+
+        wf._clear_replay_state()
+
+        assert wf._last_message is None
+        assert wf._last_step_cache == {}
+        assert wf._last_step_cache_auto_request_info_counts == {}
+        assert wf._last_state == {}
+        assert wf._last_pending_request_ids == set()
+
+    async def test_response_only_resume_restores_state_from_cached_step(self):
+        """Response-only HITL resumes must preserve state written before a cached step."""
+        seed_calls = 0
+
+        @step
+        async def seed_state(ctx: RunContext) -> str:
+            nonlocal seed_calls
+            seed_calls += 1
+            ctx.set_state("marker", "ok")
+            return "seeded"
+
+        @built_workflow
+        async def wf(data: str, ctx: RunContext) -> str:
+            value = await seed_state()
+            answer = await ctx.request_info("question", response_type=str, request_id="r1")
+            return f"{ctx.get_state('marker', 'MISSING')}:{value}:{answer}"
+
+        result1 = await wf.run("input")
+        assert result1.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+
+        result2 = await wf.run(responses={"r1": "ok"})
+
+        assert seed_calls == 1
+        assert result2.get_outputs() == ["ok:seeded:ok"]
 
     async def test_preceding_step_bypassed_on_hitl_resume(self):
         """When a step after a completed step calls request_info and interrupts,

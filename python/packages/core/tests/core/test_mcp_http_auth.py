@@ -6,7 +6,8 @@ import asyncio
 import contextlib
 import json
 import sys
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from contextvars import ContextVar
 from typing import Any, Literal, TypeAlias
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -17,10 +18,11 @@ from agent_framework import FunctionInvocationContext, MCPStreamableHTTPTool
 from agent_framework.exceptions import ToolException, ToolExecutionException
 
 MCPHTTPServer: TypeAlias = tuple[httpx.AsyncClient, list[httpx.Request], dict[str, list[str]]]
+MCPHTTPClientFactory: TypeAlias = tuple[Callable[..., httpx.AsyncClient], list[httpx.Request], dict[str, list[str]]]
 
 
 @pytest.fixture
-async def mcp_http_server() -> AsyncIterator[MCPHTTPServer]:
+async def mcp_http_client_factory() -> AsyncIterator[MCPHTTPClientFactory]:
     requests: list[httpx.Request] = []
     writes: dict[str, list[str]] = {"token-a": [], "token-A": [], "token-b": [], "token-c": []}
 
@@ -95,9 +97,34 @@ async def mcp_http_server() -> AsyncIterator[MCPHTTPServer]:
             return httpx.Response(202)
         return httpx.Response(200, headers=headers, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handle), event_hooks={"request": [record_request]}
-    ) as client:
+    async_client = httpx.AsyncClient
+    clients: list[httpx.AsyncClient] = []
+
+    def create_client(*, response_cookies: dict[str, str] | None = None, **kwargs: Any) -> httpx.AsyncClient:
+        async def handle_with_cookies(request: httpx.Request) -> httpx.Response:
+            response = await handle(request)
+            if response_cookies and request.method == "POST":
+                method = json.loads(request.content).get("method")
+                if method in response_cookies:
+                    response.headers["Set-Cookie"] = response_cookies[method]
+            return response
+
+        client = async_client(transport=httpx.MockTransport(handle_with_cookies), **kwargs)
+        client.event_hooks["request"].insert(0, record_request)
+        clients.append(client)
+        return client
+
+    try:
+        yield create_client, requests, writes
+    finally:
+        for client in clients:
+            await client.aclose()
+
+
+@pytest.fixture
+async def mcp_http_server(mcp_http_client_factory: MCPHTTPClientFactory) -> AsyncIterator[MCPHTTPServer]:
+    create_client, requests, writes = mcp_http_client_factory
+    async with create_client() as client:
         yield client, requests, writes
 
 
@@ -125,6 +152,38 @@ def _requests_for_method(requests: list[httpx.Request], method: str) -> list[htt
         for request in requests
         if request.method == "POST" and json.loads(request.content).get("method") == method
     ]
+
+
+async def test_owned_client_does_not_replay_response_cookie_across_principals(
+    mcp_http_client_factory: MCPHTTPClientFactory,
+) -> None:
+    create_client, requests, _ = mcp_http_client_factory
+    principal = ContextVar("principal", default="token-a")
+    response_cookies = {"tools/call": "regression_session=token-a; Path=/; Secure; HttpOnly"}
+
+    def create_owned_client(**kwargs: Any) -> httpx.AsyncClient:
+        return create_client(response_cookies=response_cookies, **kwargs)
+
+    tool = MCPStreamableHTTPTool(
+        name="owned",
+        url="https://mcp.example/mcp",
+        load_prompts=False,
+        header_provider=lambda _: {"Authorization": principal.get()},
+    )
+    with patch("httpx.AsyncClient", side_effect=create_owned_client):
+        async with tool:
+            await tool.call_tool("record")
+            response_cookies.clear()
+            token = principal.set("token-b")
+            try:
+                await tool.call_tool("record")
+            finally:
+                principal.reset(token)
+
+    calls = _calls(requests)
+    assert [request.headers["Authorization"] for request in calls] == ["token-a", "token-b"]
+    assert "Cookie" not in calls[0].headers
+    assert "regression_session=token-a" not in calls[1].headers.get("Cookie", "")
 
 
 @pytest.mark.parametrize("principals", [("token-a", "token-b"), ("token-b", "token-a")])
@@ -240,20 +299,50 @@ async def test_transport_failure_cleans_up_hooks_and_owned_client(
         await tool.close()
 
 
-async def test_owned_client_is_closed_after_successful_session(mcp_http_server: MCPHTTPServer) -> None:
-    client, _, _ = mcp_http_server
-    original_hooks = list(client.event_hooks["request"])
+@pytest.mark.parametrize("header_source", ["none", "static", "provider"])
+async def test_owned_client_is_closed_after_successful_session(
+    mcp_http_client_factory: MCPHTTPClientFactory, header_source: str
+) -> None:
+    create_client, requests, _ = mcp_http_client_factory
+    clients: list[httpx.AsyncClient] = []
+
+    def create_owned_client(**kwargs: Any) -> httpx.AsyncClient:
+        client = create_client(
+            response_cookies={"tools/call": "implicit_session=previous; Path=/; Secure; HttpOnly"},
+            **kwargs,
+        )
+        client.headers["Authorization"] = "token-a"
+        clients.append(client)
+        return client
+
     tool = MCPStreamableHTTPTool(
         name="owned",
         url="https://mcp.example/mcp",
         load_prompts=False,
-        header_provider=lambda _: {"Authorization": "token-a"},
+        static_headers={"Cookie": "explicit_session=caller"} if header_source == "static" else None,
+        header_provider=(lambda _: {"Authorization": "token-a", "Cookie": "explicit_session=caller"})
+        if header_source == "provider"
+        else None,
     )
-    with patch("httpx.AsyncClient", return_value=client):
+    with patch("httpx.AsyncClient", side_effect=create_owned_client):
         async with tool:
             await tool.call_tool("record")
-    assert client.is_closed
-    assert client.event_hooks["request"] == original_hooks
+            await tool.call_tool("record")
+            assert len(clients) == 1
+            assert tool._httpx_client is clients[0]
+            await tool.connect(reset=True)
+            assert len(clients) == 2
+            assert clients[0].is_closed
+            await tool.call_tool("record")
+    assert len(_calls(requests)) == 3
+    assert all(
+        request.headers.get("Cookie") == ("explicit_session=caller" if header_source != "none" else None)
+        for request in _calls(requests)
+    )
+    assert all(not client.cookies for client in clients)
+    assert all(client.is_closed for client in clients)
+    assert all(len(client.event_hooks["request"]) == 1 for client in clients)
+    assert tool._httpx_client is None
 
 
 async def test_connecting_another_tool_during_a_call_does_not_capture_its_headers(
