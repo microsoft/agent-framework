@@ -493,6 +493,12 @@ ToolAnnotations authoritative: `readOnlyHint` and `openWorldHint` remain restric
 secure_mcp = SecureMCPToolProxy(url="https://trusted.example.com/mcp/", trust_server_ifc=True)
 ```
 
+`annotation_overrides` supplies explicit local policy keyed by remote MCP tool name. It applies only to the
+`MCPTool` passed to `apply_mcp_security_labels`, or the connection wrapped by `SecureMCPToolProxy`; the mapping
+itself is not bound to a server identity. Reusing a mapping for another connection applies its overrides to
+matching tool names on that connection. Independently authorize the policy for each server's tools before
+reusing it; a shared tool name does not establish shared trust.
+
 #### Operational checklist
 
 1. Prefer `async with SecureMCPToolProxy(...)` so connection and label application happen together.
