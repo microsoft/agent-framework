@@ -2728,12 +2728,34 @@ def test_file_checkpoint_storage_shutdown_before_the_write_starts_does_not_hang(
 
     Deliberately not an async test: it has to cancel every task the way shutdown does.
     """
+    import threading
+
     pending: list[Any] = []
 
     from agent_framework._workflows import _checkpoint as checkpoint_module
 
     canonical = (tmp_path / "shared-id.json").resolve()
     outcome: dict[str, object] = {}
+
+    # Hold the submitted write at its first syscall. Without this the count below races the
+    # filesystem: `await asyncio.sleep(0)` drains every ready callback, so on a fast tmpfs the
+    # executor write can finish and resolve the shield inside that same batch, leaving the save
+    # already done and `all_tasks()` empty. CI saw `found 0 tasks` that way. Gating keeps the save
+    # deterministically suspended while still being the "write submitted but not started" case.
+    write_reached = threading.Event()
+    release_write = threading.Event()
+    real_open = checkpoint_module.os.open
+
+    def gated_open(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202 - test shim
+        # `checkpoint_module.os` is the real `os` module, so this patch is process-wide.
+        # Gate only this save's temp file: blocking every `os.open` would stall pytest's own
+        # I/O and coverage writes on `release_write` and deadlock the run.
+        if str(path).endswith(".tmp") and ".maf-ckpt-" in str(path):
+            write_reached.set()
+            assert release_write.wait(timeout=25)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(checkpoint_module.os, "open", gated_open)
 
     async def main() -> None:
         storage = FileCheckpointStorage(str(tmp_path))
@@ -2750,10 +2772,10 @@ def test_file_checkpoint_storage_shutdown_before_the_write_starts_does_not_hang(
                 )
             )
         )
-        # One tick, so the save coroutine actually runs and submits its write. Without
-        # it the write has not been created yet and cancelling only the save takes the
-        # clean cancelled-before-submission path, which was never the broken case.
-        await asyncio.sleep(0)
+        # Wait for the write to actually reach the executor rather than assuming one tick did
+        # it. Cancelling before submission takes the clean cancelled-before-submission path,
+        # which was never the broken case.
+        assert await asyncio.to_thread(write_reached.wait, 25)
         victims = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
         outcome["task_count"] = len(victims)
 
@@ -2762,12 +2784,28 @@ def test_file_checkpoint_storage_shutdown_before_the_write_starts_does_not_hang(
         # signal nothing will ever resolve -- which hangs `asyncio.run`'s own shutdown,
         # outside any `wait_for` this test could wrap around it. Failing here keeps the
         # regression a clean assertion rather than a hung CI job.
-        assert len(victims) == 1, (
-            f"the write must not be a task, or loop shutdown cancels it: found {len(victims)} tasks"
-        )
+        # Two distinct failures, kept apart so the message identifies which one happened: an
+        # empty list means the gate did not hold and the save finished early, which is a
+        # problem with this test rather than with the code; two tasks means the write is a
+        # task again, which is the regression.
+        try:
+            assert victims, "the save should still be in flight while the write is held at os.open"
+            assert len(victims) == 1, (
+                f"the write must not be a task, or loop shutdown cancels it: found {len(victims)} tasks"
+            )
+        except AssertionError:
+            # Let the held worker go before propagating, or a failing assertion stalls for the
+            # gate's full timeout before the real error surfaces.
+            release_write.set()
+            raise
 
         for task in victims:
             task.cancel()
+        # Let the held write proceed only after the cancellation is delivered, so the drain
+        # path is the one under test. Released here rather than in a `finally` because the
+        # worker must outlive this coroutine for the release-on-the-worker-thread guarantee
+        # to mean anything.
+        release_write.set()
         await asyncio.wait_for(asyncio.gather(*victims, return_exceptions=True), timeout=10)
 
     asyncio.run(main())
