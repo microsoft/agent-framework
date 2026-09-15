@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 
+import asyncio
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Generic, Protocol, TypeVar
+from typing import ClassVar, Generic, Protocol, TypeVar
 
 from agent_framework import (
     AgentSession,
@@ -295,37 +296,91 @@ class FunctionApprovalStoreProvider(StoreProvider[FunctionApprovalStore]):
 # region Agent session persistence
 
 
+class _SessionStoreLoopCache:
+    """Per-event-loop cache of backing ``FoundryStateStore`` instances, by scope.
+
+    Anchored on the event loop (see ``FoundryAgentSessionStore._loop_cache``) so
+    that it -- along with the stores' pooled pipelines and credentials -- is
+    reclaimed together with the loop, rather than surviving in a process-global
+    map after the loop closes.
+    """
+
+    __slots__ = ("lock", "stores")
+
+    def __init__(self) -> None:
+        self.stores: dict[str, FoundryStateStore] = {}
+        self.lock = asyncio.Lock()
+
+
 class FoundryAgentSessionStore(SessionStore):
     """Agent session store backed by the `FoundryStateStore`."""
 
     DEFAULT_ROOT_SCOPE = "agent_sessions"
 
+    # Name of the attribute under which each event loop carries its own
+    # ``_SessionStoreLoopCache`` (see ``_loop_cache``).
+    _LOOP_CACHE_ATTR: ClassVar[str] = "_agent_framework_foundry_session_store_cache"
+
     def __init__(self, platform_context: FoundryAgentRequestContext) -> None:
         self.platform_context = platform_context
 
+    @classmethod
+    def _loop_cache(cls, loop: "asyncio.AbstractEventLoop") -> "_SessionStoreLoopCache | None":
+        # Store the cache ON the loop rather than in a process-global map keyed
+        # by the loop. A backing ``FoundryStateStore`` (and the ``asyncio.Lock``
+        # guarding its creation) strongly references the loop it was bound to, so
+        # holding either in a module-level ``WeakKeyDictionary`` would keep that
+        # "weak" key -- and the store's open pipeline + credential -- alive
+        # forever, leaking one entry per closed loop (e.g. every ``asyncio.run``).
+        # Anchored to the loop, the cache is collected together with the loop.
+        cache: _SessionStoreLoopCache | None = getattr(loop, cls._LOOP_CACHE_ATTR, None)
+        if cache is not None:
+            return cache
+        cache = _SessionStoreLoopCache()
+        try:
+            setattr(loop, cls._LOOP_CACHE_ATTR, cache)
+        except (AttributeError, TypeError):
+            # A C-level loop that forbids attribute assignment: skip caching
+            # rather than leak. Correctness is unaffected, only the reuse.
+            return None
+        return cache
+
     async def _get_store(self) -> FoundryStateStore:
-        return await FoundryStateStore.get_or_create(
-            f"{self.DEFAULT_ROOT_SCOPE}",
-            user_isolation=True,
-        )
+        loop = asyncio.get_running_loop()
+        scope = self.DEFAULT_ROOT_SCOPE
+        cache = self._loop_cache(loop)
+        if cache is None:
+            # Loop cannot hold the cache; resolve without reuse (and no leak).
+            return await FoundryStateStore.get_or_create(scope, user_isolation=True)
+        # Fast path: already resolved on this loop -> no lock, no round-trip.
+        store = cache.stores.get(scope)
+        if store is not None:
+            return store
+        async with cache.lock:
+            store = cache.stores.get(scope)
+            if store is None:
+                store = await FoundryStateStore.get_or_create(scope, user_isolation=True)
+                cache.stores[scope] = store
+        return store
 
     async def get(self, session_id: str) -> AgentSession | None:
+        # The shared store is intentionally NOT entered as an ``async with``
+        # context manager: its ``__aexit__`` calls ``aclose()``, which would
+        # close the pooled pipeline + owned credential and defeat the cache. It
+        # stays open for the life of its event loop and is reclaimed with it.
         store = await self._get_store()
-        async with store:
-            item = await store.get_item(session_id, call_id=self.platform_context.call_id)
+        item = await store.get_item(session_id, call_id=self.platform_context.call_id)
         if item is None:
             return None
         return AgentSession.from_dict(item.value)
 
     async def set(self, session_id: str, session: AgentSession) -> None:
         store = await self._get_store()
-        async with store:
-            await store.set_item(session_id, session.to_dict(), call_id=self.platform_context.call_id)
+        await store.set_item(session_id, session.to_dict(), call_id=self.platform_context.call_id)
 
     async def delete(self, session_id: str) -> None:
         store = await self._get_store()
-        async with store:
-            await store.delete_item(session_id, call_id=self.platform_context.call_id)
+        await store.delete_item(session_id, call_id=self.platform_context.call_id)
 
 
 class AgentSessionStoreProvider(StoreProvider[SessionStore]):
