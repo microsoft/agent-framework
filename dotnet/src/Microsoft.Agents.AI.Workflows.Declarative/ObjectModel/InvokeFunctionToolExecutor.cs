@@ -125,6 +125,12 @@ internal sealed class InvokeFunctionToolExecutor(
     {
         bool autoSend = this.GetAutoSendValue();
         string? conversationId = this.GetConversationId();
+        HashSet<string> rejectedApprovalResultCallIds = response.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<FunctionResultContent>()
+            .Where(r => this._approvalSnapshots.ContainsKey(r.CallId))
+            .Select(r => r.CallId)
+            .ToHashSet(StringComparer.Ordinal);
 
         // Match the inbound result by its per-invocation call id.
         FunctionResultContent? matchingResult = response.Messages
@@ -209,7 +215,10 @@ internal sealed class InvokeFunctionToolExecutor(
         // Store messages if output path is configured
         if (this.Model.Output?.Messages is not null)
         {
-            await this.AssignAsync(this.Model.Output.Messages?.Path, response.Messages.ToFormula(), context).ConfigureAwait(false);
+            await this.AssignAsync(
+                this.Model.Output.Messages?.Path,
+                this.GetSideEffectMessages(response.Messages, rejectedApprovalResultCallIds).ToFormula(),
+                context).ConfigureAwait(false);
         }
 
         // Add messages to conversation if conversationId is provided
@@ -218,7 +227,7 @@ internal sealed class InvokeFunctionToolExecutor(
         // actual AI-generated tool calls and would be rejected by the API.
         if (conversationId is not null)
         {
-            foreach (ChatMessage message in TransformConversationMessages(response.Messages))
+            foreach (ChatMessage message in TransformConversationMessages(this.GetSideEffectMessages(response.Messages, rejectedApprovalResultCallIds)))
             {
                 await agentProvider.CreateMessageAsync(conversationId, message, cancellationToken).ConfigureAwait(false);
             }
@@ -226,6 +235,16 @@ internal sealed class InvokeFunctionToolExecutor(
 
         // Completes the action after processing the function result.
         await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
+    }
+
+    private IEnumerable<ChatMessage> GetSideEffectMessages(IEnumerable<ChatMessage> messages, HashSet<string> rejectedApprovalResultCallIds)
+    {
+        if (rejectedApprovalResultCallIds.Count == 0)
+        {
+            return messages;
+        }
+
+        return FilterRejectedApprovalResults(messages, rejectedApprovalResultCallIds);
     }
 
     /// <inheritdoc/>
@@ -338,6 +357,32 @@ internal sealed class InvokeFunctionToolExecutor(
             {
                 // Pass through messages without function content
                 yield return message;
+            }
+        }
+    }
+
+    private static IEnumerable<ChatMessage> FilterRejectedApprovalResults(IEnumerable<ChatMessage> messages, HashSet<string> rejectedApprovalResultCallIds)
+    {
+        foreach (ChatMessage message in messages)
+        {
+            List<AIContent> contents =
+                [.. message.Contents.Where(c => c is not FunctionResultContent functionResult || !rejectedApprovalResultCallIds.Contains(functionResult.CallId))];
+            if (contents.Count == message.Contents.Count)
+            {
+                yield return message;
+            }
+            else if (contents.Count > 0)
+            {
+                yield return new ChatMessage
+                {
+                    Role = message.Role,
+                    AuthorName = message.AuthorName,
+                    Contents = contents,
+                    MessageId = message.MessageId,
+                    CreatedAt = message.CreatedAt,
+                    RawRepresentation = message.RawRepresentation,
+                    AdditionalProperties = message.AdditionalProperties,
+                };
             }
         }
     }
