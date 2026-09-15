@@ -97,7 +97,6 @@ class MCPSpecificApproval(TypedDict, total=False):
     never_require_approval: Collection[str] | None
 
 
-
 MCPToolResultContentMode = Literal[
     "structured_first",
     "content_first",
@@ -986,8 +985,7 @@ class MCPTool:
         }
         if tool_result_content not in allowed_modes:
             raise ValueError(
-                f"tool_result_content must be one of {sorted(allowed_modes)}, "
-                f"got {tool_result_content!r}."
+                f"tool_result_content must be one of {sorted(allowed_modes)}, got {tool_result_content!r}."
             )
         self.name = name
         self.description = description or ""
