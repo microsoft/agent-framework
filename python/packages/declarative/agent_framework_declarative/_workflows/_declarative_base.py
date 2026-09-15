@@ -31,7 +31,7 @@ import os
 import re
 import sys
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal as _Decimal
 from enum import Enum
@@ -65,6 +65,73 @@ _ENV_REFERENCE_RE = re.compile(r"\bEnv\.([A-Za-z_][A-Za-z0-9_]*)")
 
 # Allowed identifier shape for object-attribute steps in declarative state paths
 _SAFE_PATH_SEGMENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+
+
+def _skip_powerfx_opaque_token(formula: str, start: int) -> int:
+    """Return the end of an ordinary quoted token or comment, or start if neither."""
+    quote = formula[start]
+    if quote in ('"', "'"):
+        pos = start + 1
+        while pos < len(formula):
+            if formula[pos] == quote:
+                if pos + 1 < len(formula) and formula[pos + 1] == quote:
+                    pos += 2
+                    continue
+                return pos + 1
+            pos += 1
+        return pos
+    if formula.startswith("//", start):
+        pos = start + 2
+        while pos < len(formula) and formula[pos] not in "\r\n":
+            pos += 1
+        return pos
+    if formula.startswith("/*", start):
+        end = formula.find("*/", start + 2)
+        return len(formula) if end == -1 else end + 2
+    return start
+
+
+def _iter_powerfx_expression_indices(formula: str) -> Iterator[int]:
+    """Yield code positions, excluding literals/comments but including interpolation expressions."""
+    # None denotes interpolated text; integers track record braces in expression sections.
+    scopes: list[int | None] = [0]
+    cursor = 0
+    while cursor < len(formula):
+        depth = scopes[-1]
+        char = formula[cursor]
+        if depth is None:
+            if formula.startswith(('""', "{{", "}}"), cursor):
+                cursor += 2
+                continue
+            if char == "{":
+                scopes.append(0)
+            elif char == '"':
+                scopes.pop()
+            cursor += 1
+            continue
+
+        if formula.startswith('$"', cursor):
+            scopes.append(None)
+            cursor += 2
+            continue
+
+        token_end = _skip_powerfx_opaque_token(formula, cursor)
+        if token_end != cursor:
+            cursor = token_end
+            continue
+
+        if char == "{":
+            scopes[-1] = depth + 1
+        elif char == "}":
+            if depth > 0:
+                scopes[-1] = depth - 1
+            elif len(scopes) > 1:
+                scopes.pop()
+                cursor += 1
+                continue
+
+        yield cursor
+        cursor += 1
 
 
 @dataclass(frozen=True)
@@ -667,11 +734,11 @@ class DeclarativeWorkflowState:
         When they appear nested inside other functions (e.g., Upper(MessageText(...))),
         we need to evaluate them first and replace with the result.
 
-        For long strings (>500 chars), the result is stored in a temporary state variable
-        to avoid exceeding PowerFx's 1000 character expression limit. This is a limitation
-        of the Python PowerFx wrapper (powerfx package), which doesn't expose the
-        MaximumExpressionLength configuration that the .NET PowerFxConfig provides.
-        The .NET implementation defaults to 10,000 characters, while Python defaults to 1,000.
+        Results are stored in temporary state variables so untrusted message text is
+        passed to PowerFx as data rather than inserted into formula source.
+        Temporary names avoid existing Local keys and references in the original formula.
+        Literal text, quoted identifiers, and comments are left untouched; expression
+        sections inside PowerFx interpolated strings are preprocessed as code.
 
         Args:
             formula: The PowerFx formula to pre-process
@@ -684,90 +751,53 @@ class DeclarativeWorkflowState:
         Returns:
             The rewritten formula.
         """
-        import re
-
-        # Threshold for storing in state vs embedding as literal.
-        # The Python PowerFx wrapper defaults to a 1000 char expression limit (vs 10,000 in .NET).
-        # We use 500 to leave room for the rest of the expression around the replaced value.
-        MAX_INLINE_LENGTH = 500
-
         temp_var_counter = 0
+        reserved_names = {name.casefold() for name in self.get_state_data().get("Local", {})}
+        # Reserve formula references too, so previously undefined names stay undefined.
+        folded_formula = formula.casefold()
+        function_name = "MessageText"
+        call_prefix = f"{function_name}("
+        result: list[str] = []
+        copied_until = 0
+        positions = _iter_powerfx_expression_indices(formula)
 
-        # Custom functions that need pre-processing: (regex pattern, handler)
-        custom_functions = [
-            (r"MessageText\(", self._eval_and_replace_message_text),
-        ]
+        for cursor in positions:
+            if not formula.startswith(call_prefix, cursor):
+                continue
 
-        for pattern, handler in custom_functions:
-            # Find all occurrences of the custom function
+            paren_start = cursor + len(function_name)
+            depth = 1
+            for pos in positions:
+                if pos <= paren_start:
+                    continue
+                char = formula[pos]
+                if char == "(":
+                    depth += 1
+                elif char == ")":
+                    depth -= 1
+                if depth == 0:
+                    break
+            else:
+                break
+
+            inner_expr = formula[paren_start + 1 : pos]
+            replacement = self._eval_and_replace_message_text(inner_expr)
             while True:
-                match = re.search(pattern, formula)
-                if not match:
+                temp_var_name = f"_TempMessageText{temp_var_counter}"
+                temp_var_counter += 1
+                folded_name = temp_var_name.casefold()
+                if folded_name not in reserved_names and folded_name not in folded_formula:
                     break
+            temp_var_path = f"Local.{temp_var_name}"
+            temp_writes.append((temp_var_path, self.get(temp_var_path, default=self._MISSING)))
+            self.set(temp_var_path, replacement)
+            result.append(formula[copied_until:cursor])
+            result.append(temp_var_path)
+            logger.debug(f"Stored MessageText result ({len(replacement)} chars) in temp variable {temp_var_name}")
+            copied_until = pos + 1
 
-                # Find the matching closing parenthesis
-                start = match.start()
-                paren_start = match.end() - 1  # Position of opening (
-                depth = 1
-                pos = paren_start + 1
-                in_string = False
-                escape_next = False
-
-                while pos < len(formula) and depth > 0:
-                    char = formula[pos]
-                    if escape_next:
-                        escape_next = False
-                        pos += 1
-                        continue
-                    if char == "\\":
-                        escape_next = True
-                        pos += 1
-                        continue
-                    if char == '"' and not escape_next:
-                        in_string = not in_string
-                    elif not in_string:
-                        if char == "(":
-                            depth += 1
-                        elif char == ")":
-                            depth -= 1
-                    pos += 1
-
-                if depth != 0:
-                    # Malformed expression, skip
-                    break
-
-                # Extract the inner expression (between parentheses)
-                end = pos
-                inner_expr = formula[paren_start + 1 : end - 1]
-
-                # Evaluate and get replacement
-                replacement = handler(inner_expr)
-
-                # Replace in formula
-                if isinstance(replacement, str):
-                    if len(replacement) > MAX_INLINE_LENGTH:
-                        # Store long results in an underscore-prefixed temp key;
-                        # record the prior value so eval() can restore it.
-                        temp_var_name = f"_TempMessageText{temp_var_counter}"
-                        temp_var_counter += 1
-                        temp_var_path = f"Local.{temp_var_name}"
-                        temp_writes.append((temp_var_path, self.get(temp_var_path, default=self._MISSING)))
-                        self.set(temp_var_path, replacement)
-                        replacement_str = temp_var_path
-                        logger.debug(
-                            f"Stored long MessageText result ({len(replacement)} chars) "
-                            f"in temp variable {temp_var_name}"
-                        )
-                    else:
-                        # Short strings can be embedded directly
-                        escaped = replacement.replace('"', '""')
-                        replacement_str = f'"{escaped}"'
-                else:
-                    replacement_str = str(replacement) if replacement is not None else '""'
-
-                formula = formula[:start] + replacement_str + formula[end:]
-
-        return formula
+        result.append(formula[copied_until:])
+        return "".join(result)
 
     def _eval_and_replace_message_text(self, inner_expr: str) -> str:
         """Evaluate MessageText() and return the text result.
