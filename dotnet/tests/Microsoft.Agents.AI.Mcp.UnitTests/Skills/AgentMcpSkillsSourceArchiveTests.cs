@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Formats.Tar;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -78,7 +77,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
     }
 
     [Fact]
-    public async Task GetSkillsAsync_TarGzArchive_DiscoversSkillAsync()
+    public async Task GetSkillsAsync_TarGzArchive_SkipsSkillAsync()
     {
         // Arrange
         await using var server = new InMemoryMcpServer(builder => builder.WithResources<TarGzArchiveServer>());
@@ -90,9 +89,26 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
 
         // Assert
-        var skill = Assert.Single(skills);
-        Assert.Equal("archived-skill", skill.Frontmatter.Name);
-        Assert.Contains("Body from the archive.", await skill.GetContentAsync());
+        Assert.Empty(skills);
+    }
+
+    [Fact]
+    public void DetectFormat_TarSignals_ReturnUnknown()
+    {
+        // Arrange / Act / Assert - TAR signals never become a supported archive format,
+        // including when weaker metadata claims that gzip data is ZIP.
+        Assert.Equal(
+            ArchiveFormat.Unknown,
+            AgentMcpSkillArchiveExtractor.DetectFormat([0x1F, 0x8B], "application/zip", "skill://archive.zip"));
+        Assert.Equal(
+            ArchiveFormat.Unknown,
+            AgentMcpSkillArchiveExtractor.DetectFormat([], "application/x-tar", null));
+        Assert.Equal(
+            ArchiveFormat.Unknown,
+            AgentMcpSkillArchiveExtractor.DetectFormat([], null, "skill://archive.tar"));
+        Assert.Equal(
+            ArchiveFormat.Unknown,
+            AgentMcpSkillArchiveExtractor.DetectFormat([], null, "skill://archive.tgz"));
     }
 
     [Fact]
@@ -329,42 +345,16 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
     }
 
     [Fact]
-    public void Extract_TarGzExceedsUncompressedSize_Throws()
+    public void Extract_UnknownFormat_ThrowsBeforeCreatingTarget()
     {
-        // Arrange - a gzip-compressed tar whose expansion exceeds the default budget. The ZIP pre-gate
-        // does not apply here, so this exercises the authoritative streaming cap (CopyWithLimit).
-        string oversized = new('x', (int)AgentMcpSkillArchiveExtractor.DefaultMaxUncompressedSizeBytes + 1);
-        byte[] tarGz = BuildTarGz(("SKILL.md", oversized));
+        // Arrange
         string target = Path.Combine(this._extractionRoot, "skill");
 
         // Act / Assert
-        Assert.Throws<InvalidDataException>(
-            () => AgentMcpSkillArchiveExtractor.Extract(tarGz, ArchiveFormat.TarGz, target));
-    }
-
-    [Fact]
-    public void Extract_TarWithLinkEntries_SkipsLinksAndExtractsRegularFiles()
-    {
-        // Arrange - a tar.gz containing symbolic-link and hard-link entries whose targets escape the
-        // target directory, alongside a regular file. Link entries must be skipped so an archive cannot
-        // create links that point outside the target directory.
-        byte[] tarGz = BuildTarGzFromEntries(
-            new PaxTarEntry(TarEntryType.SymbolicLink, "evil-symlink") { LinkName = "../../escaped.txt" },
-            new PaxTarEntry(TarEntryType.HardLink, "evil-hardlink") { LinkName = "../../escaped.txt" },
-            new PaxTarEntry(TarEntryType.RegularFile, "SKILL.md")
-            {
-                DataStream = new MemoryStream(Encoding.UTF8.GetBytes(ArchivedSkillMd)),
-            });
-        string target = Path.Combine(this._extractionRoot, "skill");
-
-        // Act
-        AgentMcpSkillArchiveExtractor.Extract(tarGz, ArchiveFormat.TarGz, target);
-
-        // Assert - only the regular file is materialized; neither link entry is written.
-        Assert.True(File.Exists(Path.Combine(target, "SKILL.md")));
-        Assert.False(File.Exists(Path.Combine(target, "evil-symlink")));
-        Assert.False(File.Exists(Path.Combine(target, "evil-hardlink")));
-        Assert.Single(Directory.GetFileSystemEntries(target));
+        var exception = Assert.Throws<NotSupportedException>(
+            () => AgentMcpSkillArchiveExtractor.Extract([], ArchiveFormat.Unknown, target));
+        Assert.Contains("Use ZIP instead", exception.Message);
+        Assert.False(Directory.Exists(target));
     }
 
     [Fact]
@@ -638,40 +628,6 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
         return ms.ToArray();
     }
 
-    private static byte[] BuildTarGz(params (string Path, string Content)[] entries)
-    {
-        using var ms = new MemoryStream();
-        using (var gzip = new GZipStream(ms, CompressionMode.Compress, leaveOpen: true))
-        using (var writer = new TarWriter(gzip, leaveOpen: true))
-        {
-            foreach (var (path, content) in entries)
-            {
-                var entry = new PaxTarEntry(TarEntryType.RegularFile, path)
-                {
-                    DataStream = new MemoryStream(Encoding.UTF8.GetBytes(content)),
-                };
-                writer.WriteEntry(entry);
-            }
-        }
-
-        return ms.ToArray();
-    }
-
-    private static byte[] BuildTarGzFromEntries(params TarEntry[] entries)
-    {
-        using var ms = new MemoryStream();
-        using (var gzip = new GZipStream(ms, CompressionMode.Compress, leaveOpen: true))
-        using (var writer = new TarWriter(gzip, leaveOpen: true))
-        {
-            foreach (var entry in entries)
-            {
-                writer.WriteEntry(entry);
-            }
-        }
-
-        return ms.ToArray();
-    }
-
     private static string ArchiveIndex(string skillName, string url) => $$"""
         {
           "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
@@ -711,7 +667,7 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
 
         [McpServerResource(UriTemplate = "skill://archives/archived-skill.tar.gz", Name = "archive", MimeType = "application/gzip")]
         public static BlobResourceContents Archive() => BlobResourceContents.FromBytes(
-            BuildTarGz(("SKILL.md", ArchivedSkillMd)),
+            new byte[] { 0x1F, 0x8B },
             "skill://archives/archived-skill.tar.gz",
             "application/gzip");
     }
