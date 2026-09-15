@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import pytest
 from pydantic import BaseModel
@@ -21,6 +21,15 @@ class MyTypeB(BaseModel):
 
 class MyTypeC(BaseModel):
     pass
+
+
+if TYPE_CHECKING:
+
+    class NonExistentType:
+        pass
+
+    class MissingType:
+        pass
 
 
 _T = TypeVar("_T")
@@ -143,7 +152,7 @@ class TestExecutorFutureAnnotations:
                 @response_handler  # pyright: ignore[reportUnknownArgumentType]
                 async def handle_response(
                     self,
-                    original_request: NonExistentType,  # type: ignore[name-defined]  # noqa: F821
+                    original_request: NonExistentType,
                     response: int,
                     ctx: WorkflowContext[MyTypeA, MyTypeB],
                 ) -> None:
@@ -171,7 +180,7 @@ class TestExecutorFutureAnnotations:
         """Test that annotation resolution preserves raw annotations when a hint is unresolved."""
         from agent_framework._workflows._typing_utils import _resolve_function_annotations
 
-        def sample(value: MissingType) -> None:  # type: ignore[name-defined]  # noqa: F821
+        def sample(value: MissingType) -> None:
             pass
 
         params = list(inspect.signature(sample).parameters.values())
@@ -189,5 +198,5 @@ class TestExecutorFutureAnnotations:
 
             class Bad(Executor):  # pyright: ignore[reportUnusedClass]
                 @handler  # pyright: ignore[reportUnknownArgumentType]
-                async def example(self, input: NonExistentType, ctx: WorkflowContext[MyTypeA, MyTypeB]) -> None:  # type: ignore[name-defined]  # ty: ignore[unresolved-reference]  # noqa: F821
+                async def example(self, input: NonExistentType, ctx: WorkflowContext[MyTypeA, MyTypeB]) -> None:
                     pass
