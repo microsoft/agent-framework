@@ -182,6 +182,82 @@ cd Step05_StateManagement/Server
 dotnet run
 ```
 
+### Step06_WorkflowSequential
+
+A two-agent sequential workflow hosted over AG-UI. The client displays executor `STEP_STARTED` and
+`STEP_FINISHED` events alongside the writer and reviewer text.
+
+```bash
+cd Step06_WorkflowSequential
+dotnet run --project Server --urls http://localhost:8888
+dotnet run --project Client
+```
+
+### Step07_WorkflowConcurrent
+
+A concurrent workflow that runs a researcher and critic together. The client displays each executor's steps
+and both streamed responses.
+
+```bash
+cd Step07_WorkflowConcurrent
+dotnet run --project Server --urls http://localhost:8888
+dotnet run --project Client
+```
+
+### Step08_WorkflowFailure
+
+A deterministic failing workflow. The client shows the failed executor step closing before terminal
+`RUN_ERROR`.
+
+```bash
+cd Step08_WorkflowFailure
+dotnet run --project Server --urls http://localhost:8888
+dotnet run --project Client
+```
+
+### Step09_WorkflowTools
+
+A workflow containing a backend-tool-enabled agent. The client displays executor steps, tool calls, tool
+results, and text without duplication.
+
+```bash
+cd Step09_WorkflowTools
+dotnet run --project Server --urls http://localhost:8888
+dotnet run --project Client
+```
+
+### Step10_WorkflowNested
+
+Two parallel subworkflows whose local executor IDs are both `Analyze`. The sample characterizes the
+currently ambiguous AG-UI step names tracked by issue #7763.
+
+```bash
+cd Step10_WorkflowNested
+dotnet run --project Server --urls http://localhost:8888
+dotnet run --project Client
+```
+
+### Step11_WorkflowApproval
+
+An expense workflow that pauses with an AG-UI approval interruption and resumes on the same persisted thread.
+
+```bash
+cd Step11_WorkflowApproval
+dotnet run --project Server --urls http://localhost:8888
+dotnet run --project Client
+```
+
+### Step12_WorkflowMultipleInputs
+
+A travel workflow that emits three input interruptions in one turn, accepts partial and out-of-order
+responses, and completes after the remaining input arrives.
+
+```bash
+cd Step12_WorkflowMultipleInputs
+dotnet run --project Server --urls http://localhost:8888
+dotnet run --project Client
+```
+
 The server runs on port 8888 by default.
 
 #### Client (`Step05_StateManagement/Client`)
