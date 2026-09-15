@@ -3436,6 +3436,8 @@ class MCPStdioTool(MCPTool):
                 process you do not control.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
+            tool_result_content: How to choose model-visible text when both ``content`` and
+                ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
             kwargs: Any extra arguments to pass to the stdio client.
         """
         super().__init__(
@@ -3684,6 +3686,8 @@ class MCPStreamableHTTPTool(MCPTool):
                 ``http_client``.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
+            tool_result_content: How to choose model-visible text when both ``content`` and
+                ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
             kwargs: Additional keyword arguments (accepted for backward compatibility but not used).
         """
         super().__init__(
@@ -4046,6 +4050,8 @@ class MCPWebsocketTool(MCPTool):
                 ``function_invocation_kwargs`` for servers you do not control.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
+            tool_result_content: How to choose model-visible text when both ``content`` and
+                ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
             kwargs: Any extra arguments to pass to the WebSocket client.
         """
         super().__init__(
