@@ -24,6 +24,8 @@ from .._types import (
     AgentResponseUpdate,
     AgentRunInputs,
     Content,
+    FinishReason,
+    FinishReasonLiteral,
     Message,
     ResponseStream,
     UsageDetails,
@@ -654,9 +656,17 @@ class WorkflowAgent(BaseAgent):
                         contents=list(data.contents),
                         role=data.role,
                         author_name=data.author_name or executor_id,
+                        agent_id=data.agent_id,
                         response_id=data.response_id,
                         message_id=data.message_id,
                         created_at=data.created_at,
+                        # The attribute is typed wider than the constructor accepts (custom
+                        # connectors may set any string); forward the value unchanged.
+                        finish_reason=cast(FinishReasonLiteral | FinishReason | None, data.finish_reason),
+                        continuation_token=data.continuation_token,
+                        additional_properties=dict(data.additional_properties)
+                        if data.additional_properties is not None
+                        else None,
                         raw_representation=data.raw_representation,
                     )
                 ]
