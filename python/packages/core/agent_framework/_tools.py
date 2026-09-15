@@ -3384,7 +3384,9 @@ def _response_invalidation_cleanup(
     stream_error: list[ResponseInvalidatedException] | None = None,
 ) -> Callable[[ResponseInvalidatedException], None]:
     """Capture the last valid continuation and return invalidation cleanup."""
-    service_session_id = invocation_session.service_session_id if invocation_session is not None else None
+    service_session_id = (
+        copy.deepcopy(invocation_session.service_session_id) if invocation_session is not None else None
+    )
 
     def cleanup(error: ResponseInvalidatedException) -> None:
         if stream_error is not None:

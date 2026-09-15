@@ -1185,6 +1185,67 @@ async def test_response_invalidation_short_circuits_current_iteration(
 
 
 @pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_response_invalidation_restores_structured_continuation_snapshot(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """Cleanup restores a copy when a provider mutates structured continuation state in place."""
+    from agent_framework._sessions import AgentSession
+
+    original_service_session_id = {"conversation_id": "valid", "metadata": {"generation": 1}}
+    session = AgentSession(service_session_id=original_service_session_id)
+    invalidated = ResponseInvalidatedException("provider invalidated partial response output")
+
+    def mutate_continuation() -> None:
+        service_session_id = session.service_session_id
+        assert isinstance(service_session_id, dict)
+        service_session_id["conversation_id"] = "invalid"
+        metadata = service_session_id["metadata"]
+        assert isinstance(metadata, dict)
+        metadata["generation"] = 2
+
+    if streaming:
+
+        def invalid_stream(**kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            del kwargs
+
+            async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                mutate_continuation()
+                raise invalidated
+                yield  # pragma: no cover
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        chat_client_base._get_streaming_response = invalid_stream  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+        stream = chat_client_base.get_response(
+            [Message(role="user", contents=["run"])],
+            options={"tools": []},
+            stream=True,
+            client_kwargs={"session": session},
+        )
+        with pytest.raises(ResponseInvalidatedException):
+            async for _ in stream:
+                pass
+    else:
+
+        async def invalid_response(**kwargs: Any) -> ChatResponse:
+            del kwargs
+            mutate_continuation()
+            raise invalidated
+
+        chat_client_base._get_non_streaming_response = invalid_response  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+        with pytest.raises(ResponseInvalidatedException):
+            await chat_client_base.get_response(
+                [Message(role="user", contents=["run"])],
+                options={"tools": []},
+                client_kwargs={"session": session},
+            )
+
+    assert session.service_session_id == {"conversation_id": "valid", "metadata": {"generation": 1}}
+    assert session.service_session_id is not original_service_session_id
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
 async def test_invalidated_response_is_not_persisted(
     chat_client_base: SupportsChatGetResponse,
     streaming: bool,
