@@ -5532,6 +5532,137 @@ async def test_approved_argument_repair_requires_replacement_approval(
     assert final_response.text == "done"
 
 
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_mixed_host_pause_argument_repair_reapproval_executes_with_single_call_budget(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """A replacement approval does not consume the only call-budget unit before execution."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+
+    executions: list[int] = []
+
+    class RepairArgumentsMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            if "count_text" in context.arguments:
+                context.arguments = {"count": int(context.arguments["count_text"])}
+            await call_next()
+
+    @tool(name="approved_count", approval_mode="always_require")
+    def approved_count(count: int) -> str:
+        executions.append(count)
+        return str(count)
+
+    host_tool = FunctionTool(
+        name="host_tool",
+        func=None,
+        description="A Host-owned function",
+        input_model={"type": "object", "properties": {"value": {"type": "integer"}}},
+    )
+    host_call = Content.from_function_call(
+        call_id="host-call",
+        name="host_tool",
+        arguments={"value": 1},
+        id="host-occurrence",
+    )
+    approved_call = Content.from_function_call(
+        call_id="approved-repair-call",
+        name="approved_count",
+        arguments={"count_text": "3"},
+        id="approved-repair-occurrence",
+    )
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[host_call, approved_call], finish_reason="tool_calls")],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")], finish_reason="stop")],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(
+                messages=Message(role="assistant", contents=[host_call, approved_call]),
+                finish_reason="tool_calls",
+            ),
+            ChatResponse(messages=Message(role="assistant", contents=["done"]), finish_reason="stop"),
+        ]
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    session = AgentSession()
+    budget_state: dict[str, int] = {}
+
+    async def run(contents: list[Content]) -> ChatResponse:
+        options: ChatOptions = {"tool_choice": "auto", "tools": [host_tool, approved_count]}
+        client_kwargs = {
+            "session": session,
+            "middleware": [RepairArgumentsMiddleware()],
+            _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
+        }
+        if not streaming:
+            return await chat_client_base.get_response(
+                [Message(role="user", contents=contents)],
+                options=options,
+                client_kwargs=client_kwargs,
+            )
+        stream = chat_client_base.get_response(
+            [Message(role="user", contents=contents)],
+            stream=True,
+            options=options,
+            client_kwargs=client_kwargs,
+        )
+        updates = [update async for update in stream]
+        response = await stream.get_final_response()
+        return response if response.messages or not updates else ChatResponse.from_updates(updates)
+
+    first_response = await run([Content.from_text("go")])
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    host_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.user_input_request
+    )
+    assert host_request.call_id is not None
+    host_result = Content.from_function_result(call_id=host_request.call_id, result="host result")
+    host_result.id = host_request.id
+
+    replacement_response = await run([
+        host_result,
+        approval_request.to_function_approval_response(approved=True),
+    ])
+    replacement_request = next(
+        content
+        for message in replacement_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+
+    assert replacement_request.additional_properties["_replacement_approval_request"] is True
+    assert budget_state["total_function_calls"] == 0
+    assert executions == []
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    final_response = await run([replacement_request.to_function_approval_response(approved=True)])
+
+    assert executions == [3]
+    assert budget_state["total_function_calls"] == 1
+    assert any(
+        content.type == "function_result" and content.result == "3"
+        for message in final_response.messages
+        for content in message.contents
+    )
+    assert chat_client_base.call_count == 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
 async def test_approved_argument_repair_short_circuit_requires_replacement_approval(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
