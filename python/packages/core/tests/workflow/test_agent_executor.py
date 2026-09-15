@@ -20,8 +20,13 @@ from agent_framework import (
     WorkflowRunState,
 )
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
+from agent_framework._workflows._agent_utils import prepare_executor_run_kwargs
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
-from agent_framework._workflows._const import GLOBAL_KWARGS_KEY
+from agent_framework._workflows._const import (
+    GLOBAL_KWARGS_KEY,
+    RAW_CLIENT_KWARGS_KEY,
+    RAW_FUNCTION_INVOCATION_KWARGS_KEY,
+)
 
 
 class _CountingAgent(BaseAgent):
@@ -328,6 +333,34 @@ async def test_prepare_agent_run_args_returns_none_when_no_kwargs() -> None:
     fi_kwargs, ci_kwargs = executor._prepare_agent_run_args({})  # pyright: ignore[reportPrivateUsage]
     assert fi_kwargs is None
     assert ci_kwargs is None
+
+
+async def test_prepare_executor_run_kwargs_resolves_channels_and_removes_internal_state() -> None:
+    """Executor-ready kwargs preserve options without leaking raw-routing snapshots."""
+    raw = {
+        "function_invocation_kwargs": {GLOBAL_KWARGS_KEY: {"legacy": True}},
+        "client_kwargs": {GLOBAL_KWARGS_KEY: {"legacy": True}},
+        RAW_FUNCTION_INVOCATION_KWARGS_KEY: {"agent": {"raw": True}},
+        RAW_CLIENT_KWARGS_KEY: {"agent": {"raw": True}},
+        "options": {"temperature": 0.5},
+    }
+    resolved = {
+        "function_invocation_kwargs": {
+            "global_kwargs": {"shared": "G"},
+            "executor_kwargs": {"agent": {"specific": "A"}},
+        },
+        "client_kwargs": {"executor_kwargs": {"other": {"ignored": True}}},
+    }
+
+    actual = prepare_executor_run_kwargs("agent", raw, resolved)
+
+    assert actual == {
+        "function_invocation_kwargs": {"shared": "G", "specific": "A"},
+        "options": {"temperature": 0.5},
+    }
+    assert prepare_executor_run_kwargs("agent", raw, {}) == {"options": {"temperature": 0.5}}
+    with pytest.raises(TypeError, match="Resolved workflow run kwargs state must be a dict"):
+        prepare_executor_run_kwargs("agent", raw, "invalid")
 
 
 class _NonCopyableRaw:
