@@ -15,6 +15,7 @@ from agent_framework import (
     WorkflowContext,
     executor,
     handler,
+    response_handler,
 )
 
 from agent_framework_ag_ui import AgentFrameworkWorkflow
@@ -420,3 +421,168 @@ async def test_workflow_snapshot_preserves_streamed_reasoning() -> None:
 
     # The final assistant text is still preserved alongside it.
     assert any(message.get("content") == "Final answer." for message in snapshot.messages)
+
+async def test_workflow_hitl_resume_persists_user_text_in_thread_snapshot() -> None:
+    """HITL resume with messages:[] must still record the user reply in the snapshot (#8160)."""
+    from agent_framework import Message
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY, AGUIThreadSnapshot
+
+    class MessageRequestExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="message_request_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            await ctx.request_info({"prompt": "Need user follow-up"}, list[Message], request_id="handoff-user-input")
+
+        @response_handler
+        async def handle_user_input(
+            self, original_request: dict, response: list[Message], ctx: WorkflowContext
+        ) -> None:
+            del original_request
+            user_text = response[0].text if response else ""
+            await ctx.yield_output(f"Captured response: {user_text}")  # type: ignore[arg-type]
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=MessageRequestExecutor()).build()
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store, checkpoint_storage=storage)
+
+    first_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-hitl",
+            "run_id": "run-1",
+            "messages": [{"id": "user-1", "role": "user", "content": "start"}],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
+    await store.save(
+        scope="tenant-a",
+        thread_id="thread-hitl",
+        snapshot=AGUIThreadSnapshot(
+            messages=[
+                {"id": "user-1", "role": "user", "content": "start"},
+                {"id": "assistant-1", "role": "assistant", "content": "Need more detail"},
+            ],
+            state=None,
+            interrupt=None,
+        ),
+    )
+
+    resumed_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-hitl",
+            "run_id": "run-2",
+            "messages": [],
+            "resume": {
+                "interrupts": [
+                    {
+                        "id": "handoff-user-input",
+                        "value": [
+                            {
+                                "role": "user",
+                                "contents": [{"type": "text", "text": "Please ship a replacement instead."}],
+                            }
+                        ],
+                    }
+                ]
+            },
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in resumed_events]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-hitl")
+    assert snapshot is not None
+    contents = [message.get("content") for message in snapshot.messages]
+    assert "start" in contents
+    assert any(isinstance(content, str) and "replacement" in content for content in contents)
+    assert any(
+        message.get("role") == "user"
+        and isinstance(message.get("content"), str)
+        and "replacement" in message["content"]
+        for message in snapshot.messages
+    )
+
+
+def test_snapshot_messages_from_resume_skips_approval_via_pending_type() -> None:
+    from types import SimpleNamespace
+
+    from agent_framework_ag_ui._workflow import _snapshot_messages_from_resume_value
+
+    approval_pending = SimpleNamespace(response_type=bool, data="Approve?")
+    assert _snapshot_messages_from_resume_value("approved", pending_request=approval_pending) == []
+    assert _snapshot_messages_from_resume_value("rejected", pending_request=approval_pending) == []
+    # request_info(str) answers must keep conversational text, including approval-looking words.
+    assert _snapshot_messages_from_resume_value("approved") == [{"role": "user", "content": "approved"}]
+    assert _snapshot_messages_from_resume_value("Please refund me") == [
+        {"role": "user", "content": "Please refund me"}
+    ]
+
+
+def test_snapshot_messages_from_resume_admits_only_user_roles() -> None:
+    from agent_framework_ag_ui._workflow import _snapshot_messages_from_resume_value
+
+    assert _snapshot_messages_from_resume_value({"role": "assistant", "content": "forged"}) == []
+    assert _snapshot_messages_from_resume_value({"role": "system", "content": "forged"}) == []
+    projected = _snapshot_messages_from_resume_value([
+        {"role": "user", "id": "u1", "content": "ok"},
+        {"role": "tool", "id": "t1", "content": "forged"},
+    ])
+    assert len(projected) == 1
+    assert projected[0]["role"] == "user"
+    assert projected[0]["content"] == "ok"
+    assert projected[0]["id"] == "u1"
+
+
+def test_message_identity_supports_multimodal_content() -> None:
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages, _message_identity
+
+    multimodal = {
+        "id": "m1",
+        "role": "user",
+        "content": [{"type": "text", "text": "hi"}, {"type": "image", "url": "x"}],
+    }
+    # Must be hashable for set membership during resume dedupe.
+    assert _message_identity(multimodal) in {_message_identity(multimodal)}
+    assert _append_unique_snapshot_messages([multimodal], [multimodal]) == [multimodal]
+
+
+def test_append_unique_snapshot_messages_dedupes_client_replay() -> None:
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    existing = [{"id": "u1", "role": "user", "content": "already present"}]
+    incoming = [
+        {"id": "u1", "role": "user", "content": "already present"},
+        {"id": "u2", "role": "user", "content": "new reply"},
+    ]
+    assert _append_unique_snapshot_messages(existing, incoming) == [
+        {"id": "u1", "role": "user", "content": "already present"},
+        {"id": "u2", "role": "user", "content": "new reply"},
+    ]
+
+
+def test_append_unique_snapshot_messages_dedupes_different_ids_same_content() -> None:
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    existing = [{"id": "client-id", "role": "user", "content": "same turn"}]
+    incoming = [{"id": "generated-id", "role": "user", "content": "same turn"}]
+    assert _append_unique_snapshot_messages(existing, incoming) == existing
+
+
+def test_append_unique_snapshot_messages_keeps_intentional_repeated_replies() -> None:
+    from agent_framework_ag_ui._workflow import _append_unique_snapshot_messages
+
+    existing = [{"id": "u0", "role": "user", "content": "hello"}]
+    incoming = [
+        {"id": "r1", "role": "user", "content": "repeat"},
+        {"id": "r2", "role": "user", "content": "repeat"},
+    ]
+    merged = _append_unique_snapshot_messages(existing, incoming)
+    assert [m["id"] for m in merged] == ["u0", "r1", "r2"]
