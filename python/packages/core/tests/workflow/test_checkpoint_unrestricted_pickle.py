@@ -300,7 +300,10 @@ async def test_file_storage_rejects_unlisted_user_type_at_save():
             graph_signature_hash="hash",
             state={"data": _AllowedTestState(name="test", value=1)},
         )
-        with pytest.raises(WorkflowCheckpointException, match="deserialization blocked|Unable to save|cannot be restored|cannot be encoded"):
+        with pytest.raises(
+            WorkflowCheckpointException,
+            match="deserialization blocked|Unable to save|cannot be restored|cannot be encoded",
+        ):
             await storage.save(checkpoint)
         assert not await asyncio.to_thread(lambda: list(Path(tmpdir).glob("*.json")))
 

@@ -7748,6 +7748,203 @@ def test_map_chat_to_agent_update_preserves_continuation_token() -> None:
     assert _response_id_from_token(agent_update.continuation_token) == "resp_map_123"
 
 
+def _completed_response_event(response_id: str, output_type: str) -> MagicMock:
+    event = MagicMock()
+    event.type = "response.completed"
+    event.response.id = response_id
+    event.response.conversation = None
+    event.response.model = "test-model"
+    event.response.created_at = 1_700_000_000
+    event.response.usage = None
+    event.response.status = "completed"
+    event.response.incomplete_details = None
+    event.response.output = [MagicMock(type=output_type)]
+    return event
+
+
+def _completed_response(response_id: str, output_type: str) -> MagicMock:
+    response = MagicMock()
+    response.id = response_id
+    response.conversation = None
+    response.model = "test-model"
+    response.created_at = 1_700_000_000
+    response.usage = None
+    response.status = "completed"
+    response.incomplete_details = None
+    response.metadata = {}
+    if output_type == "function_call":
+        item = MagicMock(
+            type="function_call", call_id="call_1", arguments='{"to": "bob"}', id="fc_1", status="completed"
+        )
+        item.name = "send_email"
+    else:
+        item = MagicMock(
+            type="message", content=[MagicMock(type="output_text", text="Email sent.", annotations=[], logprobs=None)]
+        )
+    response.output = [item]
+    response.parse = MagicMock(return_value=response)
+    response.headers = {}
+    return response
+
+
+async def test_streaming_resume_with_tools_runs_the_tool_once() -> None:
+    """Resuming a background stream must not re-retrieve it on every tool-loop iteration.
+
+    Streaming twin of #5394: the non-streaming path drops ``continuation_token`` from the
+    options once the background response completes; without that, the next iteration
+    retrieves the same response again and runs its tool calls again.
+    """
+    executions: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def send_email(to: str) -> str:
+        """Send an email."""
+        executions.append(to)
+        return "sent"
+
+    function_call_added = MagicMock()
+    function_call_added.type = "response.output_item.added"
+    function_call_added.output_index = 0
+    function_call_added.item.type = "function_call"
+    function_call_added.item.call_id = "call_1"
+    function_call_added.item.name = "send_email"
+    arguments_delta = MagicMock()
+    arguments_delta.type = "response.function_call_arguments.delta"
+    arguments_delta.output_index = 0
+    arguments_delta.item_id = "fc_1"
+    arguments_delta.delta = '{"to": "bob"}'
+    text_delta = MagicMock()
+    text_delta.type = "response.output_text.delta"
+    text_delta.delta = "Email sent."
+    text_delta.logprobs = None
+
+    retrieve = AsyncMock(
+        side_effect=lambda *args, **kwargs: _FakeAsyncEventStream([
+            function_call_added,
+            arguments_delta,
+            _completed_response_event("resp_bg", "function_call"),
+        ])
+    )
+    create = AsyncMock(
+        side_effect=lambda *args, **kwargs: _FakeAsyncEventStream([
+            text_delta,
+            _completed_response_event("resp_next", "message"),
+        ])
+    )
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    client.function_invocation_configuration["max_iterations"] = 4
+    options: OpenAIChatOptions[None] = {"continuation_token": {"response_id": "resp_bg"}, "tools": [send_email]}
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        stream = client.get_response([Message(role="user", contents=["email bob"])], stream=True, options=options)
+        async for _ in stream:
+            pass
+        final = await stream.get_final_response()
+
+    assert executions == ["bob"]
+    assert retrieve.await_count == 1
+    assert create.await_count == 1
+    assert create.await_args is not None
+    assert create.await_args.kwargs.get("previous_response_id") == "resp_bg"
+    assert final.text == "Email sent."
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_resume_with_tools_runs_the_tool_once_when_middleware_replaces_options(stream: bool) -> None:
+    """Chat middleware may replace the options for the service call; the tool loop must still drop the token."""
+    from agent_framework import ChatContext, ChatMiddleware
+
+    class ReplaceOptions(ChatMiddleware):
+        async def process(self, context: ChatContext, call_next: Any) -> None:
+            context.options = dict(context.options or {})
+            await call_next()
+
+    executions: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def send_email(to: str) -> str:
+        """Send an email."""
+        executions.append(to)
+        return "sent"
+
+    function_call_added = MagicMock()
+    function_call_added.type = "response.output_item.added"
+    function_call_added.output_index = 0
+    function_call_added.item.type = "function_call"
+    function_call_added.item.call_id = "call_1"
+    function_call_added.item.name = "send_email"
+    arguments_delta = MagicMock()
+    arguments_delta.type = "response.function_call_arguments.delta"
+    arguments_delta.output_index = 0
+    arguments_delta.item_id = "fc_1"
+    arguments_delta.delta = '{"to": "bob"}'
+    text_delta = MagicMock()
+    text_delta.type = "response.output_text.delta"
+    text_delta.delta = "Email sent."
+    text_delta.logprobs = None
+
+    if stream:
+        retrieve = AsyncMock(
+            side_effect=lambda *args, **kwargs: _FakeAsyncEventStream([
+                function_call_added,
+                arguments_delta,
+                _completed_response_event("resp_bg", "function_call"),
+            ])
+        )
+        create = AsyncMock(
+            side_effect=lambda *args, **kwargs: _FakeAsyncEventStream([
+                text_delta,
+                _completed_response_event("resp_next", "message"),
+            ])
+        )
+    else:
+        retrieve = AsyncMock(side_effect=lambda *args, **kwargs: _completed_response("resp_bg", "function_call"))
+        create = AsyncMock(side_effect=lambda *args, **kwargs: _completed_response("resp_next", "message"))
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key", middleware=[ReplaceOptions()])
+    client.function_invocation_configuration["max_iterations"] = 4
+    options: OpenAIChatOptions[None] = {"continuation_token": {"response_id": "resp_bg"}, "tools": [send_email]}
+    with (
+        patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
+        patch.object(client.client.responses.with_raw_response, "create", new=create),
+    ):
+        messages = [Message(role="user", contents=["email bob"])]
+        if stream:
+            response_stream = client.get_response(messages, stream=True, options=options)
+            async for _ in response_stream:
+                pass
+            final = await response_stream.get_final_response()
+        else:
+            final = await client.get_response(messages, options=options)
+
+    assert executions == ["bob"]
+    assert retrieve.await_count == 1
+    assert create.await_count == 1
+    assert final.text == "Email sent."
+
+
+async def test_streaming_resume_drops_continuation_token_before_the_terminal_update() -> None:
+    """A consumer that stops at the terminal update must not leave the token in its options."""
+    retrieve = AsyncMock(
+        side_effect=lambda *args, **kwargs: _FakeAsyncEventStream([_completed_response_event("resp_bg", "message")])
+    )
+
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    # The tool loop hands its own options dict to _inner_get_response and reuses it.
+    options: dict[str, Any] = {"continuation_token": {"response_id": "resp_bg"}}
+    with patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve):
+        stream = _as_chat_response_stream(
+            client._inner_get_response(messages=[Message(role="user", contents=["hi"])], options=options, stream=True)
+        )
+        async for _ in stream:
+            break
+
+    assert "continuation_token" not in options
+
+
 async def test_prepare_options_excludes_continuation_token() -> None:
     """Test that _prepare_options does not pass continuation_token to OpenAI API."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")

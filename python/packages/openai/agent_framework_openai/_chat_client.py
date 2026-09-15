@@ -132,6 +132,7 @@ class _PromptCacheOptions(TypedDict, total=False):
 
 
 if TYPE_CHECKING:
+    from agent_framework._sessions import AgentSession
     from azure.core.credentials import TokenCredential
     from azure.core.credentials_async import AsyncTokenCredential
 
@@ -756,6 +757,19 @@ class RawOpenAIChatClient(
                                 )
                                 if served_model is not None:
                                     update.model = served_model
+                                if chunk.type in (
+                                    "response.completed",
+                                    "response.incomplete",
+                                    "response.failed",
+                                ) and isinstance(options, dict):
+                                    # Same as the non-streaming path (issue #5394): once the resumed
+                                    # background response has finished, drop the continuation_token
+                                    # from the caller's options dict. FunctionInvocationLayer reuses
+                                    # that dict, so a leftover token makes the next tool-loop iteration
+                                    # retrieve this response again instead of POSTing the tool results,
+                                    # and the tools run again each time. Do it before yielding, so a
+                                    # consumer that stops at the terminal update doesn't keep it.
+                                    options.pop("continuation_token", None)
                                 yield update
                     except Exception as ex:
                         self._handle_request_error(ex)
@@ -3887,6 +3901,22 @@ class OpenAIChatClient(
             tokenizer=tokenizer,
             additional_properties=additional_properties,
         )
+
+    @override
+    def _update_function_invocation_continuation_state(
+        self,
+        kwargs: dict[str, Any],
+        response: ChatResponse[Any],
+        *,
+        session: AgentSession | None,
+        options: dict[str, Any] | None = None,
+    ) -> None:
+        super()._update_function_invocation_continuation_state(kwargs, response, session=session, options=options)
+        # _inner_get_response drops the token from the options that reached the service call, which
+        # chat middleware may have replaced. Drop it from the function loop's own options as well once
+        # the background response has finished, or the next iteration retrieves it again.
+        if options is not None and response.continuation_token is None:
+            options.pop("continuation_token", None)
 
 
 def _apply_openai_chat_client_docstrings() -> None:
