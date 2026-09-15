@@ -69,6 +69,7 @@ else:
     from typing_extensions import override  # pragma: no cover
 
 logger = logging.getLogger(__name__)
+DEFAULT_WORKFLOW_NAME = "GroupChat"
 
 
 @dataclass(frozen=True)
@@ -629,6 +630,7 @@ class GroupChatBuilder:
     def __init__(
         self,
         *,
+        name: str | None = None,
         participants: Sequence[SupportsAgentRun | Executor] | None = None,
         participant_factories: Sequence[Callable[[], SupportsAgentRun | Executor]] | None = None,
         # Orchestrator config (exactly one required)
@@ -646,6 +648,7 @@ class GroupChatBuilder:
         """Initialize the GroupChatBuilder.
 
         Args:
+            name: Optional workflow identifier. Defaults to ``"GroupChat"``.
             participants: Optional sequence of agent or executor instances for the group chat.
             participant_factories: Optional sequence of callables returning agent or executor instances.
             orchestrator_agent: An instance of Agent or a callable that produces one to manage the group chat.
@@ -665,6 +668,7 @@ class GroupChatBuilder:
                 surface as workflow ``intermediate`` events. Pass ``"all_other"`` to select every participant
                 not selected by ``output_from``. Unlisted participant outputs are hidden.
         """
+        self._name = name or DEFAULT_WORKFLOW_NAME
         self._participants: dict[str, SupportsAgentRun | Executor] = {}
         self._participant_factories: list[Callable[[], SupportsAgentRun | Executor]] = []
 
@@ -1039,6 +1043,7 @@ class GroupChatBuilder:
             extra_output_executors=[orchestrator],
         )
         workflow_builder = WorkflowBuilder(
+            name=self._name,
             start_executor=orchestrator,
             checkpoint_storage=self._checkpoint_storage,
             output_from=designated,
