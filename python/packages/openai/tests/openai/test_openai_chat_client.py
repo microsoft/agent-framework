@@ -7578,7 +7578,7 @@ async def test_streaming_resume_with_tools_runs_the_tool_once() -> None:
 
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     client.function_invocation_configuration["max_iterations"] = 4
-    options: dict[str, Any] = {"continuation_token": {"response_id": "resp_bg"}, "tools": [send_email]}
+    options: OpenAIChatOptions[None] = {"continuation_token": {"response_id": "resp_bg"}, "tools": [send_email]}
     with (
         patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
         patch.object(client.client.responses.with_raw_response, "create", new=create),
@@ -7591,6 +7591,7 @@ async def test_streaming_resume_with_tools_runs_the_tool_once() -> None:
     assert executions == ["bob"]
     assert retrieve.await_count == 1
     assert create.await_count == 1
+    assert create.await_args is not None
     assert create.await_args.kwargs.get("previous_response_id") == "resp_bg"
     assert final.text == "Email sent."
 
@@ -7649,7 +7650,7 @@ async def test_resume_with_tools_runs_the_tool_once_when_middleware_replaces_opt
 
     client = OpenAIChatClient(model="test-model", api_key="test-key", middleware=[ReplaceOptions()])
     client.function_invocation_configuration["max_iterations"] = 4
-    options: dict[str, Any] = {"continuation_token": {"response_id": "resp_bg"}, "tools": [send_email]}
+    options: OpenAIChatOptions[None] = {"continuation_token": {"response_id": "resp_bg"}, "tools": [send_email]}
     with (
         patch.object(client.client.responses.with_raw_response, "retrieve", new=retrieve),
         patch.object(client.client.responses.with_raw_response, "create", new=create),
