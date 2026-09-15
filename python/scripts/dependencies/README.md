@@ -22,6 +22,9 @@ Run the commands below from the `python/` directory.
   - Resolves published runtime dependencies and non-development extras independently of `uv.lock` with both
     `lowest-direct` and `highest` strategies.
   - Derives the minimum supported Python minor from each changed package's internal editable dependency closure.
+  - Re-declares any pre-release-bounded external requirement found in that closure as a direct probe requirement so
+    `prerelease = "if-necessary-or-explicit"` keeps allowing it (uv only enables pre-releases for direct requirements
+    that carry a pre-release specifier).
   - Imports each changed package and records resolved dependency versions in a JSON report.
   - Runs probes concurrently under one five-minute deadline.
 
