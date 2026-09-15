@@ -55,7 +55,7 @@ import re
 import time
 import zipfile
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
@@ -2576,7 +2576,12 @@ class SkillsProvider(ContextProvider):
             skill_name: str,
             resource_name: str,
         ) -> Any:
-            return await self._read_skill_resource(skills, skill_name, resource_name, **ctx.kwargs)
+            return await self._read_skill_resource(
+                skills,
+                skill_name,
+                resource_name,
+                runtime_kwargs=ctx.kwargs,
+            )
 
         async def _run_script(
             ctx: FunctionInvocationContext,
@@ -2584,7 +2589,13 @@ class SkillsProvider(ContextProvider):
             script_name: str,
             args: dict[str, Any] | list[str] | None = None,
         ) -> Any:
-            return await self._run_skill_script(skills, skill_name, script_name, args, **ctx.kwargs)
+            return await self._run_skill_script(
+                skills,
+                skill_name,
+                script_name,
+                args,
+                runtime_kwargs=ctx.kwargs,
+            )
 
         return [
             FunctionTool(
@@ -2712,7 +2723,8 @@ class SkillsProvider(ContextProvider):
         skill_name: str,
         script_name: str,
         args: dict[str, Any] | list[str] | None = None,
-        **kwargs: Any,
+        *,
+        runtime_kwargs: Mapping[str, Any] | None = None,
     ) -> Any:
         """Run a named script from a skill.
 
@@ -2725,7 +2737,7 @@ class SkillsProvider(ContextProvider):
             script_name: The script name to look up (case-insensitive).
             args: Optional arguments for the script, provided by the
                 agent/LLM.
-            **kwargs: Runtime keyword arguments forwarded only to script
+            runtime_kwargs: Runtime keyword arguments forwarded only to script
                 functions that accept ``**kwargs``. This parameter carries host
                 request context supplied via
                 ``agent.run(..., function_invocation_kwargs={"user_id": "123"})``
@@ -2733,7 +2745,11 @@ class SkillsProvider(ContextProvider):
                 never sourced from model-supplied tool arguments. Note that the
                 receiving script's own ``**kwargs`` is not runtime-only: these
                 values are expanded alongside any undeclared entries in *args*,
-                which the model supplies.
+                which the model supplies. Taking these as one mapping keeps this
+                helper's own parameter names (``skills``, ``skill_name``,
+                ``script_name``, ``args``) usable as runtime kwarg names; the
+                public :meth:`SkillScript.run` signature still expands them, so
+                ``skill`` and ``args`` remain reserved at that boundary.
 
         Returns:
             The script result. Returns a user-facing error string for
@@ -2759,13 +2775,18 @@ class SkillsProvider(ContextProvider):
             return f"Error: Script '{script_name}' not found in skill '{skill_name}'."
 
         try:
-            return await script.run(skill, args, **kwargs)
+            return await script.run(skill, args, **(runtime_kwargs or {}))
         except Exception:
             logger.exception("Error running script '%s' in skill '%s'", script_name, skill_name)
             raise
 
     async def _read_skill_resource(
-        self, skills: Sequence[Skill], skill_name: str, resource_name: str, **kwargs: Any
+        self,
+        skills: Sequence[Skill],
+        skill_name: str,
+        resource_name: str,
+        *,
+        runtime_kwargs: Mapping[str, Any] | None = None,
     ) -> Any:
         """Read a named resource from a skill.
 
@@ -2777,7 +2798,7 @@ class SkillsProvider(ContextProvider):
             skills: The skills to look up the skill from.
             skill_name: The name of the owning skill.
             resource_name: The resource name to look up (case-insensitive).
-            **kwargs: Runtime keyword arguments forwarded to resource functions
+            runtime_kwargs: Runtime keyword arguments forwarded to resource functions
                 that accept ``**kwargs``. These carry host request context
                 supplied via
                 ``agent.run(..., function_invocation_kwargs={"user_id": "123"})``
@@ -2811,7 +2832,7 @@ class SkillsProvider(ContextProvider):
             return f"Error: Resource '{resource_name}' not found in skill '{skill_name}'."
 
         try:
-            return await resource.read(**kwargs)
+            return await resource.read(**(runtime_kwargs or {}))
         except Exception:
             logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
             raise

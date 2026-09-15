@@ -1558,7 +1558,10 @@ class TestSkillsProviderCodeSkill:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         result = await provider._read_skill_resource(
-            _raw_skills(provider), "prog-skill", "get_user_config", user_id="user_123"
+            _raw_skills(provider),
+            "prog-skill",
+            "get_user_config",
+            runtime_kwargs={"user_id": "user_123"},
         )
         assert result == "config for user_123"
 
@@ -1575,7 +1578,10 @@ class TestSkillsProviderCodeSkill:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         result = await provider._read_skill_resource(
-            _raw_skills(provider), "prog-skill", "get_user_data", auth_token="abc"
+            _raw_skills(provider),
+            "prog-skill",
+            "get_user_data",
+            runtime_kwargs={"auth_token": "abc"},
         )
         assert result == "data with token=abc"
 
@@ -1592,7 +1598,10 @@ class TestSkillsProviderCodeSkill:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         result = await provider._read_skill_resource(
-            _raw_skills(provider), "prog-skill", "static_resource", user_id="ignored"
+            _raw_skills(provider),
+            "prog-skill",
+            "static_resource",
+            runtime_kwargs={"user_id": "ignored"},
         )
         assert result == "static content"
 
@@ -3977,7 +3986,11 @@ class TestSkillsProviderFactories:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         result = await provider._run_skill_script(
-            _raw_skills(provider), "my-skill", "greet", args={"name": "Alice"}, user_id="u42"
+            _raw_skills(provider),
+            "my-skill",
+            "greet",
+            args={"name": "Alice"},
+            runtime_kwargs={"user_id": "u42"},
         )
         assert result == "Hello Alice (user=u42)"
 
@@ -3992,7 +4005,11 @@ class TestSkillsProviderFactories:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         result = await provider._run_skill_script(
-            _raw_skills(provider), "my-skill", "fetch", args={"url": "http://x"}, auth_token="abc"
+            _raw_skills(provider),
+            "my-skill",
+            "fetch",
+            args={"url": "http://x"},
+            runtime_kwargs={"auth_token": "abc"},
         )
         assert result == "fetched http://x with token=abc"
 
@@ -4007,7 +4024,11 @@ class TestSkillsProviderFactories:
         provider = SkillsProvider([skill])
         await _init_provider(provider)
         result = await provider._run_skill_script(
-            _raw_skills(provider), "my-skill", "simple", args={"query": "test"}, user_id="ignored"
+            _raw_skills(provider),
+            "my-skill",
+            "simple",
+            args={"query": "test"},
+            runtime_kwargs={"user_id": "ignored"},
         )
         assert result == "result: test"
 
@@ -4023,7 +4044,11 @@ class TestSkillsProviderFactories:
         await _init_provider(provider)
         with pytest.raises(TypeError):
             await provider._run_skill_script(
-                _raw_skills(provider), "my-skill", "process", args={"mode": "llm-value"}, mode="runtime-value"
+                _raw_skills(provider),
+                "my-skill",
+                "process",
+                args={"mode": "llm-value"},
+                runtime_kwargs={"mode": "runtime-value"},
             )
 
     async def test_run_skill_script_error_on_missing_script(self) -> None:
@@ -6990,6 +7015,38 @@ class TestSkillsRuntimeKwargsProvenance:
 
         assert calls == [{"tenant_id": "host-tenant", "session": session}]
 
+    async def test_resource_runtime_kwargs_do_not_collide_with_dispatcher_names(
+        self, chat_client_base: MockBaseChatClient
+    ) -> None:
+        """Private resource-dispatcher names must remain valid runtime kwarg names."""
+        calls: list[dict[str, Any]] = []
+        skill = self._tenant_skill(calls)
+
+        chat_client_base.run_responses = [
+            _function_call_response(
+                call_id="call_1",
+                name="read_skill_resource",
+                arguments='{"skill_name": "tenant-data", "resource_name": "account-record"}',
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["Done!"])]),
+        ]
+
+        runtime_kwargs = {
+            "skills": "runtime-skills",
+            "skill_name": "runtime-skill-name",
+            "resource_name": "runtime-resource-name",
+            "runtime_kwargs": "runtime-runtime-kwargs",
+        }
+        agent = self._agent(chat_client_base, skill)
+        session = agent.create_session()
+        await agent.run(
+            "Read the account record.",
+            function_invocation_kwargs=runtime_kwargs,
+            session=session,
+        )
+
+        assert calls == [{**runtime_kwargs, "session": session}]
+
     async def test_script_receives_host_runtime_kwargs(self, chat_client_base: MockBaseChatClient) -> None:
         """Host ``function_invocation_kwargs`` must reach a callable script."""
         calls: list[dict[str, Any]] = []
@@ -7015,6 +7072,46 @@ class TestSkillsRuntimeKwargsProvenance:
         )
 
         assert calls == [{"tenant_id": "host-tenant", "session": session}]
+
+    async def test_script_runtime_kwargs_do_not_collide_with_dispatcher_names(
+        self, chat_client_base: MockBaseChatClient
+    ) -> None:
+        """Private script-dispatcher names must remain valid runtime kwarg names.
+
+        ``skill`` and ``args`` are deliberately absent: those are parameters of the
+        public :meth:`SkillScript.run` signature, which still expands runtime kwargs
+        and therefore still constrains those two names. Closing that gap would change
+        a public contract, so only the private dispatch chain is covered here.
+        """
+        calls: list[dict[str, Any]] = []
+        skill = self._tenant_skill(calls)
+
+        chat_client_base.run_responses = [
+            _function_call_response(
+                call_id="call_1",
+                name="run_skill_script",
+                arguments=(
+                    '{"skill_name": "tenant-data", "script_name": "export-report", "args": {"report": "summary"}}'
+                ),
+            ),
+            ChatResponse(messages=[Message(role="assistant", contents=["Done!"])]),
+        ]
+
+        runtime_kwargs = {
+            "skills": "runtime-skills",
+            "skill_name": "runtime-skill-name",
+            "script_name": "runtime-script-name",
+            "runtime_kwargs": "runtime-runtime-kwargs",
+        }
+        agent = self._agent(chat_client_base, skill)
+        session = agent.create_session()
+        await agent.run(
+            "Export the report.",
+            function_invocation_kwargs=runtime_kwargs,
+            session=session,
+        )
+
+        assert calls == [{**runtime_kwargs, "session": session}]
 
     async def test_resource_rejects_undeclared_model_argument(self, chat_client_base: MockBaseChatClient) -> None:
         """A model argument outside the advertised schema must not become a runtime kwarg.
