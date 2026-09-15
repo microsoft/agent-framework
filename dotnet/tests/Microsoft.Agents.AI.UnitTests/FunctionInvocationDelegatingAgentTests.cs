@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -286,6 +287,389 @@ public sealed class FunctionInvocationDelegatingAgentTests
     }
 
     #endregion
+
+    [Theory]
+    [InlineData(false, "Add")]
+    [InlineData(true, "Add")]
+    [InlineData(false, "Insert")]
+    [InlineData(true, "Insert")]
+    [InlineData(false, "Set")]
+    [InlineData(true, "Set")]
+    [InlineData(false, "Replace")]
+    [InlineData(true, "Replace")]
+    public async Task RunAsync_DynamicallyAddedFunction_InvokesMiddlewareAsync(bool streaming, string operation)
+    {
+        // Arrange
+        var invokedFunctions = new List<string>();
+        var functionExecuted = false;
+        var dynamicFunction = AIFunctionFactory.Create(() =>
+        {
+            functionExecuted = true;
+            return "Function result";
+        }, "DynamicFunction");
+        var loader = AIFunctionFactory.Create(() =>
+        {
+            var options = FunctionInvokingChatClient.CurrentContext!.Options!;
+            switch (operation)
+            {
+                case "Add":
+                    options.Tools!.Add(dynamicFunction);
+                    break;
+                case "Insert":
+                    options.Tools!.Insert(0, dynamicFunction);
+                    break;
+                case "Set":
+                    options.Tools![0] = dynamicFunction;
+                    break;
+                case "Replace":
+                    options.Tools = [dynamicFunction];
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(operation));
+            }
+
+            return "Function added";
+        }, "LoadFunction");
+
+        var responses = new Queue<ChatResponse>(
+        [
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("load", loader.Name)])),
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("invoke", dynamicFunction.Name)])),
+            new(new ChatMessage(ChatRole.Assistant, "Complete")),
+        ]);
+        var mockChatClient = CreateMockChatClient(responses);
+        var agent = new ChatClientAgent(mockChatClient.Object, tools: [loader])
+            .AsBuilder()
+            .Use((agent, context, next, cancellationToken) =>
+            {
+                invokedFunctions.Add(context.Function.Name);
+                return context.Function.Name == dynamicFunction.Name
+                    ? new ValueTask<object?>("Function handled by middleware")
+                    : next(context, cancellationToken);
+            })
+            .Build();
+
+        // Act
+        var response = streaming
+            ? await agent.RunStreamingAsync("Run the functions").ToAgentResponseAsync()
+            : await agent.RunAsync("Run the functions");
+
+        // Assert
+        Assert.Equal([loader.Name, dynamicFunction.Name], invokedFunctions);
+        Assert.False(functionExecuted);
+        Assert.Equal("Function handled by middleware", response.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<FunctionResultContent>()
+            .Single(r => r.CallId == "invoke").Result);
+        Assert.Empty(responses);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task RunAsync_DynamicFunction_PreservesInvocationOrderAsync(bool streaming, bool replaceTools)
+        => await RunDynamicFunctionPreservingInvocationOrderAsync(streaming, replaceTools, recreateOptions: false);
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task RunAsync_RecreatedOptions_PreservesFunctionMiddlewareAsync(bool streaming, bool replaceTools)
+        => await RunDynamicFunctionPreservingInvocationOrderAsync(streaming, replaceTools, recreateOptions: true);
+
+    private static async Task RunDynamicFunctionPreservingInvocationOrderAsync(bool streaming, bool replaceTools, bool recreateOptions)
+    {
+        // Arrange
+        var executionOrder = new List<string>();
+        var function = AIFunctionFactory.Create(() =>
+        {
+            executionOrder.Add("Function");
+            return "Function result";
+        }, "TestFunction");
+        var loader = AIFunctionFactory.Create(() =>
+        {
+            var options = FunctionInvokingChatClient.CurrentContext!.Options!;
+            if (replaceTools)
+            {
+                options.Tools = [function];
+            }
+            else
+            {
+                options.Tools!.Add(function);
+                options.Tools[options.Tools.Count - 1] = options.Tools[options.Tools.Count - 1];
+            }
+
+            return "Function added";
+        }, "LoadFunction");
+
+        var responses = new Queue<ChatResponse>();
+        var mockChatClient = CreateMockChatClient(responses);
+        using var functionClient = new TrackingFunctionInvokingChatClient(mockChatClient.Object, executionOrder, function.Name);
+        async ValueTask<object?> InvokeAsync(FunctionInvocationContext context, CancellationToken cancellationToken)
+        {
+            if (context.Function.Name == function.Name)
+            {
+                executionOrder.Add("Invoker-Pre");
+            }
+
+            var result = await context.Function.InvokeAsync(context.Arguments, cancellationToken);
+            if (context.Function.Name == function.Name)
+            {
+                executionOrder.Add("Invoker-Post");
+            }
+
+            return result;
+        }
+
+        functionClient.FunctionInvoker = InvokeAsync;
+        var innerAgent = new ChatClientAgent(functionClient, new ChatClientAgentOptions { UseProvidedChatClientAsIs = true });
+        var first = innerAgent.AsBuilder().Use(async (agent, context, next, cancellationToken) =>
+        {
+            Assert.Same(innerAgent, agent);
+            if (recreateOptions)
+            {
+                Assert.Equal(0.5f, context.Options?.Temperature);
+            }
+
+            if (context.Function.Name == function.Name)
+            {
+                executionOrder.Add("First-Pre");
+            }
+
+            var result = await next(context, cancellationToken);
+            if (context.Function.Name == function.Name)
+            {
+                executionOrder.Add("First-Post");
+            }
+
+            return result;
+        }).Build();
+        var nextAgent = recreateOptions
+            ? new AnonymousDelegatingAIAgent(
+                first,
+                (messages, session, options, agent, cancellationToken) =>
+                    agent.RunAsync(messages, session, RecreateOptions(options), cancellationToken),
+                (messages, session, options, agent, cancellationToken) =>
+                    agent.RunStreamingAsync(messages, session, RecreateOptions(options), cancellationToken))
+            : first;
+        var decorated = nextAgent.AsBuilder().Use(async (agent, context, next, cancellationToken) =>
+        {
+            Assert.Same(nextAgent, agent);
+            if (context.Function.Name == function.Name)
+            {
+                executionOrder.Add("Second-Pre");
+            }
+
+            var result = await next(context, cancellationToken);
+            if (context.Function.Name == function.Name)
+            {
+                executionOrder.Add("Second-Post");
+            }
+
+            return result;
+        }).Build();
+
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [function] });
+        var expectedOrder = new[]
+        {
+            "Override-Pre", "Invoker-Pre", "First-Pre", "Second-Pre",
+            "Function", "Second-Post", "First-Post", "Invoker-Post", "Override-Post",
+        };
+
+        // Act
+        for (int run = 0; run < 3; run++)
+        {
+            executionOrder.Clear();
+            if (run > 0)
+            {
+                options.ChatOptions!.Tools = [loader];
+                responses.Enqueue(new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("load", loader.Name)])));
+            }
+
+            responses.Enqueue(new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("invoke", function.Name)])));
+            responses.Enqueue(new(new ChatMessage(ChatRole.Assistant, "Complete")));
+            var response = streaming
+                ? await decorated.RunStreamingAsync("Run the functions", options: options).ToAgentResponseAsync()
+                : await decorated.RunAsync("Run the functions", options: options);
+
+            // Assert
+            Assert.Equal(expectedOrder, executionOrder);
+            Assert.Equal("Function result", Assert.IsType<JsonElement>(response.Messages.SelectMany(m => m.Contents)
+                .OfType<FunctionResultContent>().Single(r => r.CallId == "invoke").Result).GetString());
+            Assert.Empty(responses);
+            Assert.Equal(InvokeAsync, functionClient.FunctionInvoker);
+        }
+
+        static ChatClientAgentRunOptions RecreateOptions(AgentRunOptions? options)
+        {
+            var original = Assert.IsType<ChatClientAgentRunOptions>(options);
+            var factory = Assert.IsType<Func<IChatClient, IChatClient>>(original.ChatClientFactory);
+            return new ChatClientAgentRunOptions(original.ChatOptions?.Clone())
+            {
+                ChatClientFactory = client => factory(new ConfigureOptionsChatClient(client, options => options.Temperature = 0.5f)),
+            };
+        }
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task RunAsync_DynamicFunction_PreservesApprovalAsync(bool streaming, bool approved)
+    {
+        // Arrange
+        var invocationCount = 0;
+        var observedFunctions = new List<string>();
+        var function = AIFunctionFactory.Create(() =>
+        {
+            invocationCount++;
+            return "Function result";
+        }, "TestFunction", "Function requiring approval");
+        var approvalFunction = new ApprovalRequiredAIFunction(function);
+        var loader = AIFunctionFactory.Create(() =>
+        {
+            var tools = FunctionInvokingChatClient.CurrentContext!.Options!.Tools!;
+            tools.Add(approvalFunction);
+            Assert.Equal(function.Name, tools[tools.Count - 1].Name);
+            Assert.Same(approvalFunction, tools[tools.Count - 1].GetService<ApprovalRequiredAIFunction>());
+            Assert.Equal(function.JsonSchema.GetRawText(), Assert.IsAssignableFrom<AIFunction>(tools[tools.Count - 1]).JsonSchema.GetRawText());
+            return "Function added";
+        }, "LoadFunction");
+
+        var responses = new Queue<ChatResponse>(
+        [
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("load", loader.Name)])),
+            new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("invoke", function.Name)])),
+        ]);
+        var mockChatClient = CreateMockChatClient(responses);
+        var agent = new ChatClientAgent(mockChatClient.Object, tools: [loader]).AsBuilder()
+            .Use((agent, context, next, cancellationToken) =>
+            {
+                observedFunctions.Add(context.Function.Name);
+                return next(context, cancellationToken);
+            }).Build();
+        var session = await agent.CreateSessionAsync();
+
+        // Act
+        var response = streaming
+            ? await agent.RunStreamingAsync("Run the functions", session).ToAgentResponseAsync()
+            : await agent.RunAsync("Run the functions", session);
+
+        // Assert
+        var request = Assert.Single(response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>());
+        Assert.Equal(0, invocationCount);
+        Assert.Equal([loader.Name], observedFunctions);
+        Assert.Empty(responses);
+
+        // Act
+        responses.Enqueue(new(new ChatMessage(ChatRole.Assistant, "Complete")));
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [approvalFunction] });
+        var approvalMessage = new ChatMessage(ChatRole.User, [request.CreateResponse(approved)]);
+        var resumedResponse = streaming
+            ? await agent.RunStreamingAsync(approvalMessage, session, options).ToAgentResponseAsync()
+            : await agent.RunAsync(approvalMessage, session, options);
+
+        // Assert
+        Assert.Equal(approved ? 1 : 0, invocationCount);
+        Assert.Equal(approved ? [loader.Name, function.Name] : new[] { loader.Name }, observedFunctions);
+        Assert.Single(resumedResponse.Messages.SelectMany(m => m.Contents)
+            .OfType<FunctionResultContent>(), result => result.CallId == "invoke");
+        Assert.Empty(responses);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_SharedClientAndOptions_IsolatesFunctionMiddlewareAsync(bool streaming)
+    {
+        // Arrange
+        var loadersEntered = 0;
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var registration = cancellation.Token.Register(() => gate.TrySetCanceled());
+        var function = AIFunctionFactory.Create(() => "Function result", "TestFunction");
+        var loader = AIFunctionFactory.Create(async () =>
+        {
+            if (Interlocked.Increment(ref loadersEntered) == 2)
+            {
+                gate.TrySetResult(true);
+            }
+
+            await gate.Task;
+            FunctionInvokingChatClient.CurrentContext!.Options!.Tools!.Add(function);
+            return "Function added";
+        }, "LoadFunction");
+        var mockChatClient = new Mock<IChatClient>();
+        ChatResponse GetResponse(IEnumerable<ChatMessage> messages)
+        {
+            var results = messages.SelectMany(m => m.Contents).OfType<FunctionResultContent>().ToArray();
+            if (!results.Any(r => r.CallId == "load"))
+            {
+                return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("load", loader.Name)]));
+            }
+
+            return results.Any(r => r.CallId == "invoke")
+                ? new(new ChatMessage(ChatRole.Assistant, "Complete"))
+                : new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("invoke", function.Name)]));
+        }
+
+        mockChatClient.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns((IEnumerable<ChatMessage> messages, ChatOptions? options, CancellationToken ct) => Task.FromResult(GetResponse(messages)));
+        mockChatClient.Setup(c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns((IEnumerable<ChatMessage> messages, ChatOptions? options, CancellationToken ct) => GetResponse(messages).ToChatResponseUpdates().ToAsyncEnumerable());
+
+        using var client = new FunctionInvokingChatClient(mockChatClient.Object);
+        var innerAgent = new ChatClientAgent(client, new ChatClientAgentOptions { UseProvidedChatClientAsIs = true });
+        var firstInvocations = new List<string>();
+        var secondInvocations = new List<string>();
+        var first = innerAgent.AsBuilder().Use((agent, context, next, cancellationToken) =>
+        {
+            firstInvocations.Add(context.Function.Name);
+            return context.Function.Name == function.Name ? new ValueTask<object?>("First") : next(context, cancellationToken);
+        }).Build();
+        var second = innerAgent.AsBuilder().Use((agent, context, next, cancellationToken) =>
+        {
+            secondInvocations.Add(context.Function.Name);
+            return context.Function.Name == function.Name ? new ValueTask<object?>("Second") : next(context, cancellationToken);
+        }).Build();
+        Func<IChatClient, IChatClient> factory = static client => client;
+        var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [loader] }) { ChatClientFactory = factory };
+
+        // Act
+        Task<AgentResponse> RunAsync(AIAgent agent, AgentRunOptions? runOptions = null) => streaming
+            ? agent.RunStreamingAsync("Run the functions", options: runOptions ?? options, cancellationToken: cancellation.Token).ToAgentResponseAsync(cancellation.Token)
+            : agent.RunAsync("Run the functions", options: runOptions ?? options, cancellationToken: cancellation.Token);
+        var responses = await Task.WhenAll(RunAsync(first), RunAsync(second));
+
+        // Assert
+        Assert.Equal([loader.Name, function.Name], firstInvocations);
+        Assert.Equal([loader.Name, function.Name], secondInvocations);
+        Assert.Equal("First", responses[0].Messages.SelectMany(m => m.Contents)
+            .OfType<FunctionResultContent>().Single(r => r.CallId == "invoke").Result);
+        Assert.Equal("Second", responses[1].Messages.SelectMany(m => m.Contents)
+            .OfType<FunctionResultContent>().Single(r => r.CallId == "invoke").Result);
+        Assert.Same(factory, options.ChatClientFactory);
+        Assert.Same(loader, Assert.Single(options.ChatOptions!.Tools!));
+        Assert.Null(client.FunctionInvoker);
+
+        // Act & Assert
+        foreach (var response in new[] { await RunAsync(innerAgent), await RunAsync(innerAgent, options.Clone()) })
+        {
+            Assert.Equal("Function result", Assert.IsType<JsonElement>(response.Messages.SelectMany(m => m.Contents)
+                .OfType<FunctionResultContent>().Single(r => r.CallId == "invoke").Result).GetString());
+        }
+
+        Assert.Equal([loader.Name, function.Name], firstInvocations);
+        Assert.Equal([loader.Name, function.Name], secondInvocations);
+        Assert.Same(factory, options.ChatClientFactory);
+        Assert.Same(loader, Assert.Single(options.ChatOptions!.Tools!));
+    }
 
     #region Context Validation Tests
 
@@ -993,6 +1377,38 @@ public sealed class FunctionInvocationDelegatingAgentTests
     }
 
     #endregion
+
+    private static Mock<IChatClient> CreateMockChatClient(Queue<ChatResponse> responses)
+    {
+        var mockChatClient = new Mock<IChatClient>();
+        mockChatClient.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => responses.Dequeue());
+        mockChatClient.Setup(c => c.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(() => responses.Dequeue().ToChatResponseUpdates().ToAsyncEnumerable());
+        return mockChatClient;
+    }
+
+    private sealed class TrackingFunctionInvokingChatClient(IChatClient innerClient, List<string> executionOrder, string functionName)
+        : FunctionInvokingChatClient(innerClient)
+    {
+        protected override async ValueTask<object?> InvokeFunctionAsync(FunctionInvocationContext context, CancellationToken cancellationToken)
+        {
+            if (context.Function.Name == functionName)
+            {
+                executionOrder.Add("Override-Pre");
+            }
+
+            var result = await base.InvokeFunctionAsync(context, cancellationToken);
+            if (context.Function.Name == functionName)
+            {
+                executionOrder.Add("Override-Post");
+            }
+
+            return result;
+        }
+    }
 
     /// <summary>
     /// Creates a mock IChatClient with predefined responses for testing.
