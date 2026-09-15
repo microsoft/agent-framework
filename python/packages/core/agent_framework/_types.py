@@ -2009,20 +2009,27 @@ def prepend_instructions_to_messages(
     if isinstance(instructions, str):
         instructions = [instructions]
 
-    # Skip instructions that are already present as leading messages with the
+    # Skip instructions that are already present as the leading messages with the
     # same role and text.  This prevents duplicate system messages when
     # instructions are injected by multiple layers (e.g. Agent + chat client).
-    deduplicated: list[str] = []
+    # Only a *prefix* of instructions can be deduplicated: once an instruction
+    # does not match, any remaining instructions must keep their relative order.
+    # Prepending the non-matching remainder in front of the matched messages
+    # would invert the instruction order (e.g. ["First", "Second"] with a
+    # leading "First" message becoming ["Second", "First", ...]), so the
+    # remainder is inserted right after the matched prefix instead.
+    matched_count = 0
     for idx, instr in enumerate(instructions):
         if idx < len(messages) and messages[idx].role == role and messages[idx].text == instr:
-            continue
-        deduplicated.append(instr)
+            matched_count += 1
+        else:
+            break
 
-    if not deduplicated:
+    if matched_count == len(instructions):
         return messages
 
-    instruction_messages = [Message(role, [instr]) for instr in deduplicated]
-    return [*instruction_messages, *messages]
+    instruction_messages = [Message(role, [instr]) for instr in instructions[matched_count:]]
+    return [*messages[:matched_count], *instruction_messages, *messages[matched_count:]]
 
 
 # region ChatResponse

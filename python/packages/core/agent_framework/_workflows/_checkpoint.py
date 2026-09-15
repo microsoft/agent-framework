@@ -569,12 +569,26 @@ class FileCheckpointStorage:
 
         Returns:
             The unique ID of the saved checkpoint.
+
+        Raises:
+            WorkflowCheckpointException: If the checkpoint cannot be encoded or would
+                fail to decode under this storage's ``allowed_checkpoint_types``.
         """
-        from ._checkpoint_encoding import encode_checkpoint_value
+        from ._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 
         file_path = self._validate_file_path(checkpoint.checkpoint_id)
         checkpoint_dict = checkpoint.to_dict()
-        encoded_checkpoint = encode_checkpoint_value(checkpoint_dict)
+        # Fail at save time if encoding or restore validation fails (#8181).
+        try:
+            encoded_checkpoint = encode_checkpoint_value(checkpoint_dict)
+            decode_checkpoint_value(encoded_checkpoint, allowed_types=self._allowed_types)
+        except WorkflowCheckpointException:
+            raise
+        except Exception as ex:
+            raise WorkflowCheckpointException(
+                f"Checkpoint {checkpoint.checkpoint_id} cannot be encoded or restored under "
+                "this storage's allowed types; refusing to save."
+            ) from ex
 
         def _replace_with_retry(tmp_path: Path) -> None:
             # On Windows, os.replace can transiently fail with PermissionError when a
@@ -614,7 +628,12 @@ class FileCheckpointStorage:
                 tmp_name = f".maf-ckpt-{uuid.uuid4().hex}.tmp"
                 tmp_path = file_path.parent / tmp_name
                 fd = os.open(tmp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
-                with os.fdopen(fd, "w") as f:
+                # UTF-8 explicitly, carried over from #8214: `json.dump(..., ensure_ascii=False)`
+                # writes non-ASCII raw, and the platform default is cp1252 on Windows, so a
+                # checkpoint containing CJK text or emoji raised UnicodeEncodeError. The read
+                # sides are UTF-8 too; fixing only one would trade a loud write error for silent
+                # read corruption.
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
                     json.dump(encoded_checkpoint, f, indent=2, ensure_ascii=False)
                 _replace_with_retry(tmp_path)
                 tmp_path = None
@@ -731,10 +750,19 @@ class FileCheckpointStorage:
             raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
 
         def _read() -> dict[str, Any]:
-            with open(file_path) as f:
+            with open(file_path, encoding="utf-8") as f:
                 return json.load(f)
 
-        encoded_checkpoint = await asyncio.to_thread(_read)
+        try:
+            encoded_checkpoint = await asyncio.to_thread(_read)
+        except UnicodeDecodeError as ex:
+            raise WorkflowCheckpointException(
+                f"Checkpoint file for {checkpoint_id} is not valid UTF-8 and cannot be loaded."
+            ) from ex
+        except json.JSONDecodeError as ex:
+            raise WorkflowCheckpointException(
+                f"Checkpoint file for {checkpoint_id} is not valid JSON and cannot be loaded."
+            ) from ex
 
         from ._checkpoint_encoding import decode_checkpoint_value
 
@@ -760,7 +788,7 @@ class FileCheckpointStorage:
             checkpoints: list[WorkflowCheckpoint] = []
             for file_path in self.storage_path.glob("*.json"):
                 try:
-                    with open(file_path) as f:
+                    with open(file_path, encoding="utf-8") as f:
                         encoded_checkpoint = json.load(f)
                         from ._checkpoint_encoding import decode_checkpoint_value
 
@@ -820,18 +848,8 @@ class FileCheckpointStorage:
 
         Returns:
             A list of checkpoint IDs for the specified workflow name.
+            Only includes checkpoints that can be decoded under this storage's
+            allowed types (aligned with :meth:`list_checkpoints`, #8181).
         """
-
-        def _list_ids() -> list[CheckpointID]:
-            checkpoint_ids: list[CheckpointID] = []
-            for file_path in self.storage_path.glob("*.json"):
-                try:
-                    with open(file_path) as f:
-                        data = json.load(f)
-                    if data.get("workflow_name") == workflow_name:
-                        checkpoint_ids.append(data.get("checkpoint_id", file_path.stem))
-                except Exception as e:
-                    logger.warning(f"Failed to read checkpoint file {file_path}: {e}")
-            return checkpoint_ids
-
-        return await asyncio.to_thread(_list_ids)
+        checkpoints = await self.list_checkpoints(workflow_name=workflow_name)
+        return [checkpoint.checkpoint_id for checkpoint in checkpoints]
