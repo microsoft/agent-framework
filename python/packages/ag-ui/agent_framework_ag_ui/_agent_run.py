@@ -1950,7 +1950,7 @@ async def _resolve_approval_responses(
 
             async def execute_local_call(approval: Content = approval, call_id: str = call_id) -> list[Content]:
                 try:
-                    result_groups, _ = await _try_execute_function_call_groups(
+                    result_groups, _, _ = await _try_execute_function_call_groups(
                         custom_args=tool_kwargs,
                         function_calls=[approval],
                         tools=tools,

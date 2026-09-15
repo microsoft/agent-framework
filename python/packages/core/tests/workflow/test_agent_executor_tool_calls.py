@@ -5,6 +5,7 @@
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any, Literal, overload
 
+import pytest
 from typing_extensions import Never
 
 from agent_framework import (
@@ -592,6 +593,215 @@ class DeclarationOnlyMockChatClient(FunctionInvocationLayer[Any], BaseChatClient
             yield ChatResponseUpdate(contents=[Content.from_text(text="successfully.")], role="assistant")
 
         self._iteration += 1
+
+
+class MixedPauseBatchMockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
+    """Mock client that emits one ordered approval/Host pause batch."""
+
+    def __init__(self) -> None:
+        FunctionInvocationLayer.__init__(self)
+        BaseChatClient.__init__(self)
+        self._iteration = 0
+        self.received_messages: list[list[Message]] = []
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        self.received_messages.append([Message.from_dict(message.to_dict()) for message in messages])
+        if stream:
+            return self._build_response_stream(self._stream_response())
+
+        async def _get_response() -> ChatResponse:
+            return self._create_response()
+
+        return _get_response()
+
+    def _pause_contents(self) -> list[Content]:
+        return [
+            Content.from_function_call(
+                call_id="reused-call-id",
+                name="host_func",
+                arguments={"value": 1},
+                id="host-occurrence-1",
+            ),
+            Content.from_function_call(
+                call_id="reused-call-id",
+                name="approval_func",
+                arguments={},
+                id="approval-occurrence",
+            ),
+            Content.from_function_call(
+                call_id="reused-call-id",
+                name="host_func",
+                arguments={"value": 2},
+                id="host-occurrence-2",
+            ),
+        ]
+
+    def _create_response(self) -> ChatResponse:
+        if self._iteration == 0:
+            response = ChatResponse(messages=Message("assistant", self._pause_contents()))
+        else:
+            response = ChatResponse(messages=Message("assistant", ["done"]))
+        self._iteration += 1
+        return response
+
+    async def _stream_response(self) -> AsyncIterable[ChatResponseUpdate]:
+        if self._iteration == 0:
+            yield ChatResponseUpdate(role="assistant", contents=self._pause_contents(), finish_reason="tool_calls")
+        else:
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")], finish_reason="stop")
+        self._iteration += 1
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("host_kind", ["declaration", "additional"])
+async def test_agent_executor_mixed_pause_batch_waits_and_preserves_occurrence_order(
+    streaming: bool,
+    host_kind: str,
+) -> None:
+    """Workflow responses remain atomic and ordered for reused provider call ids."""
+    approval_calls = 0
+    host_calls = 0
+
+    def execute_approval() -> str:
+        nonlocal approval_calls
+        approval_calls += 1
+        return "approved"
+
+    def execute_host(value: int) -> str:
+        nonlocal host_calls
+        host_calls += 1
+        return f"unexpected-{value}"
+
+    approval_tool = FunctionTool(name="approval_func", func=execute_approval, approval_mode="always_require")
+    host_tool = FunctionTool(
+        name="host_func",
+        func=None if host_kind == "declaration" else execute_host,
+        description="A Host-owned function",
+        input_model={"type": "object", "properties": {"value": {"type": "integer"}}},
+    )
+    client = MixedPauseBatchMockChatClient()
+    if host_kind == "additional":
+        client.function_invocation_configuration["additional_tools"] = [host_tool]
+    agent = Agent(
+        client=client,
+        name="MixedPauseAgent",
+        tools=[approval_tool, host_tool] if host_kind == "declaration" else [approval_tool],
+    )
+    workflow = WorkflowBuilder(start_executor=agent, output_from=[test_executor]).add_edge(agent, test_executor).build()
+
+    if streaming:
+        initial_events = [event async for event in workflow.run("run mixed batch", stream=True)]
+        requests = [event for event in initial_events if event.type == "request_info"]
+    else:
+        initial = await workflow.run("run mixed batch")
+        requests = initial.get_request_info_events()
+
+    assert {request.data.id for request in requests} == {
+        "host-occurrence-1",
+        "approval-occurrence",
+        "host-occurrence-2",
+    }
+    requests_by_id = {request.data.id: request for request in requests}
+    host_one = requests_by_id["host-occurrence-1"]
+    approval = requests_by_id["approval-occurrence"]
+    host_two = requests_by_id["host-occurrence-2"]
+
+    async def resume_one(request_id: str, response: Content) -> list[Any]:
+        if streaming:
+            return [
+                event.data
+                async for event in workflow.run(stream=True, responses={request_id: response})
+                if event.type == "output"
+            ]
+        resumed = await workflow.run(responses={request_id: response})
+        return resumed.get_outputs()
+
+    assert (
+        await resume_one(
+            host_two.request_id,
+            Content.from_function_result(call_id="reused-call-id", result="host-two"),
+        )
+        == []
+    )
+    assert (
+        await resume_one(
+            approval.request_id,
+            approval.data.to_function_approval_response(True),
+        )
+        == []
+    )
+    assert approval_calls == 0
+    assert host_calls == 0
+    assert client._iteration == 1
+
+    outputs = await resume_one(
+        host_one.request_id,
+        Content.from_function_result(call_id="reused-call-id", result="host-one"),
+    )
+
+    assert outputs == ["done"]
+    assert approval_calls == 1
+    assert host_calls == 0
+    assert client._iteration == 2
+    submitted_results = [
+        content
+        for message in client.received_messages[-1]
+        for content in message.contents
+        if content.type == "function_result"
+    ]
+    assert [(content.id, content.result) for content in submitted_results] == [
+        ("host-occurrence-1", "host-one"),
+        (None, "approved"),
+        ("host-occurrence-2", "host-two"),
+    ]
+
+
+async def test_agent_executor_mixed_pause_cancellation_terminates_corresponding_item() -> None:
+    """Cancelling one mixed-pause request must not leave the session barrier stuck."""
+
+    def execute_approval() -> str:
+        return "approved"
+
+    approval_tool = FunctionTool(name="approval_func", func=execute_approval, approval_mode="always_require")
+    host_tool = FunctionTool(
+        name="host_func",
+        func=None,
+        description="A Host-owned function",
+        input_model={"type": "object", "properties": {"value": {"type": "integer"}}},
+    )
+    client = MixedPauseBatchMockChatClient()
+    agent = Agent(
+        client=client,
+        name="MixedPauseCancellationAgent",
+        tools=[approval_tool, host_tool],
+    )
+    workflow = WorkflowBuilder(start_executor=agent, output_from=[test_executor]).add_edge(agent, test_executor).build()
+
+    paused = await workflow.run("run mixed batch")
+    requests = {event.request_id: event for event in paused.get_request_info_events()}
+    cancelled = await workflow.cancel_pending_requests(["host-occurrence-1"])
+
+    assert cancelled.get_outputs() == []
+
+    resumed = await workflow.run(
+        responses={
+            "approval-occurrence": requests["approval-occurrence"].data.to_function_approval_response(True),
+            "host-occurrence-2": Content.from_function_result(
+                call_id="reused-call-id",
+                result="host-two",
+            ),
+        }
+    )
+
+    assert resumed.get_outputs() == ["done"]
+    assert client._iteration == 2
 
 
 async def test_agent_executor_declaration_only_tool_emits_request_info() -> None:

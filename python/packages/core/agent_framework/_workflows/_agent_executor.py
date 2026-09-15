@@ -315,6 +315,13 @@ class AgentExecutor(Executor):
             response: The user's response to the function approval request.
             ctx: The workflow context for emitting events and outputs.
         """
+        # Workflow responses are correlated by request_info id, while a function
+        # result normally carries only the provider call_id. Preserve the
+        # authoritative request occurrence so reused call_id values stay
+        # unambiguous when a mixed pause batch is resumed.
+        if response.type == "function_result" and original_request.type == "function_call":
+            response = Content.from_dict(response.to_dict())
+            response.id = original_request.id
         self._pending_responses_to_agent.append(response)
         self._pending_agent_requests.pop(original_request.id, None)  # type: ignore[arg-type]
 
@@ -342,6 +349,9 @@ class AgentExecutor(Executor):
         ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate],
     ) -> None:
         """Release an agent-owned user-input request after workflow cancellation."""
+        from .._tools import _cancel_pending_pause_batch_request  # pyright: ignore[reportPrivateUsage]
+
+        _cancel_pending_pause_batch_request(self._session, request_id)
         self._pending_agent_requests.pop(request_id, None)
         if not self._pending_agent_requests:
             await self._resume_with_pending_responses(ctx)

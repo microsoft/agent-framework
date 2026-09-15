@@ -117,6 +117,7 @@ def _has_authoritative_approval_session(invocation_session: AgentSession | None)
 
 _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY: Final[str] = "already_approved_approval_request_groups"
 _PENDING_APPROVAL_REQUESTS_KEY: Final[str] = "pending_approval_requests"
+_PENDING_PAUSE_BATCH_KEY: Final[str] = "pending_pause_batch"
 _APPROVAL_REQUEST_ID_KEY: Final[str] = "_approval_request_id"
 _FUNCTION_INVOCATION_BUDGET_STATE_KEY: Final[str] = "_function_invocation_budget_state"
 _FUNCTION_RESULT_CARRIER_CONTEXT_KEY: Final[str] = "_function_result_carrier"
@@ -1664,8 +1665,12 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
       before abandoning the tool loop for this request.
     - ``terminate_on_unknown_calls``: Whether to raise an error when the model
       requests a function that is not in the tool map.
-    - ``additional_tools``: Extra tools available during execution but not
-      advertised to the model in the tool list.
+    - ``additional_tools``: Extra Host-owned tools that are not advertised to
+      the model in the tool list. A name present here remains Host-owned even
+      when a visible tool has the same name, so it is never executed locally.
+      Approval is fail-closed for such collisions: ``approval_mode="always_require"``
+      on either the visible or additional definition requires approval before
+      the call is surfaced to the Host.
     - ``include_detailed_errors``: Whether to include exception details in the
       function result returned to the model. Exception text may contain sensitive
       information regardless of its source, so enable this only for a trusted channel.
@@ -2130,6 +2135,20 @@ def _underlying_function_call(content: Content) -> Content:
     return content
 
 
+def _as_user_input_pause(function_call: Content) -> Content:
+    """Copy a declaration-only/additional call and surface it as a user-input pause.
+
+    These tools have no local implementation (spec 004); AgentExecutor emits its request_info events off
+    user_input_request, and the id is backfilled from call_id so the resume can correlate the reply.
+    Copying avoids mutating a Content object that may already have been yielded in a streaming update.
+    """
+    user_input_call = copy.copy(function_call)
+    user_input_call.user_input_request = True
+    if user_input_call.id is None:
+        user_input_call.id = user_input_call.call_id
+    return user_input_call
+
+
 async def _execute_single_function_call(
     function_call: Content,
     *,
@@ -2140,10 +2159,20 @@ async def _execute_single_function_call(
     middleware_pipeline: FunctionMiddlewarePipeline | None,
     live_tools: list[ToolTypes] | None,
     host_payload_budget: _FunctionResultPayloadBudget | None,
-) -> tuple[list[Content], bool]:
+) -> tuple[list[Content], bool, bool]:
     from ._middleware import MiddlewareTermination
     from ._sessions import _suspend_run_persistence_gate  # pyright: ignore[reportPrivateUsage]
     from ._types import Content
+
+    # Older persisted batches can contain an approval wrapper around a
+    # declaration-only call. Reclassify it before the execution boundary so
+    # host-owned calls never enter local middleware or a tool implementation.
+    source_function_call = _underlying_function_call(function_call)
+    source_tool = tool_map.get(source_function_call.name) if source_function_call.name is not None else None
+    additional_tool_names = {tool.name for tool in config.get("additional_tools") or []}
+    if (source_tool is not None and source_tool.declaration_only) or source_function_call.name in additional_tool_names:
+        declaration_only_call = _as_user_input_pause(source_function_call)
+        return [declaration_only_call], False, False
 
     try:
         # A run-persistence gate defers only the gated run's own persistence; nested
@@ -2163,17 +2192,32 @@ async def _execute_single_function_call(
                 live_tools=live_tools,
                 host_payload_budget=host_payload_budget,
             )
-        return [result], False
+        is_replacement_approval = (
+            result.type == "function_approval_request"
+            and result.additional_properties.get("_replacement_approval_request") is True
+        )
+        was_executed = not (
+            is_replacement_approval or (function_call.type == "function_approval_response" and source_tool is None)
+        )
+        return [result], False, was_executed
     except MiddlewareTermination as exc:
         if isinstance(exc.result, Content):
-            return [exc.result], True
-        source_function_call = _underlying_function_call(function_call)
-        return [
-            Content.from_function_result(
-                call_id=source_function_call.call_id,  # type: ignore[arg-type]
-                result=exc.result,
+            is_replacement_approval = (
+                exc.result.type == "function_approval_request"
+                and exc.result.additional_properties.get("_replacement_approval_request") is True
             )
-        ], True
+            return [exc.result], True, not is_replacement_approval
+        source_function_call = _underlying_function_call(function_call)
+        return (
+            [
+                Content.from_function_result(
+                    call_id=source_function_call.call_id,  # type: ignore[arg-type]
+                    result=exc.result,
+                )
+            ],
+            True,
+            True,
+        )
     except UserInputRequiredException as exc:
         source_function_call = _underlying_function_call(function_call)
         call_id = source_function_call.call_id
@@ -2183,14 +2227,23 @@ async def _execute_single_function_call(
             if not item.id:
                 item.id = call_id
         if propagated_contents:
-            return propagated_contents, False
-        return [
-            Content.from_function_result(
-                call_id=call_id,  # type: ignore[arg-type]
-                result="Tool requires user input but no request details were provided.",
-                exception="UserInputRequiredException",
+            is_replacement_approval = all(
+                item.type == "function_approval_request"
+                and item.additional_properties.get("_replacement_approval_request") is True
+                for item in propagated_contents
             )
-        ], False
+            return propagated_contents, False, not is_replacement_approval
+        return (
+            [
+                Content.from_function_result(
+                    call_id=call_id,  # type: ignore[arg-type]
+                    result="Tool requires user input but no request details were provided.",
+                    exception="UserInputRequiredException",
+                )
+            ],
+            False,
+            True,
+        )
 
 
 async def _try_execute_function_call_groups(
@@ -2201,7 +2254,7 @@ async def _try_execute_function_call_groups(
     invocation_session: AgentSession | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
-) -> tuple[list[list[Content]], bool]:
+) -> tuple[list[list[Content]], bool, int]:
     """Execute multiple function calls concurrently while preserving per-call result groups.
 
     Args:
@@ -2217,6 +2270,7 @@ async def _try_execute_function_call_groups(
         A tuple of:
         - One ordered content group per function call.
         - True when function middleware requested loop termination.
+        - Number of calls that crossed the execution boundary.
     """
     from ._types import Content
 
@@ -2227,73 +2281,103 @@ async def _try_execute_function_call_groups(
         if function_call.type == "function_approval_response" or _is_actionable_function_call(function_call)
     ]
     if not function_calls:
-        return [], False
+        return [], False, 0
 
     tool_map = _get_tool_map(tools)
+    additional_tools = tuple(config.get("additional_tools") or ())
     # The live tools list (when tools is the run-local list) is exposed on the
     # FunctionInvocationContext so tools can add/remove tools during the run.
     live_tools: list[ToolTypes] | None = cast("list[ToolTypes]", tools) if isinstance(tools, list) else None
-    approval_tool_names = {tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"}
+    # additional_tools are Host-owned by name, including when a visible tool has
+    # the same name. Approval policy is deliberately fail-closed across that
+    # collision: either definition can require the first approval pause.
+    approval_tool_names = {
+        tool_name for tool_name, tool in tool_map.items() if tool.approval_mode == "always_require"
+    } | {tool.name for tool in additional_tools if tool.approval_mode == "always_require"}
     logger.debug(
         "_try_execute_function_calls: tool_map keys=%s, approval_tools=%s",
         list(tool_map.keys()),
         approval_tool_names,
     )
     declaration_only_tool_names = {tool_name for tool_name, tool in tool_map.items() if tool.declaration_only}
-    additional_tool_names = {tool.name for tool in config.get("additional_tools") or []}
-    actionable_calls = [
-        function_call for function_call in function_calls if _is_actionable_function_call(function_call)
-    ]
-
-    # Classify the entire batch first: any required user interaction pauses the batch before execution.
+    additional_tool_names = {tool.name for tool in additional_tools}
+    # Classify the entire batch first so classification travels with each call, not with its position in
+    # the batch. Scan every call before acting on any of it. Precedence (highest first): unknown-call
+    # termination > approval pause > declaration-only user-input. unknown-call termination is a fail-closed
+    # security gate: when terminate_on_unknown_calls is enabled, an unknown call aborts the whole batch up
+    # front, before any approval is solicited or any sibling executes, so it can never be downgraded into a
+    # rejectable approval request and slip past the abort on a rejection or a dropped response. Approval and
+    # declaration-only calls otherwise pause together (see the approval branch) so neither is bypassed.
     requires_approval = False
     has_declaration_only_call = False
-    # A user-input pause takes precedence over unknown-call termination in mixed batches.
-    for function_call in actionable_calls:
-        function_name = function_call.name
+    unknown_call_found = False
+    unknown_call_name: str | None = None
+    for function_call in function_calls:
+        source_function_call = _underlying_function_call(function_call)
+        function_name = source_function_call.name
         logger.debug(
             "Checking function call: type=%s, name=%s, in approval_tools=%s",
             function_call.type,
             function_name,
             function_name in approval_tool_names,
         )
-        if function_name in approval_tool_names:
+        if _is_actionable_function_call(function_call) and function_name in approval_tool_names:
             logger.debug("Approval needed for function: %s", function_name)
             requires_approval = True
-            break
-        if function_name in declaration_only_tool_names or function_name in additional_tool_names:
+            continue
+        if _is_actionable_function_call(function_call) and (
+            function_name in declaration_only_tool_names or function_name in additional_tool_names
+        ):
             has_declaration_only_call = True
-            break
-        if config.get("terminate_on_unknown_calls", False) and function_name not in tool_map:
-            raise KeyError(f'Error: Requested function "{function_name}" not found.')
+            continue
+        if (
+            _is_actionable_function_call(function_call)
+            and not unknown_call_found
+            and config.get("terminate_on_unknown_calls", False)
+            and function_name not in tool_map
+        ):
+            unknown_call_found = True
+            unknown_call_name = function_name
+    # Fail-closed precedence: an unknown call in a batch configured to terminate aborts the whole batch
+    # before any approval is solicited or any sibling executes. unknown_call_found is only set when
+    # terminate_on_unknown_calls is enabled (see the scan above), so this never fires for tolerated unknown
+    # calls. Wrapping the unknown call as a rejectable approval request instead would let a rejection or a
+    # dropped response silently skip the abort, turning a fail-closed gate back into a running loop.
+    if unknown_call_found:
+        raise KeyError(f'Error: Requested function "{unknown_call_name}" not found.')
     if requires_approval:
         # Surface only the approvals the host must decide; session-backed safe siblings wait for that resume.
         # approval can only be needed for Function Call Content, not Approval Responses.
         logger.debug("Returning visible function_approval_request contents and storing already-approved requests")
         visible_requests: list[Content] = []
         already_approved_requests: list[Content] = []
+        pause_groups: list[list[Content]] = []
         for function_call in function_calls:
             if function_call.type != "function_call":
+                continue
+            tool_name = function_call.name
+            # Explicit approval takes precedence over Host ownership on the first pause. After approval,
+            # _execute_single_function_call reclassifies declaration-only/additional calls at the execution
+            # boundary, surfaces them as user input, and keeps them out of local middleware/tool execution.
+            if (
+                tool_name is not None
+                and tool_name not in approval_tool_names
+                and (tool_name in declaration_only_tool_names or tool_name in additional_tool_names)
+            ):
+                pause_groups.append([_as_user_input_pause(function_call)])
                 continue
             approval_request = Content.from_function_approval_request(
                 id=function_call.id or function_call.call_id,  # type: ignore[arg-type]
                 function_call=function_call,
             )
-            tool_name = function_call.name
-            if tool_name is None:
+            tool = tool_map.get(tool_name) if tool_name is not None else None
+            if tool_name is None or tool_name in approval_tool_names or tool is None:
                 visible_requests.append(approval_request)
-                continue
-            tool = tool_map.get(tool_name)
-            if (
-                tool_name in approval_tool_names
-                or tool is None
-                or tool_name in declaration_only_tool_names
-                or tool_name in additional_tool_names
-            ):
-                visible_requests.append(approval_request)
+                pause_groups.append([approval_request])
                 continue
             if not _has_authoritative_approval_session(invocation_session):
                 visible_requests.append(approval_request)
+                pause_groups.append([approval_request])
                 continue
             already_approved_requests.append(approval_request)
         _store_already_approved_approval_requests(
@@ -2302,7 +2386,10 @@ async def _try_execute_function_call_groups(
             already_approved_requests,
         )
         _store_pending_approval_requests(invocation_session, visible_requests)
-        return [[request] for request in visible_requests], False
+        _store_pending_pause_batch(invocation_session, pause_groups)
+        # Surface approval pauses and declaration-only user-input pauses together so a mixed batch neither
+        # bypasses approval nor executes a declaration-only call.
+        return pause_groups, False, 0
     if has_declaration_only_call:
         # Declaration-only calls are returned as user input rather than executed locally.
         # return the declaration only tools to the user, since we cannot execute them.
@@ -2310,11 +2397,8 @@ async def _try_execute_function_call_groups(
         declaration_only_calls: list[Content] = []
         for function_call in function_calls:
             if function_call.type == "function_call":
-                function_call.user_input_request = True
-                if function_call.id is None:
-                    function_call.id = function_call.call_id
-                declaration_only_calls.append(function_call)
-        return [[function_call] for function_call in declaration_only_calls], False
+                declaration_only_calls.append(_as_user_input_pause(function_call))
+        return [[function_call] for function_call in declaration_only_calls], False, 0
 
     # Only a fully executable batch reaches this point; run calls concurrently but retain per-call result groups.
     # Create each task inside a copied context so the active agent span is
@@ -2350,8 +2434,9 @@ async def _try_execute_function_call_groups(
         await asyncio.gather(*execution_tasks, return_exceptions=True)
         raise
 
-    should_terminate = any(terminate for _, terminate in execution_results)
-    return [result_contents for result_contents, _ in execution_results], should_terminate
+    should_terminate = any(terminate for _, terminate, _ in execution_results)
+    executed_call_count = sum(1 for _, _, was_executed in execution_results if was_executed)
+    return [result_contents for result_contents, _, _ in execution_results], should_terminate, executed_call_count
 
 
 @dataclass
@@ -2366,21 +2451,7 @@ class _FunctionExecutionBatch:
         """Flatten the ordered result groups for ordinary response processing."""
         return [content for result_group in self.result_groups for content in result_group]
 
-    @property
-    def executed_call_count(self) -> int:
-        """Count of result groups that were actually invoked.
-
-        Excludes groups still deferred on an approval request (the tool body never ran,
-        unlike a ``UserInputRequiredException`` raised mid-execution, which did run and
-        still counts) or left as a bare declaration because the batch as a whole was
-        deferred, so a call is only charged against ``max_function_calls`` once it
-        actually executes, rather than again when it was merely requested.
-        """
-        return sum(
-            1
-            for result_group in self.result_groups
-            if not any(content.type in {"function_approval_request", "function_call"} for content in result_group)
-        )
+    executed_call_count: int = 0
 
     @property
     def had_errors(self) -> bool:
@@ -2404,9 +2475,9 @@ async def _execute_function_calls(
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
 ) -> _FunctionExecutionBatch:
     tools = _extract_tools(options)
-    if not tools:
+    if not tools and not config.get("additional_tools"):
         return _FunctionExecutionBatch(result_groups=[])
-    result_groups, should_terminate = await _try_execute_function_call_groups(
+    result_groups, should_terminate, executed_call_count = await _try_execute_function_call_groups(
         custom_args=custom_args,
         function_calls=function_calls,
         tools=tools,
@@ -2418,6 +2489,7 @@ async def _execute_function_calls(
     return _FunctionExecutionBatch(
         result_groups=result_groups,
         should_terminate=should_terminate,
+        executed_call_count=executed_call_count,
     )
 
 
@@ -2675,6 +2747,369 @@ def _store_pending_approval_requests(
         state.pop(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY, None)
 
 
+def _store_pending_pause_batch(
+    invocation_session: AgentSession | None,
+    pause_groups: Sequence[Sequence[Content]],
+) -> None:
+    """Persist an ordered mixed approval/Host pause batch."""
+    state = _get_tool_approval_state(invocation_session)
+    if state is None:
+        return
+
+    items: list[dict[str, Any]] = []
+    kinds: set[str] = set()
+    for group in pause_groups:
+        for content in group:
+            kind: str | None = None
+            if content.type == "function_approval_request":
+                kind = "approval"
+            elif content.type == "function_call" and content.user_input_request:
+                kind = "host"
+            if kind is None:
+                continue
+            kinds.add(kind)
+            items.append({"kind": kind, "request": content.to_dict()})
+
+    if kinds == {"approval", "host"}:
+        state[_PENDING_PAUSE_BATCH_KEY] = {"items": items}
+    else:
+        state.pop(_PENDING_PAUSE_BATCH_KEY, None)
+
+
+def _cancel_pending_pause_batch_request(  # pyright: ignore[reportUnusedFunction]
+    invocation_session: AgentSession | None,
+    request_id: str,
+) -> None:
+    """Remove one cancelled workflow request from session-backed pause state."""
+    state = _get_tool_approval_state(invocation_session, create=False)
+    if state is None:
+        return
+
+    raw_batch = state.get(_PENDING_PAUSE_BATCH_KEY)
+    if isinstance(raw_batch, Mapping):
+        batch = cast(Mapping[str, Any], raw_batch)
+        raw_items: Any = batch.get("items")
+        if isinstance(raw_items, list):
+            remaining_items: list[Any] = []
+            for raw_item in cast(list[Any], raw_items):
+                if not isinstance(raw_item, dict):
+                    remaining_items.append(raw_item)
+                    continue
+                item = cast(dict[str, Any], raw_item)
+                request = _content_from_state(item.get("request"))
+                request_ids: set[str] = {request.id} if request is not None and request.id is not None else set()
+                if request is not None and request.function_call is not None and request.function_call.id is not None:
+                    request_ids.add(request.function_call.id)
+                if request_id not in request_ids:
+                    remaining_items.append(item)
+            if remaining_items:
+                state[_PENDING_PAUSE_BATCH_KEY] = {"items": remaining_items}
+            else:
+                state.pop(_PENDING_PAUSE_BATCH_KEY, None)
+
+    pending = _load_pending_approval_requests(invocation_session)
+    pending.pop(request_id, None)
+    for pending_id, request in list(pending.items()):
+        if request.function_call is not None and request.function_call.id == request_id:
+            pending.pop(pending_id)
+    _store_pending_approval_requests(invocation_session, list(pending.values()))
+
+
+def _stage_pending_pause_batch_responses(
+    messages: list[Message],
+    invocation_session: AgentSession | None,
+) -> tuple[bool, set[int]]:
+    """Stage mixed-batch responses until every ordered pause occurrence is answered."""
+    from ._types import Message
+
+    state = _get_tool_approval_state(invocation_session, create=False)
+    if state is None:
+        return False, set()
+    raw_batch = state.get(_PENDING_PAUSE_BATCH_KEY)
+    if not isinstance(raw_batch, Mapping):
+        return False, set()
+    batch = cast(Mapping[str, Any], raw_batch)
+    raw_items = batch.get("items")
+    if not isinstance(raw_items, list):
+        state.pop(_PENDING_PAUSE_BATCH_KEY, None)
+        return False, set()
+
+    items = [copy.deepcopy(cast(dict[str, Any], item)) for item in cast(list[Any], raw_items) if isinstance(item, dict)]
+    if not items:
+        state.pop(_PENDING_PAUSE_BATCH_KEY, None)
+        return False, set()
+
+    preexisting_response_slot_ids = {id(item) for item in items if item.get("response") is not None}
+    matched_content_ids: set[int] = set()
+    approval_items: dict[str, dict[str, Any]] = {}
+    host_items_by_call_id: dict[str, list[dict[str, Any]]] = {}
+    host_items_by_occurrence_id: dict[str, dict[str, Any]] = {}
+    for item in items:
+        request = _content_from_state(item.get("request"))
+        if request is None:
+            continue
+        if item.get("kind") == "approval" and request.id is not None:
+            approval_items[request.id] = item
+            if request.function_call is not None and request.function_call.id is not None:
+                approval_items[request.function_call.id] = item
+        elif item.get("kind") == "host" and request.call_id is not None:
+            host_items_by_call_id.setdefault(request.call_id, []).append(item)
+            if request.id is not None:
+                host_items_by_occurrence_id[request.id] = item
+
+    host_candidates_by_call_id: dict[str, list[Content]] = {}
+    for message in messages:
+        for content in message.contents:
+            if content.type == "function_approval_response":
+                rebound = _bind_approval_response_to_pending_request(
+                    content,
+                    invocation_session,
+                    consume=False,
+                )
+                if rebound is None:
+                    continue
+                request_id = rebound.additional_properties.get(_APPROVAL_REQUEST_ID_KEY)
+                item = approval_items.get(str(request_id)) if request_id is not None else None
+                if item is None and rebound.id is not None:
+                    item = approval_items.get(rebound.id)
+                if item is None:
+                    continue
+                candidate_state = rebound.to_dict()
+                stored_response = item.get("response")
+                if stored_response is not None:
+                    if not isinstance(stored_response, dict) or stored_response != candidate_state:
+                        raise RuntimeError(f"Conflicting approval response for occurrence {rebound.id!r}.")
+                else:
+                    item["response"] = candidate_state
+                matched_content_ids.add(id(content))
+            elif content.type == "function_result" and content.call_id in host_items_by_call_id:
+                host_candidates_by_call_id.setdefault(content.call_id, []).append(content)
+
+    for call_id, candidates in host_candidates_by_call_id.items():
+        slots = host_items_by_call_id[call_id]
+        observed_stored_slots: set[int] = set()
+        identified_candidates = [candidate for candidate in candidates if candidate.id is not None]
+        idless_candidates = [candidate for candidate in candidates if candidate.id is None]
+        for candidate in (*identified_candidates, *idless_candidates):
+            item = host_items_by_occurrence_id.get(candidate.id) if candidate.id is not None else None
+            if item is not None:
+                matched_request = _content_from_state(item.get("request"))
+                if matched_request is None or matched_request.call_id != call_id:
+                    item = None
+            if candidate.id is not None and item is None:
+                continue
+            candidate_state = candidate.to_dict()
+            if item is None:
+                # History can replay responses staged on an earlier run. Consume those
+                # occurrences before assigning later same-call_id results.
+                matching_stored_slots = [
+                    slot
+                    for slot in slots
+                    if slot.get("response") is not None
+                    and _same_pause_response_payload(cast(dict[str, Any], slot["response"]), candidate_state)
+                ]
+                item = next(
+                    (slot for slot in matching_stored_slots if id(slot) not in observed_stored_slots),
+                    None,
+                )
+                if item is not None:
+                    observed_stored_slots.add(id(item))
+                elif matching_stored_slots:
+                    # A repeated id-less history item is a replay of an already staged
+                    # response, not a response for another occurrence sharing call_id.
+                    matched_content_ids.add(id(candidate))
+                    continue
+                else:
+                    item = next((slot for slot in slots if slot.get("response") is None), None)
+                    if item is not None and any(id(slot) in preexisting_response_slot_ids for slot in slots):
+                        raise RuntimeError(
+                            f"Conflicting id-less Host response for a previously answered {call_id!r} occurrence."
+                        )
+            if item is None:
+                if any(slot.get("response") is not None for slot in slots):
+                    raise RuntimeError(f"Conflicting Host response for an already answered {call_id!r} occurrence.")
+                continue
+            stored_response = item.get("response")
+            if stored_response is not None:
+                if not isinstance(stored_response, dict) or not _same_pause_response_payload(
+                    cast(dict[str, Any], stored_response), candidate_state
+                ):
+                    raise RuntimeError(f"Conflicting Host response for occurrence {candidate.id!r}.")
+            else:
+                item["response"] = candidate_state
+            matched_content_ids.add(id(candidate))
+
+    if matched_content_ids:
+        filtered_messages: list[Message] = []
+        for message in messages:
+            message.contents = [content for content in message.contents if id(content) not in matched_content_ids]
+            if message.contents:
+                filtered_messages.append(message)
+        messages[:] = filtered_messages
+    state[_PENDING_PAUSE_BATCH_KEY] = {"items": items}
+
+    if any(item.get("response") is None for item in items):
+        return True, set()
+
+    ordered_responses: list[Content] = []
+    host_result_ids: set[int] = set()
+    for item in items:
+        response = _content_from_state(item.get("response"))
+        if response is None:
+            return True, set()
+        ordered_responses.append(response)
+        if item.get("kind") == "host":
+            host_result_ids.add(id(response))
+    state.pop(_PENDING_PAUSE_BATCH_KEY, None)
+    messages.append(Message(role="user", contents=ordered_responses))
+    return False, host_result_ids
+
+
+def _same_pause_response_payload(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    """Compare pause responses while treating the optional occurrence id as correlation metadata."""
+    left_payload = dict(left)
+    right_payload = dict(right)
+    left_payload.pop("id", None)
+    right_payload.pop("id", None)
+    return left_payload == right_payload
+
+
+def _stateless_mixed_pause_batch_status(messages: list[Message]) -> tuple[bool, set[int]]:
+    """Return stateless mixed-barrier completeness and rebuild a complete batch in occurrence order."""
+    from ._types import Message
+
+    approval_requests: list[Content] = []
+    host_requests: list[Content] = []
+    approval_responses: list[Content] = []
+    host_responses: list[Content] = []
+    pause_order_contents: list[Content] = []
+    for message in messages:
+        for content in message.contents:
+            if content.type == "function_call":
+                pause_order_contents.append(content)
+                if content.user_input_request:
+                    host_requests.append(content)
+            elif content.type == "function_approval_request":
+                pause_order_contents.append(content)
+                approval_requests.append(content)
+            elif content.type == "function_approval_response":
+                approval_responses.append(content)
+            elif content.type == "function_result":
+                host_responses.append(content)
+
+    if not approval_requests or not host_requests or not (approval_responses or host_responses):
+        return False, set()
+
+    approval_identity_owners: dict[str, int] = {}
+    approval_request_identities: list[set[str]] = []
+    for index, request in enumerate(approval_requests):
+        identities = {
+            identity
+            for identity in (
+                request.id,
+                request.function_call.id if request.function_call is not None else None,
+            )
+            if identity is not None
+        }
+        for identity in identities:
+            previous_owner = approval_identity_owners.setdefault(identity, index)
+            if previous_owner != index:
+                return True, set()
+        approval_request_identities.append(identities)
+
+    unmatched_approval_requests = set(range(len(approval_requests)))
+    matched_approval_responses: dict[int, Content] = {}
+    matched_approval_response_ids: set[int] = set()
+    for response in approval_responses:
+        if response.id is None:
+            continue
+        matching_indexes = [
+            index for index, identities in enumerate(approval_request_identities) if response.id in identities
+        ]
+        if len(matching_indexes) != 1:
+            continue
+        matching_index = matching_indexes[0]
+        previous_response = matched_approval_responses.get(matching_index)
+        if previous_response is not None:
+            if previous_response.to_dict() != response.to_dict():
+                function_call = approval_requests[matching_index].function_call
+                occurrence_id = function_call.id if function_call is not None else approval_requests[matching_index].id
+                raise RuntimeError(f"Conflicting approval response for occurrence {occurrence_id!r}.")
+        else:
+            unmatched_approval_requests.remove(matching_index)
+            matched_approval_responses[matching_index] = response
+        matched_approval_response_ids.add(id(response))
+    approval_complete = not unmatched_approval_requests
+
+    unmatched_host_requests = list(host_requests)
+    matched_host_responses: dict[int, Content] = {}
+    matched_host_result_ids: set[int] = set()
+    for response in (candidate for candidate in host_responses if candidate.id is not None):
+        matching_index = next(
+            (
+                index
+                for index, request in enumerate(unmatched_host_requests)
+                if request.id == response.id and request.call_id == response.call_id
+            ),
+            None,
+        )
+        if matching_index is not None:
+            request = unmatched_host_requests.pop(matching_index)
+            matched_host_responses[id(request)] = response
+            matched_host_result_ids.add(id(response))
+
+    for response in (candidate for candidate in host_responses if candidate.id is None):
+        matching_indexes = [
+            index for index, request in enumerate(unmatched_host_requests) if request.call_id == response.call_id
+        ]
+        if len(matching_indexes) == 1:
+            request = unmatched_host_requests.pop(matching_indexes[0])
+            matched_host_responses[id(request)] = response
+            matched_host_result_ids.add(id(response))
+
+    if not approval_complete or unmatched_host_requests:
+        return True, matched_host_result_ids
+
+    approval_indexes_by_occurrence_id = {
+        request.function_call.id: index
+        for index, request in enumerate(approval_requests)
+        if request.function_call is not None and request.function_call.id is not None
+    }
+    approval_indexes_by_request_object = {id(request): index for index, request in enumerate(approval_requests)}
+    ordered_responses: list[Content] = []
+    ordered_approval_indexes: set[int] = set()
+    for content in pause_order_contents:
+        host_response = matched_host_responses.get(id(content))
+        if host_response is not None:
+            ordered_responses.append(host_response)
+            continue
+        approval_index = approval_indexes_by_request_object.get(id(content))
+        if approval_index is None and content.type == "function_call" and content.id is not None:
+            approval_index = approval_indexes_by_occurrence_id.get(content.id)
+        if approval_index is not None and approval_index not in ordered_approval_indexes:
+            ordered_responses.append(matched_approval_responses[approval_index])
+            ordered_approval_indexes.add(approval_index)
+
+    # Malformed legacy histories may contain an approval response without either its
+    # original standalone function_call or its request wrapper. Keep any such response
+    # deterministic after all model occurrences that can be identified explicitly.
+    ordered_responses.extend(
+        matched_approval_responses[index]
+        for index in range(len(approval_requests))
+        if index not in ordered_approval_indexes
+    )
+
+    matched_response_ids = {id(response) for response in ordered_responses} | matched_approval_response_ids
+    filtered_messages: list[Message] = []
+    for message in messages:
+        message.contents = [content for content in message.contents if id(content) not in matched_response_ids]
+        if message.contents:
+            filtered_messages.append(message)
+    filtered_messages.append(Message(role="user", contents=ordered_responses))
+    messages[:] = filtered_messages
+    return False, matched_host_result_ids
+
+
 def _bind_approval_response_to_pending_request(
     response: Content,
     invocation_session: AgentSession | None,
@@ -2862,6 +3297,8 @@ def _pop_already_approved_approval_responses(
 
 def _collect_approval_responses(
     messages: list[Message],
+    *,
+    non_approval_result_ids: set[int] | None = None,
 ) -> dict[str, Content]:
     """Collect approval responses (both approved and rejected) from messages.
 
@@ -2888,6 +3325,8 @@ def _collect_approval_responses(
                 pending_by_call_id.setdefault(function_call.call_id, deque()).append(content)
                 continue
             if content.call_id is None:
+                continue
+            if non_approval_result_ids is not None and id(content) in non_approval_result_ids:
                 continue
             is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
             is_follow_up_request = content.user_input_request and content.type not in {
@@ -3079,6 +3518,8 @@ def _replace_approval_contents_with_results(
     messages: list[Message],
     pending_approval_responses: dict[str, Content],
     approved_function_result_groups: list[list[Content]],
+    *,
+    non_approval_result_ids: set[int] | None = None,
 ) -> list[Content]:
     """Replace approval request/response contents with function call/result contents in-place.
 
@@ -3224,6 +3665,8 @@ def _replace_approval_contents_with_results(
                 resolved_contents.extend(replacements)
             elif content.type == "function_result":
                 if content.call_id is None:
+                    continue
+                if non_approval_result_ids is not None and id(content) in non_approval_result_ids:
                     continue
                 occurrence = find_open_occurrence(content.call_id)
                 if occurrence is None:
@@ -3489,6 +3932,30 @@ def _handle_function_call_results(
         result.type in {"function_approval_request", "function_call"} or result.user_input_request
         for result in execution_results
     ):
+        user_input_calls = [result for result in execution_results if result.type == "function_call"]
+        user_input_by_occurrence: dict[str, deque[Content]] = {}
+        user_input_by_provider_call: dict[tuple[str | None, str | None], deque[Content]] = {}
+        for item in user_input_calls:
+            if item.id is not None:
+                user_input_by_occurrence.setdefault(item.id, deque()).append(item)
+            user_input_by_provider_call.setdefault((item.call_id, item.name), deque()).append(item)
+        consumed_user_input_calls: set[int] = set()
+        for message in response.messages:
+            for index, content in enumerate(message.contents):
+                if content.type != "function_call":
+                    continue
+                occurrence_candidates = user_input_by_occurrence.get(content.id) if content.id is not None else None
+                while occurrence_candidates and id(occurrence_candidates[0]) in consumed_user_input_calls:
+                    occurrence_candidates.popleft()
+                replacement = occurrence_candidates.popleft() if occurrence_candidates else None
+                if replacement is None and content.id is None:
+                    provider_candidates = user_input_by_provider_call.get((content.call_id, content.name))
+                    while provider_candidates and id(provider_candidates[0]) in consumed_user_input_calls:
+                        provider_candidates.popleft()
+                    replacement = provider_candidates.popleft() if provider_candidates else None
+                if replacement is not None:
+                    consumed_user_input_calls.add(id(replacement))
+                    message.contents[index] = replacement
         # Only add items that aren't already in the message (e.g. function_approval_request wrappers).
         # Declaration-only function_call items are already present from the LLM response.
         new_items = [result for result in execution_results if result.type != "function_call"]
@@ -3557,6 +4024,20 @@ async def _resolve_approval_responses(
     from ._middleware import MiddlewareFailure
     from ._types import Message
 
+    stateless_host_result_ids: set[int] = set()
+    if not _has_authoritative_approval_session(invocation_session):
+        partial_mixed_batch, stateless_host_result_ids = _stateless_mixed_pause_batch_status(prepared_messages)
+        if partial_mixed_batch:
+            raise RuntimeError("A caller-owned AgentSession is required to resume a mixed pause batch partially.")
+
+    incomplete_pause_batch, host_result_ids = _stage_pending_pause_batch_responses(
+        prepared_messages,
+        invocation_session,
+    )
+    host_result_ids.update(stateless_host_result_ids)
+    if incomplete_pause_batch:
+        return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row, action="return")
+
     active_pending_ids = (
         set(_load_pending_approval_requests(invocation_session))
         if _has_authoritative_approval_session(invocation_session)
@@ -3579,7 +4060,12 @@ async def _resolve_approval_responses(
         prepared_messages.append(Message(role="user", contents=already_approved_responses))
 
     # 2. With no new decision, hide any still-pending batch from model input while keeping it resumable in history.
-    if not (pending_approval_responses := _collect_approval_responses(prepared_messages)):
+    if not (
+        pending_approval_responses := _collect_approval_responses(
+            prepared_messages,
+            non_approval_result_ids=host_result_ids,
+        )
+    ):
         _remove_unanswered_approval_batches_from_model_input(prepared_messages)
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row)
 
@@ -3595,6 +4081,7 @@ async def _resolve_approval_responses(
             responses_not_granted, session=invocation_session
         )
     execution_result_groups: list[list[Content]] = []
+    executed_function_count = 0
     should_terminate = False
     reached_error_limit = False
     if responses_to_execute and not (options and options.get("tool_choice") == "none"):
@@ -3611,6 +4098,7 @@ async def _resolve_approval_responses(
                 await settle_dangling_calls(responses_to_execute)
             raise
         execution_result_groups = execution.result_groups
+        executed_function_count = execution.executed_call_count
         should_terminate = execution.should_terminate
         errors_in_a_row, reached_error_limit = _update_consecutive_error_count(
             errors_in_a_row,
@@ -3639,6 +4127,7 @@ async def _resolve_approval_responses(
         prepared_messages,
         pending_approval_responses,
         execution_result_groups,
+        non_approval_result_ids=host_result_ids,
     )
     pending_by_id = {
         request.id: request
@@ -3655,7 +4144,6 @@ async def _resolve_approval_responses(
         _store_pending_approval_requests(invocation_session, list(pending_by_id.values()))
 
     # 5. Return role-correct output and tell the outer loop whether to return, stop tools, or call the model.
-    executed_function_count = len(execution_result_groups)
     requires_user_input = any(
         result.type == "function_call" or result.user_input_request for result in terminal_contents
     )
@@ -3682,6 +4170,7 @@ async def _process_model_function_calls(
     errors_in_a_row: int,
     max_errors: int,
     execute_function_calls: _FunctionCallExecutor,
+    config: FunctionInvocationConfiguration,
     invocation_session: AgentSession | None = None,
 ) -> _FunctionProcessingResult:
     """Execute function calls from a newly completed model response."""
@@ -3694,7 +4183,7 @@ async def _process_model_function_calls(
     # 1. Extract only actionable, unanswered calls from this model turn.
     tools = _extract_tools(options)
     function_calls = _extract_function_calls(response)
-    if not (function_calls and tools):
+    if not (function_calls and (tools or config.get("additional_tools"))):
         if function_call_messages is not None:
             _prepend_function_call_messages(response, function_call_messages)
         if approval_requests:
@@ -3994,6 +4483,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     errors_in_a_row=errors_in_a_row,
                     max_errors=max_errors,
                     execute_function_calls=execute_function_calls,
+                    config=self.function_invocation_configuration,
                     invocation_session=invocation_session,
                 )
             except MiddlewareFailure:
@@ -4132,6 +4622,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         for update in approval_processing.streaming_updates:
             yield update
         if approval_processing.action == "return":
+            _clear_budget_state_from_session(invocation_session)
             return
 
         if options.get("tool_choice") != "none":
@@ -4250,6 +4741,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     errors_in_a_row=errors_in_a_row,
                     max_errors=max_errors,
                     execute_function_calls=execute_function_calls,
+                    config=self.function_invocation_configuration,
                     invocation_session=invocation_session,
                 )
             except MiddlewareFailure:
@@ -4277,6 +4769,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 yield update
             if function_processing.action != "continue" and function_processing.action != "stop":
                 # "return" action: model produced a terminal response.
+                _clear_budget_state_from_session(invocation_session)
                 return
             _apply_batch_limit_decision(
                 function_processing.action,

@@ -128,6 +128,7 @@ Code-reading landmarks:
 - `_get_response_with_function_invocation(...)` owns non-streaming aggregation.
 - `_stream_response_with_function_invocation(...)` owns streamed emission/finalization.
 - `_resolve_approval_responses(...)` handles only inbound approval decisions.
+- `_stage_pending_pause_batch_responses(...)` durably assembles mixed approval and Host-owned responses.
 - `_process_model_function_calls(...)` handles only calls from a completed model response.
 - `_try_execute_function_calls(...)` decides approval/declaration/execution behavior for a batch.
 - `_replace_approval_contents_with_results(...)` is the occurrence-aware approval transcript normalizer.
@@ -186,6 +187,15 @@ sequenceDiagram
 
 The terminal result is caller-visible in both modes. The private normalized message copy is model-visible. The
 original caller input and earlier response remain unchanged.
+
+When one model batch mixes local approval requests with declaration-only or `additional_tools` calls, all of those
+pauses form one ordered barrier. The session stores immutable request snapshots plus any partial responses. Until
+every occurrence has a response, later calls return without executing an approved tool or invoking the model,
+including runs that contain only unrelated input. Once complete, the layer reconstructs the response batch in the
+model's original call order. Correlation uses each content occurrence id rather than assuming provider `call_id`
+values are unique. Workflow `request_info` responses preserve that occurrence id when they are handed back to the
+agent. The stored representation must survive an `AgentSession.to_dict()` / `AgentSession.from_dict()` round trip,
+and streaming and non-streaming paths must have equivalent behavior.
 
 ### Reasoning-bound function-call groups
 
@@ -581,6 +591,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 
 | Scenario | Required invariant | Primary regression test |
 |---|---|---|
+| Mixed approval and Host pause batch | Approval decisions and declaration-only or `additional_tools` results from one model batch form one ordered barrier. Partial replies persist in serializable session state without executing a tool or calling the model; after every occurrence is answered, the batch is submitted in original model order. Correlation is occurrence-aware when provider `call_id` values repeat, with equivalent streaming, non-streaming, and workflow behavior. | `packages/core/tests/core/test_function_invocation_logic.py::test_mixed_approval_host_batch_stages_partial_responses_in_original_order`, `packages/core/tests/workflow/test_agent_executor_tool_calls.py::test_agent_executor_mixed_pause_batch_waits_and_preserves_occurrence_order` |
 | Safe and approval-required calls in one batch | Hidden safe calls replay only with the matching visible approval. | `packages/core/tests/core/test_harness_tool_approval.py::test_mixed_batch_hides_already_approved_request_until_approval_replay` |
 | Restored approval state | Serialized `ToolApprovalState` restores mixed-batch behavior. | `test_mixed_batch_accepts_restored_tool_approval_state` |
 | Unrelated turn before approval | Hidden calls do not execute on an unrelated turn. | `test_hidden_mixed_batch_requests_do_not_replay_on_unrelated_turn` |

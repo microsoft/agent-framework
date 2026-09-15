@@ -2874,6 +2874,1866 @@ async def test_function_invocation_config_terminate_on_unknown_calls_true(chat_c
     assert exec_counter == 0
 
 
+@pytest.mark.parametrize("approval_first", [True, False], ids=["approval-first", "declaration-only-first"])
+async def test_mixed_batch_approval_enforced_regardless_of_call_order(
+    chat_client_base: SupportsChatGetResponse, approval_first: bool
+):
+    """A tool with approval_mode='always_require' must pause for approval even when a declaration-only
+    call precedes it in the same batch.
+
+    Regression: batch classification used to stop at the first matching call, so a declaration-only call
+    appearing before an approval-required call caused the whole batch to be returned as user input and the
+    approval gate to be silently bypassed. Classification must travel with each call, not with its position.
+    """
+    from agent_framework import FunctionTool
+
+    approval_calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func(arg1: str) -> str:
+        nonlocal approval_calls
+        approval_calls += 1
+        return f"Approved {arg1}"
+
+    declaration_func = FunctionTool(
+        name="declaration_func",
+        func=None,
+        description="A declaration-only function for testing",
+        input_model={"type": "object", "properties": {"arg1": {"type": "string"}}, "required": ["arg1"]},
+    )
+
+    approval_call = Content.from_function_call(call_id="a1", name="approval_func", arguments='{"arg1": "x"}')
+    declaration_call = Content.from_function_call(call_id="d1", name="declaration_func", arguments='{"arg1": "y"}')
+    contents = [approval_call, declaration_call] if approval_first else [declaration_call, approval_call]
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=contents)),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [approval_func, declaration_func]},
+    )
+
+    approval_requests = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if content.type == "function_approval_request"
+        and content.function_call is not None
+        and content.function_call.name == "approval_func"
+    ]
+    assert len(approval_requests) == 1, "approval gate must be surfaced regardless of call order"
+    # The declaration-only sibling must be surfaced as user input, never wrapped as an approval request,
+    # so that an "approve" decision cannot drive it into local execution on resume (spec 004).
+    declaration_as_approval = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if content.type == "function_approval_request"
+        and content.function_call is not None
+        and content.function_call.name == "declaration_func"
+    ]
+    assert not declaration_as_approval, "declaration-only call must not be wrapped as an approval request"
+    declaration_user_input = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if content.type == "function_call" and content.user_input_request and content.name == "declaration_func"
+    ]
+    assert len(declaration_user_input) == 1, "declaration-only call must be surfaced as user input"
+    assert approval_calls == 0, "approval-required tool must not execute before approval"
+
+
+async def test_mixed_batch_pause_groups_preserve_model_call_order():
+    """Approval and declaration-only pause groups retain the model call order."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import _try_execute_function_call_groups
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func(arg1: str) -> str:
+        return arg1
+
+    declaration_func = FunctionTool(
+        name="declaration_func",
+        func=None,
+        description="A declaration-only function for testing",
+        input_model={"type": "object", "properties": {"arg1": {"type": "string"}}, "required": ["arg1"]},
+    )
+    calls = [
+        Content.from_function_call(call_id="d1", name="declaration_func", arguments={"arg1": "1"}),
+        Content.from_function_call(call_id="a1", name="approval_func", arguments={"arg1": "2"}),
+        Content.from_function_call(call_id="d2", name="declaration_func", arguments={"arg1": "3"}),
+    ]
+
+    result_groups, should_terminate, executed_call_count = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=calls,
+        tools=[approval_func, declaration_func],
+        config={},
+    )
+
+    ordered_call_ids: list[str | None] = []
+    for group in result_groups:
+        content = group[0]
+        if content.type == "function_approval_request":
+            assert content.function_call is not None
+            ordered_call_ids.append(content.function_call.call_id)
+        else:
+            ordered_call_ids.append(content.call_id)
+    assert ordered_call_ids == ["d1", "a1", "d2"]
+    assert should_terminate is False
+    assert executed_call_count == 0
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("approval_first", [False, True], ids=["host-first", "approval-first"])
+@pytest.mark.parametrize("host_kind", ["declaration", "additional"])
+async def test_approval_mode_precedes_host_classification_and_partial_batch_stays_pending(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+    approval_first: bool,
+    host_kind: str,
+):
+    """A Host-owned approval tool asks for approval first, then is reclassified without local execution."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import _PENDING_PAUSE_BATCH_KEY, _TOOL_APPROVAL_STATE_KEY
+
+    gated_host_calls = 0
+    sibling_host_calls = 0
+
+    def execute_gated_host() -> str:
+        nonlocal gated_host_calls
+        gated_host_calls += 1
+        return "unexpected-gated-execution"
+
+    def execute_sibling_host() -> str:
+        nonlocal sibling_host_calls
+        sibling_host_calls += 1
+        return "unexpected-sibling-execution"
+
+    gated_host = FunctionTool(
+        name="gated_host",
+        func=None if host_kind == "declaration" else execute_gated_host,
+        description="A Host-owned function that explicitly requires approval",
+        input_model={"type": "object", "properties": {}},
+        approval_mode="always_require",
+    )
+    sibling_host = FunctionTool(
+        name="sibling_host",
+        func=None if host_kind == "declaration" else execute_sibling_host,
+        description="Another Host-owned function",
+        input_model={"type": "object", "properties": {}},
+    )
+    if host_kind == "additional":
+        chat_client_base.function_invocation_configuration["additional_tools"] = [gated_host, sibling_host]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    gated_call = Content.from_function_call(
+        call_id="gated-call",
+        name="gated_host",
+        arguments={},
+        id="gated-occurrence",
+    )
+    sibling_call = Content.from_function_call(
+        call_id="sibling-call",
+        name="sibling_host",
+        arguments={},
+        id="sibling-occurrence",
+    )
+    calls = [gated_call, sibling_call] if approval_first else [sibling_call, gated_call]
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=calls, finish_reason="tool_calls")]
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=calls), finish_reason="tool_calls")
+        ]
+
+    async def run(contents: list[Content], session: AgentSession) -> ChatResponse:
+        # Keep additional tools genuinely additional-only. Including gated_host in
+        # the visible list would mask a failure to derive approval policy from config.
+        visible_tools = [gated_host, sibling_host] if host_kind == "declaration" else []
+        if not streaming:
+            return await chat_client_base.get_response(
+                [Message(role="user", contents=contents)],
+                options={"tool_choice": "auto", "tools": visible_tools},
+                client_kwargs={"session": session},
+            )
+        result = chat_client_base.get_response(
+            [Message(role="user", contents=contents)],
+            stream=True,
+            options={"tool_choice": "auto", "tools": visible_tools},
+            client_kwargs={"session": session},
+        )
+        updates = [update async for update in result]
+        response = await result.get_final_response()
+        return response if response.messages else ChatResponse.from_updates(updates)
+
+    session = AgentSession()
+    first_response = await run([Content.from_text("go")], session)
+    approval_requests = [
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    ]
+    assert len(approval_requests) == 1
+    assert approval_requests[0].function_call is not None
+    assert approval_requests[0].function_call.name == "gated_host"
+    initial_host_requests = [
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.user_input_request
+    ]
+    assert [content.name for content in initial_host_requests] == ["sibling_host"]
+    assert gated_call.user_input_request is None
+
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    approval_response = approval_requests[0].to_function_approval_response(approved=True)
+    partial_response = await run([approval_response], session)
+    assert partial_response.messages == []
+    assert gated_host_calls == sibling_host_calls == 0
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
+    assert isinstance(tool_state, dict)
+    assert _PENDING_PAUSE_BATCH_KEY in tool_state
+
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    sibling_result = Content.from_function_result(call_id="sibling-call", result="host-result")
+    sibling_result.id = "sibling-occurrence"
+    resumed_response = await run([sibling_result], session)
+
+    resumed_host_requests = [
+        content
+        for message in resumed_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.user_input_request
+    ]
+    assert [(content.name, content.id) for content in resumed_host_requests] == [("gated_host", "gated-occurrence")]
+    assert gated_host_calls == sibling_host_calls == 0
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert not any(
+        content.type == "function_result" and content.call_id == "gated-call"
+        for message in resumed_response.messages
+        for content in message.contents
+    )
+    final_tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
+    assert isinstance(final_tool_state, dict)
+    assert _PENDING_PAUSE_BATCH_KEY not in final_tool_state
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_additional_only_always_require_rejection_never_executes_after_session_roundtrip(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """An additional-only tool requires approval, and rejection never becomes a Host execution pause."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import (
+        _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
+        _PENDING_PAUSE_BATCH_KEY,
+        _TOOL_APPROVAL_STATE_KEY,
+    )
+
+    invocation_count = 0
+
+    def execute_host_tool() -> str:
+        nonlocal invocation_count
+        invocation_count += 1
+        return "unexpected"
+
+    host_tool = FunctionTool(
+        name="additional_guarded",
+        func=execute_host_tool,
+        approval_mode="always_require",
+    )
+    call = Content.from_function_call(
+        call_id="additional-call",
+        name="additional_guarded",
+        arguments={},
+        id="additional-occurrence",
+    )
+    chat_client_base.function_invocation_configuration["additional_tools"] = [host_tool]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[call], finish_reason="tool_calls")],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("rejected")], finish_reason="stop")],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[call]), finish_reason="tool_calls"),
+            ChatResponse(messages=Message(role="assistant", contents=["rejected"]), finish_reason="stop"),
+        ]
+
+    async def run(contents: list[Content], session: AgentSession) -> ChatResponse:
+        if not streaming:
+            return await chat_client_base.get_response(
+                [Message(role="user", contents=contents)],
+                options={"tool_choice": "auto"},
+                client_kwargs={"session": session},
+            )
+        result = chat_client_base.get_response(
+            [Message(role="user", contents=contents)],
+            stream=True,
+            options={"tool_choice": "auto"},
+            client_kwargs={"session": session},
+        )
+        updates = [update async for update in result]
+        response = await result.get_final_response()
+        return response if response.messages else ChatResponse.from_updates(updates)
+
+    session = AgentSession()
+    first_response = await run([Content.from_text("go")], session)
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    assert approval_request.function_call is not None
+    assert approval_request.function_call.name == "additional_guarded"
+    assert not any(
+        content.type == "function_call" and content.user_input_request
+        for message in first_response.messages
+        for content in message.contents
+    )
+
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    rejected_response = await run(
+        [approval_request.to_function_approval_response(approved=False)],
+        session,
+    )
+
+    assert rejected_response.text == "rejected"
+    assert invocation_count == 0
+    assert chat_client_base.call_count == 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert not any(
+        content.type == "function_call" and content.user_input_request
+        for message in rejected_response.messages
+        for content in message.contents
+    )
+    tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
+    assert isinstance(tool_state, dict)
+    assert _PENDING_PAUSE_BATCH_KEY not in tool_state
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+
+
+@pytest.mark.parametrize(
+    ("visible_mode", "additional_mode", "requires_approval"),
+    [
+        ("always_require", "never_require", True),
+        ("never_require", "always_require", True),
+        ("never_require", "never_require", False),
+    ],
+)
+async def test_additional_tool_name_collision_is_host_owned_and_approval_is_fail_closed(
+    visible_mode: Literal["always_require", "never_require"],
+    additional_mode: Literal["always_require", "never_require"],
+    requires_approval: bool,
+) -> None:
+    """Additional ownership wins by name, while either definition may require approval."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import FunctionInvocationConfiguration, _try_execute_function_call_groups
+
+    visible_calls = 0
+    additional_calls = 0
+
+    def execute_visible() -> str:
+        nonlocal visible_calls
+        visible_calls += 1
+        return "visible"
+
+    def execute_additional() -> str:
+        nonlocal additional_calls
+        additional_calls += 1
+        return "additional"
+
+    visible_tool = FunctionTool(name="collision", func=execute_visible, approval_mode=visible_mode)
+    additional_tool = FunctionTool(name="collision", func=execute_additional, approval_mode=additional_mode)
+    function_call = Content.from_function_call(
+        call_id="collision-call",
+        name="collision",
+        arguments={},
+        id="collision-occurrence",
+    )
+    config: FunctionInvocationConfiguration = {"additional_tools": [additional_tool]}
+
+    result_groups, should_terminate, executed_call_count = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[function_call],
+        tools=[visible_tool],
+        config=config,
+    )
+
+    first_result = result_groups[0][0]
+    if requires_approval:
+        assert first_result.type == "function_approval_request"
+        approved = first_result.to_function_approval_response(approved=True)
+        result_groups, should_terminate, executed_call_count = await _try_execute_function_call_groups(
+            custom_args={},
+            function_calls=[approved],
+            tools=[visible_tool],
+            config=config,
+        )
+        first_result = result_groups[0][0]
+
+    assert first_result.type == "function_call"
+    assert first_result.user_input_request is True
+    assert should_terminate is False
+    assert executed_call_count == 0
+    assert visible_calls == additional_calls == 0
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("host_kind", ["declaration", "additional"])
+async def test_mixed_approval_host_batch_stages_partial_responses_in_original_order(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+    streaming: bool,
+    host_kind: str,
+):
+    """A mixed approval/Host batch is resumed atomically after serialized, out-of-order replies."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import _PENDING_PAUSE_BATCH_KEY, _TOOL_APPROVAL_STATE_KEY
+
+    approval_calls = 0
+    host_calls = 0
+    provider_inputs: list[list[Message]] = []
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func() -> str:
+        nonlocal approval_calls
+        approval_calls += 1
+        return "approved"
+
+    def execute_host(value: int) -> str:
+        nonlocal host_calls
+        host_calls += 1
+        return f"unexpected-{value}"
+
+    host_func = FunctionTool(
+        name="host_func",
+        func=None if host_kind == "declaration" else execute_host,
+        description="A Host-owned function",
+        input_model={"type": "object", "properties": {"value": {"type": "integer"}}},
+    )
+    if host_kind == "additional":
+        chat_client_base.function_invocation_configuration["additional_tools"] = [host_func]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    calls = [
+        Content.from_function_call(
+            call_id="reused-call-id",
+            name="host_func",
+            arguments={"value": 1},
+            id="host-occurrence-1",
+        ),
+        Content.from_function_call(
+            call_id="reused-call-id",
+            name="approval_func",
+            arguments={},
+            id="approval-occurrence",
+        ),
+        Content.from_function_call(
+            call_id="reused-call-id",
+            name="host_func",
+            arguments={"value": 2},
+            id="host-occurrence-2",
+        ),
+    ]
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=calls, finish_reason="tool_calls")],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")], finish_reason="stop")],
+        ]
+        original_stream = chat_client_base._get_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+        def record_stream(*, messages: list[Message], **kwargs: Any):
+            provider_inputs.append([Message.from_dict(message.to_dict()) for message in messages])
+            return original_stream(messages=messages, **kwargs)
+
+        monkeypatch.setattr(chat_client_base, "_get_streaming_response", record_stream)
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=calls), finish_reason="tool_calls"),
+            ChatResponse(messages=Message(role="assistant", contents=["done"]), finish_reason="stop"),
+        ]
+        original_get = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+        async def record_get(*, messages: list[Message], **kwargs: Any):
+            provider_inputs.append([Message.from_dict(message.to_dict()) for message in messages])
+            return await original_get(messages=messages, **kwargs)
+
+        monkeypatch.setattr(chat_client_base, "_get_non_streaming_response", record_get)
+
+    async def run(contents: list[Content], session: AgentSession) -> ChatResponse:
+        visible_tools = [approval_func, host_func] if host_kind == "declaration" else [approval_func]
+        if not streaming:
+            return await chat_client_base.get_response(
+                [Message(role="user", contents=contents)],
+                options={"tool_choice": "auto", "tools": visible_tools},
+                client_kwargs={"session": session},
+            )
+        result = chat_client_base.get_response(
+            [Message(role="user", contents=contents)],
+            stream=True,
+            options={"tool_choice": "auto", "tools": visible_tools},
+            client_kwargs={"session": session},
+        )
+        updates = [update async for update in result]
+        response = await result.get_final_response()
+        if not response.messages and updates:
+            return ChatResponse.from_updates(updates)
+        return response
+
+    session = AgentSession()
+    first_response = await run([Content.from_text("go")], session)
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    host_requests = [
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.user_input_request
+    ]
+    assert [content.id for content in host_requests] == ["host-occurrence-1", "host-occurrence-2"]
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    partial_response = await run([approval_response], session)
+    assert partial_response.messages == []
+    assert approval_calls == 0
+    assert host_calls == 0
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    unrelated_response = await run([Content.from_text("unrelated")], session)
+    assert unrelated_response.messages == []
+    assert approval_calls == 0
+    assert host_calls == 0
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    stale_host_result = Content.from_function_result(call_id="reused-call-id", result="stale")
+    stale_host_result.id = "unknown-host-occurrence"
+    stale_response = await run([stale_host_result], session)
+    assert stale_response.messages == []
+    assert approval_calls == 0
+    assert host_calls == 0
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    host_two_result = Content.from_function_result(call_id="reused-call-id", result="host-two")
+    host_two_result.id = "host-occurrence-2"
+    partial_response = await run([host_two_result], session)
+    assert partial_response.messages == []
+    assert approval_calls == 0
+    assert host_calls == 0
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
+    assert isinstance(tool_state, dict)
+    assert _PENDING_PAUSE_BATCH_KEY in tool_state
+
+    session = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    host_one_result = Content.from_function_result(call_id="reused-call-id", result="host-one")
+    host_one_result.id = "host-occurrence-1"
+    final_response = await run([host_one_result], session)
+
+    assert final_response.text == "done"
+    assert approval_calls == 1
+    assert host_calls == 0
+    assert chat_client_base.call_count == 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    submitted_results = [
+        content for message in provider_inputs[-1] for content in message.contents if content.type == "function_result"
+    ]
+    assert [(content.id, content.result) for content in submitted_results] == [
+        ("host-occurrence-1", "host-one"),
+        (None, "approved"),
+        ("host-occurrence-2", "host-two"),
+    ]
+    final_tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
+    assert isinstance(final_tool_state, dict)
+    assert _PENDING_PAUSE_BATCH_KEY not in final_tool_state
+
+
+@pytest.mark.parametrize("identified_first", [True, False], ids=["identified-first", "idless-first"])
+def test_stateless_complete_mixed_pause_matches_identified_host_responses_first(identified_first: bool) -> None:
+    """An identified response reserves its occurrence before an id-less sibling is matched."""
+    from agent_framework._tools import _stateless_mixed_pause_batch_status
+
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    first_host_request = Content.from_function_call(
+        call_id="duplicate-call",
+        name="host_func",
+        arguments={"value": 1},
+        id="host-occurrence-1",
+    )
+    first_host_request.user_input_request = True
+    second_host_request = Content.from_function_call(
+        call_id="duplicate-call",
+        name="host_func",
+        arguments={"value": 2},
+        id="host-occurrence-2",
+    )
+    second_host_request.user_input_request = True
+    identified_result = Content.from_function_result(call_id="duplicate-call", result="second")
+    identified_result.id = "host-occurrence-2"
+    idless_result = Content.from_function_result(call_id="duplicate-call", result="first")
+    host_responses = [identified_result, idless_result] if identified_first else [idless_result, identified_result]
+
+    partial, host_result_ids = _stateless_mixed_pause_batch_status([
+        Message(
+            role="assistant",
+            contents=[approval_call, approval_request, first_host_request, second_host_request],
+        ),
+        Message(
+            role="user",
+            contents=[approval_request.to_function_approval_response(approved=True), *host_responses],
+        ),
+    ])
+
+    assert partial is False
+    assert host_result_ids == {id(identified_result), id(idless_result)}
+
+
+def test_stateless_complete_mixed_pause_rebuilds_host_approval_host_occurrence_order() -> None:
+    """A complete stateless batch follows the model's Host1-Approval-Host2 occurrence order."""
+    from agent_framework._tools import _stateless_mixed_pause_batch_status
+
+    first_host_request = Content.from_function_call(
+        call_id="host-1",
+        name="host_func",
+        arguments={"value": 1},
+        id="host-occurrence-1",
+    )
+    first_host_request.user_input_request = True
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    second_host_request = Content.from_function_call(
+        call_id="host-2",
+        name="host_func",
+        arguments={"value": 2},
+        id="host-occurrence-2",
+    )
+    second_host_request.user_input_request = True
+    first_host_result = Content.from_function_result(call_id="host-1", result="first")
+    first_host_result.id = "host-occurrence-1"
+    approval_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    second_host_result = Content.from_function_result(call_id="host-2", result="second")
+    second_host_result.id = "host-occurrence-2"
+    messages = [
+        Message(
+            role="assistant",
+            contents=[first_host_request, approval_call, approval_request, second_host_request],
+        ),
+        Message(role="tool", contents=[second_host_result, first_host_result]),
+        Message(role="user", contents=[approval_response]),
+    ]
+
+    partial, host_result_ids = _stateless_mixed_pause_batch_status(messages)
+
+    assert partial is False
+    assert host_result_ids == {id(first_host_result), id(second_host_result)}
+    assert messages[-1].role == "user"
+    assert messages[-1].contents == [first_host_result, approval_response, second_host_result]
+
+
+async def test_stateless_complete_mixed_pause_normalizes_out_of_order_reused_call_id_results() -> None:
+    """Out-of-order replies are normalized in occurrence order without confusing a reused provider call_id."""
+    from agent_framework._tools import _FunctionExecutionBatch, _resolve_approval_responses
+
+    first_host_request = Content.from_function_call(
+        call_id="reused-call",
+        name="host_func",
+        arguments={"value": 1},
+        id="host-occurrence-1",
+    )
+    first_host_request.user_input_request = True
+    approval_call = Content.from_function_call(
+        call_id="reused-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    second_host_request = Content.from_function_call(
+        call_id="reused-call",
+        name="host_func",
+        arguments={"value": 2},
+        id="host-occurrence-2",
+    )
+    second_host_request.user_input_request = True
+    first_host_result = Content.from_function_result(call_id="reused-call", result="host-one")
+    first_host_result.id = "host-occurrence-1"
+    approval_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    second_host_result = Content.from_function_result(call_id="reused-call", result="host-two")
+    second_host_result.id = "host-occurrence-2"
+    prepared_messages = [
+        Message(
+            role="assistant",
+            contents=[first_host_request, approval_call, approval_request, second_host_request],
+        ),
+        Message(role="user", contents=[second_host_result, approval_response, first_host_result]),
+    ]
+    executed: list[Content] = []
+
+    async def execute_function_calls(*, function_calls: list[Content], **kwargs: Any) -> Any:
+        executed.extend(function_calls)
+        return _FunctionExecutionBatch(
+            result_groups=[[Content.from_function_result(call_id="reused-call", result="approved")]],
+            executed_call_count=1,
+        )
+
+    result = await _resolve_approval_responses(
+        prepared_messages=prepared_messages,
+        options=None,
+        errors_in_a_row=0,
+        max_errors=3,
+        execute_function_calls=execute_function_calls,
+    )
+
+    assert executed == [approval_response]
+    assert result.function_call_count == 1
+    response_projection = [
+        (message.role, [content.result for content in message.contents]) for message in result.response_messages
+    ]
+    assert response_projection == [("tool", ["approved"])]
+    assert prepared_messages[-1].role == "tool"
+    assert [(content.type, content.result) for content in prepared_messages[-1].contents] == [
+        ("function_result", "host-one"),
+        ("function_result", "approved"),
+        ("function_result", "host-two"),
+    ]
+
+
+def _host_approval_host_replay_messages(
+    approval_responses: Sequence[Content],
+) -> tuple[list[Message], Content, Content, Content]:
+    """Build an out-of-order stateless Host1-Approval-Host2 replay."""
+    first_host_request = Content.from_function_call(
+        call_id="reused-call",
+        name="host_func",
+        arguments={"value": 1},
+        id="host-occurrence-1",
+    )
+    first_host_request.user_input_request = True
+    approval_call = Content.from_function_call(
+        call_id="reused-call",
+        name="approval_func",
+        arguments={"value": "approved"},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    second_host_request = Content.from_function_call(
+        call_id="reused-call",
+        name="host_func",
+        arguments={"value": 2},
+        id="host-occurrence-2",
+    )
+    second_host_request.user_input_request = True
+    first_host_result = Content.from_function_result(call_id="reused-call", result="host-one")
+    first_host_result.id = "host-occurrence-1"
+    second_host_result = Content.from_function_result(call_id="reused-call", result="host-two")
+    second_host_result.id = "host-occurrence-2"
+    return (
+        [
+            Message(
+                role="assistant",
+                contents=[first_host_request, approval_call, approval_request, second_host_request],
+            ),
+            Message(
+                role="user",
+                contents=[second_host_result, *approval_responses, first_host_result],
+            ),
+        ],
+        approval_call,
+        first_host_result,
+        second_host_result,
+    )
+
+
+async def test_stateless_host_approval_host_identical_approval_replay_executes_once() -> None:
+    """An exact duplicate decision is an idempotent replay of one approval occurrence."""
+    from agent_framework._tools import _FunctionExecutionBatch, _resolve_approval_responses
+
+    approval_call = Content.from_function_call(
+        call_id="reused-call",
+        name="approval_func",
+        arguments={"value": "approved"},
+        id="approval-occurrence",
+    )
+    approval_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval-occurrence",
+        function_call=approval_call,
+        additional_properties={"audit": "same"},
+    )
+    replay = Content.from_dict(approval_response.to_dict())
+    prepared_messages, _, first_host_result, second_host_result = _host_approval_host_replay_messages([
+        approval_response,
+        replay,
+    ])
+    executed: list[Content] = []
+
+    async def execute_function_calls(*, function_calls: list[Content], **kwargs: Any) -> Any:
+        executed.extend(function_calls)
+        return _FunctionExecutionBatch(
+            result_groups=[[Content.from_function_result(call_id="reused-call", result="approved")]],
+            executed_call_count=1,
+        )
+
+    result = await _resolve_approval_responses(
+        prepared_messages=prepared_messages,
+        options=None,
+        errors_in_a_row=0,
+        max_errors=3,
+        execute_function_calls=execute_function_calls,
+    )
+
+    assert executed == [approval_response]
+    assert result.function_call_count == 1
+    assert prepared_messages[-1].role == "tool"
+    assert [(content.type, content.result) for content in prepared_messages[-1].contents] == [
+        ("function_result", first_host_result.result),
+        ("function_result", "approved"),
+        ("function_result", second_host_result.result),
+    ]
+
+
+@pytest.mark.parametrize("conflict_kind", ["approved", "embedded-call", "additional-properties"])
+async def test_stateless_host_approval_host_conflicting_approval_replay_fails_closed(
+    conflict_kind: str,
+) -> None:
+    """Conflicting decisions for one occurrence are rejected before any approved call executes."""
+    from agent_framework._tools import _resolve_approval_responses
+
+    approval_call = Content.from_function_call(
+        call_id="reused-call",
+        name="approval_func",
+        arguments={"value": "approved"},
+        id="approval-occurrence",
+    )
+    first_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval-occurrence",
+        function_call=approval_call,
+        additional_properties={"audit": "same"},
+    )
+    conflicting_call = Content.from_dict(approval_call.to_dict())
+    conflicting_approved = True
+    conflicting_properties = {"audit": "same"}
+    if conflict_kind == "approved":
+        conflicting_approved = False
+    elif conflict_kind == "embedded-call":
+        conflicting_call.arguments = {"value": "attacker"}
+    else:
+        conflicting_properties = {"audit": "attacker"}
+    conflicting_response = Content.from_function_approval_response(
+        approved=conflicting_approved,
+        id="approval-occurrence",
+        function_call=conflicting_call,
+        additional_properties=conflicting_properties,
+    )
+    prepared_messages, _, _, _ = _host_approval_host_replay_messages([first_response, conflicting_response])
+    executions = 0
+
+    async def execute_function_calls(**kwargs: Any) -> Any:
+        nonlocal executions
+        executions += 1
+        pytest.fail(f"conflicting stateless approval replay must not execute: {kwargs}")
+
+    with pytest.raises(RuntimeError, match="Conflicting approval response.*approval-occurrence"):
+        await _resolve_approval_responses(
+            prepared_messages=prepared_messages,
+            options=None,
+            errors_in_a_row=0,
+            max_errors=3,
+            execute_function_calls=execute_function_calls,
+        )
+
+    assert executions == 0
+
+
+def test_stateless_complete_mixed_pause_with_ambiguous_idless_responses_fails_closed() -> None:
+    """Id-less responses cannot be assigned when duplicate call-id occurrences remain."""
+    from agent_framework._tools import _stateless_mixed_pause_batch_status
+
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_requests: list[Content] = []
+    for occurrence in (1, 2):
+        request = Content.from_function_call(
+            call_id="duplicate-call",
+            name="host_func",
+            arguments={"value": occurrence},
+            id=f"host-occurrence-{occurrence}",
+        )
+        request.user_input_request = True
+        host_requests.append(request)
+
+    partial, host_result_ids = _stateless_mixed_pause_batch_status([
+        Message(role="assistant", contents=[approval_call, approval_request, *host_requests]),
+        Message(
+            role="user",
+            contents=[
+                approval_request.to_function_approval_response(approved=True),
+                Content.from_function_result(call_id="duplicate-call", result="first"),
+                Content.from_function_result(call_id="duplicate-call", result="second"),
+            ],
+        ),
+    ])
+    assert partial is True
+    assert host_result_ids == set()
+
+
+async def test_stateless_complete_mixed_pause_excludes_host_result_with_reused_approval_call_id() -> None:
+    """A Host result sharing the approval call_id must not suppress approval execution."""
+    from agent_framework._tools import _FunctionExecutionBatch, _resolve_approval_responses
+
+    approval_call = Content.from_function_call(
+        call_id="reused-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="reused-call",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    host_result = Content.from_function_result(call_id="reused-call", result="host")
+    host_result.id = "host-occurrence"
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    executed: list[Content] = []
+
+    async def execute_function_calls(*, function_calls: list[Content], **kwargs: Any) -> Any:
+        executed.extend(function_calls)
+        return _FunctionExecutionBatch(
+            result_groups=[[Content.from_function_result(call_id="reused-call", result="approved")]],
+            executed_call_count=1,
+        )
+
+    result = await _resolve_approval_responses(
+        prepared_messages=[
+            Message(role="assistant", contents=[approval_call, approval_request, host_request]),
+            Message(role="user", contents=[approval_response, host_result]),
+        ],
+        options=None,
+        errors_in_a_row=0,
+        max_errors=3,
+        execute_function_calls=execute_function_calls,
+    )
+
+    assert executed == [approval_response]
+    assert result.function_call_count == 1
+    assert [content.result for message in result.response_messages for content in message.contents] == ["approved"]
+
+
+async def test_mixed_pause_partial_resume_without_session_fails_closed() -> None:
+    """A stateless partial response cannot bypass the mixed-pause barrier."""
+    from agent_framework._tools import _resolve_approval_responses
+
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host-call",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    executions = 0
+
+    async def execute_function_calls(**kwargs: Any) -> Any:
+        nonlocal executions
+        executions += 1
+        pytest.fail(f"partial stateless mixed batch must not execute: {kwargs}")
+
+    with pytest.raises(RuntimeError, match="AgentSession.*mixed pause batch"):
+        await _resolve_approval_responses(
+            prepared_messages=[
+                Message(role="assistant", contents=[approval_call, approval_request, host_request]),
+                Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)]),
+            ],
+            options=None,
+            errors_in_a_row=0,
+            max_errors=3,
+            execute_function_calls=execute_function_calls,
+        )
+
+    assert executions == 0
+
+
+def test_idless_duplicate_call_id_replay_does_not_fill_another_pause_occurrence() -> None:
+    """Repeated id-less history remains bound to its already staged occurrence."""
+    from agent_framework._tools import (
+        _PENDING_PAUSE_BATCH_KEY,
+        _TOOL_APPROVAL_STATE_KEY,
+        _stage_pending_pause_batch_responses,
+        _store_pending_pause_batch,
+    )
+
+    session = AgentSession()
+    first_request = Content.from_function_call(
+        call_id="duplicate",
+        name="host_func",
+        arguments={"value": 1},
+        id="host-occurrence-1",
+    )
+    first_request.user_input_request = True
+    second_request = Content.from_function_call(
+        call_id="duplicate",
+        name="host_func",
+        arguments={"value": 2},
+        id="host-occurrence-2",
+    )
+    second_request.user_input_request = True
+    approval_call = Content.from_function_call(
+        call_id="approval",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    _store_pending_pause_batch(session, [[first_request], [approval_request], [second_request]])
+
+    first_result = Content.from_function_result(call_id="duplicate", result="first")
+    incomplete, _ = _stage_pending_pause_batch_responses(
+        [Message(role="tool", contents=[first_result])],
+        session,
+    )
+    assert incomplete is True
+
+    replay_one = Content.from_function_result(call_id="duplicate", result="first")
+    replay_two = Content.from_function_result(call_id="duplicate", result="first")
+    incomplete, _ = _stage_pending_pause_batch_responses(
+        [Message(role="tool", contents=[replay_one, replay_two])],
+        session,
+    )
+
+    assert incomplete is True
+    tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
+    assert isinstance(tool_state, dict)
+    batch = tool_state[_PENDING_PAUSE_BATCH_KEY]
+    assert isinstance(batch, dict)
+    items = batch["items"]
+    assert isinstance(items, list)
+    assert items[0]["response"] == first_result.to_dict()
+    assert "response" not in items[2]
+
+
+@pytest.mark.parametrize("initial_has_id", [False, True], ids=["idless-first", "identified-first"])
+def test_same_host_response_occurrence_replay_is_idempotent_across_optional_id(initial_has_id: bool) -> None:
+    """The same response payload may be replayed with or without its occurrence id."""
+    from agent_framework._tools import _stage_pending_pause_batch_responses, _store_pending_pause_batch
+
+    session = AgentSession()
+    host_request = Content.from_function_call(
+        call_id="host-call",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    _store_pending_pause_batch(session, [[host_request], [approval_request]])
+
+    initial = Content.from_function_result(call_id="host-call", result={"value": 1})
+    if initial_has_id:
+        initial.id = "host-occurrence"
+    incomplete, _ = _stage_pending_pause_batch_responses([Message(role="tool", contents=[initial])], session)
+    assert incomplete is True
+
+    replay = Content.from_function_result(call_id="host-call", result={"value": 1})
+    if not initial_has_id:
+        replay.id = "host-occurrence"
+    incomplete, _ = _stage_pending_pause_batch_responses([Message(role="tool", contents=[replay])], session)
+    assert incomplete is True
+
+
+async def test_same_staged_approval_response_replay_is_idempotent_and_executes_once() -> None:
+    """An identical approval replay keeps the mixed barrier intact and authorizes one execution."""
+    from agent_framework._tools import (
+        _FunctionExecutionBatch,
+        _resolve_approval_responses,
+        _store_pending_approval_requests,
+        _store_pending_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={"value": 1},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host-call",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_pause_batch(session, [[approval_request], [host_request]])
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    executions = 0
+
+    async def execute_function_calls(*, function_calls: list[Content], **kwargs: Any) -> Any:
+        nonlocal executions
+        executions += 1
+        assert len(function_calls) == 1
+        assert function_calls[0].approved is True
+        return _FunctionExecutionBatch(
+            result_groups=[[Content.from_function_result(call_id="approval-call", result="approved")]],
+            executed_call_count=1,
+        )
+
+    for response in (approval_response, Content.from_dict(approval_response.to_dict())):
+        result = await _resolve_approval_responses(
+            prepared_messages=[Message(role="user", contents=[response])],
+            options=None,
+            errors_in_a_row=0,
+            max_errors=3,
+            execute_function_calls=execute_function_calls,
+            invocation_session=session,
+        )
+        assert result.action == "return"
+        assert executions == 0
+
+    host_result = Content.from_function_result(call_id="host-call", result="host")
+    host_result.id = "host-occurrence"
+    result = await _resolve_approval_responses(
+        prepared_messages=[Message(role="tool", contents=[host_result])],
+        options=None,
+        errors_in_a_row=0,
+        max_errors=3,
+        execute_function_calls=execute_function_calls,
+        invocation_session=session,
+    )
+
+    assert executions == 1
+    assert result.function_call_count == 1
+
+
+@pytest.mark.parametrize("conflict", ["approved", "payload"])
+async def test_conflicting_staged_approval_response_fails_closed_before_execution(conflict: str) -> None:
+    """A later decision or payload cannot replace an approval already staged in a mixed barrier."""
+    from agent_framework._tools import (
+        _FunctionExecutionBatch,
+        _resolve_approval_responses,
+        _store_pending_approval_requests,
+        _store_pending_pause_batch,
+    )
+
+    session = AgentSession()
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={"value": 1},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    host_request = Content.from_function_call(
+        call_id="host-call",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    _store_pending_approval_requests(session, [approval_request])
+    _store_pending_pause_batch(session, [[approval_request], [host_request]])
+    executions = 0
+
+    async def execute_function_calls(**kwargs: Any) -> Any:
+        nonlocal executions
+        executions += 1
+        return _FunctionExecutionBatch(result_groups=[], executed_call_count=0)
+
+    approved = approval_request.to_function_approval_response(approved=True)
+    result = await _resolve_approval_responses(
+        prepared_messages=[Message(role="user", contents=[approved])],
+        options=None,
+        errors_in_a_row=0,
+        max_errors=3,
+        execute_function_calls=execute_function_calls,
+        invocation_session=session,
+    )
+    assert result.action == "return"
+
+    conflicting = approval_request.to_function_approval_response(approved=conflict != "approved")
+    if conflict == "payload":
+        conflicting.additional_properties["proof"] = "different"
+    with pytest.raises(RuntimeError, match="Conflicting approval response"):
+        await _resolve_approval_responses(
+            prepared_messages=[Message(role="user", contents=[conflicting])],
+            options=None,
+            errors_in_a_row=0,
+            max_errors=3,
+            execute_function_calls=execute_function_calls,
+            invocation_session=session,
+        )
+
+    assert executions == 0
+
+
+@pytest.mark.parametrize("duplicate_identity", ["request", "occurrence"])
+async def test_stateless_mixed_pause_duplicate_approval_identity_with_too_few_responses_fails_closed(
+    duplicate_identity: str,
+) -> None:
+    """One response cannot satisfy two stateless approval occurrences sharing a correlation identity."""
+    from agent_framework._tools import _resolve_approval_responses
+
+    approval_calls: list[Content] = []
+    approval_requests: list[Content] = []
+    for occurrence in (1, 2):
+        occurrence_id = f"approval-occurrence-{occurrence}"
+        function_call = Content.from_function_call(
+            call_id=f"approval-call-{occurrence}",
+            name="approval_func",
+            arguments={"value": occurrence},
+            id=occurrence_id,
+        )
+        approval_calls.append(function_call)
+        approval_request = Content.from_function_approval_request(
+            id=occurrence_id,
+            function_call=function_call,
+        )
+        if duplicate_identity == "request":
+            approval_request.id = "duplicate-request"
+        else:
+            function_call.id = "duplicate-occurrence"
+        approval_requests.append(approval_request)
+    host_request = Content.from_function_call(
+        call_id="host-call",
+        name="host_func",
+        arguments={},
+        id="host-occurrence",
+    )
+    host_request.user_input_request = True
+    host_result = Content.from_function_result(call_id="host-call", result="host")
+    host_result.id = "host-occurrence"
+    response_id = "duplicate-request" if duplicate_identity == "request" else "duplicate-occurrence"
+    approval_response = Content.from_function_approval_response(
+        approved=True,
+        id=response_id,
+        function_call=approval_calls[0],
+    )
+    executions = 0
+
+    async def execute_function_calls(**kwargs: Any) -> Any:
+        nonlocal executions
+        executions += 1
+        pytest.fail(f"ambiguous stateless mixed batch must not execute: {kwargs}")
+
+    with pytest.raises(RuntimeError, match="AgentSession.*mixed pause batch"):
+        await _resolve_approval_responses(
+            prepared_messages=[
+                Message(role="assistant", contents=[*approval_calls, *approval_requests, host_request]),
+                Message(role="user", contents=[approval_response, host_result]),
+            ],
+            options=None,
+            errors_in_a_row=0,
+            max_errors=3,
+            execute_function_calls=execute_function_calls,
+        )
+
+    assert executions == 0
+
+
+@pytest.mark.parametrize("initial_has_id", [False, True], ids=["idless-first", "identified-first"])
+def test_conflicting_host_response_for_same_occurrence_fails_closed(initial_has_id: bool) -> None:
+    """A conflicting replay cannot mutate another same-call-id pause slot."""
+    from agent_framework._tools import (
+        _PENDING_PAUSE_BATCH_KEY,
+        _TOOL_APPROVAL_STATE_KEY,
+        _stage_pending_pause_batch_responses,
+        _store_pending_pause_batch,
+    )
+
+    session = AgentSession()
+    host_requests: list[Content] = []
+    for occurrence in (1, 2):
+        request = Content.from_function_call(
+            call_id="reused-call",
+            name="host_func",
+            arguments={"value": occurrence},
+            id=f"host-occurrence-{occurrence}",
+        )
+        request.user_input_request = True
+        host_requests.append(request)
+    approval_call = Content.from_function_call(
+        call_id="approval-call",
+        name="approval_func",
+        arguments={},
+        id="approval-occurrence",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval-occurrence",
+        function_call=approval_call,
+    )
+    _store_pending_pause_batch(session, [[host_requests[0]], [approval_request], [host_requests[1]]])
+
+    initial = Content.from_function_result(call_id="reused-call", result={"value": 1})
+    if initial_has_id:
+        initial.id = "host-occurrence-1"
+    incomplete, _ = _stage_pending_pause_batch_responses([Message(role="tool", contents=[initial])], session)
+    assert incomplete is True
+
+    conflicting = Content.from_function_result(call_id="reused-call", result={"value": 999})
+    if not initial_has_id:
+        conflicting.id = "host-occurrence-1"
+    with pytest.raises(RuntimeError, match="Conflicting .*Host response"):
+        _stage_pending_pause_batch_responses([Message(role="tool", contents=[conflicting])], session)
+
+    tool_state = session.state[_TOOL_APPROVAL_STATE_KEY]
+    assert isinstance(tool_state, dict)
+    batch = tool_state[_PENDING_PAUSE_BATCH_KEY]
+    assert isinstance(batch, dict)
+    items = batch["items"]
+    assert isinstance(items, list)
+    assert items[0]["response"] == initial.to_dict()
+    assert "response" not in items[2]
+
+
+@pytest.mark.parametrize("unknown_first", [True, False], ids=["unknown-first", "approval-first"])
+async def test_mixed_batch_unknown_call_fails_closed_before_approval(
+    chat_client_base: SupportsChatGetResponse, unknown_first: bool
+):
+    """With terminate_on_unknown_calls=True, an unknown call aborts the whole batch before any tool runs."""
+    approval_calls = 0
+    safe_calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func(arg1: str) -> str:
+        nonlocal approval_calls
+        approval_calls += 1
+        return f"Approved {arg1}"
+
+    @tool(name="safe_func", approval_mode="never_require")
+    def safe_func(arg1: str) -> str:
+        nonlocal safe_calls
+        safe_calls += 1
+        return f"Safe {arg1}"
+
+    unknown_call = Content.from_function_call(call_id="u1", name="unknown_function", arguments={"arg1": "x"})
+    approval_call = Content.from_function_call(call_id="a1", name="approval_func", arguments={"arg1": "y"})
+    safe_call = Content.from_function_call(call_id="s1", name="safe_func", arguments={"arg1": "z"})
+    contents = [unknown_call, approval_call, safe_call] if unknown_first else [approval_call, safe_call, unknown_call]
+
+    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=contents)),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    with pytest.raises(KeyError, match=r'Requested function "unknown_function" not found'):
+        await chat_client_base.get_response(
+            [Message(role="user", contents=["hello"])],
+            options={"tool_choice": "auto", "tools": [approval_func, safe_func]},
+        )
+
+    assert approval_calls == 0
+    assert safe_calls == 0
+
+
+async def test_removed_tool_approval_response_does_not_trigger_unknown_termination():
+    """An approval response for a removed tool is inert even when new unknown calls are fatal."""
+    from agent_framework._tools import _try_execute_function_call_groups
+
+    function_call = Content.from_function_call(
+        call_id="removed-call",
+        name="removed_function",
+        arguments={},
+    )
+    approval_request = Content.from_function_approval_request(
+        id="removed-request",
+        function_call=function_call,
+    )
+    approval_response = approval_request.to_function_approval_response(approved=True)
+
+    result_groups, should_terminate, executed_call_count = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[approval_response],
+        tools=[],
+        config={"terminate_on_unknown_calls": True},
+    )
+
+    assert should_terminate is False
+    assert executed_call_count == 0
+    assert result_groups == [[approval_response]]
+
+
+async def test_legacy_declaration_only_approval_response_is_reclassified_before_execution():
+    """An old approval wrapper cannot make a declaration-only call executable after an upgrade."""
+    from agent_framework import FunctionTool
+    from agent_framework._middleware import FunctionMiddlewarePipeline
+    from agent_framework._tools import _try_execute_function_call_groups
+
+    middleware_calls = 0
+
+    class RejectUnexpectedInvocationMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Any) -> None:
+            nonlocal middleware_calls
+            middleware_calls += 1
+            pytest.fail("declaration-only calls must not enter local function middleware")
+
+    declaration_func = FunctionTool(
+        name="declaration_func",
+        func=None,
+        description="A declaration-only function for testing",
+        input_model={"type": "object", "properties": {"arg1": {"type": "string"}}, "required": ["arg1"]},
+    )
+    function_call = Content.from_function_call(
+        call_id="legacy-declaration",
+        name="declaration_func",
+        arguments={"arg1": "value"},
+    )
+    legacy_request = Content.from_function_approval_request(
+        id="legacy-request",
+        function_call=function_call,
+    )
+
+    result_groups, should_terminate, executed_call_count = await _try_execute_function_call_groups(
+        custom_args={},
+        function_calls=[legacy_request.to_function_approval_response(approved=True)],
+        tools=[declaration_func],
+        config={},
+        middleware_pipeline=FunctionMiddlewarePipeline(RejectUnexpectedInvocationMiddleware()),
+    )
+
+    assert should_terminate is False
+    assert executed_call_count == 0
+    assert len(result_groups) == 1
+    assert len(result_groups[0]) == 1
+    result = result_groups[0][0]
+    assert result.type == "function_call"
+    assert result.call_id == "legacy-declaration"
+    assert result.user_input_request is True
+    assert middleware_calls == 0
+    assert function_call.user_input_request is None
+
+
+async def test_legacy_additional_tool_approval_response_is_reclassified_before_execution():
+    """An old approval wrapper cannot hide an additional-tool user-input pause after an upgrade."""
+    from agent_framework._tools import _execute_function_calls
+
+    additional_tool_calls = 0
+
+    @tool(name="additional_func")
+    def additional_func(arg1: str) -> str:
+        nonlocal additional_tool_calls
+        additional_tool_calls += 1
+        return arg1
+
+    function_call = Content.from_function_call(
+        call_id="legacy-additional",
+        name="additional_func",
+        arguments={"arg1": "value"},
+    )
+    legacy_request = Content.from_function_approval_request(
+        id="legacy-additional-request",
+        function_call=function_call,
+    )
+
+    execution = await _execute_function_calls(
+        custom_args={},
+        function_calls=[legacy_request.to_function_approval_response(approved=True)],
+        options=None,
+        config={"additional_tools": [additional_func]},
+    )
+
+    assert execution.should_terminate is False
+    assert len(execution.result_groups) == 1
+    assert len(execution.result_groups[0]) == 1
+    result = execution.result_groups[0][0]
+    assert result.type == "function_call"
+    assert result.call_id == "legacy-additional"
+    assert result.user_input_request is True
+    assert additional_tool_calls == 0
+    assert function_call.user_input_request is None
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_additional_tools_only_are_classified_as_user_input(
+    chat_client_base: SupportsChatGetResponse, streaming: bool
+):
+    """Additional tools remain host-owned when no visible tool list is supplied."""
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+
+    additional_tool_calls = 0
+
+    @tool(name="host_only")
+    def host_only() -> str:
+        nonlocal additional_tool_calls
+        additional_tool_calls += 1
+        return "unexpected"
+
+    call = Content.from_function_call(call_id="host-only-call", name="host_only", arguments={})
+    chat_client_base.function_invocation_configuration["additional_tools"] = [host_only]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    session = AgentSession()
+    budget_state: dict[str, Any] = {"total_function_calls": 0, "start_time": 0.0}
+    session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY] = budget_state
+    client_kwargs = {
+        "session": session,
+        _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
+    }
+    streaming_updates: list[ChatResponseUpdate] = []
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(contents=[call], role="assistant", finish_reason="tool_calls")]
+        ]
+        stream = chat_client_base.get_response(
+            [Message(role="user", contents=["hello"])],
+            stream=True,
+            options={"tool_choice": "auto"},
+            client_kwargs=client_kwargs,
+        )
+        streaming_updates = [update async for update in stream]
+        response = await stream.get_final_response()
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[call]))
+        ]
+        response = await chat_client_base.get_response(
+            [Message(role="user", contents=["hello"])],
+            options={"tool_choice": "auto"},
+            client_kwargs=client_kwargs,
+        )
+
+    host_calls = [
+        content
+        for message in response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.name == "host_only"
+    ]
+    assert len(host_calls) == 1
+    assert host_calls[0].user_input_request is True
+    assert host_calls[0].call_id == "host-only-call"
+    assert host_calls[0].id is not None
+    if streaming:
+        terminal_host_updates = [
+            content
+            for update in streaming_updates
+            for content in update.contents
+            if content.type == "function_call" and content.user_input_request
+        ]
+        assert len(terminal_host_updates) == 1
+        assert terminal_host_updates[0].call_id == host_calls[0].call_id
+        assert terminal_host_updates[0].id == host_calls[0].id
+        assert terminal_host_updates[0].name == host_calls[0].name
+    assert additional_tool_calls == 0
+    assert budget_state["total_function_calls"] == 0
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+    assert not any(content.type == "function_result" for message in response.messages for content in message.contents)
+
+
+def test_host_pause_replacement_preserves_duplicate_call_arguments():
+    """Fallback matching consumes repeated provider identities in model order."""
+    from agent_framework._tools import _as_user_input_pause, _handle_function_call_results
+
+    first = Content("function_call", call_id="duplicate", name="host_only", arguments={"value": 1})
+    second = Content("function_call", call_id="duplicate", name="host_only", arguments={"value": 2})
+    response = ChatResponse(messages=Message(role="assistant", contents=[first, second]))
+
+    processing = _handle_function_call_results(
+        response=response,
+        execution_results=[_as_user_input_pause(first), _as_user_input_pause(second)],
+        function_call_count=0,
+        function_call_messages=None,
+        errors_in_a_row=0,
+        had_errors=False,
+        max_errors=3,
+    )
+
+    host_calls = [content for message in response.messages for content in message.contents]
+    assert processing.action == "return"
+    assert [content.arguments for content in host_calls] == [{"value": 1}, {"value": 2}]
+    assert all(content.user_input_request for content in host_calls)
+    assert first.user_input_request is None
+    assert second.user_input_request is None
+
+
+async def test_legacy_host_approval_resume_does_not_count_as_execution():
+    """Reclassifying a legacy Host approval wrapper must not consume execution budget."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import _execute_function_calls, _resolve_approval_responses
+
+    declaration_func = FunctionTool(
+        name="declaration_func",
+        func=None,
+        description="A declaration-only function for testing",
+        input_model={"type": "object", "properties": {}},
+    )
+    function_call = Content.from_function_call(
+        call_id="legacy-budget",
+        name="declaration_func",
+        arguments={},
+    )
+    request = Content.from_function_approval_request(id="legacy-budget-request", function_call=function_call)
+    response = request.to_function_approval_response(approved=True)
+
+    async def execute_function_calls(*, function_calls: list[Content], options: dict[str, Any] | None):
+        return await _execute_function_calls(
+            custom_args={},
+            function_calls=function_calls,
+            options={"tools": [declaration_func]},
+            config={},
+        )
+
+    processing = await _resolve_approval_responses(
+        prepared_messages=[
+            Message(role="assistant", contents=[function_call, request]),
+            Message(role="user", contents=[response]),
+        ],
+        options={"tools": [declaration_func]},
+        errors_in_a_row=0,
+        max_errors=3,
+        execute_function_calls=execute_function_calls,
+    )
+
+    assert processing.action == "return"
+    assert processing.function_call_count == 0
+    assert any(
+        content.type == "function_call" and content.user_input_request
+        for message in processing.response_messages
+        for content in message.contents
+    )
+
+
+async def test_tool_execution_that_requests_follow_up_approval_still_counts():
+    """A tool body that starts and then requests approval still consumes one execution unit."""
+    from agent_framework._tools import _execute_function_calls
+    from agent_framework.exceptions import UserInputRequiredException
+
+    calls = 0
+
+    @tool(name="follow_up_tool")
+    def follow_up_tool() -> str:
+        nonlocal calls
+        calls += 1
+        follow_up_call = Content.from_function_call(
+            call_id="follow-up-call",
+            name="follow_up_action",
+            arguments={},
+        )
+        raise UserInputRequiredException(
+            contents=[
+                Content.from_function_approval_request(
+                    id="follow-up-request",
+                    function_call=follow_up_call,
+                )
+            ]
+        )
+
+    execution = await _execute_function_calls(
+        custom_args={},
+        function_calls=[Content.from_function_call(call_id="outer-call", name="follow_up_tool", arguments={})],
+        options={"tools": [follow_up_tool]},
+        config={},
+    )
+
+    assert calls == 1
+    assert execution.executed_call_count == 1
+    assert execution.contents[0].type == "function_approval_request"
+
+
+async def test_streaming_terminal_approval_resume_clears_budget(chat_client_base: SupportsChatGetResponse):
+    """Streaming clears persisted run budget when phase-1 approval handling returns terminally."""
+    from unittest.mock import AsyncMock, patch
+
+    from agent_framework._tools import (
+        _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
+        _FunctionProcessingResult,
+    )
+
+    session = AgentSession()
+    budget_state: dict[str, Any] = {"total_function_calls": 0, "start_time": 0.0}
+    session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY] = budget_state
+
+    async def unused_execute_function_calls(**kwargs: Any):
+        pytest.fail(f"function execution was not expected: {kwargs}")
+
+    with patch(
+        "agent_framework._tools._resolve_approval_responses",
+        new=AsyncMock(return_value=_FunctionProcessingResult(errors_in_a_row=0, action="return")),
+    ):
+        updates = [
+            update
+            async for update in chat_client_base._stream_response_with_function_invocation(  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+                super_get_response=lambda **kwargs: pytest.fail(f"provider call was not expected: {kwargs}"),
+                messages=[],
+                options={},
+                request_kwargs={},
+                compaction_strategy=None,
+                tokenizer=None,
+                execute_function_calls=unused_execute_function_calls,
+                invocation_session=session,
+                budget_state=budget_state,
+                max_errors=3,
+            )
+        ]
+
+    assert updates == []
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+
+
+async def test_mixed_batch_declaration_only_not_executed_after_approval_resume(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """After approving a mixed batch, the declaration-only sibling must not be executed locally.
+
+    Regression: the approval branch wrapped every call in the batch as an approval request, so approving
+    the batch drove the declaration-only call into local execution on resume, where it raised because it
+    has no implementation. A declaration-only call must surface as user input and never produce a local
+    result or error, regardless of an approval-required sibling in the same batch.
+    """
+    from agent_framework import FunctionTool
+
+    approval_calls = 0
+
+    @tool(name="approval_func", approval_mode="always_require")
+    def approval_func(arg1: str) -> str:
+        nonlocal approval_calls
+        approval_calls += 1
+        return f"Approved {arg1}"
+
+    declaration_func = FunctionTool(
+        name="declaration_func",
+        func=None,
+        description="A declaration-only function for testing",
+        input_model={"type": "object", "properties": {"arg1": {"type": "string"}}, "required": ["arg1"]},
+    )
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="d1", name="declaration_func", arguments='{"arg1": "y"}'),
+                    Content.from_function_call(call_id="a1", name="approval_func", arguments='{"arg1": "x"}'),
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    first_response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [approval_func, declaration_func]},
+    )
+
+    approval_responses = [
+        content.to_function_approval_response(approved=True)
+        for msg in first_response.messages
+        for content in msg.contents
+        if content.type == "function_approval_request"
+    ]
+    assert len(approval_responses) == 1, "only the approval-required call should surface an approval request"
+
+    resumed_response = await chat_client_base.get_response(
+        [Message(role="user", contents=approval_responses)],
+        options={"tool_choice": "auto", "tools": [approval_func, declaration_func]},
+    )
+
+    declaration_results = [
+        content
+        for msg in resumed_response.messages
+        for content in msg.contents
+        if content.type == "function_result" and content.call_id == "d1"
+    ]
+    assert not declaration_results, "declaration-only call must not be executed locally on approval resume"
+    assert approval_calls == 1, "approved tool executes exactly once"
+
+
+async def test_nameless_call_honors_unknown_call_termination():
+    """A nameless call is still unknown and must terminate when configured to do so."""
+    from agent_framework._tools import _try_execute_function_call_groups
+
+    with pytest.raises(KeyError, match='Requested function "None" not found'):
+        await _try_execute_function_call_groups(
+            custom_args={},
+            function_calls=[Content("function_call", call_id="nameless-call", arguments="{}")],
+            tools=[],
+            config={"terminate_on_unknown_calls": True},
+        )
+
+
 async def test_function_invocation_config_additional_tools(chat_client_base: SupportsChatGetResponse):
     """Test that additional_tools are available but treated as declaration_only."""
     exec_counter_visible = 0
@@ -3670,6 +5530,137 @@ async def test_approved_argument_repair_requires_replacement_approval(
 
     assert executions == [3]
     assert final_response.text == "done"
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_mixed_host_pause_argument_repair_reapproval_executes_with_single_call_budget(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """A replacement approval does not consume the only call-budget unit before execution."""
+    from agent_framework import FunctionTool
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+
+    executions: list[int] = []
+
+    class RepairArgumentsMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            assert isinstance(context.arguments, dict)
+            if "count_text" in context.arguments:
+                context.arguments = {"count": int(context.arguments["count_text"])}
+            await call_next()
+
+    @tool(name="approved_count", approval_mode="always_require")
+    def approved_count(count: int) -> str:
+        executions.append(count)
+        return str(count)
+
+    host_tool = FunctionTool(
+        name="host_tool",
+        func=None,
+        description="A Host-owned function",
+        input_model={"type": "object", "properties": {"value": {"type": "integer"}}},
+    )
+    host_call = Content.from_function_call(
+        call_id="host-call",
+        name="host_tool",
+        arguments={"value": 1},
+        id="host-occurrence",
+    )
+    approved_call = Content.from_function_call(
+        call_id="approved-repair-call",
+        name="approved_count",
+        arguments={"count_text": "3"},
+        id="approved-repair-occurrence",
+    )
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[host_call, approved_call], finish_reason="tool_calls")],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")], finish_reason="stop")],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(
+                messages=Message(role="assistant", contents=[host_call, approved_call]),
+                finish_reason="tool_calls",
+            ),
+            ChatResponse(messages=Message(role="assistant", contents=["done"]), finish_reason="stop"),
+        ]
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    session = AgentSession()
+    budget_state: dict[str, int] = {}
+
+    async def run(contents: list[Content]) -> ChatResponse:
+        options: ChatOptions = {"tool_choice": "auto", "tools": [host_tool, approved_count]}
+        client_kwargs = {
+            "session": session,
+            "middleware": [RepairArgumentsMiddleware()],
+            _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
+        }
+        if not streaming:
+            return await chat_client_base.get_response(
+                [Message(role="user", contents=contents)],
+                options=options,
+                client_kwargs=client_kwargs,
+            )
+        stream = chat_client_base.get_response(
+            [Message(role="user", contents=contents)],
+            stream=True,
+            options=options,
+            client_kwargs=client_kwargs,
+        )
+        updates = [update async for update in stream]
+        response = await stream.get_final_response()
+        return response if response.messages or not updates else ChatResponse.from_updates(updates)
+
+    first_response = await run([Content.from_text("go")])
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    host_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.user_input_request
+    )
+    assert host_request.call_id is not None
+    host_result = Content.from_function_result(call_id=host_request.call_id, result="host result")
+    host_result.id = host_request.id
+
+    replacement_response = await run([
+        host_result,
+        approval_request.to_function_approval_response(approved=True),
+    ])
+    replacement_request = next(
+        content
+        for message in replacement_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+
+    assert replacement_request.additional_properties["_replacement_approval_request"] is True
+    assert budget_state["total_function_calls"] == 0
+    assert executions == []
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    final_response = await run([replacement_request.to_function_approval_response(approved=True)])
+
+    assert executions == [3]
+    assert budget_state["total_function_calls"] == 1
+    assert any(
+        content.type == "function_result" and content.result == "3"
+        for message in final_response.messages
+        for content in message.contents
+    )
+    assert chat_client_base.call_count == 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 async def test_approved_argument_repair_short_circuit_requires_replacement_approval(
