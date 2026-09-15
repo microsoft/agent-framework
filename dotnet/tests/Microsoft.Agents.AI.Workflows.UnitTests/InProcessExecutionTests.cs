@@ -15,6 +15,254 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 /// </summary>
 public class InProcessExecutionTests
 {
+    [Fact]
+    public async Task ConcurrentExecutionRejectsDirectNonShareableExecutorAsync()
+    {
+        // Arrange
+        FunctionExecutor<int> executor = new("Function", HandleAsync, declareCrossRunShareable: false);
+        Workflow workflow = new WorkflowBuilder(executor.BindExecutor()).Build();
+
+        // Act & Assert
+        await AssertConcurrentEligibilityAsync(workflow, executor.Id, expectedConcurrent: false);
+
+        static ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken) => default;
+    }
+
+    [Fact]
+    public async Task ConcurrentExecutionRejectsNonThreadsafeFunctionBindingAsync()
+    {
+        // Arrange
+        Func<int, IWorkflowContext, CancellationToken, ValueTask> handler = HandleAsync;
+        ExecutorBinding binding = handler.BindAsExecutor("Function", threadsafe: false);
+        Workflow workflow = new WorkflowBuilder(binding).Build();
+
+        // Act & Assert
+        await AssertConcurrentEligibilityAsync(workflow, binding.Id, expectedConcurrent: false);
+
+        static ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken) => default;
+    }
+
+    [Fact]
+    public async Task ConcurrentExecutionAcceptsThreadsafeInputOnlyFunctionBindingAsync()
+    {
+        // Arrange
+        Func<int, IWorkflowContext, CancellationToken, ValueTask> handler = HandleAsync;
+        ExecutorBinding binding = handler.BindAsExecutor("Function", threadsafe: true);
+        Workflow workflow = new WorkflowBuilder(binding).Build();
+
+        // Act & Assert
+        await AssertConcurrentEligibilityAsync(workflow, binding.Id, expectedConcurrent: true);
+
+        static ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken) => default;
+    }
+
+    [Fact]
+    public async Task ThreadsafeFunctionHandlerExceptionUsesWorkflowErrorPathAsync()
+    {
+        // Arrange
+        InvalidOperationException expected = new("Handler failed.");
+        Func<int, IWorkflowContext, CancellationToken, ValueTask> handler = (_, _, _) => throw expected;
+        ExecutorBinding binding = handler.BindAsExecutor("Function", threadsafe: true);
+        Workflow workflow = new WorkflowBuilder(binding).Build();
+
+        // Act
+        await using Run run = await InProcessExecution.Concurrent.RunAsync(workflow, 42);
+
+        // Assert
+        WorkflowErrorEvent error = Assert.Single(run.OutgoingEvents.OfType<WorkflowErrorEvent>());
+        Assert.Same(expected, error.Exception?.GetBaseException());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConcurrentExecutionHonorsOutputFunctionThreadSafetyAsync(bool threadsafe)
+    {
+        // Arrange
+        Func<int, int> handler = static value => value;
+        ExecutorBinding binding = handler.BindAsExecutor("Function", threadsafe: threadsafe);
+        Workflow workflow = new WorkflowBuilder(binding).Build();
+
+        // Act & Assert
+        await AssertConcurrentEligibilityAsync(workflow, binding.Id, threadsafe);
+    }
+
+    [Fact]
+    public async Task ConcurrentExecutionRejectsFunctionBindingWithDefaultThreadSafetyAsync()
+    {
+        // Arrange
+        Func<int, int> handler = static value => value;
+        ExecutorBinding binding = handler.BindAsExecutor("Function");
+        Workflow workflow = new WorkflowBuilder(binding).Build();
+
+        // Act & Assert
+        await AssertConcurrentEligibilityAsync(workflow, binding.Id, expectedConcurrent: false);
+    }
+
+    [Fact]
+    public async Task OffThreadExecutionAllowsSequentialReuseOfNonThreadsafeFunctionBindingAsync()
+    {
+        // Arrange
+        List<int> handledMessages = [];
+        Func<int, IWorkflowContext, CancellationToken, ValueTask> handler = HandleAsync;
+        ExecutorBinding binding = handler.BindAsExecutor("Function", threadsafe: false);
+        Workflow workflow = new WorkflowBuilder(binding).Build();
+
+        // Act
+        await using (Run firstRun = await InProcessExecution.OffThread.RunAsync(workflow, 1))
+        {
+            Assert.Empty(firstRun.OutgoingEvents.OfType<WorkflowErrorEvent>());
+        }
+
+        await using (Run secondRun = await InProcessExecution.OffThread.RunAsync(workflow, 2))
+        {
+            Assert.Empty(secondRun.OutgoingEvents.OfType<WorkflowErrorEvent>());
+        }
+
+        // Assert
+        Assert.Equal([1, 2], handledMessages);
+
+        ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            handledMessages.Add(message);
+            return default;
+        }
+    }
+
+    [Fact]
+    public async Task ConcurrentExecutionAcceptsFactoryCreatedExecutorAsync()
+    {
+        // Arrange
+        Func<string, string, ValueTask<FunctionExecutor<int>>> factory =
+            (id, _) => new(new FunctionExecutor<int>(id, HandleAsync, declareCrossRunShareable: false));
+        ExecutorBinding binding = factory.BindExecutor();
+        Workflow workflow = new WorkflowBuilder(binding).Build();
+
+        // Act
+        Executor first = await binding.CreateInstanceAsync("session-a");
+        Executor second = await binding.CreateInstanceAsync("session-b");
+
+        // Assert
+        Assert.NotSame(first, second);
+        await AssertConcurrentEligibilityAsync(workflow, binding.Id, expectedConcurrent: true);
+
+        static ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken) => default;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AggregatingFunctionBindingPreservesThreadSafetyAsync(bool threadsafe)
+    {
+        // Arrange
+        Func<int, int, int> aggregator = static (accumulation, value) => accumulation + value;
+        ExecutorBinding binding = aggregator.BindAsExecutor("Aggregator", threadsafe: threadsafe);
+        Workflow workflow = new WorkflowBuilder(binding).Build();
+
+        // Act & Assert
+        await AssertConcurrentEligibilityAsync(workflow, binding.Id, threadsafe);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SubworkflowBindingPropagatesDirectExecutorConcurrencyCapabilityAsync(bool crossRunShareable)
+    {
+        // Arrange
+        FunctionExecutor<int> executor = new("Function", HandleAsync, declareCrossRunShareable: crossRunShareable);
+        Workflow child = new WorkflowBuilder(executor.BindExecutor()).Build();
+        ExecutorBinding childBinding = child.BindAsExecutor("ChildWorkflow");
+
+        // Act
+        Workflow parent = new WorkflowBuilder(childBinding).Build();
+
+        // Assert
+        Assert.Equal(crossRunShareable, child.AllowConcurrent);
+        Assert.Equal(crossRunShareable, childBinding.SupportsConcurrentSharedExecution);
+        Assert.Equal(crossRunShareable, parent.AllowConcurrent);
+        await AssertConcurrentEligibilityAsync(parent, childBinding.Id, crossRunShareable);
+
+        static ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken) => default;
+    }
+
+    [Fact]
+    public void SubworkflowConcurrencyCapabilityPropagatesTransitively()
+    {
+        // Arrange
+        FunctionExecutor<int> executor = new("Function", HandleAsync, declareCrossRunShareable: false);
+        Workflow grandchild = new WorkflowBuilder(executor.BindExecutor()).Build();
+        ExecutorBinding grandchildBinding = grandchild.BindAsExecutor("GrandchildWorkflow");
+        Workflow child = new WorkflowBuilder(grandchildBinding).Build();
+        ExecutorBinding childBinding = child.BindAsExecutor("ChildWorkflow");
+
+        // Act
+        Workflow parent = new WorkflowBuilder(childBinding).Build();
+
+        // Assert
+        Assert.False(grandchild.AllowConcurrent);
+        Assert.False(child.AllowConcurrent);
+        Assert.False(parent.AllowConcurrent);
+
+        static ValueTask HandleAsync(int message, IWorkflowContext context, CancellationToken cancellationToken) => default;
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task WorkflowHostAgentUsesWorkflowConcurrencyCapabilityForDefaultEnvironmentAsync(bool threadsafe, bool nested)
+    {
+        // Arrange
+        bool? concurrentRunsEnabled = null;
+        Workflow workflow = CreateChatFunctionWorkflow(threadsafe, value => concurrentRunsEnabled = value);
+        if (nested)
+        {
+            ExecutorBinding childBinding = workflow.BindAsExecutor("ChildWorkflow");
+            workflow = new WorkflowBuilder(childBinding).WithOutputFrom(childBinding).Build();
+        }
+
+        AIAgent agent = workflow.AsAIAgent();
+
+        // Act
+        _ = await agent.RunAsync(new ChatMessage(ChatRole.User, "Hello"));
+
+        // Assert
+        Assert.Equal(threadsafe, concurrentRunsEnabled);
+    }
+
+    private static async Task AssertConcurrentEligibilityAsync(Workflow workflow, string executorId, bool expectedConcurrent)
+    {
+        if (expectedConcurrent)
+        {
+            await using StreamingRun run = await InProcessExecution.Concurrent.OpenStreamingAsync(workflow);
+            Assert.NotNull(run);
+        }
+        else
+        {
+            InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => InProcessExecution.Concurrent.OpenStreamingAsync(workflow).AsTask());
+            Assert.Contains(executorId, exception.Message);
+        }
+    }
+
+    private static Workflow CreateChatFunctionWorkflow(bool threadsafe, Action<bool> observeConcurrentRuns)
+    {
+        ExecutorBinding start = new SimpleTestAgent("ChatAgent").BindAsExecutor(emitEvents: false);
+        Func<List<ChatMessage>, IWorkflowContext, CancellationToken, ValueTask<ChatMessage>> handler = HandleAsync;
+        ExecutorBinding binding = handler.BindAsExecutor("Function", threadsafe: threadsafe);
+        return new WorkflowBuilder(start)
+            .AddEdge(start, binding)
+            .WithOutputFrom(binding)
+            .Build();
+
+        ValueTask<ChatMessage> HandleAsync(List<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken)
+        {
+            observeConcurrentRuns(context.ConcurrentRunsEnabled);
+            return new(new ChatMessage(ChatRole.Assistant, "Done"));
+        }
+    }
+
     /// <summary>
     /// The non-streaming version (RunAsync) should execute the workflow and produce events,
     /// similar to the streaming version (StreamAsync + TrySendMessageAsync).
