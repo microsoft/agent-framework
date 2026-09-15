@@ -1273,8 +1273,8 @@ def _format_summary_content(content: Content) -> str:
         result_text = _format_summary_result_items(content.items) if content.items else ""
         if not result_text:
             result_text = _tool_result_text(content.result) if content.result is not None else "no result"
-        if content.exception:
-            result_text = f"error({content.exception}): {result_text}"
+        if content.exception is not None:
+            result_text = f"error: {result_text}"
         call_id_suffix = f" [call_id={content.call_id}]" if content.call_id else ""
         return f"function_result: {result_text}{call_id_suffix}"
     if content.type == "mcp_server_tool_call":
@@ -1285,8 +1285,8 @@ def _format_summary_content(content: Content) -> str:
         return call
     if content.type == "mcp_server_tool_result":
         result_text = _tool_result_text(content.output)
-        if content.exception:
-            result_text = f"error({content.exception}): {result_text}"
+        if content.exception is not None:
+            result_text = f"error: {result_text}"
         call_id_suffix = f" [call_id={content.call_id}]" if content.call_id else ""
         return f"mcp_tool_result: {result_text}{call_id_suffix}"
     if content.type in ("function_approval_request", "function_approval_response"):
