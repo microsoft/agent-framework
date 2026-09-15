@@ -1299,8 +1299,7 @@ async def test_execute_code_tool_clears_output_after_rejection(
         contents = await execute_code.invoke(arguments={"code": "create-memory-output"})
 
         _assert_bounded_output_error(contents, "per-file output limit")
-        remaining_outputs = await asyncio.to_thread(lambda: list(output_root.iterdir()))
-        assert remaining_outputs == []
+        assert not output_root.exists()
     finally:
         _close_execute_code_registry(execute_code)
 
