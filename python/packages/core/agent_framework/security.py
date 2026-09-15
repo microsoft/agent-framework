@@ -1268,14 +1268,15 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
     +----------+------------------------------------------+----------------------------+
     | Tier 2   | Tool's source_integrity declaration       | No embedded labels         |
     +----------+------------------------------------------+----------------------------+
-    | Tier 3   | Join (combine_labels) of input arg labels| No embedded labels AND     |
-    |          |                                          | no source_integrity        |
+    | Tier 3   | Owned input labels or configured default | No embedded labels AND     |
+    |          | restricted by argument labels            | no source_integrity        |
     +----------+------------------------------------------+----------------------------+
 
     Tools can declare their source_integrity in additional_properties:
     - source_integrity="trusted": Tool produces trusted data (e.g., internal computation)
     - source_integrity="untrusted": Tool fetches external/untrusted data
-    - (not set): Falls back to tier 3 (input label join), or UNTRUSTED if no inputs
+    - (not set): Inherits integrity from resolved, owned variable references, or uses
+      default_integrity (UNTRUSTED by default). Argument labels may only restrict this baseline.
 
     This middleware:
     1. Extracts labels from tool input arguments (tier 3 input)
@@ -1604,8 +1605,9 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         Recursively inspects the arguments passed to a tool to find any
         VariableReferenceContent objects or labeled data, and collects their labels.
 
-        These labels are used as the tier-3 fallback (lowest priority) when
-        neither embedded labels nor a source_integrity declaration are present.
+        These labels propagate confidentiality and restrict the tier-3 integrity
+        baseline when no source_integrity declaration is present. They cannot
+        establish trust; that baseline comes from owned references or the configured default.
 
         Args:
             context: The function invocation context containing arguments.
@@ -1800,7 +1802,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
 
             # Step 3: Build tiered fallback_label
             # This label is used for result items that have NO embedded labels.
-            # Priority: source_integrity declaration (tier 2) > input labels join (tier 3)
+            # Priority: source_integrity declaration (tier 2) > owned input baseline (tier 3)
             if declared_source_integrity is not None:
                 fallback_label = ContentLabel(
                     integrity=declared_source_integrity,
@@ -1808,7 +1810,13 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
                     metadata={**fallback_metadata, "source": "source_integrity"},
                 )
             elif argument_labels:
-                combined = combine_labels(*argument_labels)
+                # Argument-supplied labels can restrict, but never establish, integrity.
+                baseline = (
+                    combine_labels(*resolved_labels)
+                    if resolved_labels
+                    else ContentLabel(integrity=self.default_integrity)
+                )
+                combined = combine_labels(baseline, *input_labels)
                 fallback_label = ContentLabel(
                     integrity=combined.integrity,
                     confidentiality=result_confidentiality,
@@ -1970,8 +1978,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware, _SecurityScopeBinding)
         only restrict the invocation fallback. A framework-owned producer can
         identity-stamp a complete authoritative label after applying local policy.
         Items without embedded labels use ``fallback_label``, which is either the
-        tool's ``source_integrity`` declaration (tier 2) or the join of input
-        argument labels (tier 3).
+        tool's ``source_integrity`` declaration (tier 2) or the owned-reference/default
+        integrity baseline restricted by argument labels (tier 3).
 
         Each item's own label is attached to its ``additional_properties``
         during processing, preserving per-item granularity.
