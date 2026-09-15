@@ -436,15 +436,17 @@ async def test_tool_refresh_forgets_removed_progressive_tools(replacement_name: 
     assert tool._progressive_loaded_tool_names == {"docs_search-docs", "docs_keep"}
     kept_function = next(function for function in tool._functions if function.name == "docs_keep")
     assert tool.session is not None
-    tool.session.list_tools = AsyncMock(
+    with patch.object(
+        tool.session,
+        "list_tools",
         return_value=types.ListToolsResult(
             tools=[
                 types.Tool(name=name, inputSchema={"type": "object"})
                 for name in (["keep", replacement_name] if replacement_name else ["keep"])
             ]
-        )
-    )
-    await tool.load_tools()
+        ),
+    ):
+        await tool.load_tools()
 
     assert tool._progressive_loaded_tool_names == {"docs_keep"}
     assert tool.functions[-1] is kept_function
