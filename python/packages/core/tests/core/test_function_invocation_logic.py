@@ -1240,17 +1240,129 @@ async def test_invalidated_service_call_is_not_persisted(
         require_per_service_call_history_persistence=True,
     )
 
-    with pytest.raises(FunctionCallInvalidatedException) as exc_info:
-        if streaming:
-            async for _ in agent.run("run", session=session, stream=True):
+    if streaming:
+        stream = agent.run("run", session=session, stream=True)
+        with pytest.raises(FunctionCallInvalidatedException) as exc_info:
+            async for _ in stream:
                 pass
-        else:
+        with pytest.raises(FunctionCallInvalidatedException) as final_exc_info:
+            await stream.get_final_response()
+        assert final_exc_info.value is invalidated
+    else:
+        with pytest.raises(FunctionCallInvalidatedException) as exc_info:
             await agent.run("run", session=session)
 
     assert exc_info.value is invalidated
     assert tool_calls == 0
     assert session.state[provider.source_id]["messages"] == [seed]
     assert session.service_session_id is None
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_invalidated_final_no_tool_call_preserves_prior_continuation(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """Providers can invalidate unexpected local calls returned after tools were disabled."""
+    from agent_framework._sessions import AgentSession
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+
+    tool_calls = 0
+    provider_calls = 0
+    invalidated = FunctionCallInvalidatedException("provider invalidated local function calls")
+
+    @tool(name="local_tool", approval_mode="never_require")
+    def local_tool() -> str:
+        nonlocal tool_calls
+        tool_calls += 1
+        return "result"
+
+    function_call = Content.from_function_call(call_id="valid-call", name="local_tool", arguments={})
+    session = AgentSession()
+    session.service_session_id = "starting-continuation"
+    budget_state: dict[str, Any] = {"attempt_count": 0}
+    session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY] = budget_state
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    if streaming:
+
+        def scripted_stream(
+            *,
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            nonlocal provider_calls
+            del kwargs
+            provider_calls += 1
+
+            async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                if provider_calls == 1:
+                    yield ChatResponseUpdate(
+                        role="assistant",
+                        contents=[function_call],
+                        finish_reason="tool_calls",
+                        conversation_id="valid-continuation",
+                    )
+                    return
+                assert options["tool_choice"] == "none"
+                yield ChatResponseUpdate(
+                    role="assistant",
+                    contents=[Content.from_function_call(call_id="invalid-call", name="local_tool", arguments={})],
+                    conversation_id="invalid-continuation",
+                )
+                raise invalidated
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        chat_client_base._get_streaming_response = scripted_stream  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+        stream = chat_client_base.get_response(
+            [Message(role="user", contents=["run"])],
+            options={"tools": [local_tool]},
+            stream=True,
+            client_kwargs={
+                "session": session,
+                _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
+            },
+        )
+        with pytest.raises(FunctionCallInvalidatedException) as exc_info:
+            async for _ in stream:
+                pass
+    else:
+
+        async def scripted_response(
+            *,
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ChatResponse:
+            nonlocal provider_calls
+            del kwargs
+            provider_calls += 1
+            if provider_calls == 1:
+                return ChatResponse(
+                    messages=Message(role="assistant", contents=[function_call]),
+                    finish_reason="tool_calls",
+                    conversation_id="valid-continuation",
+                )
+            assert options["tool_choice"] == "none"
+            raise invalidated
+
+        chat_client_base._get_non_streaming_response = scripted_response  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+        with pytest.raises(FunctionCallInvalidatedException) as exc_info:
+            await chat_client_base.get_response(
+                [Message(role="user", contents=["run"])],
+                options={"tools": [local_tool]},
+                client_kwargs={
+                    "session": session,
+                    _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
+                },
+            )
+
+    assert exc_info.value is invalidated
+    assert provider_calls == 2
+    assert tool_calls == 1
+    assert budget_state == {}
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+    assert session.service_session_id == "valid-continuation"
 
 
 async def test_base_client_with_function_calling_string_input(chat_client_base: SupportsChatGetResponse):

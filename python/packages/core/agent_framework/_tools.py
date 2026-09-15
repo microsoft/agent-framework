@@ -77,7 +77,7 @@ if TYPE_CHECKING:
         FunctionMiddlewareTypes,
         MiddlewareTypes,
     )
-    from ._sessions import AgentSession, ServiceSessionId
+    from ._sessions import AgentSession
     from ._types import (
         ChatOptions,
         ChatResponse,
@@ -3378,17 +3378,53 @@ def _clear_budget_state_from_session(invocation_session: AgentSession | None) ->
     invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
 
 
-def _clear_invalidated_function_invocation_state(
+def _function_call_invalidation_cleanup(
     invocation_session: AgentSession | None,
     budget_state: dict[str, Any],
-    service_session_id: str | ServiceSessionId | None,
-) -> None:
-    """Discard invalidated call state and restore the last valid service continuation."""
-    budget_state.clear()
-    if invocation_session is None:
-        return
-    invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
-    invocation_session.service_session_id = service_session_id
+    stream_error: list[FunctionCallInvalidatedException] | None = None,
+) -> Callable[[FunctionCallInvalidatedException], None]:
+    """Capture the last valid continuation and return invalidation cleanup."""
+    service_session_id = invocation_session.service_session_id if invocation_session is not None else None
+
+    def cleanup(error: FunctionCallInvalidatedException) -> None:
+        if stream_error is not None:
+            stream_error[:] = [error]
+        budget_state.clear()
+        if invocation_session is None:
+            return
+        invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
+        invocation_session.service_session_id = service_session_id
+
+    return cleanup
+
+
+_InvalidationResultT = TypeVar("_InvalidationResultT")
+
+
+async def _await_provider_call(
+    operation: Callable[..., Awaitable[_InvalidationResultT]],
+    on_invalidated: Callable[[FunctionCallInvalidatedException], None],
+    **kwargs: Any,
+) -> _InvalidationResultT:
+    """Await one provider operation and clean up invalidated local calls."""
+    try:
+        return await operation(**kwargs)
+    except FunctionCallInvalidatedException as error:
+        on_invalidated(error)
+        raise
+
+
+async def _iterate_provider_stream(
+    stream: AsyncIterable[_InvalidationResultT],
+    on_invalidated: Callable[[FunctionCallInvalidatedException], None],
+) -> AsyncIterable[_InvalidationResultT]:
+    """Yield one provider stream and clean up invalidated local calls."""
+    try:
+        async for item in stream:
+            yield item
+    except FunctionCallInvalidatedException as error:
+        on_invalidated(error)
+        raise
 
 
 def _apply_batch_limit_decision(
@@ -3978,28 +4014,20 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         # Phase 2: alternate model turns and local execution until a terminal response or safety limit is reached.
         for attempt_idx in range(attempt_start, max_iterations):
             budget_state["attempt_count"] = attempt_idx + 1
-            service_session_id_before_call = (
-                invocation_session.service_session_id if invocation_session is not None else None
+            on_invalidated = _function_call_invalidation_cleanup(invocation_session, budget_state)
+            response = cast(
+                ChatResponse[Any],
+                await _await_provider_call(
+                    super_get_response,
+                    on_invalidated,
+                    messages=prepared_messages,
+                    stream=False,
+                    options=options,
+                    compaction_strategy=compaction_strategy,
+                    tokenizer=tokenizer,
+                    client_kwargs=request_kwargs,
+                ),
             )
-            try:
-                response = cast(
-                    ChatResponse[Any],
-                    await super_get_response(
-                        messages=prepared_messages,
-                        stream=False,
-                        options=options,
-                        compaction_strategy=compaction_strategy,
-                        tokenizer=tokenizer,
-                        client_kwargs=request_kwargs,
-                    ),
-                )
-            except FunctionCallInvalidatedException:
-                _clear_invalidated_function_invocation_state(
-                    invocation_session,
-                    budget_state,
-                    service_session_id_before_call,
-                )
-                raise
             if options.get("tool_choice") == "none" and budget_state.get("truncated"):
                 _ensure_function_invocation_limit_fallback_response(response)
             aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
@@ -4064,28 +4092,20 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 max_iterations,
             )
         options["tool_choice"] = "none"
-        service_session_id_before_call = (
-            invocation_session.service_session_id if invocation_session is not None else None
+        on_invalidated = _function_call_invalidation_cleanup(invocation_session, budget_state)
+        response = cast(
+            ChatResponse[Any],
+            await _await_provider_call(
+                super_get_response,
+                on_invalidated,
+                messages=prepared_messages,
+                stream=False,
+                options=options,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                client_kwargs=request_kwargs,
+            ),
         )
-        try:
-            response = cast(
-                ChatResponse[Any],
-                await super_get_response(
-                    messages=prepared_messages,
-                    stream=False,
-                    options=options,
-                    compaction_strategy=compaction_strategy,
-                    tokenizer=tokenizer,
-                    client_kwargs=request_kwargs,
-                ),
-            )
-        except FunctionCallInvalidatedException:
-            _clear_invalidated_function_invocation_state(
-                invocation_session,
-                budget_state,
-                service_session_id_before_call,
-            )
-            raise
         _ensure_function_invocation_limit_fallback_response(response)
         aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
         self._update_function_invocation_continuation_state(
@@ -4113,6 +4133,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         budget_state: dict[str, Any],
         max_errors: int,
         middleware_pipeline: FunctionMiddlewarePipeline | None = None,
+        invalidation_error: list[FunctionCallInvalidatedException],
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Run the streaming function invocation loop."""
         from ._middleware import MiddlewareFailure
@@ -4182,92 +4203,83 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         # Phase 2: stream each model turn, finalize it, execute its calls, then advance the transcript.
         for attempt_idx in range(attempt_start, max_iterations):
             budget_state["attempt_count"] = attempt_idx + 1
-            service_session_id_before_call = (
-                invocation_session.service_session_id if invocation_session is not None else None
+            on_invalidated = _function_call_invalidation_cleanup(invocation_session, budget_state, invalidation_error)
+            inner_stream = cast(
+                "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]",
+                await _await_provider_call(
+                    super_get_response,
+                    on_invalidated,
+                    messages=prepared_messages,
+                    stream=True,
+                    options=options,
+                    compaction_strategy=compaction_strategy,
+                    tokenizer=tokenizer,
+                    client_kwargs=request_kwargs,
+                ),
             )
-            try:
-                inner_stream = cast(
-                    "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]",
-                    super_get_response(
-                        messages=prepared_messages,
-                        stream=True,
-                        options=options,
-                        compaction_strategy=compaction_strategy,
-                        tokenizer=tokenizer,
-                        client_kwargs=request_kwargs,
-                    ),
-                )
-                await inner_stream
-                drop_unexecutable_calls = options.get("tool_choice") == "none" and budget_state.get("truncated")
-                streamed_identities_by_call_id: dict[str, tuple[str, str]] = {}
-                streamed_names_by_call_id: dict[str, str] = {}
-                last_streamed_identity: tuple[str, str] | None = None
-                warned_empty_call_ids: set[str] = set()
-                async for update in inner_stream:
-                    for content in update.contents:
-                        if content.type != "function_call":
-                            continue
-                        if not _is_actionable_function_call(content):
-                            continue
-                        had_occurrence_id = content.id is not None
-                        provider_call_id = content.call_id
-                        identity = streamed_identities_by_call_id.get(provider_call_id) if provider_call_id else None
-                        if (
-                            identity is not None
-                            and provider_call_id is not None
-                            and content.id is None
-                            and content.name
-                            and (
-                                streamed_names_by_call_id.get(provider_call_id) != content.name
-                                or isinstance(content.arguments, Mapping)
+            drop_unexecutable_calls = options.get("tool_choice") == "none" and budget_state.get("truncated")
+            streamed_identities_by_call_id: dict[str, tuple[str, str]] = {}
+            streamed_names_by_call_id: dict[str, str] = {}
+            last_streamed_identity: tuple[str, str] | None = None
+            warned_empty_call_ids: set[str] = set()
+            async for update in _iterate_provider_stream(inner_stream, on_invalidated):
+                for content in update.contents:
+                    if content.type != "function_call":
+                        continue
+                    if not _is_actionable_function_call(content):
+                        continue
+                    had_occurrence_id = content.id is not None
+                    provider_call_id = content.call_id
+                    identity = streamed_identities_by_call_id.get(provider_call_id) if provider_call_id else None
+                    if (
+                        identity is not None
+                        and provider_call_id is not None
+                        and content.id is None
+                        and content.name
+                        and (
+                            streamed_names_by_call_id.get(provider_call_id) != content.name
+                            or isinstance(content.arguments, Mapping)
+                        )
+                    ):
+                        identity = None
+                    if identity is None and not provider_call_id and not content.name:
+                        identity = last_streamed_identity
+
+                    if identity is None:
+                        occurrence_id = content.id or _generate_function_call_occurrence_id()
+                        effective_call_id = provider_call_id or ("" if had_occurrence_id else occurrence_id)
+                    else:
+                        occurrence_id, effective_call_id = identity
+                    if content.id is not None:
+                        occurrence_id = content.id
+                    if provider_call_id:
+                        effective_call_id = provider_call_id
+
+                    content.id = occurrence_id
+                    if not content.call_id and not had_occurrence_id:
+                        content.call_id = effective_call_id
+                        if identity is None and occurrence_id not in warned_empty_call_ids:
+                            warnings.warn(
+                                "An actionable function_call had an empty call_id. Agent Framework used its generated "
+                                "Content.id for local correlation. Providers should supply and preserve their service "
+                                "call_id; this fallback will be removed in a future release.",
+                                FutureWarning,
+                                stacklevel=3,
                             )
-                        ):
-                            identity = None
-                        if identity is None and not provider_call_id and not content.name:
-                            identity = last_streamed_identity
+                            warned_empty_call_ids.add(occurrence_id)
+                    identity = (occurrence_id, effective_call_id)
+                    if effective_call_id:
+                        streamed_identities_by_call_id[effective_call_id] = identity
+                        if content.name:
+                            streamed_names_by_call_id[effective_call_id] = content.name
+                    last_streamed_identity = identity
+                if drop_unexecutable_calls:
+                    update = _drop_unexecutable_tool_contents_from_update(update)
+                    if update is None:
+                        continue
+                yield update
 
-                        if identity is None:
-                            occurrence_id = content.id or _generate_function_call_occurrence_id()
-                            effective_call_id = provider_call_id or ("" if had_occurrence_id else occurrence_id)
-                        else:
-                            occurrence_id, effective_call_id = identity
-                        if content.id is not None:
-                            occurrence_id = content.id
-                        if provider_call_id:
-                            effective_call_id = provider_call_id
-
-                        content.id = occurrence_id
-                        if not content.call_id and not had_occurrence_id:
-                            content.call_id = effective_call_id
-                            if identity is None and occurrence_id not in warned_empty_call_ids:
-                                warnings.warn(
-                                    "An actionable function_call had an empty call_id. Agent Framework used its "
-                                    "generated Content.id for local correlation. Providers should supply and preserve "
-                                    "their service call_id; this fallback will be removed in a future release.",
-                                    FutureWarning,
-                                    stacklevel=3,
-                                )
-                                warned_empty_call_ids.add(occurrence_id)
-                        identity = (occurrence_id, effective_call_id)
-                        if effective_call_id:
-                            streamed_identities_by_call_id[effective_call_id] = identity
-                            if content.name:
-                                streamed_names_by_call_id[effective_call_id] = content.name
-                        last_streamed_identity = identity
-                    if drop_unexecutable_calls:
-                        update = _drop_unexecutable_tool_contents_from_update(update)
-                        if update is None:
-                            continue
-                    yield update
-
-                response = await inner_stream.get_final_response()
-            except FunctionCallInvalidatedException:
-                _clear_invalidated_function_invocation_state(
-                    invocation_session,
-                    budget_state,
-                    service_session_id_before_call,
-                )
-                raise
+            response = await _await_provider_call(inner_stream.get_final_response, on_invalidated)
             fallback_added = False
             if options.get("tool_choice") == "none" and budget_state.get("truncated"):
                 fallback_added = _ensure_function_invocation_limit_fallback_response(response)
@@ -4342,35 +4354,26 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 max_iterations,
             )
         options["tool_choice"] = "none"
-        service_session_id_before_call = (
-            invocation_session.service_session_id if invocation_session is not None else None
+        on_invalidated = _function_call_invalidation_cleanup(invocation_session, budget_state, invalidation_error)
+        final_inner_stream = cast(
+            "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]",
+            await _await_provider_call(
+                super_get_response,
+                on_invalidated,
+                messages=prepared_messages,
+                stream=True,
+                options=options,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                client_kwargs=request_kwargs,
+            ),
         )
-        try:
-            final_inner_stream = cast(
-                "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]",
-                super_get_response(
-                    messages=prepared_messages,
-                    stream=True,
-                    options=options,
-                    compaction_strategy=compaction_strategy,
-                    tokenizer=tokenizer,
-                    client_kwargs=request_kwargs,
-                ),
-            )
-            await final_inner_stream
-            async for update in final_inner_stream:
-                update = _drop_unexecutable_tool_contents_from_update(update)
-                if update is None:
-                    continue
-                yield update
-            final_response = await final_inner_stream.get_final_response()
-        except FunctionCallInvalidatedException:
-            _clear_invalidated_function_invocation_state(
-                invocation_session,
-                budget_state,
-                service_session_id_before_call,
-            )
-            raise
+        async for update in _iterate_provider_stream(final_inner_stream, on_invalidated):
+            update = _drop_unexecutable_tool_contents_from_update(update)
+            if update is None:
+                continue
+            yield update
+        final_response = await _await_provider_call(final_inner_stream.get_final_response, on_invalidated)
         fallback_added = _ensure_function_invocation_limit_fallback_response(final_response)
         self._update_function_invocation_continuation_state(
             request_kwargs,
@@ -4553,6 +4556,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             )
 
         response_format = mutable_options.get("response_format")
+        invalidation_error: list[FunctionCallInvalidatedException] = []
+
+        def finalize_stream(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
+            if invalidation_error:
+                raise invalidation_error[0]
+            return ChatResponse.from_updates(updates, output_format_type=response_format)
 
         return ResponseStream(
             self._stream_response_with_function_invocation(
@@ -4567,8 +4576,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 budget_state=budget_state,
                 max_errors=max_errors,
                 middleware_pipeline=function_middleware_pipeline,
+                invalidation_error=invalidation_error,
             ),
-            finalizer=partial(ChatResponse.from_updates, output_format_type=response_format),
+            finalizer=finalize_stream,
         )
 
 
