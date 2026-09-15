@@ -60,7 +60,7 @@ internal sealed class RouteExpenseExecutor() : Executor<ExpenseRequest, ExpenseD
     public override ValueTask<ExpenseDecision> HandleAsync(ExpenseRequest message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        // ponytail: this sample routes expenses; it does not approve payments or call a business system.
+        // This sample routes expenses; it does not approve payments or call a business system.
         return ValueTask.FromResult(new ExpenseDecision(message.Id!, message.Amount,
             message.Amount > 100 ? "manager_review" : "standard_review"));
     }
