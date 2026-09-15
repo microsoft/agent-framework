@@ -270,6 +270,55 @@ public class ApprovalResponseBindingChatClientTests
         Assert.Contains(capture.Messages!.SelectMany(m => m.Contents), c => c is ToolApprovalResponseContent);
     }
 
+    [Fact]
+    public async Task TryGetPendingToolApprovalRequests_SurvivesSessionStateRoundTripAsync()
+    {
+        // Arrange — a run stops on an approval request, then the session is persisted and reloaded.
+        var session = new ChatClientAgentSession();
+        var call = new FunctionCallContent("call1", "get_weather", new Dictionary<string, object?> { ["location"] = "Beijing" });
+        await RecordRequestAsync(session, new ToolApprovalRequestContent(RequestId, call));
+
+        var restored = new ChatClientAgentSession(
+            stateBag: AgentSessionStateBag.Deserialize(session.StateBag.Serialize()));
+
+        // Act
+        var found = restored.TryGetPendingToolApprovalRequests(out var pending);
+
+        // Assert — the host can discover the pending approval without reading private state bag keys.
+        Assert.True(found);
+        var request = Assert.Single(pending!);
+        Assert.Equal(RequestId, request.RequestId);
+        var pendingCall = Assert.IsType<FunctionCallContent>(request.ToolCall);
+        Assert.Equal("get_weather", pendingCall.Name);
+        Assert.Equal("call1", pendingCall.CallId);
+    }
+
+    [Fact]
+    public async Task TryGetPendingToolApprovalRequests_AfterResponseIsConsumed_ReturnsFalseAsync()
+    {
+        // Arrange — record a request, then answer it.
+        var session = new ChatClientAgentSession();
+        await RecordRequestAsync(session, new ToolApprovalRequestContent(RequestId, new FunctionCallContent("call1", "toolA")));
+        Assert.True(session.TryGetPendingToolApprovalRequests(out _));
+
+        var decorator = new ApprovalResponseBindingChatClient(CreateCapturingChatClient(new Capture()));
+        var approval = new ToolApprovalResponseContent(RequestId, approved: true, new FunctionCallContent("call1", "toolA"));
+
+        // Act
+        await RunAsync(decorator, session, [new ChatMessage(ChatRole.User, [approval])]);
+
+        // Assert — the answered request is no longer pending.
+        Assert.False(session.TryGetPendingToolApprovalRequests(out var pending));
+        Assert.Null(pending);
+    }
+
+    [Fact]
+    public void TryGetPendingToolApprovalRequests_NoApprovalState_ReturnsFalse()
+    {
+        Assert.False(new ChatClientAgentSession().TryGetPendingToolApprovalRequests(out var pending));
+        Assert.Null(pending);
+    }
+
     private static async Task RecordRequestAsync(ChatClientAgentSession session, ToolApprovalRequestContent request)
     {
         var inner = CreateMockChatClient((_, _, _) =>
