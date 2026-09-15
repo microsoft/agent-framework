@@ -272,17 +272,19 @@ async def test_structured_output_with_json_schema_mapping_emits_text(
     json_payload = '{"name": "Alice", "age": 30}'
     updates = [ChatResponseUpdate(contents=[Content.from_text(text=json_payload)])]
 
-    schema: dict[str, Any] = {
-        "type": "object",
-        "properties": {"name": {"type": "string"}, "age": {"type": "integer"}},
-        "required": ["name", "age"],
-    }
-
     agent = Agent(
         name="extractor",
         instructions="Extract person info as JSON.",
         client=streaming_chat_client_stub(stream_from_updates_fixture(updates)),
-        default_options={"response_format": schema},
+        # keep this a dict literal: default_options is a TypedDict, so a plain
+        # dict variable (dict[str, Any]) is rejected by pyright
+        default_options={
+            "response_format": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "age": {"type": "integer"}},
+                "required": ["name", "age"],
+            }
+        },
     )
 
     wrapper = AgentFrameworkAgent(agent=agent)
