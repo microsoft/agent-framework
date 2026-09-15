@@ -20,7 +20,13 @@ from agent_framework import (
     WorkflowInvocationKwargs,
     WorkflowRunState,
 )
-from agent_framework._workflows._const import WORKFLOW_RUN_KWARGS_KEY
+from agent_framework._workflows._const import (
+    GLOBAL_KWARGS_KEY,
+    RAW_CLIENT_KWARGS_KEY,
+    RAW_FUNCTION_INVOCATION_KWARGS_KEY,
+    RESOLVED_WORKFLOW_RUN_KWARGS_KEY,
+    WORKFLOW_RUN_KWARGS_KEY,
+)
 from agent_framework.orchestrations import (
     ConcurrentBuilder,
     GroupChatBuilder,
@@ -864,6 +870,137 @@ async def test_runtime_tools_are_not_written_to_checkpoints(tmp_path) -> None:
         assert "tools" not in run_kwargs
 
 
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+async def test_collision_free_kwargs_survive_file_checkpoint_restore(tmp_path: Any, kwargs_channel: str) -> None:
+    """A real __global__ executor remains distinct after file serialization and restore."""
+    from agent_framework_orchestrations._orchestration_request_info import AgentRequestInfoResponse
+
+    from agent_framework import FileCheckpointStorage
+
+    storage = FileCheckpointStorage(
+        tmp_path,
+        allowed_checkpoint_types=[
+            "agent_framework_orchestrations._orchestration_request_info:AgentRequestInfoResponse"
+        ],
+    )
+
+    def build_workflow() -> tuple[Any, _KwargsCapturingAgent, _KwargsCapturingAgent]:
+        global_agent = _KwargsCapturingAgent(name="__global__")
+        sibling = _KwargsCapturingAgent(name="sibling")
+        workflow = (
+            SequentialBuilder(participants=[global_agent, sibling], checkpoint_storage=storage)
+            .with_request_info(agents=[global_agent])
+            .build()
+        )
+        return workflow, global_agent, sibling
+
+    workflow, global_agent, _ = build_workflow()
+    invocation_kwargs = WorkflowInvocationKwargs(
+        global_kwargs={"shared": "G", "overridden": "global"},
+        executor_kwargs={"__global__": {"special": "A", "overridden": "specific"}},
+    )
+    if kwargs_channel == "function_invocation_kwargs":
+        paused = await workflow.run("test", function_invocation_kwargs=invocation_kwargs)
+    else:
+        paused = await workflow.run("test", client_kwargs=invocation_kwargs)
+    [request] = paused.get_request_info_events()
+    assert global_agent.captured_kwargs[0].get(kwargs_channel) == {
+        "shared": "G",
+        "special": "A",
+        "overridden": "specific",
+    }
+
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+    checkpoint = max(
+        (item for item in checkpoints if item.pending_request_info_events),
+        key=lambda item: item.timestamp,
+    )
+    resolved_state = checkpoint.state[RESOLVED_WORKFLOW_RUN_KWARGS_KEY]
+    assert resolved_state[kwargs_channel] == {
+        "global_kwargs": {"shared": "G", "overridden": "global"},
+        "executor_kwargs": {"__global__": {"special": "A", "overridden": "specific"}},
+    }
+
+    resumed_workflow, _, resumed_sibling = build_workflow()
+    resumed = await resumed_workflow.run(checkpoint_id=checkpoint.checkpoint_id)
+    [resumed_request] = resumed.get_request_info_events()
+    assert resumed_request.request_id == request.request_id
+    await resumed_workflow.run(
+        responses={resumed_request.request_id: AgentRequestInfoResponse.approve()},
+    )
+    assert resumed_sibling.captured_kwargs[0].get(kwargs_channel) == {
+        "shared": "G",
+        "overridden": "global",
+    }
+
+
+@pytest.mark.parametrize(
+    ("legacy_resolved", "expected"),
+    [
+        ({GLOBAL_KWARGS_KEY: {"shared": "G"}}, {"shared": "G"}),
+        ({"sibling": {"specific": "B"}}, {"specific": "B"}),
+    ],
+    ids=["global", "per-executor"],
+)
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+async def test_legacy_kwargs_file_checkpoint_remains_readable(
+    tmp_path: Any,
+    kwargs_channel: str,
+    legacy_resolved: dict[str, Any],
+    expected: dict[str, Any],
+) -> None:
+    """Non-ambiguous legacy dict state remains readable after file restore."""
+    from agent_framework_orchestrations._orchestration_request_info import AgentRequestInfoResponse
+
+    from agent_framework import FileCheckpointStorage
+
+    storage = FileCheckpointStorage(
+        tmp_path,
+        allowed_checkpoint_types=[
+            "agent_framework_orchestrations._orchestration_request_info:AgentRequestInfoResponse"
+        ],
+    )
+
+    def build_workflow() -> tuple[Any, _KwargsCapturingAgent]:
+        first = _KwargsCapturingAgent(name="first")
+        sibling = _KwargsCapturingAgent(name="sibling")
+        workflow = (
+            SequentialBuilder(participants=[first, sibling], checkpoint_storage=storage)
+            .with_request_info(agents=[first])
+            .build()
+        )
+        return workflow, sibling
+
+    workflow, _ = build_workflow()
+    if kwargs_channel == "function_invocation_kwargs":
+        paused = await workflow.run("test", function_invocation_kwargs={"seed": True})
+    else:
+        paused = await workflow.run("test", client_kwargs={"seed": True})
+    [request] = paused.get_request_info_events()
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+    checkpoint = max(
+        (item for item in checkpoints if item.pending_request_info_events),
+        key=lambda item: item.timestamp,
+    )
+    run_kwargs = checkpoint.state[WORKFLOW_RUN_KWARGS_KEY]
+    run_kwargs[kwargs_channel] = legacy_resolved
+    run_kwargs.pop(
+        RAW_FUNCTION_INVOCATION_KWARGS_KEY if kwargs_channel == "function_invocation_kwargs" else RAW_CLIENT_KWARGS_KEY,
+        None,
+    )
+    checkpoint.state.pop(RESOLVED_WORKFLOW_RUN_KWARGS_KEY, None)
+    await storage.save(checkpoint)
+
+    resumed_workflow, resumed_sibling = build_workflow()
+    resumed = await resumed_workflow.run(checkpoint_id=checkpoint.checkpoint_id)
+    [resumed_request] = resumed.get_request_info_events()
+    assert resumed_request.request_id == request.request_id
+    await resumed_workflow.run(
+        responses={resumed_request.request_id: AgentRequestInfoResponse.approve()},
+    )
+    assert resumed_sibling.captured_kwargs[0].get(kwargs_channel) == expected
+
+
 # endregion
 
 
@@ -1100,6 +1237,65 @@ async def test_mixed_kwargs_route_through_subworkflow() -> None:
     }
 
 
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+async def test_legacy_mixed_kwargs_route_through_subworkflow(kwargs_channel: str) -> None:
+    """A child graph reclassifies preserved legacy mixed input against its executor IDs."""
+    from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+    inner1 = _KwargsCapturingAgent(name="inner1")
+    inner2 = _KwargsCapturingAgent(name="inner2")
+    child = SequentialBuilder(participants=[inner1, inner2]).build()
+    parent = SequentialBuilder(participants=[WorkflowExecutor(child, id="subworkflow")]).build()
+    invocation_kwargs = {
+        "__global__": {"shared": "G", "overridden": "global"},
+        "inner1": {"specific": "A", "overridden": "specific"},
+    }
+
+    if kwargs_channel == "function_invocation_kwargs":
+        await parent.run("test", function_invocation_kwargs=invocation_kwargs)
+    else:
+        await parent.run("test", client_kwargs=invocation_kwargs)
+
+    actual = tuple(agent.captured_kwargs[0].get(kwargs_channel) for agent in (inner1, inner2))
+    assert actual == (
+        {"shared": "G", "specific": "A", "overridden": "specific"},
+        {"shared": "G", "overridden": "global"},
+    )
+
+
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+@pytest.mark.parametrize("typed", [True, False], ids=["typed", "plain"])
+async def test_real_global_executor_collision_routes_through_subworkflow(kwargs_channel: str, typed: bool) -> None:
+    """A child workflow preserves a real __global__ executor namespace."""
+    from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+    actual_global = _KwargsCapturingAgent(name="__global__")
+    sibling = _KwargsCapturingAgent(name="sibling")
+    child = SequentialBuilder(participants=[actual_global, sibling]).build()
+    parent = SequentialBuilder(participants=[WorkflowExecutor(child, id="subworkflow")]).build()
+    expected: tuple[dict[str, Any] | None, dict[str, Any] | None]
+    if typed:
+        invocation_kwargs: Mapping[str, Any] | WorkflowInvocationKwargs = WorkflowInvocationKwargs(
+            global_kwargs={"shared": "G", "overridden": "global"},
+            executor_kwargs={"__global__": {"special": "A", "overridden": "specific"}},
+        )
+        expected = (
+            {"shared": "G", "special": "A", "overridden": "specific"},
+            {"shared": "G", "overridden": "global"},
+        )
+    else:
+        invocation_kwargs = {"__global__": {"special": "A"}}
+        expected = ({"special": "A"}, None)
+
+    if kwargs_channel == "function_invocation_kwargs":
+        await parent.run("test", function_invocation_kwargs=invocation_kwargs)
+    else:
+        await parent.run("test", client_kwargs=invocation_kwargs)
+
+    actual = tuple(agent.captured_kwargs[0].get(kwargs_channel) for agent in (actual_global, sibling))
+    assert actual == expected
+
+
 # endregion
 
 
@@ -1129,6 +1325,115 @@ async def test_function_and_client_kwargs_together() -> None:
         assert len(agent.captured_kwargs) >= 1
         assert agent.captured_kwargs[0].get("function_invocation_kwargs") == fi_kwargs
         assert agent.captured_kwargs[0].get("client_kwargs") == ci_kwargs
+
+
+@pytest.mark.parametrize(
+    ("executor_ids", "invocation_kwargs", "expected"),
+    [
+        (
+            ("agent1", "sibling"),
+            {
+                "__global__": {"shared": "G", "overridden": "global"},
+                "agent1": {"specific": "A", "overridden": "specific"},
+            },
+            (
+                {"shared": "G", "specific": "A", "overridden": "specific"},
+                {"shared": "G", "overridden": "global"},
+            ),
+        ),
+        (
+            ("agent1", "sibling"),
+            {"__global__": "tenant-a", "agent1": {"specific": "A"}},
+            (None, None),
+        ),
+        (
+            ("agent1", "sibling"),
+            {"__global__": {"tenant": "tenant-a"}, "other_option": 123},
+            (
+                {"__global__": {"tenant": "tenant-a"}, "other_option": 123},
+                {"__global__": {"tenant": "tenant-a"}, "other_option": 123},
+            ),
+        ),
+        (
+            ("__global__", "agent1"),
+            {"__global__": {"global_executor": True}, "agent1": {"agent1": True}},
+            ({"global_executor": True}, {"agent1": True}),
+        ),
+        (
+            ("__global__", "agent1"),
+            {"__global__": "invalid", "agent1": {"specific": "A"}},
+            (None, {"specific": "A"}),
+        ),
+        (
+            ("__global__", "sibling"),
+            WorkflowInvocationKwargs(
+                global_kwargs={"shared": "G", "overridden": "global"},
+                executor_kwargs={"__global__": {"special": "A", "overridden": "specific"}},
+            ),
+            (
+                {"shared": "G", "special": "A", "overridden": "specific"},
+                {"shared": "G", "overridden": "global"},
+            ),
+        ),
+        (
+            ("agent1", "sibling"),
+            WorkflowInvocationKwargs(
+                global_kwargs={"shared": "G"},
+                executor_kwargs={"__global__": {"special": "A"}},
+            ),
+            ({"shared": "G"}, {"shared": "G"}),
+        ),
+        (
+            ("__global__", "sibling"),
+            {"__global__": {"special": "A"}},
+            ({"special": "A"}, None),
+        ),
+    ],
+    ids=[
+        "legacy-mixed",
+        "legacy-mixed-invalid-global",
+        "mapping-valued-application-global",
+        "real-global-plus-target",
+        "malformed-real-global-plus-target",
+        "typed-global-collision",
+        "typed-unmatched-global-executor",
+        "plain-global-collision",
+    ],
+)
+@pytest.mark.parametrize("kwargs_channel", ["function_invocation_kwargs", "client_kwargs"])
+async def test_invocation_kwargs_compatibility_boundaries(
+    kwargs_channel: str,
+    executor_ids: tuple[str, str],
+    invocation_kwargs: Mapping[str, Any] | WorkflowInvocationKwargs,
+    expected: tuple[dict[str, Any] | None, dict[str, Any] | None],
+    caplog: "LogCaptureFixture",
+) -> None:
+    """Preserve legacy boundaries while separating a real __global__ executor."""
+    agents = [_KwargsCapturingAgent(name=executor_id) for executor_id in executor_ids]
+    workflow = SequentialBuilder(participants=agents).build()
+
+    if kwargs_channel == "function_invocation_kwargs":
+        await workflow.run("test", function_invocation_kwargs=invocation_kwargs)
+    else:
+        await workflow.run("test", client_kwargs=invocation_kwargs)
+
+    actual = tuple(agent.captured_kwargs[0].get(kwargs_channel) for agent in agents)
+    assert actual == expected
+    if isinstance(invocation_kwargs, Mapping) and invocation_kwargs.get("__global__") == "tenant-a":
+        assert sum("expected a dict for global kwargs" in record.message for record in caplog.records) == 2
+    if (
+        isinstance(invocation_kwargs, Mapping)
+        and executor_ids[0] == "__global__"
+        and invocation_kwargs.get("__global__") == "invalid"
+    ):
+        matching_warnings = [
+            record.message
+            for record in caplog.records
+            if record.levelname == "WARNING" and record.name == "agent_framework._workflows._agent_utils"
+        ]
+        assert matching_warnings == [
+            "Executor __global__ expected a dict for its kwargs, but got <class 'str'>. Ignoring."
+        ]
 
 
 async def test_global_function_invocation_kwargs_flow_to_all_agents() -> None:
