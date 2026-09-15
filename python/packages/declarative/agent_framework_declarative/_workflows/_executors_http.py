@@ -206,6 +206,9 @@ class HttpRequestActionExecutor(DeclarativeActionExecutor):
 
         # Non-success path: still publish headers diagnostically, then raise.
         self._assign_response_headers(state, result)
+        # Runner discards pending State when the superstep fails (#7859 / #8306).
+        # Commit first so diagnostic headers remain readable after the error.
+        state.commit()
         raise DeclarativeActionError(f"HTTP request to '{url}' failed with status code {result.status_code}.")
 
     # ----- Field resolution ----------------------------------------------------
