@@ -6221,5 +6221,53 @@ class TestParallelRequestReads:
         # The still-blocked history read must have been cancelled, not left orphaned.
         await asyncio.wait_for(sibling_cancelled.wait(), timeout=1)
 
+    async def test_session_preparation_failure_cancels_pending_reads(self) -> None:
+        """If session preparation fails, the concurrently-launched read must be cancelled and
+        drained by `_handle_inner_agent`, not left running as an orphan after the request fails."""
+        input_started = asyncio.Event()
+        sibling_cancelled = asyncio.Event()
+
+        class _GetFailsOnceReadStarted(SessionStore):
+            async def get(self, session_id: str) -> AgentSession | None:
+                del session_id
+                # Fail session preparation only once the concurrent read is genuinely in-flight,
+                # so this proves the handler cancels a running read (not a not-yet-started task).
+                await input_started.wait()
+                raise RuntimeError("session prep boom")
+
+        server = _make_server(_make_agent(), session_store=_GetFailsOnceReadStarted())
+        request = CreateResponse(model="m", input="hi", stream=True)
+        # A previous_response_id makes session_load_id non-None so the failing get() is reached.
+        request["previous_response_id"] = "resp-x"
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+
+        async def get_input_items(_self: Any) -> list[Any]:
+            input_started.set()
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                sibling_cancelled.set()
+                raise
+            return []
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=get_input_items),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_response(request, context, asyncio.Event()),  # pyright: ignore[reportPrivateUsage]
+            )
+
+            async def _drain() -> list[Any]:
+                return [event async for event in handler]
+
+            events = await asyncio.wait_for(_drain(), timeout=2)
+
+        types = [event.get("type") for event in events if isinstance(event, Mapping)]
+        assert types[-1] == "response.failed"
+        # The in-flight input read must have been cancelled by the handler's cleanup, not orphaned.
+        await asyncio.wait_for(sibling_cancelled.wait(), timeout=1)
+
 
 # endregion
