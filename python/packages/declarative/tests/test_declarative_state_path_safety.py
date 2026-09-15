@@ -324,6 +324,29 @@ class TestMessageTextPreprocessing:
         assert calls == ["Local.Messages"]
         assert state.get("Local._TempMessageText0") == "MessageText(Local.Secret)"
 
+    def test_interpolation_preprocesses_only_original_expression_sections(
+        self, state: DeclarativeWorkflowState, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[str] = []
+        message_text = '$"MessageText(Local.Secret) {MessageText(Local.Secret)}"'
+
+        def replace_message_text(inner_expr: str) -> str:
+            calls.append(inner_expr)
+            return message_text
+
+        monkeypatch.setattr(state, "_eval_and_replace_message_text", replace_message_text)
+        temp_writes: list[tuple[str, Any]] = []
+        formula = '$"Literal MessageText(Local.Messages) {{MessageText(Local.Messages)}} {MessageText(Local.Messages)}"'
+
+        result = state._preprocess_custom_functions(formula, temp_writes)
+
+        assert result == (
+            '$"Literal MessageText(Local.Messages) {{MessageText(Local.Messages)}} {Local._TempMessageText0}"'
+        )
+        assert calls == ["Local.Messages"]
+        assert state.get("Local._TempMessageText0") == message_text
+        assert temp_writes == [("Local._TempMessageText0", state._MISSING)]
+
     def test_message_text_inside_string_literal_is_not_preprocessed(
         self,
         state: DeclarativeWorkflowState,
@@ -451,6 +474,48 @@ class TestPowerFxStillWorks:
         original_local = state.get_state_data()["Local"].copy()
 
         assert state.eval(f"=Upper(MessageText(Local.'{quoted_name}'))") == "HELLO"
+        assert state.get_state_data()["Local"] == original_local
+
+    @pytest.mark.parametrize(
+        ("formula", "expected"),
+        [
+            ('$"Message: {MessageText(Local.Messages)}"', "Message: hello"),
+            (
+                '$"Literal MessageText(ignored) ""{{{MessageText(Local.Messages)}}}"""',
+                'Literal MessageText(ignored) "{hello}"',
+            ),
+            (
+                '$"{With({nested: {text: $"Inner {MessageText(Local.Messages)}"}}, nested.text)}"',
+                "Inner hello",
+            ),
+            ('$"{MessageText(Local.Messages)}:{Upper(MessageText(Local.Other))}"', "hello:OTHER"),
+            ('$"{/* } MessageText(Local.Secret) */ MessageText(Local.Messages)}"', "hello"),
+            (
+                (
+                    'Upper(MessageText(If($"Literal ) {MessageText(Local.Messages)}" = "Literal ) hello", '
+                    "Local.Messages, Local.Other)))"
+                ),
+                "HELLO",
+            ),
+        ],
+        ids=[
+            "basic",
+            "literal-text-and-escapes",
+            "nested-records-and-interpolation",
+            "multiple-expressions",
+            "commented-interpolation-delimiter",
+            "interpolation-in-function-argument",
+        ],
+    )
+    def test_expression_sections_evaluate_with_powerfx(
+        self, state: DeclarativeWorkflowState, formula: str, expected: str
+    ) -> None:
+        """Only expression sections of interpolated strings may evaluate MessageText calls."""
+        state.set("Local.Messages", [{"text": "hello", "contents": [{"type": "text", "text": "hello"}]}])
+        state.set("Local.Other", [{"text": "other", "contents": [{"type": "text", "text": "other"}]}])
+        original_local = state.get_state_data()["Local"].copy()
+
+        assert state.eval(f"={formula}") == expected
         assert state.get_state_data()["Local"] == original_local
 
     @pytest.mark.parametrize("name", ["MessageText(ignored)", "Archived' MessageText(ignored)"])
