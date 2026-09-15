@@ -1508,11 +1508,11 @@ async def test_failed_superstep_discards_pending_state_before_next_run() -> None
 
     class FlakyExecutor(Executor):
         @handler
-        async def run(self, message: Msg, ctx: WorkflowContext) -> None:
+        async def run(self, message: Msg, ctx: WorkflowContext[Msg, str]) -> None:
             if message.fail:
                 ctx.set_state("secret", "leaked-from-failed-run")
                 raise RuntimeError("simulated transient failure")
-            await ctx.yield_output("ok")  # type: ignore[arg-type]
+            await ctx.yield_output("ok")
 
     workflow = WorkflowBuilder(start_executor=FlakyExecutor(id="flaky")).build()
 
@@ -1540,12 +1540,12 @@ async def test_cancelled_superstep_discards_pending_state_before_next_run() -> N
 
     class StagingThenBlockingExecutor(Executor):
         @handler
-        async def run(self, message: Msg, ctx: WorkflowContext) -> None:
+        async def run(self, message: Msg, ctx: WorkflowContext[Msg, str]) -> None:
             if message.cancel:
                 ctx.set_state("secret", "leaked-from-cancelled-run")
                 started.set()
                 await asyncio.sleep(3600)
-            await ctx.yield_output("ok")  # type: ignore[arg-type]
+            await ctx.yield_output("ok")
 
     workflow = WorkflowBuilder(start_executor=StagingThenBlockingExecutor(id="blocker")).build()
 
@@ -1577,14 +1577,14 @@ async def test_failed_superstep_discards_even_if_executor_cleanup_raises() -> No
 
     class CleanupRaisesExecutor(Executor):
         @handler
-        async def run(self, message: Msg, ctx: WorkflowContext) -> None:
+        async def run(self, message: Msg, ctx: WorkflowContext[Msg, str]) -> None:
             if message.fail:
                 ctx.set_state("secret", "leaked-from-cleanup-raise")
                 try:
                     raise RuntimeError("primary failure")
                 finally:
                     raise RuntimeError("cleanup failure")  # noqa: B012
-            await ctx.yield_output("ok")  # type: ignore[arg-type]
+            await ctx.yield_output("ok")
 
     workflow = WorkflowBuilder(start_executor=CleanupRaisesExecutor(id="cleanup")).build()
 
