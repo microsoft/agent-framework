@@ -25,6 +25,7 @@ import httpx
 import pytest
 from agent_framework import (
     Agent,
+    AgentExecutor,
     AgentExecutorRequest,
     AgentResponse,
     AgentResponseUpdate,
@@ -36,6 +37,7 @@ from agent_framework import (
     Content,
     FunctionInvocationLayer,
     HistoryProvider,
+    InMemoryCheckpointStorage,
     InMemoryHistoryProvider,
     Message,
     RawAgent,
@@ -360,11 +362,26 @@ class _FailingSessionStore(SessionStore):
 _SESSION_STORE_UNSET = object()
 
 
-def _make_server(agent: Any, **kwargs: Any) -> ResponsesHostServer:
+def _make_server(agent: Any = None, **kwargs: Any) -> ResponsesHostServer:
     """Create a ResponsesHostServer, optionally replacing its private store for tests."""
     session_store = kwargs.pop("session_store", _SESSION_STORE_UNSET)
     response_store = kwargs.pop("response_store", InMemoryResponseProvider())
-    server = ResponsesHostServer(agent, store=response_store, **kwargs)
+    is_workflow = isinstance(agent, WorkflowAgent) or "agent_factory" in kwargs
+    if isinstance(agent, WorkflowAgent):
+        server = ResponsesHostServer(agent_factory=lambda: agent, store=response_store, **kwargs)
+    else:
+        server = ResponsesHostServer(agent, store=response_store, **kwargs)
+    if is_workflow:
+        if session_store is _SESSION_STORE_UNSET:
+            session_store = SessionStore()
+        checkpoints: dict[str, InMemoryCheckpointStorage] = {}
+
+        def get_checkpoint_store(*, context_id: str, **kwargs: Any) -> InMemoryCheckpointStorage:
+            return checkpoints.setdefault(context_id, InMemoryCheckpointStorage())
+
+        checkpoint_provider = MagicMock(spec=CheckpointStoreProvider)
+        checkpoint_provider.get_store.side_effect = get_checkpoint_store
+        server._checkpoint_storage_provider = checkpoint_provider  # pyright: ignore[reportPrivateUsage]
     if session_store is not _SESSION_STORE_UNSET:
         provider = MagicMock(spec=AgentSessionStoreProvider)
         provider.get_store.return_value = cast(SessionStore | None, session_store)
@@ -970,9 +987,9 @@ class TestResponsesHostServerInit:
                 options=ResponsesServerOptions(resilient_background=True),
             )
 
-    def test_init_rejects_steerable_conversations_for_workflow_agent(self) -> None:
+    def test_init_rejects_direct_workflow_agent(self) -> None:
         workflow_agent = _build_text_workflow_agent("hello from workflow")
-        with pytest.raises(RuntimeError, match="steerable_conversations"):
+        with pytest.raises(TypeError, match="agent_factory"):
             ResponsesHostServer(
                 cast(SupportsAgentRun, workflow_agent),
                 store=InMemoryResponseProvider(),
@@ -4722,7 +4739,7 @@ class TestCheckpointContextValidation:
         agent.workflow = MagicMock()
         agent.workflow.name = "workflow"
         agent.workflow._runner_context.has_checkpointing.return_value = False
-        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server = ResponsesHostServer(agent_factory=lambda: agent, store=InMemoryResponseProvider())
 
         context_kwargs: dict[str, Any] = {"response_id": "response-current", "mode_flags": MagicMock()}
         request = CreateResponse(model="m", input="hi")
@@ -5570,7 +5587,8 @@ def _build_text_workflow_agent(text: str) -> WorkflowAgent:
     async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
 
-    workflow = WorkflowBuilder(start_executor=start).add_edge(start, inner).build()
+    inner_executor = AgentExecutor(inner, id="text-agent")
+    workflow = WorkflowBuilder(name="text-workflow", start_executor=start).add_edge(start, inner_executor).build()
     return WorkflowAgent(workflow=workflow, name="Text Workflow Agent")
 
 
@@ -5653,7 +5671,10 @@ def _build_multi_update_workflow_agent(
     async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
 
-    workflow = WorkflowBuilder(start_executor=start).add_edge(start, inner).build()
+    inner_executor = AgentExecutor(inner, id="multi-update-agent")
+    workflow = (
+        WorkflowBuilder(name="multi-update-workflow", start_executor=start).add_edge(start, inner_executor).build()
+    )
     return WorkflowAgent(workflow=workflow, name="Multi Update Workflow Agent"), inner
 
 
@@ -5677,9 +5698,38 @@ def _build_approval_workflow_agent(
     async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
         await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
 
-    workflow = WorkflowBuilder(start_executor=start).add_edge(start, mock_agent).build()
+    inner_executor = AgentExecutor(mock_agent, id="approval-agent")
+    workflow = WorkflowBuilder(name="approval-workflow", start_executor=start).add_edge(start, inner_executor).build()
     workflow_agent = WorkflowAgent(workflow=workflow, name="Approval Workflow Agent")
     return workflow_agent, mock_agent
+
+
+def _build_approval_workflow_factory(
+    *, approval_request_id: str, final_text: str
+) -> tuple[Callable[[], WorkflowAgent], list[_ToolApprovalWorkflowAgentMock]]:
+    agents: list[_ToolApprovalWorkflowAgentMock] = []
+
+    def factory() -> WorkflowAgent:
+        workflow_agent, inner = _build_approval_workflow_agent(
+            approval_request_id=approval_request_id, final_text=final_text
+        )
+        agents.append(inner)
+        return workflow_agent
+
+    return factory, agents
+
+
+def _build_multi_update_workflow_factory(
+    texts: Sequence[str],
+) -> tuple[Callable[[], WorkflowAgent], list[_MultiUpdateWorkflowAgentMock]]:
+    agents: list[_MultiUpdateWorkflowAgentMock] = []
+
+    def factory() -> WorkflowAgent:
+        workflow_agent, inner = _build_multi_update_workflow_agent(texts)
+        agents.append(inner)
+        return workflow_agent
+
+    return factory, agents
 
 
 class TestWorkflowAgentHosting:
@@ -5770,23 +5820,18 @@ class TestWorkflowAgentHosting:
                 AsyncGenerator[Any, None],
                 server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
             )
-            await anext(handler)  # response.created
-            await anext(handler)  # response.in_progress
 
-            # Pull the first workflow event in the background so we can wait for the inner agent's
-            # run() to actually start (proving it's genuinely stuck on `gate`) before signalling --
-            # otherwise cancellation could preempt the pull before the workflow even reaches it.
-            pending = asyncio.ensure_future(anext(handler))
+            async def consume() -> list[Any]:
+                return [event async for event in handler]
+
+            # Keep factory entry, iteration, and cleanup in the same task.
+            pending = asyncio.create_task(consume())
             await asyncio.wait_for(inner.started.wait(), timeout=1.0)
             cancellation_signal.set()  # Fires while the inner agent is stuck awaiting `gate`.
 
-            async def _drain() -> list[Any]:
-                first = await pending
-                return [first, *[event async for event in handler]]
-
             # Bounded well below `gate` never being set: proves cancellation preempted the stuck
             # call instead of only being observed after it (eventually) produced an update.
-            events = await asyncio.wait_for(_drain(), timeout=1.0)
+            events = await asyncio.wait_for(pending, timeout=1.0)
 
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert "response.output_text.delta" not in types
@@ -5817,12 +5862,12 @@ class TestWorkflowAgentHosting:
                 AsyncGenerator[Any, None],
                 server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
             )
-            await anext(handler)  # response.created
-            await anext(handler)  # response.in_progress
 
-            # Pull the first workflow event in the background so we can wait for the inner agent's
-            # run() to actually start (proving it's genuinely stuck on `gate`) before signalling.
-            pending = asyncio.ensure_future(anext(handler))
+            async def consume() -> list[Any]:
+                return [event async for event in handler]
+
+            # Keep factory entry, iteration, and cleanup in the same task.
+            pending = asyncio.create_task(consume())
             await asyncio.wait_for(inner.started.wait(), timeout=1.0)
             context.shutdown.set()  # Fires while the inner agent is stuck awaiting `gate`.
 
@@ -5837,12 +5882,12 @@ class TestWorkflowAgentHosting:
         """Explicit-cancel: cancellation set before a continuation turn starts must skip that turn's new
         input entirely, whether caught by the restore-loop's own check or the standalone check
         guarding the start of a brand new workflow run."""
-        workflow_agent, inner = _build_multi_update_workflow_agent(["hello"])
-        server = _make_server(workflow_agent)
+        agent_factory, agents = _build_multi_update_workflow_factory(["hello"])
+        server = _make_server(agent_factory=agent_factory)
 
         first = await _post(server, conversation_id="conv-1", stream=False)
         assert first.status_code == 200
-        run_count_after_first_turn = inner.run_count
+        run_count_after_first_turn = sum(agent.run_count for agent in agents)
         assert run_count_after_first_turn == 1
 
         request = CreateResponse(model="m", input="hi again", stream=True)
@@ -5865,7 +5910,8 @@ class TestWorkflowAgentHosting:
         assert types[-1] == "response.completed"
         # At most the restore-only replay call happened; the new-turn call (which would deliver
         # "hi again") must never fire.
-        assert inner.run_count <= run_count_after_first_turn + 1
+        assert len(agents) == 2
+        assert sum(agent.run_count for agent in agents) <= run_count_after_first_turn + 1
 
     async def test_shutdown_signal_set_before_restore_only_triggers_recovery(self, tmp_path: Path) -> None:
         """Shutdown observed while resuming a checkpoint (whether during the restore-only replay or
@@ -5873,16 +5919,16 @@ class TestWorkflowAgentHosting:
         ``exit_for_recovery()`` -- proving the post-loop ``signalled`` check (not a blind re-check of
         the flag) correctly gates this action so it doesn't also fire on a replay that merely
         finished naturally."""
-        workflow_agent, inner = _build_multi_update_workflow_agent(["hello"])
+        agent_factory, agents = _build_multi_update_workflow_factory(["hello"])
         server = _make_server(
-            workflow_agent,
+            agent_factory=agent_factory,
             response_store=FileResponseStore(storage_dir=tmp_path),
             options=ResponsesServerOptions(resilient_background=True),
         )
 
         first = await _post(server, conversation_id="conv-1", stream=False)
         assert first.status_code == 200
-        run_count_after_first_turn = inner.run_count
+        run_count_after_first_turn = sum(agent.run_count for agent in agents)
         assert run_count_after_first_turn == 1
 
         request = CreateResponse(model="m", input="hi again", stream=True)
@@ -5903,7 +5949,8 @@ class TestWorkflowAgentHosting:
                 _ = [event async for event in handler]
 
         # Only the restore-only replay call may have happened; the new-turn call must never fire.
-        assert inner.run_count <= run_count_after_first_turn + 1
+        assert len(agents) == 2
+        assert sum(agent.run_count for agent in agents) <= run_count_after_first_turn + 1
 
     async def test_previous_response_requires_existing_workflow_checkpoint(self) -> None:
         """A previous_response_id naming a scope with no checkpoint must fail loudly rather than
@@ -5995,11 +6042,11 @@ class TestWorkflowAgentHosting:
         approval response back to the paused inner agent, and the inner
         agent emits the final assistant text.
         """
-        workflow_agent, mock_agent = _build_approval_workflow_agent(
+        agent_factory, agents = _build_approval_workflow_factory(
             approval_request_id="apr_wf_rt",
             final_text="done with approval",
         )
-        server = _make_server(workflow_agent)
+        server = _make_server(agent_factory=agent_factory)
         checkpoint_provider = server._checkpoint_storage_provider  # pyright: ignore[reportPrivateUsage]
 
         with patch.object(checkpoint_provider, "get_store", wraps=checkpoint_provider.get_store) as get_store:
@@ -6010,7 +6057,7 @@ class TestWorkflowAgentHosting:
             approval_items = [it for it in first_body["output"] if it["type"] == "mcp_approval_request"]
             assert len(approval_items) == 1
             approval_request_id = approval_items[0]["id"]
-            assert mock_agent.run_count == 1
+            assert sum(agent.run_count for agent in agents) == 1
 
             second_payload: dict[str, Any] = {
                 "model": "test-model",
@@ -6037,7 +6084,8 @@ class TestWorkflowAgentHosting:
         # The inner agent must have been resumed (restore replay + new turn).
         # Restore call is a no-op for the mock (no input); the new-turn call
         # delivers the approval response, so run_count grows by at least 1.
-        assert mock_agent.run_count >= 2
+        assert len(agents) == 2
+        assert sum(agent.run_count for agent in agents) >= 2
 
         # The final assistant text from the resumed inner agent surfaces in
         # the HTTP output.
@@ -6055,7 +6103,7 @@ class TestWorkflowAgentHosting:
         # The new-turn invocation of the inner agent must have received the
         # approval response routed back through WorkflowAgent.
         approval_responses = [
-            c for m in mock_agent.last_run_messages for c in m.contents if c.type == "function_approval_response"
+            c for m in agents[-1].last_run_messages for c in m.contents if c.type == "function_approval_response"
         ]
         assert len(approval_responses) == 1
         assert approval_responses[0].approved is True
@@ -6063,11 +6111,11 @@ class TestWorkflowAgentHosting:
     async def test_round_trip_approval_response_streaming(self) -> None:
         """Streaming variant of the round-trip: turn 2 is requested with
         ``stream=true`` and surfaces the resumed text as SSE events."""
-        workflow_agent, mock_agent = _build_approval_workflow_agent(
+        agent_factory, agents = _build_approval_workflow_factory(
             approval_request_id="apr_wf_rt_st",
             final_text="streamed-done",
         )
-        server = _make_server(workflow_agent)
+        server = _make_server(agent_factory=agent_factory)
 
         first = await _post(server, stream=False)
         first_body = first.json()
@@ -6097,16 +6145,17 @@ class TestWorkflowAgentHosting:
 
         text_done = [e for e in events if e["event"] == "response.output_text.done"]
         assert any("streamed-done" in e["data"]["text"] for e in text_done)
-        assert mock_agent.run_count >= 2
+        assert len(agents) == 2
+        assert sum(agent.run_count for agent in agents) >= 2
 
     async def test_round_trip_approval_response_rejected(self) -> None:
         """Sending ``approve=False`` must surface as ``approved=False`` to the
         inner agent on resume."""
-        workflow_agent, mock_agent = _build_approval_workflow_agent(
+        agent_factory, agents = _build_approval_workflow_factory(
             approval_request_id="apr_wf_reject",
             final_text="acknowledged",
         )
-        server = _make_server(workflow_agent)
+        server = _make_server(agent_factory=agent_factory)
 
         first = await _post(server, stream=False)
         first_body = first.json()
@@ -6131,7 +6180,7 @@ class TestWorkflowAgentHosting:
         assert second.status_code == 200
 
         approval_responses = [
-            c for m in mock_agent.last_run_messages for c in m.contents if c.type == "function_approval_response"
+            c for m in agents[-1].last_run_messages for c in m.contents if c.type == "function_approval_response"
         ]
         assert len(approval_responses) == 1
         assert approval_responses[0].approved is False
