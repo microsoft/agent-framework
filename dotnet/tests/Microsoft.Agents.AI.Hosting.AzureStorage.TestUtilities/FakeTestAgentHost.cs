@@ -25,6 +25,8 @@ internal sealed class FakeTestAgentHost : IAsyncDisposable
 {
     private const string AgentName = "azure-blob-session-agent";
 
+    private static readonly JsonSerializerOptions s_aguiJsonSerializerOptions = CreateAGUIJsonSerializerOptions();
+
     private readonly WebApplication _app;
     private readonly HttpClient _client;
 
@@ -89,7 +91,7 @@ internal sealed class FakeTestAgentHost : IAsyncDisposable
                 {
                     ThreadId = runStarted.ThreadId,
                     ParentRunId = runStarted.RunId,
-                    Messages = new[] { secondMessage }.AsAGUIMessages().ToList(),
+                    Messages = new[] { secondMessage }.AsAGUIMessages(s_aguiJsonSerializerOptions).ToList(),
                 },
             },
         };
@@ -113,6 +115,14 @@ internal sealed class FakeTestAgentHost : IAsyncDisposable
     {
         this._client.Dispose();
         await this._app.DisposeAsync();
+    }
+
+    private static JsonSerializerOptions CreateAGUIJsonSerializerOptions()
+    {
+        JsonSerializerOptions options = new(AgentAbstractionsJsonUtilities.DefaultOptions);
+        options.TypeInfoResolverChain.Add(AGUIJsonSerializerContext.Default.Options.TypeInfoResolver!);
+        options.MakeReadOnly();
+        return options;
     }
 
     internal sealed record FakeTestAgentRunResult(

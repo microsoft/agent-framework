@@ -216,11 +216,15 @@ jobs:
           AGENT_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
           ISSUE_REPO: ${{ needs.team_check.outputs.repo }}
           ISSUE_NUMBER: ${{ needs.team_check.outputs.issue_number }}
+          ISSUE_TYPE: ${{ needs.team_check.outputs.issue_type }}
+          ISSUE_SNAPSHOT_PATH: ${{ runner.temp }}/issue-triage-snapshot.json
         run: |
           uv run python scripts/classify_issue_spam.py \
             --repo "$ISSUE_REPO" \
             --issue-number "$ISSUE_NUMBER" \
+            --issue-type "$ISSUE_TYPE" \
             --repo-path "${TARGET_REPO_PATH}" \
+            --issue-snapshot-output "$ISSUE_SNAPSHOT_PATH" \
             --apply-labels
 
       - name: Stop after spam gate
@@ -244,6 +248,8 @@ jobs:
           ISSUE_REPO: ${{ needs.team_check.outputs.repo }}
           ISSUE_NUMBER: ${{ needs.team_check.outputs.issue_number }}
           ISSUE_TYPE: ${{ needs.team_check.outputs.issue_type }}
+          ISSUE_SNAPSHOT_PATH: ${{ runner.temp }}/issue-triage-snapshot.json
+          ISSUE_SNAPSHOT_SHA256: ${{ steps.spam.outputs.issue_snapshot_sha256 }}
           # Model-provider settings for generated repro code. Never enter the
           # agent prompt; consumed by SDK constructors via os.environ. Azure
           # OpenAI and Foundry auth via AAD from the azure/login step above.
@@ -271,4 +277,6 @@ jobs:
             --repo "$ISSUE_REPO" \
             --issue-number "$ISSUE_NUMBER" \
             --issue-type "$ISSUE_TYPE" \
+            --issue-snapshot "$ISSUE_SNAPSHOT_PATH" \
+            --issue-snapshot-sha256 "$ISSUE_SNAPSHOT_SHA256" \
             --github-username "$GITHUB_ACTOR"

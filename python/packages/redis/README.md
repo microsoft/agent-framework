@@ -79,6 +79,47 @@ arrays. Indexed strings cannot contain surrounding whitespace, NUL, or U+001F,
 and must fit Redis's 4096-byte TAG limit; these restrictions do not apply to
 unindexed payloads. Unsupported operations raise an error.
 
+## Isolate conversation history
+
+`RedisHistoryProvider` uses scoped keys by default. Supply a stable
+`application_id`; also supply `tenant_id` and `agent_id` whenever those
+boundaries exist in your application. The provider's `source_id` and each
+non-empty session ID are included automatically:
+
+```python
+from agent_framework.redis import RedisHistoryProvider
+
+history_provider = RedisHistoryProvider(
+    redis_url="redis://localhost:6379",
+    application_id="support-app",
+    tenant_id="contoso",
+    agent_id="triage-agent",
+)
+```
+
+Scoped mode rejects missing application or session identifiers rather than
+placing unrelated conversations under a shared fallback key. Identifiers are
+encoded independently, so they do not need to be globally unique across
+tenants, applications, agents, and provider sources.
+
+Releases that predate scoped keys used
+`{key_prefix}:{session_id or "default"}`. Existing deployments can temporarily
+retain that exact format by opting in explicitly:
+
+```python
+legacy_history_provider = RedisHistoryProvider(
+    redis_url="redis://localhost:6379",
+    key_format="legacy",
+)
+```
+
+Legacy mode does not accept scoped identifiers. Scoped mode never reads,
+rewrites, or deletes legacy keys. To migrate existing history, copy only the
+records belonging to a verified application, tenant, agent, provider source,
+and session into the corresponding scoped key using an application-owned
+migration process. After verifying the copied history, remove legacy keys
+separately according to the application's retention policy.
+
 ## Store and search documents
 
 This example uses precomputed vectors, so no embedding service is needed.
