@@ -299,6 +299,11 @@ class HandoffAgentExecutor(AgentExecutor):
             context_providers=agent.context_providers,
             middleware=agent.middleware,
             require_per_service_call_history_persistence=agent.require_per_service_call_history_persistence,
+            # Shared by reference rather than deep-copied, like `context_providers` and
+            # `middleware` above: both hold immutable configuration the clone never mutates,
+            # and a tokenizer can carry a vocabulary that is expensive or unsafe to copy.
+            compaction_strategy=agent.compaction_strategy,
+            tokenizer=agent.tokenizer,
             default_options=cloned_options,  # type: ignore[assignment]
             additional_properties=deepcopy(agent.additional_properties),
         )
