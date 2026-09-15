@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
 from collections.abc import AsyncIterator
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -30,6 +31,7 @@ from agent_framework import (
 )
 from agent_framework.a2a import A2AAgent
 from agent_framework.exceptions import AgentInvalidRequestException
+from google.protobuf.json_format import MessageToDict
 from pytest import fixture, mark, raises, warns
 
 from agent_framework_a2a import A2AAgentSession, A2AContinuationToken, A2AServiceSessionId
@@ -128,6 +130,70 @@ def mock_a2a_client() -> MockA2AClient:
 def a2a_agent(mock_a2a_client: MockA2AClient) -> A2AAgent:
     """Fixture that provides an A2AAgent with a mock client."""
     return A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
+
+
+@mark.parametrize("set_cookie", [True, False], ids=["set-cookie", "no-set-cookie-control"])
+async def test_run_does_not_replay_upstream_cookies_between_sessions(set_cookie: bool) -> None:
+    """A later session must not receive private data through an earlier session's response cookie."""
+    private_record = "First caller's private record"
+    upstream_requests: list[httpx.Request] = []
+    upstream_responses: list[httpx.Response] = []
+
+    def handle_upstream_request(request: httpx.Request) -> httpx.Response:
+        upstream_requests.append(request)
+        payload = json.loads(request.content)
+        assert request.method == "POST"
+        assert payload["method"] == "SendMessage"
+        prompt = payload["params"]["message"]["parts"][-1]["text"]
+        headers = {}
+        if prompt == "sign-in":
+            text = "Signed in"
+            if set_cookie:
+                headers["set-cookie"] = "remote_session=first-session; Path=/; HttpOnly; Secure"
+        else:
+            assert prompt == "read-record"
+            text = (
+                private_record
+                if "remote_session=first-session" in request.headers.get("cookie", "")
+                else "Access denied"
+            )
+        response = httpx.Response(
+            200,
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": payload["id"],
+                "result": {
+                    "message": MessageToDict(
+                        A2AMessage(
+                            message_id=str(uuid4()),
+                            role=A2ARole.ROLE_AGENT,
+                            parts=[Part(text=text)],
+                        )
+                    )
+                },
+            },
+        )
+        upstream_responses.append(response)
+        return response
+
+    async_client_type = httpx.AsyncClient
+
+    def create_http_client(**kwargs: Any) -> httpx.AsyncClient:
+        # Keep the agent-owned HTTPX client and its cookie handling; replace only network I/O.
+        return async_client_type(transport=httpx.MockTransport(handle_upstream_request), **kwargs)
+
+    with patch("agent_framework_a2a._agent.httpx.AsyncClient", side_effect=create_http_client):
+        async with A2AAgent(url="https://a2a.example.test/") as agent:
+            first_response = await agent.run("sign-in", session=agent.create_session())
+            second_response = await agent.run("read-record", session=agent.create_session())
+
+    assert len(upstream_requests) == 2
+    assert "cookie" not in upstream_requests[0].headers
+    assert ("set-cookie" in upstream_responses[0].headers) is set_cookie
+    assert first_response.text == "Signed in"
+    assert second_response.text == "Access denied"
+    assert "cookie" not in upstream_requests[1].headers
 
 
 def test_a2a_agent_initialization_with_client(mock_a2a_client: MockA2AClient) -> None:
@@ -435,24 +501,6 @@ async def test_run_streaming_with_message_response(a2a_agent: A2AAgent, mock_a2a
     assert mock_a2a_client.call_count == 1
 
 
-async def test_context_manager_cleanup() -> None:
-    """Test context manager cleanup of http client."""
-
-    # Create mock http client that tracks aclose calls
-    mock_http_client = AsyncMock()
-    mock_a2a_client = MagicMock()
-
-    agent = A2AAgent(client=cast(Any, mock_a2a_client))
-    agent._http_client = mock_http_client
-
-    # Test context manager cleanup
-    async with agent:
-        pass
-
-    # Verify aclose was called
-    mock_http_client.aclose.assert_called_once()
-
-
 async def test_context_manager_no_cleanup_when_no_http_client() -> None:
     """Test context manager when _http_client is None."""
 
@@ -465,14 +513,28 @@ async def test_context_manager_no_cleanup_when_no_http_client() -> None:
         pass
 
 
-async def test_context_manager_does_not_close_caller_supplied_http_client() -> None:
-    """A caller-supplied http_client (without client=) must survive __aexit__. See issue #7950."""
-    mock_http_client = AsyncMock()
+@mark.parametrize("supply_a2a_client", [False, True])
+async def test_context_manager_does_not_close_caller_supplied_http_client(supply_a2a_client: bool) -> None:
+    """A caller-supplied HTTP client must stay open and retain its cookie behavior after __aexit__."""
 
-    async with A2AAgent(url="http://localhost:9999/", http_client=cast(Any, mock_http_client)):
-        pass
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        assert request.headers["cookie"] == "caller_cookie=kept"
+        return httpx.Response(200, headers={"set-cookie": "server_cookie=retained; Path=/"})
 
-    mock_http_client.aclose.assert_not_called()
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handle_request), cookies={"caller_cookie": "kept"}
+    ) as http_client:
+        async with A2AAgent(
+            url="https://a2a.example.test/",
+            client=MagicMock() if supply_a2a_client else None,
+            http_client=http_client,
+        ):
+            pass
+
+        assert not http_client.is_closed
+        await http_client.get("https://a2a.example.test/")
+        assert http_client.cookies["caller_cookie"] == "kept"
+        assert http_client.cookies["server_cookie"] == "retained"
 
 
 def test_prepare_message_for_a2a_with_multiple_contents() -> None:

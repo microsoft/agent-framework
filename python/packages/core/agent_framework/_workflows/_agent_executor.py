@@ -15,7 +15,7 @@ from .._agents import SupportsAgentRun
 from .._sessions import AgentSession
 from .._types import AgentResponse, AgentResponseUpdate, Message, ResponseStream
 from ._agent_utils import prepare_agent_run_args, resolve_agent_id, resolve_executor_kwargs
-from ._const import INTERNAL_SOURCE_ID, WORKFLOW_RUN_KWARGS_KEY
+from ._const import INTERNAL_SOURCE_ID, RESOLVED_WORKFLOW_RUN_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from ._executor import Executor, handler
 from ._message_utils import normalize_messages_input
 from ._request_info_mixin import response_handler
@@ -441,7 +441,8 @@ class AgentExecutor(Executor):
             The complete AgentResponse, or None if waiting for user input.
         """
         raw_run_kwargs = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
-        function_invocation_kwargs, client_kwargs = self._prepare_agent_run_args(raw_run_kwargs)
+        resolved_run_kwargs = ctx.get_state(RESOLVED_WORKFLOW_RUN_KWARGS_KEY)
+        function_invocation_kwargs, client_kwargs = self._prepare_agent_run_args(raw_run_kwargs, resolved_run_kwargs)
         tools = ctx.get_runtime_tools()
 
         if not self._cache:
@@ -497,7 +498,8 @@ class AgentExecutor(Executor):
             The complete AgentResponse, or None if waiting for user input.
         """
         raw_run_kwargs = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
-        function_invocation_kwargs, client_kwargs = self._prepare_agent_run_args(raw_run_kwargs)
+        resolved_run_kwargs = ctx.get_state(RESOLVED_WORKFLOW_RUN_KWARGS_KEY)
+        function_invocation_kwargs, client_kwargs = self._prepare_agent_run_args(raw_run_kwargs, resolved_run_kwargs)
         tools = ctx.get_runtime_tools()
 
         if not self._cache:
@@ -582,6 +584,7 @@ class AgentExecutor(Executor):
     def _prepare_agent_run_args(
         self,
         raw_run_kwargs: dict[str, Any],
+        resolved_run_kwargs: Any = None,
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         """Prepare function_invocation_kwargs and client_kwargs for agent.run().
 
@@ -594,7 +597,7 @@ class AgentExecutor(Executor):
         Returns:
             A 2-tuple of (function_invocation_kwargs, client_kwargs).
         """
-        return prepare_agent_run_args(self.id, raw_run_kwargs)
+        return prepare_agent_run_args(self.id, raw_run_kwargs, resolved_run_kwargs)
 
     def _resolve_executor_kwargs(self, resolved: dict[str, Any] | None) -> dict[str, Any] | None:
         """Extract this executor's kwargs from a resolved invocation kwargs dict.

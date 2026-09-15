@@ -526,9 +526,10 @@ class RawMistralChatClient(
             The request body for ``POST /v1/chat/completions``.
 
         Raises:
-            ValueError: If no model is set on the options or the client instance.
+            ValueError: If transport arguments are supplied in options or kwargs,
+                or no model is set on the options or the client instance.
         """
-        if transport_arguments := _SDK_TRANSPORT_ARGUMENTS.intersection(kwargs):
+        if transport_arguments := _SDK_TRANSPORT_ARGUMENTS.intersection(options.keys() | kwargs.keys()):
             arguments = ", ".join(sorted(transport_arguments))
             raise ValueError(
                 f"Mistral transport arguments cannot be supplied per call: {arguments}. Configure the client instead."
