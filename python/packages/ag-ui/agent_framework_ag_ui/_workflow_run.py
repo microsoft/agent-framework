@@ -266,7 +266,9 @@ async def _pending_request_events(workflow: Workflow) -> dict[str, Any]:
 
 async def _pending_request_events_from_checkpoint(
     checkpoint_id: str,
-    checkpoint_storage: CheckpointStorage,
+    checkpoint_storage: CheckpointStorage | None = None,
+    *,
+    workflow: Any | None = None,
 ) -> dict[str, Any]:
     """Read pending request_info events from a persisted checkpoint without restoring it.
 
@@ -277,16 +279,34 @@ async def _pending_request_events_from_checkpoint(
     exposes them without running any executor ``on_checkpoint_restore`` hook; the single
     ``workflow.run(checkpoint_id=...)`` then performs the one real restore, so the
     restore -- and every custom restore hook -- runs exactly once per resume.
+
+    ``checkpoint_storage`` is preferred when provided. Otherwise the workflow's
+    effective builder/runtime storage is used when ``has_checkpointing()`` is true,
+    so AG-UI can round-trip pause IDs emitted from ``WorkflowBuilder(checkpoint_storage=...)``
+    without requiring a duplicate AG-UI storage argument.
     """
     try:
-        checkpoint = await checkpoint_storage.load(checkpoint_id)
+        if checkpoint_storage is not None:
+            checkpoint = await checkpoint_storage.load(checkpoint_id)
+        else:
+            context = getattr(getattr(workflow, "_runner", None), "context", None)
+            if context is None or not context.has_checkpointing():
+                raise ValueError(
+                    "Resuming a checkpoint with an AG-UI resume payload requires checkpoint_storage "
+                    "(or WorkflowBuilder checkpoint storage on the workflow instance)."
+                )
+            checkpoint = await context.load_checkpoint(checkpoint_id)
+    except ValueError:
+        raise
     except Exception:
         logger.warning(
             "Could not load checkpoint for resume-response coercion; the core run will surface any error.",
             exc_info=True,
         )
         return {}
-    return dict(checkpoint.pending_request_info_events)
+    if checkpoint is None:
+        return {}
+    return dict(checkpoint.pending_request_info_events or {})
 
 
 def _interrupt_entry_for_request_event(request_event: Any) -> dict[str, Any] | None:
@@ -1153,9 +1173,15 @@ async def run_workflow_stream(
     # pure checkpoint restore still surfaces its pending interrupts instead of tripping
     # the "resume required" contract.
     if checkpoint_id is not None and resume_payload is not None:
-        if checkpoint_storage is None:
+        # Prefer the explicit AG-UI storage argument; otherwise allow the workflow's
+        # builder/runtime storage so builder-emitted pause IDs remain round-trippable.
+        if checkpoint_storage is None and not workflow._runner.context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
             raise ValueError("Resuming a checkpoint with an AG-UI resume payload requires checkpoint_storage.")
-        pending_before_run = await _pending_request_events_from_checkpoint(checkpoint_id, checkpoint_storage)
+        pending_before_run = await _pending_request_events_from_checkpoint(
+            checkpoint_id,
+            checkpoint_storage,
+            workflow=workflow,
+        )
     else:
         pending_before_run = await _pending_request_events(workflow)
     pending_interrupt_ids = _pending_workflow_interrupt_ids(pending_before_run)
