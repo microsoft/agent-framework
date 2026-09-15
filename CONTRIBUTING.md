@@ -92,14 +92,13 @@ compatibility finding. The Griffe version is pinned with the other Python develo
 dependencies in `python/pyproject.toml`; the workflow reads that pin from the trusted base
 commit.
 
-If a breaking change is intentional and approved by maintainers, add the `breaking change`
-label to the pull request. The workflow accepts the label as an acknowledgement only when
-its latest application was performed by a collaborator with write access. Adding
-`[BREAKING]` to the title still marks the pull request through the existing title/label
-automation, but a write-capable collaborator must remove and reapply the label to approve
-the break. The compatibility workflow still reports acknowledged changes but succeeds.
-Without an approved label, the comparison step fails; the job is configured as
-non-blocking so it cannot prevent a merge while the workflow is being evaluated.
+If a breaking change is intentional, add the `breaking change` label to the pull request
+or add `[BREAKING]` to its title. Existing title/label automation keeps those signals
+synchronized. The label declares that the detected break is intentional; normal repository
+review and merge policies determine whether the change is approved. The compatibility
+workflow still reports acknowledged changes but succeeds. Without the label, the comparison
+step fails; the job is configured as non-blocking so it cannot prevent a merge while the
+workflow is being evaluated.
 
 #### Automated API Compatibility Validation
 

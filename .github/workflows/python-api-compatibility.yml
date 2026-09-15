@@ -11,8 +11,6 @@ on:
 
 permissions:
   contents: read
-  issues: read
-  pull-requests: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
@@ -37,65 +35,10 @@ jobs:
           enable-cache: false
           version: "0.12.9"
 
-      - name: Verify breaking change acknowledgement
-        id: breaking-change-ack
-        if: contains(github.event.pull_request.labels.*.name, 'breaking change')
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const labelName = 'breaking change';
-            const events = await github.paginate(github.rest.issues.listEvents, {
-              ...context.repo,
-              issue_number: context.issue.number,
-              per_page: 100,
-            });
-            const latestLabelEvent = events
-              .filter((event) =>
-                ['labeled', 'unlabeled'].includes(event.event)
-                && event.label?.name?.toLowerCase() === labelName
-              )
-              .sort((left, right) => left.id - right.id)
-              .at(-1);
-
-            if (!latestLabelEvent || latestLabelEvent.event !== 'labeled') {
-              core.setOutput('acknowledged', 'false');
-              core.warning('The breaking change label has no matching label event.');
-              return;
-            }
-
-            const actor = latestLabelEvent.actor?.login;
-            if (!actor) {
-              core.setOutput('acknowledged', 'false');
-              core.warning('The breaking change label event has no actor.');
-              return;
-            }
-
-            let permissionData;
-            try {
-              const response = await github.rest.repos.getCollaboratorPermissionLevel({
-                ...context.repo,
-                username: actor,
-              });
-              permissionData = response.data;
-            } catch (error) {
-              if (error.status !== 404) {
-                throw error;
-              }
-            }
-
-            const acknowledged = permissionData?.user?.permissions?.push === true
-              || ['admin', 'maintain', 'write'].includes(permissionData?.permission);
-            core.setOutput('acknowledged', acknowledged ? 'true' : 'false');
-            if (acknowledged) {
-              core.info(`Breaking changes were acknowledged by write-capable collaborator ${actor}.`);
-            } else {
-              core.warning(`The breaking change label was last applied by ${actor}, who does not have write permission.`);
-            }
-
       - name: Compare public API with the PR base
         working-directory: ${{ runner.temp }}
         env:
-          BREAKING_CHANGE_ACKNOWLEDGED: ${{ steps.breaking-change-ack.outputs.acknowledged == 'true' }}
+          BREAKING_CHANGE_ACKNOWLEDGED: ${{ contains(github.event.pull_request.labels.*.name, 'breaking change') }}
           UV_NO_CONFIG: "1"
         shell: bash
         run: |
