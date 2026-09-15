@@ -65,7 +65,7 @@ from ._events import (
     WorkflowRunState,
     _framework_event,
 )
-from ._workflow import WorkflowRunResult
+from ._workflow import WorkflowRunResult, _coerce_request_info_response
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +244,9 @@ class RunContext:
         found, value = self._get_response(rid)
         if found:
             self._pending_requests.pop(rid, None)
+            # Functional workflows intentionally allow None responses; _set_responses logs a warning for them.
+            if value is not None:
+                value = _coerce_request_info_response(value, response_type, rid)
             return value
 
         # No response — emit event and interrupt

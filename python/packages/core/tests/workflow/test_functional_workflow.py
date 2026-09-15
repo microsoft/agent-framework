@@ -18,6 +18,7 @@ import pytest
 from agent_framework import (
     AgentResponseUpdate,
     CheckpointStorage,
+    Content,
     ExperimentalFeature,
     FunctionalWorkflow,
     FunctionalWorkflowAgent,
@@ -331,6 +332,44 @@ class TestHITL:
         outputs = result2.get_outputs()
         assert outputs == ["Final: Looks great!"]
         assert result2.get_final_state() == WorkflowRunState.IDLE
+
+    async def test_request_info_resume_rejects_response_type_mismatch(self):
+        @built_workflow
+        async def typed_wf(data: str, ctx: RunContext) -> str:
+            answer = await ctx.request_info("number", response_type=int, request_id="typed")
+            return f"{answer}:{type(answer).__name__}"
+
+        await typed_wf.run("input")
+
+        with pytest.raises(ValueError, match="Response type mismatch for request ID typed"):
+            await typed_wf.run(responses={"typed": "not-an-int"})
+
+    async def test_request_info_resume_coerces_json_like_response(self):
+        @dataclass
+        class Decision:
+            approved: bool
+
+        @built_workflow
+        async def typed_wf(data: str, ctx: RunContext) -> str:
+            decision = await ctx.request_info("decision", response_type=Decision, request_id="decision")
+            return f"{decision.approved}:{type(decision).__name__}"
+
+        await typed_wf.run("input")
+        result = await typed_wf.run(responses={"decision": {"approved": True}})
+
+        assert result.get_outputs() == ["True:Decision"]
+
+    async def test_request_info_resume_converts_text_to_content(self):
+        @built_workflow
+        async def content_wf(data: str, ctx: RunContext) -> str:
+            answer = await ctx.request_info("message", response_type=Content, request_id="content")
+            assert isinstance(answer, Content)
+            return f"{answer.type}:{answer.text}"
+
+        await content_wf.run("input")
+        result = await content_wf.run(responses={"content": "hello"})
+
+        assert result.get_outputs() == ["text:hello"]
 
     async def test_fresh_message_while_pending_requests_warns(self, caplog: pytest.LogCaptureFixture) -> None:
         """A fresh message while request_info events are pending is allowed but logs a warning."""
