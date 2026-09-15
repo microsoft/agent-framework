@@ -19,6 +19,7 @@ from agent_framework import (
     Agent,
     AggregatingSkillsSource,
     CachingSkillsSource,
+    ChatOptions,
     ChatResponse,
     ClassSkill,
     Content,
@@ -6984,7 +6985,7 @@ class TestSkillsRuntimeKwargsProvenance:
             disable_read_skill_resource_approval=True,
             disable_run_skill_script_approval=True,
         )
-        return Agent(client=client, context_providers=[provider])
+        return Agent[ChatOptions[None]](client=client, context_providers=[provider])
 
     async def test_resource_receives_host_runtime_kwargs(self, chat_client_base: MockBaseChatClient) -> None:
         """Host ``function_invocation_kwargs`` must reach a callable resource.
