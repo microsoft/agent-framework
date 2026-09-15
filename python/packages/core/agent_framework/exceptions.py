@@ -82,8 +82,8 @@ class ChatClientException(AgentFrameworkException):
     pass
 
 
-class FunctionCallInvalidatedException(ChatClientException):
-    """A provider invalidated local function calls already present in response content."""
+class ResponseInvalidatedException(ChatClientException):
+    """A provider invalidated partial response output, so its local function calls must not execute."""
 
     pass
 

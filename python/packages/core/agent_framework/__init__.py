@@ -32,8 +32,8 @@ from ._telemetry import (
 )
 from .exceptions import (
     AgentFrameworkException,
-    FunctionCallInvalidatedException,
     MiddlewareException,
+    ResponseInvalidatedException,
     UserInputRequiredException,
     WorkflowCheckpointException,
     WorkflowConvergenceException,
@@ -514,7 +514,6 @@ __all__ = [
     "FinalT",
     "FinishReason",
     "FinishReasonLiteral",
-    "FunctionCallInvalidatedException",
     "FunctionExecutor",
     "FunctionInvocationConfiguration",
     "FunctionInvocationContext",
@@ -567,6 +566,7 @@ __all__ = [
     "Param",
     "RawAgent",
     "ReleaseCandidateFeature",
+    "ResponseInvalidatedException",
     "ResponseStream",
     "Role",
     "RoleLiteral",

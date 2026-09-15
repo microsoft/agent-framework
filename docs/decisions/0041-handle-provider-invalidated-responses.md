@@ -5,13 +5,13 @@ date: 2026-09-15
 deciders: eavanvalkenburg
 ---
 
-# Execute usable function calls unless the provider invalidates them
+# Execute usable function calls unless the provider invalidates the response
 
 ## Context and Problem Statement
 
 Chat providers do not use terminal response reasons uniformly. A response can stop because of an output limit while
 still containing complete local function arguments that are valid for execution and accepted by the service on
-continuation. Other provider protocols explicitly invalidate local function calls when a tool block is truncated, a
+continuation. Other provider protocols explicitly invalidate partial response output when a tool block is truncated, a
 refusal replaces partial output, a stream fails, or required terminal events are absent.
 
 The function-calling loop needs a default that preserves usable calls without executing calls that a provider has
@@ -52,10 +52,10 @@ Chosen option: "Execute usable calls by default and let providers signal invalid
 usability is the portable default while invalidation is provider-specific protocol knowledge.
 
 `FunctionInvocationLayer` remains independent of `finish_reason`: a newly completed actionable call proceeds when
-argument preparation and schema validation succeed. A provider that knows its local calls were cancelled raises
-`FunctionCallInvalidatedException`. The layer abandons that current iteration, clears request budget state, restores
-the last valid continuation, avoids successful response persistence and local function side effects, and re-raises the
-same exception.
+argument preparation and schema validation succeed. A provider that knows partial response output was invalidated
+raises `ResponseInvalidatedException`; any local function calls from that response must not execute. The layer
+abandons that current iteration, clears request budget state, restores the last valid continuation, avoids successful
+response persistence and local function side effects, and re-raises the same exception.
 
 Anthropic applies the signal only to local actionable `tool_use` blocks. A valid stream has closed local blocks, a
 terminal `stop_reason` of `tool_use`, and `message_stop`. Non-tool terminal reasons, an open block at `message_stop`,

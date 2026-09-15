@@ -39,7 +39,7 @@ from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidAuthException,
     ChatClientInvalidRequestException,
-    FunctionCallInvalidatedException,
+    ResponseInvalidatedException,
 )
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic import APIError as AnthropicAPIError
@@ -625,24 +625,26 @@ class RawAnthropicClient(
                             if local_function_call_started and (
                                 open_local_function_call_blocks or latest_stop_reason != "tool_use"
                             ):
-                                raise FunctionCallInvalidatedException(
-                                    "Anthropic invalidated local function calls before completing the response."
+                                raise ResponseInvalidatedException(
+                                    "Anthropic invalidated partial response output; "
+                                    "local function calls must not execute."
                                 )
                         if parsed_chunk:
                             yield parsed_chunk
                     if local_function_call_started and not message_stop_received:
-                        raise FunctionCallInvalidatedException(
-                            "Anthropic invalidated local function calls because the response ended "
-                            "without message_stop."
+                        raise ResponseInvalidatedException(
+                            "Anthropic invalidated partial response output after the response ended without "
+                            "message_stop; local function calls must not execute."
                         )
                 except asyncio.CancelledError:
                     raise
-                except FunctionCallInvalidatedException:
+                except ResponseInvalidatedException:
                     raise
                 except Exception as ex:
                     if local_function_call_started:
-                        raise FunctionCallInvalidatedException(
-                            "Anthropic invalidated local function calls because the response stream failed.",
+                        raise ResponseInvalidatedException(
+                            "Anthropic invalidated partial response output after the response stream failed; "
+                            "local function calls must not execute.",
                             inner_exception=ex,
                         ) from ex
                     if isinstance(ex, AgentFrameworkException):
@@ -1200,8 +1202,9 @@ class RawAnthropicClient(
         if message.stop_reason != "tool_use" and any(
             content.type == "function_call" and not content.informational_only for content in contents
         ):
-            raise FunctionCallInvalidatedException(
-                "Anthropic invalidated local function calls before completing the response."
+            raise ResponseInvalidatedException(
+                "Anthropic invalidated partial response output; "
+                "local function calls must not execute."
             )
 
         return ChatResponse(

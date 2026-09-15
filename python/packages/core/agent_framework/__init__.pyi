@@ -334,8 +334,8 @@ from ._workflows._workflow_context import WorkflowContext
 from ._workflows._workflow_executor import SubWorkflowRequestMessage, SubWorkflowResponseMessage, WorkflowExecutor
 from .exceptions import (
     AgentFrameworkException,
-    FunctionCallInvalidatedException,
     MiddlewareException,
+    ResponseInvalidatedException,
     UserInputRequiredException,
     WorkflowCheckpointException,
     WorkflowConvergenceException,
@@ -469,7 +469,6 @@ __all__ = [
     "FinalT",
     "FinishReason",
     "FinishReasonLiteral",
-    "FunctionCallInvalidatedException",
     "FunctionExecutor",
     "FunctionInvocationConfiguration",
     "FunctionInvocationContext",
@@ -522,6 +521,7 @@ __all__ = [
     "Param",
     "RawAgent",
     "ReleaseCandidateFeature",
+    "ResponseInvalidatedException",
     "ResponseStream",
     "Role",
     "RoleLiteral",

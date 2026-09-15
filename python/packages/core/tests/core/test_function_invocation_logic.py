@@ -19,8 +19,8 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FunctionCallInvalidatedException,
     Message,
+    ResponseInvalidatedException,
     ResponseStream,
     SupportsChatGetResponse,
     chat_middleware,
@@ -1077,7 +1077,7 @@ async def test_streamed_function_call_with_length_finish_reason_executes_and_con
 
 
 @pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
-async def test_invalidated_function_call_short_circuits_current_iteration(
+async def test_response_invalidation_short_circuits_current_iteration(
     chat_client_base: SupportsChatGetResponse,
     streaming: bool,
 ) -> None:
@@ -1088,7 +1088,7 @@ async def test_invalidated_function_call_short_circuits_current_iteration(
     middleware_calls = 0
     tool_calls = 0
     provider_calls = 0
-    invalidated = FunctionCallInvalidatedException("provider invalidated local function calls")
+    invalidated = ResponseInvalidatedException("provider invalidated partial response output")
 
     class TrackingMiddleware(FunctionMiddleware):
         async def process(
@@ -1145,7 +1145,7 @@ async def test_invalidated_function_call_short_circuits_current_iteration(
                 _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
             },
         )
-        with pytest.raises(FunctionCallInvalidatedException) as exc_info:
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
             async for update in response_stream:
                 yielded.append(update)
     else:
@@ -1157,7 +1157,7 @@ async def test_invalidated_function_call_short_circuits_current_iteration(
             raise invalidated
 
         chat_client_base._get_non_streaming_response = invalid_response  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
-        with pytest.raises(FunctionCallInvalidatedException) as exc_info:
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
             await chat_client_base.get_response(
                 [Message(role="user", contents=["run"])],
                 options={"tools": [guarded]},
@@ -1185,7 +1185,7 @@ async def test_invalidated_function_call_short_circuits_current_iteration(
 
 
 @pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
-async def test_invalidated_service_call_is_not_persisted(
+async def test_invalidated_response_is_not_persisted(
     chat_client_base: SupportsChatGetResponse,
     streaming: bool,
 ) -> None:
@@ -1197,7 +1197,7 @@ async def test_invalidated_service_call_is_not_persisted(
     session = AgentSession()
     seed = Message(role="assistant", contents=["existing history"])
     session.state[provider.source_id] = {"messages": [seed]}
-    invalidated = FunctionCallInvalidatedException("provider invalidated local function calls")
+    invalidated = ResponseInvalidatedException("provider invalidated partial response output")
     tool_calls = 0
 
     @tool(name="local_tool", approval_mode="never_require")
@@ -1242,14 +1242,14 @@ async def test_invalidated_service_call_is_not_persisted(
 
     if streaming:
         stream = agent.run("run", session=session, stream=True)
-        with pytest.raises(FunctionCallInvalidatedException) as exc_info:
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
             async for _ in stream:
                 pass
-        with pytest.raises(FunctionCallInvalidatedException) as final_exc_info:
+        with pytest.raises(ResponseInvalidatedException) as final_exc_info:
             await stream.get_final_response()
         assert final_exc_info.value is invalidated
     else:
-        with pytest.raises(FunctionCallInvalidatedException) as exc_info:
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
             await agent.run("run", session=session)
 
     assert exc_info.value is invalidated
@@ -1259,7 +1259,7 @@ async def test_invalidated_service_call_is_not_persisted(
 
 
 @pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
-async def test_invalidated_final_no_tool_call_preserves_prior_continuation(
+async def test_invalidated_final_no_tool_response_preserves_prior_continuation(
     chat_client_base: SupportsChatGetResponse,
     streaming: bool,
 ) -> None:
@@ -1269,7 +1269,7 @@ async def test_invalidated_final_no_tool_call_preserves_prior_continuation(
 
     tool_calls = 0
     provider_calls = 0
-    invalidated = FunctionCallInvalidatedException("provider invalidated local function calls")
+    invalidated = ResponseInvalidatedException("provider invalidated partial response output")
 
     @tool(name="local_tool", approval_mode="never_require")
     def local_tool() -> str:
@@ -1324,7 +1324,7 @@ async def test_invalidated_final_no_tool_call_preserves_prior_continuation(
                 _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
             },
         )
-        with pytest.raises(FunctionCallInvalidatedException) as exc_info:
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
             async for _ in stream:
                 pass
     else:
@@ -1347,7 +1347,7 @@ async def test_invalidated_final_no_tool_call_preserves_prior_continuation(
             raise invalidated
 
         chat_client_base._get_non_streaming_response = scripted_response  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
-        with pytest.raises(FunctionCallInvalidatedException) as exc_info:
+        with pytest.raises(ResponseInvalidatedException) as exc_info:
             await chat_client_base.get_response(
                 [Message(role="user", contents=["run"])],
                 options={"tools": [local_tool]},

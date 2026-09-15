@@ -16,11 +16,11 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
-    FunctionCallInvalidatedException,
     FunctionInvocationLayer,
     FunctionTool,
     InlineSkill,
     Message,
+    ResponseInvalidatedException,
     ResponseStream,
     SkillFrontmatter,
     SkillsProvider,
@@ -2158,7 +2158,7 @@ async def test_non_streaming_local_tool_call_with_invalidating_stop_reason_raise
     client = create_test_anthropic_client(mock_anthropic_client)
     mock_anthropic_client.beta.messages.create.return_value = _local_tool_message(stop_reason)
 
-    with pytest.raises(FunctionCallInvalidatedException, match="Anthropic invalidated"):
+    with pytest.raises(ResponseInvalidatedException, match="Anthropic invalidated"):
         await client.get_response(
             [Message(role="user", contents=["run"])],
             options={"tools": [local_tool], "max_tokens": 64},
@@ -2287,7 +2287,7 @@ async def test_streaming_local_tool_call_invalid_terminal_sequences_raise(
     assert isinstance(stream, ResponseStream)
     updates: list[ChatResponseUpdate] = []
 
-    with pytest.raises(FunctionCallInvalidatedException, match="Anthropic invalidated"):
+    with pytest.raises(ResponseInvalidatedException, match="Anthropic invalidated"):
         async for update in stream:
             updates.append(update)
 
@@ -2314,7 +2314,7 @@ async def test_streaming_provider_error_after_local_call_is_wrapped_as_invalidat
     )
     assert isinstance(stream, ResponseStream)
 
-    with pytest.raises(FunctionCallInvalidatedException) as exc_info:
+    with pytest.raises(ResponseInvalidatedException) as exc_info:
         async for _ in stream:
             pass
 
