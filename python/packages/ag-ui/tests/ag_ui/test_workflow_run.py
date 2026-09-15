@@ -244,7 +244,7 @@ async def test_builder_checkpoint_storage_resume_round_trips_without_agui_storag
         @response_handler
         async def handle(self, original_request: str, response: str, ctx: WorkflowContext) -> None:
             del original_request
-            await ctx.yield_output(f"got:{response}")  # type: ignore[arg-type]
+            await ctx.yield_output(f"got:{response}")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     storage = InMemoryCheckpointStorage()
     workflow = WorkflowBuilder(start_executor=ApprovalExecutor(), checkpoint_storage=storage).build()
