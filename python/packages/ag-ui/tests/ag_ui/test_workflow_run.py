@@ -536,6 +536,96 @@ async def test_workflow_run_approval_pause_closes_open_real_tool_call() -> None:
     assert interrupts[0]["id"] == "approval-1"
 
 
+async def test_workflow_run_approval_resume_skips_unmatched_tool_call_end() -> None:
+    """After synthetic close, resume must not re-END the original tool call id.
+
+    Regression for PR review on #8373 / #8244: a fresh FlowState on resume would
+    otherwise emit TOOL_CALL_END via _emit_tool_result_common without a matching
+    TOOL_CALL_START in that run. Match Agent approval resume (RESULT only).
+    """
+
+    class ApprovalWithStreamedTool(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_with_streamed_tool")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="weather-call",
+                name="api_getWeather",
+                arguments={"city": "Seattle"},
+            )
+            await ctx.yield_output(AgentResponseUpdate(contents=[function_call], role=None))
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+            del original_request
+            call_id = "weather-call"
+            if bool(response.approved):
+                await ctx.yield_output(
+                    AgentResponseUpdate(
+                        contents=[Content.from_function_result(call_id=call_id, result="Sunny in Seattle")],
+                        role="tool",
+                    )
+                )
+                await ctx.yield_output("Weather tool approved.")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+            else:
+                await ctx.yield_output("Weather tool rejected.")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    workflow = WorkflowBuilder(start_executor=ApprovalWithStreamedTool()).build()
+    first_events = [
+        event async for event in run_workflow_stream({"messages": [{"role": "user", "content": "go"}]}, workflow)
+    ]
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    interrupt_payload = _interrupts_from_run_finished(first_finished)
+    interrupt_value = _interrupt_metadata_value(interrupt_payload[0])
+
+    # Interrupt turn must close the real tool id before RUN_FINISHED.
+    assert any(
+        event.type == "TOOL_CALL_END" and getattr(event, "tool_call_id", None) == "weather-call"
+        for event in first_events
+    )
+
+    resumed_events: list[Any] = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [],
+                "resume": [
+                    {
+                        "interruptId": "approval-1",
+                        "status": "resolved",
+                        "payload": {
+                            "type": "function_approval_response",
+                            "approved": True,
+                            "id": "approval-1",
+                            "function_call": interrupt_value.get("function_call"),
+                        },
+                    }
+                ],
+            },
+            workflow,
+        )
+    ]
+
+    assert "RUN_ERROR" not in [event.type for event in resumed_events]
+    assert not any(
+        event.type in {"TOOL_CALL_START", "TOOL_CALL_ARGS", "TOOL_CALL_END"}
+        and getattr(event, "tool_call_id", None) == "weather-call"
+        for event in resumed_events
+    ), "Resume must not re-open or re-end the synthetically closed tool call id"
+    result_events = [
+        event
+        for event in resumed_events
+        if event.type == "TOOL_CALL_RESULT" and getattr(event, "tool_call_id", None) == "weather-call"
+    ]
+    assert len(result_events) == 1
+    assert "Sunny" in result_events[0].content  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
 async def test_workflow_run_request_info_interrupt_uses_raw_dict_value():
     """Dict request payloads should be preserved in canonical interrupt metadata."""
 

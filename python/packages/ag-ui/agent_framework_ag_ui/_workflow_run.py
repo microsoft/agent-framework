@@ -1158,6 +1158,12 @@ async def run_workflow_stream(
         agents that stream a ``function_call`` before pausing for approval leave
         that real tool id open; end it here so the interrupt path matches the
         native Agent ``_emit_approval_request`` behavior.
+
+        Marking the id in ``flow.tool_calls_ended`` also lets a later real
+        ``function_result`` in this run skip a duplicate ``TOOL_CALL_END``. On
+        resume, a fresh ``FlowState`` never STARTs that id, so
+        ``_emit_tool_result_common`` likewise suppresses an unmatched END and
+        emits ``TOOL_CALL_RESULT`` only — same as Agent approval resume.
         """
         events: list[ToolCallEndEvent] = []
         for tool_call in flow.get_pending_without_end():
