@@ -1203,8 +1203,7 @@ class RawAnthropicClient(
             content.type == "function_call" and not content.informational_only for content in contents
         ):
             raise ResponseInvalidatedException(
-                "Anthropic invalidated partial response output; "
-                "local function calls must not execute."
+                "Anthropic invalidated partial response output; local function calls must not execute."
             )
 
         return ChatResponse(
