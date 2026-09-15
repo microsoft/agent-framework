@@ -20,7 +20,6 @@
     <PackageReference Include="Moq" />
     <PackageReference Include="xRetry.v3" />
     <PackageReference Include="xunit.v3.mtp-v2" />
-    <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
 
   <ItemGroup>

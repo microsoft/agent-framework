@@ -434,7 +434,7 @@ jobs:
             -c ${{ matrix.configuration }} `
             --no-build -v Normal `
             --report-xunit-trx `
-            --report-junit `
+            --report-xunit-junit `
             --results-directory ../IntegrationTestResults/ `
             --ignore-exit-code 8 `
             --filter-not-trait "Category=IntegrationDisabled" `
@@ -489,7 +489,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dotnet-test-results-${{ matrix.targetFramework }}-${{ matrix.os }}
-          path: IntegrationTestResults/**/*.junit
+          path: |
+            IntegrationTestResults/**/*.junit
+            IntegrationTestResults/**/*.junit.xml
           if-no-files-found: ignore
 
   dotnet-upload-coverage:
