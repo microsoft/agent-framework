@@ -2680,6 +2680,8 @@ def test_file_checkpoint_storage_shutdown_before_the_write_starts_does_not_hang(
 
     Deliberately not an async test: it has to cancel every task the way shutdown does.
     """
+    pending: list[Any] = []
+
     from agent_framework._workflows import _checkpoint as checkpoint_module
 
     canonical = (tmp_path / "shared-id.json").resolve()
@@ -2687,9 +2689,17 @@ def test_file_checkpoint_storage_shutdown_before_the_write_starts_does_not_hang(
 
     async def main() -> None:
         storage = FileCheckpointStorage(str(tmp_path))
-        asyncio.create_task(
-            storage.save(
-                WorkflowCheckpoint(workflow_name="victim", graph_signature_hash="test-hash", checkpoint_id="shared-id")
+        # Held for the test's lifetime on purpose. An unreferenced pending task is
+        # collectable at any moment, and this one's loop is deliberately abandoned, so
+        # letting GC decide when its finalizer touches that loop makes the test
+        # nondeterministic -- it crashed a Windows CI worker that way.
+        pending.append(
+            asyncio.create_task(
+                storage.save(
+                    WorkflowCheckpoint(
+                        workflow_name="victim", graph_signature_hash="test-hash", checkpoint_id="shared-id"
+                    )
+                )
             )
         )
         # One tick, so the save coroutine actually runs and submits its write. Without
@@ -2902,6 +2912,8 @@ def test_file_checkpoint_storage_abandoned_loop_while_queued_releases_the_destin
 
     Deliberately not an async test: it needs two loops and has to close one of them.
     """
+    pending: list[Any] = []
+
     import threading
     import time
 
@@ -2941,7 +2953,11 @@ def test_file_checkpoint_storage_abandoned_loop_while_queued_releases_the_destin
         queued_storage = FileCheckpointStorage(str(tmp_path))
 
         async def start_queued() -> None:
-            queued_loop.create_task(queued_storage.save(make("queued")))
+            # Held for the test's lifetime on purpose. An unreferenced pending task is
+            # collectable at any moment, and this one's loop is deliberately abandoned, so
+            # letting GC decide when its finalizer touches that loop makes the test
+            # nondeterministic -- it crashed a Windows CI worker that way.
+            pending.append(queued_loop.create_task(queued_storage.save(make("queued"))))
             for _ in range(400):
                 entry = registry.get(canonical)
                 if entry is not None and entry.pending == 2:
@@ -2993,6 +3009,8 @@ def test_file_checkpoint_storage_graceful_shutdown_releases_a_queued_save(tmp_pa
     already closed when the signal resolves -- this is the path that has to stay safe
     without it.
     """
+    pending: list[Any] = []
+
     import threading
     import time
 
@@ -3030,7 +3048,11 @@ def test_file_checkpoint_storage_graceful_shutdown_releases_a_queued_save(tmp_pa
         def run_queued() -> None:
             async def main() -> None:
                 storage = FileCheckpointStorage(str(tmp_path))
-                asyncio.create_task(storage.save(make("queued")))
+                # Held for the test's lifetime on purpose. An unreferenced pending task is
+                # collectable at any moment, and this one's loop is deliberately abandoned, so
+                # letting GC decide when its finalizer touches that loop makes the test
+                # nondeterministic -- it crashed a Windows CI worker that way.
+                pending.append(asyncio.create_task(storage.save(make("queued"))))
                 for _ in range(400):
                     entry = registry.get(canonical)
                     if entry is not None and entry.pending == 2:
@@ -3064,6 +3086,8 @@ def test_file_checkpoint_storage_abandonment_mid_chain_keeps_the_queue_ordered(t
     the writes -- if it handed off early, the successor's `os.replace` would run beside
     the holder's.
     """
+    pending: list[Any] = []
+
     import threading
     import time
 
@@ -3128,7 +3152,11 @@ def test_file_checkpoint_storage_abandonment_mid_chain_keeps_the_queue_ordered(t
 
         async def start_abandoned() -> None:
             storage = FileCheckpointStorage(str(tmp_path))
-            abandoned_loop.create_task(storage.save(make("abandoned")))
+            # Held for the test's lifetime on purpose. An unreferenced pending task is
+            # collectable at any moment, and this one's loop is deliberately abandoned, so
+            # letting GC decide when its finalizer touches that loop makes the test
+            # nondeterministic -- it crashed a Windows CI worker that way.
+            pending.append(abandoned_loop.create_task(storage.save(make("abandoned"))))
             await asyncio.sleep(0)
 
         abandoned_loop.run_until_complete(start_abandoned())
