@@ -472,23 +472,32 @@ async def test_code_interpreter_tool_variations() -> None:
     assert run_options["tools"] == [code_tool_with_files]
 
 
-async def test_content_filter_exception() -> None:
+@pytest.mark.parametrize(
+    ("inner_code", "expected_code"),
+    [
+        ("ResponsibleAIPolicyViolation", "ResponsibleAIPolicyViolation"),
+        ("ContentFiltered", "ContentFiltered"),
+        ("FutureContentFilterCode", "Unknown"),
+    ],
+)
+async def test_content_filter_exception(inner_code: str, expected_code: str) -> None:
     """Test that content filter errors in get_response are properly handled."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     # Mock a BadRequestError with content_filter code
     mock_error = BadRequestError(
         message="Content filter error",
-        response=MagicMock(),
-        body={"error": {"code": "content_filter", "message": "Content filter error"}},
+        response=MagicMock(status_code=400),
+        body={"code": "content_filter", "innererror": {"code": inner_code}},
     )
-    mock_error.code = "content_filter"
 
     with patch.object(client.client.responses, "create", side_effect=mock_error):
         with pytest.raises(OpenAIContentFilterException) as exc_info:
             await client.get_response(messages=[Message(role="user", contents=["Test message"])])
 
         assert "content error" in str(exc_info.value)
+        assert exc_info.value.content_filter_code.value == expected_code
+        assert exc_info.value.__cause__ is mock_error
 
 
 @pytest.mark.asyncio
@@ -1526,23 +1535,32 @@ async def test_bad_request_error_non_content_filter() -> None:
         assert "failed to complete the prompt" in str(exc_info.value)
 
 
-async def test_streaming_content_filter_exception_handling() -> None:
+@pytest.mark.parametrize(
+    ("inner_code", "expected_code"),
+    [
+        ("ResponsibleAIPolicyViolation", "ResponsibleAIPolicyViolation"),
+        ("ContentFiltered", "ContentFiltered"),
+        ("FutureContentFilterCode", "Unknown"),
+    ],
+)
+async def test_streaming_content_filter_exception_handling(inner_code: str, expected_code: str) -> None:
     """Test that content filter errors in get_response(..., stream=True) are properly handled."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
-    # Mock the OpenAI client to raise a BadRequestError with content_filter code
-    with patch.object(client.client.responses, "create") as mock_create:
-        mock_create.side_effect = BadRequestError(
-            message="Content filtered in stream",
-            response=MagicMock(),
-            body={"error": {"code": "content_filter", "message": "Content filtered"}},
-        )
-        mock_create.side_effect.code = "content_filter"
+    mock_error = BadRequestError(
+        message="Content filtered in stream",
+        response=MagicMock(status_code=400),
+        body={"code": "content_filter", "innererror": {"code": inner_code}},
+    )
 
-        with pytest.raises(OpenAIContentFilterException, match="service encountered a content error"):
+    with patch.object(client.client.responses, "create", side_effect=mock_error):
+        with pytest.raises(OpenAIContentFilterException, match="service encountered a content error") as exc_info:
             response_stream = client.get_response(stream=True, messages=[Message(role="user", contents=["Test"])])
             async for _ in response_stream:
                 break
+
+        assert exc_info.value.content_filter_code.value == expected_code
+        assert exc_info.value.__cause__ is mock_error
 
 
 def test_response_content_creation_with_annotations() -> None:
