@@ -55,7 +55,9 @@ def contains_typevar(annotation: Any) -> bool:
     return any(contains_typevar(arg) for arg in get_args(annotation))
 
 
-def _resolve_function_annotations(func: Callable[..., Any], params: Sequence[Any]) -> dict[str, Any]:
+def _resolve_function_annotations(  # pyright: ignore[reportUnusedFunction]
+    func: Callable[..., Any], params: Sequence[Any]
+) -> dict[str, Any]:
     """Resolve function annotations and fall back to raw parameter annotations on failure.
 
     ``typing.get_type_hints`` resolves postponed annotations, but a single unresolved

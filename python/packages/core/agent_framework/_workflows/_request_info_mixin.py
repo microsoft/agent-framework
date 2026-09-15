@@ -12,7 +12,7 @@ from types import UnionType
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from ._typing_utils import (
-    _resolve_function_annotations,
+    _resolve_function_annotations,  # pyright: ignore[reportPrivateUsage]
     contains_typevar,
     is_instance_of,
     is_type_compatible,

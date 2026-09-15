@@ -21,7 +21,7 @@ from ._request_info_mixin import RequestInfoMixin
 from ._runner_context import MessageType, RunnerContext, WorkflowMessage
 from ._state import State
 from ._typing_utils import (
-    _resolve_function_annotations,
+    _resolve_function_annotations,  # pyright: ignore[reportPrivateUsage]
     contains_typevar,
     is_instance_of,
     normalize_type_to_list,

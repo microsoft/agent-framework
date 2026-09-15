@@ -24,7 +24,7 @@ from typing import Any
 
 from ._executor import Executor
 from ._typing_utils import (
-    _resolve_function_annotations,
+    _resolve_function_annotations,  # pyright: ignore[reportPrivateUsage]
     contains_typevar,
     normalize_type_to_list,
     resolve_type_annotation,
