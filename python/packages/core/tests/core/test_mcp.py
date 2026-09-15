@@ -3473,6 +3473,27 @@ async def test_mcp_tool_sampling_callback_no_client():
     assert "No chat client available" in result.message
 
 
+async def test_mcp_tool_sampling_warns_only_when_callback_is_used():
+    """Sampling setup stays silent until a server sends a sampling request."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        tool = MCPStdioTool(
+            name="test_tool",
+            command="python",
+            sampling_approval_callback=_approve,
+        )
+
+    assert "2027-07-28" in MCPTool.sampling_callback.__deprecated__
+
+    params = Mock()
+    params.messages = []
+
+    with pytest.warns(DeprecationWarning, match="MCP sampling.*2027-07-28"):
+        result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.ErrorData)
+
+
 async def test_mcp_tool_sampling_callback_denies_by_default():
     """Sampling is denied when no approval callback is configured (safe default)."""
     tool = MCPStdioTool(name="test_tool", command="python")

@@ -21,6 +21,11 @@ from http.cookiejar import CookieJar, DefaultCookiePolicy
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypedDict, cast
 
+if sys.version_info >= (3, 13):
+    from warnings import deprecated  # pragma: no cover
+else:
+    from typing_extensions import deprecated  # pragma: no cover
+
 from opentelemetry import propagate
 from opentelemetry import trace as otel_trace
 from pydantic_core import to_jsonable_python
@@ -95,7 +100,6 @@ class MCPSpecificApproval(TypedDict, total=False):
 
     always_require_approval: Collection[str] | None
     never_require_approval: Collection[str] | None
-
 
 
 MCPToolResultContentMode = Literal[
@@ -986,8 +990,7 @@ class MCPTool:
         }
         if tool_result_content not in allowed_modes:
             raise ValueError(
-                f"tool_result_content must be one of {sorted(allowed_modes)}, "
-                f"got {tool_result_content!r}."
+                f"tool_result_content must be one of {sorted(allowed_modes)}, got {tool_result_content!r}."
             )
         self.name = name
         self.description = description or ""
@@ -1940,7 +1943,7 @@ class MCPTool:
                         ),
                         message_handler=self.message_handler,
                         logging_callback=self.logging_callback,
-                        sampling_callback=self.sampling_callback,
+                        sampling_callback=self.sampling_callback,  # pyright: ignore[reportDeprecated]
                         sampling_capabilities=sampling_capabilities,
                     )
                 )
@@ -2080,12 +2083,20 @@ class MCPTool:
             return cap
         return requested
 
+    @deprecated(
+        "MCP sampling is deprecated as of MCP specification version 2026-07-28 and will be removed no later than "
+        "2027-07-28. MCP servers should call LLM provider APIs directly."
+    )
     async def sampling_callback(
         self,
         context: RequestContext[ClientSession, Any],
         params: types.CreateMessageRequestParams,
     ) -> types.CreateMessageResult | types.CreateMessageResultWithTools | types.ErrorData:
         """Callback function for sampling.
+
+        .. deprecated:: 2026-07-28
+            MCP sampling will be removed no later than 2027-07-28. MCP servers should
+            call LLM provider APIs directly.
 
         This function is called when the MCP server sends a ``sampling/createMessage``
         request. It enforces safety guardrails and, if the request is approved, uses the
