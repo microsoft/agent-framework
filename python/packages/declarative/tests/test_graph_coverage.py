@@ -68,6 +68,7 @@ def mock_context(mock_state: MagicMock) -> MagicMock:
     """Create a mock workflow context."""
     ctx = MagicMock()
     ctx.state = mock_state
+    ctx.get_state = MagicMock(side_effect=mock_state.get)
     ctx.send_message = AsyncMock()
     ctx.yield_output = AsyncMock()
     ctx.request_info = AsyncMock()
