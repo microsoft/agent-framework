@@ -313,9 +313,16 @@ def _encode(value: Any) -> Any:
     # Recursively encode dict values (keys become strings)
     if isinstance(value, dict):
         typed_dict = cast(dict[Any, Any], value)
-        if any(str(k) in _RESERVED_DICT_KEYS for k in typed_dict):
+        # Stringify each key once so reserved-key checks, collision detection, and
+        # the encoded mapping all observe the same strings (stateful ``__str__``).
+        stringified_items = [(str(k), v) for k, v in typed_dict.items()]
+        if any(key in _RESERVED_DICT_KEYS for key, _ in stringified_items):
             return _encode_pickle(value)
-        encoded_dict: dict[str, Any] = {str(k): _encode(v) for k, v in typed_dict.items()}
+        # Distinct Python keys can collapse after str(); pickle those mappings so
+        # values are not silently overwritten (for example {1: "a", "1": "b"}).
+        if len({key for key, _ in stringified_items}) != len(stringified_items):
+            return _encode_pickle(value)
+        encoded_dict: dict[str, Any] = {key: _encode(v) for key, v in stringified_items}
         return encoded_dict
 
     # Recursively encode list items (lists are JSON-native collections)
@@ -403,7 +410,7 @@ def _base64_to_unpickle(encoded: str, *, allowed_types: frozenset[str] | None = 
             format is incompatible, or a disallowed type is encountered.
     """
     try:
-        pickled = base64.b64decode(encoded.encode("ascii"))
+        pickled = base64.b64decode(encoded.encode("ascii"), validate=True)
         if allowed_types is not None:
             return _RestrictedUnpickler(pickled, allowed_types).load()
         return pickle.loads(pickled)  # nosec  # ruff:ignore[suspicious-pickle-usage]

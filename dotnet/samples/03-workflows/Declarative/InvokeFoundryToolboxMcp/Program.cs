@@ -5,7 +5,6 @@
 // through the reserved tools/list operation, then calls microsoft_docs_search from the workflow.
 
 using System.ClientModel;
-using System.ClientModel.Primitives;
 using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using Azure.AI.Projects;
@@ -19,8 +18,6 @@ using Shared.Foundry;
 using Shared.Workflows;
 
 #pragma warning disable OPENAI001 // Experimental API
-#pragma warning disable AAIP001 // AgentToolboxes is experimental
-
 namespace Demo.Workflows.Declarative.InvokeFoundryToolboxMcp;
 
 /// <summary>
@@ -148,9 +145,7 @@ internal sealed class Program
 
     private static async Task<string> CreateSampleToolboxAsync(string name, string serverLabel, Uri foundryEndpoint, TokenCredential credential)
     {
-        AgentAdministrationClientOptions options = new();
-        options.AddPolicy(new FoundryFeaturesPolicy("Toolboxes=V1Preview"), PipelinePosition.PerCall);
-        AgentAdministrationClient adminClient = new(foundryEndpoint, credential, options);
+        AgentAdministrationClient adminClient = new(foundryEndpoint, credential);
         AgentToolboxes toolboxClient = adminClient.GetAgentToolboxes();
 
         try
@@ -197,23 +192,6 @@ internal sealed class Program
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
 
             return await base.SendAsync(request, cancellationToken);
-        }
-    }
-
-    private sealed class FoundryFeaturesPolicy(string feature) : PipelinePolicy
-    {
-        private const string FeatureHeader = "Foundry-Features";
-
-        public override void Process(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
-        {
-            message.Request.Headers.Add(FeatureHeader, feature);
-            ProcessNext(message, pipeline, currentIndex);
-        }
-
-        public override ValueTask ProcessAsync(PipelineMessage message, IReadOnlyList<PipelinePolicy> pipeline, int currentIndex)
-        {
-            message.Request.Headers.Add(FeatureHeader, feature);
-            return ProcessNextAsync(message, pipeline, currentIndex);
         }
     }
 }
