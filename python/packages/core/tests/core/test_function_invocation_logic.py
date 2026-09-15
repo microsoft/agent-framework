@@ -19,6 +19,8 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionInvocationContext,
+    FunctionMiddleware,
     Message,
     ResponseStream,
     SupportsChatGetResponse,
@@ -36,8 +38,6 @@ from agent_framework._compaction import (
     included_token_count,
 )
 from agent_framework._middleware import (
-    FunctionInvocationContext,
-    FunctionMiddleware,
     FunctionMiddlewarePipeline,
     MiddlewareFailure,
     MiddlewareTermination,
@@ -7491,6 +7491,75 @@ async def test_add_tools_through_function_middleware(chat_client_base: SupportsC
         middleware=[PassthroughMiddleware()],
     )
     assert exec_counter == 1
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+@pytest.mark.parametrize("allowed", [False, True], ids=["blocked", "allowed"])
+@pytest.mark.parametrize("max_iterations", [3], indirect=True)
+async def test_add_tools_respects_function_middleware(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+    allowed: bool,
+) -> None:
+    """Late-added tools remain subject to the agent's function middleware."""
+    observed_tools: list[str] = []
+    target_calls: list[str] = []
+
+    class PolicyMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            observed_tools.append(context.function.name)
+            if context.function.name == "late_tool" and not allowed:
+                context.result = "blocked by policy"
+                return
+            await call_next()
+
+    @tool(name="late_tool", approval_mode="never_require")
+    def late_tool() -> str:
+        target_calls.append("invoked")
+        return "target completed"
+
+    @tool(name="load_tool", approval_mode="never_require")
+    def load_tool(context: FunctionInvocationContext) -> str:
+        context.add_tools(late_tool)
+        return "target loaded"
+
+    responses = [
+        _pte_function_call_response("1", "load_tool"),
+        _pte_function_call_response("2", "late_tool"),
+        _pte_text_response(),
+    ]
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=message.contents) for message in response.messages]
+            for response in responses
+        ]
+    else:
+        chat_client_base.run_responses = responses  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    agent = Agent(client=chat_client_base, tools=[load_tool], middleware=[PolicyMiddleware()])
+    expected_results = [("1", "target loaded"), ("2", "target completed" if allowed else "blocked by policy")]
+    if streaming:
+        stream = agent.run("Load and call the tool.", stream=True)
+        updates = [update async for update in stream]
+        response = await stream.get_final_response()
+        assert [
+            (content.call_id, content.result)
+            for update in updates
+            for content in update.contents
+            if content.type == "function_result"
+        ] == expected_results
+    else:
+        response = await agent.run("Load and call the tool.")
+
+    assert observed_tools == ["load_tool", "late_tool"]
+    assert target_calls == (["invoked"] if allowed else [])
+    assert [
+        (content.call_id, content.result)
+        for message in response.messages
+        for content in message.contents
+        if content.type == "function_result"
+    ] == expected_results
+    assert response.messages[-1].text == "done"
 
 
 async def test_add_tools_with_approval_required_tool(chat_client_base: SupportsChatGetResponse):
