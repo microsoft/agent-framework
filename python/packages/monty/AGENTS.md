@@ -59,7 +59,8 @@ Tool-management methods on both classes: `add_tools`, `get_tools`,
   adapted from the reference Monty CodeAct repo. Pauses on `FunctionSnapshot`
   to dispatch host calls, then resumes; supports direct typed tool calls,
   the `call_tool` fallback, `asyncio.gather` fan-out, and forwards
-  ``mount`` / ``limits`` to `Monty(...).start(...)`.
+  ``limits`` / type-check options via `pool.checkout(...)`, and ``mount`` /
+  ``print_callback`` via `session.feed_start(...)`.
 - **`_instructions.py`** — dynamic instruction / tool-description builders
   (include filesystem capability summaries when mounts are configured).
 
@@ -67,7 +68,7 @@ Tool-management methods on both classes: `add_tools`, `get_tools`,
 
 | Capability | Monty primitive | Status |
 |------------|-----------------|--------|
-| Custom virtual filesystem | `OSAccess` subclass passed to `Monty(...).start(os=...)` | Not exposed. Strictly more general than file mounts; useful when you want a fully synthetic FS. |
+| Custom virtual filesystem | `OSAccess` subclass passed to `session.feed_start(..., os=...)` | Not exposed. Strictly more general than file mounts; useful when you want a fully synthetic FS. |
 | Outbound URL allow-list | No Monty primitive — expose `fetch_url` as a host tool with the allow-list check in your tool function. | Not exposed in this package; users add it as a regular tool. |
 
 ## Out of scope (for now)

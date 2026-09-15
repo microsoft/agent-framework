@@ -65,7 +65,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework-lab"
-version = "1.0.0b260730"
+version = "1.0.0b260910"
 source = { editable = "." }
 dependencies = [
     { name = "agent-framework-core" },

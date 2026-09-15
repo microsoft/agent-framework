@@ -33,7 +33,7 @@ try
 
     foreach (var skill in skills.Items)
     {
-        Console.WriteLine($"  {skill.Source}: {skill.ID} (version: {skill.LatestVersion})");
+        Console.WriteLine($"  {skill.Source}: {skill.ID} (version: {skill.LatestVersionID})");
     }
 }
 catch (Exception ex)
