@@ -179,6 +179,15 @@ class _A2UIExecutionBudget:
             raise ValueError("Adapter function-call count cannot be negative.")
         self._state["total_function_calls"] = self.calls_used + count
 
+    def offset_core_handoffs(self, count: int) -> None:
+        """Remove core's charge for private handoffs before charging actual renders."""
+        if count < 0:
+            raise ValueError("Core handoff count cannot be negative.")
+        adjusted_count = self.calls_used - count
+        if adjusted_count < 0:
+            raise RuntimeError("Core handoff count exceeds the shared function-call count.")
+        self._state["total_function_calls"] = adjusted_count
+
 
 def _generate_tool_schema() -> dict[str, Any]:
     """JSON schema for the planner-facing generate_a2ui tool (string args)."""
@@ -955,6 +964,11 @@ class A2UIAgent:
             core_result_ids = {result.call_id for result in core_results}
             # Completed handoffs carry the invocation arguments after function middleware.
             generate_calls: list[Content] = list(handoff_calls.values()) if core_execution else []
+            if core_execution:
+                # Core correctly records the private handoff as executed. It is only an
+                # adapter control seam, though, so replace that charge with one for each
+                # render the adapter actually starts below.
+                execution_budget.offset_core_handoffs(len(generate_calls))
             server_calls: list[Content] = []
             client_calls: list[Content] = []
             for cid in call_order:
