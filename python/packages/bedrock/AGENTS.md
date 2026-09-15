@@ -8,6 +8,8 @@ Integration with AWS Bedrock for LLM inference.
 - **`BedrockChatOptions`** - Options TypedDict for Bedrock-specific parameters
 - **`BedrockGuardrailConfig`** - Configuration for Bedrock guardrails
 - **`BedrockSettings`** - Pydantic settings for Bedrock configuration
+- **`BedrockKnowledgeBaseTool`** - `FunctionTool` for retrieving from an Amazon Bedrock Knowledge Base (agentic retrieval with fallback to standard Retrieve)
+- **`BedrockKnowledgeBaseProvider`** - `ContextProvider` that injects Knowledge Base passages before each agent run
 
 ## Usage
 
