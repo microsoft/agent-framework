@@ -46,7 +46,7 @@ from opentelemetry.metrics import Histogram, NoOpHistogram
 from pydantic import BaseModel, Field, ValidationError, create_model
 
 from ._serialization import SerializationMixin
-from .exceptions import ToolException, UserInputRequiredException
+from .exceptions import ResponseInvalidatedException, ToolException, UserInputRequiredException
 from .observability import (
     OPERATION_DURATION_BUCKET_BOUNDARIES,
     OtelAttr,
@@ -3378,6 +3378,57 @@ def _clear_budget_state_from_session(invocation_session: AgentSession | None) ->
     invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
 
 
+def _response_invalidation_cleanup(
+    invocation_session: AgentSession | None,
+    budget_state: dict[str, Any],
+    stream_error: list[ResponseInvalidatedException] | None = None,
+) -> Callable[[ResponseInvalidatedException], None]:
+    """Capture the last valid continuation and return invalidation cleanup."""
+    service_session_id = (
+        copy.deepcopy(invocation_session.service_session_id) if invocation_session is not None else None
+    )
+
+    def cleanup(error: ResponseInvalidatedException) -> None:
+        if stream_error is not None:
+            stream_error[:] = [error]
+        budget_state.clear()
+        if invocation_session is None:
+            return
+        invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
+        invocation_session.service_session_id = service_session_id
+
+    return cleanup
+
+
+_InvalidationResultT = TypeVar("_InvalidationResultT")
+
+
+async def _await_provider_call(
+    operation: Callable[..., Awaitable[_InvalidationResultT]],
+    on_invalidated: Callable[[ResponseInvalidatedException], None],
+    **kwargs: Any,
+) -> _InvalidationResultT:
+    """Await one provider operation and clean up invalidated local calls."""
+    try:
+        return await operation(**kwargs)
+    except ResponseInvalidatedException as error:
+        on_invalidated(error)
+        raise
+
+
+async def _iterate_provider_stream(
+    stream: AsyncIterable[_InvalidationResultT],
+    on_invalidated: Callable[[ResponseInvalidatedException], None],
+) -> AsyncIterable[_InvalidationResultT]:
+    """Yield one provider stream and clean up invalidated local calls."""
+    try:
+        async for item in stream:
+            yield item
+    except ResponseInvalidatedException as error:
+        on_invalidated(error)
+        raise
+
+
 def _apply_batch_limit_decision(
     action: Literal["continue", "return", "stop"],
     options: dict[str, Any],
@@ -3965,9 +4016,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         # Phase 2: alternate model turns and local execution until a terminal response or safety limit is reached.
         for attempt_idx in range(attempt_start, max_iterations):
             budget_state["attempt_count"] = attempt_idx + 1
+            on_invalidated = _response_invalidation_cleanup(invocation_session, budget_state)
             response = cast(
                 ChatResponse[Any],
-                await super_get_response(
+                await _await_provider_call(
+                    super_get_response,
+                    on_invalidated,
                     messages=prepared_messages,
                     stream=False,
                     options=options,
@@ -4040,9 +4094,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 max_iterations,
             )
         options["tool_choice"] = "none"
+        on_invalidated = _response_invalidation_cleanup(invocation_session, budget_state)
         response = cast(
             ChatResponse[Any],
-            await super_get_response(
+            await _await_provider_call(
+                super_get_response,
+                on_invalidated,
                 messages=prepared_messages,
                 stream=False,
                 options=options,
@@ -4078,6 +4135,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         budget_state: dict[str, Any],
         max_errors: int,
         middleware_pipeline: FunctionMiddlewarePipeline | None = None,
+        invalidation_error: list[ResponseInvalidatedException],
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Run the streaming function invocation loop."""
         from ._middleware import MiddlewareFailure
@@ -4147,9 +4205,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         # Phase 2: stream each model turn, finalize it, execute its calls, then advance the transcript.
         for attempt_idx in range(attempt_start, max_iterations):
             budget_state["attempt_count"] = attempt_idx + 1
+            on_invalidated = _response_invalidation_cleanup(invocation_session, budget_state, invalidation_error)
             inner_stream = cast(
                 "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]",
-                super_get_response(
+                await _await_provider_call(
+                    super_get_response,
+                    on_invalidated,
                     messages=prepared_messages,
                     stream=True,
                     options=options,
@@ -4158,13 +4219,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     client_kwargs=request_kwargs,
                 ),
             )
-            await inner_stream
             drop_unexecutable_calls = options.get("tool_choice") == "none" and budget_state.get("truncated")
             streamed_identities_by_call_id: dict[str, tuple[str, str]] = {}
             streamed_names_by_call_id: dict[str, str] = {}
             last_streamed_identity: tuple[str, str] | None = None
             warned_empty_call_ids: set[str] = set()
-            async for update in inner_stream:
+            async for update in _iterate_provider_stream(inner_stream, on_invalidated):
                 for content in update.contents:
                     if content.type != "function_call":
                         continue
@@ -4221,7 +4281,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         continue
                 yield update
 
-            response = await inner_stream.get_final_response()
+            response = await _await_provider_call(inner_stream.get_final_response, on_invalidated)
             fallback_added = False
             if options.get("tool_choice") == "none" and budget_state.get("truncated"):
                 fallback_added = _ensure_function_invocation_limit_fallback_response(response)
@@ -4296,9 +4356,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 max_iterations,
             )
         options["tool_choice"] = "none"
+        on_invalidated = _response_invalidation_cleanup(invocation_session, budget_state, invalidation_error)
         final_inner_stream = cast(
             "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]",
-            super_get_response(
+            await _await_provider_call(
+                super_get_response,
+                on_invalidated,
                 messages=prepared_messages,
                 stream=True,
                 options=options,
@@ -4307,13 +4370,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 client_kwargs=request_kwargs,
             ),
         )
-        await final_inner_stream
-        async for update in final_inner_stream:
+        async for update in _iterate_provider_stream(final_inner_stream, on_invalidated):
             update = _drop_unexecutable_tool_contents_from_update(update)
             if update is None:
                 continue
             yield update
-        final_response = await final_inner_stream.get_final_response()
+        final_response = await _await_provider_call(final_inner_stream.get_final_response, on_invalidated)
         fallback_added = _ensure_function_invocation_limit_fallback_response(final_response)
         self._update_function_invocation_continuation_state(
             request_kwargs,
@@ -4496,6 +4558,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             )
 
         response_format = mutable_options.get("response_format")
+        invalidation_error: list[ResponseInvalidatedException] = []
+
+        def finalize_stream(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
+            if invalidation_error:
+                raise invalidation_error[0]
+            return ChatResponse.from_updates(updates, output_format_type=response_format)
 
         return ResponseStream(
             self._stream_response_with_function_invocation(
@@ -4510,8 +4578,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 budget_state=budget_state,
                 max_errors=max_errors,
                 middleware_pipeline=function_middleware_pipeline,
+                invalidation_error=invalidation_error,
             ),
-            finalizer=partial(ChatResponse.from_updates, output_format_type=response_format),
+            finalizer=finalize_stream,
         )
 
 
