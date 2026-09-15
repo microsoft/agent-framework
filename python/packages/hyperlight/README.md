@@ -118,6 +118,35 @@ codeact = HyperlightCodeActProvider(
 )
 ```
 
+### Output attachment limits
+
+Files written under `/output` are returned as inline data attachments. Hyperlight
+limits each invocation to 20 files, 5 MiB per file, and 20 MiB of cumulative raw
+file data by default. Oversized output is returned as a structured execution error
+without partial data attachments.
+Output discovery also has finite internal entry and nesting-depth safeguards;
+directory-heavy output that exceeds them is rejected as an execution error.
+
+Trusted applications can raise these limits with positive integers on either
+`HyperlightExecuteCodeTool` or `HyperlightCodeActProvider`:
+
+```python
+codeact = HyperlightCodeActProvider(
+    workspace_root="./workspace",
+    max_output_files=40,
+    max_output_file_bytes=10 * 1024 * 1024,
+    max_output_total_bytes=50 * 1024 * 1024,
+)
+```
+
+Limits are always finite. Increasing them also increases host memory use because
+file data is encoded as inline base64, and may increase model context cost when
+attachments are included in subsequent requests.
+
+Nested output paths require secure directory-relative file opening. On platforms
+without that capability, nested attachments fail closed; write attachment files
+directly under `/output` for portable behavior.
+
 ## Notes
 
 - This package is intentionally separate from `agent-framework-core` so CodeAct

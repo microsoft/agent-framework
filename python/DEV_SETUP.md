@@ -76,6 +76,14 @@ uv run poe setup -p 3.13
 
 You can then run different commands through Poe the Poet, use `uv run poe` to discover which ones.
 
+The root setup excludes the experimental Lab package. Lab has a separate environment and lockfile:
+
+```bash
+cd packages/lab
+uv sync --all-extras --all-groups
+uv run poe test
+```
+
 ## VSCode Setup
 
 Install the [Python extension](https://marketplace.visualstudio.com/items?itemName=ms-python.python) for VSCode.
@@ -244,12 +252,13 @@ Install all dependencies (including extras and dependency groups) from the lockf
 uv run poe install
 ```
 The root `dev` group contains shared tooling and source/type-check support. Package-specific test fixtures use
-`test` groups, while dependencies needed for a locally executable optional feature may use a feature-named group
-such as the lab package's `tau2` group.
+`test` groups. The standalone Lab project keeps its own development and feature groups, including `tau2`, under
+`packages/lab/pyproject.toml`.
 For intentional dependency upgrades, run `uv lock --upgrade-package <dependency-name>` and then run `uv run poe install`.
 
 For repo-wide development dependency refreshes, run `uv run poe upgrade-dev-dependencies` to repin exact
 dependencies in development groups, refresh `uv.lock`, and rerun validation, typing, and tests.
+This root task does not update Lab; use `uv lock --upgrade` from `packages/lab` or its dedicated Dependabot updates.
 
 #### `venv`
 Create a virtual environment with specified Python version or switch python version:

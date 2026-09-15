@@ -154,11 +154,9 @@ public sealed class ResilientWorkflowHostedAgentTests(ResilientWorkflowHostedAge
 
     private static CreateResponseOptions CreateBackgroundRequest(string input)
     {
-        CreateResponseOptions options = new()
-        {
-            BackgroundModeEnabled = true,
-            StoredOutputEnabled = true,
-        };
+        CreateResponseOptions options = ProjectResponsesTestOptions.Create();
+        options.BackgroundModeEnabled = true;
+        options.StoredOutputEnabled = true;
         options.InputItems.Add(ResponseItem.CreateUserMessageItem(input));
         return options;
     }

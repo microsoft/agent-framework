@@ -16,6 +16,7 @@ python/
 ├── packages/
 │   ├── core/                   # agent-framework-core (main package)
 │   ├── foundry/                # agent-framework-foundry
+│   ├── lab/                    # Standalone uv project, excluded from the root workspace
 │   ├── anthropic/              # agent-framework-anthropic
 │   └── ...                     # Other connector packages
 ```
@@ -23,6 +24,11 @@ python/
 - `agent-framework-core` contains core abstractions and OpenAI/Azure OpenAI built-in
 - Provider packages extend core with specific integrations
 - Root `agent-framework` depends on `agent-framework-core[all]`
+- `packages/lab` is intentionally excluded from the root uv workspace. It has its own
+  `pyproject.toml`, `uv.lock`, environment, CI matrix, and dependency updates so experimental
+  dependencies cannot constrain released provider packages. Lab is also an explicit exception
+  to the lifecycle rule that beta packages belong in `agent-framework-core[all]`. Lab resolves
+  released Core and provider distributions rather than local root-workspace packages.
 
 ## Dependency Management
 
@@ -62,6 +68,11 @@ uv run poe validate-dependency-bounds-project --mode upper --package "*"
 
 # Add a dependency to one project and run both validators for that project/dependency
 uv run poe add-dependency-and-validate-bounds --package core --dependency "<dependency-spec>"
+
+# Work on the standalone Lab project
+cd packages/lab
+uv sync --all-extras --all-groups
+uv run poe test
 ```
 
 ### Dependency Bound Notes
@@ -87,6 +98,8 @@ uv run poe add-dependency-and-validate-bounds --package core --dependency "<depe
   expressed in published runtime metadata.
 - Use `upgrade-dev-dependencies` for repo-wide development dependency refreshes; it repins exact dependencies
   across development groups, refreshes `uv.lock`, and reruns `check`, `typing`, and `test`.
+- Run Lab dependency and validation commands from `packages/lab`; root workspace tasks deliberately do not
+  discover or update the Lab project.
 
 ## Lazy Loading Pattern
 

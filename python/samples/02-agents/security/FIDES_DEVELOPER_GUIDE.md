@@ -43,15 +43,115 @@ Every piece of content (tool calls, results, messages) can be assigned a `Conten
 - **USER_IDENTITY**: Content is restricted to specific user identities only
 
 ```python
-from agent_framework.security import ContentLabel, IntegrityLabel, ConfidentialityLabel
+from agent_framework.security import ConfidentialityLabel, ContentLabel, IntegrityLabel, PRINCIPAL_METADATA_KEY
 
 # Create a label
 label = ContentLabel(
     integrity=IntegrityLabel.TRUSTED,
-    confidentiality=ConfidentialityLabel.PRIVATE,
-    metadata={"user_id": "user-123"}
+    confidentiality=ConfidentialityLabel.USER_IDENTITY,
+    metadata={
+        PRINCIPAL_METADATA_KEY: [
+            {"tenant_id": "tenant-123", "user_id": "user-123"},
+        ]
+    },
 )
 ```
+
+### 1.1 USER_IDENTITY Principal Binding
+
+`USER_IDENTITY` labels require a canonical, non-empty principal set. Each
+principal contains exactly `tenant_id` and `user_id`. Build this metadata from
+the authenticated request or session, or from a locally trusted static tool
+declaration. Do not infer it from model arguments or remote result metadata.
+
+Source tools declare the owner of identity-scoped output. Destination tools
+declare the principals they authorize using the same namespaced key:
+
+```python
+from agent_framework import tool
+from agent_framework.security import PRINCIPAL_METADATA_KEY
+
+alice = [{"tenant_id": "tenant-contoso", "user_id": "alice"}]
+
+
+@tool(
+    description="Read Alice's profile",
+    additional_properties={
+        "source_integrity": "trusted",
+        "confidentiality": "user_identity",
+        PRINCIPAL_METADATA_KEY: alice,
+    },
+)
+async def read_profile() -> str:
+    return "Alice profile data"
+
+
+@tool(
+    description="Save data to Alice's profile",
+    additional_properties={
+        "max_allowed_confidentiality": "user_identity",
+        PRINCIPAL_METADATA_KEY: alice,
+    },
+)
+async def save_profile(data: str) -> None:
+    ...
+```
+
+The policy allows a flow only when every source principal is present in the
+destination's authorized set. Missing, malformed, or mismatched principal data
+is blocked. See
+[`user_identity_security_example.py`](user_identity_security_example.py) for a
+complete runnable setup.
+
+#### Migrating legacy USER_IDENTITY labels
+
+Earlier FIDES examples used a single, unnamespaced `user_id` and did not bind
+identity destinations. Releases containing principal-bound enforcement reject
+that shape. Migrate both the source label and every USER_IDENTITY destination;
+do not fill in a tenant or user from model-generated arguments.
+
+Before:
+
+```python
+legacy_label = ContentLabel(
+    confidentiality=ConfidentialityLabel.USER_IDENTITY,
+    metadata={"user_id": "alice"},
+)
+
+
+@tool(
+    description="Save identity data",
+    additional_properties={"max_allowed_confidentiality": "user_identity"},
+)
+async def save_identity_data(data: str) -> None:
+    ...
+```
+
+After:
+
+```python
+alice = [{"tenant_id": authenticated_tenant_id, "user_id": authenticated_user_id}]
+
+label = ContentLabel(
+    confidentiality=ConfidentialityLabel.USER_IDENTITY,
+    metadata={PRINCIPAL_METADATA_KEY: alice},
+)
+
+
+@tool(
+    description="Save identity data",
+    additional_properties={
+        "max_allowed_confidentiality": "user_identity",
+        PRINCIPAL_METADATA_KEY: alice,
+    },
+)
+async def save_identity_data(data: str) -> None:
+    ...
+```
+
+Combined content may contain more than one principal. A destination must list
+all authorized principals because the policy checks that the source set is a
+subset of the destination set.
 
 ### 2. Label Tracking Middleware with Tiered Label Propagation
 
@@ -59,16 +159,19 @@ label = ContentLabel(
 
 | Priority | Source | Used When |
 |----------|--------|-----------|
-| **Tier 1** (Highest) | Per-item embedded labels (`additional_properties.security_label`) | Tool result items include explicit labels |
+| **Tier 1** | Per-item embedded labels (`additional_properties.security_label`) | Restrict the locally established fallback |
 | **Tier 2** | Tool's `source_integrity` declaration | No embedded labels, but tool declares `source_integrity` |
 | **Tier 3** (Lowest) | Join of input argument labels (`combine_labels`) | No embedded labels AND no `source_integrity` declared |
 | **Default** | `UNTRUSTED` | No labels from any tier |
 
 **Tiered Label Propagation:**
-- **Tier 1: Embedded labels** in result items via `additional_properties.security_label` — highest priority, used per-item
-- **Tier 2: `source_integrity`** declaration on the tool — authoritative for the trust level of the tool's output, regardless of input labels
+- **Tier 1: Embedded labels** are restriction-only by default: they can downgrade integrity or raise confidentiality, but cannot upgrade a fallback or supply principal authority
+- **Tier 2: `source_integrity`** is the locally trusted fallback for the tool's output; use `"trusted"` only after the local connector enforces its trust policy
 - **Tier 3: Input labels join** — `combine_labels(*input_labels)` from arguments (VariableReferenceContent, labeled data)
 - **Default**: `UNTRUSTED` when no labels exist from any tier
+
+Framework-owned parsers and wrappers may stamp a complete label after enforcing
+local policy. Application and remote metadata remains restriction-only.
 
 **Per-Item Embedded Labels (RECOMMENDED for Mixed-Trust Data):**
 Tools returning mixed-trust data should embed labels on each item in `additional_properties.security_label`:
@@ -88,7 +191,7 @@ The middleware automatically:
 
 **Tool-Level Source Integrity (Tier 2 Fallback):**
 If items don't have embedded labels, the tool can declare a fallback via `source_integrity`.
-When declared, `source_integrity` alone determines the result label — input argument labels are NOT combined in. This means a tool declaring `source_integrity="trusted"` always produces trusted output regardless of what inputs it received:
+When declared, `source_integrity` establishes the local integrity fallback. Embedded labels can make the result less trusted, but cannot make it more trusted:
 - `source_integrity="trusted"`: Tool produces trusted data (internal computations)
 - `source_integrity="untrusted"`: Tool fetches untrusted data
 - (not set): Falls back to tier 3 (join of input labels) or **UNTRUSTED** default
@@ -112,7 +215,12 @@ from agent_framework import Content, tool
 from agent_framework.security import LabelTrackingFunctionMiddleware, SecureAgentConfig
 
 # Define a tool that returns mixed-trust data with per-item labels
-@tool(description="Fetch emails from inbox")
+@tool(
+    description="Fetch emails from inbox",
+    additional_properties={
+        "source_integrity": "trusted",  # Local connector verifies internal senders
+    },
+)
 async def fetch_emails(count: int = 5) -> list[Content]:
     """Fetch emails - some from trusted internal sources, others from external sources."""
     emails = get_emails(count)
@@ -171,7 +279,12 @@ For tools that return mixed-trust data (e.g., emails from both internal and exte
 import json
 from agent_framework import Content, tool
 
-@tool(description="Fetch emails from inbox")
+@tool(
+    description="Fetch emails from inbox",
+    additional_properties={
+        "source_integrity": "trusted",  # Local connector verifies internal senders
+    },
+)
 async def fetch_emails(count: int = 5) -> list[Content]:
     """Fetch emails with per-item security labels."""
     emails = fetch_from_server(count)
@@ -290,8 +403,8 @@ The middleware now automatically handles variable indirection for UNTRUSTED cont
 Use it when you need all of the following together:
 
 1. Direct connection to a remote MCP URL from your app process
-2. Automatic labeling of tools from MCP annotations (`readOnlyHint`, `openWorldHint`, and related hints)
-3. Parsing server result labels from `_meta.ifc`
+2. Restriction-only labeling from untrusted MCP annotations (`readOnlyHint`, `openWorldHint`, and related hints)
+3. Parsing server result labels from `_meta.ifc` without allowing them to relax local policy by default
 4. Local policy enforcement and auto-hide middleware on every tool call
 
 **Why this matters:**
@@ -363,12 +476,22 @@ async def run_secure_github_mcp(github_pat: str, endpoint: str) -> None:
 
 #### What the proxy applies automatically
 
-- Tool metadata labels from MCP hints:
+- Restriction-only tool metadata from MCP hints:
   - `source_integrity`
   - `accepts_untrusted`
   - `max_allowed_confidentiality`
-- Sink-hardening: non-read-only tools are treated as write-capable and capped to `PUBLIC` confidentiality by default
-- Per-result label mapping from `_meta.ifc` into FIDES `security_label`
+- Sink-hardening: server annotations cannot remove the `PUBLIC` confidentiality cap or authorize untrusted input
+- Per-result label mapping from `_meta.ifc` into FIDES `security_label`; by default, remote labels are combined with
+  local policy and can only add restrictions
+
+Set `trust_server_ifc=True` only when the MCP server is an authenticated authority for result labels. In that mode,
+a complete valid `_meta.ifc` label is authoritative for that result, including permitted relaxation of the local
+fallback. Missing, partial, or malformed labels still use current local policy. This opt-in does not make
+ToolAnnotations authoritative: `readOnlyHint` and `openWorldHint` remain restriction-only hints.
+
+```python
+secure_mcp = SecureMCPToolProxy(url="https://trusted.example.com/mcp/", trust_server_ifc=True)
+```
 
 #### Operational checklist
 
@@ -377,6 +500,7 @@ async def run_secure_github_mcp(github_pat: str, endpoint: str) -> None:
 3. Use `context_providers=[SecureAgentConfig(...)]` instead of manual security wiring.
 4. Keep `auto_hide_untrusted=True` unless you have a very specific reason to expose untrusted content.
 5. If write-like actions are blocked, inspect `config.get_audit_log(session)` first.
+6. Leave `trust_server_ifc=False` unless the connected server is explicitly trusted to label result data.
 
 
 ### 7. Security Tools
@@ -635,11 +759,15 @@ agent = Agent(
     middleware=[label_tracker, policy_enforcer],
 )
 
-# Run agent - security is automatic
+# Omitting session uses isolated state for this run.
 response = await agent.run(messages=[
     {"role": "user", "content": "Search the web for Python tutorials"}
 ])
 ```
+
+Reusable manual middleware uses one private security scope for the complete run when `session` is omitted, so tool
+chains within that run share hidden variables while separate runs remain isolated. Pass an explicit `AgentSession`
+when labels, variables, audit records, or FIDES policy-approval authority must survive across distinct `Agent.run` calls. Ordinary tool approval responses retain their no-session pass-through behavior.
 
 ### Example 3: Agent Processing Hidden Content
 
@@ -670,7 +798,12 @@ import json
 from agent_framework import Content, tool
 
 # Tool returning mixed-trust data with per-item labels (RECOMMENDED)
-@tool(description="Fetch emails from inbox")
+@tool(
+    description="Fetch emails from inbox",
+    additional_properties={
+        "source_integrity": "trusted",  # Local connector verifies internal senders
+    },
+)
 async def fetch_emails(count: int = 5) -> list[Content]:
     """Emails can be from trusted internal or untrusted external sources."""
     emails = get_emails(count)
@@ -821,7 +954,7 @@ PUBLIC (0) < PRIVATE (1) < USER_IDENTITY (2)
 
 - PUBLIC data can flow anywhere
 - PRIVATE data can only flow to PRIVATE or USER_IDENTITY destinations
-- USER_IDENTITY data can only flow to USER_IDENTITY destinations
+- USER_IDENTITY data can only flow to USER_IDENTITY destinations that authorize every source principal
 
 **Runtime Helper Function:**
 
@@ -878,8 +1011,10 @@ await post_to_slack(channel="#docs", message="Check out our docs!")
 |----------|---------|----------------|
 | `confidentiality` | Declares output sensitivity | `"public"`, `"private"`, `"user_identity"` |
 | `max_allowed_confidentiality` | Gates outputs (maximum level) | `"public"` = blocks PRIVATE data exfiltration |
+| `agent_framework.security.principals` | Declares USER_IDENTITY owners or authorized destinations | `[{"tenant_id": "tenant-contoso", "user_id": "alice"}]` |
 
-See `samples/02-agents/security/repo_confidentiality_example.py` for a complete working example.
+See `repo_confidentiality_example.py` for confidentiality ranking and
+`user_identity_security_example.py` for principal-bound identity data.
 
 ## Configuration Options
 
@@ -928,6 +1063,12 @@ Configure tool security requirements in the `@tool` decorator:
 )
 ```
 
+Hidden variable references in tool arguments are expanded recursively, but their stored labels remain attached to
+the invocation. A tool with `accepts_untrusted=False` is blocked, audited, or sent for policy approval before it can
+receive hidden untrusted data. `accepts_untrusted=True` permits blind forwarding without exposing that data to the
+model context. It does not bypass `max_allowed_confidentiality`; hidden private data still cannot flow to a public
+sink. Argument labels do not rewrite result labels.
+
 **Approval model:**
 - Use `approval_mode="always_require"` for normal human-in-the-loop approval on a specific tool.
 - Use `SecureAgentConfig(..., approval_on_violation=True)` to request approval only when a secure-policy check would otherwise block a call.
@@ -961,7 +1102,7 @@ Configure tool security requirements in the `@tool` decorator:
 Access the audit log:
 
 ```python
-audit_log = policy_enforcer.get_audit_log()
+audit_log = policy_enforcer.get_audit_log(session)
 
 for violation in audit_log:
     print(f"Type: {violation['type']}")
@@ -984,7 +1125,7 @@ Access the middleware's variable store to list or inspect stored variables:
 
 ```python
 # Get all stored variables
-variables = label_tracker.list_variables()
+variables = label_tracker.list_variables(session)
 print(f"Stored variables: {variables}")
 
 # Get variable metadata
@@ -1000,6 +1141,7 @@ Run the maintained security samples from `python/`:
 ```bash
 uv run samples/02-agents/security/email_security_example.py --cli
 uv run samples/02-agents/security/repo_confidentiality_example.py --cli
+uv run samples/02-agents/security/user_identity_security_example.py
 uv run samples/02-agents/security/github_mcp_example.py --cli
 uv run samples/02-agents/security/github_mcp_example.py --cli --attack
 ```
@@ -1010,6 +1152,7 @@ This demonstrates:
 - Quarantined LLM usage
 - Variable inspection
 - Policy enforcement
+- Principal-bound USER_IDENTITY sources and destinations
 - Complete secure workflow
 
 ## Key Takeaways
@@ -1038,6 +1181,7 @@ from agent_framework.security import (
     ContentLabel,
     IntegrityLabel,
     ConfidentialityLabel,
+    PRINCIPAL_METADATA_KEY,
     combine_labels,
 
     # Variable Store

@@ -521,6 +521,56 @@ jobs:
           path: ./python/pytest.xml
           if-no-files-found: ignore
 
+  # PostgreSQL tests use a disposable local service and need no cloud credentials.
+  python-tests-postgres:
+    name: Python Integration Tests - PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.2-pg17@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966
+        env:
+          POSTGRES_PASSWORD: local_test
+          POSTGRES_DB: af_vectors_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d af_vectors_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      POSTGRES_TEST_CONNECTION_STRING: postgresql://postgres:local_test@localhost:5432/af_vectors_test
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout-ref }}
+          persist-credentials: false
+      - name: Set up python and install the project
+        uses: ./.github/actions/python-setup
+        with:
+          python-version: ${{ env.UV_PYTHON }}
+          os: ${{ runner.os }}
+      - name: Enable pgvector in the disposable test database
+        run: >
+          docker exec "${{ job.services.postgres.id }}" psql -U postgres -d af_vectors_test
+          -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS vector'
+      - name: Test PostgreSQL integration
+        run: >
+          uv run pytest --import-mode=importlib packages/postgres/tests
+          -m integration --timeout=120 --session-timeout=900 --timeout_method thread
+          --junitxml=pytest-postgres.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-postgres
+          path: ./python/pytest-postgres.xml
+          if-no-files-found: ignore
+
   python-tests-redis:
     name: Python Integration Tests - Redis
     runs-on: ubuntu-latest
@@ -581,6 +631,7 @@ jobs:
         python-tests-cosmos,
         python-tests-qdrant,
         python-tests-github-copilot,
+        python-tests-postgres,
         python-tests-redis,
       ]
     runs-on: ubuntu-latest
@@ -647,6 +698,7 @@ jobs:
         python-tests-cosmos,
         python-tests-qdrant,
         python-tests-github-copilot,
+        python-tests-postgres,
         python-tests-redis,
       ]
     steps:

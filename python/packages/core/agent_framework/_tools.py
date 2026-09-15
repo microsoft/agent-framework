@@ -8,6 +8,7 @@ import copy
 import inspect
 import json
 import logging
+import struct
 import sys
 import typing
 import warnings
@@ -103,16 +104,112 @@ DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
 _TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
+_RUN_LOCAL_MIDDLEWARE_SESSION_ATTR: Final[str] = "_run_local_function_middleware_session"
+
+
+def _has_authoritative_approval_session(invocation_session: AgentSession | None) -> bool:
+    """Return whether approval state belongs to a caller-owned session."""
+    return (
+        invocation_session is not None
+        and getattr(invocation_session, _RUN_LOCAL_MIDDLEWARE_SESSION_ATTR, False) is not True
+    )
+
+
 _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY: Final[str] = "already_approved_approval_request_groups"
 _PENDING_APPROVAL_REQUESTS_KEY: Final[str] = "pending_approval_requests"
+_APPROVAL_REQUEST_ID_KEY: Final[str] = "_approval_request_id"
 _FUNCTION_INVOCATION_BUDGET_STATE_KEY: Final[str] = "_function_invocation_budget_state"
 _FUNCTION_RESULT_CARRIER_CONTEXT_KEY: Final[str] = "_function_result_carrier"
 _FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY: Final[str] = "_function_result_payload_budget"
 _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY: Final[str] = "_function_result_payload_budget"
+_APPROVED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_approved_function_arguments"
+_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY: Final[str] = "_security_function_arguments"
+_PREPARED_ARGUMENTS_CONTEXT_KEY: Final[str] = "_prepared_function_arguments"
+_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY: Final[str] = "_auto_prepare_function_arguments"
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
 )
 _USER_VISIBLE_CONTENT_TYPES: Final[set[str]] = {"data", "uri", "error", "hosted_file", "hosted_vector_store"}
+
+
+class _FunctionArgumentValidationError(TypeError):
+    """An argument-validation failure raised before the function body starts."""
+
+    def __init__(self, message: str, *, redacted_message: str | None = None) -> None:
+        super().__init__(message)
+        self.redacted_message = redacted_message or message
+
+
+class _FunctionArgumentsChangedAfterApproval(Exception):
+    """Signal that middleware changed an approval-bound invocation."""
+
+    def __init__(self, arguments: Mapping[str, Any]) -> None:
+        super().__init__("Function arguments changed after approval.")
+        self.arguments = dict(arguments)
+
+
+@dataclass(frozen=True)
+class _OpaqueArgumentToken:
+    """Identity token that is unsuitable for approval or security authority."""
+
+    value_type_name: str
+    identity: int
+
+
+def _argument_comparison_token(value: Any) -> Any:
+    """Build an immutable, type-aware token without copying argument objects."""
+    if isinstance(value, BaseModel):
+        return _argument_comparison_token(value.model_dump(exclude_unset=True))
+    if isinstance(value, dict):
+        return (
+            "dict",
+            frozenset(
+                (_argument_comparison_token(key), _argument_comparison_token(item))
+                for key, item in cast(dict[Any, Any], value).items()
+            ),
+        )
+    if isinstance(value, list):
+        return ("list", tuple(_argument_comparison_token(item) for item in cast(list[Any], value)))
+    if isinstance(value, tuple):
+        return ("tuple", tuple(_argument_comparison_token(item) for item in cast(tuple[Any, ...], value)))
+    if isinstance(value, float):
+        return ("float", struct.pack("!d", value))
+    if value is None or isinstance(value, bool | int | str | bytes):
+        return (type(value), value)
+    value_type = cast(type[object], type(value))
+    return _OpaqueArgumentToken(f"{value_type.__module__}.{value_type.__qualname__}", id(value))
+
+
+def _contains_opaque_argument_token(token: Any) -> bool:
+    """Return whether a comparison token contains identity-only values."""
+    if isinstance(token, _OpaqueArgumentToken):
+        return True
+    if isinstance(token, tuple | frozenset):
+        return any(_contains_opaque_argument_token(item) for item in cast(Iterable[Any], token))
+    return False
+
+
+def _argument_authority_token(value: Any, *, boundary: str) -> Any:
+    """Build an argument token that is safe to use as authority."""
+    token = _argument_comparison_token(value)
+    if _contains_opaque_argument_token(token):
+        from ._middleware import MiddlewareFailure
+
+        raise MiddlewareFailure(
+            f"Cannot safely bind {boundary} to opaque mutable function arguments. "
+            "Use JSON-native values or an immutable Pydantic representation."
+        )
+    return token
+
+
+@dataclass(frozen=True)
+class _PreparedArgumentsState:
+    """Exact prepared arguments and their immutable comparison token."""
+
+    arguments: dict[str, Any]
+    token: Any
+
+
 ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -311,7 +408,10 @@ class FunctionTool(SerializationMixin):
     """A tool that wraps a Python function to make it callable by AI models.
 
     This class wraps a Python function to make it callable by AI models with automatic
-    parameter validation and JSON schema generation.
+    parameter validation and JSON schema generation. Inferred and Pydantic input models
+    provide recursive runtime validation. Caller-supplied JSON schema mappings are passed
+    through to providers and receive only the lightweight checks documented on
+    :paramref:`input_model`; they are not an authorization or security boundary.
 
     Attributes:
         name: The name of the tool.
@@ -422,6 +522,15 @@ class FunctionTool(SerializationMixin):
                 parameters, explicitly provide ``input_model`` (either a Pydantic
                 ``BaseModel`` or a JSON schema dictionary) so the model can reason about
                 the expected arguments.
+
+                A dictionary is preserved as supplied and checked only for top-level
+                ``required`` fields, ``additionalProperties: false``, and property
+                ``enum`` and primitive ``type`` values. Nested constraints,
+                compositions such as ``oneOf``, references such as ``$ref``, and other
+                JSON Schema keywords are not comprehensively enforced at runtime. Use a
+                Pydantic model when runtime validation matters. Treat dictionary schemas
+                as declarations for trusted settings and non-sensitive functions only;
+                never rely on them as an authorization or security boundary.
             result_parser: An optional callable with signature ``Callable[[Any], str]`` that
                 overrides the default result parsing behavior. When provided, this callable
                 is used to convert the raw function return value to a string instead of the
@@ -602,9 +711,16 @@ class FunctionTool(SerializationMixin):
             if func is None:
                 raise ToolException(f"Function '{self.name}' has no implementation.")
             # If we have a bound instance, call the function with self
-            if self._instance is not None:
-                return func(self._instance, *args, **kwargs)
-            return func(*args, **kwargs)
+            result = func(self._instance, *args, **kwargs) if self._instance is not None else func(*args, **kwargs)
+            return self._await_invocation_result(result) if inspect.isawaitable(result) else result
+        except Exception:
+            self.invocation_exception_count += 1
+            raise
+
+    async def _await_invocation_result(self, result: Any) -> Any:
+        """Await a function result and count exceptions raised by the awaitable."""
+        try:
+            return await result
         except Exception:
             self.invocation_exception_count += 1
             raise
@@ -614,10 +730,140 @@ class FunctionTool(SerializationMixin):
         func = self.func.func if isinstance(self.func, FunctionTool) else self.func
         if inspect.iscoroutinefunction(func) or getattr(self, "_invoke_sync_on_event_loop", False):
             res = self.__call__(**call_kwargs)
-            return await res if inspect.isawaitable(res) else res
-
-        res = await asyncio.to_thread(self.__call__, **call_kwargs)
+        else:
+            res = await asyncio.to_thread(self.__call__, **call_kwargs)
         return await res if inspect.isawaitable(res) else res
+
+    def _prepare_arguments(self, arguments: BaseModel | Mapping[str, Any] | None) -> dict[str, Any]:
+        """Validate and normalize arguments immediately before function execution."""
+        if arguments is None:
+            return {}
+
+        try:
+            if isinstance(arguments, Mapping):
+                parsed_arguments = dict(arguments)
+                if self.input_model is not None and not self._schema_supplied:
+                    # exclude_unset (not exclude_none): keep arguments the model
+                    # explicitly provided even when their value is null, and drop
+                    # only the ones it left out, so the function's own defaults
+                    # apply. Excluding null instead would strip a required nullable
+                    # parameter the model deliberately set to null, failing the
+                    # invocation on the missing argument (#5934).
+                    parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(exclude_unset=True)
+            elif isinstance(arguments, BaseModel):
+                if (
+                    self.input_model is not None
+                    and not self._schema_supplied
+                    and not isinstance(arguments, self.input_model)
+                ):
+                    raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
+                parsed_arguments = arguments.model_dump(exclude_unset=True)
+            else:
+                raise TypeError(
+                    f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"
+                )
+        except ValidationError as exc:
+            raise _FunctionArgumentValidationError(
+                f"Invalid arguments for '{self.name}': {exc}",
+                redacted_message=f"Invalid arguments for '{self.name}'.",
+            ) from exc
+        except TypeError as exc:
+            raise _FunctionArgumentValidationError(
+                str(exc),
+                redacted_message=f"Invalid arguments for '{self.name}'.",
+            ) from exc
+
+        try:
+            return _validate_arguments_against_schema(
+                arguments=parsed_arguments,
+                schema=self.parameters(),
+                tool_name=self.name,
+            )
+        except TypeError as exc:
+            raise _FunctionArgumentValidationError(str(exc)) from exc
+
+    @staticmethod
+    def _arguments_as_mapping(arguments: Any) -> dict[str, Any] | None:
+        """Return arguments as a mapping without applying schema validation."""
+        candidate = arguments
+        if candidate is None:
+            return {}
+        if isinstance(candidate, BaseModel):
+            return candidate.model_dump(exclude_unset=True)
+        if isinstance(candidate, Mapping):
+            return dict(cast(Mapping[str, Any], candidate))
+        return None
+
+    @classmethod
+    def _approval_visible_arguments(
+        cls,
+        arguments: BaseModel | Mapping[str, Any] | None,
+        context: FunctionInvocationContext | None,
+    ) -> dict[str, Any] | None:
+        """Return the non-expanded arguments that an approval request may disclose."""
+        if context is not None and "original_arguments_for_messages" in context.metadata:
+            return cls._arguments_as_mapping(context.metadata["original_arguments_for_messages"])
+        return cls._arguments_as_mapping(arguments)
+
+    def _prepare_context_arguments(
+        self,
+        context: FunctionInvocationContext,
+        arguments: BaseModel | Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Prepare current context arguments once, reusing an unchanged prepared snapshot."""
+        current_arguments = self._arguments_as_mapping(arguments)
+        prepared_state = context.metadata.get(_PREPARED_ARGUMENTS_CONTEXT_KEY)
+        if (
+            current_arguments is not None
+            and isinstance(prepared_state, _PreparedArgumentsState)
+            and _argument_comparison_token(current_arguments) == prepared_state.token
+        ):
+            context.arguments = prepared_state.arguments
+            return prepared_state.arguments
+
+        validated_arguments = self._prepare_arguments(arguments)
+        context.arguments = validated_arguments
+        context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = _PreparedArgumentsState(
+            arguments=validated_arguments,
+            token=_argument_comparison_token(validated_arguments),
+        )
+        return validated_arguments
+
+    @staticmethod
+    def _ensure_security_arguments_unchanged(
+        context: FunctionInvocationContext | None,
+        current_arguments: Mapping[str, Any] | None,
+    ) -> None:
+        """Fail closed when arguments change after security middleware processed them."""
+        if context is None:
+            return
+        security_token = context.metadata.get(_SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY)
+        if security_token is not None and (
+            current_arguments is None
+            or _argument_authority_token(dict(current_arguments), boundary="security policy") != security_token
+        ):
+            from ._middleware import MiddlewareFailure
+
+            raise MiddlewareFailure(
+                "Function arguments changed after security middleware processed them. "
+                "Install argument-repair middleware before security middleware."
+            )
+
+    @staticmethod
+    def _ensure_approved_arguments_unchanged(
+        context: FunctionInvocationContext | None,
+        approval_visible_arguments: Mapping[str, Any] | None,
+    ) -> None:
+        """Require a replacement approval when middleware changes approved arguments."""
+        if context is None:
+            return
+        if approval_visible_arguments is None:
+            return
+        approved_token = context.metadata.get(_APPROVED_ARGUMENTS_CONTEXT_KEY)
+        if approved_token is None:
+            return
+        if _argument_authority_token(dict(approval_visible_arguments), boundary="approval") != approved_token:
+            raise _FunctionArgumentsChangedAfterApproval(approval_visible_arguments)
 
     @overload
     async def invoke(
@@ -710,42 +956,14 @@ class FunctionTool(SerializationMixin):
         if arguments is None and context is not None:
             arguments = context.arguments
 
-        if arguments is None:
-            validated_arguments: dict[str, Any] = {}
-        else:
-            try:
-                if isinstance(arguments, Mapping):
-                    parsed_arguments = dict(arguments)
-                    if self.input_model is not None and not self._schema_supplied:
-                        # exclude_unset (not exclude_none): keep arguments the model
-                        # explicitly provided even when their value is null, and drop
-                        # only the ones it left out, so the function's own defaults
-                        # apply. Excluding null instead would strip a required nullable
-                        # parameter the model deliberately set to null, failing the
-                        # invocation on the missing argument (#5934).
-                        parsed_arguments = self.input_model.model_validate(parsed_arguments).model_dump(
-                            exclude_unset=True
-                        )
-                elif isinstance(arguments, BaseModel):
-                    if (
-                        self.input_model is not None
-                        and not self._schema_supplied
-                        and not isinstance(arguments, self.input_model)
-                    ):
-                        raise TypeError(f"Expected {self.input_model.__name__}, got {type(arguments).__name__}")
-                    parsed_arguments = arguments.model_dump(exclude_unset=True)
-                else:
-                    raise TypeError(
-                        f"Expected mapping-like arguments for tool '{self.name}', got {type(arguments).__name__}"
-                    )
-            except ValidationError as exc:
-                raise TypeError(f"Invalid arguments for '{self.name}': {exc}") from exc
-
-            validated_arguments = _validate_arguments_against_schema(
-                arguments=parsed_arguments,
-                schema=self.parameters(),
-                tool_name=self.name,
-            )
+        current_arguments = self._arguments_as_mapping(arguments)
+        approval_visible_arguments = self._approval_visible_arguments(arguments, context)
+        self._ensure_security_arguments_unchanged(context, current_arguments)
+        validated_arguments = (
+            self._prepare_context_arguments(context, arguments)
+            if context is not None
+            else self._prepare_arguments(arguments)
+        )
 
         effective_context = context
         if effective_context is None and self._context_parameter_name is not None:
@@ -758,6 +976,8 @@ class FunctionTool(SerializationMixin):
             effective_context.function = self
             effective_context.arguments = validated_arguments
             effective_context.kwargs = dict(runtime_kwargs)
+
+        self._ensure_approved_arguments_unchanged(effective_context, approval_visible_arguments)
 
         call_kwargs = dict(validated_arguments)
         observable_kwargs = dict(validated_arguments)
@@ -1165,7 +1385,7 @@ def _validate_arguments_against_schema(
     schema: Mapping[str, Any],
     tool_name: str,
 ) -> dict[str, Any]:
-    """Run lightweight argument checks for schema-supplied tools."""
+    """Run lightweight, top-level argument checks for schema-supplied tools."""
     parsed_arguments = dict(arguments)
 
     required_fields = [field for field in schema.get("required", []) if isinstance(field, str)]
@@ -1185,9 +1405,7 @@ def _validate_arguments_against_schema(
 
         enum_values = properties.get(field_name, {}).get("enum")
         if isinstance(enum_values, list) and enum_values and field_value not in enum_values:
-            raise TypeError(
-                f"Invalid value for '{field_name}' in '{tool_name}': {field_value!r} is not in {enum_values!r}"
-            )
+            raise TypeError(f"Invalid value for '{field_name}' in '{tool_name}': value is not in {enum_values!r}")
 
         schema_type = properties.get(field_name, {}).get("type")
         if isinstance(schema_type, str):
@@ -1281,9 +1499,14 @@ def tool(
             docstring will be used.
         schema: An explicit input schema for the function. This can be a Pydantic
             ``BaseModel`` subclass or a JSON schema dictionary (``Mapping[str, Any]``).
-            When a dictionary is provided, it must be a flat object schema with a
-            ``properties`` key (complex JSON Schema features such as ``oneOf``,
-            ``$ref``, or nested compositions are not supported).
+            Dictionary schemas are passed through to providers and receive only
+            lightweight top-level checks for ``required``, ``additionalProperties:
+            false``, property ``enum``, and primitive property ``type``. Nested
+            constraints, compositions such as ``oneOf``, references such as ``$ref``,
+            and other JSON Schema keywords are not comprehensively enforced at runtime.
+            Use a Pydantic model when runtime validation matters. Dictionary schemas are
+            intended for trusted settings and non-sensitive functions and must not be
+            treated as an authorization or security boundary.
             When provided, the schema is used instead of inferring one from the
             function's signature. Defaults to ``None`` (infer from signature).
         approval_mode: Whether or not approval is required to run this tool.
@@ -1444,7 +1667,8 @@ class FunctionInvocationConfiguration(TypedDict, total=False):
     - ``additional_tools``: Extra tools available during execution but not
       advertised to the model in the tool list.
     - ``include_detailed_errors``: Whether to include exception details in the
-      function result returned to the model.
+      function result returned to the model. Exception text may contain sensitive
+      information regardless of its source, so enable this only for a trusted channel.
 
     Note:
         ``max_iterations``, ``max_function_calls``, and ``max_duration_seconds``
@@ -1527,6 +1751,62 @@ def _function_execution_error_result(
         exception=str(exception),
         base_additional_properties=function_call.additional_properties,
         context=context,
+    )
+
+
+def _function_argument_validation_error_result(
+    function_call: Content,
+    exception: _FunctionArgumentValidationError,
+    config: FunctionInvocationConfiguration,
+    context: FunctionInvocationContext | None = None,
+) -> Content:
+    """Build the stable tool result for argument-validation failures."""
+    from ._types import Content
+
+    exception_message = (
+        exception.redacted_message
+        if context is not None and _SECURITY_ARGUMENTS_SNAPSHOT_CONTEXT_KEY in context.metadata
+        else str(exception)
+    )
+    message = "Error: Argument parsing failed."
+    if config.get("include_detailed_errors", False):
+        message = f"{message} Exception: {exception_message}"
+    return Content.from_function_result(
+        call_id=function_call.call_id,  # type: ignore[arg-type]
+        result=message,
+        exception=exception_message,
+        additional_properties=function_call.additional_properties,
+    )
+
+
+def _replacement_approval_request(
+    function_call: Content,
+    arguments: Mapping[str, Any],
+) -> Content:
+    """Create a new approval generation for middleware-repaired arguments."""
+    from ._types import Content
+
+    call_id = function_call.call_id
+    if call_id is None:
+        raise KeyError(f'Function "{function_call.name}" is missing call_id.')
+    occurrence_id = function_call.id or call_id
+    request_id = f"{occurrence_id}:replacement:{uuid4().hex}"
+    repaired_call = Content.from_function_call(
+        call_id=call_id,
+        name=function_call.name,  # type: ignore[arg-type]
+        arguments=copy.deepcopy(dict(arguments)),
+        id=occurrence_id,
+        annotations=copy.deepcopy(function_call.annotations),
+        additional_properties=copy.deepcopy(function_call.additional_properties),
+    )
+    return Content.from_function_approval_request(
+        id=request_id,
+        function_call=repaired_call,
+        additional_properties={
+            _APPROVAL_REQUEST_ID_KEY: request_id,
+            "_replacement_approval_request": True,
+            "reason": "Function arguments changed after approval.",
+        },
     )
 
 
@@ -1660,29 +1940,7 @@ async def _auto_invoke_function(
     }
     if invocation_session is not None:
         runtime_kwargs["session"] = invocation_session
-    try:
-        if not cast(bool, getattr(tool, "_schema_supplied", False)) and tool.input_model is not None:
-            # exclude_unset (not exclude_none) so an argument the model explicitly set
-            # to null still reaches the function; see FunctionTool.invoke for the full
-            # rationale. This is the auto-calling path #5934 actually hits.
-            args = tool.input_model.model_validate(parsed_args).model_dump(exclude_unset=True)
-        else:
-            args = dict(parsed_args)
-        args = _validate_arguments_against_schema(
-            arguments=args,
-            schema=tool.parameters(),
-            tool_name=tool.name,
-        )
-    except (TypeError, ValidationError) as exc:
-        message = "Error: Argument parsing failed."
-        if config.get("include_detailed_errors", False):
-            message = f"{message} Exception: {exc}"
-        return Content.from_function_result(
-            call_id=function_call_content.call_id,  # type: ignore[arg-type]
-            result=message,
-            exception=str(exc),
-            additional_properties=function_call_content.additional_properties,
-        )
+    args = dict(parsed_args)
 
     from ._middleware import FunctionInvocationContext, MiddlewareFailure
 
@@ -1715,9 +1973,20 @@ async def _auto_invoke_function(
             # Explicit control-flow signals escape the loop; only ordinary exceptions
             # are absorbed into tool-error results below.
             raise
+        except _FunctionArgumentValidationError as exc:
+            return _function_argument_validation_error_result(function_call_content, exc, config)
         except Exception as exc:
             return _function_execution_error_result(function_call_content, tool.name, exc, config, direct_context)
     # Execute through middleware pipeline if available
+    arguments_prepared = False
+    try:
+        args = tool._prepare_arguments(args)  # pyright: ignore[reportPrivateUsage]
+        arguments_prepared = True
+    except _FunctionArgumentValidationError:
+        # Invalid provider arguments are intentionally exposed to middleware so
+        # it has a supported opportunity to repair them before final validation.
+        pass
+
     middleware_context = FunctionInvocationContext(
         function=tool,
         arguments=args,
@@ -1727,6 +1996,12 @@ async def _auto_invoke_function(
     )
     if host_payload_budget is not None:
         middleware_context.metadata[_FUNCTION_RESULT_PAYLOAD_BUDGET_CONTEXT_KEY] = host_payload_budget
+    middleware_context.metadata[_AUTO_ARGUMENT_PREPARATION_CONTEXT_KEY] = True
+    if arguments_prepared:
+        middleware_context.metadata[_PREPARED_ARGUMENTS_CONTEXT_KEY] = _PreparedArgumentsState(
+            arguments=args,
+            token=_argument_comparison_token(args),
+        )
 
     call_id = function_call_content.call_id
     if call_id is None:
@@ -1741,12 +2016,34 @@ async def _auto_invoke_function(
     # this replay corresponds to a middleware-specific approval flow.
     if approval_response is not None:
         middleware_context.metadata["approval_response"] = approval_response
+        middleware_context.metadata[_APPROVED_ARGUMENTS_CONTEXT_KEY] = _argument_authority_token(
+            args,
+            boundary="approval",
+        )
+
+    final_handler_started = False
 
     async def final_function_handler(context_obj: Any) -> Any:
+        nonlocal final_handler_started
+        final_handler_started = True
         return await tool.invoke(
             arguments=context_obj.arguments,
             context=context_obj,
             tool_call_id=call_id,
+        )
+
+    def ensure_short_circuit_arguments_are_authorized() -> None:
+        current_arguments = tool._arguments_as_mapping(  # pyright: ignore[reportPrivateUsage]
+            middleware_context.arguments
+        )
+        tool._ensure_security_arguments_unchanged(  # pyright: ignore[reportPrivateUsage]
+            middleware_context, current_arguments
+        )
+        tool._ensure_approved_arguments_unchanged(  # pyright: ignore[reportPrivateUsage]
+            middleware_context,
+            tool._approval_visible_arguments(  # pyright: ignore[reportPrivateUsage]
+                middleware_context.arguments, middleware_context
+            ),
         )
 
     from ._middleware import MiddlewareTermination
@@ -1757,6 +2054,8 @@ async def _auto_invoke_function(
             context=middleware_context,
             final_handler=final_function_handler,
         )
+        if not final_handler_started:
+            ensure_short_circuit_arguments_are_authorized()
 
         # Pass through function_approval_request directly (e.g., from security middleware)
         if isinstance(function_result, Content) and function_result.type == "function_approval_request":
@@ -1769,6 +2068,14 @@ async def _auto_invoke_function(
             context=middleware_context,
         )
     except MiddlewareTermination as term_exc:
+        if not final_handler_started:
+            try:
+                ensure_short_circuit_arguments_are_authorized()
+            except _FunctionArgumentsChangedAfterApproval as exc:
+                raise MiddlewareTermination(
+                    "Function arguments changed after approval.",
+                    result=_replacement_approval_request(function_call_content, exc.arguments),
+                ) from exc
         # Re-raise to signal loop termination, but first capture any result set by middleware
         if middleware_context.result is not None:
             # Pass through function_approval_request directly (e.g., from security policy middleware)
@@ -1787,6 +2094,13 @@ async def _auto_invoke_function(
                     context=middleware_context,
                 )
         raise
+    except _FunctionArgumentsChangedAfterApproval as exc:
+        raise MiddlewareTermination(
+            "Function arguments changed after approval.",
+            result=_replacement_approval_request(function_call_content, exc.arguments),
+        ) from exc
+    except _FunctionArgumentValidationError as exc:
+        return _function_argument_validation_error_result(function_call_content, exc, config, middleware_context)
     except (MiddlewareFailure, UserInputRequiredException):
         # MiddlewareFailure is the loop's explicit fail-closed escape: middleware that
         # must abort the run (enforcement layers, guardrails) raises it instead of
@@ -1978,7 +2292,7 @@ async def _try_execute_function_call_groups(
             ):
                 visible_requests.append(approval_request)
                 continue
-            if invocation_session is None:
+            if not _has_authoritative_approval_session(invocation_session):
                 visible_requests.append(approval_request)
                 continue
             already_approved_requests.append(approval_request)
@@ -2251,26 +2565,29 @@ def _extract_tools(
     return options.get("tools") if options else None
 
 
-def _get_tool_approval_state(invocation_session: AgentSession | None) -> dict[str, Any] | None:
+def _get_tool_approval_state(invocation_session: AgentSession | None, *, create: bool = True) -> dict[str, Any] | None:
     """Return the shared tool-approval state bag for the invocation session."""
-    if invocation_session is None:
+    if not _has_authoritative_approval_session(invocation_session):
         return None
-    raw_state = invocation_session.state.get(_TOOL_APPROVAL_STATE_KEY)
+    authoritative_session = cast("AgentSession", invocation_session)
+    raw_state = authoritative_session.state.get(_TOOL_APPROVAL_STATE_KEY)
     if isinstance(raw_state, dict):
         return cast(dict[str, Any], raw_state)
     from ._harness._tool_approval import ToolApprovalState
 
     if isinstance(raw_state, ToolApprovalState):
         serialized_state = raw_state.to_dict(exclude={"type"})
-        invocation_session.state[_TOOL_APPROVAL_STATE_KEY] = serialized_state
+        authoritative_session.state[_TOOL_APPROVAL_STATE_KEY] = serialized_state
         return serialized_state
     if raw_state is not None:
         raise TypeError(
             f"Session state for {_TOOL_APPROVAL_STATE_KEY!r} must be a dict or ToolApprovalState, "
             f"got {type(raw_state).__name__}."
         )
+    if not create:
+        return None
     new_state: dict[str, Any] = {}
-    invocation_session.state[_TOOL_APPROVAL_STATE_KEY] = new_state
+    authoritative_session.state[_TOOL_APPROVAL_STATE_KEY] = new_state
     return new_state
 
 
@@ -2287,7 +2604,7 @@ def _content_from_state(value: Any) -> Content | None:
 
 def _load_pending_approval_requests(invocation_session: AgentSession | None) -> dict[str, Content]:
     """Load immutable approval-request snapshots keyed by request ID."""
-    state = _get_tool_approval_state(invocation_session)
+    state = _get_tool_approval_state(invocation_session, create=False)
     if state is None:
         return {}
     raw_requests = state.get(_PENDING_APPROVAL_REQUESTS_KEY, [])
@@ -2367,7 +2684,7 @@ def _bind_approval_response_to_pending_request(
     """Bind one approval response to a session-recorded request."""
     from ._types import Content
 
-    if invocation_session is None:
+    if not _has_authoritative_approval_session(invocation_session):
         return response
     pending = _load_pending_approval_requests(invocation_session)
     request_key = response.id
@@ -2381,6 +2698,7 @@ def _bind_approval_response_to_pending_request(
             (pending_id, candidate)
             for pending_id, candidate in pending.items()
             if not _is_hosted_tool_approval(candidate)
+            and candidate.additional_properties.get("_replacement_approval_request") is not True
             and candidate.function_call is not None
             and candidate.function_call.id == response.id
         ]
@@ -2396,17 +2714,22 @@ def _bind_approval_response_to_pending_request(
     if not is_hosted and occurrence_id is not None:
         embedded_call = response.function_call
         uses_occurrence_id = response.id == occurrence_id
-        uses_legacy_request_id = response.id == request.id
+        uses_request_id = response.id == request.id
+        is_replacement = request.additional_properties.get("_replacement_approval_request") is True
         if not uses_occurrence_id:
-            if not (uses_legacy_request_id and embedded_call is not None and embedded_call.id == occurrence_id):
+            if is_replacement and uses_request_id:
+                if embedded_call is not None and embedded_call.id != occurrence_id:
+                    return None
+            elif not (uses_request_id and embedded_call is not None and embedded_call.id == occurrence_id):
                 return None
-            warnings.warn(
-                "An occurrence-aware approval used the legacy provider call_id request binding. "
-                "Return function_call.id as the approval response id; legacy request-id binding will be removed "
-                "in a future release.",
-                FutureWarning,
-                stacklevel=3,
-            )
+            else:
+                warnings.warn(
+                    "An occurrence-aware approval used the legacy provider call_id request binding. "
+                    "Return function_call.id as the approval response id; legacy request-id binding will be removed "
+                    "in a future release.",
+                    FutureWarning,
+                    stacklevel=3,
+                )
         elif embedded_call is not None and embedded_call.id != occurrence_id:
             return None
     elif not is_hosted:
@@ -2422,12 +2745,14 @@ def _bind_approval_response_to_pending_request(
     if rebound_call is None:
         return None
     rebound_id = occurrence_id if not is_hosted and occurrence_id is not None else response.id
+    rebound_properties = copy.deepcopy(response.additional_properties)
+    rebound_properties[_APPROVAL_REQUEST_ID_KEY] = request.id
     rebound = Content.from_function_approval_response(
         approved=_is_approval_granted(response.approved),
         id=rebound_id,  # type: ignore[arg-type]
         function_call=rebound_call,
         annotations=response.annotations,
-        additional_properties=copy.deepcopy(response.additional_properties),
+        additional_properties=rebound_properties,
         raw_representation=response.raw_representation,
     )
     if consume:
@@ -2545,14 +2870,21 @@ def _collect_approval_responses(
     """
     approval_responses: list[Content] = []
     pending_by_call_id: dict[str, deque[Content]] = {}
+    pending_by_approval_id: dict[str, Content] = {}
     resolved_response_ids: set[int] = set()
     for message in messages:
         for content in message.contents:
+            if content.type == "function_approval_request" and content.id is not None:
+                if superseded := pending_by_approval_id.pop(content.id, None):
+                    resolved_response_ids.add(id(superseded))
+                continue
             if content.type == "function_approval_response" and not _is_hosted_tool_approval(content):
                 function_call = content.function_call
                 if function_call is None or function_call.call_id is None:
                     continue
                 approval_responses.append(content)
+                if content.id is not None:
+                    pending_by_approval_id[content.id] = content
                 pending_by_call_id.setdefault(function_call.call_id, deque()).append(content)
                 continue
             if content.call_id is None:
@@ -2565,8 +2897,13 @@ def _collect_approval_responses(
             if not (is_terminal_result or is_follow_up_request):
                 continue
             pending_responses = pending_by_call_id.get(content.call_id)
+            while pending_responses and id(pending_responses[0]) in resolved_response_ids:
+                pending_responses.popleft()
             if pending_responses:
-                resolved_response_ids.add(id(pending_responses.popleft()))
+                resolved = pending_responses.popleft()
+                resolved_response_ids.add(id(resolved))
+                if resolved.id is not None and pending_by_approval_id.get(resolved.id) is resolved:
+                    pending_by_approval_id.pop(resolved.id, None)
 
     return {
         content.id: content
@@ -2576,9 +2913,10 @@ def _collect_approval_responses(
 
 
 def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[Content]:
-    approval_requests_by_id: dict[str, Content] = {}
-    pending_request_ids_by_call_id: dict[str, deque[str]] = {}
-    answered_approval_ids: set[str] = set()
+    unanswered_by_id: dict[str, Content] = {}
+    requests_by_call_id: dict[str, deque[Content]] = {}
+    request_ids_by_occurrence: dict[str, str] = {}
+    answered_request_ids_by_call_id: dict[str, deque[str]] = {}
 
     for message in messages:
         for content in message.contents:
@@ -2586,13 +2924,19 @@ def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[C
                 function_call = content.function_call
                 if content.id is None or function_call is None or function_call.call_id is None:
                     continue
-                if content.id not in approval_requests_by_id:
-                    approval_requests_by_id[content.id] = content
-                    pending_request_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
+                if content.id not in unanswered_by_id:
+                    unanswered_by_id[content.id] = content
+                    requests_by_call_id.setdefault(function_call.call_id, deque()).append(content)
+                    if function_call.id is not None:
+                        request_ids_by_occurrence[function_call.id] = content.id
                 continue
             if content.type == "function_approval_response":
+                function_call = content.function_call
                 if content.id is not None:
-                    answered_approval_ids.add(content.id)
+                    request_id = request_ids_by_occurrence.get(content.id, content.id)
+                    unanswered_by_id.pop(request_id, None)
+                    if function_call is not None and function_call.call_id is not None:
+                        answered_request_ids_by_call_id.setdefault(function_call.call_id, deque()).append(request_id)
                 continue
             if content.call_id is None:
                 continue
@@ -2603,12 +2947,19 @@ def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[C
             }
             if not (is_terminal_result or is_follow_up_request):
                 continue
-            if request_ids := pending_request_ids_by_call_id.get(content.call_id):
-                answered_approval_ids.add(request_ids.popleft())
+            answered_requests = answered_request_ids_by_call_id.get(content.call_id)
+            if answered_requests:
+                answered_requests.popleft()
+                continue
+            requests = requests_by_call_id.get(content.call_id)
+            while requests and (requests[0].id is None or unanswered_by_id.get(requests[0].id) is not requests[0]):
+                requests.popleft()
+            if requests:
+                resolved = requests.popleft()
+                if resolved.id is not None:
+                    unanswered_by_id.pop(resolved.id, None)
 
-    return [
-        request for approval_id, request in approval_requests_by_id.items() if approval_id not in answered_approval_ids
-    ]
+    return list(unanswered_by_id.values())
 
 
 def _remove_unanswered_approval_batches_from_model_input(messages: list[Message]) -> None:
@@ -2742,7 +3093,21 @@ def _replace_approval_contents_with_results(
 
     result_groups_by_call_id: dict[str, deque[list[Content]]] = {}
     for result_group in approved_function_result_groups:
-        call_id = next((result.call_id for result in result_group if result.call_id is not None), None)
+        call_id = next(
+            (
+                result.function_call.call_id
+                if result.type == "function_approval_request" and result.function_call is not None
+                else result.call_id
+                for result in result_group
+                if result.call_id is not None
+                or (
+                    result.type == "function_approval_request"
+                    and result.function_call is not None
+                    and result.function_call.call_id is not None
+                )
+            ),
+            None,
+        )
         if call_id is not None:
             result_groups_by_call_id.setdefault(call_id, deque()).append(result_group)
 
@@ -2844,7 +3209,18 @@ def _replace_approval_contents_with_results(
                 else:
                     replacement_groups_by_index[content_idx] = replacements
                 if occurrence is not None:
-                    occurrence.closed = True
+                    replacement_request = next(
+                        (
+                            replacement
+                            for replacement in replacements
+                            if replacement.type == "function_approval_request"
+                        ),
+                        None,
+                    )
+                    if replacement_request is not None:
+                        occurrence.approval_id = replacement_request.id
+                    else:
+                        occurrence.closed = True
                 resolved_contents.extend(replacements)
             elif content.type == "function_result":
                 if content.call_id is None:
@@ -3116,11 +3492,17 @@ def _handle_function_call_results(
         # Only add items that aren't already in the message (e.g. function_approval_request wrappers).
         # Declaration-only function_call items are already present from the LLM response.
         new_items = [result for result in execution_results if result.type != "function_call"]
-        if new_items:
-            if response.messages and response.messages[0].role == "assistant":
-                response.messages[0].contents.extend(new_items)
-            else:
-                response.messages.append(Message(role="assistant", contents=new_items))
+        response_messages, _ = _messages_and_updates_for_terminal_contents(new_items)
+        if (
+            response_messages
+            and all(message.role == "assistant" for message in response_messages)
+            and response.messages
+            and response.messages[0].role == "assistant"
+        ):
+            for message in response_messages:
+                response.messages[0].contents.extend(message.contents)
+        else:
+            response.messages.extend(response_messages)
         streaming_items: list[Content] = []
         for result in execution_results:
             if result.type == "function_call":
@@ -3129,11 +3511,12 @@ def _handle_function_call_results(
                 streaming_items.append(metadata_only_result)
             else:
                 streaming_items.append(result)
+        _, streaming_updates = _messages_and_updates_for_terminal_contents(streaming_items)
         return _FunctionProcessingResult(
             errors_in_a_row=errors_in_a_row,
             action="return",
             function_call_count=function_call_count,
-            streaming_updates=(ChatResponseUpdate(contents=streaming_items, role="assistant"),),
+            streaming_updates=streaming_updates,
         )
 
     errors_in_a_row, reached_error_limit = _update_consecutive_error_count(
@@ -3161,6 +3544,7 @@ async def _resolve_approval_responses(
     max_errors: int,
     execute_function_calls: _FunctionCallExecutor,
     invocation_session: AgentSession | None = None,
+    middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     settle_dangling_calls: Callable[[Sequence[Content]], Awaitable[None]] | None = None,
 ) -> _FunctionProcessingResult:
     """Resolve inbound approval responses before the next model call.
@@ -3173,6 +3557,11 @@ async def _resolve_approval_responses(
     from ._middleware import MiddlewareFailure
     from ._types import Message
 
+    active_pending_ids = (
+        set(_load_pending_approval_requests(invocation_session))
+        if _has_authoritative_approval_session(invocation_session)
+        else None
+    )
     _bind_approval_responses_to_pending_requests(prepared_messages, invocation_session)
 
     # 1. Restore safe siblings hidden with a prior mixed approval batch when its visible decision arrives.
@@ -3198,6 +3587,13 @@ async def _resolve_approval_responses(
     responses_to_execute = [
         response for response in pending_approval_responses.values() if _is_approval_granted(response.approved)
     ]
+    responses_not_granted = [
+        response for response in pending_approval_responses.values() if not _is_approval_granted(response.approved)
+    ]
+    if middleware_pipeline is not None and responses_not_granted:
+        middleware_pipeline._notify_approval_responses(  # pyright: ignore[reportPrivateUsage]
+            responses_not_granted, session=invocation_session
+        )
     execution_result_groups: list[list[Content]] = []
     should_terminate = False
     reached_error_limit = False
@@ -3222,14 +3618,41 @@ async def _resolve_approval_responses(
             max_errors=max_errors,
         )
 
-    # 4. Replace approval controls/placeholders with terminal contents, correlated by logical call occurrence.
+    # 4. Snapshot unanswered siblings before normalization removes their wrappers, then merge them with
+    # replacement requests produced while resolving this response.
+    produced_replacement_request = any(
+        content.type == "function_approval_request"
+        and content.additional_properties.get("_replacement_approval_request") is True
+        for result_group in execution_result_groups
+        for content in result_group
+    )
+    pending_before_normalization = (
+        [
+            request
+            for request in _collect_unanswered_approval_requests(prepared_messages)
+            if active_pending_ids is None or request.id in active_pending_ids
+        ]
+        if produced_replacement_request
+        else []
+    )
     terminal_contents = _replace_approval_contents_with_results(
         prepared_messages,
         pending_approval_responses,
         execution_result_groups,
     )
-    if pending_requests := _collect_unanswered_approval_requests(prepared_messages):
-        terminal_contents.extend(pending_requests)
+    pending_by_id = {
+        request.id: request
+        for request in (*pending_before_normalization, *_collect_unanswered_approval_requests(prepared_messages))
+        if request.id is not None
+    }
+    if pending_by_id:
+        surfaced_request_ids = {
+            content.id for content in terminal_contents if content.type == "function_approval_request"
+        }
+        terminal_contents.extend(
+            request for request_id, request in pending_by_id.items() if request_id not in surfaced_request_ids
+        )
+        _store_pending_approval_requests(invocation_session, list(pending_by_id.values()))
 
     # 5. Return role-correct output and tell the outer loop whether to return, stop tools, or call the model.
     executed_function_count = len(execution_result_groups)
@@ -3467,6 +3890,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         invocation_session: AgentSession | None,
         budget_state: dict[str, Any],
         max_errors: int,
+        middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     ) -> ChatResponse[Any]:
         """Run the non-streaming function invocation loop."""
         from ._middleware import MiddlewareFailure
@@ -3512,6 +3936,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             max_errors=max_errors,
             execute_function_calls=execute_function_calls,
             invocation_session=invocation_session,
+            middleware_pipeline=middleware_pipeline,
             settle_dangling_calls=settle_approval_replay_calls,
         )
         function_call_messages.extend(approval_processing.response_messages)
@@ -3652,6 +4077,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         invocation_session: AgentSession | None,
         budget_state: dict[str, Any],
         max_errors: int,
+        middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Run the streaming function invocation loop."""
         from ._middleware import MiddlewareFailure
@@ -3694,6 +4120,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             max_errors=max_errors,
             execute_function_calls=execute_function_calls,
             invocation_session=invocation_session,
+            middleware_pipeline=middleware_pipeline,
             settle_dangling_calls=settle_approval_replay_calls,
         )
         errors_in_a_row = approval_processing.errors_in_a_row
@@ -3979,8 +4406,11 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             request_kwargs.pop("middleware", []), supported_categories=("chat", "function")
         )
 
-        function_middleware_pipeline = self._get_function_middleware_pipeline(
-            categorized_runtime_middleware["function"]
+        runtime_function_middleware = categorized_runtime_middleware["function"]
+        function_middleware_pipeline = self._get_function_middleware_pipeline(runtime_function_middleware)
+        requires_session_state = any(
+            getattr(item, "_requires_session_state", False) is True
+            for item in (*self.function_middleware, *runtime_function_middleware)
         )
         if categorized_runtime_middleware["chat"]:
             request_kwargs["middleware"] = categorized_runtime_middleware["chat"]
@@ -4011,6 +4441,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
         raw_session = request_kwargs.get("session")
         invocation_session = raw_session if isinstance(raw_session, _AgentSession) else None
+        if invocation_session is None and requires_session_state:
+            invocation_session = _AgentSession()
+            setattr(invocation_session, _RUN_LOCAL_MIDDLEWARE_SESSION_ATTR, True)
 
         # Bind one executor with the run's custom arguments, middleware, configuration, and session.
         execute_function_calls = partial(
@@ -4059,6 +4492,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 invocation_session=invocation_session,
                 budget_state=budget_state,
                 max_errors=max_errors,
+                middleware_pipeline=function_middleware_pipeline,
             )
 
         response_format = mutable_options.get("response_format")
@@ -4075,6 +4509,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 invocation_session=invocation_session,
                 budget_state=budget_state,
                 max_errors=max_errors,
+                middleware_pipeline=function_middleware_pipeline,
             ),
             finalizer=partial(ChatResponse.from_updates, output_format_type=response_format),
         )

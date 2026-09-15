@@ -45,14 +45,15 @@ from agent_framework._evaluation import (
 from agent_framework._feature_stage import ExperimentalFeature, experimental
 from agent_framework._telemetry import mark_feature_used
 from agent_framework._types import Message
-from openai import AsyncOpenAI
 
-from ._chat_client import FoundryChatClient
 from ._feature_usage import FeatureIndex
 
 if TYPE_CHECKING:
     from azure.ai.projects.aio import AIProjectClient
+    from openai import AsyncOpenAI
     from openai.types.evals import RunRetrieveResponse
+
+    from ._chat_client import FoundryChatClient
 
 logger = logging.getLogger(__name__)
 
@@ -726,6 +727,10 @@ def _resolve_openai_client(
     project_client: AIProjectClient | None = None,
 ) -> AsyncOpenAI:
     """Resolve an AsyncOpenAI client from a FoundryChatClient, raw client, or project_client."""
+    from openai import AsyncOpenAI
+
+    from ._chat_client import FoundryChatClient
+
     if client is not None:
         if isinstance(client, FoundryChatClient):
             return client.client
@@ -917,6 +922,8 @@ class FoundryEvals:
 
         # Auto-create a FoundryChatClient from env vars when no client is provided
         if client is None and project_client is None:
+            from ._chat_client import FoundryChatClient
+
             client = FoundryChatClient(model=model or "gpt-4o")
 
         self._client = _resolve_openai_client(client, project_client)

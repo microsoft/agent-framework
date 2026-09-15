@@ -16,6 +16,7 @@ import logging
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
 from typing import Literal, cast, overload
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -63,7 +64,7 @@ from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputIt
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
 from mcp.types import ErrorData
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
@@ -82,6 +83,9 @@ from agent_framework_foundry_hosting._state_store import (
     CheckpointStoreProvider,
     FunctionApprovalStoreProvider,
 )
+
+_OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
+_PRIVATE_ERROR_DETAIL = "test-token-value at /srv/private/tool.py"
 
 
 def _function_approval_store(request: Content) -> MagicMock:
@@ -454,12 +458,12 @@ async def test_item_to_message_marks_refusal_text() -> None:
     assert message.contents[0].additional_properties == {"model_output_kind": "refusal"}
 
 
-class _CapturingASGITransport(httpx.AsyncBaseTransport):
+class _CapturingASGITransport:
     def __init__(self, app: Any) -> None:
-        self._transport = httpx.ASGITransport(app=app)
+        self._transport = _OPENAI_HTTPX.ASGITransport(app=app)
         self.payloads: list[dict[str, Any]] = []
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+    async def handle_async_request(self, request: Any) -> Any:
         self.payloads.append(json.loads(await request.aread()))
         return await self._transport.handle_async_request(request)
 
@@ -534,7 +538,7 @@ async def test_agui_service_storage_conversation_mode_sends_only_incremental_pro
     responses_client = AsyncOpenAI(
         api_key="test-key",
         base_url="http://test",
-        http_client=httpx.AsyncClient(transport=transport),
+        http_client=DefaultAsyncHttpxClient(transport=cast(Any, transport)),
         max_retries=0,
     )
     store = InMemoryAGUIThreadSnapshotStore()
@@ -602,7 +606,7 @@ async def test_agui_service_storage_native_uuid_uses_backend_created_conversatio
     responses_client = AsyncOpenAI(
         api_key="test-key",
         base_url="http://test",
-        http_client=httpx.AsyncClient(transport=transport),
+        http_client=DefaultAsyncHttpxClient(transport=cast(Any, transport)),
         max_retries=0,
     )
     hosted_agent_client = Agent(client=OpenAIChatClient(model="test-model", async_client=responses_client))
@@ -664,7 +668,7 @@ async def test_agui_service_storage_response_mode_persists_provider_continuation
     responses_client = AsyncOpenAI(
         api_key="test-key",
         base_url="http://test",
-        http_client=httpx.AsyncClient(transport=transport),
+        http_client=DefaultAsyncHttpxClient(transport=cast(Any, transport)),
         max_retries=0,
     )
     store = InMemoryAGUIThreadSnapshotStore()
@@ -726,7 +730,7 @@ async def test_agui_stateless_store_true_does_not_restore_provider_continuation(
     responses_client = AsyncOpenAI(
         api_key="test-key",
         base_url="http://test",
-        http_client=httpx.AsyncClient(transport=transport),
+        http_client=DefaultAsyncHttpxClient(transport=cast(Any, transport)),
         max_retries=0,
     )
     store = InMemoryAGUIThreadSnapshotStore()
@@ -1631,6 +1635,34 @@ class TestNonStreaming:
         assert "function_call_output" in types
         assert "message" in types
 
+    async def test_function_result_omits_internal_exception(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[Content.from_function_call("call_1", "get_weather", arguments="{}")],
+                    ),
+                    Message(
+                        role="tool",
+                        contents=[
+                            Content.from_function_result(
+                                "call_1",
+                                result="Error: Function failed.",
+                                exception=_PRIVATE_ERROR_DETAIL,
+                            )
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        resp = await _post(_make_server(agent), stream=False)
+
+        assert resp.status_code == 200
+        assert "Error: Function failed." in resp.text
+        assert _PRIVATE_ERROR_DETAIL not in resp.text
+
     @pytest.mark.parametrize(
         ("result", "expected_output"),
         [
@@ -2037,6 +2069,32 @@ class TestStreaming:
         args_done = [e for e in events if e["event"] == "response.function_call_arguments.done"]
         assert len(args_done) == 1
         assert args_done[0]["data"]["arguments"] == '{"q": "hello"}'
+
+    async def test_function_result_omits_internal_exception(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    role="assistant",
+                    contents=[Content.from_function_call("call_1", "get_weather", arguments="{}")],
+                ),
+                AgentResponseUpdate(
+                    role="tool",
+                    contents=[
+                        Content.from_function_result(
+                            "call_1",
+                            result="Error: Function failed.",
+                            exception=_PRIVATE_ERROR_DETAIL,
+                        )
+                    ],
+                ),
+            ]
+        )
+
+        resp = await _post(_make_server(agent), stream=True)
+
+        assert resp.status_code == 200
+        assert "Error: Function failed." in resp.text
+        assert _PRIVATE_ERROR_DETAIL not in resp.text
 
     @pytest.mark.parametrize(("arguments", "expected_count"), [(None, 1), ("", 2)])
     async def test_declaration_only_metadata_replay_requires_none_arguments(

@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import json
 import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -1258,6 +1261,62 @@ async def test_file_checkpoint_storage_delete():
         assert result is False
 
 
+async def test_file_checkpoint_storage_concurrent_delete():
+    """Serialize deletes when overlapping unlink calls could both report success."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        other_storage = FileCheckpointStorage(temp_dir)
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="test-workflow",
+            graph_signature_hash="test-hash",
+            checkpoint_id="same",
+        )
+        await storage.save(checkpoint)
+
+        file_path = (Path(temp_dir) / "same.json").resolve()
+        original_to_thread = asyncio.to_thread
+        original_unlink = Path.unlink
+        worker_barrier = threading.Barrier(2)
+        unlink_barrier = threading.Barrier(2)
+        unlink_guard = threading.Lock()
+        overlapping_delete_completed = False
+
+        async def synchronized_to_thread(function: Any, /, *args: Any, **kwargs: Any) -> Any:
+            def synchronized_call() -> Any:
+                worker_barrier.wait(timeout=5)
+                return function(*args, **kwargs)
+
+            return await original_to_thread(synchronized_call)
+
+        def macos_style_unlink(path: Path, missing_ok: bool = False) -> None:
+            nonlocal overlapping_delete_completed
+            if path.resolve() != file_path:
+                original_unlink(path, missing_ok=missing_ok)
+                return
+
+            try:
+                unlink_barrier.wait(timeout=0.5)
+            except threading.BrokenBarrierError:
+                original_unlink(path, missing_ok=missing_ok)
+                return
+
+            with unlink_guard:
+                if not overlapping_delete_completed:
+                    original_unlink(path, missing_ok=missing_ok)
+                    overlapping_delete_completed = True
+
+        with (
+            patch.object(asyncio, "to_thread", synchronized_to_thread),
+            patch.object(Path, "unlink", macos_style_unlink),
+        ):
+            results = await asyncio.gather(
+                storage.delete(checkpoint.checkpoint_id),
+                other_storage.delete(checkpoint.checkpoint_id),
+            )
+
+        assert sorted(results) == [False, True]
+
+
 async def test_file_checkpoint_storage_directory_creation():
     with tempfile.TemporaryDirectory() as temp_dir:
         nested_path = Path(temp_dir) / "nested" / "checkpoint" / "storage"
@@ -1287,6 +1346,54 @@ async def test_file_checkpoint_storage_corrupted_file():
         # list should handle the corrupted file gracefully
         checkpoints = await storage.list_checkpoints(workflow_name="any-workflow")
         assert checkpoints == []
+
+
+async def test_file_checkpoint_storage_load_invalid_json_raises():
+    """Issue #8181: load wraps JSONDecodeError as WorkflowCheckpointException."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        bad_id = "bad-json-checkpoint"
+        bad_file = Path(temp_dir) / f"{bad_id}.json"
+        with open(bad_file, "w") as f:  # noqa: ASYNC230
+            f.write("{ not json")
+        with pytest.raises(WorkflowCheckpointException, match="not valid JSON"):
+            await storage.load(bad_id)
+
+
+async def test_file_checkpoint_storage_load_invalid_utf8_raises():
+    """Issue #8181: load wraps UnicodeDecodeError as WorkflowCheckpointException."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        bad_id = "bad-utf8-checkpoint"
+        bad_file = Path(temp_dir) / f"{bad_id}.json"
+        bad_file.write_bytes(b'{"x": "\xff\xfe"}')
+        with pytest.raises(WorkflowCheckpointException, match="not valid UTF-8"):
+            await storage.load(bad_id)
+
+
+async def test_file_checkpoint_storage_list_ids_matches_list_decode_filter():
+    """Issue #8181: list_checkpoint_ids skips undecodable files like list_checkpoints."""
+    from tests.workflow.test_checkpoint_unrestricted_pickle import _AllowedTestState
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        type_key = f"{_AllowedTestState.__module__}:{_AllowedTestState.__qualname__}"
+        writer = FileCheckpointStorage(temp_dir, allowed_checkpoint_types=[type_key])
+        good = WorkflowCheckpoint(workflow_name="wf-a", graph_signature_hash="h")
+        await writer.save(good)
+        blocked = WorkflowCheckpoint(
+            workflow_name="wf-a",
+            graph_signature_hash="h",
+            checkpoint_id="orphan-blocked",
+            state={"x": _AllowedTestState(name="x", value=1)},
+        )
+        await writer.save(blocked)
+
+        reader = FileCheckpointStorage(temp_dir)  # no allow list
+        listed = await reader.list_checkpoints(workflow_name="wf-a")
+        ids = await reader.list_checkpoint_ids(workflow_name="wf-a")
+        assert [c.checkpoint_id for c in listed] == ids
+        assert "orphan-blocked" not in ids
+        assert good.checkpoint_id in ids
 
 
 async def test_file_checkpoint_storage_json_serialization():
