@@ -2342,12 +2342,13 @@ async def _try_execute_function_call_groups(
             if function_call.type != "function_call":
                 continue
             tool_name = function_call.name
-            # Declaration-only and additional tools are surfaced as user input and never executed locally
-            # (spec 004). Wrapping them as approval requests here made an "approve" decision drive them into
-            # local execution on resume, where they raise because they have no implementation. Classification
-            # must travel with each call even inside an approval-pausing batch.
-            if tool_name is not None and (
-                tool_name in declaration_only_tool_names or tool_name in additional_tool_names
+            # Explicit approval takes precedence over Host ownership on the first pause. After approval,
+            # _execute_single_function_call reclassifies declaration-only/additional calls at the execution
+            # boundary, surfaces them as user input, and keeps them out of local middleware/tool execution.
+            if (
+                tool_name is not None
+                and tool_name not in approval_tool_names
+                and (tool_name in declaration_only_tool_names or tool_name in additional_tool_names)
             ):
                 pause_groups.append([_as_user_input_pause(function_call)])
                 continue
