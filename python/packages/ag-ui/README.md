@@ -105,6 +105,20 @@ The `AGUIChatClient` supports:
 - Integration with `Agent` for client-side history management
 - Canonical interrupt/resume passthrough (`availableInterrupts` and `resume`)
 
+#### HTTP client ownership and cookies
+
+**Breaking change:** `AGUIChatClient` and `AGUIHttpService` reuse an internally owned HTTP client
+for connection pooling but no longer persist response cookies. This applies to all runs,
+including repeated requests with the same thread ID. Closing the AG-UI client or leaving
+its async context manager closes its internally owned HTTP client.
+
+Applications that need cookies for upstream authentication, sessions, or load-balancer affinity, including those migrating from
+the previous default of retaining response cookies, must supply an `httpx.AsyncClient`
+through `http_client`. Supplied clients retain their headers, cookies, timeout, transport,
+and response-cookie handling, and must be closed by the caller. Scope a cookie-bearing
+client to a single authenticated principal; do not share it across users. AG-UI thread IDs
+are correlation identifiers, not authentication boundaries.
+
 ## Tool Return Helpers
 
 Use `state_update` when a backend tool needs to send different payloads to the model, the UI, and shared state. The `text` value remains the LLM-bound tool result, `tool_result` becomes the AG-UI `ToolCallResultEvent.content` for frontend rendering, and `state` is merged into durable shared state.

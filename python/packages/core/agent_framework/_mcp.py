@@ -17,6 +17,7 @@ from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ig
 from copy import copy
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypedDict, cast
 
@@ -95,6 +96,29 @@ class MCPSpecificApproval(TypedDict, total=False):
     always_require_approval: Collection[str] | None
     never_require_approval: Collection[str] | None
 
+
+
+MCPToolResultContentMode = Literal[
+    "structured_first",
+    "content_first",
+    "content_only",
+    "structured_only",
+    "both",
+]
+"""How model-visible text is selected when a tool result has both ``content`` and ``structuredContent``.
+
+MCP servers disagree on whether the two fields are duplicates or complementary (#7866).
+Callers pick an explicit policy:
+
+- ``structured_first`` (default): use ``structuredContent`` when present, else ``content``
+- ``content_first``: use ``content`` when non-empty, else ``structuredContent``
+- ``content_only``: ignore ``structuredContent`` for the model-visible result
+- ``structured_only``: ignore ``content`` for the model-visible result
+- ``both``: append serialized ``structuredContent`` after ``content`` blocks
+
+The full MCP payload is still retained on the Host channel regardless of mode.
+Custom ``parse_tool_results`` overrides this policy entirely.
+"""
 
 _MCP_REMOTE_NAME_KEY = "_mcp_remote_name"
 _MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
@@ -868,6 +892,7 @@ class MCPTool:
         always_load: Collection[str] | None = None,
         *,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
+        tool_result_content: MCPToolResultContentMode = "structured_first",
     ) -> None:
         """Initialize the MCP Tool base.
 
@@ -937,6 +962,9 @@ class MCPTool:
             max_host_payload_size_bytes: Maximum encoded size of the complete MCP result retained
                 for Host transports. Oversized payloads are omitted from the Host channel while
                 the parsed model result is preserved. Set to ``None`` to disable the limit.
+            tool_result_content: How to choose model-visible text when both ``content`` and
+                ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
+                Ignored when ``parse_tool_results`` is set. Default ``structured_first``.
         """
         if use_progressive_disclosure and not load_tools:
             raise ValueError("use_progressive_disclosure=True requires load_tools=True.")
@@ -949,6 +977,18 @@ class MCPTool:
             )
         if max_host_payload_size_bytes is not None and max_host_payload_size_bytes <= 0:
             raise ValueError("max_host_payload_size_bytes must be positive or None.")
+        allowed_modes = {
+            "structured_first",
+            "content_first",
+            "content_only",
+            "structured_only",
+            "both",
+        }
+        if tool_result_content not in allowed_modes:
+            raise ValueError(
+                f"tool_result_content must be one of {sorted(allowed_modes)}, "
+                f"got {tool_result_content!r}."
+            )
         self.name = name
         self.description = description or ""
         self.approval_mode = approval_mode
@@ -957,6 +997,7 @@ class MCPTool:
         self.additional_properties = additional_properties
         self.load_tools_flag = load_tools
         self.parse_tool_results = parse_tool_results
+        self.tool_result_content = tool_result_content
         self.load_prompts_flag = load_prompts
         self.parse_prompt_results = parse_prompt_results
         self.max_host_payload_size_bytes = max_host_payload_size_bytes
@@ -1139,8 +1180,30 @@ class MCPTool:
                 case _:
                     result.append(Content.from_text(str(item), **additional_kwargs))
 
+        structured_block: Content | None = None
         if mcp_type.structuredContent is not None:
-            result.append(Content.from_text(json.dumps(mcp_type.structuredContent, default=str), **additional_kwargs))
+            structured_block = Content.from_text(
+                json.dumps(mcp_type.structuredContent, default=str), **additional_kwargs
+            )
+
+        # Select model-visible content per explicit policy (#7866). Host payload still
+        # retains the full MCP result regardless of this choice.
+        mode = self.tool_result_content
+        if mode == "both":
+            if structured_block is not None:
+                result.append(structured_block)
+        elif mode == "content_only":
+            pass
+        elif mode == "structured_only":
+            result = [structured_block] if structured_block is not None else []
+        elif mode == "content_first":
+            if not result and structured_block is not None:
+                result.append(structured_block)
+        elif mode == "structured_first":
+            if structured_block is not None:
+                result = [structured_block]
+        else:  # pragma: no cover - validated in __init__
+            raise ValueError(f"Unknown tool_result_content mode: {mode!r}")
 
         if not result:
             result.append(Content.from_text("null", **additional_kwargs))
@@ -3371,6 +3434,7 @@ class MCPStdioTool(MCPTool):
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
+        tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP stdio tool.
@@ -3463,6 +3527,8 @@ class MCPStdioTool(MCPTool):
                 process you do not control.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
+            tool_result_content: How to choose model-visible text when both ``content`` and
+                ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
             kwargs: Any extra arguments to pass to the stdio client.
         """
         super().__init__(
@@ -3487,6 +3553,7 @@ class MCPStdioTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
+            tool_result_content=tool_result_content,
         )
         self.command = command
         self.args = args or []
@@ -3574,6 +3641,7 @@ class MCPStreamableHTTPTool(MCPTool):
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
+        tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP streamable HTTP tool.
@@ -3582,7 +3650,7 @@ class MCPStreamableHTTPTool(MCPTool):
             The arguments are used to create a streamable HTTP client using the
             new ``mcp.client.streamable_http.streamable_http_client`` API.
             If an asyncClient is provided via ``http_client``, it will be used as the underlying transport client.
-            Otherwise, the ``streamable_http_client`` API will create and manage a default client.
+            Otherwise, the tool creates and manages a default client without response-cookie persistence.
 
         Args:
             name: The name of the tool.
@@ -3639,8 +3707,13 @@ class MCPStreamableHTTPTool(MCPTool):
                 (``min(requested, cap)``); ``None`` disables it.
             sampling_max_requests: Per-session cap on the number of sampling requests; further
                 requests are rejected. Resets on reconnect. ``None`` disables it.
-            http_client: Optional asyncClient to use. If not provided, the
-                ``streamable_http_client`` API will create and manage a default client.
+            http_client: Optional asyncClient to use. If not provided, the tool creates and manages
+                a client that does not persist response cookies, with or without a ``header_provider``.
+                Explicit ``Cookie`` headers from ``static_headers`` or a ``header_provider`` are supported.
+                Supplied clients retain their cookie behavior and remain caller-owned. Applications
+                requiring cookie-based sessions must supply a client scoped to one authenticated
+                principal and manage its lifetime. Cookie rejection does not partition MCP protocol
+                sessions or other server-side state between principals.
                 Use ``static_headers`` for fixed headers. To configure timeouts or other
                 HTTP client settings, create and pass your own ``asyncClient`` instance.
                 Security: when you attach sensitive headers (e.g. authentication tokens)
@@ -3727,6 +3800,8 @@ class MCPStreamableHTTPTool(MCPTool):
                 ``http_client``.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
+            tool_result_content: How to choose model-visible text when both ``content`` and
+                ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
             kwargs: Additional keyword arguments (accepted for backward compatibility but not used).
         """
         super().__init__(
@@ -3751,6 +3826,7 @@ class MCPStreamableHTTPTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
+            tool_result_content=tool_result_content,
         )
         self.url = url
         self.terminate_on_close = terminate_on_close
@@ -3806,17 +3882,20 @@ class MCPStreamableHTTPTool(MCPTool):
 
         self._promote_pending_session_headers()
 
+        target_origin = (
+            _url_origin(URL(self.url)) if self._static_headers or self._header_provider is not None else None
+        )
         http_client = self._httpx_client
-        if self._static_headers or self._header_provider is not None:
-            target_origin = _url_origin(URL(self.url))
-            if http_client is None:
-                http_client = AsyncClient(
-                    follow_redirects=True,
-                    timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
-                )
-                self._httpx_client = http_client
-                self._exit_stack.push_async_callback(self._close_owned_http_client, http_client)
+        if http_client is None:
+            http_client = AsyncClient(
+                follow_redirects=True,
+                timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
+                cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+            )
+            self._httpx_client = http_client
+            self._exit_stack.push_async_callback(self._close_owned_http_client, http_client)
 
+        if target_origin is not None:
             if not hasattr(self, "_inject_headers_hook"):
 
                 async def _inject_headers(request: Request) -> None:  # ruff:ignore[unused-async]
@@ -3888,9 +3967,7 @@ class MCPStreamableHTTPTool(MCPTool):
                 # while successful sessions keep the hook through transport shutdown.
                 self._exit_stack.callback(self._remove_header_hook)
 
-        transport_http_client = (
-            _MCPHeaderScopedClient(http_client, self._header_request_owner) if http_client is not None else None
-        )
+        transport_http_client = _MCPHeaderScopedClient(http_client, self._header_request_owner)
 
         return streamable_http_client(
             url=self.url,
@@ -4158,6 +4235,7 @@ class MCPWebsocketTool(MCPTool):
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
         max_host_payload_size_bytes: int | None = _DEFAULT_MCP_HOST_PAYLOAD_SIZE_BYTES,
+        tool_result_content: MCPToolResultContentMode = "structured_first",
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP WebSocket tool.
@@ -4248,6 +4326,8 @@ class MCPWebsocketTool(MCPTool):
                 ``function_invocation_kwargs`` for servers you do not control.
             max_host_payload_size_bytes: Maximum encoded MCP result size retained for Host
                 transports. ``None`` disables the limit.
+            tool_result_content: How to choose model-visible text when both ``content`` and
+                ``structuredContent`` are present. See :data:`MCPToolResultContentMode`.
             kwargs: Any extra arguments to pass to the WebSocket client.
         """
         super().__init__(
@@ -4272,6 +4352,7 @@ class MCPWebsocketTool(MCPTool):
             sampling_max_tokens=sampling_max_tokens,
             sampling_max_requests=sampling_max_requests,
             max_host_payload_size_bytes=max_host_payload_size_bytes,
+            tool_result_content=tool_result_content,
         )
         self.url = url
         self._client_kwargs = kwargs

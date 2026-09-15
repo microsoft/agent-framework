@@ -1792,17 +1792,17 @@ public sealed class A2AAgentHandlerTests
     public async Task ExecuteAsync_Streaming_SavesSessionAfterProcessingAsync()
     {
         // Arrange
-        var mockSessionStore = new Mock<AgentSessionStore>();
+        var mockSessionStore = new Mock<AgentSessionStore> { CallBase = true };
         mockSessionStore
             .Setup(x => x.GetSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.IsAny<string>(),
+                It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TestAgentSession());
         mockSessionStore
             .Setup(x => x.SaveSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.IsAny<string>(),
+                It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<AgentSession>(),
                 It.IsAny<CancellationToken>()))
             .Returns(ValueTask.CompletedTask);
@@ -1826,7 +1826,7 @@ public sealed class A2AAgentHandlerTests
         mockSessionStore.Verify(
             x => x.SaveSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.Is<string>(s => s == "ctx-stream"),
+                It.Is<AgentSessionStoreKey>(key => key.SessionId == "ctx-stream"),
                 It.IsAny<AgentSession>(),
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -1840,17 +1840,17 @@ public sealed class A2AAgentHandlerTests
     public async Task ExecuteAsync_Streaming_WhenNoUpdates_EnqueuesEmptyMessageAndSavesSessionAsync()
     {
         // Arrange
-        var mockSessionStore = new Mock<AgentSessionStore>();
+        var mockSessionStore = new Mock<AgentSessionStore> { CallBase = true };
         mockSessionStore
             .Setup(x => x.GetSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.IsAny<string>(),
+                It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TestAgentSession());
         mockSessionStore
             .Setup(x => x.SaveSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.IsAny<string>(),
+                It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<AgentSession>(),
                 It.IsAny<CancellationToken>()))
             .Returns(ValueTask.CompletedTask);
@@ -1871,7 +1871,7 @@ public sealed class A2AAgentHandlerTests
         mockSessionStore.Verify(
             x => x.SaveSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.Is<string>(s => s == "ctx"),
+                It.Is<AgentSessionStoreKey>(key => key.SessionId == "ctx"),
                 It.IsAny<AgentSession>(),
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -1962,17 +1962,17 @@ public sealed class A2AAgentHandlerTests
     public async Task Handler_WithCustomSessionStore_UsesProvidedSessionStoreAsync()
     {
         // Arrange
-        var mockSessionStore = new Mock<AgentSessionStore>();
+        var mockSessionStore = new Mock<AgentSessionStore> { CallBase = true };
         mockSessionStore
             .Setup(x => x.GetSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.IsAny<string>(),
+                It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TestAgentSession());
         mockSessionStore
             .Setup(x => x.SaveSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.IsAny<string>(),
+                It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<AgentSession>(),
                 It.IsAny<CancellationToken>()))
             .Returns(ValueTask.CompletedTask);
@@ -1998,13 +1998,13 @@ public sealed class A2AAgentHandlerTests
         mockSessionStore.Verify(
             x => x.GetSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.Is<string>(s => s == "ctx-1"),
+                It.Is<AgentSessionStoreKey>(key => key.SessionId == "ctx-1"),
                 It.IsAny<CancellationToken>()),
             Times.Once);
         mockSessionStore.Verify(
             x => x.SaveSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.Is<string>(s => s == "ctx-1"),
+                It.Is<AgentSessionStoreKey>(key => key.SessionId == "ctx-1"),
                 It.IsAny<AgentSession>(),
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -2169,12 +2169,19 @@ public sealed class A2AAgentHandlerTests
     public async Task ExecuteAsync_NonStreaming_WhenRunStreamingAsyncThrows_SavesSessionWithUncancelledTokenAsync()
     {
         // Arrange
-        var mockSessionStore = new Mock<AgentSessionStore>();
+        var mockSessionStore = new Mock<AgentSessionStore> { CallBase = true };
         mockSessionStore
-            .Setup(x => x.GetSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.GetSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TestAgentSession());
         mockSessionStore
-            .Setup(x => x.SaveSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<AgentSession>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<AgentSession>(),
+                It.IsAny<CancellationToken>()))
             .Returns(ValueTask.CompletedTask);
 
         Mock<AIAgent> agentMock = new() { CallBase = true };
@@ -2209,7 +2216,7 @@ public sealed class A2AAgentHandlerTests
         mockSessionStore.Verify(
             x => x.SaveSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.Is<string>(s => s == "ctx"),
+                It.Is<AgentSessionStoreKey>(key => key.SessionId == "ctx"),
                 It.IsAny<AgentSession>(),
                 It.Is<CancellationToken>(ct => ct == CancellationToken.None)),
             Times.Once);
@@ -2223,12 +2230,19 @@ public sealed class A2AAgentHandlerTests
     public async Task ExecuteAsync_Streaming_WhenRunStreamingAsyncThrows_SavesSessionWithUncancelledTokenAsync()
     {
         // Arrange
-        var mockSessionStore = new Mock<AgentSessionStore>();
+        var mockSessionStore = new Mock<AgentSessionStore> { CallBase = true };
         mockSessionStore
-            .Setup(x => x.GetSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.GetSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TestAgentSession());
         mockSessionStore
-            .Setup(x => x.SaveSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<AgentSession>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<AgentSession>(),
+                It.IsAny<CancellationToken>()))
             .Returns(ValueTask.CompletedTask);
 
         Mock<AIAgent> agentMock = new() { CallBase = true };
@@ -2263,7 +2277,7 @@ public sealed class A2AAgentHandlerTests
         mockSessionStore.Verify(
             x => x.SaveSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.Is<string>(s => s == "ctx-stream"),
+                It.Is<AgentSessionStoreKey>(key => key.SessionId == "ctx-stream"),
                 It.IsAny<AgentSession>(),
                 It.Is<CancellationToken>(ct => ct == CancellationToken.None)),
             Times.Once);
@@ -2277,12 +2291,19 @@ public sealed class A2AAgentHandlerTests
     public async Task ExecuteAsync_OnContinuation_WhenRunAsyncThrows_SavesSessionWithUncancelledTokenAsync()
     {
         // Arrange
-        var mockSessionStore = new Mock<AgentSessionStore>();
+        var mockSessionStore = new Mock<AgentSessionStore> { CallBase = true };
         mockSessionStore
-            .Setup(x => x.GetSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.GetSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TestAgentSession());
         mockSessionStore
-            .Setup(x => x.SaveSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<AgentSession>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<AgentSession>(),
+                It.IsAny<CancellationToken>()))
             .Returns(ValueTask.CompletedTask);
 
         Mock<AIAgent> agentMock = new() { CallBase = true };
@@ -2323,7 +2344,7 @@ public sealed class A2AAgentHandlerTests
         mockSessionStore.Verify(
             x => x.SaveSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.Is<string>(s => s == "ctx-cont"),
+                It.Is<AgentSessionStoreKey>(key => key.SessionId == "ctx-cont"),
                 It.IsAny<AgentSession>(),
                 It.Is<CancellationToken>(ct => ct == CancellationToken.None)),
             Times.Once);
@@ -2337,12 +2358,19 @@ public sealed class A2AAgentHandlerTests
     public async Task ExecuteAsync_NonStreaming_SavesSessionWithUncancelledTokenAsync()
     {
         // Arrange
-        var mockSessionStore = new Mock<AgentSessionStore>();
+        var mockSessionStore = new Mock<AgentSessionStore> { CallBase = true };
         mockSessionStore
-            .Setup(x => x.GetSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.GetSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TestAgentSession());
         mockSessionStore
-            .Setup(x => x.SaveSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<AgentSession>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<AgentSession>(),
+                It.IsAny<CancellationToken>()))
             .Returns(ValueTask.CompletedTask);
 
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Reply")]);
@@ -2366,7 +2394,7 @@ public sealed class A2AAgentHandlerTests
         mockSessionStore.Verify(
             x => x.SaveSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.Is<string>(s => s == "ctx"),
+                It.Is<AgentSessionStoreKey>(key => key.SessionId == "ctx"),
                 It.IsAny<AgentSession>(),
                 It.Is<CancellationToken>(ct => ct == CancellationToken.None)),
             Times.Once);
@@ -2380,12 +2408,19 @@ public sealed class A2AAgentHandlerTests
     public async Task ExecuteAsync_Streaming_SavesSessionWithUncancelledTokenAsync()
     {
         // Arrange
-        var mockSessionStore = new Mock<AgentSessionStore>();
+        var mockSessionStore = new Mock<AgentSessionStore> { CallBase = true };
         mockSessionStore
-            .Setup(x => x.GetSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.GetSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TestAgentSession());
         mockSessionStore
-            .Setup(x => x.SaveSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<AgentSession>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<AgentSession>(),
+                It.IsAny<CancellationToken>()))
             .Returns(ValueTask.CompletedTask);
 
         AgentResponseUpdate[] updates = [new AgentResponseUpdate(ChatRole.Assistant, "chunk") { ResponseId = "r1" }];
@@ -2409,7 +2444,7 @@ public sealed class A2AAgentHandlerTests
         mockSessionStore.Verify(
             x => x.SaveSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.Is<string>(s => s == "ctx-stream"),
+                It.Is<AgentSessionStoreKey>(key => key.SessionId == "ctx-stream"),
                 It.IsAny<AgentSession>(),
                 It.Is<CancellationToken>(ct => ct == CancellationToken.None)),
             Times.Once);
@@ -2423,12 +2458,19 @@ public sealed class A2AAgentHandlerTests
     public async Task ExecuteAsync_OnContinuation_SavesSessionWithUncancelledTokenAsync()
     {
         // Arrange
-        var mockSessionStore = new Mock<AgentSessionStore>();
+        var mockSessionStore = new Mock<AgentSessionStore> { CallBase = true };
         mockSessionStore
-            .Setup(x => x.GetSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.GetSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TestAgentSession());
         mockSessionStore
-            .Setup(x => x.SaveSessionAsync(It.IsAny<AIAgent>(), It.IsAny<string>(), It.IsAny<AgentSession>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<AgentSession>(),
+                It.IsAny<CancellationToken>()))
             .Returns(ValueTask.CompletedTask);
 
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Done!")]);
@@ -2457,7 +2499,7 @@ public sealed class A2AAgentHandlerTests
         mockSessionStore.Verify(
             x => x.SaveSessionAsync(
                 It.IsAny<AIAgent>(),
-                It.Is<string>(s => s == "ctx-cont"),
+                It.Is<AgentSessionStoreKey>(key => key.SessionId == "ctx-cont"),
                 It.IsAny<AgentSession>(),
                 It.Is<CancellationToken>(ct => ct == CancellationToken.None)),
             Times.Once);

@@ -269,6 +269,22 @@ class TestResponsesRunHelpers:
         assert run["stream"] is True
         assert run["options"] == {"max_tokens": 32, "model": "gpt-x"}
 
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_responses_to_run_preserves_provider_options_and_omits_nulls(self, stream: bool) -> None:
+        run = responses_to_run({
+            "input": "hi",
+            "stream": stream,
+            "max_output_tokens": 32,
+            "safe_prompt": True,
+            "server_url": None,
+            "http_headers": None,
+            "retries": None,
+            "timeout_ms": None,
+        })
+
+        assert run["stream"] is stream
+        assert run["options"] == {"max_tokens": 32, "safe_prompt": True}
+
     def test_responses_to_run_rejects_conflicting_continuation_mechanisms(self) -> None:
         with pytest.raises(ValueError, match="mutually exclusive"):
             responses_to_run({

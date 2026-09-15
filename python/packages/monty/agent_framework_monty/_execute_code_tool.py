@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import mimetypes
 from collections.abc import Callable, Iterator, Sequence
-from copy import copy
 from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
@@ -161,7 +160,7 @@ def _make_tool_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
     receives real Python objects. ``FunctionTool.invoke`` accepts direct keyword
     arguments and handles both sync and async underlying functions internally.
     """
-    return partial(copy(tool_obj).invoke, skip_parsing=True)
+    return partial(tool_obj.invoke, skip_parsing=True)
 
 
 class MontyExecuteCodeTool(FunctionTool):
