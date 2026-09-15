@@ -482,6 +482,10 @@ class _MCPHeaderScopedClient:
 #   session connection (the counter resets on reconnect).
 _DEFAULT_SAMPLING_MAX_TOKENS = 4096
 _DEFAULT_SAMPLING_MAX_REQUESTS = 25
+_MCP_SAMPLING_DEPRECATION_MESSAGE = (
+    "MCP sampling is deprecated as of MCP specification version 2026-07-28 and will be removed no later than "
+    "2027-07-28. MCP servers should call LLM provider APIs directly."
+)
 
 # A user-supplied gate invoked before each server-initiated sampling request is
 # forwarded to the chat client. It receives the raw ``CreateMessageRequestParams``
@@ -1023,6 +1027,14 @@ class MCPTool:
         self.sampling_approval_callback = sampling_approval_callback
         self.sampling_max_tokens = sampling_max_tokens
         self.sampling_max_requests = sampling_max_requests
+        self._sampling_deprecation_warned = False
+        if (
+            client is not None
+            or sampling_approval_callback is not None
+            or sampling_max_tokens != _DEFAULT_SAMPLING_MAX_TOKENS
+            or sampling_max_requests != _DEFAULT_SAMPLING_MAX_REQUESTS
+        ):
+            self._warn_sampling_deprecated(stacklevel=4)
         self._sampling_request_count = 0
         self._functions: list[FunctionTool] = []
         self.use_progressive_disclosure = use_progressive_disclosure
@@ -2083,10 +2095,18 @@ class MCPTool:
             return cap
         return requested
 
-    @deprecated(
-        "MCP sampling is deprecated as of MCP specification version 2026-07-28 and will be removed no later than "
-        "2027-07-28. MCP servers should call LLM provider APIs directly."
-    )
+    def _warn_sampling_deprecated(self, *, stacklevel: int) -> None:
+        """Emit the MCP sampling deprecation warning once for this tool."""
+        if self._sampling_deprecation_warned:
+            return
+        warnings.warn(
+            _MCP_SAMPLING_DEPRECATION_MESSAGE,
+            DeprecationWarning,
+            stacklevel=stacklevel,
+        )
+        self._sampling_deprecation_warned = True
+
+    @deprecated(_MCP_SAMPLING_DEPRECATION_MESSAGE, category=None)
     async def sampling_callback(
         self,
         context: RequestContext[ClientSession, Any],
@@ -2126,6 +2146,8 @@ class MCPTool:
             request is denied, rate limited, or generation fails.
         """
         from mcp import types
+
+        self._warn_sampling_deprecated(stacklevel=3)
 
         if not self.client:
             return types.ErrorData(

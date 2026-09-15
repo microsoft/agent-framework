@@ -3473,15 +3473,11 @@ async def test_mcp_tool_sampling_callback_no_client():
     assert "No chat client available" in result.message
 
 
-async def test_mcp_tool_sampling_warns_only_when_callback_is_used():
-    """Sampling setup stays silent until a server sends a sampling request."""
+async def test_mcp_tool_sampling_defaults_stay_silent_until_callback_is_used():
+    """Default setup stays silent until a server sends a sampling request."""
     with warnings.catch_warnings():
         warnings.simplefilter("error", DeprecationWarning)
-        tool = MCPStdioTool(
-            name="test_tool",
-            command="python",
-            sampling_approval_callback=_approve,
-        )
+        tool = MCPStdioTool(name="test_tool", command="python")
 
     assert "2027-07-28" in MCPTool.sampling_callback.__deprecated__
 
@@ -3492,6 +3488,53 @@ async def test_mcp_tool_sampling_warns_only_when_callback_is_used():
         result = await tool.sampling_callback(Mock(), params)
 
     assert isinstance(result, types.ErrorData)
+
+
+async def test_mcp_tool_sampling_configuration_warns_once():
+    """Each sampling option warns at setup, without warning again on callback use."""
+    with pytest.warns(DeprecationWarning, match="MCP sampling.*2027-07-28") as warning_info:
+        tool = MCPStdioTool(
+            name="test_tool",
+            command="python",
+            client=AsyncMock(),
+            sampling_approval_callback=_approve,
+            sampling_max_tokens=None,
+            sampling_max_requests=None,
+        )
+
+    assert len(warning_info) == 1
+
+    params = Mock()
+    params.messages = []
+    params.maxTokens = 128
+    params.systemPrompt = None
+    params.tools = None
+    params.temperature = None
+    params.stopSequences = None
+    params.toolChoice = None
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        await tool.sampling_callback(Mock(), params)
+
+    assert not caught
+
+
+@pytest.mark.parametrize(
+    "sampling_option",
+    [
+        {"client": AsyncMock()},
+        {"sampling_approval_callback": _approve},
+        {"sampling_max_tokens": None},
+        {"sampling_max_requests": None},
+    ],
+)
+def test_mcp_tool_each_sampling_option_warns(sampling_option: dict[str, Any]):
+    """Each non-default sampling option enables the setup warning."""
+    with pytest.warns(DeprecationWarning, match="MCP sampling.*2027-07-28") as warning_info:
+        MCPStdioTool(name="test_tool", command="python", **sampling_option)
+
+    assert len(warning_info) == 1
 
 
 async def test_mcp_tool_sampling_callback_denies_by_default():
