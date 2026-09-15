@@ -114,6 +114,13 @@ def test_sequential_builder_rejects_empty_participants() -> None:
         SequentialBuilder(participants=[])
 
 
+def test_sequential_builder_uses_stable_default_and_custom_name() -> None:
+    participant = _EchoAgent(name="echo")
+
+    assert SequentialBuilder(participants=[participant]).build().name == "Sequential"
+    assert SequentialBuilder(name="custom-sequential", participants=[participant]).build().name == "custom-sequential"
+
+
 def test_sequential_builder_validation_rejects_invalid_executor() -> None:
     """Test that adding an invalid executor to the builder raises an error."""
     with pytest.raises(TypeCompatibilityError):
@@ -212,6 +219,7 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
 
     initial_agents = (_EchoAgent(id="agent1", name="A1"), _EchoAgent(id="agent2", name="A2"))
     wf = SequentialBuilder(participants=list(initial_agents), checkpoint_storage=storage).build()
+    assert wf.name == "Sequential"
 
     baseline_updates: list[AgentResponseUpdate] = []
     async for ev in wf.run("checkpoint sequential", stream=True):
