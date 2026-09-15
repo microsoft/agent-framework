@@ -130,7 +130,7 @@ internal sealed class InvokeFunctionToolExecutor(
         FunctionResultContent? matchingResult = response.Messages
             .SelectMany(m => m.Contents)
             .OfType<FunctionResultContent>()
-            .FirstOrDefault(r => this.IsKnownPendingId(r.CallId));
+            .FirstOrDefault(r => this._pendingNonApprovalCallIds.ContainsKey(r.CallId));
 
         // Legacy non-approval backstop: when no pendings are tracked, accept a result
         // whose CallId equals this.Id. The runtime has already routed the response to
@@ -183,6 +183,10 @@ internal sealed class InvokeFunctionToolExecutor(
                     await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
                 }
             }
+            else if (!this._approvalSnapshots.IsEmpty)
+            {
+                await this.AssignErrorAsync(context, "No pending approval matched the response.").ConfigureAwait(false);
+            }
         }
 
         if (matchingResult is not null)
@@ -223,9 +227,6 @@ internal sealed class InvokeFunctionToolExecutor(
         // Completes the action after processing the function result.
         await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
     }
-
-    private bool IsKnownPendingId(string callId) =>
-        this._pendingNonApprovalCallIds.ContainsKey(callId) || this._approvalSnapshots.ContainsKey(callId);
 
     /// <inheritdoc/>
     public override ValueTask ResetAsync()
