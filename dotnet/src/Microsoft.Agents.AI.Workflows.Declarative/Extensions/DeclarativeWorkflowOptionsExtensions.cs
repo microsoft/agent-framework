@@ -10,5 +10,5 @@ internal static class DeclarativeWorkflowOptionsExtensions
     private const int DefaultMaximumExpressionLength = 10000;
 
     public static RecalcEngine CreateRecalcEngine(this DeclarativeWorkflowOptions? context) =>
-        RecalcEngineFactory.Create(context?.MaximumExpressionLength ?? DefaultMaximumExpressionLength, context?.MaximumCallDepth);
+        RecalcEngineFactory.Create(context?.MaximumExpressionLength ?? DefaultMaximumExpressionLength, context?.MaximumCallDepth, context?.EnableSetFunction ?? false);
 }

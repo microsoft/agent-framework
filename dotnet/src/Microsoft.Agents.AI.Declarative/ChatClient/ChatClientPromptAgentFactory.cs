@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.ObjectModel;
@@ -20,19 +21,65 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
     /// <summary>
     /// Creates a new instance of the <see cref="ChatClientPromptAgentFactory"/> class.
     /// </summary>
-    public ChatClientPromptAgentFactory(IChatClient chatClient, IList<AIFunction>? functions = null, RecalcEngine? engine = null, IConfiguration? configuration = null, ILoggerFactory? loggerFactory = null) : base(engine, configuration)
+    /// <param name="chatClient">The chat client used by created agents.</param>
+    /// <param name="functions">Optional functions exposed as tools to created agents.</param>
+    /// <param name="engine">Optional Power Fx engine used to evaluate declarative expressions.</param>
+    /// <param name="configuration">Optional configuration used to resolve explicitly allowed environment variables referenced by the agent definition.</param>
+    /// <param name="loggerFactory">Optional logger factory used by created agents.</param>
+    public ChatClientPromptAgentFactory(
+        IChatClient chatClient,
+        IList<AIFunction>? functions = null,
+        RecalcEngine? engine = null,
+        IConfiguration? configuration = null,
+        ILoggerFactory? loggerFactory = null)
+        : this(
+            chatClient,
+            functions,
+            new ChatClientPromptAgentFactoryOptions()
+            {
+                Engine = engine,
+                Configuration = configuration,
+                AllowedConfigurationVariables = configuration?.AsEnumerable().Select(static pair => pair.Key),
+                LoggerFactory = loggerFactory,
+            },
+            isValidated: true)
     {
+    }
+
+    /// <summary>
+    /// Creates a new instance of the <see cref="ChatClientPromptAgentFactory"/> class.
+    /// </summary>
+    /// <param name="chatClient">The chat client used by created agents.</param>
+    /// <param name="options">Options used to configure the created agents and declarative expression evaluation.</param>
+    /// <param name="functions">Optional functions exposed as tools to created agents.</param>
+    /// <returns>The configured <see cref="ChatClientPromptAgentFactory"/> instance.</returns>
+    public static ChatClientPromptAgentFactory Create(
+        IChatClient chatClient,
+        ChatClientPromptAgentFactoryOptions options,
+        IList<AIFunction>? functions = null) =>
+        new(chatClient, functions, ValidateOptions(options), isValidated: true);
+
+    private ChatClientPromptAgentFactory(
+        IChatClient chatClient,
+        IList<AIFunction>? functions,
+        ChatClientPromptAgentFactoryOptions options,
+        bool isValidated) :
+        base(options.Engine, options.Configuration, options.AllowedConfigurationVariables, options.MaximumExpressionLength, options.MaximumCallDepth)
+    {
+        _ = isValidated;
         Throw.IfNull(chatClient);
 
         this._chatClient = chatClient;
         this._functions = functions;
-        this._loggerFactory = loggerFactory;
+        this._loggerFactory = options.LoggerFactory;
     }
 
     /// <inheritdoc/>
     public override Task<AIAgent?> TryCreateAsync(GptComponentMetadata promptAgent, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(promptAgent);
+
+        this.InitializeConfigurationVariables(promptAgent);
 
         var options = new ChatClientAgentOptions()
         {
@@ -51,5 +98,44 @@ public sealed class ChatClientPromptAgentFactory : PromptAgentFactory
     private readonly IChatClient _chatClient;
     private readonly IList<AIFunction>? _functions;
     private readonly ILoggerFactory? _loggerFactory;
+
+    private static ChatClientPromptAgentFactoryOptions ValidateOptions(ChatClientPromptAgentFactoryOptions? options) =>
+        Throw.IfNull(options);
     #endregion
+}
+
+/// <summary>
+/// Options for configuring <see cref="ChatClientPromptAgentFactory"/>.
+/// </summary>
+public sealed class ChatClientPromptAgentFactoryOptions
+{
+    /// <summary>
+    /// Gets or sets configuration keys that may be exposed to Power Fx when the agent definition references them through <c>Env</c>.
+    /// </summary>
+    public IEnumerable<string>? AllowedConfigurationVariables { get; init; }
+
+    /// <summary>
+    /// Gets or sets an optional Power Fx engine used to evaluate declarative expressions.
+    /// </summary>
+    public RecalcEngine? Engine { get; init; }
+
+    /// <summary>
+    /// Gets or sets optional configuration used to resolve explicitly allowed environment variables referenced by the agent definition.
+    /// </summary>
+    public IConfiguration? Configuration { get; init; }
+
+    /// <summary>
+    /// Gets or sets an optional logger factory used by created agents.
+    /// </summary>
+    public ILoggerFactory? LoggerFactory { get; init; }
+
+    /// <summary>
+    /// Gets or sets an optional maximum length for Power Fx expressions evaluated by the factory-created engine.
+    /// </summary>
+    public int? MaximumExpressionLength { get; init; }
+
+    /// <summary>
+    /// Gets or sets an optional maximum nested call depth for Power Fx expressions evaluated by the factory-created engine.
+    /// </summary>
+    public int? MaximumCallDepth { get; init; }
 }

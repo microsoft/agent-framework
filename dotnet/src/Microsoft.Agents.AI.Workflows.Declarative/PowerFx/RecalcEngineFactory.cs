@@ -11,7 +11,8 @@ internal static class RecalcEngineFactory
 {
     public static RecalcEngine Create(
         int? maximumExpressionLength = null,
-        int? maximumCallDepth = null)
+        int? maximumCallDepth = null,
+        bool enableSetFunction = false)
     {
         RecalcEngine engine = new(CreateConfig());
 
@@ -37,7 +38,10 @@ internal static class RecalcEngineFactory
                 config.MaxCallDepth = maximumCallDepth.Value;
             }
 
-            config.EnableSetFunction();
+            if (enableSetFunction)
+            {
+                config.EnableSetFunction();
+            }
             config.AddFunction(new AgentMessage());
             config.AddFunction(new UserMessage());
             config.AddFunction(new MessageText.StringInput());

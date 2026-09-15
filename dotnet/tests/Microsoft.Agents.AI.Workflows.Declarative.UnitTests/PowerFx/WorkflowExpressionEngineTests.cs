@@ -124,6 +124,79 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     }
 
     [Fact]
+    public void StringExpressionGetValueForEnvironmentVariableIsSensitive()
+    {
+        // Arrange
+        this.State.Set("SOME_SECRET", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Variable(PropertyPath.Create("Env.SOME_SECRET")),
+            expectedValue: "secret-value",
+            expectedSensitivity: SensitivityLevel.Sensitive);
+    }
+
+    [Fact]
+    public void StringExpressionGetValueForQuotedEnvironmentVariableIsSensitive()
+    {
+        // Arrange
+        this.State.Set("API-KEY", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Expression("Env.'API-KEY'"),
+            expectedValue: "secret-value",
+            expectedSensitivity: SensitivityLevel.Sensitive);
+    }
+
+    [Fact]
+    public void StringExpressionGetValueForComputedDottedAccessIsSensitive()
+    {
+        // Arrange
+        TableValue secretTable = FormulaValue.NewTable(
+            RecordType.Empty().Add("Value", FormulaType.String),
+            new RecordValue[] { FormulaValue.NewRecordFromFields(new NamedValue("Value", FormulaValue.New("secret-value"))) });
+        this.State.Set("SecretTable", secretTable, VariableScopeNames.Local, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Expression("First(Local.SecretTable).Value"),
+            expectedValue: "secret-value",
+            expectedSensitivity: SensitivityLevel.Sensitive);
+    }
+
+    [Fact]
+    public void StringExpressionGetValueForEnvironmentVariableTextLiteralIsNotSensitive()
+    {
+        // Arrange
+        this.State.Set("SOME_SECRET", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        // Act & Assert
+        this.EvaluateExpression(
+            StringExpression.Expression(@"Concatenate(""Env.SOME_SECRET"", "" literal"")"),
+            expectedValue: "Env.SOME_SECRET literal");
+    }
+
+    [Fact]
+    public void BoolExpressionGetValueForSetWhenEnabled()
+    {
+        // Arrange
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create(enableSetFunction: true), allowsSideEffects: true);
+        state.Engine.UpdateVariable("MyVariable", FormulaValue.New("old-value"));
+
+        // Act
+        EvaluationResult<bool> result = state.Evaluator.GetValue(BoolExpression.Expression("""Set(MyVariable, "new-value"); true"""));
+
+        // Assert
+        Assert.True(result.Value);
+        Assert.Equal("new-value", ((StringValue)state.Engine.Eval("MyVariable")).Value);
+    }
+
+    [Fact]
     public void StringExpressionGetValueForFormula() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
