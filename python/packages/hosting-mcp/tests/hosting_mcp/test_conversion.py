@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
+
 from agent_framework import AgentResponse, Content, Message
 from mcp import types
 from pytest import raises
@@ -113,6 +115,11 @@ def test_mcp_from_run_omits_content_not_supported_in_tool_results() -> None:
             "assistant",
             [
                 Content.from_function_call(call_id="call-1", name="get_weather", arguments="{}"),
+                Content.from_function_result(
+                    call_id="call-1",
+                    result="Error: Function failed.",
+                    exception="test-token-value at /srv/private/tool.py",
+                ),
                 Content.from_text("hello"),
             ],
         )
@@ -120,6 +127,9 @@ def test_mcp_from_run_omits_content_not_supported_in_tool_results() -> None:
 
     assert len(blocks) == 1
     assert isinstance(blocks[0], types.TextContent)
+    payload = json.dumps([block.model_dump(mode="json", by_alias=True) for block in blocks])
+
+    assert "test-token-value" not in payload
 
 
 def test_mcp_from_run_omits_user_messages() -> None:

@@ -86,10 +86,8 @@ public sealed class AzureSearchToolAnnotationsHostedAgentTests(
 
     private static CreateResponseOptions CreateRequest()
     {
-        CreateResponseOptions options = new()
-        {
-            StoredOutputEnabled = false,
-        };
+        CreateResponseOptions options = ProjectResponsesTestOptions.Create();
+        options.StoredOutputEnabled = false;
         options.InputItems.Add(ResponseItem.CreateUserMessageItem(
             "What item code do I get with my return? Use Azure AI Search and cite the source."));
         return options;

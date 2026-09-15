@@ -5,13 +5,14 @@
 import asyncio
 import json
 import logging
+import math
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from agent_framework import (
     Agent,
@@ -23,7 +24,7 @@ from agent_framework import (
     Message,
     SessionContext,
 )
-from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareTermination
+from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareFailure, MiddlewareTermination
 from agent_framework._tools import (
     FunctionTool,
     _auto_invoke_function,
@@ -4772,6 +4773,168 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 
 
+class TestSecureMCPToolProxyURLMode:
+    """Tests for origin-scoped headers in the proxy's URL mode."""
+
+    async def test_static_headers_do_not_serialize_tool_calls(self) -> None:
+        from unittest.mock import patch
+
+        from agent_framework._mcp import MCPTool
+        from agent_framework.security import SecureMCPToolProxy
+
+        both_started = asyncio.Event()
+        started = 0
+
+        async def overlapping_call(_tool: MCPTool, tool_name: str, **_kwargs: Any) -> str:
+            nonlocal started
+            started += 1
+            if started == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=1)
+            return tool_name
+
+        proxy = SecureMCPToolProxy(
+            url="https://mcp.example/mcp",
+            headers={"Authorization": "auth-value"},
+        )
+
+        with patch.object(MCPTool, "call_tool", overlapping_call):
+            results = await asyncio.gather(
+                proxy.mcp_tool.call_tool("first"),
+                proxy.mcp_tool.call_tool("second"),
+            )
+
+        assert results == ["first", "second"]
+
+    async def test_headers_are_sent_only_to_the_configured_origin(self) -> None:
+        from unittest.mock import patch
+
+        import httpx
+
+        from agent_framework._mcp import _MCPHeaderScopedClient
+        from agent_framework.security import SecureMCPToolProxy
+
+        configured_headers = {
+            "Authorization": "auth-value",
+            "X-API-Key": "api-value",
+            "Cookie": "session=value",
+            "Proxy-Authorization": "proxy-value",
+            "X-Custom-Credential": "custom-value",
+        }
+        observed: list[tuple[str, str, dict[str, str | None]]] = []
+        connection_methods: list[str] = []
+
+        async def handle(request: httpx.Request) -> httpx.Response:
+            observed.append((
+                request.url.host,
+                request.url.path,
+                {name: request.headers.get(name) for name in configured_headers},
+            ))
+            if request.url.path == "/redirect-start":
+                return httpx.Response(307, headers={"location": "/redirect-same-origin"})
+            if request.url.path == "/redirect-same-origin":
+                return httpx.Response(307, headers={"location": "https://other.example/redirect-final"})
+            if request.url.path == "/redirect-final":
+                return httpx.Response(200)
+            if request.url.path == "/loop-a":
+                return httpx.Response(307, headers={"location": "/loop-b"})
+            if request.url.path == "/loop-b":
+                return httpx.Response(307, headers={"location": "/loop-a"})
+            if request.url.path != "/mcp":
+                return httpx.Response(404)
+            if request.method == "GET":
+                return httpx.Response(405)
+            if request.method == "DELETE":
+                return httpx.Response(200)
+
+            body = json.loads(request.content)
+            method = body.get("method")
+            if isinstance(method, str):
+                connection_methods.append(method)
+            response_headers: dict[str, str] = {}
+            result: dict[str, Any] = {}
+            if method == "initialize":
+                response_headers["mcp-session-id"] = "secure-session"
+                result = {
+                    "protocolVersion": body["params"]["protocolVersion"],
+                    "capabilities": {"tools": {}, "prompts": {}},
+                    "serverInfo": {"name": "secure-test", "version": "1"},
+                }
+            elif method == "tools/list":
+                result = {"tools": []}
+            elif method == "prompts/list":
+                result = {"prompts": []}
+            if "id" not in body:
+                return httpx.Response(202)
+            return httpx.Response(
+                200,
+                headers=response_headers,
+                json={"jsonrpc": "2.0", "id": body["id"], "result": result},
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handle),
+            follow_redirects=True,
+            max_redirects=2,
+        ) as client:
+
+            def create_client(*_args: Any, **kwargs: Any) -> httpx.AsyncClient:
+                client.headers.update(kwargs.get("headers", {}))
+                client.follow_redirects = kwargs.get("follow_redirects", client.follow_redirects)
+                return client
+
+            with patch("httpx.AsyncClient", side_effect=create_client):
+                proxy = SecureMCPToolProxy(
+                    url="https://mcp.example/mcp",
+                    headers=configured_headers,
+                )
+                async with proxy:
+                    tool = proxy.mcp_tool
+                    transport_client = _MCPHeaderScopedClient(client, tool._header_request_owner)
+
+                    response = await transport_client.send(
+                        client.build_request("POST", "https://mcp.example/redirect-start"),
+                        follow_redirects=True,
+                    )
+                    assert response.status_code == 200
+
+                    with pytest.raises(httpx.TooManyRedirects):
+                        await transport_client.send(
+                            client.build_request("POST", "https://mcp.example/loop-a"),
+                            follow_redirects=True,
+                        )
+
+        connection_requests = [headers for host, path, headers in observed if host == "mcp.example" and path == "/mcp"]
+        assert connection_requests
+        assert all(headers == configured_headers for headers in connection_requests)
+        assert {"initialize", "tools/list"}.issubset(connection_methods)
+
+        redirect_requests = [entry for entry in observed if "redirect" in entry[1]]
+        assert redirect_requests == [
+            ("mcp.example", "/redirect-start", configured_headers),
+            ("mcp.example", "/redirect-same-origin", configured_headers),
+            ("other.example", "/redirect-final", dict.fromkeys(configured_headers)),
+        ]
+
+        loop_requests = [entry for entry in observed if entry[1].startswith("/loop-")]
+        assert loop_requests
+        assert all(host == "mcp.example" and headers == configured_headers for host, _, headers in loop_requests)
+
+    @pytest.mark.parametrize("url", ["not-a-url", "ftp://mcp.example/path", "https:///missing-host"])
+    def test_headers_require_an_absolute_http_origin(self, url: str) -> None:
+        from unittest.mock import patch
+
+        from agent_framework.security import SecureMCPToolProxy
+
+        with patch("httpx.AsyncClient") as create_client:
+            proxy = SecureMCPToolProxy(url=url, headers={"X-Custom-Credential": "custom-value"})
+
+            with pytest.raises(ValueError, match="absolute HTTP.*URL with a host"):
+                proxy.mcp_tool.get_mcp_client()
+
+            create_client.assert_not_called()
+
+
 class TestMCPAnnotationMapping:
     """Tests for hint-based mapping from MCP annotations to FIDES labels."""
 
@@ -5724,6 +5887,402 @@ class TestVariableArgumentPolicy:
         assert received == ["payload"]
         assert context.metadata["argument_label"].integrity == IntegrityLabel.UNTRUSTED
         assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
+
+    async def test_hidden_argument_resolution_does_not_require_reapproval(self) -> None:
+        """Security expansion preserves the approval-visible placeholder."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        sink = self._sink(accepts_untrusted=True)
+        function_call = Content.from_function_call(
+            call_id="approved-hidden-value",
+            id="approved-hidden-value-occurrence",
+            name=sink.name,
+            arguments={"value": f"[{variable_id}]"},
+        )
+        approval_response = Content.from_function_approval_request(
+            id="approved-hidden-value-occurrence",
+            function_call=function_call,
+        ).to_function_approval_response(approved=True)
+
+        result = await _auto_invoke_function(
+            approval_response,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={sink.name: sink},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert result.result == "payload"
+
+    async def test_hidden_argument_can_be_normalized_after_security_check(self) -> None:
+        """Final Pydantic coercion is not mistaken for post-policy mutation."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "3",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+
+        class StrictArgs(BaseModel):
+            value: int
+
+        received: list[int] = []
+
+        def strict_sink(value: int) -> str:
+            received.append(value)
+            return str(value)
+
+        strict_tool = FunctionTool(
+            func=strict_sink,
+            name="strict_sink",
+            input_model=StrictArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="hidden-normalization",
+            name=strict_tool.name,
+            arguments={"value": f"[{variable_id}]"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={strict_tool.name: strict_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert result.exception is None
+        assert received == [3]
+
+    @pytest.mark.parametrize("include_detailed_errors", [False, True])
+    async def test_hidden_argument_validation_error_does_not_disclose_resolved_value(
+        self,
+        include_detailed_errors: bool,
+    ) -> None:
+        """Validation failures redact values resolved by security middleware."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "secret payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+
+        class StrictArgs(BaseModel):
+            value: int
+
+        strict_tool = FunctionTool(
+            func=lambda value: str(value),
+            name="strict_sink",
+            input_model=StrictArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="hidden-validation-error",
+            name=strict_tool.name,
+            arguments={"value": f"[{variable_id}]"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration({"include_detailed_errors": include_detailed_errors}),
+            tool_map={strict_tool.name: strict_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert "secret payload" not in str(result.result)
+        assert "secret payload" not in str(result.exception)
+        assert result.exception == "Invalid arguments for 'strict_sink'."
+
+    async def test_hidden_mapping_key_is_not_disclosed_by_validation_error(self) -> None:
+        """Pydantic error locations cannot expose keys from resolved hidden mappings."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            {"secret-key": 1},
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+
+        class StrictArgs(BaseModel):
+            value: dict[int, int]
+
+        strict_tool = FunctionTool(
+            func=lambda value: str(value),
+            name="strict_mapping_sink",
+            input_model=StrictArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="hidden-mapping-key-error",
+            name=strict_tool.name,
+            arguments={"value": f"[{variable_id}]"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration({"include_detailed_errors": True}),
+            tool_map={strict_tool.name: strict_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert "secret-key" not in str(result.result)
+        assert "secret-key" not in str(result.exception)
+        assert result.exception == "Invalid arguments for 'strict_mapping_sink'."
+
+    async def test_hidden_value_is_not_disclosed_by_validator_type_error(self) -> None:
+        """Direct validator TypeErrors use the generic security redaction."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        variable_id = tracker.get_variable_store().store(
+            "secret payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+
+        class StrictArgs(BaseModel):
+            value: str
+
+            @field_validator("value")
+            @classmethod
+            def reject_value(cls, value: str) -> str:
+                raise TypeError(f"rejected: {value}")
+
+        strict_tool = FunctionTool(
+            func=lambda value: value,
+            name="validator_type_error_sink",
+            input_model=StrictArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="hidden-validator-type-error",
+            name=strict_tool.name,
+            arguments={"value": f"[{variable_id}]"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration({"include_detailed_errors": True}),
+            tool_map={strict_tool.name: strict_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert "secret payload" not in str(result.result)
+        assert "secret payload" not in str(result.exception)
+        assert result.exception == "Invalid arguments for 'validator_type_error_sink'."
+
+    @pytest.mark.parametrize(
+        ("inspected_value", "changed_value"),
+        [(True, 1), (-0.0, 0.0)],
+        ids=["boolean-to-integer", "negative-zero-to-positive-zero"],
+    )
+    async def test_argument_mutation_after_security_middleware_fails_closed(
+        self,
+        inspected_value: Any,
+        changed_value: Any,
+    ) -> None:
+        """A later type or float-bit change fails closed after policy inspection."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        sink = self._sink(accepts_untrusted=True)
+
+        class LateRepairMiddleware(FunctionMiddleware):
+            async def process(self, context, call_next):
+                context.arguments = {"value": changed_value}
+                await call_next()
+
+        function_call = Content.from_function_call(
+            call_id="late-repair",
+            name=sink.name,
+            arguments={"value": inspected_value},
+        )
+
+        with pytest.raises(MiddlewareFailure, match="Install argument-repair middleware before security middleware"):
+            await _auto_invoke_function(
+                function_call,
+                config=normalize_function_invocation_configuration(None),
+                tool_map={sink.name: sink},
+                middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy, LateRepairMiddleware()),
+            )
+
+    async def test_security_snapshot_accepts_unchanged_nan(self) -> None:
+        """An unchanged NaN remains stable through security snapshot comparison."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        received: list[float] = []
+
+        class FloatArgs(BaseModel):
+            value: float
+
+        def nan_sink(value: float) -> str:
+            received.append(value)
+            return "nan"
+
+        nan_tool = FunctionTool(
+            func=nan_sink,
+            name="nan_sink",
+            input_model=FloatArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="security-nan",
+            name=nan_tool.name,
+            arguments={"value": "NaN"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={nan_tool.name: nan_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+        assert result.type == "function_result"
+        assert len(received) == 1 and math.isnan(received[0])
+
+    async def test_security_policy_observes_custom_validator_transform_once(self) -> None:
+        """Security middleware inspects the exact normalized value delivered to the tool."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        validation_count = 0
+        observed: list[str] = []
+        received: list[str] = []
+
+        class TransformArgs(BaseModel):
+            value: str
+
+            @field_validator("value")
+            @classmethod
+            def transform_value(cls, value: str) -> str:
+                nonlocal validation_count
+                validation_count += 1
+                return "dangerous-operation" if value == "safe" else value
+
+        class ObserveAfterTrackingMiddleware(FunctionMiddleware):
+            async def process(self, context, call_next):
+                observed.append(cast(dict[str, str], context.arguments)["value"])
+                await call_next()
+
+        def transformed_sink(value: str) -> str:
+            received.append(value)
+            return value
+
+        transformed_tool = FunctionTool(
+            func=transformed_sink,
+            name="transformed_sink",
+            input_model=TransformArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="validator-transform",
+            name=transformed_tool.name,
+            arguments={"value": "safe"},
+        )
+
+        result = await _auto_invoke_function(
+            function_call,
+            config=normalize_function_invocation_configuration(None),
+            tool_map={transformed_tool.name: transformed_tool},
+            middleware_pipeline=FunctionMiddlewarePipeline(
+                tracker,
+                ObserveAfterTrackingMiddleware(),
+                policy,
+            ),
+        )
+
+        assert result.type == "function_result"
+        assert observed == ["dangerous-operation"]
+        assert received == ["dangerous-operation"]
+        assert validation_count == 1
+
+    async def test_security_rejects_opaque_mutable_validator_output(self) -> None:
+        """Security fails closed when normalized arguments cannot be safely snapshotted."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        middleware_called = False
+        tool_called = False
+
+        class MutableValue:
+            def __init__(self) -> None:
+                self.value = "initial"
+
+        class MutableArgs(BaseModel):
+            value: Any
+
+            @field_validator("value")
+            @classmethod
+            def create_mutable_value(cls, value: Any) -> Any:
+                return MutableValue() if value == "mutable" else value
+
+        class MutatingMiddleware(FunctionMiddleware):
+            async def process(self, context, call_next):
+                nonlocal middleware_called
+                middleware_called = True
+                assert isinstance(context.arguments, dict)
+                cast(Any, context.arguments["value"]).value = "changed"
+                await call_next()
+
+        def opaque_security_tool(value: Any) -> str:
+            nonlocal tool_called
+            tool_called = True
+            return value.value
+
+        function = FunctionTool(
+            func=opaque_security_tool,
+            name="opaque_security_tool",
+            input_model=MutableArgs,
+            additional_properties={"accepts_untrusted": True},
+        )
+        function_call = Content.from_function_call(
+            call_id="opaque-security",
+            name=function.name,
+            arguments={"value": "mutable"},
+        )
+
+        with pytest.raises(
+            MiddlewareFailure,
+            match="Cannot safely bind security policy to opaque mutable function arguments",
+        ):
+            await _auto_invoke_function(
+                function_call,
+                config=normalize_function_invocation_configuration(None),
+                tool_map={function.name: function},
+                middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy, MutatingMiddleware()),
+            )
+
+        assert not middleware_called
+        assert not tool_called
+
+    async def test_argument_mutation_after_security_short_circuit_fails_closed(self) -> None:
+        """Post-policy mutation cannot evade the guard by short-circuiting execution."""
+        tracker = LabelTrackingFunctionMiddleware()
+        policy = PolicyEnforcementFunctionMiddleware()
+        sink = self._sink(accepts_untrusted=True)
+
+        class LateShortCircuitMiddleware(FunctionMiddleware):
+            async def process(self, context, call_next):
+                del call_next
+                context.arguments = {"value": "changed after policy"}
+                context.result = "short-circuited"
+
+        function_call = Content.from_function_call(
+            call_id="late-short-circuit",
+            name=sink.name,
+            arguments={"value": "approved value"},
+        )
+
+        with pytest.raises(MiddlewareFailure, match="Install argument-repair middleware before security middleware"):
+            await _auto_invoke_function(
+                function_call,
+                config=normalize_function_invocation_configuration(None),
+                tool_map={sink.name: sink},
+                middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy, LateShortCircuitMiddleware()),
+            )
 
     async def test_private_hidden_argument_is_blocked_from_public_sink(self) -> None:
         tracker = LabelTrackingFunctionMiddleware()
