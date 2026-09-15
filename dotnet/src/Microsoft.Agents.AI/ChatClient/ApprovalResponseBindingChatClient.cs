@@ -155,11 +155,14 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
     }
 
     /// <summary>
-    /// Rewrites the inbound messages so that each <see cref="ToolApprovalResponseContent"/> is bound to a known
-    /// <see cref="ToolApprovalRequestContent"/>, with its tool call rebound to the request's call when it differs.
-    /// A response with no known request is removed so a forged approval cannot drive execution. Approval requests
-    /// are left untouched: a request present in the message history is itself the pairing authority.
+    /// Validates inbound <see cref="ToolApprovalResponseContent"/> against known requests and rebinds matched
+    /// responses to the model-originated tool call. Responses with no known request are dropped.
     /// </summary>
+    /// <remarks>
+    /// Pending session entries are consumed only when a matching approval response is bound in this turn.
+    /// An unrelated user message must not clear pending approvals (#7872); otherwise a restored session can
+    /// lose binding authority while a dangling <see cref="FunctionCallContent"/> remains in history.
+    /// </remarks>
     private IEnumerable<ChatMessage> ValidateInboundApprovalResponses(IEnumerable<ChatMessage> messages, AgentSession session)
     {
         var messageList = messages as IList<ChatMessage> ?? new List<ChatMessage>(messages);
@@ -170,12 +173,11 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
         //  2. Requests already present in the current message history (covers replayed history and approvals
         //     generated internally, such as the mixed server/client tool invocation used by AG-UI hosting).
         // A response is honored only when its request id is known, and it is rebound to the known request's call.
-        var knownRequests = LoadPendingApprovalRequestLookup(session);
-
-        // Pending state only needs to bridge a single turn; consume it now.
-        if (knownRequests.Count > 0)
+        var pendingFromBag = LoadPendingApprovalRequests(session);
+        var knownRequests = new Dictionary<string, ToolApprovalRequestContent>(pendingFromBag.Count, StringComparer.Ordinal);
+        foreach (var request in pendingFromBag)
         {
-            session.StateBag.TryRemoveValue(StateBagKey);
+            knownRequests[request.RequestId] = request;
         }
 
         bool hasResponse = false;
@@ -196,6 +198,7 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
         }
 
         // Only approval responses are rewritten; if there are none there is nothing to bind or drop.
+        // Leave pending session state intact so an unrelated user turn cannot silently abandon approvals.
         if (!hasResponse)
         {
             return messageList;
@@ -234,6 +237,19 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
                 result.Add(cloned);
             }
         }
+
+        // Persist only bag-originated requests that were not answered in this turn. History-only known
+        // requests are not written into the session bag.
+        var remainingPending = new List<ToolApprovalRequestContent>(pendingFromBag.Count);
+        foreach (var request in pendingFromBag)
+        {
+            if (knownRequests.ContainsKey(request.RequestId))
+            {
+                remainingPending.Add(request);
+            }
+        }
+
+        SavePendingApprovalRequests(remainingPending, session);
 
         return result ?? messageList;
     }
@@ -376,18 +392,6 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
         return true;
     }
 
-    private static Dictionary<string, ToolApprovalRequestContent> LoadPendingApprovalRequestLookup(AgentSession session)
-    {
-        var pendingRequests = LoadPendingApprovalRequests(session);
-        var byRequestId = new Dictionary<string, ToolApprovalRequestContent>(pendingRequests.Count, StringComparer.Ordinal);
-        foreach (var request in pendingRequests)
-        {
-            byRequestId[request.RequestId] = request;
-        }
-
-        return byRequestId;
-    }
-
     /// <summary>
     /// Records model-originated <see cref="ToolApprovalRequestContent"/> items found in the response messages into
     /// the session so they can be matched against the caller's approval responses on the next request.
@@ -445,10 +449,10 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
     }
 
     /// <summary>
-    /// Creates a snapshot of an approval request so a later mutation of the caller-visible instance
-    /// (for example changing the tool call arguments) cannot alter the recorded request used for binding.
+    /// Creates a deep snapshot of an approval request for durable storage or public enumeration so callers
+    /// cannot mutate the model-originated binding authority through shared <see cref="FunctionCallContent.Arguments"/>.
     /// </summary>
-    private static ToolApprovalRequestContent SnapshotRequest(ToolApprovalRequestContent request)
+    internal static ToolApprovalRequestContent SnapshotRequest(ToolApprovalRequestContent request)
     {
         if (request.ToolCall is FunctionCallContent functionCall)
         {
