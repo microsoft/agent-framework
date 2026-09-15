@@ -1261,6 +1261,58 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
     }
 
     /// <summary>
+    /// After an approval-required invocation consumes its snapshot, a replayed legacy
+    /// result using the executor id must not overwrite <c>Output.Result</c>.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolPostApprovalLegacyReplayDoesNotOverwriteResultAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string ResultVariable = "Result";
+        const string RegisteredResult = "registered-result";
+        const string ReplayedResult = "replayed-result";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolPostApprovalLegacyReplayDoesNotOverwriteResultAsync),
+            functionName: FunctionName,
+            requireApproval: true,
+            outputResultVariable: ResultVariable);
+
+        int invocationCount = 0;
+        TestFunctionAgentProvider testAgentProvider = new(
+            [AIFunctionFactory.Create(() => { Interlocked.Increment(ref invocationCount); return RegisteredResult; }, name: FunctionName)]);
+        InvokeFunctionToolExecutor action = new(model, testAgentProvider, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        ExternalInputResponse approvalResponse = CreateApprovalResponseFor(emittedRequests, approved: true);
+        FunctionResultContent replayedLegacyResult = new(action.Id, ReplayedResult);
+        ExternalInputResponse replayResponse = new(new ChatMessage(ChatRole.Tool, [replayedLegacyResult]));
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, approvalResponse, CancellationToken.None);
+        await action.CaptureResponseAsync(mockContext.Object, replayResponse, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(1, invocationCount);
+        Assert.Contains(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value == RegisteredResult);
+        Assert.DoesNotContain(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value == ReplayedResult);
+    }
+
+    /// <summary>
     /// A non-approval <c>FunctionResultContent</c> whose CallId equals <c>this.Id</c> is
     /// consumed and assigned to <c>Output.Result</c> when no pendings are tracked.
     /// </summary>

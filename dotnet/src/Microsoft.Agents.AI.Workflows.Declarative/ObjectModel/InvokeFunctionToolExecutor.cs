@@ -124,6 +124,7 @@ internal sealed class InvokeFunctionToolExecutor(
         CancellationToken cancellationToken)
     {
         bool autoSend = this.GetAutoSendValue();
+        bool requireApproval = this.GetRequireApproval();
         string? conversationId = this.GetConversationId();
         HashSet<string> rejectedApprovalResultCallIds = response.Messages
             .SelectMany(m => m.Contents)
@@ -138,10 +139,12 @@ internal sealed class InvokeFunctionToolExecutor(
             .OfType<FunctionResultContent>()
             .FirstOrDefault(r => this._pendingNonApprovalCallIds.ContainsKey(r.CallId));
 
-        // Legacy non-approval backstop: when no pendings are tracked, accept a result
-        // whose CallId equals this.Id. The runtime has already routed the response to
-        // this executor's port and the framework does not invoke a function here.
+        // Legacy non-approval backstop: when no pendings are tracked and approval is
+        // not required, accept a result whose CallId equals this.Id. The runtime has
+        // already routed the response to this executor's port and the framework does
+        // not invoke a function here.
         if (matchingResult is null
+            && !requireApproval
             && this._pendingNonApprovalCallIds.IsEmpty
             && this._approvalSnapshots.IsEmpty)
         {
