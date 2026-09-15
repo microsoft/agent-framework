@@ -2147,10 +2147,8 @@ class RawOpenAIChatClient(
             payload = {
                 "stdout": "" if content.result is None else str(content.result),
             }
-        if content.exception is not None and "stderr" not in payload:
-            payload["stderr"] = str(content.exception)
         if "exit_code" not in payload:
-            payload["exit_code"] = 1 if content.exception else 0
+            payload["exit_code"] = 1 if content.exception is not None else 0
         return json.dumps(payload, ensure_ascii=False)
 
     @staticmethod
@@ -2163,8 +2161,6 @@ class RawOpenAIChatClient(
             payload = {
                 "stdout": "" if content.result is None else str(content.result),
             }
-        if content.exception is not None and "stderr" not in payload:
-            payload["stderr"] = str(content.exception)
 
         # Pass through native payload shape when tool already returns shell output entries.
         direct_output = payload.get("output")
@@ -2179,9 +2175,11 @@ class RawOpenAIChatClient(
         else:
             exit_code_raw = payload.get("exit_code")
             try:
-                exit_code = int(exit_code_raw) if exit_code_raw is not None else (1 if content.exception else 0)
+                exit_code = (
+                    int(exit_code_raw) if exit_code_raw is not None else (1 if content.exception is not None else 0)
+                )
             except (TypeError, ValueError):
-                exit_code = 1 if content.exception else 0
+                exit_code = 1 if content.exception is not None else 0
             outcome = {"type": "exit", "exit_code": exit_code}
         return [
             {

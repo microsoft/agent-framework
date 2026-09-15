@@ -873,6 +873,17 @@ public class OpenTelemetryAgentTests
         Assert.Equal(2, activities.Count(a => string.Equals(a.GetTagItem("gen_ai.operation.name") as string, "chat", StringComparison.Ordinal)));
     }
 
+    [Fact]
+    public void DefaultSourceName_ReturnsDocumentedSourceName()
+    {
+        // Callers pass this to TracerProviderBuilder.AddSource, so it must stay in sync with the source name the
+        // agent emits spans under, which Ctor_NullOrWhitespaceSourceName_AutoWiredChatClientUsesDefaultSource_Async
+        // pins to the same literal. Comparing against the literal here guards a rename of the internal constant.
+
+        // Arrange & Act & Assert
+        Assert.Equal("Experimental.Microsoft.Agents.AI", OpenTelemetryAgent.DefaultSourceName);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

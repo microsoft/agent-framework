@@ -545,6 +545,27 @@ actions:
         assert workflow is not None
         assert workflow.name == "file-workflow"
 
+    def test_load_from_file_reads_utf8(self, tmp_path):
+        """Test loading a workflow file explicitly uses UTF-8."""
+        workflow_file = tmp_path / "UnicodeWorkflow.yaml"
+        workflow_file.write_text(
+            """
+name: unicode-workflow
+actions:
+  - kind: SetValue
+    path: Local.message
+    value: 政务助手 🏛️
+""",
+            encoding="utf-8",
+        )
+
+        factory = WorkflowFactory()
+        with patch("builtins.open", wraps=open) as mock_open:
+            workflow = factory.create_workflow_from_yaml_path(workflow_file)
+
+        mock_open.assert_called_once_with(workflow_file, encoding="utf-8")
+        assert workflow.name == "unicode-workflow"
+
 
 @_requires_powerfx
 class TestDisplayNameMetadata:
