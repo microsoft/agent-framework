@@ -39,12 +39,15 @@ internal sealed class WorkflowFormulaState
 
     public WorkflowExpressionEngine Evaluator { get; }
 
-    public WorkflowFormulaState(RecalcEngine engine)
+    public bool AllowsSideEffects { get; }
+
+    public WorkflowFormulaState(RecalcEngine engine, bool allowsSideEffects = false)
     {
         this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => GetScopeName(scopeName), _ => new WorkflowScope());
         this._initialScopes = this.CreateScopeSnapshot();
 
         this.Engine = engine;
+        this.AllowsSideEffects = allowsSideEffects;
         this.Evaluator = new WorkflowExpressionEngine(this);
         this.Bind();
     }

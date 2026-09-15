@@ -18,10 +18,12 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 internal sealed class WorkflowExpressionEngine
 {
     private readonly WorkflowFormulaState _state;
+    private readonly ParserOptions? _parserOptions;
 
     public WorkflowExpressionEngine(WorkflowFormulaState state)
     {
         this._state = state;
+        this._parserOptions = state.AllowsSideEffects ? new ParserOptions { AllowsSideEffects = true } : null;
     }
 
     public EvaluationResult<bool> GetValue(BoolExpression boolean) => this.Evaluate(boolean);
@@ -325,7 +327,7 @@ internal sealed class WorkflowExpressionEngine
             expression.VariableReference?.ToString() :
             expression.ExpressionText;
 
-        FormulaValue result = this._state.Engine.Eval(expressionText);
+        FormulaValue result = this._state.Engine.Eval(expressionText, options: this._parserOptions);
 
         if (result is ErrorValue errorValue)
         {
@@ -348,7 +350,7 @@ internal sealed class WorkflowExpressionEngine
             return SensitivityLevel.None;
         }
 
-        CheckResult checkResult = this._state.Engine.Check(expressionText);
+        CheckResult checkResult = this._state.Engine.Check(expressionText, options: this._parserOptions);
         checkResult.ThrowOnErrors();
 
         SensitivityLevel sensitivity = SensitivityLevel.None;

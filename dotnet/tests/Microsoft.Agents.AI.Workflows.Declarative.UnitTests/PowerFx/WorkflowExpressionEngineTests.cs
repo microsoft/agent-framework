@@ -182,6 +182,21 @@ public class WorkflowExpressionEngineTests : RecalcEngineTest
     }
 
     [Fact]
+    public void BoolExpressionGetValueForSetWhenEnabled()
+    {
+        // Arrange
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create(enableSetFunction: true), allowsSideEffects: true);
+        state.Engine.UpdateVariable("MyVariable", FormulaValue.New("old-value"));
+
+        // Act
+        EvaluationResult<bool> result = state.Evaluator.GetValue(BoolExpression.Expression("""Set(MyVariable, "new-value"); true"""));
+
+        // Assert
+        Assert.True(result.Value);
+        Assert.Equal("new-value", ((StringValue)state.Engine.Eval("MyVariable")).Value);
+    }
+
+    [Fact]
     public void StringExpressionGetValueForFormula() =>
         // Arrange, Act & Assert
         this.EvaluateExpression(
