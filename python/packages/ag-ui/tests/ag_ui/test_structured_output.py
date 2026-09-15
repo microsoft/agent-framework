@@ -272,7 +272,7 @@ async def test_structured_output_with_json_schema_mapping_emits_text(
     json_payload = '{"name": "Alice", "age": 30}'
     updates = [ChatResponseUpdate(contents=[Content.from_text(text=json_payload)])]
 
-    schema = {
+    schema: dict[str, Any] = {
         "type": "object",
         "properties": {"name": {"type": "string"}, "age": {"type": "integer"}},
         "required": ["name", "age"],
@@ -296,4 +296,3 @@ async def test_structured_output_with_json_schema_mapping_emits_text(
     text_events = [e for e in events if e.type == "TEXT_MESSAGE_CONTENT"]
     assert len(text_events) > 0
     assert text_events[0].delta == json_payload
-
