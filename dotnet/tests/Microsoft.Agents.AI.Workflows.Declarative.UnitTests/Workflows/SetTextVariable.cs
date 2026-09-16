@@ -55,12 +55,12 @@ public static class WorkflowProvider
     {
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            string textValue =
-                await context.FormatTemplateAsync(
+            var textValue =
+                await context.FormatTemplateWithSensitivityAsync(
                     """
                     Test content
                     """);
-            await context.QueueStateUpdateAsync(key: "TestVar", value: textValue, scopeName: "Local").ConfigureAwait(false);
+            await context.QueueStateUpdateWithSensitivityAsync(key: "TestVar", value: textValue, scopeName: "Local").ConfigureAwait(false);
     
             return default;
         }

@@ -119,8 +119,8 @@ public static class WorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("Local.Count + 1").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "Count", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+            var evaluatedValue = await context.EvaluateValueWithSensitivityAsync<object>("Local.Count + 1").ConfigureAwait(false);
+            await context.QueueStateUpdateWithSensitivityAsync(key: "Count", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
     
             return default;
         }

@@ -37,6 +37,27 @@ public static class IWorkflowContextExtensions
         context.FormatTemplateAsync([line], cancellationToken);
 
     /// <summary>
+    /// Formats a template line using the workflow's declarative state
+    /// and evaluating any embedded expressions (e.g., Power Fx) contained within the line.
+    /// </summary>
+    /// <param name="context">The workflow execution context used to restore persisted state prior to formatting.</param>
+    /// <param name="line">The template line to format.</param>
+    /// <returns>The formatted line and its sensitivity metadata.</returns>
+    public static ValueTask<EvaluationResult<string>> FormatTemplateWithSensitivityAsync(this IWorkflowContext context, string line) =>
+        context.FormatTemplateWithSensitivityAsync(line, default);
+
+    /// <summary>
+    /// Formats a template line using the workflow's declarative state
+    /// and evaluating any embedded expressions (e.g., Power Fx) contained within the line.
+    /// </summary>
+    /// <param name="context">The workflow execution context used to restore persisted state prior to formatting.</param>
+    /// <param name="line">The template line to format.</param>
+    /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
+    /// <returns>The formatted line and its sensitivity metadata.</returns>
+    public static ValueTask<EvaluationResult<string>> FormatTemplateWithSensitivityAsync(this IWorkflowContext context, string line, CancellationToken cancellationToken) =>
+        context.FormatTemplateWithSensitivityAsync([line], cancellationToken);
+
+    /// <summary>
     /// Formats a template lines using the workflow's declarative state
     /// and evaluating any embedded expressions (e.g., Power Fx) contained within each line.
     /// </summary>
@@ -53,17 +74,43 @@ public static class IWorkflowContextExtensions
     /// </example>
     public static async ValueTask<string> FormatTemplateAsync(this IWorkflowContext context, IEnumerable<string> lines, CancellationToken cancellationToken = default)
     {
+        EvaluationResult<string> result = await context.FormatTemplateWithSensitivityAsync(lines, cancellationToken).ConfigureAwait(false);
+        ThrowIfSensitive(result.Sensitivity);
+        return result.Value;
+    }
+
+    /// <summary>
+    /// Formats a template lines using the workflow's declarative state
+    /// and evaluating any embedded expressions (e.g., Power Fx) contained within each line.
+    /// </summary>
+    /// <param name="context">The workflow execution context used to restore persisted state prior to formatting.</param>
+    /// <param name="lines">The template lines to format.</param>
+    /// <returns>The formatted lines and their sensitivity metadata.</returns>
+    public static ValueTask<EvaluationResult<string>> FormatTemplateWithSensitivityAsync(this IWorkflowContext context, IEnumerable<string> lines) =>
+        context.FormatTemplateWithSensitivityAsync(lines, default);
+
+    /// <summary>
+    /// Formats a template lines using the workflow's declarative state
+    /// and evaluating any embedded expressions (e.g., Power Fx) contained within each line.
+    /// </summary>
+    /// <param name="context">The workflow execution context used to restore persisted state prior to formatting.</param>
+    /// <param name="lines">The template lines to format.</param>
+    /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
+    /// <returns>The formatted lines and their sensitivity metadata.</returns>
+    public static async ValueTask<EvaluationResult<string>> FormatTemplateWithSensitivityAsync(this IWorkflowContext context, IEnumerable<string> lines, CancellationToken cancellationToken)
+    {
         WorkflowFormulaState state = await context.GetStateAsync(cancellationToken).ConfigureAwait(false);
 
         StringBuilder builder = new();
+        SensitivityLevel sensitivity = SensitivityLevel.None;
         foreach (string line in lines)
         {
             EvaluationResult<string> result = state.Evaluator.Format(TemplateLine.Parse(line));
-            ThrowIfSensitive(result.Sensitivity);
+            sensitivity = MaxSensitivity(sensitivity, result.Sensitivity);
             builder.AppendLine(result.Value);
         }
 
-        return builder.ToString();
+        return new(builder.ToString(), sensitivity);
     }
 
     /// <summary>
@@ -85,12 +132,26 @@ public static class IWorkflowContextExtensions
     /// <returns>The evaluated expression value</returns>
     public static async ValueTask<TValue?> EvaluateValueAsync<TValue>(this IWorkflowContext context, string expression, CancellationToken cancellationToken = default)
     {
+        EvaluationResult<TValue?> result = await context.EvaluateValueWithSensitivityAsync<TValue>(expression, cancellationToken).ConfigureAwait(false);
+        ThrowIfSensitive(result.Sensitivity);
+        return result.Value;
+    }
+
+    /// <summary>
+    /// Evaluate an expression using the workflow's declarative state.
+    /// </summary>
+    /// <typeparam name="TValue">The type of the evaluated value.</typeparam>
+    /// <param name="context">The workflow execution context used to restore persisted state prior to formatting.</param>
+    /// <param name="expression">The expression to evaluate.</param>
+    /// <param name="cancellationToken">A token that propagates notification when operation should be canceled.</param>
+    /// <returns>The evaluated expression value and its sensitivity metadata.</returns>
+    public static async ValueTask<EvaluationResult<TValue?>> EvaluateValueWithSensitivityAsync<TValue>(this IWorkflowContext context, string expression, CancellationToken cancellationToken = default)
+    {
         WorkflowFormulaState state = await context.GetStateAsync(cancellationToken).ConfigureAwait(false);
 
         EvaluationResult<DataValue> result = state.Evaluator.GetValue(ValueExpression.Expression(expression));
-        ThrowIfSensitive(result.Sensitivity);
 
-        return (TValue?)result.Value.ToObject();
+        return new((TValue?)result.Value.ToObject(), result.Sensitivity);
     }
 
     /// <summary>
@@ -239,6 +300,9 @@ public static class IWorkflowContextExtensions
             throw new DeclarativeActionException("Cannot return sensitive workflow expression value.");
         }
     }
+
+    private static SensitivityLevel MaxSensitivity(SensitivityLevel left, SensitivityLevel right) =>
+        left == SensitivityLevel.Sensitive || right == SensitivityLevel.Sensitive ? SensitivityLevel.Sensitive : SensitivityLevel.None;
 
     private static bool ShouldPersistSensitivity(string scopeName) =>
         DeclarativeWorkflowContext.ManagedScopes.Contains(scopeName) ||

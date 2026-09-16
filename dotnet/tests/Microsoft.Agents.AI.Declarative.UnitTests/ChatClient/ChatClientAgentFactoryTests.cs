@@ -181,6 +181,52 @@ public sealed class ChatClientAgentFactoryTests
     }
 
     [Fact]
+    public async Task ProtectedConstructor_WithLegacyConfiguration_LoadsReferencedConfigurationAsync()
+    {
+        // Arrange
+        IConfiguration configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Temperature"] = "0.9",
+                ["TopP"] = "0.8",
+                ["SOME_SECRET"] = "secret-value",
+            })
+            .Build();
+        GptComponentMetadata promptAgent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithVariableReferences);
+        LegacyInspectingPromptAgentFactory factory = new(configuration);
+
+        // Act
+        await factory.TryCreateAsync(promptAgent);
+
+        // Assert
+        StringValue temperature = Assert.IsType<StringValue>(factory.Evaluate("Temperature"));
+        Assert.Equal("0.9", temperature.Value);
+        StringValue topP = Assert.IsType<StringValue>(factory.Evaluate("TopP"));
+        Assert.Equal("0.8", topP.Value);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithLegacyConfiguration_InitializesVariablesBeforeTryCreateAsync()
+    {
+        // Arrange
+        IConfiguration configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Temperature"] = "0.9",
+            })
+            .Build();
+        GptComponentMetadata promptAgent = AgentBotElementYaml.FromYaml(PromptAgents.AgentWithVariableReferences);
+        CreateAsyncInspectingPromptAgentFactory factory = new(configuration, this._mockChatClient.Object);
+
+        // Act
+        AIAgent agent = await factory.CreateAsync(promptAgent);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("0.9", factory.TemperatureValue);
+    }
+
+    [Fact]
     public async Task TryCreateAsync_OnlyLoadsAllowedReferencedConfigurationAsync()
     {
         // Arrange
@@ -209,6 +255,39 @@ public sealed class ChatClientAgentFactoryTests
         public FormulaValue Evaluate(string expression) => this.Engine.Eval(expression);
 
         public bool CanEvaluate(string expression) => this.Engine.Check(expression).IsSuccess;
+
+        public override Task<AIAgent?> TryCreateAsync(GptComponentMetadata promptAgent, CancellationToken cancellationToken = default)
+        {
+            // Arrange
+            this.InitializeConfigurationVariables(promptAgent);
+
+            // Act & Assert
+            return Task.FromResult<AIAgent?>(null);
+        }
+    }
+
+    private sealed class CreateAsyncInspectingPromptAgentFactory(IConfiguration configuration, IChatClient chatClient)
+        : PromptAgentFactory(engine: null, configuration: configuration)
+    {
+        public string? TemperatureValue { get; private set; }
+
+        public override Task<AIAgent?> TryCreateAsync(GptComponentMetadata promptAgent, CancellationToken cancellationToken = default)
+        {
+            // Arrange
+            StringValue temperature = Assert.IsType<StringValue>(this.Engine.Eval("Temperature"));
+
+            // Act
+            this.TemperatureValue = temperature.Value;
+
+            // Assert
+            return Task.FromResult<AIAgent?>(new ChatClientAgent(chatClient));
+        }
+    }
+
+    private sealed class LegacyInspectingPromptAgentFactory(IConfiguration configuration)
+        : PromptAgentFactory(engine: null, configuration: configuration)
+    {
+        public FormulaValue Evaluate(string expression) => this.Engine.Eval(expression);
 
         public override Task<AIAgent?> TryCreateAsync(GptComponentMetadata promptAgent, CancellationToken cancellationToken = default)
         {

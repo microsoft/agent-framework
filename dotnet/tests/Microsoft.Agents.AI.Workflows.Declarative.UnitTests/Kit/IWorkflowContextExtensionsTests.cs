@@ -32,6 +32,57 @@ public sealed class IWorkflowContextExtensionsTests
     }
 
     [Fact]
+    public async Task FormatTemplateWithSensitivityAsync_WithSensitiveValue_ReturnsSensitivityAsync()
+    {
+        // Arrange
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        state.Set("SOME_SECRET", FormulaValue.New("secret-value"), VariableScopeNames.Environment, SensitivityLevel.Sensitive);
+        state.Bind();
+        DeclarativeWorkflowContext context = new(new Mock<IWorkflowContext>().Object, state);
+
+        // Act
+        EvaluationResult<string> result = await context.FormatTemplateWithSensitivityAsync("={Env.SOME_SECRET}");
+
+        // Assert
+        Assert.Equal("=secret-value" + System.Environment.NewLine, result.Value);
+        Assert.Equal(SensitivityLevel.Sensitive, result.Sensitivity);
+    }
+
+    [Fact]
+    public async Task EvaluateValueAsync_WithSensitiveValue_ThrowsAsync()
+    {
+        // Arrange
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        state.Set(SystemScope.Names.LastMessageText, FormulaValue.New("secret-value"), VariableScopeNames.System, SensitivityLevel.Sensitive);
+        state.Bind();
+        DeclarativeWorkflowContext context = new(new Mock<IWorkflowContext>().Object, state);
+
+        // Act
+        ValueTask<object?> EvaluateAsync() => context.EvaluateValueAsync<object>("System.LastMessageText");
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(async () => await EvaluateAsync());
+        Assert.Contains("Cannot return sensitive workflow expression value", exception.Message);
+    }
+
+    [Fact]
+    public async Task EvaluateValueWithSensitivityAsync_WithSensitiveValue_ReturnsSensitivityAsync()
+    {
+        // Arrange
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        state.Set(SystemScope.Names.LastMessageText, FormulaValue.New("secret-value"), VariableScopeNames.System, SensitivityLevel.Sensitive);
+        state.Bind();
+        DeclarativeWorkflowContext context = new(new Mock<IWorkflowContext>().Object, state);
+
+        // Act
+        EvaluationResult<object?> result = await context.EvaluateValueWithSensitivityAsync<object>("System.LastMessageText");
+
+        // Assert
+        Assert.Equal("secret-value", result.Value);
+        Assert.Equal(SensitivityLevel.Sensitive, result.Sensitivity);
+    }
+
+    [Fact]
     public async Task QueueStateUpdateAsync_WithSensitivity_RebindsStateAsync()
     {
         // Arrange

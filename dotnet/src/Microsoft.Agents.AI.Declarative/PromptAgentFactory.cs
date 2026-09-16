@@ -29,7 +29,7 @@ public abstract class PromptAgentFactory
     /// <param name="engine">Optional <see cref="RecalcEngine"/>, if none is provided a default instance will be created.</param>
     /// <param name="configuration">Optional configuration used to resolve explicitly allowed environment variables referenced by the agent definition.</param>
     protected PromptAgentFactory(RecalcEngine? engine = null, IConfiguration? configuration = null)
-        : this(engine, configuration, allowedConfigurationVariables: null)
+        : this(engine, configuration, allowedConfigurationVariables: configuration?.AsEnumerable().Select(static pair => pair.Key))
     {
     }
 
@@ -105,6 +105,7 @@ public abstract class PromptAgentFactory
     {
         Throw.IfNull(promptAgent);
 
+        this.InitializeConfigurationVariables(promptAgent);
         var agent = await this.TryCreateAsync(promptAgent, cancellationToken).ConfigureAwait(false) ?? throw new NotSupportedException($"Agent type {promptAgent.Kind} is not supported.");
         Declarative.FeatureUsageMarker.MarkUsed();
         return agent;
