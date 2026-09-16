@@ -19,7 +19,12 @@ from .._sessions import ContextProvider
 from .._tools import ToolTypes, normalize_tools
 from .._types import Content, ResponseStream
 from ..exceptions import WorkflowException
-from ..observability import OtelAttr, capture_exception, create_workflow_span
+from ..observability import (
+    OtelAttr,
+    _activate_span,  # pyright: ignore[reportPrivateUsage]
+    capture_exception,
+    start_workflow_span,
+)
 from ._checkpoint import CheckpointStorage
 from ._const import (
     DEFAULT_MAX_ITERATIONS,
@@ -551,10 +556,8 @@ class Workflow(DictConvertible):
         if self.description:
             attributes[OtelAttr.WORKFLOW_DESCRIPTION] = self.description
 
-        with create_workflow_span(
-            OtelAttr.WORKFLOW_RUN_SPAN,
-            attributes,
-        ) as span:
+        span = start_workflow_span(OtelAttr.WORKFLOW_RUN_SPAN, attributes)
+        try:
             emitted_in_progress_pending = False
             try:
                 # Add workflow started event (telemetry + surface state to consumers)
@@ -620,10 +623,17 @@ class Workflow(DictConvertible):
 
                 # Execute initial setup if provided
                 if initial_executor_fn:
-                    await initial_executor_fn()
+                    with _activate_span(span):
+                        await initial_executor_fn()
 
-                # All executor executions happen within workflow span
-                async for event in self._runner.run_until_convergence():
+                # Activate the workflow span for each runner pull, then detach before yielding to callers.
+                runner_events = self._runner.run_until_convergence()
+                while True:
+                    with _activate_span(span):
+                        try:
+                            event = await anext(runner_events)
+                        except StopAsyncIteration:
+                            break
                     yield event
 
                     if event.type == "request_info" and not emitted_in_progress_pending:
@@ -671,6 +681,8 @@ class Workflow(DictConvertible):
                 )
                 capture_exception(span, exception=exc)
                 raise
+        finally:
+            span.end()
 
     async def _execute_with_message_or_checkpoint(
         self,
