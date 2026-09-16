@@ -103,10 +103,6 @@ You can specify a fixed host port for the DevUI web interface:
 builder.AddDevUI("devui", port: 8090);
 ```
 
-### DevUI frontend assembly
-
-To serve the DevUI frontend directly from the aggregator (instead of proxying from a backend), add the `Microsoft.Agents.AI.DevUI` NuGet package to your AppHost project. The aggregator loads its embedded resources at runtime via `Assembly.Load`.
-
 ## Additional documentation
 
 * https://github.com/microsoft/agent-framework

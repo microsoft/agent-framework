@@ -458,25 +458,28 @@ public class DevUIAggregatorHostedServiceTests
     }
 
     [Fact]
-    public async Task ProxyRequest_DevUIRoute_ForwardsToConfiguredBackendAsync()
+    public async Task ProxyRequest_DevUIRoute_ServesEmbeddedFrontend()
     {
         // Arrange
         await using var proxy = await ProxyTestContext.StartAsync();
 
         // Act
-        var response = await proxy.SendAsync("/devui/index.html?v=1");
+        var response = await proxy.SendAsync("/devui/index.html");
 
         // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var forwarded = Assert.Single(proxy.BackendRequests);
-        Assert.Equal("/devui/index.html", forwarded.Path);
-        Assert.Equal("?v=1", forwarded.QueryString);
+
+        // It shouldn't forward to the backend if the assembly is present and embedded resources are loaded.
+        Assert.Empty(proxy.BackendRequests);
+
+        var content = await response.Content.ReadAsStringAsync();
+        Assert.Contains("<!doctype html>", content, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
-    [InlineData("/v1/conversations/../conversations")]
-    [InlineData("/devui/../devui/index.html")]
-    public async Task ProxyRequest_NormalizedPath_ForwardsToConfiguredBackendAsync(string requestPath)
+    [InlineData("/v1/conversations/../conversations", true)]
+    [InlineData("/devui/../devui/index.html", false)]
+    public async Task ProxyRequest_NormalizedPath_ForwardsToConfiguredBackendAsync(string requestPath, bool expectsForward)
     {
         // Arrange
         await using var proxy = await ProxyTestContext.StartAsync();
@@ -486,7 +489,14 @@ public class DevUIAggregatorHostedServiceTests
 
         // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Single(proxy.BackendRequests);
+        if (expectsForward)
+        {
+            Assert.Single(proxy.BackendRequests);
+        }
+        else
+        {
+            Assert.Empty(proxy.BackendRequests);
+        }
     }
 
     #region Proxy Test Helpers
