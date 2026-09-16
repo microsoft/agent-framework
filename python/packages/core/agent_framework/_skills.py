@@ -64,6 +64,9 @@ from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
 from typing import IO, TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
 
+import yaml
+from yaml.nodes import MappingNode, Node, ScalarNode
+
 from ._feature_stage import ExperimentalFeature, experimental
 from ._filesystem import _is_link_or_reparse_point  # pyright: ignore[reportPrivateUsage]
 from ._sessions import ContextProvider
@@ -702,8 +705,8 @@ class SkillFrontmatter:
         allowed_tools: Optional space-delimited pre-approved tool names.
         metadata: Optional arbitrary key-value pairs (shallow-copied on
             construction to avoid caller-owned dict aliasing). Keys are case-sensitive.
-            When parsed from a SKILL.md file, exact duplicate keys retain the first
-            value and produce warnings without rejecting the skill.
+            When parsed from a SKILL.md file, invalid entries are skipped with warnings,
+            and exact duplicate keys retain the first valid value with warnings.
     """
 
     def __init__(
@@ -1751,19 +1754,8 @@ DEFAULT_SEARCH_DEPTH: Final[int] = 2
 # Matches YAML frontmatter delimited by "---" lines.
 # The \uFEFF? prefix allows an optional UTF-8 BOM.
 FRONTMATTER_RE = re.compile(
-    r"\A\uFEFF?---\s*$(.+?)^---\s*$",
+    r"\A\uFEFF?---[ \t]*\r?\n(.*?)^---[ \t]*\r?$",
     re.MULTILINE | re.DOTALL,
-)
-
-# Matches top-level YAML "key: value" lines (unindented). Group 1 = key (including quotes),
-# Group 2 = quoted value, Group 3 = unquoted value (possibly empty for
-# keys such as "metadata:"). A value may start on a later indented line, but
-# cannot consume another top-level field. Retain trailing whitespace matching
-# so block-scalar parsing handles leading blank lines as before.
-YAML_KV_RE = re.compile(
-    r"^([\w-]+|\"[\w-]+\"|'[\w-]+')[ \t]*:[ \t]*(?:\r?\n(?:[ \t]*\r?\n)*[ \t]+)?"
-    r"(?:[\"']([^\r\n]+?)[\"']|([^\r\n]*?))\s*$",
-    re.MULTILINE,
 )
 
 FRONTMATTER_FIELD_NAMES = {
@@ -1775,112 +1767,16 @@ FRONTMATTER_FIELD_NAMES = {
     "allowed-tools": "allowed-tools",
 }
 
-# Matches a YAML metadata block, allowing quotes around the root key.
-YAML_METADATA_BLOCK_RE = re.compile(
-    r"^(?:metadata|\"metadata\"|'metadata')\s*:\s*$\n((?:[ \t]+\S.*\n?)+)",
-    re.MULTILINE,
-)
-
-# Matches indented "key: value" lines within a metadata block.
-YAML_INDENTED_KV_RE = re.compile(
-    r"^\s+([\w-]+)\s*:\s*(?:[\"'](.+?)[\"']|(.+?))\s*$",
-    re.MULTILINE,
-)
+_YAML_TEXT_SCALAR_TAGS = frozenset(f"tag:yaml.org,2002:{kind}" for kind in ("str", "bool", "int", "float", "timestamp"))
 
 # Validates skill names: lowercase letters, numbers, hyphens only;
 # must not start or end with a hyphen, and must not contain consecutive hyphens.
 VALID_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9]*-[a-z0-9])*[a-z0-9]*$")
 
-# Block scalar indicator characters recognised by the lightweight YAML parser.
-_BLOCK_SCALAR_INDICATORS = ("|", ">")
 
-
-def _parse_yaml_scalar_value(yaml_content: str, kv_match: re.Match[str]) -> str:
-    """Resolve an unquoted YAML scalar value.
-
-    If the captured value starts with a YAML block scalar indicator (``|`` or
-    ``>``), the function reads subsequent indented continuation lines, strips
-    the common leading indentation, and joins them according to the scalar
-    style (literal preserves newlines, folded replaces them with spaces).
-
-    Chomping indicators are respected per YAML 1.2 §8.1.1.2:
-
-    * ``-`` (strip) — final line break and trailing empty lines excluded
-    * ``+`` (keep) — final line break and any trailing empty lines preserved
-    * default (clip) — final line break preserved, trailing empty lines excluded
-
-    For plain (non-block-scalar) values the captured text is returned as-is.
-    Note: explicit indentation indicators (e.g. ``|2``) are not supported;
-    indentation is auto-detected from the common leading whitespace.
-    """
-    value: str = kv_match.group(3)
-
-    if not value or value[0] not in _BLOCK_SCALAR_INDICATORS:
-        return value
-
-    scalar_style = value[0]
-    keep_trailing_newline = len(value) > 1 and value[1] == "+"
-    strip_trailing_newline = len(value) > 1 and value[1] == "-"
-
-    # Find the start of the next line after this key-value match.
-    next_line_start = yaml_content.find("\n", kv_match.end())
-    if next_line_start < 0:
-        return value
-    next_line_start += 1  # skip the newline character itself
-
-    # Collect indented continuation lines (or blank lines within the block).
-    block_lines: list[str] = []
-    pos = next_line_start
-    while pos < len(yaml_content):
-        line_end = yaml_content.find("\n", pos)
-        if line_end < 0:
-            line = yaml_content[pos:]
-            line_end = len(yaml_content)
-        else:
-            line = yaml_content[pos:line_end]
-
-        if not line or line.isspace():
-            # Blank / whitespace-only lines are part of the block.
-            block_lines.append("")
-            pos = line_end + 1 if line_end < len(yaml_content) else line_end
-            continue
-
-        if line[0] not in (" ", "\t"):
-            # Non-indented, non-blank line — end of the block.
-            break
-
-        block_lines.append(line)
-        pos = line_end + 1 if line_end < len(yaml_content) else line_end
-
-    # Strip trailing blank lines collected from the block.
-    while block_lines and block_lines[-1] == "":
-        block_lines.pop()
-
-    if not block_lines:
-        return ""
-
-    # Determine the common leading indentation across non-empty lines.
-    # Only space/tab characters count as indentation (matches YAML semantics).
-    def _indent_width(s: str) -> int:
-        i = 0
-        while i < len(s) and s[i] in (" ", "\t"):
-            i += 1
-        return i
-
-    common_indent = min(_indent_width(line) for line in block_lines if line)
-    normalized = [line[common_indent:] if line else "" for line in block_lines]
-
-    # Literal preserves newlines; folded joins non-empty lines with spaces.
-    parsed = "\n".join(normalized) if scalar_style == "|" else " ".join(line for line in normalized if line)
-
-    if keep_trailing_newline:
-        return parsed + "\n"
-    if strip_trailing_newline:
-        return parsed
-    # Clip (default): literal gets a trailing newline, folded does not.
-    if scalar_style == "|":
-        return parsed + "\n"
-    return parsed
+def _contains_surrogate_code_points(value: str) -> bool:
+    """Detect surrogate escapes that PyYAML accepts but UTF-8 cannot encode."""
+    return any("\ud800" <= char <= "\udfff" for char in value)
 
 
 # Default system prompt template for advertising available skills to the model.
@@ -3614,6 +3510,58 @@ class FileSkillsSource(SkillsSource):
         return None
 
     @staticmethod
+    def _extract_frontmatter_metadata(node: Node | None, skill_file_path: str) -> dict[str, str] | None:
+        """Read optional metadata without rejecting a skill for invalid entries."""
+        # Missing metadata, an empty declaration, or an explicit YAML null leaves metadata unset.
+        if node is None or (isinstance(node, ScalarNode) and node.tag == "tag:yaml.org,2002:null"):
+            return None
+
+        # Metadata must be a standard YAML mapping; otherwise warn and ignore it without rejecting the skill.
+        if not isinstance(node, MappingNode) or node.tag != "tag:yaml.org,2002:map":
+            logger.warning("SKILL.md at '%s' has invalid metadata; expected a mapping", skill_file_path)
+            return None
+
+        metadata: dict[str, str] = {}
+
+        for key_node, value_node in node.value:
+            # Accept scalar keys as text, but reject collections, nulls, and unsupported YAML types.
+            if (
+                not isinstance(key_node, ScalarNode)
+                or key_node.tag not in _YAML_TEXT_SCALAR_TAGS
+                or _contains_surrogate_code_points(key_node.value)
+            ):
+                logger.warning("SKILL.md at '%s' has an invalid metadata key; skipping entry", skill_file_path)
+                continue
+
+            key = key_node.value
+            # Keep the first valid value for each exact, case-sensitive key; warn about later duplicates.
+            if key in metadata:
+                logger.warning(
+                    "SKILL.md at '%s' contains duplicate metadata key '%s'; keeping the first value",
+                    skill_file_path,
+                    key,
+                )
+                continue
+
+            # The Agent Skills spec requires string-to-string metadata, not arrays or nested mappings.
+            # Keep supported scalars as text; warn and skip invalid values rather than rejecting the skill.
+            if (
+                not isinstance(value_node, ScalarNode)
+                or value_node.tag not in _YAML_TEXT_SCALAR_TAGS
+                or _contains_surrogate_code_points(value_node.value)
+            ):
+                logger.warning(
+                    "SKILL.md at '%s' has an invalid metadata value for '%s'; expected a text scalar; skipping entry",
+                    skill_file_path,
+                    key,
+                )
+                continue
+
+            metadata[key] = value_node.value
+
+        return metadata
+
+    @staticmethod
     def _extract_frontmatter(
         content: str,
         skill_file_path: str,
@@ -3624,9 +3572,12 @@ class FileSkillsSource(SkillsSource):
         `agentskills.io specification <https://agentskills.io/specification>`_
         fields: ``name``, ``description``, ``license``, ``compatibility``,
         ``allowed-tools``, and ``metadata``. Recognized top-level fields must
-        use lowercase names (optionally quoted) and must not be repeated. Within the optional
-        metadata mapping, keys are case-sensitive; exact duplicates retain
-        the first value and produce warnings without rejecting the skill.
+        use lowercase names and must not be repeated, including equivalent quoted
+        or escaped spellings. YAML scalars are retained as text; null root values
+        remain unset. Within the optional metadata mapping, keys are case-sensitive;
+        exact duplicates retain the first valid value and produce warnings.
+        Invalid metadata entries are skipped with warnings. Invalid YAML syntax
+        or invalid recognized root fields reject the skill.
 
         Args:
             content: Raw text content of the SKILL.md file.
@@ -3641,23 +3592,40 @@ class FileSkillsSource(SkillsSource):
             logger.error("SKILL.md at '%s' does not contain valid YAML frontmatter delimited by '---'", skill_file_path)
             return None
 
-        yaml_content = match.group(1).strip()
-        name: str | None = None
-        description: str | None = None
-        license_value: str | None = None
-        compatibility: str | None = None
-        allowed_tools: str | None = None
+        try:
+            # compose() keeps duplicate keys, unlike safe_load(), which silently keeps only the last value.
+            # The Pyright ignores are needed because PyYAML's type definitions do not fully describe compose().
+            root = yaml.compose(match.group(1), Loader=yaml.SafeLoader)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        except (yaml.YAMLError, RecursionError, ValueError, OverflowError) as exc:
+            # PyYAML raises ValueError or OverflowError for Unicode escapes outside the valid code-point range.
+            logger.error("SKILL.md at '%s' contains invalid YAML frontmatter: %s", skill_file_path, exc)
+            return None
 
-        # Recognized fields use exact lowercase names, with optional quotes. Reject casing variants and
-        # duplicates rather than silently changing which value the skill exposes.
+        if not isinstance(root, MappingNode) or root.tag != "tag:yaml.org,2002:map":
+            logger.error("SKILL.md at '%s' must contain a YAML frontmatter mapping", skill_file_path)
+            return None
+
+        fields: dict[str, str] = {}
+        metadata_node: Node | None = None
         seen_fields: set[str] = set()
-        for kv_match in YAML_KV_RE.finditer(yaml_content):
-            key = kv_match.group(1)
-            key = key[1:-1] if key[0] in "\"'" else key
+
+        for key_node, value_node in root.value:
+            # Accept scalar keys as text, but reject collections, nulls, and unsupported YAML types.
+            if (
+                not isinstance(key_node, ScalarNode)
+                or key_node.tag not in _YAML_TEXT_SCALAR_TAGS
+                or _contains_surrogate_code_points(key_node.value)
+            ):
+                logger.error("SKILL.md at '%s' has an invalid frontmatter property name", skill_file_path)
+                return None
+
+            key = key_node.value
             canonical_key = FRONTMATTER_FIELD_NAMES.get(key.lower())
+
             # Unknown fields are intentionally excluded from this validation for forward compatibility.
             if canonical_key is None:
                 continue
+
             if key != canonical_key:
                 logger.error(
                     "SKILL.md at '%s' uses incorrectly cased frontmatter field '%s'; expected '%s'",
@@ -3666,48 +3634,39 @@ class FileSkillsSource(SkillsSource):
                     canonical_key,
                 )
                 return None
+
             if key in seen_fields:
                 logger.error("SKILL.md at '%s' contains duplicate frontmatter field '%s'", skill_file_path, key)
                 return None
+
             seen_fields.add(key)
 
-            # Empty declarations participate in key validation, but leave optional scalar fields unset.
-            if kv_match.group(2) is None and not kv_match.group(3):
+            if key == "metadata":
+                metadata_node = value_node
                 continue
 
-            value = (
-                kv_match.group(2) if kv_match.group(2) is not None else _parse_yaml_scalar_value(yaml_content, kv_match)
-            )
+            # Leave empty declarations and explicit YAML nulls unset; required fields are validated below.
+            if isinstance(value_node, ScalarNode) and value_node.tag == "tag:yaml.org,2002:null":
+                continue
 
-            if key == "name":
-                name = value
-            elif key == "description":
-                description = value
-            elif key == "license":
-                license_value = value
-            elif key == "compatibility":
-                compatibility = value
-            elif key == "allowed-tools":
-                allowed_tools = value
+            # Reject lists, mappings, and unsupported YAML types because these fields are stored as text.
+            if (
+                not isinstance(value_node, ScalarNode)
+                or value_node.tag not in _YAML_TEXT_SCALAR_TAGS
+                or _contains_surrogate_code_points(value_node.value)
+            ):
+                logger.error(
+                    "SKILL.md at '%s' has an invalid '%s' value; expected a text scalar",
+                    skill_file_path,
+                    key,
+                )
+                return None
 
-        # Parse metadata block (indented key-value pairs under "metadata:").
-        metadata: dict[str, str] | None = None
-        metadata_match = YAML_METADATA_BLOCK_RE.search(yaml_content)
-        if metadata_match:
-            metadata = {}
-            for kv_match in YAML_INDENTED_KV_RE.finditer(metadata_match.group(1)):
-                mk = kv_match.group(1)
-                # Keep the first value for an exact key match; differently cased keys remain distinct.
-                if mk in metadata:
-                    logger.warning(
-                        "SKILL.md at '%s' contains duplicate metadata key '%s'; keeping the first value",
-                        skill_file_path,
-                        mk,
-                    )
-                    continue
-                mv = kv_match.group(2) if kv_match.group(2) is not None else kv_match.group(3)
-                metadata[mk] = mv
+            fields[key] = value_node.value
 
+        name = fields.get("name")
+        description = fields.get("description")
+        compatibility = fields.get("compatibility")
         error = FileSkillsSource._validate_skill_metadata(name, description, skill_file_path, compatibility)
         if error:
             logger.error(error)
@@ -3718,10 +3677,10 @@ class FileSkillsSource(SkillsSource):
         return SkillFrontmatter(
             name=cast(str, name),
             description=cast(str, description),
-            license=license_value,
+            license=fields.get("license"),
             compatibility=compatibility,
-            allowed_tools=allowed_tools,
-            metadata=metadata,
+            allowed_tools=fields.get("allowed-tools"),
+            metadata=FileSkillsSource._extract_frontmatter_metadata(metadata_node, skill_file_path),
         )
 
     @staticmethod

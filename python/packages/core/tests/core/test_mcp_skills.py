@@ -774,6 +774,13 @@ class TestMCPSkillsSourceArchive:
             "description: Valid\nlicense: MIT\n'license':",
             'description: Valid\ncompatibility: Any runtime\n"compatibility": Other runtime',
             'description: Valid\n"name": packaged-skill',
+            'description: First\n"descrip\\u0074ion": Second',
+            'description: First\n"\\x44escription": Second',
+            "description: Valid\nmetadata: [unterminated",
+            'description: "\\U00110000"',
+            'description: "\\UFFFFFFFF"',
+            'description: "\\uD800"',
+            'description: "\\uDFFF"',
         ),
     )
     async def test_ambiguous_archive_frontmatter_is_skipped(self, fields: str, newline: str) -> None:
@@ -786,6 +793,27 @@ class TestMCPSkillsSourceArchive:
         skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
 
         assert skills == []
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    async def test_archive_yaml_escapes_and_invalid_metadata(
+        self, newline: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        content = (
+            '---\nname: packaged-skill\n"\\x64escription": "Read\\nfiles"\n'
+            '"\\u006detadata": {author: First, "\\u0061uthor": Second, invalid: [value]}\n---\nBody.'
+        )
+        archive = _make_zip({"SKILL.md": content.replace("\n", newline).encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.description == "Read\nfiles"
+        assert skills[0].frontmatter.metadata == {"author": "First"}
+        assert len(caplog.records) == 2
+        assert all(record.levelname == "WARNING" for record in caplog.records)
 
     @pytest.mark.parametrize("newline", ("\n", "\r\n"))
     async def test_archive_value_on_indented_next_line_is_preserved(self, newline: str) -> None:
@@ -806,7 +834,7 @@ class TestMCPSkillsSourceArchive:
     async def test_archive_empty_optional_scalar_remains_none(self, field: str, newline: str) -> None:
         url = "skill://archives/packaged-skill.zip"
         index = _make_archive_index("packaged-skill", url)
-        content = f"---\nname: packaged-skill\ndescription: Read files\n{field}: \t\n---\nBody."
+        content = f"---\nname: packaged-skill\ndescription: Read files\n{field}:  \n---\nBody."
         archive = _make_zip({"SKILL.md": content.replace("\n", newline).encode()})
         client = _archive_client(index, url, archive, "application/zip")
 
@@ -843,9 +871,8 @@ class TestMCPSkillsSourceArchive:
         if second_key == "Author":
             expected["Author"] = "Second"
         assert skills[0].frontmatter.metadata == expected
-        # Archive parsing retains CR characters in block scalars; unlike file reads, it does not normalize newlines.
-        assert skills[0].frontmatter.description == ("Read files" if newline == "\n" else "Read\r files\r")
-        assert skills[0].frontmatter.license == f"MIT{newline}License"
+        assert skills[0].frontmatter.description == "Read files"
+        assert skills[0].frontmatter.license == "MIT\nLicense"
         assert skills[0].frontmatter.compatibility == "Any runtime"
         assert skills[0].frontmatter.allowed_tools == "read"
         assert "Body." in await skills[0].get_content()
@@ -862,11 +889,11 @@ class TestMCPSkillsSourceArchive:
         (
             ("First", "First"),
             ("\n    'First'", "First"),
-            ("|-\n    First\n    Second", "|-"),
-            (">-\n    First\n    Second", ">-"),
+            ("|-\n    First\n    Second", "First\nSecond"),
+            (">-\n    First\n    Second", "First Second"),
         ),
     )
-    async def test_archive_existing_metadata_scalar_formats_preserved(
+    async def test_archive_yaml_metadata_scalar_formats(
         self, newline: str, value: str, expected: str, caplog: pytest.LogCaptureFixture
     ) -> None:
         url = "skill://archives/packaged-skill.zip"
