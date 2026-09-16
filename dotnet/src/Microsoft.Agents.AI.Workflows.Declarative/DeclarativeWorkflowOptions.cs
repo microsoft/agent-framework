@@ -64,11 +64,6 @@ public sealed class DeclarativeWorkflowOptions(ResponseAgentProvider agentProvid
     public int? MaximumExpressionLength { get; init; }
 
     /// <summary>
-    /// Gets a value indicating whether the Power Fx <c>Set</c> function is enabled.
-    /// </summary>
-    public bool EnableSetFunction { get; init; }
-
-    /// <summary>
     /// Gets the <see cref="ILoggerFactory"/> used to create loggers for workflow components.
     /// </summary>
     public ILoggerFactory LoggerFactory { get; init; } = NullLoggerFactory.Instance;

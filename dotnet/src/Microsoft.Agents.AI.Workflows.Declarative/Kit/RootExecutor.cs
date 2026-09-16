@@ -48,7 +48,7 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
         this._inputTransform = inputTransform;
         this._allowProcessEnvironmentVariableFallback = options.AllowProcessEnvironmentVariableFallback;
         this._allowedEnvironmentVariables = (options.AllowedEnvironmentVariables ?? []).ToFrozenSet(StringComparer.OrdinalIgnoreCase);
-        this._state = new WorkflowFormulaState(options.CreateRecalcEngine(), options.EnableSetFunction);
+        this._state = new WorkflowFormulaState(options.CreateRecalcEngine());
         this._state.InitializeSystem();
         this.Session = new RootFormulaSession(this._state);
     }

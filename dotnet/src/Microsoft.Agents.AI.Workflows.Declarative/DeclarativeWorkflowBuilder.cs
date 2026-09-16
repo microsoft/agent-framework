@@ -72,7 +72,7 @@ public static class DeclarativeWorkflowBuilder
         AdaptiveDialog workflowElement = ReadWorkflow(yamlReader);
         string rootId = WorkflowActionVisitor.Steps.Root(workflowElement);
 
-        WorkflowFormulaState state = new(options.CreateRecalcEngine(), options.EnableSetFunction);
+        WorkflowFormulaState state = new(options.CreateRecalcEngine());
         state.Initialize(
             workflowElement.WrapWithBot(),
             options.Configuration,
