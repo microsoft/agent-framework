@@ -166,9 +166,8 @@ public static class IWorkflowContextExtensions
             return;
         }
 
-        await context.QueueStateUpdateAsync(key, value.Value, scopeName, cancellationToken).ConfigureAwait(false);
-
         string plainScopeName = scopeName ?? WorkflowFormulaState.DefaultScopeName;
+        await context.QueueStateUpdateAsync(key, value.Value, plainScopeName, cancellationToken).ConfigureAwait(false);
         if (ShouldPersistSensitivity(plainScopeName))
         {
             await context.QueueStateUpdateAsync(key, value.Sensitivity, WorkflowFormulaState.GetSensitivityScopeName(plainScopeName), cancellationToken).ConfigureAwait(false);
