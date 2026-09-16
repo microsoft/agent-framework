@@ -42,11 +42,12 @@ from typing import (
 )
 from uuid import uuid4
 
+from opentelemetry import trace
 from opentelemetry.metrics import Histogram, NoOpHistogram
 from pydantic import BaseModel, Field, ValidationError, create_model
 
 from ._serialization import SerializationMixin
-from .exceptions import ToolException, UserInputRequiredException
+from .exceptions import ResponseInvalidatedException, ToolException, UserInputRequiredException
 from .observability import (
     OPERATION_DURATION_BUCKET_BOUNDARIES,
     OtelAttr,
@@ -531,10 +532,12 @@ class FunctionTool(SerializationMixin):
                 Pydantic model when runtime validation matters. Treat dictionary schemas
                 as declarations for trusted settings and non-sensitive functions only;
                 never rely on them as an authorization or security boundary.
-            result_parser: An optional callable with signature ``Callable[[Any], str]`` that
+            result_parser: An optional callable with signature ``Callable[[Any], str | list[Content]]`` that
                 overrides the default result parsing behavior. When provided, this callable
-                is used to convert the raw function return value to a string instead of the
-                built-in :meth:`parse_result` logic. Pass the :data:`SKIP_PARSING` sentinel
+                converts the raw function return value to a string or content items instead of the
+                built-in :meth:`parse_result` logic. Exceptions raised by a custom parser propagate
+                from :meth:`invoke`; the raw result is not used as a fallback. Handle recoverable
+                conversion errors inside the parser if a fallback is needed. Pass the :data:`SKIP_PARSING` sentinel
                 instead of a callable to opt out of parsing entirely; in that case
                 :meth:`invoke` returns the wrapped function's raw return value. Depending
                 on your function, it may be easiest to just do the serialization directly
@@ -903,6 +906,11 @@ class FunctionTool(SerializationMixin):
         configured on the tool. Every result — text, rich media, or serialized
         objects — is represented uniformly as Content items.
 
+        Exceptions raised by a custom result parser propagate to the caller without
+        falling back to the raw result. During automatic tool invocation, these
+        exceptions follow the existing tool-error handling, including the
+        ``include_detailed_errors`` setting. Default parsing retains its string fallback.
+
         Parsing can be skipped in two ways: configure the tool with
         ``result_parser=SKIP_PARSING`` to always skip parsing, or pass
         ``skip_parsing=True`` per call. Either way the wrapped function's raw value
@@ -937,7 +945,6 @@ class FunctionTool(SerializationMixin):
 
         configured_parser = self.result_parser
         skip_parsing = skip_parsing or configured_parser is SKIP_PARSING
-        parser = configured_parser if callable(configured_parser) else FunctionTool.parse_result
 
         parameter_names = set(self.parameters().get("properties", {}).keys())
         direct_argument_kwargs = (
@@ -1001,9 +1008,19 @@ class FunctionTool(SerializationMixin):
                 and configured_parser is None
             ):
                 parsed = result
+            elif callable(configured_parser):
+                try:
+                    parsed = configured_parser(result)
+                except Exception as exception:
+                    self.invocation_exception_count += 1
+                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+                        logger.error(f"Function {self.name}: result parser failed. Error: {exception}")
+                    else:
+                        logger.error(f"Function {self.name}: result parser failed.")
+                    raise
             else:
                 try:
-                    parsed = parser(result)
+                    parsed = FunctionTool.parse_result(result)
                 except Exception:
                     logger.warning(f"Function {self.name}: result parser failed, falling back to str().")
                     parsed = [Content.from_text(str(result))]
@@ -1076,9 +1093,23 @@ class FunctionTool(SerializationMixin):
                     and configured_parser is None
                 ):
                     parsed = result
+                elif callable(configured_parser):
+                    try:
+                        parsed = configured_parser(result)
+                    except Exception as exception:
+                        self.invocation_exception_count += 1
+                        attributes[OtelAttr.ERROR_TYPE] = type(exception).__name__
+                        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+                            capture_exception(span=span, exception=exception, timestamp=time_ns())
+                            logger.error(f"Function {self.name}: result parser failed. Error: {exception}")
+                        else:
+                            span.set_attribute(OtelAttr.ERROR_TYPE, type(exception).__name__)
+                            span.set_status(status=trace.StatusCode.ERROR)
+                            logger.error(f"Function {self.name}: result parser failed.")
+                        raise
                 else:
                     try:
-                        parsed = parser(result)
+                        parsed = FunctionTool.parse_result(result)
                     except Exception:
                         logger.warning(f"Function {self.name}: result parser failed, falling back to str().")
                         parsed = [Content.from_text(str(result))]
@@ -1519,11 +1550,13 @@ def tool(
         max_invocation_exceptions: The maximum number of exceptions allowed during invocations.
             If None, there is no limit, should be at least 1.
         additional_properties: Additional properties to set on the function.
-        result_parser: An optional callable with signature ``Callable[[Any], str]`` that
+        result_parser: An optional callable with signature ``Callable[[Any], str | list[Content]]`` that
             overrides the default result parsing. When provided, this callable converts the
-            raw function return value to a string instead of using the built-in
-            :meth:`FunctionTool.parse_result`. Depending on your function, it may be
-            easiest to just do the serialization directly in the function body rather
+            raw function return value to a string or content items instead of using the built-in
+            :meth:`FunctionTool.parse_result`. Exceptions raised by a custom parser propagate
+            from :meth:`FunctionTool.invoke`; the raw result is not used as a fallback.
+            Handle recoverable conversion errors inside the parser if a fallback is needed.
+            Depending on your function, it may be easiest to do the serialization directly in the function body rather
             than providing a custom ``result_parser``.
 
     Note:
@@ -1736,12 +1769,21 @@ def _function_execution_error_result(
     config: FunctionInvocationConfiguration,
     context: FunctionInvocationContext | None = None,
 ) -> Content:
-    logger.warning(
-        "Function '%s' raised an exception; returning an error result to the model. "
-        "Set include_detailed_errors=True for the full detail. Exception: %r",
-        tool_name,
-        exception,
-    )
+    from .observability import OBSERVABILITY_SETTINGS
+
+    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+        logger.warning(
+            "Function '%s' raised an exception; returning an error result to the model. "
+            "Set include_detailed_errors=True for the full detail. Exception: %r",
+            tool_name,
+            exception,
+        )
+    else:
+        logger.warning(
+            "Function '%s' raised an exception; returning an error result to the model. "
+            "Set include_detailed_errors=True for the full detail.",
+            tool_name,
+        )
     message = "Error: Function failed."
     if config.get("include_detailed_errors", False):
         message = f"{message} Exception: {exception}"
@@ -3378,6 +3420,57 @@ def _clear_budget_state_from_session(invocation_session: AgentSession | None) ->
     invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
 
 
+def _response_invalidation_cleanup(
+    invocation_session: AgentSession | None,
+    budget_state: dict[str, Any],
+    stream_error: list[ResponseInvalidatedException] | None = None,
+) -> Callable[[ResponseInvalidatedException], None]:
+    """Capture the last valid continuation and return invalidation cleanup."""
+    service_session_id = (
+        copy.deepcopy(invocation_session.service_session_id) if invocation_session is not None else None
+    )
+
+    def cleanup(error: ResponseInvalidatedException) -> None:
+        if stream_error is not None:
+            stream_error[:] = [error]
+        budget_state.clear()
+        if invocation_session is None:
+            return
+        invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
+        invocation_session.service_session_id = service_session_id
+
+    return cleanup
+
+
+_InvalidationResultT = TypeVar("_InvalidationResultT")
+
+
+async def _await_provider_call(
+    operation: Callable[..., Awaitable[_InvalidationResultT]],
+    on_invalidated: Callable[[ResponseInvalidatedException], None],
+    **kwargs: Any,
+) -> _InvalidationResultT:
+    """Await one provider operation and clean up invalidated local calls."""
+    try:
+        return await operation(**kwargs)
+    except ResponseInvalidatedException as error:
+        on_invalidated(error)
+        raise
+
+
+async def _iterate_provider_stream(
+    stream: AsyncIterable[_InvalidationResultT],
+    on_invalidated: Callable[[ResponseInvalidatedException], None],
+) -> AsyncIterable[_InvalidationResultT]:
+    """Yield one provider stream and clean up invalidated local calls."""
+    try:
+        async for item in stream:
+            yield item
+    except ResponseInvalidatedException as error:
+        on_invalidated(error)
+        raise
+
+
 def _apply_batch_limit_decision(
     action: Literal["continue", "return", "stop"],
     options: dict[str, Any],
@@ -3964,9 +4057,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         # Phase 2: alternate model turns and local execution until a terminal response or safety limit is reached.
         for attempt_idx in range(attempt_start, max_iterations):
             budget_state["attempt_count"] = attempt_idx + 1
+            on_invalidated = _response_invalidation_cleanup(invocation_session, budget_state)
             response = cast(
                 ChatResponse[Any],
-                await super_get_response(
+                await _await_provider_call(
+                    super_get_response,
+                    on_invalidated,
                     messages=prepared_messages,
                     stream=False,
                     options=options,
@@ -4051,9 +4147,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 max_iterations,
             )
         options["tool_choice"] = "none"
+        on_invalidated = _response_invalidation_cleanup(invocation_session, budget_state)
         response = cast(
             ChatResponse[Any],
-            await super_get_response(
+            await _await_provider_call(
+                super_get_response,
+                on_invalidated,
                 messages=prepared_messages,
                 stream=False,
                 options=options,
@@ -4096,6 +4195,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         budget_state: dict[str, Any],
         max_errors: int,
         middleware_pipeline: FunctionMiddlewarePipeline | None = None,
+        invalidation_error: list[ResponseInvalidatedException],
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Run the streaming function invocation loop."""
         from ._middleware import MiddlewareFailure
@@ -4165,9 +4265,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         # Phase 2: stream each model turn, finalize it, execute its calls, then advance the transcript.
         for attempt_idx in range(attempt_start, max_iterations):
             budget_state["attempt_count"] = attempt_idx + 1
+            on_invalidated = _response_invalidation_cleanup(invocation_session, budget_state, invalidation_error)
             inner_stream = cast(
                 "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]",
-                super_get_response(
+                await _await_provider_call(
+                    super_get_response,
+                    on_invalidated,
                     messages=prepared_messages,
                     stream=True,
                     options=options,
@@ -4176,13 +4279,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     client_kwargs=request_kwargs,
                 ),
             )
-            await inner_stream
             drop_unexecutable_calls = options.get("tool_choice") == "none" and budget_state.get("truncated")
             streamed_identities_by_call_id: dict[str, tuple[str, str]] = {}
             streamed_names_by_call_id: dict[str, str] = {}
             last_streamed_identity: tuple[str, str] | None = None
             warned_empty_call_ids: set[str] = set()
-            async for update in inner_stream:
+            async for update in _iterate_provider_stream(inner_stream, on_invalidated):
                 for content in update.contents:
                     if content.type != "function_call":
                         continue
@@ -4239,7 +4341,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         continue
                 yield update
 
-            response = await inner_stream.get_final_response()
+            response = await _await_provider_call(inner_stream.get_final_response, on_invalidated)
             fallback_added = False
             if options.get("tool_choice") == "none" and budget_state.get("truncated"):
                 fallback_added = _ensure_function_invocation_limit_fallback_response(response)
@@ -4314,9 +4416,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 max_iterations,
             )
         options["tool_choice"] = "none"
+        on_invalidated = _response_invalidation_cleanup(invocation_session, budget_state, invalidation_error)
         final_inner_stream = cast(
             "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]",
-            super_get_response(
+            await _await_provider_call(
+                super_get_response,
+                on_invalidated,
                 messages=prepared_messages,
                 stream=True,
                 options=options,
@@ -4325,13 +4430,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 client_kwargs=request_kwargs,
             ),
         )
-        await final_inner_stream
-        async for update in final_inner_stream:
+        async for update in _iterate_provider_stream(final_inner_stream, on_invalidated):
             update = _drop_unexecutable_tool_contents_from_update(update)
             if update is None:
                 continue
             yield update
-        final_response = await final_inner_stream.get_final_response()
+        final_response = await _await_provider_call(final_inner_stream.get_final_response, on_invalidated)
         fallback_added = _ensure_function_invocation_limit_fallback_response(final_response)
         self._update_function_invocation_continuation_state(
             request_kwargs,
@@ -4514,6 +4618,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             )
 
         response_format = mutable_options.get("response_format")
+        invalidation_error: list[ResponseInvalidatedException] = []
+
+        def finalize_stream(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
+            if invalidation_error:
+                raise invalidation_error[0]
+            return ChatResponse.from_updates(updates, output_format_type=response_format)
 
         return ResponseStream(
             self._stream_response_with_function_invocation(
@@ -4528,8 +4638,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 budget_state=budget_state,
                 max_errors=max_errors,
                 middleware_pipeline=function_middleware_pipeline,
+                invalidation_error=invalidation_error,
             ),
-            finalizer=partial(ChatResponse.from_updates, output_format_type=response_format),
+            finalizer=finalize_stream,
         )
 
 

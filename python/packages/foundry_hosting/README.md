@@ -86,6 +86,12 @@ Native Responses refusal parts are stored as text carrying
 `additional_properties["model_output_kind"] == "refusal"` and emitted as
 `response.refusal.*` events when streamed back to clients.
 
+`InvocationsHostServer` keeps sessions in memory. When hosted, `AgentSession.session_id` is an
+opaque composite identifier that preserves the boundaries between the platform session ID
+and user ID. Consumers must use it as a whole and must not parse it or depend on its internal
+representation. Repeated requests for the same identifier pair reuse the session. Locally,
+the platform session ID is used unchanged.
+
 ### Workflow checkpoints
 
 `ResponsesHostServer` persists workflow checkpoints durably. By default, it uses the

@@ -184,6 +184,107 @@ public class OutputConverterTests
         Assert.NotNull(completedEvent);
     }
 
+    [Theory]
+    [InlineData(34304L, 128L, null, null, 34304L, 128L)]
+    [InlineData(34304L, 128L, 999L, 999L, 34304L, 128L)]
+    [InlineData(0L, 0L, 999L, 999L, 0L, 0L)]
+    [InlineData(null, null, null, null, 0L, 0L)]
+    [InlineData(null, null, 34304L, 128L, 34304L, 128L)]
+    [InlineData(34304L, null, 999L, 128L, 34304L, 128L)]
+    [InlineData(null, 128L, 34304L, 999L, 34304L, 128L)]
+    public async Task ConvertUpdatesToEventsAsync_UsageCounters_PreservesDetailsAsync(
+        long? cachedTokens, long? reasoningTokens, long? legacyCachedTokens, long? legacyReasoningTokens,
+        long expectedCachedTokens, long expectedReasoningTokens)
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var details = new UsageDetails
+        {
+            InputTokenCount = 34847,
+            OutputTokenCount = 1000,
+            TotalTokenCount = 35847,
+            CachedInputTokenCount = cachedTokens,
+            ReasoningTokenCount = reasoningTokens,
+        };
+        if (legacyCachedTokens is { } cached)
+        {
+            (details.AdditionalCounts ??= [])["InputTokenDetails.CachedTokenCount"] = cached;
+        }
+
+        if (legacyReasoningTokens is { } reasoning)
+        {
+            (details.AdditionalCounts ??= [])["OutputTokenDetails.ReasoningTokenCount"] = reasoning;
+        }
+
+        var updates = new[] { new AgentResponseUpdate { Contents = [new UsageContent(details)] } };
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var completed = Assert.Single(events.OfType<ResponseCompletedEvent>());
+        var usage = Assert.IsType<ResponseUsage>(completed.Response.Usage);
+        Assert.Equal(34847, usage.InputTokens);
+        Assert.Equal(1000, usage.OutputTokens);
+        Assert.Equal(35847, usage.TotalTokens);
+        Assert.Equal(expectedCachedTokens, usage.InputTokensDetails.CachedTokens);
+        Assert.Equal(expectedReasoningTokens, usage.OutputTokensDetails.ReasoningTokens);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConvertUpdatesToEventsAsync_UsageCounters_AccumulatesInTerminalEventAsync(bool fail)
+    {
+        // Arrange
+        var (stream, _) = CreateTestStream();
+        var updates = new List<AgentResponseUpdate>
+        {
+            new()
+            {
+                Contents = [new UsageContent(new UsageDetails
+                {
+                    InputTokenCount = 100, OutputTokenCount = 10, TotalTokenCount = 110,
+                    CachedInputTokenCount = 64, ReasoningTokenCount = 2,
+                })],
+            },
+            new()
+            {
+                Contents = [new UsageContent(new UsageDetails
+                {
+                    InputTokenCount = 200, OutputTokenCount = 20, TotalTokenCount = 220,
+                    CachedInputTokenCount = 128, ReasoningTokenCount = 4,
+                })],
+            },
+        };
+        if (fail)
+        {
+            updates.Add(new AgentResponseUpdate { Contents = [new ErrorContent("Test failure")] });
+        }
+
+        // Act
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(updates), stream))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        var terminal = Assert.Single(events);
+        var usage = Assert.IsType<ResponseUsage>(fail
+            ? Assert.IsType<ResponseFailedEvent>(terminal).Response.Usage
+            : Assert.IsType<ResponseCompletedEvent>(terminal).Response.Usage);
+        Assert.Equal(300, usage.InputTokens);
+        Assert.Equal(30, usage.OutputTokens);
+        Assert.Equal(330, usage.TotalTokens);
+        Assert.Equal(192, usage.InputTokensDetails.CachedTokens);
+        Assert.Equal(6, usage.OutputTokensDetails.ReasoningTokens);
+    }
+
     [Fact]
     public async Task ConvertUpdatesToEventsAsync_ReasoningContent_EmitsReasoningEventsAsync()
     {
