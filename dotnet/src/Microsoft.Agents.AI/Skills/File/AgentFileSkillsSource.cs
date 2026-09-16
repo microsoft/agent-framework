@@ -275,6 +275,12 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
                 return false;
             }
 
+            // Empty declarations participate in key validation, but leave optional scalar fields unset.
+            if (!kvMatch.Groups[2].Success && kvMatch.Groups[3].Length == 0)
+            {
+                continue;
+            }
+
             string value = kvMatch.Groups[2].Success
                 ? kvMatch.Groups[2].Value
                 : ParseYamlScalarValue(yamlContent, kvMatch);

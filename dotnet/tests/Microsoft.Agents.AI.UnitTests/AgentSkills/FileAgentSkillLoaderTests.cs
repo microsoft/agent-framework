@@ -640,6 +640,10 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     [InlineData("metadata", "\r\n")]
     [InlineData("license", "\n")]
     [InlineData("license", "\r\n")]
+    [InlineData("compatibility", "\n")]
+    [InlineData("compatibility", "\r\n")]
+    [InlineData("allowed-tools", "\n")]
+    [InlineData("allowed-tools", "\r\n")]
     [InlineData("vendor-option", "\n")]
     [InlineData("vendor-option", "\r\n")]
     public async Task GetSkillsAsync_EmptyInlineValue_DoesNotConsumeNextFieldAsync(string field, string newline)
@@ -656,6 +660,34 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var skill = Assert.Single(skills);
         Assert.Equal("test-skill", skill.Frontmatter.Name);
         Assert.Equal("A test skill.", skill.Frontmatter.Description);
+        Assert.Null(skill.Frontmatter.License);
+        Assert.Null(skill.Frontmatter.Compatibility);
+        Assert.Null(skill.Frontmatter.AllowedTools);
+    }
+
+    [Theory]
+    [InlineData("license", "\n")]
+    [InlineData("license", "\r\n")]
+    [InlineData("compatibility", "\n")]
+    [InlineData("compatibility", "\r\n")]
+    [InlineData("allowed-tools", "\n")]
+    [InlineData("allowed-tools", "\r\n")]
+    public async Task GetSkillsAsync_EmptyOptionalScalarAtEnd_RemainsNullAsync(string field, string newline)
+    {
+        // Arrange
+        string content = $"---\nname: test-skill\ndescription: Read files\n{field}: \t\n---\nBody.";
+        _ = this.CreateSkillDirectoryWithRawContent("test-skill", content.Replace("\n", newline));
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var frontmatter = Assert.Single(skills).Frontmatter;
+        Assert.Equal("Read files", frontmatter.Description);
+        Assert.Null(frontmatter.License);
+        Assert.Null(frontmatter.Compatibility);
+        Assert.Null(frontmatter.AllowedTools);
     }
 
     [Theory]
@@ -667,6 +699,12 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     [InlineData("metadata:\nmetadata:", "\r\n")]
     [InlineData("license:\nlicense: MIT", "\n")]
     [InlineData("license:\nlicense: MIT", "\r\n")]
+    [InlineData("license: MIT\nlicense:", "\n")]
+    [InlineData("license: MIT\nlicense:", "\r\n")]
+    [InlineData("compatibility:\ncompatibility: Any runtime", "\n")]
+    [InlineData("compatibility:\ncompatibility: Any runtime", "\r\n")]
+    [InlineData("allowed-tools:\nallowed-tools: read", "\n")]
+    [InlineData("allowed-tools:\nallowed-tools: read", "\r\n")]
     [InlineData("Metadata:", "\n")]
     [InlineData("Metadata:", "\r\n")]
     [InlineData("allowed-tools: read\nALLOWED-TOOLS:", "\n")]

@@ -792,6 +792,23 @@ class TestMCPSkillsSourceArchive:
         assert skills[0].frontmatter.license == "MIT"
 
     @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize("field", ("license", "compatibility", "allowed-tools"))
+    async def test_archive_empty_optional_scalar_remains_none(self, field: str, newline: str) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        content = f"---\nname: packaged-skill\ndescription: Read files\n{field}: \t\n---\nBody."
+        archive = _make_zip({"SKILL.md": content.replace("\n", newline).encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert skills[0].frontmatter.description == "Read files"
+        assert skills[0].frontmatter.license is None
+        assert skills[0].frontmatter.compatibility is None
+        assert skills[0].frontmatter.allowed_tools is None
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
     @pytest.mark.parametrize("second_key", ("author", "Author"))
     async def test_archive_duplicate_metadata_keeps_first_value_and_warns(
         self, newline: str, second_key: str, caplog: pytest.LogCaptureFixture

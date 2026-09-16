@@ -3669,6 +3669,10 @@ class FileSkillsSource(SkillsSource):
                 return None
             seen_fields.add(key)
 
+            # Empty declarations participate in key validation, but leave optional scalar fields unset.
+            if kv_match.group(2) is None and not kv_match.group(3):
+                continue
+
             value = (
                 kv_match.group(2) if kv_match.group(2) is not None else _parse_yaml_scalar_value(yaml_content, kv_match)
             )

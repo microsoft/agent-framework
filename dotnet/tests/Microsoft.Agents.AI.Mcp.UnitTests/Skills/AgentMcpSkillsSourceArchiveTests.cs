@@ -108,6 +108,35 @@ public sealed class AgentMcpSkillsSourceArchiveTests : IDisposable
     }
 
     [Theory]
+    [InlineData("license", "\n")]
+    [InlineData("license", "\r\n")]
+    [InlineData("compatibility", "\n")]
+    [InlineData("compatibility", "\r\n")]
+    [InlineData("allowed-tools", "\n")]
+    [InlineData("allowed-tools", "\r\n")]
+    public async Task GetSkillsAsync_ArchiveEmptyOptionalScalar_RemainsNullAsync(string field, string newline)
+    {
+        // Arrange
+        string content = $"---\nname: archived-skill\ndescription: Read files\n{field}: \t\n---\nBody.";
+        byte[] archive = BuildZip(("SKILL.md", content.Replace("\n", newline)));
+        await using var server = CreateArchiveServer(
+            ArchiveIndex("archived-skill", "skill://archives/archived-skill.zip"),
+            new Dictionary<string, byte[]> { ["archived-skill"] = archive });
+        await using var client = await server.CreateClientAsync();
+        var source = new AgentMcpSkillsSource(client, new() { ArchiveSkillsDirectory = this._extractionRoot });
+
+        // Act
+        var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+        // Assert
+        var frontmatter = Assert.Single(skills).Frontmatter;
+        Assert.Equal("Read files", frontmatter.Description);
+        Assert.Null(frontmatter.License);
+        Assert.Null(frontmatter.Compatibility);
+        Assert.Null(frontmatter.AllowedTools);
+    }
+
+    [Theory]
     [InlineData("author", "\n")]
     [InlineData("author", "\r\n")]
     [InlineData("Author", "\n")]

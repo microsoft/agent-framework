@@ -571,7 +571,7 @@ class TestTryParseSkillDocument:
         assert result is None
 
     @pytest.mark.parametrize("newline", ("\n", "\r\n"))
-    @pytest.mark.parametrize("field", ("metadata", "license", "vendor-option"))
+    @pytest.mark.parametrize("field", ("metadata", "license", "compatibility", "allowed-tools", "vendor-option"))
     def test_empty_inline_value_does_not_consume_next_field(self, field: str, newline: str) -> None:
         content = newline.join((
             "---",
@@ -587,6 +587,22 @@ class TestTryParseSkillDocument:
         assert result is not None
         assert result.name == "test-skill"
         assert result.description == "A test skill."
+        assert result.license is None
+        assert result.compatibility is None
+        assert result.allowed_tools is None
+
+    @pytest.mark.parametrize("newline", ("\n", "\r\n"))
+    @pytest.mark.parametrize("field", ("license", "compatibility", "allowed-tools"))
+    def test_empty_optional_scalar_at_end_remains_none(self, field: str, newline: str) -> None:
+        content = f"---\nname: test-skill\ndescription: Read files\n{field}: \t\n---\nBody.".replace("\n", newline)
+
+        result = FileSkillsSource._extract_frontmatter(content, "test.md")
+
+        assert result is not None
+        assert result.description == "Read files"
+        assert result.license is None
+        assert result.compatibility is None
+        assert result.allowed_tools is None
 
     @pytest.mark.parametrize("newline", ("\n", "\r\n"))
     @pytest.mark.parametrize(
@@ -596,6 +612,9 @@ class TestTryParseSkillDocument:
             "description:",
             "metadata:\nmetadata:",
             "license:\nlicense: MIT",
+            "license: MIT\nlicense:",
+            "compatibility:\ncompatibility: Any runtime",
+            "allowed-tools:\nallowed-tools: read",
             "Metadata:",
             "allowed-tools: read\nALLOWED-TOOLS:",
         ),
