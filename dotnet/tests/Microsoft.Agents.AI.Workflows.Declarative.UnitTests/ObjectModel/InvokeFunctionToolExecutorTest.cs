@@ -473,6 +473,59 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
     }
 
     /// <summary>
+    /// Completed approval-required invocations must not leave per-request tombstones in
+    /// checkpoint state.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolCheckpointAfterCompletedApprovalsPersistsBoundedApprovalStateAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolCheckpointAfterCompletedApprovalsPersistsBoundedApprovalStateAsync),
+            functionName: FunctionName,
+            requireApproval: true);
+
+        TestFunctionAgentProvider testAgentProvider = new(
+            [AIFunctionFactory.Create(() => "result", name: FunctionName)]);
+        InvokeFunctionToolExecutor action = new(model, testAgentProvider, this.State);
+
+        List<string> completedRequestIds = [];
+        Dictionary<string, object?> stateStore = [];
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContextWithStateStore(stateStore, emittedRequests);
+
+        // Act - complete multiple approval-required invocations through the same executor.
+        for (int i = 0; i < 3; i++)
+        {
+            emittedRequests.Clear();
+            await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+            ToolApprovalRequestContent approvalRequest = GetApprovalRequest(emittedRequests);
+            completedRequestIds.Add(approvalRequest.RequestId);
+            await action.CaptureResponseAsync(mockContext.Object, CreateApprovalResponseFor(emittedRequests, approved: true), CancellationToken.None);
+        }
+
+        await InvokeProtectedMethodAsync(action, "OnCheckpointingAsync", mockContext.Object, CancellationToken.None);
+
+        // Assert - checkpoint state stores one approval-history flag, not completed request ids.
+        bool hasApprovalRequiredInvocation = Assert.IsType<bool>(stateStore["_hasApprovalRequiredInvocation"]);
+        Assert.True(hasApprovalRequiredInvocation);
+
+        Dictionary<string, ApprovalSnapshot> persistedSnapshots = Assert.IsType<Dictionary<string, ApprovalSnapshot>>(stateStore["_approvalSnapshots"]);
+        Assert.Empty(persistedSnapshots);
+
+        List<string> persistedPendingNonApprovalIds = Assert.IsType<List<string>>(stateStore["_pendingNonApprovalCallIds"]);
+        Assert.Empty(persistedPendingNonApprovalIds);
+
+        Assert.DoesNotContain(stateStore.Values.OfType<List<string>>(), persistedIds => completedRequestIds.Any(persistedIds.Contains));
+    }
+
+    /// <summary>
     /// Each ExecuteAsync invocation must produce a unique per-invocation request id on
     /// both the FunctionCallContent.CallId and the ToolApprovalRequestContent.RequestId.
     /// </summary>
@@ -1631,6 +1684,9 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         mockContext.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<List<string>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback<string, List<string>, string?, CancellationToken>((key, value, _, _) => stateStore[key] = value)
             .Returns(default(ValueTask));
+        mockContext.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, bool, string?, CancellationToken>((key, value, _, _) => stateStore[key] = value)
+            .Returns(default(ValueTask));
         mockContext.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<ApprovalSnapshot?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback<string, ApprovalSnapshot?, string?, CancellationToken>((key, value, _, _) =>
             {
@@ -1659,6 +1715,9 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         mockContext.Setup(c => c.ReadStateAsync<List<string>>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Returns<string, string?, CancellationToken>((key, _, _) =>
                 new ValueTask<List<string>?>(stateStore.TryGetValue(key, out object? val) ? val as List<string> : null));
+        mockContext.Setup(c => c.ReadStateAsync<bool>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns<string, string?, CancellationToken>((key, _, _) =>
+                new ValueTask<bool>(stateStore.TryGetValue(key, out object? val) && val is bool boolValue && boolValue));
         mockContext.Setup(c => c.ReadStateAsync<ApprovalSnapshot>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Returns<string, string?, CancellationToken>((key, _, _) =>
                 new ValueTask<ApprovalSnapshot?>(stateStore.TryGetValue(key, out object? val) ? val as ApprovalSnapshot : null));

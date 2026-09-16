@@ -29,7 +29,7 @@ internal sealed class InvokeFunctionToolExecutor(
     DeclarativeActionExecutor<InvokeFunctionTool>(model, state)
 {
     private const string ApprovalSnapshotStateKey = nameof(_approvalSnapshots);
-    private const string ApprovalRequiredCallIdsStateKey = nameof(_approvalRequiredCallIds);
+    private const string HasApprovalRequiredInvocationStateKey = nameof(_hasApprovalRequiredInvocation);
     private const string PendingCallIdsStateKey = nameof(_pendingNonApprovalCallIds);
     private const string LegacyApprovalSnapshotStateKey = "_approvalSnapshot";
 
@@ -40,12 +40,7 @@ internal sealed class InvokeFunctionToolExecutor(
     /// </summary>
     private readonly ConcurrentDictionary<string, ApprovalSnapshot> _approvalSnapshots = new(StringComparer.Ordinal);
 
-    /// <summary>
-    /// Call ids that were classified as approval-required when emitted, retained after
-    /// approval snapshot consumption so replayed caller-supplied function results are
-    /// rejected consistently.
-    /// </summary>
-    private readonly ConcurrentDictionary<string, byte> _approvalRequiredCallIds = new(StringComparer.Ordinal);
+    private bool _hasApprovalRequiredInvocation;
 
     /// <summary>
     /// Per-invocation call ids for in-flight non-approval requests; used to match the
@@ -102,8 +97,7 @@ internal sealed class InvokeFunctionToolExecutor(
             // Capture the evaluated parameters keyed by request id; the matching response
             // resumes from this snapshot.
             this._approvalSnapshots[requestId] = new ApprovalSnapshot(functionName, arguments);
-            this._approvalRequiredCallIds.TryAdd(requestId, 0);
-            this._approvalRequiredCallIds.TryAdd(this.Id, 0);
+            this._hasApprovalRequiredInvocation = true;
 
             requestMessage.Contents.Add(new ToolApprovalRequestContent(requestId, functionCall));
         }
@@ -147,7 +141,7 @@ internal sealed class InvokeFunctionToolExecutor(
         // already routed the response to this executor's port and the framework does
         // not invoke a function here.
         if (matchingResult is null
-            && this._approvalRequiredCallIds.IsEmpty
+            && !this._hasApprovalRequiredInvocation
             && this._pendingNonApprovalCallIds.IsEmpty
             && this._approvalSnapshots.IsEmpty)
         {
@@ -212,10 +206,6 @@ internal sealed class InvokeFunctionToolExecutor(
                 AgentResponse resultResponse = new([new ChatMessage(ChatRole.Tool, [matchingResult])]);
                 await context.AddEventAsync(new AgentResponseEvent(this.Id, resultResponse), cancellationToken).ConfigureAwait(false);
             }
-
-            // Drop the per-invocation entry now that the response has been processed.
-            this._pendingNonApprovalCallIds.TryRemove(matchingResult.CallId, out _);
-            this._approvalSnapshots.TryRemove(matchingResult.CallId, out _);
         }
 
         // Store messages if output path is configured
@@ -239,13 +229,20 @@ internal sealed class InvokeFunctionToolExecutor(
             }
         }
 
+        if (matchingResult is not null)
+        {
+            // Drop the per-invocation entry now that the response side effects have been processed.
+            this._pendingNonApprovalCallIds.TryRemove(matchingResult.CallId, out _);
+            this._approvalSnapshots.TryRemove(matchingResult.CallId, out _);
+        }
+
         // Completes the action after processing the function result.
         await context.RaiseCompletionEventAsync(this.Model, cancellationToken).ConfigureAwait(false);
     }
 
     private IEnumerable<ChatMessage> GetSideEffectMessages(IEnumerable<ChatMessage> messages)
     {
-        if (this._approvalRequiredCallIds.IsEmpty)
+        if (!this._hasApprovalRequiredInvocation)
         {
             return messages;
         }
@@ -257,14 +254,14 @@ internal sealed class InvokeFunctionToolExecutor(
     public override ValueTask ResetAsync()
     {
         this._approvalSnapshots.Clear();
-        this._approvalRequiredCallIds.Clear();
+        this._hasApprovalRequiredInvocation = false;
         this._pendingNonApprovalCallIds.Clear();
         return default;
     }
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Persists approval classifications, pending approval snapshots, and non-approval
+    /// Persists approval classification, pending approval snapshots, and non-approval
     /// call ids so they survive checkpoint/restore cycles.
     /// </remarks>
     protected override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
@@ -272,8 +269,7 @@ internal sealed class InvokeFunctionToolExecutor(
         Dictionary<string, ApprovalSnapshot> snapshotCopy = this._approvalSnapshots.ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.Ordinal);
         await context.QueueStateUpdateAsync(ApprovalSnapshotStateKey, snapshotCopy, null, cancellationToken).ConfigureAwait(false);
 
-        List<string> approvalRequiredCopy = [.. this._approvalRequiredCallIds.Keys];
-        await context.QueueStateUpdateAsync(ApprovalRequiredCallIdsStateKey, approvalRequiredCopy, null, cancellationToken).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync(HasApprovalRequiredInvocationStateKey, this._hasApprovalRequiredInvocation, null, cancellationToken).ConfigureAwait(false);
 
         List<string> pendingCopy = [.. this._pendingNonApprovalCallIds.Keys];
         await context.QueueStateUpdateAsync(PendingCallIdsStateKey, pendingCopy, null, cancellationToken).ConfigureAwait(false);
@@ -289,9 +285,7 @@ internal sealed class InvokeFunctionToolExecutor(
     protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         await base.OnCheckpointRestoredAsync(context, cancellationToken).ConfigureAwait(false);
-
         this._approvalSnapshots.Clear();
-        this._approvalRequiredCallIds.Clear();
         Dictionary<string, ApprovalSnapshot>? snapshots = await context.ReadStateAsync<Dictionary<string, ApprovalSnapshot>>(
             ApprovalSnapshotStateKey, null, cancellationToken).ConfigureAwait(false);
         if (snapshots is not null)
@@ -302,21 +296,9 @@ internal sealed class InvokeFunctionToolExecutor(
             }
         }
 
-        List<string>? approvalRequired = await context.ReadStateAsync<List<string>>(
-            ApprovalRequiredCallIdsStateKey, null, cancellationToken).ConfigureAwait(false);
-        if (approvalRequired is not null)
-        {
-            foreach (string id in approvalRequired)
-            {
-                this._approvalRequiredCallIds.TryAdd(id, 0);
-            }
-        }
-
-        foreach (string snapshotId in this._approvalSnapshots.Keys)
-        {
-            this._approvalRequiredCallIds.TryAdd(snapshotId, 0);
-            this._approvalRequiredCallIds.TryAdd(this.Id, 0);
-        }
+        this._hasApprovalRequiredInvocation =
+            await context.ReadStateAsync<bool>(HasApprovalRequiredInvocationStateKey, null, cancellationToken).ConfigureAwait(false)
+            || !this._approvalSnapshots.IsEmpty;
 
         this._pendingNonApprovalCallIds.Clear();
         List<string>? pending = await context.ReadStateAsync<List<string>>(
@@ -336,7 +318,7 @@ internal sealed class InvokeFunctionToolExecutor(
         if (legacy is not null)
         {
             this._approvalSnapshots.TryAdd(this.Id, legacy);
-            this._approvalRequiredCallIds.TryAdd(this.Id, 0);
+            this._hasApprovalRequiredInvocation = true;
             await context.QueueStateUpdateAsync<ApprovalSnapshot?>(
                 LegacyApprovalSnapshotStateKey, null, null, cancellationToken).ConfigureAwait(false);
         }
@@ -394,7 +376,7 @@ internal sealed class InvokeFunctionToolExecutor(
         foreach (ChatMessage message in messages)
         {
             List<AIContent> contents =
-                [.. message.Contents.Where(c => c is not FunctionResultContent functionResult || !this._approvalRequiredCallIds.ContainsKey(functionResult.CallId))];
+                [.. message.Contents.Where(c => c is not FunctionResultContent functionResult || this._pendingNonApprovalCallIds.ContainsKey(functionResult.CallId))];
             if (contents.Count == message.Contents.Count)
             {
                 yield return message;
